@@ -10,7 +10,7 @@
 1. [Module Overview](#module-overview)
 2. [Package Structure](#package-structure)
 3. [Core Agents](#core-agents)
-   - [SearchAgent](#1-videosearchagent)
+   - [SearchAgent](#1-searchagent)
    - [GatewayAgent](#gateway-gatewayagent)
    - [OrchestratorAgent (A2A Entry Point)](#3-orchestratoragent-a2a-entry-point)
    - [ProfileSelectionAgent](#4-profileselectionagent)
@@ -22,7 +22,7 @@
    - [SummarizerAgent](#10-summarizeragent)
    - [AudioAnalysisAgent](#11-audioanalysisagent)
    - [TextAnalysisAgent](#12-textanalysisagent)
-   - [SearchAgent (Refactored)](#13-videosearchagent-refactored)
+   - [SearchAgent (Refactored)](#13-searchagent-refactored)
    - [QueryEnhancementAgent](#14-queryenhancementagent)
    - [CodingAgent](#15-codingagent)
    - [DeepResearchAgent](#16-deepresearchagent)
@@ -155,11 +155,13 @@ graph TD
     SearchDir --> LearnedRerank["<span style='color:#000'>learned_reranker.py</span>"]
     SearchDir --> RerankersDir["<span style='color:#000'>rerankers/</span>"]
 
-    Root --> OrchDir["<span style='color:#000'><b>orchestrator/</b></span>"]
+    Root --> OrchDir["<span style='color:#000'><b>orchestrator/</b><br/>4 files</span>"]
     OrchDir --> OrchInit["<span style='color:#000'>__init__.py</span>"]
-    OrchDir --> MoreOrch["<span style='color:#000'>... (orchestration components)</span>"]
+    OrchDir --> CheckpointStorage["<span style='color:#000'>checkpoint_storage.py</span>"]
+    OrchDir --> CheckpointTypes["<span style='color:#000'>checkpoint_types.py</span>"]
+    OrchDir --> SuffContext["<span style='color:#000'>sufficient_context_signature.py</span>"]
 
-    Root --> OptDir["<span style='color:#000'><b>optimizer/</b></span>"]
+    Root --> OptDir["<span style='color:#000'><b>optimizer/</b><br/>5 files</span>"]
     OptDir --> OptInit["<span style='color:#000'>__init__.py</span>"]
     OptDir --> ArtifactMgr["<span style='color:#000'>artifact_manager.py</span>"]
     OptDir --> DspyAgentOpt["<span style='color:#000'>dspy_agent_optimizer.py</span>"]
@@ -170,9 +172,10 @@ graph TD
     InferenceDir --> RlmInf["<span style='color:#000'>rlm_inference.py</span>"]
     InferenceDir --> InstrumentedRlm["<span style='color:#000'>instrumented_rlm.py</span>"]
 
-    Root --> ApprovalDir["<span style='color:#000'><b>approval/</b><br/>5 files</span>"]
+    Root --> ApprovalDir["<span style='color:#000'><b>approval/</b><br/>4 files</span>"]
     ApprovalDir --> ApprovalStorage["<span style='color:#000'>approval_storage.py</span>"]
     ApprovalDir --> HumanApproval["<span style='color:#000'>human_approval_agent.py</span>"]
+    ApprovalDir --> ApprovalOrch["<span style='color:#000'>orchestrator.py</span>"]
 
     Root --> GraphDir["<span style='color:#000'><b>graph/</b><br/>12 files</span>"]
     GraphDir --> GraphMgr["<span style='color:#000'>graph_manager.py</span>"]
@@ -203,7 +206,7 @@ graph TD
     style WorkflowDir fill:#81d4fa,stroke:#0288d1,color:#000
 ```
 
-**Total Files**: 96 Python files (33 at top level + 63 in subdirectories)
+**Total Files**: 95 Python files (33 at top level + 62 in subdirectories)
 
 **Key Agent Files** (all at top level):
 
@@ -1999,15 +2002,21 @@ class DetailedReportAgent(
 | `metadata` | Dict | Additional metadata |
 
 **Usage:**
+
+`config_manager` has a default of `None` in the signature but is required —
+the constructor raises `ValueError` if it is not supplied:
+
 ```python
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
     DetailedReportInput,
 )
+from cogniverse_foundation.config.utils import create_default_config_manager
 
+config_manager = create_default_config_manager()
 deps = DetailedReportDeps()
-agent = DetailedReportAgent(deps=deps, port=8004)
+agent = DetailedReportAgent(deps=deps, config_manager=config_manager, port=8004)
 result = await agent.process(DetailedReportInput(
     query="Analyze video content about machine learning",
     search_results=search_results,
@@ -2080,10 +2089,15 @@ class DocumentAgent(MemoryAwareMixin, A2AAgent[DocumentSearchInput, DocumentSear
 | `count` | int | Total result count |
 
 **Usage:**
+
+Unlike `SearchAgent`/`OrchestratorAgent`, `DocumentAgent` reads `deps.tenant_id`
+in `__init__` — `tenant_id` must be passed to `DocumentAgentDeps` at
+construction time, not per-request:
+
 ```python
 from cogniverse_agents.document_agent import DocumentAgent, DocumentAgentDeps, DocumentSearchInput
 
-deps = DocumentAgentDeps()
+deps = DocumentAgentDeps(tenant_id="acme")
 agent = DocumentAgent(deps=deps)
 result = await agent._process_impl(DocumentSearchInput(
     query="quarterly financial report",
@@ -2890,7 +2904,7 @@ from cogniverse_agents.orchestrator_agent import OrchestratorAgent, Orchestrator
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 # tenant_id arrives per-request in A2A task payload
 ```
 
@@ -3022,7 +3036,7 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # ONE orchestrator serves ALL tenants — tenant_id arrives per-request
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
 # Memory is initialized lazily per-tenant on first request via MemoryAwareMixin:
 # - Tenant "acme" → agent_memories_acme schema (first request initializes)
@@ -3041,7 +3055,7 @@ from cogniverse_agents.orchestrator_agent import OrchestratorAgent, Orchestrator
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
 result = await orchestrator._process_impl(
     OrchestratorInput(
@@ -3265,6 +3279,7 @@ RLM is implemented using DSPy's built-in `dspy.RLM` module (requires `dspy-ai>=3
 libs/agents/cogniverse_agents/
 ├── inference/
 │   ├── __init__.py
+│   ├── ab_harness.py             # RLMABRunner: with-RLM vs without-RLM comparison
 │   ├── deno_check.py             # Boot probe: fail-fast if Deno missing
 │   ├── instrumented_rlm.py       # InstrumentedRLM with EventQueue + fallback marker
 │   ├── rlm_inference.py          # RLMInference wrapper, RLMResult, RLMTimeoutError
@@ -3444,7 +3459,7 @@ RLM results include telemetry for comparison in Phoenix dashboard:
 | `rlm_trajectory_length` | Number of REPL iterations captured in `RLMResult.trajectory` (0 unless `RLMOptions.include_trajectory=True`) |
 | `context_size_chars` | Input context size |
 
-### Orchestrator RLM promotion (B.6)
+### Orchestrator RLM promotion
 
 Before dispatching to a sub-agent, the orchestrator now estimates the
 projected payload size (sum of stringified field lengths). When the
@@ -3467,7 +3482,7 @@ The promotion is **idempotent**: if the caller already supplied an
 `rlm` field (any value, including `None` for explicit opt-out), the
 orchestrator does not touch it.
 
-### RLM A/B harness (B.5)
+### RLM A/B harness
 
 `RLMABRunner` runs the same query through both arms — once without RLM
 (single LM call on the raw context) and once with RLM (recursive REPL) —
@@ -3504,7 +3519,7 @@ comparison still isolates the RLM machinery, now measured against the
 production (routed) path. `optimization_cli.run_ab_compare` passes both, so the
 dashboard's A/B tile reflects what production actually runs.
 
-### Deep synthesis workflow (B.7)
+### Deep synthesis workflow
 
 Opt-in entry point for queries that need recursive multi-agent
 orchestration over a knowledge subgraph that doesn't fit in a normal
@@ -3513,11 +3528,11 @@ unified report"). Distinct from the default `OrchestratorAgent` plan-
 then-act path: this workflow runs Orchestrator *inside* an RLM-style
 trajectory so partial results inform the next round of fan-out.
 
-This is **not** the default execution path — see the C1 analysis in the
-plan. Default Orchestrator stays plan-then-act with parallel sub-agent
-fan-out. `DeepSynthesisWorkflow` is a separate class so its cost is
-local and explicit, the default trace shape stays clean, and B.5 A/B
-can compare the two paths on a curated benchmark before promotion.
+This is **not** the default execution path. Default Orchestrator stays
+plan-then-act with parallel sub-agent fan-out. `DeepSynthesisWorkflow` is a
+separate class so its cost is local and explicit, the default trace shape
+stays clean, and the RLM A/B harness can compare the two paths on a curated
+benchmark before promotion.
 
 ```python
 from cogniverse_agents.deep_synthesis_workflow import (
@@ -3585,10 +3600,10 @@ Nine A2A agents that operate on the Knowledge Management Layer (schema-driven me
 ### AuditExplanationAgent
 
 Read-only A2A agent that explains *why* a system answer was produced.
-Walks the provenance chain (A.2) to surface every source memory the
-answer was derived from, attaches the decayed trust score per source
-(A.4), and flags any contradictions touching those sources' subjects
-(A.3). Compliance deployments need this surface for every answer.
+Walks the provenance chain to surface every source memory the
+answer was derived from, attaches the decayed trust score per source,
+and flags any contradictions touching those sources' subjects.
+Compliance deployments need this surface for every answer.
 
 ```python
 from cogniverse_agents.audit_explanation_agent import (
@@ -3633,7 +3648,7 @@ a kind, optionally a time window) into a structured summary with
 citations. Distinct from `SummarizerAgent` (which summarises retrieval
 results in-flight): `KnowledgeSummarizationAgent` summarises the
 *knowledge layer itself* and can promote the result into the org trunk
-via A.5 federation.
+via federation.
 
 ```python
 from cogniverse_agents.knowledge_summarization_agent import (
@@ -3704,7 +3719,7 @@ print(out.distinct_signatures_count)  # 1 = unchanged, >1 = evolved
 print(out.undated_count)  # memories on the subject lacking written_at
 ```
 
-The agent uses the `written_at` field that A.2 provenance stamps onto
+The agent uses the `written_at` field that provenance stamps onto
 every metadata block — no Vespa-side time-version index is required.
 Each window emits a stable content-hash signature so a caller can detect
 whether knowledge actually changed without invoking an LLM. The
@@ -3773,7 +3788,7 @@ Default `port=8024`.
 ### CrossTenantComparisonAgent
 
 A2A agent that compares per-tenant views of a subject across multiple
-tenants in the *same* org. Built on A.5 federation: each per-tenant
+tenants in the *same* org. Built on federation: each per-tenant
 fetch goes through `FederationService.federated_get_all`, so the org
 trunk is included automatically and cross-org reads are structurally
 prevented.
@@ -3902,7 +3917,7 @@ Default `port=8021`.
 
 ### ContradictionReconciliationAgent
 
-Read-only A2A agent that consumes a ConflictSet (A.3) and resolves it
+Read-only A2A agent that consumes a `ConflictSet` and resolves it
 per the target schema's `contradiction_policy` (or an explicit per-call
 override). Returns a survivor list plus per-member outcomes for the UI.
 
@@ -3928,14 +3943,14 @@ for member in out.resolved:
 ```
 
 V1 is deterministic: it applies `reconcile()` from
-`cogniverse_core.memory.contradiction` directly. The plan reserves an
-RLM trajectory for fetching extra evidence per side; that enrichment is
+`cogniverse_core.memory.contradiction` directly. An RLM trajectory for
+fetching extra evidence per side is not yet implemented; that enrichment is
 left as a follow-up. Capability strings: `contradiction_reconciliation`,
 `audit`. Default `port=8020`.
 
 ### CitationTracingAgent
 
-Read-only A2A agent that wraps `ProvenanceWalker` (A.2). Given a memory id,
+Read-only A2A agent that wraps `ProvenanceWalker`. Given a memory id,
 returns the BFS-walked citation chain plus the structured primary-source
 list — useful for "show me the sources" UX, compliance audit, and
 debugging why a synthesised claim was promoted.
@@ -4040,8 +4055,8 @@ result = rlm(context=large_context, query="Summarize this")
 Users can cancel RLM operations mid-execution via the CancellationToken:
 
 ```python
-# Cancel from another coroutine
-await event_queue.cancellation_token.cancel(reason="User requested")
+# Cancel from another coroutine (cancel() is synchronous, not a coroutine)
+event_queue.cancellation_token.cancel(reason="User requested")
 
 # RLM raises RLMCancelledError when cancelled
 try:
@@ -4102,14 +4117,14 @@ class TestOrchestratorAgent:
     def test_initialization(self, config_manager):
         """Test agent initialization with deps (no tenant_id)"""
         registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-        agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+        agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
         assert agent.deps is not None
 
     async def test_process_query(self, config_manager):
         """Test query processing — tenant_id in request"""
         registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-        agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+        agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
         result = await agent._process_impl(
             OrchestratorInput(
@@ -4123,7 +4138,7 @@ class TestOrchestratorAgent:
     def test_tenant_agnostic_construction(self, config_manager):
         """Agent serves all tenants — one instance, per-request tenant_id"""
         registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-        agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+        agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
         # Same agent handles different tenants at request time
         # Memory is namespaced by (tenant_id, agent_name) at request time
@@ -4331,7 +4346,7 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # ✅ Good: Explicit deps (no tenant_id — it arrives per-request)
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
 # ❌ Bad: No deps or registry
 agent = OrchestratorAgent()  # TypeError: missing deps
@@ -4360,7 +4375,7 @@ from cogniverse_agents.orchestrator_agent import OrchestratorAgent, Orchestrator
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
 # Operations traced per-request with tenant_id from A2A payload
 result = await orchestrator._process_impl(
@@ -4378,7 +4393,7 @@ def test_tenant_isolation(config_manager):
     from cogniverse_core.registries.agent_registry import AgentRegistry
 
     registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
     # Tenant isolation verified at request time, not construction
     # Telemetry projects isolated: cogniverse-{tenant_id}-orchestrator
@@ -4516,29 +4531,32 @@ orchestrator = OrchestratorAgent(
 ### Resuming Failed Workflows
 
 ```python
-# Get list of resumable workflows
-resumable = await orchestrator.get_resumable_workflows()
+# Get list of resumable workflows (queried from checkpoint storage directly)
+resumable = await orchestrator.checkpoint_storage.get_resumable_workflows(tenant_id="acme")
 # Returns: [{"workflow_id": "wf_123", "original_query": "...", ...}, ...]
 
-# Resume a specific workflow
-result = await orchestrator.process_complex_query(
-    query="Original query (ignored when resuming)",
-    resume_from_workflow_id="wf_123"
-)
+# Fetch the latest checkpoint for a specific workflow
+checkpoint_data = await orchestrator.resume_workflow(resumable[0]["workflow_id"])
+# Returns the checkpoint as a dict (checkpoint_id, current_phase, task_states, ...),
+# or None if no checkpoint exists for that workflow_id
 ```
 
 ### Resume Algorithm
 
+`resume_workflow(workflow_id)` loads and returns the latest checkpoint's
+state — it does not itself re-execute the remaining tasks:
+
 ```text
-1. Load latest ACTIVE checkpoint for workflow_id
-2. Reconstruct WorkflowPlan from checkpoint
-3. For each phase from checkpoint.current_phase:
-   - Skip tasks with status=COMPLETED (use cached result)
-   - Execute tasks with status=WAITING/READY/FAILED
-   - Save checkpoint after phase completion
-4. Mark old checkpoint as SUPERSEDED
-5. Return aggregated result
+1. Load latest checkpoint for workflow_id via checkpoint_storage.get_latest_checkpoint()
+2. If none found, log a warning and return None
+3. Otherwise return checkpoint.to_dict() (task_states, current_phase, execution_order, ...)
 ```
+
+Reconstructing the `OrchestrationPlan` from that checkpoint data and
+re-executing only the incomplete steps (skipping `task_states` entries with
+`status="completed"`) is caller-side logic today — the checkpoint dict gives
+the caller everything needed to do so, but `OrchestratorAgent` does not drive
+that loop itself.
 
 ### Checkpoint Storage
 
@@ -4592,7 +4610,7 @@ class TaskCheckpoint:
 ### Example: Complete Checkpoint Flow
 
 ```python
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig
 from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
 
@@ -4613,20 +4631,21 @@ orchestrator = OrchestratorAgent(
 
 # Execute workflow (checkpoints saved automatically after each phase)
 try:
-    result = await orchestrator.process_complex_query(
-        "Find videos about machine learning and summarize them"
+    result = await orchestrator._process_impl(
+        OrchestratorInput(
+            query="Find videos about machine learning and summarize them",
+            tenant_id="acme",
+        )
     )
 except Exception as e:
     print(f"Workflow failed: {e}")
 
-    # Get resumable workflows
-    resumable = await orchestrator.get_resumable_workflows()
+    # Get resumable workflows and fetch the latest checkpoint for one
+    resumable = await storage.get_resumable_workflows(tenant_id="acme")
     if resumable:
-        # Resume from last checkpoint
-        result = await orchestrator.process_complex_query(
-            query="",  # Ignored when resuming
-            resume_from_workflow_id=resumable[0]["workflow_id"]
-        )
+        checkpoint_data = await orchestrator.resume_workflow(resumable[0]["workflow_id"])
+        # checkpoint_data carries task_states/current_phase for the caller
+        # to reconstruct the plan and re-run only the incomplete steps
 ```
 
 ---
@@ -4673,13 +4692,23 @@ orchestrator = OrchestratorAgent(
 
 ### Event Flow
 
-When a workflow executes with EventQueue configured:
+`self.event_queue` on `OrchestratorAgent` reaches two channels — there is no
+per-phase "planning"/"executing" push beyond these:
 
-1. **Planning phase** → StatusEvent("planning")
-2. **Execution starts** → StatusEvent("executing")
-3. **Each phase completes** → Checkpoint saves → StatusEvent + ProgressEvent (automatic)
-4. **Task results** → ArtifactEvent (per-task)
-5. **Workflow completes** → Checkpoint saves → StatusEvent("completed") + CompleteEvent
+1. **Checkpoint saves** (`checkpoint_storage.save_checkpoint`) automatically
+   enqueue a `StatusEvent` + `ProgressEvent` pair whenever `checkpoint_storage`
+   was built with the same `event_queue` — one pair per checkpointed phase.
+2. **Sufficiency-gate RLM promotion** (evidence too large for a single
+   `ChainOfThought` call) runs through `InstrumentedRLM(event_queue=self.event_queue, ...)`,
+   which emits its own per-iteration `StatusEvent`/`ProgressEvent` sequence.
+
+Per-agent progress narration (`self.emit_progress("planning", ...)`,
+`"execution"`, `"aggregating"`, `"complete"`) is a separate, dict-based
+streaming channel consumed via `process(stream=True)` — see
+[Streaming API](#streaming-api) — it does not go through this `EventQueue`.
+`ArtifactEvent` and `CompleteEvent` are defined in `cogniverse_core.events.types`
+but `OrchestratorAgent` does not emit them today; `CompleteEvent` is emitted
+by the ingestion pipeline, not the orchestrator.
 
 ### Subscribing to Events
 
@@ -4759,7 +4788,7 @@ flowchart TB
 ### Quick Example
 
 ```python
-from cogniverse_agents.approval import HumanApprovalAgent, ApprovalStorageImpl
+from cogniverse_agents.approval import ApprovalStorageImpl, HumanApprovalAgent, ReviewDecision
 
 # Initialize
 storage = ApprovalStorageImpl(
@@ -4774,14 +4803,25 @@ agent = HumanApprovalAgent(
     confidence_threshold=0.8  # Auto-approve >= 0.8
 )
 
-# Create batch (auto-approves high-confidence items)
-batch_id = await agent.create_batch(items=synthetic_data, context={...})
+# Process a batch of raw items — splits by confidence, auto-approves >= threshold,
+# persists the batch to storage so the rest surface for human review
+batch = await agent.process_batch(
+    items=synthetic_data,
+    batch_id="batch_001",
+    context={"tenant_id": "acme"},
+)
 
-# Apply human decision
-await agent.apply_decision(batch_id, ReviewDecision(item_id="...", approved=True))
+# Apply a human decision to one of the pending items. When approved and
+# storage is an ApprovalStorageImpl, the item is appended to the training
+# dataset named in batch.context["dataset_name"] automatically — there is
+# no separate export call.
+await agent.apply_decision(
+    batch.batch_id,
+    ReviewDecision(item_id=f"{batch.batch_id}_0", approved=True),
+)
 
-# Export approved to training dataset
-await agent.export_approved_to_dataset(batch_id, "training_v2")
+# Inspect approval stats for the batch (counts + rates, no LLM call)
+print(agent.get_approval_stats(batch))
 ```
 
 ### Workflow States
@@ -4984,8 +5024,8 @@ except RLMCancelledError as e:
 **Cancellation Support:**
 
 ```python
-# Client can cancel via CancellationToken
-await event_queue.cancel("User requested cancellation")
+# Client can cancel via CancellationToken (cancel() is synchronous)
+event_queue.cancel("User requested cancellation")
 
 # InstrumentedRLM checks token at each iteration
 # Raises RLMCancelledError if cancelled

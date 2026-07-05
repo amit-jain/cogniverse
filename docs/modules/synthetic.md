@@ -11,8 +11,9 @@ The Synthetic module provides **training data generation** for DSPy optimizers:
 
 - **DSPy-Driven Generation**: Uses DSPy signatures and modules for LLM-driven query generation
 - **Backend-Agnostic Sampling**: Works with any backend implementing the Backend interface
-- **Optimizer Support**: Generates data for Profile, Routing, and Workflow optimizers
+- **Optimizer Support**: Generates data for all five registered optimizers — `profile`, `routing`, `workflow`, `unified`, and `cross_modal`
 - **REST API**: FastAPI router for HTTP endpoints
+- **HITL Approval**: Confidence scoring and rejection-feedback regeneration for human-in-the-loop review
 
 ---
 
@@ -23,29 +24,59 @@ from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
 
-# Initialize service (backend=None uses mock data)
+# Initialize service (backend=None uses mock data). tenant_id is required on
+# both BackendConfig and SyntheticGeneratorConfig — __post_init__ raises via
+# require_tenant_id() if it's omitted.
 service = SyntheticDataService(
     backend=None,
-    backend_config=BackendConfig(backend_type="vespa", profiles={}),
-    generator_config=SyntheticGeneratorConfig()
+    backend_config=BackendConfig(tenant_id="acme:production", backend_type="vespa", profiles={}),
+    generator_config=SyntheticGeneratorConfig(tenant_id="acme:production")
 )
 
-# Generate training data
+# Generate training data (tenant_id is required on the request too)
 request = SyntheticDataRequest(
     optimizer="profile",
     count=100,
     vespa_sample_size=200,
-    strategies=["diverse"]
+    strategies=["diverse"],
+    tenant_id="acme:production"
 )
 response = await service.generate(request)
 print(f"Generated {response.count} examples")
 ```
 
+### Public API
+
+Everything below is importable directly from `cogniverse_synthetic` (see `__init__.py`):
+
+| Export | What it is |
+|--------|------------|
+| `SyntheticDataService` | Main orchestrator (`service.py`) |
+| `router` | FastAPI `APIRouter`, prefix `/synthetic` (`api.py`) |
+| `configure_service(backend, backend_config, generator_config, llm_client)` | Replaces the router's module-level service singleton |
+| `OPTIMIZER_REGISTRY`, `OptimizerConfig` | Optimizer-to-generator/schema mapping (`registry.py`) |
+| `SyntheticDataRequest`, `SyntheticDataResponse` | API request/response schemas |
+| `ProfileSelectionExampleSchema`, `RoutingExperienceSchema`, `WorkflowExecutionSchema` | Per-optimizer training-example schemas |
+
+`SyntheticDataService` also exposes `get_optimizer_info(optimizer_name)` and
+`list_all_optimizers()`, which back the `/synthetic/optimizers` endpoints.
+
 ---
 
 ## Generators
 
-Four generator types are available. See source at `libs/synthetic/cogniverse_synthetic/generators/`.
+Three generator classes back all five registered optimizers (see `OPTIMIZER_REGISTRY` in
+`registry.py`). `unified` reuses `WorkflowGenerator` and `cross_modal` reuses
+`ProfileGenerator` — `SyntheticDataService._get_generator()` maps them explicitly.
+See source at `libs/synthetic/cogniverse_synthetic/generators/`.
+
+| Optimizer | Generator | Schema |
+|-----------|-----------|--------|
+| `profile` | `ProfileGenerator` | `ProfileSelectionExampleSchema` |
+| `cross_modal` | `ProfileGenerator` | `ProfileSelectionExampleSchema` |
+| `routing` | `RoutingGenerator` | `RoutingExperienceSchema` |
+| `workflow` | `WorkflowGenerator` | `WorkflowExecutionSchema` |
+| `unified` | `WorkflowGenerator` | `WorkflowExecutionSchema` |
 
 ### ProfileGenerator
 
@@ -63,11 +94,27 @@ examples = await generator.generate(
 
 ### RoutingGenerator
 
+`RoutingGenerator` requires an `OptimizerGenerationConfig` with a `query_generator`
+entry in `dspy_modules` — `generate()` raises `ValueError` without one, since it
+uses `ValidatedEntityQueryGenerator` (see `dspy_modules.py`) for entity-rich query
+generation and has no fallback config.
+
 ```python
 from cogniverse_synthetic.generators.routing import RoutingGenerator
-from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
+from cogniverse_foundation.config.unified_config import (
+    DSPyModuleConfig,
+    OptimizerGenerationConfig,
+)
 
-optimizer_config = OptimizerGenerationConfig(optimizer_type="routing")
+optimizer_config = OptimizerGenerationConfig(
+    optimizer_type="routing",
+    dspy_modules={
+        "query_generator": DSPyModuleConfig(
+            signature_class="cogniverse_synthetic.dspy_signatures.GenerateEntityQuery",
+            module_type="Predict",
+        )
+    },
+)
 generator = RoutingGenerator(optimizer_config=optimizer_config)
 
 examples = await generator.generate(sampled_content=documents, target_count=75)
@@ -113,7 +160,14 @@ app.include_router(router, tags=["synthetic"])
 ```bash
 curl -X POST http://localhost:8000/synthetic/generate \
   -H "Content-Type: application/json" \
-  -d '{"optimizer": "profile", "count": 100, "strategies": ["diverse"]}'
+  -d '{"optimizer": "profile", "count": 100, "strategies": ["diverse"], "tenant_id": "acme:production"}'
+```
+
+`/synthetic/batch/generate` takes its parameters as query params, not a JSON
+body, and also requires `tenant_id`:
+
+```bash
+curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=profile&count_per_batch=100&num_batches=5&tenant_id=acme:production"
 ```
 
 ---
@@ -121,6 +175,11 @@ curl -X POST http://localhost:8000/synthetic/generate \
 ## Configuration
 
 ### Environment Variables
+
+`cogniverse_synthetic` itself never reads these directly — `RoutingGenerator`
+calls `dspy.ChainOfThought`/`dspy.Predict` against whatever LM the caller
+configured via `dspy.configure(lm=...)` (e.g. `optimization_cli.py` building an
+LM from `create_dspy_lm()`). These are the env vars that flow into that LM:
 
 ```bash
 export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"  # Works with any LiteLLM-supported provider
@@ -142,7 +201,7 @@ from pathlib import Path
 # Required dependencies
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-backend_config = BackendConfig(backend_type="vespa", profiles={})
+backend_config = BackendConfig(tenant_id="acme:production", backend_type="vespa", profiles={})
 
 # Initialize backend with all required params
 backend = VespaBackend(
@@ -154,7 +213,7 @@ backend = VespaBackend(
 service = SyntheticDataService(
     backend=backend,
     backend_config=backend_config,
-    generator_config=SyntheticGeneratorConfig()
+    generator_config=SyntheticGeneratorConfig(tenant_id="acme:production")
 )
 ```
 
@@ -162,13 +221,83 @@ service = SyntheticDataService(
 
 ## Testing
 
+Tests live in two directories: `tests/routing/unit/synthetic/` (generator, registry,
+schema, and approval unit tests) and `tests/synthetic/` (unit + real-boundary
+integration tests for the API and service).
+
 ```bash
 # Run synthetic tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/unit/synthetic/ -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/unit/synthetic/ tests/synthetic/ -v
 
 # With coverage
-uv run pytest tests/routing/unit/synthetic/ --cov=cogniverse_synthetic
+uv run pytest tests/routing/unit/synthetic/ tests/synthetic/ --cov=cogniverse_synthetic
 ```
+
+---
+
+## Optimizer Registry
+
+`registry.py` maps each optimizer name to its `OptimizerConfig` (schema class,
+generator class name, backend query strategy, sample/generation-count defaults):
+
+```python
+from cogniverse_synthetic import OPTIMIZER_REGISTRY, OptimizerConfig
+from cogniverse_synthetic.registry import (
+    get_optimizer_config,
+    get_optimizer_schema,
+    list_optimizers,
+    validate_optimizer_exists,
+)
+
+list_optimizers()  # {"routing": "...", "workflow": "...", "profile": "...", "unified": "...", "cross_modal": "..."}
+get_optimizer_config("profile")  # OptimizerConfig(name='profile', schema=ProfileSelectionExampleSchema, strategy='diverse')
+```
+
+## Profile Selection and Backend Sampling
+
+`ProfileSelector` (`profile_selector.py`) picks which backend profiles to sample
+from for a given optimizer — via LLM reasoning when `llm_client` is supplied to
+`SyntheticDataService`, otherwise via rule-based scoring keyed on optimizer name
+and profile characteristics (`_score_with_default_rules`, or configured
+`ProfileScoringRule`s from `SyntheticGeneratorConfig`).
+
+`BackendQuerier` (`backend_querier.py`) samples content from the configured
+`Backend` using `query_metadata_documents`, building strategy-specific YQL
+(`diverse`, `temporal_recent`, `entity_rich`, `multi_modal_sequences`) and
+normalizing results through `FieldMappingConfig`. When `backend=None`, it
+generates mock documents instead of querying.
+
+## Approval (`approval/`)
+
+Domain-specific implementations of the HITL approval interfaces from
+`cogniverse_core.approval.interfaces`:
+
+- **`SyntheticDataConfidenceExtractor`** (`confidence_extractor.py`) — scores a
+  generated example 0-1 from DSPy retry count, entity presence in the query,
+  query length, and reasoning presence.
+- **`SyntheticDataFeedbackHandler`** (`feedback_handler.py`) — on human
+  rejection, reruns `ValidatedEntityQueryGenerator` with corrected
+  entities/topics from the reviewer's feedback and returns a regenerated
+  `ReviewItem`.
+
+```python
+from cogniverse_synthetic.approval import (
+    SyntheticDataConfidenceExtractor,
+    SyntheticDataFeedbackHandler,
+)
+
+confidence = SyntheticDataConfidenceExtractor().extract(example_dict)
+```
+
+## Utilities (`utils/`)
+
+- **`PatternExtractor`** (`pattern_extraction.py`) — extracts topics (bigrams/
+  trigrams), entities (capitalized/technical terms), temporal patterns, and
+  content-type keywords from sampled content, using `FieldMappingConfig` to
+  stay schema-agnostic.
+- **`AgentInferrer`** (`agent_inference.py`) — infers routing agents from
+  modality or content characteristics. Loads its agent roster from the
+  `agents` section of `configs/config.json` rather than hardcoding names.
 
 ---
 
@@ -177,20 +306,24 @@ uv run pytest tests/routing/unit/synthetic/ --cov=cogniverse_synthetic
 ```text
 cogniverse_synthetic/
 ├── service.py              # Main SyntheticDataService
-├── api.py                  # FastAPI router
-├── schemas.py              # Pydantic schemas
-├── backend_querier.py      # Backend-agnostic content sampling
-├── dspy_signatures.py      # DSPy signatures for LLM generation
-├── dspy_modules.py         # Validated DSPy modules
-├── registry.py             # Generator registry
-├── profile_selector.py     # Profile selection logic
+├── api.py                  # FastAPI router + configure_service()
+├── schemas.py              # Pydantic schemas (request/response + per-optimizer examples)
+├── backend_querier.py      # Backend-agnostic content sampling (BackendQuerier)
+├── dspy_signatures.py      # DSPy signatures (GenerateModalityQuery, GenerateEntityQuery, InferAgentFromModality)
+├── dspy_modules.py         # ValidatedEntityQueryGenerator (retry-validated DSPy module)
+├── registry.py             # OPTIMIZER_REGISTRY, OptimizerConfig
+├── profile_selector.py     # ProfileSelector (LLM or rule-based profile scoring)
 ├── generators/
 │   ├── base.py             # BaseGenerator abstract class
 │   ├── profile.py          # ProfileGenerator
 │   ├── routing.py          # RoutingGenerator
 │   └── workflow.py         # WorkflowGenerator
-├── utils/                  # Utility modules
-└── approval/               # HITL approval utilities
+├── utils/
+│   ├── pattern_extraction.py  # PatternExtractor
+│   └── agent_inference.py     # AgentInferrer
+└── approval/
+    ├── confidence_extractor.py  # SyntheticDataConfidenceExtractor
+    └── feedback_handler.py      # SyntheticDataFeedbackHandler
 ```
 
 ---
@@ -213,7 +346,7 @@ flowchart TB
     subgraph CoreLayer["<span style='color:#000'>Core Layer</span>"]
         Core["<span style='color:#000'>cogniverse-core</span>"]
         Evaluation["<span style='color:#000'>cogniverse-evaluation</span>"]
-        Telemetry["<span style='color:#000'>cogniverse-telemetry</span>"]
+        Telemetry["<span style='color:#000'>cogniverse-telemetry-phoenix</span>"]
     end
 
     subgraph FoundationLayer["<span style='color:#000'>Foundation Layer</span>"]
@@ -241,9 +374,9 @@ flowchart TB
     style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-**Dependencies:** `cogniverse-sdk`, `cogniverse-foundation`, `dspy-ai`, `pydantic`, `fastapi`
+**Dependencies:** `cogniverse-sdk`, `cogniverse-foundation`, `cogniverse-core`, `dspy-ai`, `pydantic`, `httpx`, `fastapi`
 
-**Dependents:** `cogniverse-runtime`, `cogniverse-agents`
+**Dependents:** `cogniverse-runtime`, `cogniverse-agents`, `cogniverse-finetuning` (declared workspace dependencies); `cogniverse-dashboard` also imports it directly at runtime for the optimization and approval-queue tabs
 
 ---
 

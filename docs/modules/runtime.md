@@ -20,7 +20,13 @@
 6. [API Reference](#api-reference)
 7. [Configuration](#configuration)
 8. [Deployment](#deployment)
-9. [Testing](#testing)
+9. [Architecture Position](#architecture-position)
+10. [Testing](#testing)
+11. [Admin System](#admin-system)
+12. [Embedding Generator Subsystem](#embedding-generator-subsystem)
+13. [Sandbox (OpenShell)](#sandbox-openshell)
+14. [Optimization CLI](#optimization-cli)
+15. [Quality Monitor CLI](#quality-monitor-cli)
 
 ---
 
@@ -97,7 +103,8 @@ cogniverse_runtime/
 │           ├── embedding_generator.py
 │           ├── embedding_generator_impl.py
 │           ├── embedding_generator_factory.py
-│           └── backend_factory.py
+│           ├── backend_factory.py
+│           └── token_pooling.py     # Post-hoc multi-vector token pooling
 ├── ingestion_worker/                # Async Redis-Streams ingestion worker
 │   ├── worker.py                    # Worker entrypoint + queue consumer
 │   ├── queue.py
@@ -149,15 +156,18 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 **Startup Sequence:**
 
-1. Load configuration via `ConfigManager`
-2. Initialize `SchemaLoader` for Vespa schemas
-3. Set dependencies on routers
-4. Initialize `BackendRegistry` and `AgentRegistry`
-5. Wire registries and dependencies to routers
-6. Load backends and agents from config (agents are validated and registered as endpoints, not instantiated)
-7. Initialize telemetry
-8. Wire tenant manager to backend
-9. Configure DSPy LM and synthetic data service
+1. Wait (up to 5 minutes) for the backend feed endpoint to be reachable before touching config
+2. Load configuration via `ConfigManager`; wire `BackendRegistry` profile add/remove into a `config_manager` profile-change listener
+3. Initialize `SchemaLoader` for Vespa schemas; wire `admin`/`tenant` routers and `ingestion`/`search`/`knowledge` FastAPI dependency overrides
+4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
+5. Initialize `SandboxManager` with a policy resolved from env/config; wire it and the agent registry to the `agents` router
+6. Mount the A2A JSON-RPC server at `/a2a` with an `AgentCard` built from the registered agents
+7. Load backends and agents from config via `ConfigLoader` (agents are validated and registered as endpoints, not instantiated)
+8. Deploy metadata schemas via a system backend; apply deployment env-var overrides to `SystemConfig`
+9. Probe Phoenix reachability and validate inference services against configured profiles
+10. Wire tenant manager and the wiki/graph manager factories
+11. Configure DSPy LM and the synthetic data service
+12. Start the `GatewayHealthProbe` and the OpenShell mTLS cert rotator (when sandboxing is enabled)
 
 ```python
 # From main.py (simplified)
@@ -165,33 +175,43 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app."""
 
-    # 1. Load configuration
+    # 1. Wait for the backend to be reachable
+    bootstrap = BootstrapConfig.from_environment()
+    await _wait_for_backend_ready(f"{bootstrap.backend_url}:{bootstrap.backend_port}")
+
+    # 2. Load configuration
     config_manager = create_default_config_manager()
     config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
 
-    # 2. Initialize SchemaLoader
+    # 3. Initialize SchemaLoader
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-    # 3. Set dependencies on routers
+    # 3b. Set dependencies on routers
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
-    ingestion.set_config_manager(config_manager)
-    ingestion.set_schema_loader(schema_loader)
+    tenant.set_config_manager(config_manager)
+    app.dependency_overrides[ingestion.get_config_manager_dependency] = lambda: config_manager
+    app.dependency_overrides[search.get_config_manager_dependency] = lambda: config_manager
 
     # 4. Initialize registries
-    backend_registry = BackendRegistry(config_manager=config_manager)
-    agent_registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
+    backend_registry = BackendRegistry.get_instance()
+    agent_registry = AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
 
-    # 5. Wire agent registry and dependencies
+    # 5. Initialize SandboxManager and wire agent registry + dependencies
+    sandbox_manager = SandboxManager(policy=sandbox_policy)
     agents.set_agent_registry(agent_registry)
     agents.set_agent_dependencies(config_manager, schema_loader)
+    agents.set_sandbox_manager(sandbox_manager)
 
-    # 6. Load from config — agents are validated and registered as endpoints
+    # 6. Mount the A2A protocol server
+    app.mount("/a2a", a2a_server.build())
+
+    # 7. Load from config — agents are validated and registered as endpoints
     config_loader = get_config_loader()
     config_loader.load_backends()
     config_loader.load_agents(agent_registry=agent_registry)
 
-    # ... telemetry, tenant manager, DSPy/synthetic setup ...
+    # ... schema deploy, telemetry, tenant manager, DSPy/synthetic setup ...
 
     yield
 ```
@@ -391,8 +411,10 @@ from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 # Initialize
 manager = ProcessorManager(logger)
 
-# Initialize from strategy set
-manager.initialize_from_strategies(strategy_set)
+# Initialize from strategy set. service_urls is the {service_name: url}
+# map of deployed inference services (from SystemConfig.inference_service_urls);
+# pass {} when no remote services are deployed.
+manager.initialize_from_strategies(strategy_set, service_urls={})
 
 # Get processor by name
 keyframe_processor = manager.get_processor("keyframe")
@@ -410,6 +432,8 @@ manager.list_processors()
 | `AudioProcessor` | `audio` | Audio processing utilities |
 | `VLMProcessor` | `vlm` | Generate frame descriptions via Modal VLM service |
 | `SingleVectorProcessor` | `single_vector` | Process for single-vector embeddings |
+
+`AudioProcessor` and `VLMProcessor` are thin `BaseProcessor` wrappers that delegate to internal helper classes: `AudioTranscriber` (Whisper transcription), `AudioEmbeddingGenerator` (CLAP acoustic/semantic embeddings), and `VLMDescriptor` (Modal VLM service communication). These helpers are not `BaseProcessor` subclasses themselves and are not addressable by name through `ProcessorManager`.
 
 ---
 
@@ -555,6 +579,25 @@ curl http://localhost:8000/agents/
 curl http://localhost:8000/agents/stats
 ```
 
+**GET /agents/annotations/queue** - Annotation-queue statistics and pending items (routing feedback loop)
+```bash
+curl http://localhost:8000/agents/annotations/queue
+```
+
+**POST /agents/annotations/queue/{span_id}/assign** - Assign a pending annotation to a reviewer
+```bash
+curl -X POST http://localhost:8000/agents/annotations/queue/span-123/assign \
+  -H "Content-Type: application/json" \
+  -d '{"reviewer": "alice", "sla_hours": 24}'
+```
+
+**POST /agents/annotations/queue/{span_id}/complete** - Record a completed annotation label
+```bash
+curl -X POST http://localhost:8000/agents/annotations/queue/span-123/complete \
+  -H "Content-Type: application/json" \
+  -d '{"label": "correct"}'
+```
+
 **GET /agents/by-capability/{capability}** - Find agents by capability
 ```bash
 curl http://localhost:8000/agents/by-capability/video_search
@@ -577,9 +620,30 @@ curl -X DELETE http://localhost:8000/agents/video-search-agent
 
 **POST /agents/{agent_name}/process** - Process task with agent in-process. Dispatches by capability: `routing` routes through `OrchestratorAgent` (with memory, query enhancement, entity extraction) and executes the recommended downstream agent via `_execute_downstream_agent`; `search`/`video_search`/`retrieval` execute via `SearchService`; `summarization`/`detailed_report`/`text_analysis` instantiate their respective agents; unsupported capabilities raise `ValueError`. Supports multi-turn conversations via `conversation_history` field — a list of `{"role": "user"|"agent", "content": "..."}` dicts. When present, search agents rewrite queries using `ConversationalQueryRewriteModule` to resolve anaphoric references (e.g., "show me more" → "show me more basketball videos"). The response includes `original_query` and `rewritten_query` fields when rewriting occurs.
 
-**POST /agents/{agent_name}/upload** - Upload file to agent
+**POST /agents/{agent_name}/message** - Enqueue an inbound message for a running agent session (202 on success)
+```bash
+curl -X POST http://localhost:8000/agents/routing_agent/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "sess-123",
+    "tenant_id": "acme",
+    "role": "user",
+    "content": "stop searching, use the last 3 results",
+    "tags": ["constraint"]
+  }'
+```
+`agent_name` is accepted for URL symmetry with `/process` but is not used for routing — the registry is keyed by `session_id` alone. Returns 404 when the session isn't active, or when `tenant_id` doesn't match the session's registered tenant (cross-tenant probes can't distinguish "wrong tenant" from "no such session").
+
+**GET /agents/{agent_name}/sessions/{session_id}** - Poll whether a session is active (used by clients and the e2e harness)
+```bash
+curl "http://localhost:8000/agents/routing_agent/sessions/sess-123?tenant_id=acme"
+```
 
 **A2A Streaming** - Agents that support streaming (summarization, text_generation) emit intermediate progress events via the A2A protocol. Use `POST /a2a/tasks/sendSubscribe` with `metadata.stream: true` to receive SSE events. The SummarizerAgent streams phase-by-phase (thinking → visual analysis → summary generation) as `TaskStatusUpdateEvent`s with `state=working` for progress and `state=input_required` for the final result.
+
+#### AgentDispatcher and egress enforcement
+
+`AgentDispatcher` (`agent_dispatcher.py`) is the class behind `/agents/{agent_name}/process` — it holds the per-capability dispatch logic described above. Before dispatching to `search_agent`, `routing_agent`, or `summarizer_agent` it calls `consult_egress_policy(agent_name)` to look up that agent's OpenShell egress allow-list (from `configs/agent_policies/`), then `_verify_*_egress(tenant_id)` to confirm every resolved endpoint (LLM, inference service, etc.) the agent is about to call is within that allow-list. A resolved endpoint outside the allow-list logs an "egress policy DRIFT" warning rather than failing the request — the check is a drift detector for policy authors, not a hard block.
 
 #### Inbound messaging (per-session)
 
@@ -608,15 +672,29 @@ Verified end-to-end against a live cluster with `kubectl delete pod --wait=true`
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 **POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile
 
-**Tenant lifecycle**
+**Tenant lifecycle** (`libs/runtime/cogniverse_runtime/admin/tenant_manager.py`)
 
 **POST /admin/organizations** - Create organization
+**GET /admin/organizations** - List all organizations
 **GET /admin/organizations/{org_id}** - Get organization
 **DELETE /admin/organizations/{org_id}** - Delete organization (and its tenants)
+**GET /admin/organizations/{org_id}/tenants** - List tenants for an organization
 **POST /admin/tenants** - Create tenant (writes `tenant_metadata`). Accepts both simple form (`acme`) and colon form (`acme:production`); simple form is normalized to `acme:acme` before storage.
 **GET /admin/tenants/{tenant_full_id}** - Get tenant. Path param is canonicalized via `canonical_tenant_id` (see [common.md#canonical_tenant_id](common.md#canonical_tenant_id)), so simple form (`acme`) and colon form (`acme:acme`) resolve identically.
 **DELETE /admin/tenants/{tenant_full_id}** - Delete tenant. Path param is canonicalized like GET. Drops registered schemas and all Vespa-side orphans matching the tenant suffix; unresolved Vespa-only orphans encountered during the redeploy are absorbed into the deletion set (logged as warnings) rather than causing a `BackendDeploymentError`.
 **POST /admin/reconcile-orphans?dry_run={true|false}** - List Vespa-only schema orphans (no registry record), or drop every orphan tenant in one atomic redeploy. `dry_run=true` (default) returns the diff for operator review; `dry_run=false` calls `delete_tenant_schemas_bulk` so all orphans are removed in a single Vespa redeploy. See [operations/multi-tenant-ops.md#orphan-reconciliation](../operations/multi-tenant-ops.md#orphan-reconciliation) for the operator workflow.
+
+**Messaging gateway and memory admin**
+
+**POST /admin/messaging/invite** — Generate an invite token for messaging-gateway registration. Body: `{"tenant_id": str, "expires_in_hours": int = 24}`. Response: `{token, tenant_id}`; the token is what a user sends to the gateway bot (e.g. `/start <token>`) to link an account to the tenant.
+
+**DELETE /admin/memories/{tenant_id}/{memory_id}** — Delete any memory by id regardless of namespace (tries `_user_memories` then `_strategy_store`). 404 if not found in either.
+
+**DELETE /admin/memories/{tenant_id}?type={preference|strategy|all}** — Clear memories by type (`preference` → `_user_memories`, `strategy` → `_strategy_store`); omitted/`all` clears both namespaces.
+
+**DELETE /admin/tenants/{tenant_id}/sessions/{session_id}** — Hard-delete every `EPHEMERAL_SESSION`-retention memory tagged with `session_id`, schema-driven via `Mem0MemoryManager.drop_session`. Response includes per-kind deletion counts and a total.
+
+**POST /admin/sessions/{session_id}/close** — Fan-out session close: sweeps `drop_session(session_id)` across every warm (in-process-cached) `Mem0MemoryManager` instance, since a session may have written memories under more than one tenant. Tenants already evicted from the warm cache are skipped (best-effort, not a guaranteed sweep — use the per-tenant DELETE endpoint above for a guaranteed one).
 
 **Endpoint guards**
 
@@ -692,6 +770,44 @@ Body: `FederatedQueryRequest { query: str, tenant_ids: [str], actor_role: str = 
 
 **POST /admin/tenants/{tenant_id}/knowledge/temporal/reason** — Compare knowledge of a subject across time windows (read-only).
 Body: `TemporalReasonRequest { subject_key: str, windows: [Dict] (min 2), agent_name_filter?: str }`. The 2-window floor matches `TemporalReasoningInput` — single-window calls are rejected at validation.
+
+### Wiki Endpoints
+
+Per-tenant wiki knowledge pages (`libs/runtime/cogniverse_runtime/routers/wiki.py`). Each request resolves a `WikiManager` bound to the request's `tenant_id` via a factory installed by `main.py` at startup; a missing factory returns 503.
+
+**POST /wiki/save** — Persist an agent interaction as a wiki page. Body: `{query, response: dict, entities: [str] = [], agent_name: str = "summarizer_agent", tenant_id: str}`. Response: `{status, doc_id, title, slug}`.
+
+**POST /wiki/search** — Full-text search over wiki pages. Body: `{query, tenant_id, top_k: int = 5}`. Response: `{results, count}`.
+
+**GET /wiki/topic/{slug}?tenant_id=...** — Retrieve a topic page by slug. 404 if not found.
+
+**GET /wiki/index?tenant_id=...** — Return the rendered wiki index for the tenant.
+
+**GET /wiki/lint?tenant_id=...** — Run lint checks and return a quality report.
+
+**DELETE /wiki/topic/{slug}?tenant_id=...** — Delete a topic page by slug.
+
+### Graph Endpoints
+
+Knowledge-graph upsert, search, and traversal (`libs/runtime/cogniverse_runtime/routers/graph.py`), tenant-scoped via a `GraphManager` factory injected at startup (same pattern as the wiki router). Every route canonicalizes `tenant_id` via `canonical_tenant_id` and calls `assert_tenant_exists` before touching graph state.
+
+**POST /graph/upsert** — Upsert a batch of nodes and edges for a tenant. Response model `UpsertResponse` (per-kind counts).
+
+**GET /graph/search?tenant_id=...&q=...&top_k=10** — Semantic search over graph nodes (`top_k` 1-100).
+
+**GET /graph/neighbors?tenant_id=...&node=...&depth=1** — Direct neighbors (out and in) of a node by name (`depth` 1-3).
+
+**GET /graph/path?tenant_id=...&source=...&target=...&max_depth=4** — Shortest path between two nodes by name (`max_depth` 1-6).
+
+**GET /graph/stats?tenant_id=...** — Node/edge counts and top-degree nodes.
+
+### Debug Endpoints
+
+Runtime diagnostics gated behind `COGNIVERSE_DEBUG_MEM` (`libs/runtime/cogniverse_runtime/routers/debug.py`); zero startup cost when the env var is unset.
+
+**POST /admin/debug/memsnap?top_n=25&mode=lineno** — Take a `tracemalloc` snapshot, diff it against the previous one held in memory, and return the top allocation sites by retained-size growth.
+
+**POST /admin/debug/memreset** — Stop `tracemalloc` tracing and drop the stored snapshot, so the next `memsnap` call starts a fresh trace. Response: `{was_tracing: bool}`.
 
 ### Health Endpoints
 
@@ -790,20 +906,47 @@ backend:
 ### Environment Variables
 
 ```bash
-# Required
-export TENANT_ID="acme"
-export VESPA_URL="http://localhost:8080"
+# Required — backend bootstrap (chicken-and-egg: ConfigStore needs a
+# connection before it can load anything else from config.json)
+export BACKEND_URL="http://localhost"
+export BACKEND_PORT="8080"
 
-# Optional
-export VESPA_CONFIG_URL="http://localhost:19071"
-export PHOENIX_ENDPOINT="http://localhost:6006"
-export REDIS_URL="redis://localhost:6379"
-export LOG_LEVEL="INFO"
-export DEBUG_PIPELINE="false"
+# Deployment overrides applied to SystemConfig at startup (all optional;
+# absent env leaves the config.json value in place)
+export LLM_ENDPOINT="http://llm-service:11434"
+export LLM_ENGINE="ollama"
+export LLM_MODEL="qwen2.5:7b"                    # bare model id; provider prefix attached automatically
+export TELEMETRY_HTTP_ENDPOINT="http://phoenix:6006"
+export TELEMETRY_OTLP_ENDPOINT="http://phoenix:4317"
+export TELEMETRY_REQUIRED="false"                # "true" fails startup if Phoenix is unreachable
+export RUNTIME_URL="http://cogniverse-runtime:8000"
+export COLPALI_INFERENCE_URL="http://colpali-inference:8000"
+export INFERENCE_SERVICE_URLS='{"general": "http://vllm-inference:8000"}'
+export REDIS_URL="redis://localhost:6379"        # cross-pod inbound messaging + queue-driven ingestion
+export MINIO_ENDPOINT="http://minio:9000"        # object store for /ingestion/upload
+export COGNIVERSE_ADAPTER_CACHE="/data/adapters" # local cache dir for finetuning adapters
 
-# Server configuration
-export RUNTIME_HOST="0.0.0.0"
-export RUNTIME_PORT="8000"
+# Orchestrator iterative-retrieval knobs
+export ITER_RETRIEVAL_MAX_ITER="5"
+export ITER_RETRIEVAL_TOKEN_BUDGET="8000"
+export ITER_RETRIEVAL_WALL_CLOCK_MS="30000"
+
+# Semantic router (in-cluster query router)
+export SEMANTIC_ROUTER_ENABLED="true"
+export SEMANTIC_ROUTER_URL="http://cogniverse-router:8090"
+
+# Startup inference-service validation
+export SKIP_INFERENCE_VALIDATION="0"                        # "1" skips the boot-time probe
+export INFERENCE_HEALTH_BOOT_DEADLINE_SECONDS="120"
+
+# OpenShell sandbox
+export COGNIVERSE_SANDBOX_POLICY="optional"                 # required | optional | disabled
+export COGNIVERSE_SANDBOX_PROBE_INTERVAL="30"                # GatewayHealthProbe cadence (seconds)
+export COGNIVERSE_SANDBOX_CERT_ROTATION_INTERVAL="300"        # mTLS cert-watch poll interval (seconds)
+export COGNIVERSE_SANDBOX_CERT_ROTATION_DISABLED="false"      # "true"/"1"/"yes" disables the cert rotator
+
+# Debug router (routers/debug.py — dark unless set)
+export COGNIVERSE_DEBUG_MEM="0"
 
 # Workflow engine (Argo Workflows)
 export WORKFLOW_API_URL="https://argo.example.com"       # Argo API URL; unset disables cron/optimization submission
@@ -814,6 +957,8 @@ export OPTIMIZATION_WORKFLOW_TEMPLATE="optimization-job" # WorkflowTemplate name
 ```
 
 Workflow settings are read once at startup via `get_workflow_settings()` (returns a cached `WorkflowSettings` dataclass). The tenant router uses these to submit cron and optimization jobs via Argo `workflowTemplateRef`; no pod spec or image is owned by the runtime.
+
+Host/port for `uvicorn` itself (`RUNTIME_HOST`/`RUNTIME_PORT`-style vars) are **not** read by the runtime — they're passed as `uvicorn` CLI flags (`--host`, `--port`), see [Deployment](#deployment) below.
 
 ---
 
@@ -871,9 +1016,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - TENANT_ID=acme
-      - VESPA_URL=http://vespa:8080
-      - PHOENIX_ENDPOINT=http://phoenix:6006
+      - BACKEND_URL=http://vespa
+      - BACKEND_PORT=8080
+      - TELEMETRY_HTTP_ENDPOINT=http://phoenix:6006
+      - TELEMETRY_OTLP_ENDPOINT=http://phoenix:4317
     depends_on:
       - vespa
       - phoenix
@@ -958,7 +1104,7 @@ flowchart TB
 ## Testing
 
 ```bash
-# Run all runtime tests (ingestion pipeline tests)
+# Run ingestion pipeline tests
 JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/ -v
 
 # Run integration tests (requires services)
@@ -969,6 +1115,11 @@ uv run pytest tests/ingestion/unit/ -v
 
 # Test with coverage
 uv run pytest tests/ingestion/ --cov=cogniverse_runtime --cov-report=html
+
+# Run FastAPI server/router tests (main.py, routers/, admin/, messaging, sandbox)
+uv run pytest tests/runtime/ -v
+uv run pytest tests/runtime/unit/ -v
+uv run pytest tests/runtime/integration/ -v
 ```
 
 **Test Categories:**
@@ -976,6 +1127,10 @@ uv run pytest tests/ingestion/ --cov=cogniverse_runtime --cov-report=html
 - `tests/ingestion/unit/` - Unit tests for pipeline, processors, strategies
 
 - `tests/ingestion/integration/` - Integration tests with Vespa, Phoenix
+
+- `tests/runtime/unit/` - Unit tests for routers, agent dispatch, sandbox, messaging, health checks (e.g. `test_agent_endpoints.py`, `test_health_endpoints.py`, `test_debug_routes.py`, `test_a2a_server.py`)
+
+- `tests/runtime/integration/` - Integration tests exercising the FastAPI app against real backends (Vespa, Redis, Argo)
 
 ---
 
@@ -1040,7 +1195,7 @@ class Organization:
     created_by: str       # User/service that created
     status: str = "active"  # active | suspended | deleted
     tenant_count: int = 0
-    config: Optional[Dict] = None
+    config: Optional[Dict] = field(default_factory=dict)
 
 @dataclass
 class Tenant:
@@ -1050,8 +1205,8 @@ class Tenant:
     created_at: int       # Unix timestamp (ms)
     created_by: str
     status: str = "active"
-    schemas_deployed: List[str] = []  # Vespa schemas for this tenant
-    config: Optional[Dict] = None
+    schemas_deployed: List[str] = field(default_factory=list)  # Vespa schemas for this tenant
+    config: Optional[Dict] = field(default_factory=dict)
 ```
 
 ### Profile Models
@@ -1276,7 +1431,7 @@ await probe.stop()
 
 CLI entry point invoked by Argo CronWorkflows for batch per-agent optimization. Reads production spans from Phoenix, builds DSPy training examples, compiles optimized modules, and saves artifacts via `ArtifactManager`.
 
-**Modes:**
+**Modes:** the full `--mode` choice set is `cleanup`, `triggered`, `simba`, `workflow`, `gateway-thresholds`, `online-routing-eval`, `profile`, `entity-extraction`, `synthetic`, `rollback`, `ab-compare`, `egress-netpol`, `monthly-reports`. `--tenant-id` is required for every mode except `cleanup` and `monthly-reports`, which run globally.
 
 ```bash
 python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id acme:production
@@ -1291,6 +1446,22 @@ python -m cogniverse_runtime.optimization_cli --mode triggered \
 # Rollback: restore a previously active artefact version
 python -m cogniverse_runtime.optimization_cli --mode rollback \
     --tenant-id acme:production --agent search_agent --prompts-version 2
+# Score recent routing spans (routing_outcome + confidence_calibration) for drift
+python -m cogniverse_runtime.optimization_cli --mode online-routing-eval \
+    --tenant-id acme:production --lookback-hours 24
+# Generate synthetic training examples for the given optimizer types
+python -m cogniverse_runtime.optimization_cli --mode synthetic \
+    --tenant-id acme:production --agents simba,profile,workflow
+# A/B-compare two arms over a Phoenix (query, context) dataset via RLM
+python -m cogniverse_runtime.optimization_cli --mode ab-compare \
+    --tenant-id acme:production --queries-dataset golden_eval_v1 \
+    --judge-substring "Paris"
+# Generate k8s NetworkPolicy CRDs from configs/agent_policies/ YAMLs
+python -m cogniverse_runtime.optimization_cli --mode egress-netpol \
+    --policy-dir configs/agent_policies --output-dir charts/cogniverse/templates/networkpolicies \
+    --service-map vespa=cogniverse/vespa-service:8080
+# Global monthly usage + performance report (no --tenant-id)
+python -m cogniverse_runtime.optimization_cli --mode monthly-reports --reports-output-dir ./reports
 ```
 
 Hot reload: agents call `_load_artifact` per-request (the dispatcher runs it after telemetry/tenant injection), so a promoted or rolled-back artefact lands without a process restart.
@@ -1299,12 +1470,33 @@ See [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loo
 
 ---
 
+## Quality Monitor CLI
+
+**Location:** `libs/runtime/cogniverse_runtime/quality_monitor_cli.py`
+
+CLI entry point for the quality-monitor sidecar: a continuous loop that runs golden-set and live-traffic evaluations against a running runtime, scores agents via an LLM judge, and auto-submits Argo optimization workflows when quality degrades.
+
+```bash
+python -m cogniverse_runtime.quality_monitor_cli \
+    --tenant-id acme:production \
+    --runtime-url http://cogniverse-runtime:28000 \
+    --phoenix-url http://cogniverse-phoenix:6006 \
+    --llm-base-url http://localhost:11434 \
+    --llm-model qwen2.5:7b \
+    --argo-url http://argo-server:2746 --argo-namespace cogniverse \
+    --golden-interval 7200 --live-interval 14400 --live-sample-count 20
+```
+
+`--tenant-id` and `--llm-model` are required; `--argo-url` defaults to `None`, which disables auto-submission of optimization workflows (the monitor still evaluates and logs, it just won't trigger retraining). `--once` runs a single forced optimization cycle and exits (bypassing the quality-threshold check), for Argo CronWorkflows doing scheduled distillation, instead of looping.
+
+---
+
 ## Related Documentation
 
 - [Core Module](./core.md) - Agent base classes and registries
 - [Foundation Module](./foundation.md) - Configuration and telemetry
 - [Agents Module](./agents.md) - Agent implementations
-- [Vespa Backend](../backends/vespa.md) - Vespa integration details
+- [Backends Module](./backends.md) - Vespa integration details
 - [Configuration System](../CONFIGURATION_SYSTEM.md) - Profile configuration guide
 - [Coding Agent CLI](../user/coding-agent-cli.md) - Sandbox deployment modes and policy details
 - [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md) - Optimizer artifacts, canary promotion, rollback

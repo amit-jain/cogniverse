@@ -92,6 +92,8 @@ libs/core/cogniverse_core/common/cache/
 
 - `msgpack`: Binary serialization (optional)
 
+- `boto3` / `botocore`: S3/MinIO client for the `S3CacheBackend` (imported lazily on first cache use, not at config-load time)
+
 ---
 
 ## Architecture Diagrams
@@ -501,9 +503,14 @@ Initialize cache manager with configuration.
 
 3. Set up statistics tracking
 
+Note: although `CacheConfig.backends` is typed `List[BackendConfig]`,
+`CacheManager._initialize_backends()` calls `.get(...)` on each entry, so at
+runtime `backends` must be a list of plain **dicts** (as in every example in
+this doc and in `configs/config.json`), not `BackendConfig` instances.
+
 **Example:**
 ```python
-from cogniverse_core.common.cache.base import CacheConfig, BackendConfig
+from cogniverse_core.common.cache.base import CacheConfig
 
 config = CacheConfig(
     backends=[
@@ -687,6 +694,37 @@ await self.backends[0].set(key, value, self.config.default_ttl)
 
 ---
 
+#### `async list_keys(pattern: Optional[str] = None, include_metadata: bool = False) -> List[Tuple[str, Optional[Dict[str, Any]]]]`
+List keys from the primary (first, highest-priority) backend only — does not merge keys across tiers.
+
+**Parameters:**
+
+- `pattern`: Optional glob pattern
+
+- `include_metadata`: Include metadata in results
+
+**Returns:** List of (key, metadata) tuples from `self.backends[0]`, or `[]` if no backends configured
+
+**Example:**
+```python
+keys = await cache_manager.list_keys(pattern="video_colpali_mv:*", include_metadata=True)
+```
+
+---
+
+#### `async cleanup_expired() -> int`
+Run `cleanup_expired()` on every configured backend and sum the results.
+
+**Returns:** Total number of expired entries removed across all tiers
+
+**Example:**
+```python
+cleaned = await cache_manager.cleanup_expired()
+print(f"Removed {cleaned} expired entries across all tiers")
+```
+
+---
+
 ### 3. CacheBackendRegistry (registry.py:11-48)
 
 **Purpose:** Plugin registry for cache backend types.
@@ -761,14 +799,14 @@ List all registered backend types.
 **Example:**
 ```python
 backends = CacheBackendRegistry.list_backends()
-# ["structured_filesystem", "memory", "redis", ...]
+# ["structured_filesystem", "s3"]  # the two currently-registered backend types
 ```
 
 ---
 
 ## Cache Backends
 
-### StructuredFilesystemBackend (backends/structured_filesystem.py:35-554)
+### StructuredFilesystemBackend (backends/structured_filesystem.py:36-555)
 
 **Purpose:** Filesystem cache with human-readable directory structure.
 
@@ -1486,6 +1524,66 @@ Invalidate all cached artifacts for a video.
 # Clear all cache entries for a video
 cleared = await pipeline_cache.invalidate_video("/path/to/robot_soccer.mp4")
 print(f"Cleared {cleared} cache entries")
+```
+
+---
+
+#### `async get_cache_stats() -> Dict[str, Any]`
+Get cache statistics wrapped with a per-artifact-type placeholder breakdown.
+
+**Returns:**
+```python
+{
+    "overall": { ... },  # same shape as CacheManager.get_stats()
+    "artifacts": {
+        "keyframes": "Not implemented",
+        "transcripts": "Not implemented",
+        "descriptions": "Not implemented",
+    },
+}
+```
+
+Per-artifact-type stats are not implemented — `get_cache_stats()` currently
+just wraps `CacheManager.get_stats()` (the `"overall"` key) alongside a fixed
+placeholder dict.
+
+**Example:**
+```python
+stats = await pipeline_cache.get_cache_stats()
+print(stats["overall"]["manager"]["hit_rate"])
+```
+
+---
+
+### 2. VideoArtifacts (pipeline_cache.py:20-43)
+
+**Purpose:** Dataclass container returned by `get_all_artifacts()`, bundling every artifact type cached for one video.
+
+**Fields:**
+```python
+@dataclass
+class VideoArtifacts:
+    video_id: str
+    keyframes: Optional[Dict[str, Any]] = None
+    audio_transcript: Optional[Dict[str, Any]] = None
+    frame_descriptions: Optional[Dict[str, Any]] = None
+    embeddings: Optional[Dict[str, Any]] = None
+```
+
+Note: `get_all_artifacts()` only ever populates `keyframes`, `audio_transcript`,
+and `frame_descriptions` — the `embeddings` field exists on the dataclass but
+is never set by the current pipeline cache.
+
+#### `is_complete(pipeline_config: Dict[str, Any]) -> bool`
+Check whether every artifact type enabled in `pipeline_config` (via
+`extract_keyframes`, `transcribe_audio`, `generate_descriptions`,
+`generate_embeddings`) is present on this instance.
+
+**Example:**
+```python
+artifacts = await pipeline_cache.get_all_artifacts(video_path, pipeline_config)
+if not artifacts.is_complete(pipeline_config):
+    print("Some artifacts still need to be computed")
 ```
 
 ---

@@ -206,25 +206,25 @@ that get parsed and fanned out, capped per round by
 flowchart TD
     Start["<span style='color:#000'>run(query, tenant_id, seed_subagents)</span>"]
     Rate{"<span style='color:#000'>DeepSynthesisRateLimiter.try_acquire(tenant_id)<br/>(rate_limit_per_hour, sliding window)</span>"}
-    RateOut["<span style='color:#000'>return DeepSynthesisResult(<br/>was_rate_limited=True, answer='')</span>"]
+    RateOut["<span style='color:#fff'>return DeepSynthesisResult(<br/>was_rate_limited=True, answer='')</span>"]
 
     Seed["<span style='color:#000'>Iter 0 fan-out:<br/>seed_subagents[:max_subagent_calls_per_round]<br/>parallel _fan_out -> gathered[]</span>"]
 
     Loop["<span style='color:#000'>for it in 1..max_iterations</span>"]
     HardCap{"<span style='color:#000'>subagent_calls_made + llm_calls_used<br/>>= hard_call_cap?</span>"}
-    Capped["<span style='color:#000'>return DeepSynthesisResult(<br/>was_capped=True, was_submitted=False)</span>"]
+    Capped["<span style='color:#fff'>return DeepSynthesisResult(<br/>was_capped=True, was_submitted=False)</span>"]
 
     RLMStep["<span style='color:#000'>rlm.process(query, context=gathered)<br/>llm_calls_used += 1</span>"]
     Submit{"<span style='color:#000'>SUBMIT() in iter_text?</span>"}
     Submitted["<span style='color:#000'>return DeepSynthesisResult(<br/>was_submitted=True, answer)</span>"]
 
     Asks{"<span style='color:#000'>_parse_asks(iter_text)<br/>yields ASK(name: subq) pairs?</span>"}
-    Stalled["<span style='color:#000'>trajectory: stalled_no_asks<br/>return was_capped=True</span>"]
+    Stalled["<span style='color:#fff'>trajectory: stalled_no_asks<br/>return was_capped=True</span>"]
 
     FanOut["<span style='color:#000'>dispatch asks[:max_subagent_calls_per_round]<br/>(further trimmed by remaining cap budget)<br/>subagent_calls_made += len(results)</span>"]
 
     IterCap{"<span style='color:#000'>iterations exhausted<br/>without SUBMIT?</span>"}
-    IterExhausted["<span style='color:#000'>trajectory: iteration_cap_exhausted<br/>return was_capped=True, was_submitted=False</span>"]
+    IterExhausted["<span style='color:#fff'>trajectory: iteration_cap_exhausted<br/>return was_capped=True, was_submitted=False</span>"]
 
     Start --> Rate
     Rate -->|denied| RateOut
@@ -244,30 +244,37 @@ flowchart TD
 
     style Start fill:#90caf9,stroke:#1565c0,color:#000
     style Rate fill:#ffcc80,stroke:#ef6c00,color:#000
-    style RateOut fill:#e57373,stroke:#c62828,color:#000
+    style RateOut fill:#e53935,stroke:#c62828,color:#fff
     style Seed fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Loop fill:#b0bec5,stroke:#546e7a,color:#000
     style HardCap fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Capped fill:#e57373,stroke:#c62828,color:#000
+    style Capped fill:#e53935,stroke:#c62828,color:#fff
     style RLMStep fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Submit fill:#ffcc80,stroke:#ef6c00,color:#000
     style Submitted fill:#a5d6a7,stroke:#388e3c,color:#000
     style Asks fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Stalled fill:#e57373,stroke:#c62828,color:#000
+    style Stalled fill:#e53935,stroke:#c62828,color:#fff
     style FanOut fill:#ce93d8,stroke:#7b1fa2,color:#000
     style IterCap fill:#ffcc80,stroke:#ef6c00,color:#000
-    style IterExhausted fill:#e57373,stroke:#c62828,color:#000
+    style IterExhausted fill:#e53935,stroke:#c62828,color:#fff
 ```
 
 ---
 
 ## Sandbox Boot Policy Decision
 
+Runtime boot (`libs/runtime/cogniverse_runtime/main.py`) resolves a
+`SandboxPolicy` before constructing the manager: an explicit
+`COGNIVERSE_SANDBOX_POLICY` env var wins first, then
+`config["sandbox"]["policy"]`; only when neither is set does it fall
+back to the legacy `enabled` shorthand (`config["sandbox"]["enabled"]`
+or `COGNIVERSE_SANDBOX_ENABLED` or a bare `OPENSHELL_GATEWAY_ENDPOINT`
+being present) mapping truthy to `OPTIONAL` and falsy to `DISABLED`.
 `SandboxManager.__init__`
-(`libs/runtime/cogniverse_runtime/sandbox_manager.py`) resolves a
-`SandboxPolicy` (the `enabled` bool shorthand maps `True` to `OPTIONAL`,
-`False` to `DISABLED`; `policy` takes precedence when both are given) and
-either short-circuits on `DISABLED` or
+(`libs/runtime/cogniverse_runtime/sandbox_manager.py`) then takes that
+resolved `SandboxPolicy` (via `_resolve_policy`, which itself only
+defaults a bare `None` to `OPTIONAL`) and either short-circuits on
+`DISABLED` or loads per-agent policies and
 calls `_connect()`, which TCP-probes
 `OPENSHELL_GATEWAY_ENDPOINT` via `_probe_gateway_endpoint`. When the
 resolved policy is `REQUIRED` and `_available` is still False after
@@ -289,7 +296,7 @@ flowchart TD
 
     Optional["<span style='color:#000'>OPTIONAL + available=False<br/>log warning 'will execute without sandbox'<br/>continue boot</span>"]
     OptionalOK["<span style='color:#000'>OPTIONAL + available=True<br/>continue boot</span>"]
-    Required["<span style='color:#000'>REQUIRED + available=False<br/>raise SandboxGatewayUnavailableError<br/>(refuse to start)</span>"]
+    Required["<span style='color:#fff'>REQUIRED + available=False<br/>raise SandboxGatewayUnavailableError<br/>(refuse to start)</span>"]
     RequiredOK["<span style='color:#000'>REQUIRED + available=True<br/>continue boot</span>"]
 
     Init --> Resolve --> Decision
@@ -311,7 +318,7 @@ flowchart TD
     style Available fill:#ffcc80,stroke:#ef6c00,color:#000
     style Optional fill:#ffcc80,stroke:#ef6c00,color:#000
     style OptionalOK fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Required fill:#e57373,stroke:#c62828,color:#000
+    style Required fill:#e53935,stroke:#c62828,color:#fff
     style RequiredOK fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 

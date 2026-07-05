@@ -15,7 +15,7 @@ Comprehensive performance monitoring and optimization covering:
 
 - **Monitoring Setup**: Phoenix dashboards for telemetry and experiment tracking
 
-- **Optimization**: Advanced DSPy optimization (GEPA/MIPROv2/SIMBA), caching strategies
+- **Optimization**: Batch DSPy compilation (`BootstrapFewShot`) triggered from Phoenix spans, caching strategies
 
 - **Alerting**: Performance degradation patterns and thresholds
 
@@ -97,14 +97,16 @@ flowchart TB
 
 ### Embedding Model Performance
 
-| Model | Dimensions | Inference Time | Memory |
-|-------|------------|----------------|--------|
-| **ColPali SmolVLM 500M** | 1024×320 (patch-based) | Variable | 2GB |
-| **ColQwen3 Omni** | 1024×320 (patch-based) | Variable | 4GB |
-| **VideoPrism Base** | 768 or 1024 | Variable | 3GB |
-| **VideoPrism LVT** | 768 or 1024 | Variable | 4GB |
+| Profile | Embedding Model | Dimensions | Inference Time | Memory |
+|---------|-----------------|------------|----------------|--------|
+| **video_colpali_smol500_mv_frame** | `TomoroAI/tomoro-colqwen3-embed-4b` | up to 1024 patches × 320-dim (float) / 40-dim (binary) | Variable | 4GB |
+| **video_colqwen_omni_mv_chunk_30s** | `TomoroAI/tomoro-colqwen3-embed-4b` | up to 1024 patches × 320-dim (float) / 40-dim (binary) | Variable | 4GB |
+| **video_videoprism_base_mv_chunk_30s** | `videoprism_public_v1_base_hf` | 768 | Variable | 3GB |
+| **video_videoprism_large_mv_chunk_30s** | `videoprism_public_v1_large_hf` | 1024 | Variable | 4GB |
+| **video_videoprism_lvt_base_sv_chunk_6s** | `videoprism_lvt_public_v1_base` | 768 (global, single-vector) | Variable | 3GB |
+| **video_videoprism_lvt_large_sv_chunk_6s** | `videoprism_lvt_public_v1_large` | 1024 (global, single-vector) | Variable | 4GB |
 
-> **Note**: Inference times are hardware-dependent and vary based on input size. ColPali and ColQwen use patch-based embeddings (1024 patches of 320 dimensions each). VideoPrism supports both 768 and 1024-dimensional outputs depending on configuration.
+> **Note**: Inference times are hardware-dependent and vary based on input size. Both ColPali/ColQwen profiles share the same `TomoroAI/tomoro-colqwen3-embed-4b` model (patch-based multi-vector embeddings, `tensor<bfloat16>(patch{}, v[320])` float / `tensor<int8>(patch{}, v[40])` binary in the Vespa schema); they differ in keyframe-extraction vs 30-second-chunk sampling, not in model architecture. VideoPrism Base/Large produce 768/1024-dim multi-vector chunk embeddings; VideoPrism LVT Base/Large produce 768/1024-dim single-vector (global) embeddings over shorter 6-second chunks.
 
 ---
 
@@ -150,41 +152,54 @@ sequenceDiagram
 
 ## Optimization System Performance
 
-### Advanced Routing Optimizer (GEPA/MIPROv2/SIMBA)
+### Batch DSPy Optimization Jobs
+
+The Argo-triggered batch jobs in `optimization_cli.py` (query-enhancement
+"SIMBA" job, profile-selection optimization, entity-extraction optimization)
+all compile their DSPy module the same way, via `_create_teleprompter()`:
+`dspy.teleprompt.BootstrapFewShot`, scaled by the number of training
+examples pulled from Phoenix spans (plus any approved synthetic demos).
 
 ```mermaid
 flowchart LR
-    Experience["<span style='color:#000'>Experience Buffer<br/>Routing decisions</span>"]
+    Spans["<span style='color:#000'>Phoenix Spans<br/>+ approved synthetic demos</span>"]
 
-    Experience --> Optimizer["<span style='color:#000'>Advanced Optimizer<br/>GEPA/MIPROv2/SIMBA</span>"]
+    Spans --> Trainset["<span style='color:#000'>Trainset Size Check<br/>_create_teleprompter()</span>"]
 
-    Optimizer --> ModelUpdate["<span style='color:#000'>Model Update<br/>DSPy-optimized</span>"]
+    Trainset -->|"< 50 examples"| Small["<span style='color:#000'>BootstrapFewShot<br/>4 demos, 8 labeled, 1 round</span>"]
+    Trainset -->|">= 50 examples"| Large["<span style='color:#000'>BootstrapFewShot<br/>8 demos, 16 labeled, 2 rounds</span>"]
 
-    ModelUpdate --> Routing["<span style='color:#000'>Enhanced Routing<br/>Improved accuracy</span>"]
+    Small --> Artifact["<span style='color:#000'>Compiled Module<br/>saved via ArtifactManager</span>"]
+    Large --> Artifact
 
-    style Experience fill:#90caf9,stroke:#1565c0,color:#000
-    style Optimizer fill:#ffcc80,stroke:#ef6c00,color:#000
-    style ModelUpdate fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Routing fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Spans fill:#90caf9,stroke:#1565c0,color:#000
+    style Trainset fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Small fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Large fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Artifact fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 | Metric | Target | Description |
 |--------|--------|-------------|
-| **Optimization Cycle** | Variable | Complete optimization iteration (depends on optimizer) |
-| **Experience Buffer Size** | 1000 | Routing decisions stored (configurable) |
-| **Batch Processing** | Variable | Experience replay rate (depends on dataset size) |
-| **Model Update** | Variable | Routing model update time (depends on optimizer) |
+| **Optimization Cycle** | Variable | Time to run one Argo batch job (depends on span volume) |
+| **Trainset Threshold** | 50 examples | `_create_teleprompter()` scales demo/round counts at this single cutoff |
+| **Compile Time** | Variable | `BootstrapFewShot.compile()` time (depends on trainset size and LM latency) |
 
-### DSPy Optimizer Performance
+### DSPy Optimizer Types
 
-| Optimizer | Training Time | Memory | Convergence |
-|-----------|--------------|--------|-------------|
-| **Bootstrap** | Variable | 4GB | 10-20 iterations |
-| **SIMBA** | Variable | 8GB | 50-100 iterations |
-| **MIPROv2** | Variable | 16GB | 100-200 iterations |
-| **GEPA** | Variable | 6GB | Continuous |
-
-> **Note**: Actual training time depends on dataset size, model complexity, and hardware. The optimizer is selected automatically based on dataset size thresholds (Bootstrap: <20, SIMBA: <50, MIPROv2: <100, GEPA: 200+).
+`OptimizerType` (`libs/foundation/cogniverse_foundation/config/agent_config.py`)
+declares seven optimizer identifiers for `AgentConfig.optimizer_config`:
+`bootstrap_few_shot`, `labeled_few_shot`,
+`bootstrap_few_shot_with_random_search`, `copro`, `mipro_v2`, `gepa`, `simba`.
+`DSPyOptimizerRegistry` (`libs/core/cogniverse_core/common/dspy_module_registry.py`)
+maps five of them to real DSPy classes (`dspy.BootstrapFewShot`,
+`dspy.LabeledFewShot`, `dspy.BootstrapFewShotWithRandomSearch`,
+`dspy.COPRO`, `dspy.MIPROv2`) — `gepa` and `simba` are declared enum values
+with no class mapping in that registry. The batch job named "SIMBA"
+(`run_simba_optimization`) does not use a SIMBA teleprompter; it compiles
+with `BootstrapFewShot` like the other batch jobs. GEPA and true SIMBA
+compilation are not currently wired into any automatic dataset-size
+selection.
 
 ### Optimization Impact
 
@@ -288,15 +303,20 @@ flowchart LR
 
 ### Container Resources
 
-| Service | CPU Request | Memory Request | Replicas |
-|---------|-------------|----------------|----------|
-| **Multi-Agent Orchestrator** | 2 cores | 4GB | 3 |
-| **Search Agent** | 4 cores | 8GB | 5 |
-| **Vespa Container** | 8 cores | 16GB | 3 |
-| **Vespa Content** | 4 cores | 32GB | 5 |
-| **Phoenix** | 2 cores | 4GB | 1 |
+Values below are the `charts/cogniverse/values.yaml` defaults. All 23 agents
+(routing, search, image search, document, KG/reasoning, federation, research,
+coding, etc.) run inside the single `runtime` deployment via the unified
+agent dispatcher — there is no per-agent container or replica count.
 
-> **Note**: These are example resource allocations. Actual requirements depend on workload, concurrency, and embedding models used. Mem0 uses the same Vespa backend, so no separate deployment is needed.
+| Service | CPU Request | Memory Request | CPU Limit | Memory Limit | Replicas |
+|---------|-------------|-----------------|-----------|---------------|----------|
+| **runtime** (all agents, unified dispatcher) | 2 cores | 4GB | 4 cores | 8GB | 2 (autoscales 2-10) |
+| **vespa** | 4 cores | 8GB | 8 cores | 20GB | 1 (static, no HPA) |
+| **ingestor** | 1 core | 2GB | 4 cores | 8GB | 2 (static) |
+| **dashboard** | 1 core | 2GB | 2 cores | 4GB | 1 (static) |
+| **phoenix** | 1 core | 2GB | 2 cores | 4GB | 1 (static) |
+
+> **Note**: Mem0 uses the same Vespa backend, so no separate deployment is needed. Model-inference sidecars (ColPali/ColQwen/VideoPrism/LLM) are configured separately under the `inference` and `llm` chart values and are not shown here.
 
 ---
 
@@ -379,30 +399,34 @@ flowchart TB
 
 ### Horizontal Scaling
 
+The Helm chart ships exactly one `HorizontalPodAutoscaler`
+(`charts/cogniverse/templates/hpa.yaml`), targeting the `runtime`
+deployment — the process that hosts every agent via the unified
+dispatcher. Vespa, the dashboard, Phoenix, and the ingestor run with
+static `replicaCount` values and are scaled manually.
+
 ```mermaid
 flowchart LR
     Load["<span style='color:#000'>Increased Load</span>"]
 
-    Load --> Monitor["<span style='color:#000'>Monitor Metrics<br/>CPU > 70%</span>"]
+    Load --> Monitor["<span style='color:#000'>runtime HPA<br/>CPU > 70% or Mem > 80%</span>"]
 
     Monitor --> Scale["<span style='color:#000'>Auto-scale Trigger</span>"]
 
-    Scale --> SearchAgent["<span style='color:#000'>Search Agent<br/>3 → 20 replicas</span>"]
-    Scale --> VespaContainer["<span style='color:#000'>Vespa Container<br/>3 → 10 replicas</span>"]
+    Scale --> Runtime["<span style='color:#000'>runtime deployment<br/>2 → 10 replicas</span>"]
 
     style Load fill:#90caf9,stroke:#1565c0,color:#000
     style Monitor fill:#ffcc80,stroke:#ef6c00,color:#000
     style Scale fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style SearchAgent fill:#a5d6a7,stroke:#388e3c,color:#000
-    style VespaContainer fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Runtime fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 | Component | Auto-scale Trigger | Min | Max |
 |-----------|-------------------|-----|-----|
-| **Multi-Agent Orchestrator** | CPU > 70% | 2 | 10 |
-| **Search Agent** | CPU > 70% | 3 | 20 |
-| **Vespa Container** | QPS > 100 | 3 | 10 |
-| **Vespa Content** | Storage > 80% | 3 | 20 |
+| **runtime** (all agents) | CPU > 70% or Memory > 80% | 2 | 10 |
+| **vespa** | Not autoscaled — static `replicaCount: 1` | 1 | 1 |
+| **ingestor** | Not autoscaled — static `replicaCount: 2` | 2 | 2 |
+| **dashboard** / **phoenix** | Not autoscaled — static `replicaCount: 1` | 1 | 1 |
 
 ---
 

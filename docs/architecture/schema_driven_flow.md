@@ -7,9 +7,9 @@ The Cogniverse system uses a schema-driven architecture where backend schemas (e
 ## Complete Flow Summary
 
 1. **Schemas define everything** → `configs/schemas/*.json`
-2. **Deployment extracts strategies** → `ranking_strategies.json`
+2. **Ingestion auto-generates strategies** → `StrategyAwareProcessor` writes `ranking_strategies.json` the first time it runs against a schema directory (deployment itself does not touch this file)
 3. **Processing uses schema mapping** → profile → schema
-4. **Query loads strategies** → validates → executes
+4. **Query re-extracts strategies from the schema JSON** → validates → executes (search caches in-process; it does not read `ranking_strategies.json`)
 5. **No manual steps** → Everything is automatic!
 
 ## Multi-Tenant Schema Architecture
@@ -67,12 +67,14 @@ flowchart TD
     C -->|No| E[<span style='color:#000'>VideoIngestionPipeline</span>]
 
     D --> D1[<span style='color:#000'>Read Schema JSONs</span>]
-    D1 --> D2[<span style='color:#000'>Deploy to Backend</span>]
-    D2 --> D3[<span style='color:#000'>Extract Ranking Strategies</span>]
-    D3 --> D4[<span style='color:#000'>Save ranking_strategies.json</span>]
-    D4 --> E
+    D1 --> D2[<span style='color:#000'>Deploy to Backend via SchemaRegistry</span>]
+    D2 --> E
 
-    E --> F[<span style='color:#000'>Process Videos by Profile</span>]
+    E --> EP[<span style='color:#000'>StrategyAwareProcessor Init</span>]
+    EP --> EP1{<span style='color:#000'>ranking_strategies.json exists?</span>}
+    EP1 -->|No| EP2[<span style='color:#000'>Extract + Save ranking_strategies.json</span>]
+    EP1 -->|Yes| F
+    EP2 --> F[<span style='color:#000'>Process Videos by Profile</span>]
     F --> G[<span style='color:#000'>Extract Keyframes</span>]
     G --> H[<span style='color:#000'>Generate Embeddings</span>]
     H --> I[<span style='color:#000'>Get Schema for Profile</span>]
@@ -99,9 +101,10 @@ flowchart TD
     style D fill:#ffcc80,stroke:#ef6c00,color:#000
     style D1 fill:#ffcc80,stroke:#ef6c00,color:#000
     style D2 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style D3 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style D4 fill:#a5d6a7,stroke:#388e3c,color:#000
     style E fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style EP fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style EP1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style EP2 fill:#a5d6a7,stroke:#388e3c,color:#000
     style F fill:#ce93d8,stroke:#7b1fa2,color:#000
     style G fill:#ffcc80,stroke:#ef6c00,color:#000
     style H fill:#81d4fa,stroke:#0288d1,color:#000
@@ -131,8 +134,13 @@ flowchart TD
    - Reads the schema JSON from `configs/schemas/` via `FilesystemSchemaLoader`
    - Deploys via `SchemaRegistry.deploy_schema` so the package is the
      union of the new schema + everything already live in the cluster
-   - Ranking strategies are extracted at search time from the loaded
-     schemas — no separate `ranking_strategies.json` step
+   - Deployment itself never writes `ranking_strategies.json`. Two
+     independent consumers extract ranking strategies on their own:
+     `StrategyAwareProcessor` (ingestion) reads `configs/schemas/ranking_strategies.json`,
+     auto-generating it via `extract_all_ranking_strategies` +
+     `save_ranking_strategies` the first time it's missing; `VespaSearchBackend`
+     (query time) re-extracts directly from the schema JSON files on first
+     use and caches the result in-process — it never reads the on-disk file
 
 2. **Profile Processing**:
    ```python
@@ -225,13 +233,16 @@ flowchart TD
   - Only uses `userInput`, no embeddings needed
 
 ### How Embeddings Flow
-1. SearchService generates embeddings upfront
-2. Backend receives both text and embeddings
-3. Strategy determines what to use:
-   - `needs_float_embeddings: true` → Use float embeddings
-   - `needs_binary_embeddings: true` → Use binary embeddings
-   - Both false → Text-only search, ignore embeddings
-4. Future optimization: Make embeddings optional, generate lazily
+1. `SearchService.search()` calls the backend with the raw query text and
+   no pre-computed embeddings (`has_embeddings=False`)
+2. `VespaSearchBackend` resolves the ranking strategy (requested or
+   auto-selected) and checks its `needs_float_embeddings` /
+   `needs_binary_embeddings` flags
+3. Embeddings are generated on-demand only when the strategy needs them —
+   `self.query_encoder.encode(query_text)` is called lazily inside the
+   backend's search path
+4. If both flags are false (e.g. `bm25_only`), the encoder is never called —
+   text-only search via `userInput` YQL only
 
 ## 3. Ranking Strategy Details
 
@@ -239,15 +250,24 @@ flowchart TD
 
 | Strategy | Text | Float | Binary | nearestNeighbor | Notes |
 |----------|------|-------|--------|-----------------|-------|
+| default | - | - | ✓ | - | Schema's default profile; binary Hamming-distance ranking, not nearestNeighbor-eligible |
 | bm25_only | ✓ | - | - | - | Pure text search |
 | float_float | - | ✓ | - | ✓* | Pure visual, float embeddings |
 | binary_binary | - | - | ✓ | ✓* | Pure visual, binary embeddings |
 | float_binary | - | ✓/✓ | ✓/✓ | ✓* | Float primary, binary fallback |
-| hybrid_float_bm25 | ✓ | ✓ | - | ✓* | Text + float embeddings |
-| hybrid_binary_bm25 | ✓ | - | ✓ | ✓* | Text + binary embeddings |
+| hybrid_float_bm25 | ✓ | ✓ | - | ✓* | Text + float embeddings, visual-similarity-first ranking |
+| hybrid_binary_bm25 | ✓ | - | ✓ | ✓* | Text + binary embeddings, visual-similarity-first ranking |
+| hybrid_bm25_float | ✓ | ✓ | - | - | Same fields as hybrid_float_bm25, but BM25-first ranking; not nearestNeighbor-eligible |
+| hybrid_bm25_binary | ✓ | - | ✓ | - | Same fields as hybrid_binary_bm25, but BM25-first ranking; not nearestNeighbor-eligible |
 | phased | ✓ | ✓ | ✓ | ✓* | Two-phase: binary → float |
 
-*nearestNeighbor used by single-vector schemas (detected via `_sv_` in schema name, e.g., `video_videoprism_lvt_base_sv_chunk_6s`)
+*nearestNeighbor used by single-vector schemas (detected via `_sv_` or `_lvt_` token in the schema name, e.g., `video_videoprism_lvt_base_sv_chunk_6s`), and only for the profile names the extractor recognizes as nearestNeighbor-eligible (the `default` and `hybrid_bm25_*` profiles above always use tensor ranking, even on single-vector schemas).
+
+The colpali/colqwen video schemas also carry `bm25_no_description` and
+`hybrid_*_bm25_no_description` variants of the text/hybrid strategies above,
+which drop the `segment_description` field from the BM25 expression — same
+Text/Float/Binary/nearestNeighbor requirements as their non-`_no_description`
+counterparts.
 
 ### Schema-Specific Behavior
 
@@ -289,7 +309,7 @@ from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 manager = VespaSchemaManager(
     backend_endpoint="http://localhost",
     backend_port=19071,
-    schema_loader=schema_loader,  # Optional, needed for tenant schema operations
+    schema_loader=schema_loader,  # Accepted for call-site compatibility but unused
     schema_registry=schema_registry  # Optional, needed for tenant schema operations
 )
 
@@ -312,14 +332,15 @@ exists = manager.tenant_schema_exists(
 # schema, and deploys via the backend.
 from cogniverse_core.registries.schema_registry import SchemaRegistry
 
-registry = SchemaRegistry(...)  # constructed with backend + schema_loader
+registry = SchemaRegistry(...)  # constructed with config_manager, backend, schema_loader (all required)
 tenant_schema_name = registry.deploy_schema(
     tenant_id="acme",
     base_schema_name="video_colpali_smol500_mv_frame",
 )
 # Returns: "video_colpali_smol500_mv_frame_acme"
 
-# Delete all schemas for a tenant (unregisters from registry + redeploys to Vespa)
+# Delete all schemas for a tenant (redeploys to Vespa without them first,
+# then tombstones the registry entries)
 deleted = manager.delete_tenant_schemas(tenant_id="acme")
 # Returns: ["video_colpali_smol500_mv_frame_acme", ...]
 ```
@@ -327,7 +348,7 @@ deleted = manager.delete_tenant_schemas(tenant_id="acme")
 **Key Methods:**
 - `get_tenant_schema_name(tenant_id, base_schema_name)` - Generate tenant schema name
 - `tenant_schema_exists(tenant_id, base_schema_name)` - Check schema existence
-- `delete_tenant_schemas(tenant_id)` - Unregister tenant schemas and immediately redeploy to Vespa with `allow_schema_removal=True`
+- `delete_tenant_schemas(tenant_id)` - Redeploy to Vespa without the tenant's schemas (`allow_schema_removal=True` via `_redeploy_dropping`), then tombstone the registry entries
 - `SchemaRegistry.deploy_schema(tenant_id, base_schema_name)` - Primary entry point for deploying a tenant-scoped schema from its JSON base definition
 
 ### Profile to Schema Mapping
@@ -437,34 +458,31 @@ if not validate_strategy_for_schema("video_colpali_smol500_mv_frame", "float_flo
 ## 6. Optimization Points
 
 ### Current Implementation
-- Embeddings generated for ALL queries upfront
-- Backend receives both text and embeddings
-- Strategy decides what to use
 
-### Future Optimizations
+Lazy, on-demand embedding generation is already implemented in
+`VespaSearchBackend`. `SearchService` never encodes the query itself —
+it passes the raw query text to the backend, which resolves the ranking
+strategy first and only invokes the query encoder when the strategy's
+`needs_float_embeddings` / `needs_binary_embeddings` flags require it
+(`libs/vespa/cogniverse_vespa/search_backend.py`, the on-demand-encode
+block around `requires_embeddings = rank_config.get("needs_float_embeddings", ...)`).
+Text-only strategies (`bm25_only`) never invoke the encoder:
+
 ```python
-# Lazy embedding generation
-class OptimizedSearchService:
-    async def search(self, query: str, strategy: str):
-        # Only generate embeddings if strategy needs them
-        strategy_config = self.get_strategy_config(strategy)
+# libs/vespa/cogniverse_vespa/search_backend.py (simplified)
+requires_embeddings = rank_config.get(
+    "needs_float_embeddings", False
+) or rank_config.get("needs_binary_embeddings", False)
 
-        float_embeddings = None
-        binary_embeddings = None
-
-        if strategy_config.get("needs_float_embeddings"):
-            float_embeddings = await self.generate_float_embeddings(query)
-
-        if strategy_config.get("needs_binary_embeddings"):
-            binary_embeddings = await self.generate_binary_embeddings(query)
-
-        return await self.backend.search(
-            text=query,
-            float_embeddings=float_embeddings,  # May be None
-            binary_embeddings=binary_embeddings,  # May be None
-            strategy=strategy
-        )
+if requires_embeddings and query_embeddings is None:
+    if self.query_encoder:
+        query_embeddings = self.query_encoder.encode(query_text)
 ```
+
+### Remaining Gaps
+- Float and binary embeddings are not independently gated — a `float_binary`
+  strategy currently runs one encoder call and derives both representations
+  from it rather than skipping the unused one
 
 ## 7. Configuration Storage in Vespa
 
@@ -564,9 +582,15 @@ config_store.import_configs(tenant_id="new_tenant", configs=exported)
    - Location: `configs/schemas/*.json`
    - Package: cogniverse-vespa (schema manager)
 
-3. **ranking_strategies.json** (auto-generated) → Extracted strategies
+3. **ranking_strategies.json** (auto-generated by ingestion, bypassed by search) → Extracted strategies
    - Location: `configs/schemas/ranking_strategies.json`
    - Package: cogniverse-vespa (strategy extractor)
+   - Written by `StrategyAwareProcessor` (ingestion) the first time it runs
+     against a schema directory where the file doesn't exist yet.
+     `VespaSearchBackend` (query time) never reads this file — it calls
+     `extract_all_ranking_strategies` directly against the schema JSON
+     files and caches the result in-process, so search always reflects
+     the live schemas even if this file is stale or deleted.
 
 4. **Profile-Schema Mapping** (Naming convention) → Profile to schema mapping
    - Convention: Each profile has a dedicated schema file named `{profile_name}_schema.json`
@@ -617,7 +641,7 @@ from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 manager = VespaSchemaManager(
     backend_endpoint="http://localhost",
     backend_port=19071,
-    schema_loader=schema_loader,  # Optional, needed for tenant operations
+    schema_loader=schema_loader,  # Accepted for call-site compatibility but unused
     schema_registry=schema_registry  # Optional, needed for tenant operations
 )
 
@@ -708,9 +732,10 @@ with open("configs/schemas/video_colpali_smol500_mv_frame_schema.json") as f:
 # Find embedding field dimension
 for field in schema["document"]["fields"]:
     if field["name"] == "embedding":
-        # Parse dimension from type like "tensor<bfloat16>(patch{}, v[128])"
+        # Parse dimension from type like "tensor<bfloat16>(patch{}, v[320])"
+        # (this schema's actual embedding type)
         field_type = field["type"]
-        # Extract dimension - e.g., v[128] → 128
+        # Extract dimension - e.g., v[320] → 320
         print(f"Schema embedding dimension: {field_type}")
 
 # Compare with actual embedding

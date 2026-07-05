@@ -19,28 +19,28 @@
 
 ```mermaid
 flowchart TB
-    subgraph "Tenant A - acme_corp"
-        TenantA["<span style='color:#000'>Tenant: acme_corp</span>"]
-        ConfigA["<span style='color:#000'>TenantConfig<br/>tenant_id=acme_corp</span>"]
-        SchemaA["<span style='color:#000'>Vespa Schemas<br/>video_*_acme_corp</span>"]
-        PhoenixA["<span style='color:#000'>Phoenix Project<br/>cogniverse-acme_corp-video-search</span>"]
-        MemoryA["<span style='color:#000'>Mem0 Memory<br/>user_id=acme_corp_*</span>"]
+    subgraph "Tenant A - acme:production"
+        TenantA["<span style='color:#000'>Tenant: acme:production</span>"]
+        ConfigA["<span style='color:#000'>TenantConfig<br/>tenant_id=acme:production</span>"]
+        SchemaA["<span style='color:#000'>Vespa Schemas<br/>video_*_acme_production</span>"]
+        PhoenixA["<span style='color:#000'>Phoenix Project<br/>cogniverse-acme:production-video-search</span>"]
+        MemoryA["<span style='color:#000'>Mem0 Memory<br/>user_id=acme:production</span>"]
     end
 
-    subgraph "Tenant B - globex_inc"
-        TenantB["<span style='color:#000'>Tenant: globex_inc</span>"]
-        ConfigB["<span style='color:#000'>TenantConfig<br/>tenant_id=globex_inc</span>"]
-        SchemaB["<span style='color:#000'>Vespa Schemas<br/>video_*_globex_inc</span>"]
-        PhoenixB["<span style='color:#000'>Phoenix Project<br/>cogniverse-globex_inc-video-search</span>"]
-        MemoryB["<span style='color:#000'>Mem0 Memory<br/>user_id=globex_inc_*</span>"]
+    subgraph "Tenant B - globex:production"
+        TenantB["<span style='color:#000'>Tenant: globex:production</span>"]
+        ConfigB["<span style='color:#000'>TenantConfig<br/>tenant_id=globex:production</span>"]
+        SchemaB["<span style='color:#000'>Vespa Schemas<br/>video_*_globex_production</span>"]
+        PhoenixB["<span style='color:#000'>Phoenix Project<br/>cogniverse-globex:production-video-search</span>"]
+        MemoryB["<span style='color:#000'>Mem0 Memory<br/>user_id=globex:production</span>"]
     end
 
-    subgraph "Tenant C - default"
-        TenantC["<span style='color:#000'>Tenant: default</span>"]
-        ConfigC["<span style='color:#000'>TenantConfig<br/>tenant_id=default</span>"]
-        SchemaC["<span style='color:#000'>Vespa Schemas<br/>video_*_default</span>"]
-        PhoenixC["<span style='color:#000'>Phoenix Project<br/>cogniverse-default-video-search</span>"]
-        MemoryC["<span style='color:#000'>Mem0 Memory<br/>user_id=default_*</span>"]
+    subgraph "Tenant C - acme:staging"
+        TenantC["<span style='color:#000'>Tenant: acme:staging</span>"]
+        ConfigC["<span style='color:#000'>TenantConfig<br/>tenant_id=acme:staging</span>"]
+        SchemaC["<span style='color:#000'>Vespa Schemas<br/>video_*_acme_staging</span>"]
+        PhoenixC["<span style='color:#000'>Phoenix Project<br/>cogniverse-acme:staging-video-search</span>"]
+        MemoryC["<span style='color:#000'>Mem0 Memory<br/>user_id=acme:staging</span>"]
     end
 
     subgraph "Shared Infrastructure"
@@ -124,7 +124,7 @@ flowchart TB
     subgraph "Storage Layer"
         VespaSchema["<span style='color:#000'>Vespa Schema<br/>schema_name_tenant_id</span>"]
         PhoenixProject["<span style='color:#000'>Phoenix Project<br/>cogniverse-{tenant_id}-{service}</span>"]
-        MemoryStore["<span style='color:#000'>Memory Store<br/>user_id prefix</span>"]
+        MemoryStore["<span style='color:#000'>Memory Store<br/>user_id=tenant_id, agent_id=agent_name</span>"]
     end
 
     Request --> Runtime
@@ -167,25 +167,25 @@ flowchart LR
         ColQwen["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s</span>"]
     end
 
-    subgraph "Tenant A - acme_corp"
-        ColPaliA["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_corp</span>"]
-        VideoPrismA["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme_corp</span>"]
-        ColQwenA["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_acme_corp</span>"]
+    subgraph "Tenant A - acme:production"
+        ColPaliA["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_production</span>"]
+        VideoPrismA["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme_production</span>"]
+        ColQwenA["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_acme_production</span>"]
     end
 
-    subgraph "Tenant B - globex_inc"
-        ColPaliB["<span style='color:#000'>video_colpali_smol500_mv_frame_globex_inc</span>"]
-        VideoPrismB["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_globex_inc</span>"]
-        ColQwenB["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_globex_inc</span>"]
+    subgraph "Tenant B - globex:production"
+        ColPaliB["<span style='color:#000'>video_colpali_smol500_mv_frame_globex_production</span>"]
+        VideoPrismB["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_globex_production</span>"]
+        ColQwenB["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_globex_production</span>"]
     end
 
-    ColPali -->|+ _acme_corp| ColPaliA
-    VideoPrism -->|+ _acme_corp| VideoPrismA
-    ColQwen -->|+ _acme_corp| ColQwenA
+    ColPali -->|+ _acme_production| ColPaliA
+    VideoPrism -->|+ _acme_production| VideoPrismA
+    ColQwen -->|+ _acme_production| ColQwenA
 
-    ColPali -->|+ _globex_inc| ColPaliB
-    VideoPrism -->|+ _globex_inc| VideoPrismB
-    ColQwen -->|+ _globex_inc| ColQwenB
+    ColPali -->|+ _globex_production| ColPaliB
+    VideoPrism -->|+ _globex_production| VideoPrismB
+    ColQwen -->|+ _globex_production| ColQwenB
 
     style ColPali fill:#90caf9,stroke:#1565c0,color:#000
     style VideoPrism fill:#90caf9,stroke:#1565c0,color:#000
@@ -197,6 +197,12 @@ flowchart LR
     style VideoPrismB fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ColQwenB fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
+
+`VespaSchemaManager.get_tenant_schema_name(tenant_id, base)` (`libs/vespa/cogniverse_vespa/vespa_schema_manager.py`)
+canonicalizes `tenant_id` first (`canonical_tenant_id`) so a bare, single-word tenant_id like `"acme"`
+is expanded to `"acme:acme"` before the suffix is derived — its schema suffix is therefore
+`_acme_acme`, not `_acme`. Always register tenants in `org:tenant` form (e.g. `acme:production`)
+to get single, readable suffixes as shown above.
 
 ### Schema Deployment Flow (Multi-Tenant)
 
@@ -231,33 +237,38 @@ sequenceDiagram
     API-->>Admin: {"tenant_full_id": "acme:production", "schemas_deployed": [...]}
 ```
 
-**Deployment path: runtime admin API**
+**Deployment path: Helm init job (profile schemas only)**
 
-Schema deployment flows through the runtime's admin API so it always
-goes through ``SchemaRegistry.deploy_schema`` (with the live-cluster
-merge that preserves peer-tenant schemas). The Helm init job at
-``charts/cogniverse/templates/init-jobs.yaml`` loops tenant × profile
-and issues these calls on install:
+The Helm init job at ``charts/cogniverse/templates/init-jobs.yaml`` (`schema-deployment`
+Job) loops `config.tenants` × `initJobs.schemaDeployment.profiles` and calls only
+`POST /admin/profiles/{profile}/deploy` — it does **not** call `POST /admin/tenants`,
+so it never creates a `tenant_metadata` record; it just ensures each tenant's
+data (video/etc.) schema exists. Global metadata schemas (`organization_metadata`,
+`tenant_metadata`, `config_metadata`, `adapter_registry`) are deployed once by the
+runtime itself at startup (`main.py` → `system_backend.schema_manager.upload_metadata_schemas()`),
+not by this job and not per-tenant. `agent_memories_<tenant>` is **not** deployed by
+either path — `Mem0MemoryManager` deploys it lazily on first use for that tenant.
 
 ```mermaid
 sequenceDiagram
-    participant Admin as Admin / Init job
+    participant InitJob as Helm init job (schema-deployment)
     participant Runtime as Runtime admin API
     participant Registry as SchemaRegistry
     participant Vespa as Vespa Config Server
 
-    Admin->>Runtime: POST /admin/tenants {tenant_id}
-    Runtime->>Registry: create tenant record + metadata schemas
-    Registry->>Vespa: Deploy tenant_metadata, agent_memories, ...
-    Vespa-->>Registry: Deployed
+    Note over Runtime: At runtime startup (once, not per-tenant):<br/>upload_metadata_schemas() → organization_metadata, tenant_metadata,<br/>config_metadata, adapter_registry
 
-    Admin->>Runtime: POST /admin/profiles/{profile}/deploy {tenant_id}
-    Runtime->>Registry: deploy_schema(tenant_id, profile)
-    Registry->>Registry: Merge registry + live Vespa schemas
-    Registry->>Vespa: ApplicationPackage (allow_schema_removal=False)
-    Vespa-->>Registry: Deployed
-    Registry-->>Runtime: tenant-scoped schema name
-    Runtime-->>Admin: 200 OK
+    loop For each tenant in config.tenants
+        loop For each profile in initJobs.schemaDeployment.profiles
+            InitJob->>Runtime: POST /admin/profiles/{profile}/deploy {"tenant_id": tenant.id, "force": false}
+            Runtime->>Registry: deploy_schema(tenant_id, base_schema_name=profile, force)
+            Registry->>Registry: Merge registry + live Vespa schemas (preserve peer tenants)
+            Registry->>Vespa: ApplicationPackage (allow_schema_removal=False)
+            Vespa-->>Registry: Deployed
+            Registry-->>Runtime: tenant-scoped schema name
+            Runtime-->>InitJob: 200 OK
+        end
+    end
 ```
 
 ### Schema Isolation in Vespa
@@ -265,28 +276,28 @@ sequenceDiagram
 ```mermaid
 flowchart TB
     subgraph "Vespa Instance"
-        subgraph "Tenant: acme_corp"
-            SchemaA1["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_corp<br/>Documents: 1000</span>"]
-            SchemaA2["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme_corp<br/>Documents: 500</span>"]
+        subgraph "Tenant: acme:production"
+            SchemaA1["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_production<br/>Documents: 1000</span>"]
+            SchemaA2["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme_production<br/>Documents: 500</span>"]
         end
 
-        subgraph "Tenant: globex_inc"
-            SchemaB1["<span style='color:#000'>video_colpali_smol500_mv_frame_globex_inc<br/>Documents: 2000</span>"]
-            SchemaB2["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_globex_inc<br/>Documents: 800</span>"]
+        subgraph "Tenant: globex:production"
+            SchemaB1["<span style='color:#000'>video_colpali_smol500_mv_frame_globex_production<br/>Documents: 2000</span>"]
+            SchemaB2["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_globex_production<br/>Documents: 800</span>"]
         end
 
-        subgraph "Tenant: default"
-            SchemaC1["<span style='color:#000'>video_colpali_smol500_mv_frame_default<br/>Documents: 300</span>"]
-            SchemaC2["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_default<br/>Documents: 150</span>"]
+        subgraph "Tenant: acme:staging"
+            SchemaC1["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_staging<br/>Documents: 300</span>"]
+            SchemaC2["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme_staging<br/>Documents: 150</span>"]
         end
     end
 
-    QueryA["<span style='color:#000'>Query from acme_corp</span>"] -->|Targets| SchemaA1
+    QueryA["<span style='color:#000'>Query from acme:production</span>"] -->|Targets| SchemaA1
     QueryA -->|Targets| SchemaA2
     QueryA -.->|❌ Cannot access| SchemaB1
     QueryA -.->|❌ Cannot access| SchemaC1
 
-    QueryB["<span style='color:#000'>Query from globex_inc</span>"] -->|Targets| SchemaB1
+    QueryB["<span style='color:#000'>Query from globex:production</span>"] -->|Targets| SchemaB1
     QueryB -->|Targets| SchemaB2
     QueryB -.->|❌ Cannot access| SchemaA1
     QueryB -.->|❌ Cannot access| SchemaC1
@@ -309,7 +320,7 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant User as User (acme_corp)
+    participant User as User (acme:production)
     participant Script as run_ingestion.py
     participant Foundation as cogniverse_foundation
     participant Builder as VideoIngestionPipelineBuilder
@@ -317,21 +328,21 @@ sequenceDiagram
     participant Registry as BackendRegistry
     participant Vespa as VespaBackend
 
-    User->>Script: Run with --tenant-id acme_corp --profile video_colpali_smol500_mv_frame
+    User->>Script: Run with --tenant-id acme:production --profile video_colpali_smol500_mv_frame
 
     Script->>Foundation: create_default_config_manager()
     Foundation-->>Script: config_manager
 
-    Script->>Foundation: get_config(tenant_id="your_org:production", config_manager)
+    Script->>Foundation: get_config(tenant_id="acme:production", config_manager)
     Foundation-->>Script: app_config
 
     Script->>Builder: build_simple_pipeline(tenant_id, video_dir, schema, backend)
     Builder->>Builder: Validate tenant_id and config_manager
     Builder->>Builder: Create PipelineConfig
     Builder->>Pipeline: Initialize VideoIngestionPipeline
-    Pipeline->>Registry: get_ingestion_backend("vespa", tenant_id, config)
+    Pipeline->>Registry: get_ingestion_backend("vespa", tenant_id, config, config_manager, schema_loader)
     Registry->>Vespa: Create VespaBackend instance
-    Vespa->>Vespa: Apply tenant suffix to schema_name
+    Vespa->>Vespa: get_tenant_schema_name(tenant_id, base_schema_name)
     Registry-->>Pipeline: Backend instance
     Builder-->>Script: Configured pipeline
 
@@ -339,47 +350,46 @@ sequenceDiagram
     Pipeline->>Pipeline: Extract frames
     Pipeline->>Pipeline: Generate embeddings
     Pipeline->>Vespa: ingest_documents(docs, tenant_schema)
-    Vespa->>Vespa: Insert into video_colpali_smol500_mv_frame_acme_corp
+    Vespa->>Vespa: Insert into video_colpali_smol500_mv_frame_acme_production
     Vespa-->>Pipeline: Ingestion success
 
     Pipeline-->>Script: Processing results
-    Script-->>User: Video ingested for acme_corp
+    Script-->>User: Video ingested for acme:production
 ```
 
 ### Search Flow (Tenant-Isolated - Layered Architecture)
 
 ```mermaid
 sequenceDiagram
-    participant User as User (acme_corp)
+    participant User as User (acme:production)
     participant Runtime as cogniverse_runtime
     participant Foundation as cogniverse_foundation
     participant Agent as VideoSearchAgent
+    participant Registry as BackendRegistry
     participant Backend as VespaBackend
     participant Telemetry as TelemetryManager
 
-    User->>Runtime: POST /search {"query": "ML tutorial", "tenant_id": "acme_corp"}
+    User->>Runtime: POST /search {"query": "ML tutorial", "tenant_id": "acme:production"}
 
-    Runtime->>Foundation: get_config(tenant_id="acme_corp")
+    Runtime->>Foundation: get_config(tenant_id="acme:production", config_manager)
     Foundation-->>Runtime: ConfigUtils (tenant-scoped config wrapper)
 
     Runtime->>Agent: create_video_search_agent(config, tenant_id)
-    Agent->>Backend: get_search_backend(schema_name)
-    Backend-->>Agent: Shared search backend
-    Agent->>Backend: search(query_dict with tenant_id)
-    Backend->>Backend: Apply tenant suffix: video_colpali_smol500_mv_frame_acme_corp
-
+    Agent->>Registry: get_search_backend("vespa", config, config_manager, schema_loader)
+    Note over Registry: Search backends are shared across all tenants;<br/>isolation happens via tenant_id in query_dict at search() time
+    Registry-->>Agent: Shared VespaBackend instance
     Agent->>Agent: Generate query embedding
-
-    Agent->>Backend: search(query, tenant_schema)
-    Note over Backend: Query targets acme_corp schema only
-    Backend-->>Agent: Search results (acme_corp documents only)
+    Agent->>Backend: search(query_dict with tenant_id)
+    Backend->>Backend: get_tenant_schema_name(tenant_id, base) →<br/>video_colpali_smol500_mv_frame_acme_production
+    Note over Backend: Query targets acme:production schema only
+    Backend-->>Agent: Search results (acme:production documents only)
 
     Agent->>Agent: Rerank results
 
     Note over Agent,Telemetry: Telemetry spans recorded automatically via context manager
 
     Agent-->>Runtime: Reranked results
-    Runtime-->>User: Search results (acme_corp data only)
+    Runtime-->>User: Search results (acme:production data only)
 ```
 
 ### Cross-Tenant Isolation Verification
@@ -387,17 +397,17 @@ sequenceDiagram
 ```mermaid
 flowchart TB
     subgraph "Tenant A Request"
-        RequestA["<span style='color:#000'>Query: tenant_id=acme_corp</span>"]
-        ProcessA["<span style='color:#000'>Process with acme_corp config</span>"]
-        SearchA["<span style='color:#000'>Search: video_*_acme_corp</span>"]
-        ResultsA["<span style='color:#000'>Results: acme_corp data only</span>"]
+        RequestA["<span style='color:#000'>Query: tenant_id=acme:production</span>"]
+        ProcessA["<span style='color:#000'>Process with acme:production config</span>"]
+        SearchA["<span style='color:#000'>Search: video_*_acme_production</span>"]
+        ResultsA["<span style='color:#000'>Results: acme:production data only</span>"]
     end
 
     subgraph "Tenant B Request"
-        RequestB["<span style='color:#000'>Query: tenant_id=globex_inc</span>"]
-        ProcessB["<span style='color:#000'>Process with globex_inc config</span>"]
-        SearchB["<span style='color:#000'>Search: video_*_globex_inc</span>"]
-        ResultsB["<span style='color:#000'>Results: globex_inc data only</span>"]
+        RequestB["<span style='color:#000'>Query: tenant_id=globex:production</span>"]
+        ProcessB["<span style='color:#000'>Process with globex:production config</span>"]
+        SearchB["<span style='color:#000'>Search: video_*_globex_production</span>"]
+        ResultsB["<span style='color:#000'>Results: globex:production data only</span>"]
     end
 
     subgraph "Isolation Boundary"
@@ -437,34 +447,34 @@ flowchart TB
 ```mermaid
 flowchart TB
     subgraph "Phoenix Instance (Port 6006)"
-        subgraph "Project: cogniverse-acme_corp-video-search"
-            SpansA["<span style='color:#000'>Spans<br/>All acme_corp traces</span>"]
-            ExperimentsA["<span style='color:#000'>Experiments<br/>acme_corp evaluations</span>"]
-            DatasetsA["<span style='color:#000'>Datasets<br/>acme_corp queries</span>"]
+        subgraph "Project: cogniverse-acme:production-video-search"
+            SpansA["<span style='color:#000'>Spans<br/>All acme:production traces</span>"]
+            ExperimentsA["<span style='color:#000'>Experiments<br/>acme:production evaluations</span>"]
+            DatasetsA["<span style='color:#000'>Datasets<br/>acme:production queries</span>"]
         end
 
-        subgraph "Project: cogniverse-globex_inc-video-search"
-            SpansB["<span style='color:#000'>Spans<br/>All globex_inc traces</span>"]
-            ExperimentsB["<span style='color:#000'>Experiments<br/>globex_inc evaluations</span>"]
-            DatasetsB["<span style='color:#000'>Datasets<br/>globex_inc queries</span>"]
+        subgraph "Project: cogniverse-globex:production-video-search"
+            SpansB["<span style='color:#000'>Spans<br/>All globex:production traces</span>"]
+            ExperimentsB["<span style='color:#000'>Experiments<br/>globex:production evaluations</span>"]
+            DatasetsB["<span style='color:#000'>Datasets<br/>globex:production queries</span>"]
         end
 
-        subgraph "Project: cogniverse-default-video-search"
-            SpansC["<span style='color:#000'>Spans<br/>All default traces</span>"]
-            ExperimentsC["<span style='color:#000'>Experiments<br/>default evaluations</span>"]
-            DatasetsC["<span style='color:#000'>Datasets<br/>default queries</span>"]
+        subgraph "Project: cogniverse-acme:staging-video-search"
+            SpansC["<span style='color:#000'>Spans<br/>All acme:staging traces</span>"]
+            ExperimentsC["<span style='color:#000'>Experiments<br/>acme:staging evaluations</span>"]
+            DatasetsC["<span style='color:#000'>Datasets<br/>acme:staging queries</span>"]
         end
     end
 
-    TenantA["<span style='color:#000'>Tenant: acme_corp</span>"] --> SpansA
+    TenantA["<span style='color:#000'>Tenant: acme:production</span>"] --> SpansA
     TenantA --> ExperimentsA
     TenantA --> DatasetsA
 
-    TenantB["<span style='color:#000'>Tenant: globex_inc</span>"] --> SpansB
+    TenantB["<span style='color:#000'>Tenant: globex:production</span>"] --> SpansB
     TenantB --> ExperimentsB
     TenantB --> DatasetsB
 
-    TenantC["<span style='color:#000'>Tenant: default</span>"] --> SpansC
+    TenantC["<span style='color:#000'>Tenant: acme:staging</span>"] --> SpansC
     TenantC --> ExperimentsC
     TenantC --> DatasetsC
 
@@ -486,26 +496,27 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant AgentA as Agent (acme_corp)
-    participant TelemetryA as TelemetryManager<br/>(acme_corp)
+    participant AgentA as Agent (acme:production)
+    participant TelemetryA as TelemetryManager<br/>(acme:production)
     participant Phoenix as Phoenix Collector<br/>(Port 4317)
-    participant ProjectA as cogniverse-acme_corp-video-search
+    participant ProjectA as cogniverse-acme:production-video-search
     participant UI as Phoenix UI<br/>(Port 6006)
+    participant Operator as Operator
 
-    AgentA->>TelemetryA: with span("search", tenant_id="acme_corp")
-    TelemetryA->>TelemetryA: Attach attributes:<br/>tenant_id=acme_corp
-    TelemetryA->>TelemetryA: Set project: cogniverse-acme_corp-video-search
+    AgentA->>TelemetryA: with span("search", tenant_id="acme:production")
+    TelemetryA->>TelemetryA: Attach attributes:<br/>tenant_id=acme:production
+    TelemetryA->>TelemetryA: tenant_service_template.format(tenant_id, service) →<br/>cogniverse-acme:production-video-search
 
     AgentA->>AgentA: Execute search operation
 
     TelemetryA->>TelemetryA: Span context ends
-    TelemetryA->>Phoenix: Export span via OTLP<br/>project=cogniverse-acme_corp-video-search
-    Phoenix->>ProjectA: Store span in cogniverse-acme_corp-video-search
+    TelemetryA->>Phoenix: Export span via OTLP<br/>project=cogniverse-acme:production-video-search
+    Phoenix->>ProjectA: Store span in cogniverse-acme:production-video-search
 
-    Note over ProjectA: Span visible ONLY in cogniverse-acme_corp-video-search
+    Note over ProjectA: Span visible ONLY in cogniverse-acme:production-video-search
 
-    ProjectA-->>UI: Spans for cogniverse-acme_corp-video-search
-    UI-->>User: View acme_corp traces<br/>(no cross-tenant visibility)
+    ProjectA-->>UI: Spans for cogniverse-acme:production-video-search
+    UI-->>Operator: View acme:production traces<br/>(no cross-tenant visibility)
 ```
 
 ### Phoenix UI Access Pattern
@@ -518,17 +529,17 @@ flowchart LR
 
     subgraph "Project Selection"
         DropDown["<span style='color:#000'>Project Dropdown</span>"]
-        ProjectA["<span style='color:#000'>cogniverse-acme_corp-video-search</span>"]
-        ProjectB["<span style='color:#000'>cogniverse-globex_inc-video-search</span>"]
-        ProjectC["<span style='color:#000'>cogniverse-default-video-search</span>"]
+        ProjectA["<span style='color:#000'>cogniverse-acme:production-video-search</span>"]
+        ProjectB["<span style='color:#000'>cogniverse-globex:production-video-search</span>"]
+        ProjectC["<span style='color:#000'>cogniverse-acme:staging-video-search</span>"]
     end
 
     subgraph "Tenant A View"
-        ViewA["<span style='color:#000'>Spans: acme_corp only<br/>Experiments: acme_corp only<br/>Datasets: acme_corp only</span>"]
+        ViewA["<span style='color:#000'>Spans: acme:production only<br/>Experiments: acme:production only<br/>Datasets: acme:production only</span>"]
     end
 
     subgraph "Tenant B View"
-        ViewB["<span style='color:#000'>Spans: globex_inc only<br/>Experiments: globex_inc only<br/>Datasets: globex_inc only</span>"]
+        ViewB["<span style='color:#000'>Spans: globex:production only<br/>Experiments: globex:production only<br/>Datasets: globex:production only</span>"]
     end
 
     Dashboard --> DropDown
@@ -555,32 +566,37 @@ flowchart LR
 
 ## Memory Isolation
 
-### Mem0 Memory Isolation with User ID Prefix
+### Mem0 Memory Isolation by Tenant + Agent Partition
+
+`Mem0MemoryManager.add_memory`/`get_all_memories` (`libs/core/cogniverse_core/memory/manager.py`)
+call the underlying Mem0 API with `user_id=<tenant_id>` and `agent_id=<agent_name>` — there is no
+per-end-user id concept in the current API; the whole tenant is the Mem0 "user" partition, and
+`agent_name` further partitions memories per agent within that tenant.
 
 ```mermaid
 flowchart TB
-    subgraph "Mem0 Memory Store (Vespa Backend)"
-        subgraph "Tenant A Memories"
-            MemA1["<span style='color:#000'>user_id: acme_corp_user1<br/>Conversation history</span>"]
-            MemA2["<span style='color:#000'>user_id: acme_corp_user2<br/>Preferences</span>"]
+    subgraph "Mem0 Memory Store (Vespa Backend, schema agent_memories_&lt;tenant&gt;)"
+        subgraph "Tenant A Memories (user_id=acme:production)"
+            MemA1["<span style='color:#000'>agent_id: orchestrator_agent<br/>Conversation history</span>"]
+            MemA2["<span style='color:#000'>agent_id: search_agent<br/>Preferences</span>"]
         end
 
-        subgraph "Tenant B Memories"
-            MemB1["<span style='color:#000'>user_id: globex_inc_user1<br/>Conversation history</span>"]
-            MemB2["<span style='color:#000'>user_id: globex_inc_admin<br/>Preferences</span>"]
+        subgraph "Tenant B Memories (user_id=globex:production)"
+            MemB1["<span style='color:#000'>agent_id: orchestrator_agent<br/>Conversation history</span>"]
+            MemB2["<span style='color:#000'>agent_id: search_agent<br/>Preferences</span>"]
         end
 
-        subgraph "Default Memories"
-            MemC1["<span style='color:#000'>user_id: default_user1<br/>Conversation history</span>"]
+        subgraph "Tenant C Memories (user_id=acme:staging)"
+            MemC1["<span style='color:#000'>agent_id: orchestrator_agent<br/>Conversation history</span>"]
         end
     end
 
-    AgentA["<span style='color:#000'>Agent: acme_corp</span>"] -->|Search memories| MemA1
-    AgentA -->|Search memories| MemA2
+    AgentA["<span style='color:#000'>Agent: acme:production</span>"] -->|get_all_memories tenant_id=acme:production| MemA1
+    AgentA -->|get_all_memories tenant_id=acme:production| MemA2
     AgentA -.->|❌ Cannot access| MemB1
 
-    AgentB["<span style='color:#000'>Agent: globex_inc</span>"] -->|Search memories| MemB1
-    AgentB -->|Search memories| MemB2
+    AgentB["<span style='color:#000'>Agent: globex:production</span>"] -->|get_all_memories tenant_id=globex:production| MemB1
+    AgentB -->|get_all_memories tenant_id=globex:production| MemB2
     AgentB -.->|❌ Cannot access| MemA1
 
     style AgentA fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -596,7 +612,7 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant Agent as Agent (acme_corp)
+    participant Agent as Agent (acme:production)
     participant Memory as Mem0MemoryManager
     participant Federation as FederationService
     participant KnowledgeReg as KnowledgeRegistry
@@ -606,19 +622,19 @@ sequenceDiagram
     participant ProvenanceStore as ProvenanceStore (Vespa)
 
     Note over Agent,Memory: Write path — knowledge write with provenance + trust
-    Agent->>Memory: add_memory(content, metadata={kind, subject_key, provenance}, tenant_id)
+    Agent->>Memory: add_memory(content, tenant_id, agent_name, metadata={kind, subject_key, provenance})
     Memory->>KnowledgeReg: get(kind) → KnowledgeSchema
     KnowledgeReg-->>Memory: schema (retention, sensitivity, contradiction_policy, default_trust)
     Memory->>Memory: schema.validate_provenance(provenance)
     Memory->>Memory: compute_initial_trust(schema, provenance) → TrustRecord
     Memory->>Memory: attach_trust_to_metadata(metadata, trust)
-    Memory->>Backend: store to agent_memories_acme_corp
+    Memory->>Backend: memory.add(content, user_id=tenant_id, agent_id=agent_name) → agent_memories_acme_production
     Memory->>ProvenanceStore: index provenance record (memory_id, derived_from_ids)
 
     Note over Agent,ProvenanceStore: Read path — federated, trust-ranked, contradiction-resolved
-    Agent->>Federation: federated_get_all(tenant_id="acme_corp", agent_name)
-    Federation->>Memory: get_all_memories(tenant_id="acme_corp")
-    Federation->>Memory: get_all_memories(tenant_id="acme:_org_trunk")
+    Agent->>Federation: federated_get_all(tenant_id="acme:production", agent_name)
+    Federation->>Memory: get_all_memories(tenant_id="acme:production", agent_name)
+    Federation->>Memory: get_all_memories(tenant_id="acme:_org_trunk", agent_name)
     Federation->>Federation: Dedup by subject_key — tenant overlay wins
     Federation-->>Agent: Merged candidates
 
@@ -630,7 +646,7 @@ sequenceDiagram
     Agent->>Trust: rank_with_trust(memories, apply_decay_now=True)
     Trust-->>Agent: Re-ranked by relevance × trust × confidence
 
-    Note over Agent,ProvenanceStore: Tenant isolation via schema suffix + user_id prefix
+    Note over Agent,ProvenanceStore: Tenant isolation via schema suffix (agent_memories_&lt;tenant&gt;)<br/>plus user_id=tenant_id, agent_id=agent_name partitioning within the schema
 ```
 
 ### Memory Schema Naming (Per-Tenant)
@@ -646,27 +662,27 @@ flowchart LR
         BaseAdapterSchema["<span style='color:#000'>adapter_registry</span>"]
     end
 
-    subgraph "Tenant acme_corp Schemas"
-        SchemaA["<span style='color:#000'>agent_memories_acme_corp</span>"]
-        ProvSchemaA["<span style='color:#000'>provenance_acme_corp</span>"]
+    subgraph "Tenant acme:production Schemas"
+        SchemaA["<span style='color:#000'>agent_memories_acme_production</span>"]
+        ProvSchemaA["<span style='color:#000'>provenance_acme_production</span>"]
     end
 
-    subgraph "Tenant globex_inc Schemas"
-        SchemaB["<span style='color:#000'>agent_memories_globex_inc</span>"]
-        ProvSchemaB["<span style='color:#000'>provenance_globex_inc</span>"]
+    subgraph "Tenant globex:production Schemas"
+        SchemaB["<span style='color:#000'>agent_memories_globex_production</span>"]
+        ProvSchemaB["<span style='color:#000'>provenance_globex_production</span>"]
     end
 
     subgraph "Org Trunk Schema"
         OrgTrunk["<span style='color:#000'>agent_memories_acme__org_trunk<br/>(org shared knowledge)</span>"]
     end
 
-    BaseMemSchema -->|+ _acme_corp| SchemaA
-    BaseMemSchema -->|+ _globex_inc| SchemaB
-    BaseProvSchema -->|+ _acme_corp| ProvSchemaA
-    BaseProvSchema -->|+ _globex_inc| ProvSchemaB
+    BaseMemSchema -->|+ _acme_production| SchemaA
+    BaseMemSchema -->|+ _globex_production| SchemaB
+    BaseProvSchema -->|+ _acme_production| ProvSchemaA
+    BaseProvSchema -->|+ _globex_production| ProvSchemaB
 
-    SchemaA --> DocA["<span style='color:#000'>user_id prefix: acme_corp_*<br/>metadata: kind, subject_key, trust, provenance</span>"]
-    SchemaB --> DocB["<span style='color:#000'>user_id prefix: globex_inc_*<br/>metadata: kind, subject_key, trust, provenance</span>"]
+    SchemaA --> DocA["<span style='color:#000'>user_id: acme:production, agent_id: &lt;agent_name&gt;<br/>metadata: kind, subject_key, trust, provenance</span>"]
+    SchemaB --> DocB["<span style='color:#000'>user_id: globex:production, agent_id: &lt;agent_name&gt;<br/>metadata: kind, subject_key, trust, provenance</span>"]
     ProvSchemaA --> ProvDocA["<span style='color:#000'>memory_id, derived_from_memory_ids<br/>written_by, derivation_kind, confidence</span>"]
     OrgTrunk --> OrgDoc["<span style='color:#000'>org_shared memories promoted from tenants<br/>sensitivity=org_shared, promoted_from_tenant</span>"]
 
@@ -701,20 +717,20 @@ flowchart TB
         Mem0Backend["<span style='color:#000'>Mem0 Vespa Backend<br/>Shared</span>"]
     end
 
-    subgraph "Tenant A - acme_corp"
-        AppA["<span style='color:#000'>Application: acme_corp</span>"]
-        ConfigA["<span style='color:#000'>Config: acme_corp</span>"]
-        SchemasA["<span style='color:#000'>Schemas: *_acme_corp</span>"]
-        ProjectA["<span style='color:#000'>Phoenix: cogniverse-acme_corp-video-search</span>"]
-        MemoryA["<span style='color:#000'>Memory: user_id=acme_corp_*</span>"]
+    subgraph "Tenant A - acme:production"
+        AppA["<span style='color:#000'>Application: acme:production</span>"]
+        ConfigA["<span style='color:#000'>Config: acme:production</span>"]
+        SchemasA["<span style='color:#000'>Schemas: *_acme_production</span>"]
+        ProjectA["<span style='color:#000'>Phoenix: cogniverse-acme:production-video-search</span>"]
+        MemoryA["<span style='color:#000'>Memory: user_id=acme:production</span>"]
     end
 
-    subgraph "Tenant B - globex_inc"
-        AppB["<span style='color:#000'>Application: globex_inc</span>"]
-        ConfigB["<span style='color:#000'>Config: globex_inc</span>"]
-        SchemasB["<span style='color:#000'>Schemas: *_globex_inc</span>"]
-        ProjectB["<span style='color:#000'>Phoenix: cogniverse-globex_inc-video-search</span>"]
-        MemoryB["<span style='color:#000'>Memory: user_id=globex_inc_*</span>"]
+    subgraph "Tenant B - globex:production"
+        AppB["<span style='color:#000'>Application: globex:production</span>"]
+        ConfigB["<span style='color:#000'>Config: globex:production</span>"]
+        SchemasB["<span style='color:#000'>Schemas: *_globex_production</span>"]
+        ProjectB["<span style='color:#000'>Phoenix: cogniverse-globex:production-video-search</span>"]
+        MemoryB["<span style='color:#000'>Memory: user_id=globex:production</span>"]
     end
 
     AppA --> ConfigA
@@ -754,88 +770,95 @@ flowchart TB
 ```mermaid
 sequenceDiagram
     participant Admin as Admin
-    participant TenantMgr as TenantManager
-    participant ConfigStore as Config Store
-    participant SchemaManager as VespaSchemaManager
-    participant KnowledgeReg as KnowledgeRegistry
+    participant API as POST /admin/tenants
+    participant TenantMgr as tenant_manager.py
+    participant Backend as Backend (Vespa)
+    participant Registry as SchemaRegistry
     participant LifecycleSched as LifecycleScheduler
     participant PinService as PinService
-    participant Phoenix as Phoenix API
 
-    Note over Admin: Create new tenant: "new_corp"
+    Note over Admin: Create new tenant: "acme:trial"
 
-    Admin->>TenantMgr: create_tenant("new_corp")
-
-    TenantMgr->>ConfigStore: Store TenantConfig(tenant_id="new_corp")
-    ConfigStore-->>TenantMgr: Config saved
-
-    TenantMgr->>SchemaManager: deploy_schemas(tenant_id="new_corp")
-    loop For each schema
-        SchemaManager->>SchemaManager: Create video schema: video_*_new_corp
-        SchemaManager->>SchemaManager: Create memory schema: agent_memories_new_corp
-        SchemaManager->>SchemaManager: Create provenance schema: provenance_new_corp
-        SchemaManager->>SchemaManager: Deploy to Vespa
+    Admin->>API: POST /admin/tenants {"tenant_id": "acme:trial"}
+    API->>TenantMgr: create_tenant(request)
+    TenantMgr->>TenantMgr: parse_tenant_id → org_id="acme", tenant_name="trial"
+    TenantMgr->>Backend: get_organization_internal("acme")
+    alt org does not exist yet
+        TenantMgr->>Backend: create_metadata_document(schema="organization_metadata", doc_id="acme")
     end
-    SchemaManager-->>TenantMgr: Schemas deployed
 
-    TenantMgr->>Phoenix: create_project("cogniverse-new_corp-video-search")
-    Phoenix-->>TenantMgr: Project created
+    loop For each base_schema in request.base_schemas (default: video_colpali_smol500_mv_frame)
+        TenantMgr->>Registry: deploy_schema(tenant_id="acme:trial", base_schema_name)
+        Registry->>Registry: get_tenant_schema_name → "..._acme_trial"
+        Registry-->>TenantMgr: schema deployed
+    end
 
-    TenantMgr-->>Admin: Tenant "new_corp" created successfully
+    TenantMgr->>Backend: create_metadata_document(schema="tenant_metadata",<br/>doc_id="acme:trial", fields={schemas_deployed, ...})
+    TenantMgr-->>API: Tenant(tenant_full_id="acme:trial", schemas_deployed=[...])
+    API-->>Admin: 200 OK
 
-    Note over Admin,PinService: Schema-driven lifecycle cleanup tick (hourly via LifecycleScheduler)
+    Note over Admin,PinService: Phoenix project is NOT created here — it is created<br/>lazily on first span export via tenant_service_template
 
-    LifecycleSched->>LifecycleSched: get_warm_managers() — active tenant Mem0 instances
+    Note over Admin,PinService: Schema-driven lifecycle cleanup tick (hourly via LifecycleScheduler.tick_once)
+
+    LifecycleSched->>LifecycleSched: get_warm_managers() — active tenant Mem0MemoryManager instances
     loop For each warm tenant manager
-        LifecycleSched->>KnowledgeReg: get(kind) → KnowledgeSchema per memory kind
-        LifecycleSched->>PinService: get_pinned_ids(tenant_id) — skip pinned memories
-        Note over LifecycleSched: Retention.EPHEMERAL_DAYS → delete if age > retention_days
-        Note over LifecycleSched: Retention.SCHEMA_DRIVEN → call cleanup_hook(memory, schema)
-        Note over LifecycleSched: Retention.PERMANENT → skip (never expire)
-        Note over LifecycleSched: Pinned memories always skipped — org_admin pins survive
+        LifecycleSched->>PinService: pin_lookup(manager) → pinned_memory_ids (via list_pins)
+        LifecycleSched->>Backend: manager.cleanup_with_schema(registry, pinned_memory_ids)
+        loop For each memory
+            Backend->>Backend: registry.get(kind) → KnowledgeSchema
+            Note over Backend: Retention.PERMANENT → skip (never expire)
+            Note over Backend: Retention.EPHEMERAL_DAYS(N) → delete if age > N days
+            Note over Backend: Retention.SCHEMA_DRIVEN → delegate to schema.cleanup_hook
+            Note over Backend: memory_id in pinned_memory_ids → always skipped
+        end
+        Backend-->>LifecycleSched: deleted_by_kind
     end
 
     Note over Admin,PinService: Admin pins a memory (org_admin override)
-    Admin->>PinService: pin(memory_id, role=ORG_ADMIN, tenant_id)
-    PinService->>KnowledgeReg: get(kind) → validate_pin_authority(ORG_ADMIN)
-    PinService->>PinService: Check quota (org_admin = unlimited)
-    PinService->>PinService: Write pin_record memory (kind=pin_record, agent=_pinning)
-    PinService-->>Admin: Pinned — memory immune to lifecycle cleanup
+    Admin->>PinService: pin(target_memory_id, target_kind, pinned_by=ORG_ADMIN, actor_id, tenant_id)
+    PinService->>PinService: registry.get(target_kind).validate_pin_authority(ORG_ADMIN)
+    PinService->>PinService: Check quota (PinQuotas; org_admin overrides existing lower-role pins)
+    PinService->>Backend: memory_manager.add_memory(pin record, agent_name=PIN_AGENT_NAME, infer=False)
+    PinService-->>Admin: PinRecord — memory immune to lifecycle cleanup
 ```
 
 ### Tenant Deletion/Cleanup Flow
 
+`delete_tenant_internal` (`libs/runtime/cogniverse_runtime/admin/tenant_manager.py`) does not back
+up data and does not delete a Phoenix project (there is no Phoenix API call anywhere in
+`tenant_manager.py`) — it only removes the tenant's Vespa schemas and its `tenant_metadata` doc.
+Take a backup out-of-band beforehand if the data must be recoverable.
+
 ```mermaid
 sequenceDiagram
     participant Admin as Admin
-    participant TenantMgr as TenantManager
+    participant API as DELETE /admin/tenants/{tenant_full_id}
+    participant TenantMgr as tenant_manager.py
+    participant Registry as SchemaRegistry
     participant SchemaManager as VespaSchemaManager
-    participant Phoenix as Phoenix API
-    participant Backup as Backup Service
+    participant Backend as Backend (Vespa)
 
-    Note over Admin: Delete tenant: "old_corp"
+    Note over Admin: Delete tenant: "acme:staging"
 
-    Admin->>TenantMgr: delete_tenant("old_corp")
+    Admin->>API: DELETE /admin/tenants/acme:staging
+    API->>TenantMgr: delete_tenant_internal("acme:staging")
+    TenantMgr->>TenantMgr: canonical_tenant_id("acme:staging") → "acme:staging"
+    TenantMgr->>Registry: get_tenant_schemas(tid) for both bare and canonical id forms
+    Registry-->>TenantMgr: (tenant_id, base_schema_name) targets
+    TenantMgr->>SchemaManager: list_deployed_document_types() — discover orphan schema targets too
 
-    TenantMgr->>Backup: backup_tenant_data("old_corp")
-    Backup->>Backup: Export all schemas data
-    Backup->>Backup: Export Phoenix traces
-    Backup->>Backup: Export memories
-    Backup-->>TenantMgr: Backup complete (old_corp_backup_20251015.tar.gz)
-
-    TenantMgr->>SchemaManager: delete_schemas(tenant_id="old_corp")
-    loop For each schema
-        SchemaManager->>SchemaManager: Delete schema: video_*_old_corp
-        SchemaManager->>SchemaManager: Delete all documents
+    loop For each (tenant_id, base_schema_name) target
+        TenantMgr->>SchemaManager: delete_schema(tenant_id, base_schema_name)
+        SchemaManager->>Backend: Delete video_*_acme_staging / agent_memories_acme_staging / provenance_acme_staging
+        SchemaManager-->>TenantMgr: full_schema_name deleted
     end
-    SchemaManager-->>TenantMgr: Schemas deleted
 
-    TenantMgr->>Phoenix: delete_project("cogniverse-old_corp-video-search")
-    Phoenix-->>TenantMgr: Project deleted
+    TenantMgr->>Backend: delete_metadata_document(schema="tenant_metadata", doc_id="acme:staging")
+    TenantMgr->>TenantMgr: invalidate_tenant_exists("acme:staging")
 
-    TenantMgr->>TenantMgr: Remove tenant config
-
-    TenantMgr-->>Admin: ✅ Tenant "old_corp" deleted<br/>Backup: old_corp_backup_20251015.tar.gz
+    TenantMgr-->>API: {"status": "deleted", "schemas_deleted": N, "deleted_schemas": [...]}
+    API-->>Admin: 200 OK
 ```
 
 ### Federation: Org Trunk + Tenant Overlay
@@ -859,9 +882,9 @@ flowchart TB
         MergedResult["<span style='color:#000'>Merged candidates<br/>tagged with _federation_origin</span>"]
     end
 
-    subgraph PromotePath["<span style='color:#000'>Admin Promote (org_admin / tenant_admin)</span>"]
-        PromoteCheck["<span style='color:#000'>schema.sensitivity != tenant_private<br/>actor_role >= schema.pinnable_by</span>"]
-        PromoteWrite["<span style='color:#000'>Write to acme:_org_trunk<br/>metadata: promoted_from_tenant, promoted_by</span>"]
+    subgraph PromotePath["<span style='color:#000'>FederationService.promote_to_org_trunk(source_tenant_id, source_memory, actor_role, actor_id)</span>"]
+        PromoteCheck["<span style='color:#000'>schema.sensitivity != tenant_private<br/>schema.validate_pin_authority(actor_role)</span>"]
+        PromoteWrite["<span style='color:#000'>target_mm.add_memory() → acme:_org_trunk<br/>metadata: promoted_from_tenant, promoted_by, promoted_by_role</span>"]
     end
 
     TenantMem --> FetchTenant
@@ -891,42 +914,43 @@ flowchart TB
 
 ### Cross-Tenant Comparison Flow
 
+CrossTenantComparisonAgent does not call an LLM in V1 and never writes to the org trunk itself —
+`_process_impl` only reads via `FederationService.federated_get_all` and returns a
+`CrossTenantComparisonOutput`. Promotion to the org trunk is a separate, explicit admin action
+(`FederationService.promote_to_org_trunk`, shown in the diagram above), not something this agent
+triggers automatically.
+
 ```mermaid
 sequenceDiagram
     participant OrgAdmin as Org Admin
     participant Runtime as cogniverse_runtime
+    participant Route as POST /tenants/{tenant_id}/knowledge/cross_tenant/compare
     participant CrossTenant as CrossTenantComparisonAgent
     participant Federation as FederationService
-    participant KnowledgeReg as KnowledgeRegistry
     participant OrgTrunk as Org Trunk (acme:_org_trunk)
     participant Tenants as Tenant Managers (acme:production, acme:staging)
 
-    OrgAdmin->>Runtime: POST /agents {"query": "compare knowledge across tenants", "org_id": "acme"}
+    OrgAdmin->>Runtime: POST /tenants/acme:production/knowledge/cross_tenant/compare<br/>{"subject_key": "...", "tenant_ids": ["acme:production","acme:staging"], "actor_role": "org_admin"}
 
-    Runtime->>CrossTenant: CrossTenantComparisonAgent(query, org_id="acme")
+    Runtime->>Route: cross_tenant_compare(tenant_id, body)
+    Route->>CrossTenant: CrossTenantComparisonAgent(deps, memory_manager_factory, registry)
+    Route->>CrossTenant: _process_impl(CrossTenantComparisonInput(tenant_id, **body))
 
-    Note over CrossTenant: ACL check — only tenants under org_id visible
-    CrossTenant->>KnowledgeReg: get(kind) → sensitivity check per kind
-    KnowledgeReg-->>CrossTenant: Only org_shared sensitivity eligible for cross-tenant read
+    Note over CrossTenant: ACL — actor_role must be tenant_admin/org_admin (else ACLRejected)
+    Note over CrossTenant: ACL — every tenant_id's org (parse_tenant_id) must match caller's org
 
-    loop For each tenant under org: acme:production, acme:staging
-        CrossTenant->>Federation: federated_get_all(tenant_id, agent_name)
-        Federation->>Tenants: Fetch tenant memories (org_shared only — ACL enforced)
-        Federation->>OrgTrunk: Fetch org trunk memories
-        Federation-->>CrossTenant: Tenant-scoped candidates
+    loop For each tenant_id in tenant_ids
+        CrossTenant->>Federation: federated_get_all(tenant_id, agent_name_filter or "_promoted")
+        Federation->>Tenants: get_all_memories(tenant_id, agent_name)
+        Federation->>OrgTrunk: get_all_memories(org_trunk_tenant_id(tenant_id), agent_name)
+        Federation-->>CrossTenant: Dedup'd rows (tenant overlay wins)
+        CrossTenant->>CrossTenant: Filter rows to metadata.subject_key == input.subject_key
+        CrossTenant->>CrossTenant: Build TenantViewOut(tenant_id, matching_memory_ids, excerpts, origin_tags)
     end
 
-    CrossTenant->>CrossTenant: Compare memories by subject_key across tenants
-    CrossTenant->>CrossTenant: Detect divergences (same subject, different content)
-    CrossTenant->>CrossTenant: Synthesize comparison result
-
-    Note over CrossTenant,OrgTrunk: Result write to org trunk is admin-gated
-    CrossTenant->>Federation: promote_to_org_trunk(comparison_result, actor_role=ORG_ADMIN)
-    Federation->>KnowledgeReg: validate sensitivity + actor authority
-    Federation->>OrgTrunk: Write comparison_result memory (promoted_from_tenant=org_admin)
-    OrgTrunk-->>CrossTenant: Promoted
-
-    CrossTenant-->>Runtime: Comparison result + org trunk write confirmation
+    CrossTenant->>CrossTenant: Count distinct content signatures across all tenant_views<br/>(1 == all tenants agree)
+    CrossTenant-->>Route: CrossTenantComparisonOutput(subject_key, tenant_views, distinct_signatures_count)
+    Route-->>Runtime: 200 OK (or 403 on ACLRejected)
     Runtime-->>OrgAdmin: Cross-tenant comparison report
 ```
 
@@ -989,7 +1013,7 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 2. **Schema-Per-Tenant**: Naming convention with `_tenant_id` suffix managed by cogniverse_vespa; includes per-tenant `provenance_<tenant>` schema for citation graph BFS walks
 3. **Data Flow**: Tenant-specific routing from ingestion to search through layered architecture
 4. **Phoenix Projects**: Per-tenant observability via cogniverse_telemetry_phoenix plugin
-5. **Memory Isolation**: User ID prefixes and tenant-specific schemas via cogniverse_core; full Knowledge Subsystem (provenance, contradiction, trust, federation, pinning, lifecycle)
+5. **Memory Isolation**: Tenant-specific `agent_memories_<tenant>` schemas plus `user_id=tenant_id`/`agent_id=agent_name` partitioning via cogniverse_core; full Knowledge Subsystem (provenance, contradiction, trust, federation, pinning, lifecycle)
 6. **Lifecycle Management**: Schema-driven lifecycle (KnowledgeSchema.retention → cleanup_hook); pinned memories skipped by LifecycleScheduler; org_admin pins survive
 7. **Federation**: Org trunk (`<org>:_org_trunk`) + tenant overlays; tenant overlay wins on subject_key collision; admin-gated promotion to trunk
 8. **Cross-Tenant Comparison**: CrossTenantComparisonAgent fans out across org tenants with sensitivity=org_shared ACL enforcement; result writes to org trunk admin-gated
@@ -1000,7 +1024,7 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 
 - **Project Isolation**: Each tenant has dedicated Phoenix project (Implementation Layer Plugin)
 
-- **Memory Isolation**: User IDs prefixed with tenant_id (Core Layer) with per-kind KnowledgeSchema policies (retention, sensitivity, pinnable_by, contradiction_policy, default_trust)
+- **Memory Isolation**: Mem0 `user_id=tenant_id`, `agent_id=agent_name` (Core Layer) with per-kind KnowledgeSchema policies (retention, sensitivity, pinnable_by, contradiction_policy, default_trust)
 
 - **No Cross-Tenant Access**: Firewall at every layer — FederationService only reads from caller's tenant + that tenant's org trunk; no cross-org leakage
 
@@ -1018,13 +1042,13 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 
 - Phoenix projects: `cogniverse-{tenant_id}-{service}` (cogniverse_telemetry_phoenix)
 
-- Memory user IDs: `{tenant_id}_{user_id}` (cogniverse_core)
+- Memory partitioning: `user_id={tenant_id}`, `agent_id={agent_name}` (cogniverse_core) — no per-end-user id in `Mem0MemoryManager` today
 
 **Layered Architecture Integration:**
 
 - **Foundation Layer**: Provides TenantConfig (per-tenant) and SystemConfig (global, one per deployment), TelemetryManager base
 
-- **Core Layer**: Full Knowledge Subsystem — KnowledgeRegistry, ProvenanceStore, ContradictionDetector, TrustRanker, FederationService, PinService, LifecycleScheduler
+- **Core Layer**: Full Knowledge Subsystem — KnowledgeRegistry, ProvenanceStore, ContradictionDetector, `trust.py` (compute_initial_trust / rank_with_trust), FederationService, PinService, LifecycleScheduler
 
 - **Implementation Layer**: Vespa backend applies tenant suffixes; 9 knowledge agents (MultiDocumentSynthesis, KGTraversal, CrossTenantComparison, ContradictionReconciliation, CitationTracing, TemporalReasoning, FederatedQuery, KnowledgeSummarization, AuditExplanation)
 

@@ -245,69 +245,22 @@ kubectl get namespace -L istio-injection
 
 ### Step 5: Deploy Phoenix with OTLP Support (if not already deployed)
 
-**IMPORTANT**: The default Helm chart for Phoenix only exposes port 6006 (HTTP). For Istio tracing to work, you need OTLP port 4317 exposed.
+The `charts/cogniverse/templates/all-resources.yaml` Phoenix `Service` and `StatefulSet` already expose both ports by default — no chart modification is needed:
 
-**Option A: Modify Helm chart values** (recommended):
+- `http` — `6006` (`.Values.phoenix.service.port`, Phoenix UI/API)
+- `otlp-grpc` — `4317` (hardcoded container port, used for Istio tracing)
 
-You need to modify `charts/cogniverse/values.yaml` to add OTLP port. Change the Phoenix service configuration from:
-
-```yaml
-phoenix:
-  service:
-    type: ClusterIP
-    port: 6006
-    annotations: {}
-```
-
-To support multiple ports:
-
-```yaml
-phoenix:
-  service:
-    type: ClusterIP
-    ports:
-      http: 6006
-      otlpGrpc: 4317
-    annotations: {}
-```
-
-Then modify `charts/cogniverse/templates/all-resources.yaml` Phoenix Service section to expose both ports:
-
-```yaml
-spec:
-  type: {{ .Values.phoenix.service.type }}
-  ports:
-  - port: {{ .Values.phoenix.service.ports.http }}
-    targetPort: http
-    protocol: TCP
-    name: http
-  - port: {{ .Values.phoenix.service.ports.otlpGrpc }}
-    targetPort: otlp-grpc
-    protocol: TCP
-    name: otlp-grpc
-```
-
-And add the OTLP container port to the Phoenix StatefulSet:
-
-```yaml
-ports:
-- name: http
-  containerPort: 6006
-- name: otlp-grpc
-  containerPort: 4317
-```
-
-After modifications, install/upgrade:
+**Option A: Deploy via Helm** (recommended):
 
 ```bash
-# Install/upgrade with OTLP support
+# Install/upgrade Phoenix (OTLP port ships enabled by default)
 helm upgrade --install cogniverse ./charts/cogniverse
 
 # Verify Phoenix service has both ports
 kubectl get svc cogniverse-phoenix -o yaml | grep -A 10 "ports:"
 ```
 
-**Option B: Manual deployment** (for testing only):
+**Option B: Manual deployment** (for testing only, without the Helm chart):
 
 ```bash
 # Create standalone Phoenix deployment with OTLP support
@@ -414,7 +367,7 @@ kubectl get pods -n default
 # cogniverse-dashboard-xxxxx-xxxxx        2/2     Running   0          1m
 # cogniverse-vespa-0                      2/2     Running   0          1m
 # cogniverse-phoenix-0                    2/2     Running   0          1m
-# cogniverse-ollama-0                     2/2     Running   0          1m
+# cogniverse-llm-0                        2/2     Running   0          1m
 ```
 
 **Explanation of 2/2 READY:**
@@ -577,7 +530,7 @@ flowchart TD
 
 - ✅ **Zero application code changes** needed
 
-- ✅ Each cluster has separate Vespa, Phoenix, Ollama instances
+- ✅ Each cluster has separate Vespa, Phoenix, LLM instances
 
 ### Load Balancer Configuration
 

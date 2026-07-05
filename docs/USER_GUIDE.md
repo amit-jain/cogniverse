@@ -140,8 +140,10 @@ The `cogniverse` CLI manages the full stack:
 | `cogniverse graph search <query>` | Search the knowledge graph |
 | `cogniverse graph neighbors <node>` | Find related nodes |
 | `cogniverse graph path <src> <dst>` | Find path between nodes |
-| `cogniverse sandbox sync` | Sync code to Deno sandbox |
-| `cogniverse sandbox status` | Check sandbox state |
+| `cogniverse sandbox sync` | Sync OpenShell gateway mTLS certs into the cluster (after rotation) |
+| `cogniverse sandbox status` | Show OpenShell gateway status and cluster sync state |
+| `cogniverse secrets sync` | Re-sync the `hf-token` Secret from local HuggingFace credentials |
+| `cogniverse admin reconcile-orphans` | Find (and, with `--confirm`, drop) Vespa schema orphans not in the schema registry |
 
 ---
 
@@ -402,13 +404,16 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 
 **Ingestion Options:**
 
-- `--video_dir`: Directory containing videos
+- `--video_dir`: Directory containing content files
+- `--content-dir`: Alias for `--video_dir`
+- `--media-root-uri`: Media root URI (e.g. `s3://corpus/`, `pvc://media/`) for non-filesystem sources; overrides `--video_dir` / `--content-dir` when set
+- `--content-type`: Content type to ingest (choices: video, image, audio, document; default: video)
 - `--profile`: Embedding profile(s) - can specify multiple space-separated values
 - `--tenant-id`: Tenant ID for multi-tenancy (required — no default)
 - `--backend`: Backend to use (choices: byaldi, vespa; default: vespa)
-- `--max-concurrent`: Maximum concurrent videos to process (default: 3)
+- `--max-concurrent`: Maximum concurrent items to process (default: 3)
 - `--output_dir`: Output directory for processed data
-- `--max-frames`: Maximum frames per video
+- `--max-frames`: Maximum frames per video / images per batch
 - `--test-mode`: Use test mode with limited frames
 - `--debug`: Enable debug mode
 
@@ -546,33 +551,19 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.p
 
 #### Custom Evaluation Dataset
 
-Create your own evaluation dataset:
+Create your own evaluation dataset as a CSV file with `query`, `expected_videos` (comma-separated video IDs), and an optional `category` column:
 
-```python
-# evaluation_dataset.json
-{
-  "queries": [
-    {
-      "query_id": "q1",
-      "query_text": "machine learning basics",
-      "relevant_videos": ["video_123", "video_456"],
-      "relevance_scores": [1.0, 0.8]
-    },
-    {
-      "query_id": "q2",
-      "query_text": "Python tutorial for beginners",
-      "relevant_videos": ["video_789"],
-      "relevance_scores": [1.0]
-    }
-  ]
-}
+```text
+query,expected_videos,category
+machine learning basics,"video_123,video_456",general
+Python tutorial for beginners,video_789,general
 ```
 
 ```bash
 # Run evaluation on custom dataset
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
   --tenant-id acme:acme \
-  --csv-path evaluation_dataset.json \
+  --csv-path evaluation_dataset.csv \
   --profiles video_colpali_smol500_mv_frame
 ```
 
@@ -625,8 +616,11 @@ deps = SearchAgentDeps(profile="video_colpali_smol500_mv_frame")
 agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
 
 # Each tenant_id produces isolated results:
-# - Vespa documents are filtered by a tenant-scoped schema:
-#   video_colpali_smol500_mv_frame_acme_corp
+# - Vespa documents are filtered by a tenant-scoped schema. A bare tenant_id
+#   like "acme_corp" is canonicalized to "acme_corp:acme_corp" (org:tenant),
+#   giving the schema name video_colpali_smol500_mv_frame_acme_corp_acme_corp
+#   (use "org:tenant" form, e.g. "acme_corp:production", to avoid the
+#   doubled suffix).
 # - Memory: separate Mem0 namespaces
 results_acme = agent.search_by_text(query="tutorial", tenant_id="acme_corp", top_k=10)
 results_startup = agent.search_by_text(query="tutorial", tenant_id="startup_inc", top_k=10)
@@ -737,7 +731,14 @@ Available optimization modes:
 | `profile` | Profile performance ranking |
 | `workflow` | Full end-to-end optimization pipeline |
 | `triggered` | On-demand when quality monitor fires |
-| `cleanup` | Purge old optimization logs |
+| `simba` | Query enhancement (SIMBA), from `cogniverse.query_enhancement` spans |
+| `online-routing-eval` | Scores `cogniverse.routing` spans (routing_outcome + confidence) without retraining |
+| `synthetic` | Generates synthetic training data for one or more optimizer types (`simba`, `profile`, `workflow` by default) |
+| `rollback` | Restores an agent's active prompts/demos artifact to a previously-snapshotted version |
+| `ab-compare` | Runs an RLM A/B comparison over a Phoenix queries dataset |
+| `egress-netpol` | Emits Kubernetes `NetworkPolicy` CRDs from per-agent policy YAMLs (no `--tenant-id`) |
+| `monthly-reports` | Generates the monthly usage + performance report (no `--tenant-id`) |
+| `cleanup` | Purge old optimization logs and expired memories (no `--tenant-id`) |
 
 ### Batch Processing
 
@@ -1034,7 +1035,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 async def main():
     config_manager = create_default_config_manager()
-    deps = DetailedReportDeps(tenant_id="default")
+    deps = DetailedReportDeps()  # deps are tenant-agnostic; tenant_id is per-request
     agent = DetailedReportAgent(deps=deps, config_manager=config_manager)
 
     result = await agent.process(

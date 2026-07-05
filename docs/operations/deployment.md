@@ -19,23 +19,28 @@ This guide covers verified, implemented deployment patterns:
 
 ### Runtime and Agents
 The deployed system runs a single **Runtime** process (port 8000) that
-exposes REST + an in-process A2A JSON-RPC server (`/a2a`). Agent
-implementations (`orchestrator_agent`, `gateway_agent`, `search_agent`,
-`summarizer_agent`, `detailed_report_agent`, `entity_extraction_agent`,
-`query_enhancement_agent`, and others) are DSPy-based classes registered
+exposes REST + an in-process A2A JSON-RPC server (`/a2a`). All **23**
+agent classes registered in `configs/config.json` `agents.*` (14
+enabled by default, 9 knowledge/federation agents shipped disabled —
+see the full roster table below) are DSPy-based classes registered
 with an in-process `AgentRegistry` and dispatched directly by the
 Runtime — they are not separate deployments or A2A services on their
 own ports. `gateway_agent` and `orchestrator_agent` together form the
 routing entry point that plans and hands off to the specialized agents.
 
-`search_agent.py`, `summarizer_agent.py`, and `detailed_report_agent.py`
-each have a `--port` CLI default for running that one agent standalone
-during development (8002, 8003, 8004 respectively) — this is not how
-the chart deploys the system. Other agent classes (`orchestrator_agent`,
-`gateway_agent`, `entity_extraction_agent`, `query_enhancement_agent`,
-`profile_selection_agent`) have no standalone entry point at all; their
-constructor `port` parameter is agent-config metadata used by the A2A
-card, not a way to launch them as their own server.
+`search_agent.py`, `summarizer_agent.py`, `detailed_report_agent.py`,
+and `text_analysis_agent.py` each expose their own standalone FastAPI
+app with a `uvicorn.run(...)` call, for running that one agent alone
+during development (default ports 8002, 8003, 8004, 8005
+respectively) — this is not how the chart deploys the system. All
+other agent classes (`orchestrator_agent`, `gateway_agent`,
+`entity_extraction_agent`, `query_enhancement_agent`,
+`profile_selection_agent`, `image_search_agent`,
+`audio_analysis_agent`, `document_agent`, `deep_research_agent`,
+`coding_agent`, and the nine knowledge/federation agents) have no
+standalone entry point at all; a `port` value on their constructor or
+in `configs/config.json` is agent-config metadata used to build the
+A2A card, not a way to launch them as their own server.
 
 ---
 
@@ -91,6 +96,70 @@ flowchart TB
     style OllamaData fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
+The diagram above shows the core dispatch path with a representative
+subset of agents. All 23 registered agent classes are dispatched the
+same way, through the in-process `AgentRegistry` — none of them run as
+separate deployments.
+
+### Complete Agent Roster
+
+`configs/config.json` `agents.*` registers 23 agents. 14 are enabled
+by default; the 9 disabled ones are knowledge-graph and multi-tenant
+federation agents still under active development.
+
+**Generation + Routing Agents**
+
+| Agent | Enabled | Purpose |
+|-------|---------|---------|
+| `gateway_agent` | yes | LLM-free A2A entry point that classifies queries via GLiNER and routes simple ones directly, complex ones to the orchestrator. |
+| `orchestrator_agent` | yes | Autonomous coordinator that plans a multi-agent workflow with DSPy then executes it by calling sub-agents over A2A HTTP. |
+| `summarizer_agent` | yes | A2A summarizer that turns search results into structured summaries with a thinking phase and VLM visual analysis. |
+| `detailed_report_agent` | yes | A2A agent that generates comprehensive detailed reports (executive summary, findings, technical + visual analysis, recommendations) with optional RLM synthesis. |
+| `profile_selection_agent` | yes | Uses DSPy LLM reasoning to pick the optimal backend search profile for a query, with a heuristic fallback. |
+| `query_enhancement_agent` | yes | Expands and rewrites queries with synonyms, context, and RRF variants using DSPy. |
+| `entity_extraction_agent` | yes | Tiered NER agent: fast GLiNER + SpaCy path (no LLM) with a DSPy ChainOfThought fallback. |
+
+**Search & Analysis Agents**
+
+| Agent | Enabled | Purpose |
+|-------|---------|---------|
+| `search_agent` | yes | Multi-modal retrieval agent that searches Vespa across video/image/text/audio/document modalities with DSPy query rewriting and RRF ensemble fusion. |
+| `image_search_agent` | yes | ColPali multi-vector image similarity search against Vespa, with semantic and hybrid (BM25+ColPali) modes and image-to-image lookup. |
+| `document_agent` | yes | Dual-strategy document search: ColPali visual (page-as-image), ColBERT/BM25 text, or hybrid, with keyword-based auto strategy selection. |
+| `text_analysis_agent` | yes | Runtime-configurable DSPy text analysis agent (sentiment/summary/entities) with per-tenant persisted config and its own FastAPI `/analyze` endpoint. |
+| `audio_analysis_agent` | yes | Whisper transcription + Vespa audio search agent supporting transcript (BM25), acoustic (CLAP nearest-neighbor), and hybrid modes. |
+
+**Research + Coding Agents**
+
+| Agent | Enabled | Purpose |
+|-------|---------|---------|
+| `deep_research_agent` | yes | Multi-step research agent that decomposes a query, iteratively gathers evidence via parallel searches, and synthesizes a cited report. |
+| `coding_agent` | yes | Iterative coding agent that searches code semantically, plans and generates code with DSPy, and runs it in an OpenShell sandbox, looping on failures. |
+
+**Knowledge-Graph & Reasoning Agents** (all disabled by default except `audit_explanation_agent`)
+
+| Agent | Enabled | Purpose |
+|-------|---------|---------|
+| `citation_tracing_agent` | no | Read-only agent that walks a memory's provenance chain back to its primary sources. |
+| `contradiction_reconciliation_agent` | no | Resolves conflict sets by applying a knowledge schema's contradiction policy over member memories. |
+| `multi_document_synthesis_agent` | no | Synthesises a coherent answer across N source documents while preserving the citation graph. |
+| `kg_traversal_agent` | no | Structurally walks `kg_node`/`entity_fact` and `kg_edge` memories from a seed entity into a node+edge graph view. |
+| `temporal_reasoning_agent` | no | Compares a subject's knowledge across explicit time windows using `provenance.written_at`. |
+| `knowledge_summarization_agent` | no | Distills a knowledge subgraph into a structured, citation-aware summary with optional admin-gated promotion to the org trunk. |
+| `audit_explanation_agent` | yes | Explains why a given answer memory was produced — its derivation chain, per-source trust, and active contradictions. |
+
+**Multi-Tenant + Federation Agents** (disabled by default)
+
+| Agent | Enabled | Purpose |
+|-------|---------|---------|
+| `cross_tenant_comparison_agent` | no | Read-only A2A agent that compares per-tenant views of one subject across all tenants in an org via the federation read path. |
+| `federated_query_agent` | no | Read-only A2A agent that answers a free-text query by aggregating federated reads across multiple tenants in the same org, with an optional RLM summariser. |
+
+None of the 23 agents run on their own port in a deployed cluster —
+they are all dispatched in-process by the Runtime. See
+[Runtime and Agents](#runtime-and-agents) above for which ones also
+expose a standalone dev-mode FastAPI server.
+
 ---
 
 ## Local Development
@@ -145,20 +214,22 @@ curl http://localhost:11434/api/tags         # Ollama
 | **Ollama** | 11434 | HTTP | LLM inference API |
 | **Runtime** | 8000 | HTTP | REST API + in-process A2A JSON-RPC entry point |
 
-The agents dispatched by the Runtime (`orchestrator_agent`,
-`gateway_agent`, `search_agent`, `summarizer_agent`,
-`detailed_report_agent`, `entity_extraction_agent`,
-`query_enhancement_agent`, `profile_selection_agent`, and others) do not
-have their own ports in a deployed cluster. Only `search_agent.py`,
-`summarizer_agent.py`, and `detailed_report_agent.py` define a
-standalone-only `--port` CLI default for running that one agent on its
-own during development (8002, 8003, and 8004 respectively). The other
-agent classes have no standalone entry point — `orchestrator_agent`'s
-constructor defaults `port=8013`, `gateway_agent`'s `port=8014`,
-`entity_extraction_agent`'s `port=8010`, `profile_selection_agent`'s
-`port=8011`, and `query_enhancement_agent`'s `port=8012`, but these are
-only agent-config metadata (used to build the A2A card), not a way to
-run the agent as its own server.
+None of the 23 agents registered under `configs/config.json`
+`agents.*` (see [Complete Agent Roster](#complete-agent-roster) above)
+have their own port in a deployed cluster — all are dispatched
+in-process by the Runtime. Only `search_agent.py`, `summarizer_agent.py`,
+`detailed_report_agent.py`, and `text_analysis_agent.py` define their
+own standalone FastAPI app + `uvicorn.run(...)` for running that one
+agent on its own during development (default ports 8002, 8003, 8004,
+and 8005 respectively). All other agent classes have no standalone
+entry point — `orchestrator_agent`'s constructor defaults `port=8013`,
+`gateway_agent`'s `port=8014`, `entity_extraction_agent`'s `port=8010`,
+`profile_selection_agent`'s `port=8011`, and `query_enhancement_agent`'s
+`port=8012`, but these are only agent-config metadata (used to build
+the A2A card), not a way to run the agent as its own server. The nine
+knowledge-graph/federation agent classes work the same way, using
+their own `_DEFAULT_PORT` module constants (8019–8027, one port per
+agent in roster order) purely as A2A card metadata.
 
 ### Environment Configuration
 
@@ -389,7 +460,10 @@ registry = SchemaRegistry(
 tenants = ["acme_corp", "globex_inc"]
 
 for tenant_id in tenants:
-    # Get all video schemas (exclude metadata schemas)
+    # This example deploys only the video content schemas; the same
+    # pattern applies to any other profile schema (image_colpali_mv,
+    # audio_content, document_text, document_visual, lateon_mv,
+    # code_lateon_mv) by adjusting the filter below.
     all_schemas = schema_loader.list_available_schemas()
     video_schemas = [
         s for s in all_schemas
@@ -416,6 +490,8 @@ for tenant in acme:production globex:staging; do
   curl -sfX POST "$RUNTIME_URL/admin/tenants" \
     -H 'Content-Type: application/json' \
     -d "{\"tenant_id\": \"$tenant\"}"
+  # Add every content profile the tenant needs, e.g.:
+  #   video_colpali_smol500_mv_frame image_colpali_mv document_text_semantic
   for profile in video_colpali_smol500_mv_frame; do
     curl -sfX POST "$RUNTIME_URL/admin/profiles/$profile/deploy" \
       -H 'Content-Type: application/json' \
@@ -434,30 +510,60 @@ route that preserves peer-tenant schemas through redeploys.
 
 ### Available Schemas
 
-The `configs/schemas/` directory contains multiple schema types:
-- Video schemas: `video_*_schema.json` (for video search)
-- Metadata schemas: `organization_metadata_schema.json`, `tenant_metadata_schema.json`, `config_metadata_schema.json`, `adapter_registry_schema.json`
-- Other schemas: `agent_memories_schema.json`, `ranking_strategies.json`
+The `configs/schemas/` directory (21 files) breaks down into three
+categories:
 
-The schema names inside the JSON files do not include the `_schema.json` suffix.
+- **Content/profile schemas** — one per `configs/config.json`
+  `profiles.*` entry, deployed on demand through
+  `POST /admin/profiles/{profile}/deploy` and always tenant-suffixed.
+- **Knowledge/memory schemas** — `agent_memories`, `knowledge_graph`,
+  `provenance`, `wiki_pages`. Also tenant-suffixed, but deployed
+  automatically on tenant bootstrap (`memory_init.py`,
+  `ingestion_worker/worker.py`) rather than through the profile-deploy
+  route.
+- **Cluster-wide metadata schemas** — `organization_metadata_schema.json`,
+  `tenant_metadata_schema.json`, `config_metadata_schema.json`,
+  `adapter_registry_schema.json`. Never tenant-suffixed; one instance
+  serves the whole cluster.
 
-| Schema File | Schema Name (in JSON) | Embedding Model | Modality | Dimensions | Tenant Suffix |
-|-------------|----------------------|----------------|----------|------------|---------------|
-| `video_colpali_smol500_mv_frame_schema.json` | `video_colpali_smol500_mv_frame` | ColPali SmolVLM 500M | Frame-based | 320 per patch | `_<tenant_id>` |
-| `video_colqwen_omni_mv_chunk_30s_schema.json` | `video_colqwen_omni_mv_chunk_30s` | ColQwen3 Omni | Chunk-based (30s) | 320 per patch | `_<tenant_id>` |
-| `video_videoprism_base_mv_chunk_30s_schema.json` | `video_videoprism_base_mv_chunk_30s` | VideoPrism Base | Chunk-based (30s) | 768 per patch | `_<tenant_id>` |
-| `video_videoprism_large_mv_chunk_30s_schema.json` | `video_videoprism_large_mv_chunk_30s` | VideoPrism Large | Chunk-based (30s) | 1024 per patch | `_<tenant_id>` |
-| `video_videoprism_lvt_base_sv_chunk_6s_schema.json` | `video_videoprism_lvt_base_sv_chunk_6s` | VideoPrism LVT Base | Chunk-based (6s) | 768 | `_<tenant_id>` |
-| `video_videoprism_lvt_large_sv_chunk_6s_schema.json` | `video_videoprism_lvt_large_sv_chunk_6s` | VideoPrism LVT Large | Chunk-based (6s) | 1024 | `_<tenant_id>` |
+`ranking_strategies.json` is not a Vespa schema — it is a
+schema-name-keyed map of ranking-profile definitions consumed by the
+backend at query time.
 
-**Example:** For tenant `acme_corp`:
+The schema names inside the schema JSON files do not include the
+`_schema.json` suffix.
 
-- `video_colpali_smol500_mv_frame_acme_corp`
-- `video_colqwen_omni_mv_chunk_30s_acme_corp`
-- `video_videoprism_base_mv_chunk_30s_acme_corp`
-- `video_videoprism_large_mv_chunk_30s_acme_corp`
-- `video_videoprism_lvt_base_sv_chunk_6s_acme_corp`
-- `video_videoprism_lvt_large_sv_chunk_6s_acme_corp`
+| Schema File | Schema Name (in JSON) | Profile | Embedding Model | Dimensions | Tenant Suffix |
+|-------------|----------------------|---------|-----------------|------------|---------------|
+| `video_colpali_smol500_mv_frame_schema.json` | `video_colpali_smol500_mv_frame` | `video_colpali_smol500_mv_frame` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
+| `video_colqwen_omni_mv_chunk_30s_schema.json` | `video_colqwen_omni_mv_chunk_30s` | `video_colqwen_omni_mv_chunk_30s` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
+| `video_videoprism_base_mv_chunk_30s_schema.json` | `video_videoprism_base_mv_chunk_30s` | `video_videoprism_base_mv_chunk_30s` | videoprism_public_v1_base_hf | 768 per patch | `_<tenant_id>` |
+| `video_videoprism_large_mv_chunk_30s_schema.json` | `video_videoprism_large_mv_chunk_30s` | `video_videoprism_large_mv_chunk_30s` | videoprism_public_v1_large_hf | 1024 per patch | `_<tenant_id>` |
+| `video_videoprism_lvt_base_sv_chunk_6s_schema.json` | `video_videoprism_lvt_base_sv_chunk_6s` | `video_videoprism_lvt_base_sv_chunk_6s` | videoprism_lvt_public_v1_base | 768 | `_<tenant_id>` |
+| `video_videoprism_lvt_large_sv_chunk_6s_schema.json` | `video_videoprism_lvt_large_sv_chunk_6s` | `video_videoprism_lvt_large_sv_chunk_6s` | videoprism_lvt_public_v1_large | 1024 | `_<tenant_id>` |
+| `image_colpali_mv_schema.json` | `image_colpali_mv` | `image_colpali_mv` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
+| `audio_content_schema.json` | `audio_content` | `audio_clap_semantic` | laion/clap-htsat-unfused | 128 per token + 512 dense | `_<tenant_id>` |
+| `document_text_schema.json` | `document_text` | `document_text_semantic` | lightonai/LateOn | 128 per token | `_<tenant_id>` |
+| `document_visual_schema.json` | `document_visual` | `document_visual_colpali` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
+| `lateon_mv_schema.json` | `lateon_mv` | `lateon_mv` | lightonai/LateOn | 128 per token | `_<tenant_id>` |
+| `code_lateon_mv_schema.json` | `code_lateon_mv` | `code_lateon_mv` | lightonai/LateOn-Code-edge | 48 per token | `_<tenant_id>` |
+
+Knowledge/memory schemas (tenant-suffixed, bootstrap-deployed — no
+`profiles.*` entry):
+
+| Schema File | Schema Name (in JSON) | Deployed by |
+|-------------|----------------------|-------------|
+| `agent_memories_schema.json` | `agent_memories` | `memory_init.py`, `MemoryManager` |
+| `knowledge_graph_schema.json` | `knowledge_graph` | `main.py` tenant bootstrap, `ingestion_worker/worker.py` |
+| `provenance_schema.json` | `provenance` | `provenance_store.py` |
+| `wiki_pages_schema.json` | `wiki_pages` | `main.py` tenant bootstrap |
+
+**Example:** For tenant `acme_corp`, content-schema deployment produces
+`video_colpali_smol500_mv_frame_acme_corp`,
+`image_colpali_mv_acme_corp`, `document_text_acme_corp`, and so on for
+every profile deployed for that tenant; bootstrap deployment produces
+`agent_memories_acme_corp`, `knowledge_graph_acme_corp`,
+`provenance_acme_corp`, and `wiki_pages_acme_corp`.
 
 Each tenant gets completely isolated schemas with their own documents and indexes.
 
@@ -472,10 +578,10 @@ Each tenant gets completely isolated schemas with their own documents and indexe
 open http://localhost:6006
 
 # View tenant-specific traces (each tenant has isolated project)
-# Projects:
-#   - acme_corp_project
-#   - globex_inc_project
-#   - default_project
+# Project names follow "cogniverse-{tenant_id}" (TelemetryConfig
+# .get_project_name; there is no "default" tenant/project):
+#   - cogniverse-acme_corp
+#   - cogniverse-globex_inc
 ```
 
 ### Phoenix Telemetry Integration
@@ -508,10 +614,10 @@ Phoenix telemetry is automatically enabled with **per-tenant project isolation**
 ```json
 {
   "tenant_id": "acme_corp",
-  "schema_name": "video_colpali_mv_frame_acme_corp",
-  "phoenix_project": "acme_corp_project",
+  "schema_name": "video_colpali_smol500_mv_frame_acme_corp",
+  "phoenix_project": "cogniverse-acme_corp",
   "query": "machine learning tutorial",
-  "agent_type": "VideoSearchAgent"
+  "agent_type": "search"
 }
 ```
 

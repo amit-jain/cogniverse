@@ -58,7 +58,9 @@ libs/evaluation/cogniverse_evaluation/
 3. [Core Components](#core-components)
 4. [Usage Examples](#usage-examples)
 5. [Production Considerations](#production-considerations)
-6. [Testing](#testing)
+6. [Inspect AI Integration](#inspect-ai-integration)
+7. [Plugin System](#plugin-system)
+8. [Testing](#testing)
 
 ---
 
@@ -114,6 +116,26 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
    - Session-level outcome classification (Success/Partial/Failure)
    - Integration with Phoenix session tracking
 
+7. **OnlineEvaluator**
+   - Real-time scoring of `cogniverse.routing` spans as they are produced
+   - Configurable sampling rate to bound evaluation overhead
+   - Dispatches `routing_outcome` and `confidence_calibration` evaluators
+   - Persists scores as telemetry annotations for drift detection
+
+8. **QualityMonitor**
+   - Continuous, scheduled quality monitoring across all agents (search, summary, report, gateway)
+   - Dual strategy: golden-set evaluation (MRR/nDCG/P@5) + live-traffic LLM-judge sampling
+   - Threshold-based verdicts (`SKIP` / `OPTIMIZE` / `FULL`) that trigger Argo optimization workflows
+   - Composes `SpanEvaluator`, `GoldenDatasetEvaluator`, `LLMJudgeCore`, and `PhoenixDatasetStore` rather than reimplementing them
+
+9. **Evaluation Provider System**
+   - Provider-agnostic abstraction (`EvaluationProvider`, `AnalyticsProvider`, `MonitoringProvider`) for experiment tracking, dataset management, and analytics
+   - Entry-point based discovery (`cogniverse.evaluation.providers`) with tenant-scoped caching, mirroring the telemetry provider registry
+   - Phoenix is the only concrete implementation shipped today (`PhoenixEvaluationProvider`)
+
+10. **CLI**
+    - `cogniverse-eval` unified command group (`evaluate`, `create-dataset`, `list-traces`, `test`) for running evaluations and managing datasets from the shell
+
 ### Dependencies
 
 **Internal (from pyproject.toml):**
@@ -124,17 +146,17 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 
 **External:**
 
-- `inspect_ai>=0.3.0`: Evaluation framework
+- `inspect-ai==0.3.205`: Evaluation framework
 
-- `pandas>=2.0.0`: Data analysis
+- `pandas==2.3.3`: Data analysis
 
-- `numpy>=1.24.0`: Numerical computations
+- `numpy==2.4.4`: Numerical computations
 
-- `scikit-learn>=1.3.0`: Statistical methods
+- `scikit-learn==1.8.0`: Statistical methods
 
-- `pillow>=10.0.0`: Image processing
+- `pillow==12.2.0`: Image processing
 
-**Note:** Phoenix, Plotly, and Tabulate are optional dependencies provided by other packages in the workspace.
+**Note:** Phoenix, Plotly, and Tabulate are optional dependencies provided by other packages in the workspace (e.g. `cogniverse-telemetry-phoenix` supplies the `PhoenixEvaluationProvider` and `PhoenixAnalytics`).
 
 ---
 
@@ -527,86 +549,49 @@ flowchart TB
 sequenceDiagram
     participant User
     participant SpanEval as Span Evaluator
-    participant Phoenix as Phoenix Client
-    participant RefFree as Reference-Free Evaluators
-    participant Golden as Golden Dataset Evaluator
-    participant Upload as Phoenix Upload
+    participant Phoenix as Telemetry Provider
+    participant Eval as Evaluator (per name)
 
-    User->>SpanEval: run_evaluation_pipeline(hours=6)
+    User->>SpanEval: run_evaluation_pipeline(hours=6, incremental=True)
 
     Note over SpanEval: Step 1: Fetch Recent Spans
     SpanEval->>Phoenix: get_recent_spans(hours, operation_name, limit)
     activate Phoenix
-    Phoenix->>Phoenix: Query spans by time range
-    Phoenix->>Phoenix: Filter by operation name
-    Phoenix->>Phoenix: Apply limit
     Phoenix-->>SpanEval: spans_dataframe
     deactivate Phoenix
 
-    Note over SpanEval: Step 2: Evaluate Spans
-    SpanEval->>SpanEval: Determine evaluators to run
+    Note over SpanEval: Step 2: Incremental Gate (if incremental=True)
+    SpanEval->>Phoenix: _already_evaluated_span_ids(evaluator_names)
+    activate Phoenix
+    Phoenix->>Phoenix: get_spans + annotations.get_annotations per evaluator
+    Phoenix-->>SpanEval: skip_span_ids: {evaluator_name: {span_id,...}}
+    deactivate Phoenix
 
-    par Parallel Evaluation
-        SpanEval->>RefFree: evaluate_relevance(spans_df)
-        activate RefFree
-        loop For each span
-            RefFree->>RefFree: Extract query and results
-            RefFree->>RefFree: Calculate relevance score
-            RefFree->>RefFree: Assign label (relevant/not_relevant)
+    Note over SpanEval: Step 3: evaluate_spans(spans_df, evaluator_names, skip_span_ids)
+    loop For each evaluator_name in evaluator_names
+        SpanEval->>SpanEval: Resolve evaluator (golden_evaluator or reference_free_evaluators[name])
+        loop For each span not in skip_span_ids[evaluator_name]
+            SpanEval->>Eval: evaluate(input=query, output=results, metadata=attributes)
+            activate Eval
+            Eval-->>SpanEval: EvaluationResult(score, label, explanation)
+            deactivate Eval
         end
-        RefFree-->>SpanEval: relevance_results_df
-        deactivate RefFree
-
-        and
-
-        SpanEval->>RefFree: evaluate_diversity(spans_df)
-        activate RefFree
-        loop For each span
-            RefFree->>RefFree: Extract results
-            RefFree->>RefFree: Calculate diversity score
-            RefFree->>RefFree: Assign label (high/medium/low)
-        end
-        RefFree-->>SpanEval: diversity_results_df
-        deactivate RefFree
-
-        and
-
-        SpanEval->>Golden: evaluate_golden_dataset(spans_df)
-        activate Golden
-        loop For each span
-            Golden->>Golden: Check if in golden dataset
-            alt In golden dataset
-                Golden->>Golden: Compare with gold label
-                Golden->>Golden: Calculate match score
-                Golden->>Golden: Assign label (exact/partial/no match)
-            else Not in golden dataset
-                Golden->>Golden: Skip span
-            end
-        end
-        Golden-->>SpanEval: golden_results_df
-        deactivate Golden
+        SpanEval->>SpanEval: Collect results into evaluator_name -> DataFrame
     end
 
-    Note over SpanEval: Step 3: Upload Evaluations
-    SpanEval->>Upload: upload_evaluations(eval_results)
-    activate Upload
-
-    loop For each evaluator
-        Upload->>Upload: Format evaluation results
-        Upload->>Upload: Create annotation objects
-        Upload->>Phoenix: Upload annotations
-        Phoenix-->>Upload: Upload confirmation
+    Note over SpanEval: Step 4: Upload Evaluations (if upload_evaluations=True)
+    SpanEval->>Phoenix: upload_evaluations(eval_results)
+    activate Phoenix
+    loop For each evaluator's results DataFrame
+        Phoenix->>Phoenix: Create + upload annotation per span
     end
+    Phoenix-->>SpanEval: Upload complete
+    deactivate Phoenix
 
-    Upload-->>SpanEval: Upload complete
-    deactivate Upload
+    Note over SpanEval: Step 5: Generate Summary
+    SpanEval->>SpanEval: Aggregate mean_score / score_distribution per evaluator
 
-    Note over SpanEval: Step 4: Generate Summary
-    SpanEval->>SpanEval: Calculate summary statistics
-    SpanEval->>SpanEval: Aggregate scores by evaluator
-    SpanEval->>SpanEval: Count labels distribution
-
-    SpanEval-->>User: {<br/>num_spans_evaluated: 500,<br/>evaluators_run: ["relevance", "diversity", "golden_dataset"],<br/>results: {<br/>  relevance: {mean_score: 0.78, ...},<br/>  diversity: {mean_score: 0.85, ...},<br/>  golden_dataset: {mean_score: 0.91, ...}<br/>}<br/>}
+    SpanEval-->>User: {<br/>num_spans_retrieved: 500,<br/>num_skipped: N,<br/>incremental: true,<br/>evaluators_run: [...],<br/>results: {<br/>  relevance: {num_evaluated, num_skipped, mean_score, score_distribution},<br/>  diversity: {...},<br/>  golden_dataset: {...}<br/>}<br/>}
 
     Note over User: View results in Phoenix UI
 ```
@@ -615,7 +600,9 @@ sequenceDiagram
 
 - Retrospective evaluation of existing spans
 
-- Multiple evaluator support (reference-free, golden dataset)
+- Multiple evaluator support (reference-free, golden dataset) — evaluated sequentially per evaluator name, not in parallel
+
+- Incremental mode skips (span, evaluator) pairs that already carry that evaluator's annotation
 
 - Automatic upload to Phoenix for visualization
 
@@ -1030,7 +1017,7 @@ metadata: dict[str, Any]
 
 **Main Methods:**
 
-#### `get_traces(start_time: datetime | None = None, end_time: datetime | None = None, operation_filter: str | None = None, limit: int = 10000) -> list[TraceMetrics]`
+#### `get_traces(start_time: datetime | None = None, end_time: datetime | None = None, operation_filter: str | None = None, limit: int = 10000, project_name: str | None = None) -> list[TraceMetrics]`
 Fetch traces from Phoenix with filters.
 
 **Parameters:**
@@ -1042,6 +1029,8 @@ Fetch traces from Phoenix with filters.
 - `operation_filter`: Regex filter for operation name
 
 - `limit`: Max traces to fetch
+
+- `project_name`: Phoenix project name (e.g. `cogniverse-<tenant_id>`)
 
 **Returns:** List of TraceMetrics objects
 
@@ -1213,24 +1202,30 @@ print(f"Retrieved {len(spans_df)} search spans")
 
 ---
 
-#### `async evaluate_spans(spans_df: pd.DataFrame, evaluator_names: list[str] | None = None) -> dict[str, pd.DataFrame]`
+#### `async evaluate_spans(spans_df: pd.DataFrame, evaluator_names: list[str] | None = None, skip_span_ids: dict[str, set[str]] | None = None) -> dict[str, pd.DataFrame]`
 Evaluate spans using specified evaluators.
 
 **Parameters:**
 
 - `spans_df`: DataFrame of spans to evaluate
 
-- `evaluator_names`: List of evaluator names (None = all)
+- `evaluator_names`: List of evaluator names (None = all — reference-free evaluators plus `golden_dataset`)
+
+- `skip_span_ids`: Optional `{evaluator_name: {span_id, ...}}` of (span, evaluator) pairs to skip (used by `run_evaluation_pipeline`'s incremental mode)
 
 **Returns:** Dict mapping evaluator name to results DataFrame
 
-**Available Evaluators:**
+**Available Evaluators** (from `create_reference_free_evaluators()` plus `golden_dataset`):
 
-- `relevance`: Relevance quality metric
+- `relevance`: `QueryResultRelevanceEvaluator` — heuristic relevance from result scores
 
-- `diversity`: Result diversity metric
+- `diversity`: `ResultDiversityEvaluator` — unique-video ratio
 
-- `golden_dataset`: Golden dataset comparison
+- `temporal_coverage`: `TemporalCoverageEvaluator` — unique time-segment coverage for video results
+
+- `composite`: `CompositeEvaluator` — weighted combination of relevance + diversity + temporal_coverage
+
+- `golden_dataset`: `GoldenDatasetEvaluator` — comparison against a golden dataset
 
 **Example:**
 ```python
@@ -1386,22 +1381,37 @@ score, explanation = judge._extract_score_from_response("Score: 8/10. Relevant."
 
 **2. QueryResultRelevanceEvaluator**
 
-Evaluates relevance without LLM (embedding-based).
+Evaluates relevance without an LLM, using a heuristic over each result's
+`relevance_score`/`score` field (no embeddings are computed). `evaluate` is
+`async` and takes `input`/`output`, matching the shared `Evaluator` interface.
 
 ```python
+import asyncio
 from cogniverse_evaluation.evaluators.reference_free import QueryResultRelevanceEvaluator
 
-evaluator = QueryResultRelevanceEvaluator()
+evaluator = QueryResultRelevanceEvaluator(min_score_threshold=0.5)
 
-# Fast embedding-based relevance scoring
-result = evaluator.evaluate(
-    query="machine learning tutorial",
-    retrieved_results=[
-        {"video_id": "vid_001", "title": "ML Basics", "score": 0.95},
-        {"video_id": "vid_002", "title": "Deep Learning", "score": 0.85}
-    ]
-)
+async def score():
+    return await evaluator.evaluate(
+        input="machine learning tutorial",
+        output=[
+            {"video_id": "vid_001", "title": "ML Basics", "score": 0.95},
+            {"video_id": "vid_002", "title": "Deep Learning", "score": 0.85},
+        ],
+    )
+
+result = asyncio.run(score())
+# result.score == 0.90, result.label == "highly_relevant"
 ```
+
+**Sibling reference-free evaluators** (`cogniverse_evaluation.evaluators.reference_free`),
+all returned together by `create_reference_free_evaluators()` under the keys
+`relevance` / `diversity` / `temporal_coverage` / `composite`:
+
+- `ResultDiversityEvaluator` — unique-video ratio (`high_diversity` ≥0.8, `moderate_diversity` ≥0.5, else `low_diversity`); needs ≥2 results.
+- `TemporalCoverageEvaluator` — counts unique `(start_time, end_time)` segments across results, normalized to 10 segments (`good_coverage` ≥0.7, `moderate_coverage` ≥0.3).
+- `CompositeEvaluator(evaluators, weights=None)` — runs its component evaluators concurrently via `asyncio.gather`, combines scores with (normalized) weights, and reports per-component scores/labels in `metadata`.
+- `RetrievalContext` — a `@dataclass(query, results, metadata=None)` context object shared across these evaluators.
 
 ---
 
@@ -1471,6 +1481,448 @@ The Interactive Search tab in the dashboard provides unified session evaluation:
    - Click "Log Session Evaluation" to record
 
 **Note:** Session evaluation works for both single-turn and multi-turn conversations, providing a unified annotation mechanism.
+
+---
+
+### 6. Evaluation Provider System
+
+**Files:** `libs/evaluation/cogniverse_evaluation/providers/base.py`, `libs/evaluation/cogniverse_evaluation/providers/registry.py`
+
+**Purpose:** Provider-agnostic abstraction for experiment tracking, dataset management, analytics, and monitoring — mirrors the telemetry provider pattern so a non-Phoenix backend (e.g. Langsmith) can be added without touching evaluator code.
+
+**Abstract Interfaces (`providers/base.py`):**
+
+```python
+class EvaluatorFramework(ABC):
+    def get_evaluator_base_class(self) -> type: ...
+    def get_evaluation_result_type(self) -> type: ...
+    def create_evaluation_result(self, score, label, explanation, metadata=None) -> Any: ...
+
+class EvaluationProvider(ABC):
+    def initialize(self, config: dict) -> None: ...
+    def create_experiment(self, name, description=None, metadata=None) -> Any: ...
+    def create_dataset(self, name, data, description=None, metadata=None) -> Any: ...
+    def log_evaluation(self, experiment_id, evaluation_name, score, label=None, explanation=None, metadata=None) -> None: ...
+    def create_evaluation_result(self, score, label=None, explanation=None, metadata=None) -> Any: ...
+    def get_experiment_url(self, experiment_id: str) -> str: ...
+    def get_dataset_url(self, dataset_id: str) -> str: ...
+
+class AnalyticsProvider(ABC):
+    async def get_traces(self, start_time=None, end_time=None, operation_filter=None, limit=10000) -> list[TraceMetrics]: ...
+    def calculate_statistics(self, traces: list[TraceMetrics]) -> dict[str, Any]: ...
+    def create_time_series_plot(self, traces, metric="duration") -> Any: ...
+    def create_distribution_plot(self, traces, metric="duration") -> Any: ...
+    def generate_report(self, traces, format="markdown") -> str: ...
+
+class MonitoringProvider(ABC):
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def log_retrieval_event(self, event: dict) -> None: ...
+    def get_active_alerts(self) -> list[dict]: ...
+    def get_metrics_summary(self) -> dict: ...
+```
+
+`EvaluationProvider` is the only interface with a concrete implementation
+today (`PhoenixEvaluationProvider` in `cogniverse_telemetry_phoenix`).
+`AnalyticsProvider` and `MonitoringProvider` document the contract that
+`PhoenixAnalytics` and future monitoring providers follow, but are not
+literally subclassed by them.
+
+**Registry (`providers/registry.py`):**
+
+`EvaluationRegistry` subclasses `cogniverse_foundation.registry.EntryPointRegistry`,
+adding a tenant-scoped default-provider singleton on top of entry-point
+discovery. Implementations register via the `cogniverse.evaluation.providers`
+entry-point group:
+
+```toml
+[project.entry-points."cogniverse.evaluation.providers"]
+phoenix = "cogniverse_telemetry_phoenix.evaluation:PhoenixEvaluationProvider"
+```
+
+**Module-level helpers:**
+
+```python
+from cogniverse_evaluation.providers import (
+    get_evaluation_provider,      # get_evaluation_provider(tenant_id=None, name=None, config=None)
+    set_evaluation_provider,      # pin a pre-initialized default provider
+    register_evaluation_provider, # register_evaluation_provider(name, provider_class) — for testing
+    reset_evaluation_provider,    # clear cache + pinned default
+)
+
+# tenant_id defaults to SYSTEM_TENANT_ID when omitted
+provider = get_evaluation_provider(tenant_id="your_org:production")
+```
+
+---
+
+### 7. OnlineEvaluator
+
+**File:** `libs/evaluation/cogniverse_evaluation/online_evaluator.py`
+
+**Purpose:** Score individual `cogniverse.routing` spans in real time (as opposed to `SpanEvaluator`'s retrospective batch evaluation) and persist the scores as telemetry annotations for drift detection.
+
+**Constructor:**
+
+```python
+OnlineEvaluator(
+    provider: TelemetryProvider,
+    project_name: str,
+    config: OnlineEvaluationConfig | None = None,  # from cogniverse_agents.routing.config
+)
+```
+
+When `config` is omitted, defaults are: `enabled=True`, `sampling_rate=1.0`,
+`evaluator_names=["routing_outcome", "confidence_calibration"]`,
+`persist_scores=True`, `annotation_name="online_eval"`.
+
+**`OnlineEvalResult` dataclass:**
+
+```python
+span_id: str
+evaluator_name: str
+score: float
+label: str
+explanation: str
+timestamp: datetime
+```
+
+**Main Methods:**
+
+- `async evaluate_span(span_data: dict) -> list[OnlineEvalResult]` — dispatches to `_eval_routing_outcome` and/or `_eval_confidence_calibration` per configured evaluator name, respecting `sampling_rate`; empty list if disabled or not sampled.
+- `get_statistics() -> dict` — returns `total_evaluated`, `total_skipped`, `sampling_rate`, `effective_rate`, `evaluators`.
+
+**Example:**
+
+```python
+import asyncio
+from cogniverse_evaluation.online_evaluator import OnlineEvaluator
+from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+
+async def score_live_span(span_data: dict):
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
+    online_eval = OnlineEvaluator(
+        provider=provider,
+        project_name="cogniverse-default-routing-optimization",
+    )
+    results = await online_eval.evaluate_span(span_data)
+    for r in results:
+        print(f"{r.evaluator_name}: {r.score:.2f} ({r.label})")
+
+asyncio.run(score_live_span({"context.span_id": "abc123", "status_code": "OK"}))
+```
+
+`routing_outcome` scores `1.0`/`0.0`/`0.5` for SUCCESS/FAILURE/AMBIGUOUS
+(reusing `RoutingEvaluator._classify_routing_outcome`); `confidence_calibration`
+scores how well the routing span's stated confidence predicted its actual
+success (`well_calibrated` / `moderately_calibrated` / `poorly_calibrated`).
+
+---
+
+### 8. QualityMonitor
+
+**File:** `libs/evaluation/cogniverse_evaluation/quality_monitor.py`
+
+**Purpose:** Continuous, scheduled quality monitor across all agents. Runs two evaluation strategies and decides whether to trigger an Argo optimization workflow — it composes `SpanEvaluator`, `GoldenDatasetEvaluator`, `LLMJudgeCore`, and `PhoenixDatasetStore` rather than reimplementing them.
+
+**`AgentType` enum:** `SEARCH`, `SUMMARY`, `REPORT`, `GATEWAY` — mapped to span names via `SPAN_NAME_BY_AGENT` (e.g. `"SearchAgent.process"`), matching the `f"{ClassName}.process"` convention emitted by `AgentBase._process_span()`.
+
+**`Verdict` enum:** `SKIP = 0`, `OPTIMIZE = 1`, `FULL = 2`.
+
+**Constructor:**
+
+```python
+QualityMonitor(
+    tenant_id: str,
+    runtime_url: str,
+    phoenix_http_endpoint: str,
+    llm_base_url: str,
+    llm_model: str,
+    golden_dataset_path: str,
+    argo_api_url: str | None = None,
+    argo_namespace: str = "cogniverse",
+    golden_eval_interval_seconds: int = 7200,
+    live_eval_interval_seconds: int = 14400,
+    live_sample_count: int = 20,
+    thresholds: QualityThresholds | None = None,
+    telemetry_provider=None,
+    search_profile: str = "video_colpali_smol500_mv_frame",
+)
+```
+
+**`QualityThresholds` dataclass (defaults):**
+
+```python
+golden_mrr_drop_pct: float = 0.10
+golden_ndcg_drop_pct: float = 0.10
+live_score_floor: float = 0.5
+error_rate_ceiling: float = 0.05
+latency_p95_ceiling_ms: float = 1000.0
+min_samples_for_verdict: int = 10
+```
+
+**Result dataclasses:** `AgentEvalResult` (per-agent score/baseline/degradation),
+`GoldenEvalResult` (mean_mrr, mean_ndcg, mean_precision_at_5, per-query scores,
+`baseline_mrr` captured before the new result is stored), `LiveEvalResult`
+(per-`AgentType` `AgentEvalResult` map), `OptimizationTrigger` (payload
+submitted to the Argo optimization workflow).
+
+**Key methods:** `check_thresholds(...)` decides the `Verdict` from golden/live
+results against `QualityThresholds`; `_build_trigger(...)` assembles an
+`OptimizationTrigger` when optimization is warranted.
+
+**Example:**
+
+```python
+from cogniverse_evaluation.quality_monitor import QualityMonitor, QualityThresholds
+
+monitor = QualityMonitor(
+    tenant_id="your_org:production",
+    runtime_url="http://localhost:8000",
+    phoenix_http_endpoint="http://localhost:6006",
+    llm_base_url="http://localhost:11434",
+    llm_model="google/gemma-4-e4b-it",
+    golden_dataset_path="data/testset/evaluation/video_search_queries.csv",
+    thresholds=QualityThresholds(live_score_floor=0.6),
+)
+```
+
+---
+
+### 9. Data Layer
+
+**Files:** `libs/evaluation/cogniverse_evaluation/data/{datasets,storage,traces}.py`
+
+**`DatasetManager`** (`data/datasets.py`) — Phoenix dataset CRUD used by the CLI's `create-dataset` command:
+
+```python
+DatasetManager(storage: TelemetryStorage | None = None)
+
+manager.create_from_csv(csv_path: str, dataset_name: str, description: str | None = None) -> str
+manager.create_from_queries(queries: list[dict], dataset_name: str, description: str | None = None) -> str
+manager.create_from_json(...) -> str
+manager.get_dataset(dataset_name: str) -> dict
+manager.list_datasets() -> list[str]
+manager.update_dataset(...)
+manager.delete_dataset(dataset_name: str) -> bool
+manager.export_dataset(dataset_name: str, output_path: str) -> bool
+manager.create_test_dataset() -> str
+```
+
+**`TelemetryStorage`** (`data/storage.py`) — connection/health-check management for the telemetry backend, plus `MonitoredSpanExporter` (an OTel `SpanExporter` wrapping export success/failure metrics via `ExportMetrics`):
+
+```python
+TelemetryStorage(config: ConnectionConfig | None = None)
+
+storage.log_experiment_results(...)
+storage.get_traces_for_evaluation(...)
+storage.get_metrics() -> dict
+storage.shutdown()
+# Context-manager: `with TelemetryStorage() as storage: ...`
+```
+
+`ConnectionConfig` (defaults: `http_endpoint="http://localhost:6006"`,
+`otlp_endpoint="localhost:4317"`, `max_retries=3`, `max_batch_size=512`,
+`export_timeout_millis=30000`) tracks connection health via the
+`ConnectionState` enum (`DISCONNECTED` / `CONNECTING` / `CONNECTED` / `FAILED`).
+
+**`TraceManager`** (`data/traces.py`) — used by the CLI's `list-traces` command:
+
+```python
+TraceManager(storage: TelemetryStorage | None = None)
+
+manager.get_recent_traces(hours_back: int = 1, limit: int = 100) -> pd.DataFrame
+manager.get_traces_by_ids(trace_ids: list[str]) -> pd.DataFrame
+manager.extract_trace_data(trace_df: pd.DataFrame) -> list[dict]
+manager.get_traces_by_experiment(...) -> pd.DataFrame
+manager.get_trace_statistics(hours_back: int = 24) -> dict
+manager.export_traces(output_path: str, hours_back: int = 24) -> bool
+```
+
+---
+
+### 10. Ground Truth Strategies
+
+**Files:** `libs/evaluation/cogniverse_evaluation/core/ground_truth.py`, `core/schema_analyzer.py`
+
+**Purpose:** Extract ground-truth item lists for a query without hardcoding domain assumptions — used by `core/solvers.py`'s batch/live solvers when scoring traces that lack an explicit `target`.
+
+```python
+from cogniverse_evaluation.core.ground_truth import get_ground_truth_strategy
+
+strategy = get_ground_truth_strategy({"ground_truth_strategy": "schema_aware"})
+result = await strategy.extract_ground_truth(trace_data, backend=None)
+# result = {"expected_items": [...], "confidence": 0.0-1.0, "source": str, "metadata": {...}}
+```
+
+`get_ground_truth_strategy(config)` maps `config["ground_truth_strategy"]` to
+one of four `GroundTruthStrategy` (ABC) implementations, all with the same
+`async extract_ground_truth(trace_data, backend=None) -> dict` contract:
+
+| `ground_truth_strategy` value | Class |
+|---|---|
+| `"schema_aware"` (default) | `SchemaAwareGroundTruthStrategy` |
+| `"dataset"` | `DatasetGroundTruthStrategy` |
+| `"backend"` | `BackendGroundTruthStrategy` |
+| `"hybrid"` | `HybridGroundTruthStrategy` |
+
+`SchemaAwareGroundTruthStrategy` delegates schema-specific parsing to a
+`SchemaAnalyzer` (`core/schema_analyzer.py`) resolved via
+`get_schema_analyzer(schema_name, schema_fields)`; `DefaultSchemaAnalyzer` is
+the generic fallback, and `SchemaAnalyzerRegistry` / `register_analyzer(...)`
+is how the video/document/image plugins (see Plugin System below) plug in
+their own analyzers. Exceptions raised during extraction subclass
+`GroundTruthError` (`SchemaDiscoveryError`, `BackendError`).
+
+---
+
+### 11. Metrics Suite
+
+**File:** `libs/evaluation/cogniverse_evaluation/metrics/custom.py`
+
+Pure functions operating on ranked ID lists — used by scorers and `QualityMonitor`'s golden-set evaluation:
+
+```python
+from cogniverse_evaluation.metrics.custom import (
+    calculate_mrr,             # calculate_mrr(results: list[str], expected: list[str]) -> float
+    calculate_ndcg,            # calculate_ndcg(results, expected, k: int = 10) -> float
+    calculate_precision_at_k,  # calculate_precision_at_k(results, expected, k: int = 5) -> float
+    calculate_recall_at_k,     # calculate_recall_at_k(results, expected, k: int = 5) -> float
+    calculate_f1_at_k,         # calculate_f1_at_k(results, expected, k: int = 5) -> float
+    calculate_map,             # calculate_map(results_list: list[list[str]], expected_list: list[list[str]]) -> float
+    calculate_metrics_suite,   # calculate_metrics_suite(results, expected, k_values: list[int] | None = None) -> dict[str, float]
+)
+
+metrics = calculate_metrics_suite(
+    results=["vid_003", "vid_001", "vid_007"],
+    expected=["vid_001", "vid_002"],
+    k_values=[1, 5, 10],
+)
+# metrics = {"mrr": 0.5, "ndcg": ..., "precision@1": 0.0, "recall@1": 0.0, "f1@1": 0.0, ...}
+```
+
+`calculate_metrics_suite` defaults `k_values` to `[1, 5, 10]` and always
+includes `mrr` and `ndcg` (unparameterized) plus `precision@k`/`recall@k`/`f1@k`
+for each `k`.
+
+---
+
+### 12. Evaluator Base Classes
+
+**File:** `libs/evaluation/cogniverse_evaluation/evaluators/base.py`
+
+**Purpose:** Provider-delegating base class so evaluator subclasses (e.g. `GoldenDatasetEvaluator`, `QueryResultRelevanceEvaluator`, `ConfigurableVisualJudge`) work against whichever `EvaluationProvider` is active, without importing a concrete provider type.
+
+```python
+class Evaluator:
+    """Subclasses implement `evaluate(...)`. `__init_subclass__` injects the
+    active provider's evaluator base class into the MRO at subclass-definition
+    time (degrades to a debug log, not a hard failure, if the provider isn't
+    available yet)."""
+
+class EvaluationResult:
+    """`EvaluationResult(score, label, explanation, metadata=None)` — a thin
+    `__new__` shim that delegates to `create_evaluation_result`, so callers
+    get the provider-specific result type without importing it directly."""
+```
+
+Module-level helpers: `get_evaluator_base_class()`, `get_evaluation_result_type()`,
+and `create_evaluation_result(score, label, explanation, metadata=None)` —
+all resolve the current provider via `get_evaluation_provider()` and delegate
+to `provider.framework`.
+
+**`SyncQueryResultRelevanceEvaluator` / `SyncResultDiversityEvaluator`**
+(`evaluators/sync_reference_free.py`) provide synchronous (non-`async`)
+equivalents of `QueryResultRelevanceEvaluator`/`ResultDiversityEvaluator` for
+call sites that can't `await` (e.g. Inspect AI scorers); `create_sync_evaluators()`
+returns both as a list.
+
+---
+
+### 13. CLI
+
+**File:** `libs/evaluation/cogniverse_evaluation/cli.py`
+
+**Purpose:** `click`-based command group (`cogniverse-eval`) wrapping `evaluation_task` (experiment/batch/live modes), dataset creation, and trace listing.
+
+```bash
+# Run an experiment-mode evaluation
+cogniverse-eval evaluate --mode experiment --dataset test_dataset \
+    -p frame_based_colpali -s binary_binary
+
+# Evaluate existing traces (batch mode)
+cogniverse-eval evaluate --mode batch --dataset test_dataset \
+    -t trace_id_1 -t trace_id_2
+
+# Live evaluation
+cogniverse-eval evaluate --mode live --dataset test_dataset
+
+# Create a dataset from CSV
+cogniverse-eval create-dataset --name my_dataset --csv queries.csv
+
+# List recent traces
+cogniverse-eval list-traces --hours 2 --limit 50
+
+# Quick smoke test
+cogniverse-eval test
+```
+
+`evaluate --mode experiment` requires both `--profiles`/`-p` and
+`--strategies`/`-s`; `create-dataset` requires either `--csv` or
+`--queries-json`. All commands accept `-v`/`--verbose` for debug logging.
+
+---
+
+### 14. RootCauseAnalyzer
+
+**File:** `libs/evaluation/cogniverse_evaluation/analysis/root_cause_analysis.py`
+
+**Purpose:** Automated root-cause analysis over a batch of trace objects — separates failed/successful/performance-degraded traces, mines failure patterns, and generates ranked hypotheses with suggested actions.
+
+```python
+RootCauseAnalyzer()  # no constructor args; loads a built-in known-issues table
+    # (timeout, memory, connection, rate_limit, model_error, data_format —
+    # each a regex pattern + category + suggested_action)
+
+analyzer.analyze_failures(
+    traces: list[Any],
+    include_performance: bool = True,
+    performance_threshold_percentile: int = 95,
+) -> dict[str, Any]
+
+analyzer.generate_rca_report(analysis: dict, format: str = "markdown") -> str
+```
+
+`analyze_failures` expects each trace object to expose `.status`, `.error`,
+and `.duration_ms` attributes; it partitions traces into failed / successful /
+performance-degraded (successful but above the given duration percentile),
+then mines `FailurePattern`s and produces `RootCauseHypothesis` objects:
+
+```python
+@dataclass
+class FailurePattern:
+    pattern_type: str        # 'operation' | 'profile' | 'strategy' | 'time' | 'parameter'
+    pattern_value: Any
+    failure_rate: float
+    occurrence_count: int
+    confidence: float
+    examples: list[str]
+    correlation_strength: float = 0.0
+
+@dataclass
+class RootCauseHypothesis:
+    hypothesis: str
+    confidence: float
+    evidence: list[str]
+    affected_traces: list[str]
+    suggested_action: str
+    category: str            # 'configuration' | 'resource' | 'timeout' | 'data' | 'model'
+    patterns: list[FailurePattern]
+```
+
+`generate_rca_report(analysis, format="markdown")` renders the
+`analyze_failures` output as a Markdown or HTML report (any other `format`
+value falls back to `str(analysis)`).
 
 ---
 
@@ -2210,14 +2662,17 @@ retrieval_solver = create_retrieval_solver(
     config={"top_k": 10}
 )
 
-# Batch solver - loads existing Phoenix traces with ground truth extraction
+# Batch solver - loads existing Phoenix traces with ground truth extraction.
+# ground_truth_strategy must be one of "schema_aware" (default), "dataset",
+# "backend", or "hybrid" — any other value silently falls back to schema_aware
+# (see core/ground_truth.py::get_ground_truth_strategy).
 batch_solver = create_batch_solver(
     trace_ids=None,  # None for recent traces
     config={
         "project_name": "cogniverse-default",
         "hours_back": 24,
         "limit": 100,
-        "ground_truth_strategy": "keyword"
+        "ground_truth_strategy": "hybrid"
     }
 )
 
@@ -2230,6 +2685,15 @@ live_solver = create_live_solver(
     }
 )
 ```
+
+**Solver output serialization (`core/solver_output.py`):** solvers pass rich
+result data through Inspect AI's string-only solver→scorer interface via a
+`pack_solver_output(query, search_results, phoenix_trace_id=None, metadata=None) -> str`
+/ `unpack_solver_output(output_str: str) -> EvaluationOutput` pair.
+`EvaluationOutput` is a `@dataclass(query, search_configs, phoenix_trace_id=None, metadata=None)`
+with `to_json()`/`from_json()`; `from_json` degrades to an empty
+`EvaluationOutput(query="", search_configs={})` on a parse failure rather than
+raising, so scorers always receive a valid (possibly empty) object.
 
 ## Plugin System
 
@@ -2278,6 +2742,13 @@ constraints = analyzer.analyze_query(
 | Scene types (indoor, outdoor) | visual_descriptors.scenes |
 | `"quoted speech"` | audio_constraints.exact_speech |
 
+**VideoTemporalAnalyzer (plugins/video_analyzer.py):** a more specialized
+`SchemaAnalyzer` that only claims schemas which are both video-like *and*
+carry `start_time`/`end_time` in their `temporal_fields` (`VideoSchemaAnalyzer`
+handles the video-but-no-temporal-fields case). `analyze_query` delegates to
+`VideoSchemaAnalyzer` first, then layers on advanced patterns: `N seconds
+before/after <event>`, `during <event>`, and `throughout the video`.
+
 ### DocumentSchemaAnalyzer (plugins/document_analyzer.py)
 
 Analyzes document/text search schemas.
@@ -2322,17 +2793,26 @@ Analyzes image search schemas with color, size, and composition detection.
 
 ### VisualEvaluator Plugin (plugins/visual_evaluator.py)
 
-Provides visual evaluation scorers for Inspect AI.
+`VisualEvaluatorPlugin` provides static factory methods that build Inspect AI
+scorer functions; `get_visual_scorers(config)` assembles the list based on
+config flags (not a model name):
 
 ```python
 from cogniverse_evaluation.plugins.visual_evaluator import get_visual_scorers
 
 scorers = get_visual_scorers({
-    "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
-    "evaluate_top_k": 5
+    "enable_llm_evaluators": True,
+    "enable_quality_evaluators": True,
+    "evaluator_name": "visual_judge",
 })
-# Returns: [visual_relevance_scorer(), visual_diversity_scorer()]
+# Returns: [VisualEvaluatorPlugin.create_visual_judge_scorer("visual_judge"),
+#           VisualEvaluatorPlugin.create_quality_scorer()]
 ```
+
+`create_visual_judge_scorer(evaluator_name="visual_judge")` scores each
+sample through `ConfigurableVisualJudge`; `create_quality_scorer()` scores
+each sample through the synchronous evaluators from
+`evaluators.sync_reference_free.create_sync_evaluators()`.
 
 **ConfigurableVisualJudge:**
 
@@ -2363,24 +2843,37 @@ result = evaluator.evaluate(
 
 ### Key Test Files
 
-**Unit Tests:**
+**Unit Tests (`tests/evaluation/unit/`):**
 
-- `tests/evaluation/unit/test_experiment_tracker.py`
-  - Experiment configuration
-  - Dataset management
-  - Result formatting
+- `test_experiment_tracker.py` — experiment configuration, dataset management, result formatting
+- `test_routing_evaluator.py` — routing outcome classification, metric calculation
+- `test_span_evaluator.py` — span evaluation dispatch, evaluator resolution
+- `test_quality_monitor.py` — threshold checks, verdict decisions
+- `test_online_evaluator_confidence.py` — confidence calibration scoring
+- `test_data_managers.py` — `DatasetManager` / `TraceManager`
+- `test_storage.py` — `TelemetryStorage` connection/health-check handling
+- `test_ground_truth.py` — ground truth strategy dispatch
+- `test_metrics.py` — MRR/nDCG/precision/recall/F1/MAP
+- `test_evaluators.py` — `Evaluator` base class, reference-free evaluators
+- `test_inspect_scorers.py`, `test_solvers.py`, `test_task.py`, `test_reranking.py` — Inspect AI integration
+- `test_plugin_analyzers.py`, `test_visual_plugin.py` — schema analyzer / visual plugin registration
+- `test_media_helpers.py` — `_media_helpers` source/frame resolution
+- `test_multi_turn_llm_judge.py` — session-level LLM judging
+- `test_cli.py`, `test_cli_simple.py` — CLI command behavior
+- `test_root_cause_analysis.py` — `analysis/root_cause_analysis.py`
+- `test_query_window_tz.py`, `test_traces_filter_escape.py` — timezone/query-window and YQL-escaping edge cases
 
-**Integration Tests:**
+**Integration Tests (`tests/evaluation/integration/`):**
 
-- `tests/evaluation/integration/test_routing_evaluator_integration.py`
-  - Phoenix span querying
-  - Routing metric calculation
-  - Confidence calibration
-
-- `tests/routing/integration/test_routing_span_evaluator_integration.py`
-  - Span evaluation pipeline
-  - Evaluator integration
-  - Phoenix upload
+- `test_end_to_end.py` — full evaluation pipeline against a real backend
+- `test_incremental_span_eval.py` — `SpanEvaluator` incremental skip-set behavior
+- `test_golden_baseline_capture.py` — golden-set baseline MRR capture for `QualityMonitor`
+- `test_xgboost_quality_monitor.py` — quality-monitor training-decision modeling
+- `test_provider_resolution.py` — `EvaluationRegistry` provider discovery/resolution
+- `test_schema_driven_pipeline.py` — schema-aware ground truth extraction
+- `test_storage_integration.py` — `TelemetryStorage` against a real telemetry backend
+- `test_task_real.py` — `evaluation_task` against a real Phoenix dataset
+- `test_visual_judge_e2e.py` — `ConfigurableVisualJudge` end-to-end
 
 **Test Scenarios:**
 
@@ -2463,9 +2956,17 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 
 - ✅ Phoenix analytics with visualizations
 
-- ✅ Retrospective span evaluation
+- ✅ Retrospective span evaluation (`SpanEvaluator`, batch/incremental)
 
-- ✅ Multi-evaluator support (quality, LLM, golden)
+- ✅ Real-time span evaluation (`OnlineEvaluator`, sampled)
+
+- ✅ Continuous cross-agent quality monitoring with optimization triggers (`QualityMonitor`)
+
+- ✅ Provider-agnostic evaluation backend abstraction (`EvaluationProvider`/`AnalyticsProvider`/`MonitoringProvider`)
+
+- ✅ Multi-evaluator support (quality, LLM, golden, reference-free)
+
+- ✅ CLI for experiment/batch/live evaluation and dataset management
 
 **Production Strengths:**
 
@@ -2479,15 +2980,19 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 
 - Interactive Plotly visualizations
 
+- Incremental span evaluation avoids re-annotating already-scored spans
+
 **Integration Points:**
 
-- Phoenix for trace storage and visualization
+- Phoenix for trace storage and visualization (via `PhoenixEvaluationProvider`)
 
 - Inspect AI for evaluation execution
 
 - Quality evaluators for automated assessment
 
 - Dataset management for golden datasets
+
+- Argo workflows for triggered re-optimization (`QualityMonitor`)
 
 ---
 
@@ -2508,3 +3013,21 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 - PhoenixAnalytics: `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/analytics.py`
 
 - SpanEvaluator: `libs/evaluation/cogniverse_evaluation/span_evaluator.py`
+
+- OnlineEvaluator: `libs/evaluation/cogniverse_evaluation/online_evaluator.py`
+
+- QualityMonitor: `libs/evaluation/cogniverse_evaluation/quality_monitor.py`
+
+- Evaluation Provider System: `libs/evaluation/cogniverse_evaluation/providers/base.py`, `providers/registry.py`
+
+- Data Layer: `libs/evaluation/cogniverse_evaluation/data/{datasets,storage,traces}.py`
+
+- Ground Truth: `libs/evaluation/cogniverse_evaluation/core/ground_truth.py`, `core/schema_analyzer.py`
+
+- Metrics: `libs/evaluation/cogniverse_evaluation/metrics/custom.py`
+
+- Evaluator Base: `libs/evaluation/cogniverse_evaluation/evaluators/base.py`, `evaluators/sync_reference_free.py`
+
+- CLI: `libs/evaluation/cogniverse_evaluation/cli.py`
+
+- RootCauseAnalyzer: `libs/evaluation/cogniverse_evaluation/analysis/root_cause_analysis.py`

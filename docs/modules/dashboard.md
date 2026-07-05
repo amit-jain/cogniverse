@@ -28,7 +28,7 @@
    - [Memory Management Tab](#memory-management-tab)
    - [RLM A/B Compare Tab](#rlm-ab-compare-tab)
    - [Backend Profile Tab](#backend-profile-tab)
-5. [Phoenix Data Manager](#phoenix-data-manager)
+5. [Phoenix Data Management](#phoenix-data-management)
 6. [Configuration](#configuration)
 7. [Deployment](#deployment)
 8. [Testing](#testing)
@@ -44,7 +44,12 @@ The Dashboard module provides a **Streamlit-based UI** for:
 - **HITL Workflows**: Human approval queues and orchestration annotation
 - **System Monitoring**: Configuration, memory, and backend profile management
 
-The dashboard communicates with the **unified Runtime** (`http://localhost:8000`) via REST API. Search queries go through `POST /search/`, agent status is checked via `GET /agents/`, and configuration is managed through `/admin/` endpoints. The Runtime handles routing, agent dispatch, and telemetry internally. The dashboard never instantiates agents directly.
+The dashboard communicates with the **unified Runtime** (`http://localhost:8000`, from `SystemConfig.agent_registry_url`) over two channels — it never instantiates agents directly:
+
+- **A2A streaming** (`POST /a2a/`, JSON-RPC `message/stream` over SSE) — used by the Interactive Search tab and the "Summarize Results" control (`search_summary.py`) to show progressive status/token events as an agent runs.
+- **Plain REST** — the Chat tab calls `POST /agents/{agent_name}/process` (e.g. `gateway_agent`) directly for a blocking response; video ingestion goes through `POST /ingestion/start`; agent connectivity is checked via `GET /agents/{agent_name}/health`; tenant/profile administration goes through `/admin/` endpoints (`/admin/tenants`, `/admin/profiles/{name}`).
+
+The Runtime handles routing, agent dispatch, and telemetry internally.
 
 **Main Entry Point:** `libs/dashboard/cogniverse_dashboard/app.py` — the primary Streamlit application. All tabs are in the `cogniverse_dashboard.tabs` package.
 
@@ -191,15 +196,13 @@ traces = analytics.get_traces(
 
 **Features:**
 
-- List all experiments with filters
+- Select a Phoenix dataset; view example count and creation date
 
-- Compare experiment results side-by-side
+- Per-profile, per-ranking-strategy nested tabs showing MRR, Recall@1, Recall@5, and query count for each experiment run
 
-- View optimizer settings and hyperparameters
+- Per-query results table (query, expected, retrieved results)
 
-- Visualize metric trends over time
-
-- Export experiment data
+- Deep links to the Phoenix dataset view and Phoenix's own experiment comparison UI
 
 ```python
 from cogniverse_dashboard.tabs.evaluation import render_evaluation_tab
@@ -211,7 +214,14 @@ render_evaluation_tab()
 
 **File:** `libs/dashboard/cogniverse_dashboard/tabs/embedding_atlas.py`
 
-**Purpose:** Visual exploration of embedding spaces
+**Purpose:** Visual exploration of embedding spaces using UMAP and Apple's
+`embedding-atlas` component
+
+**Features:**
+
+- Reads parquet embeddings from `outputs/embeddings/` (written by `scripts/export_backend_embeddings.py`), with a file-upload fallback when none exist locally
+
+- Lazily imports `umap` and `embedding_atlas.streamlit` so the base dashboard image doesn't pay their startup cost; shows an install hint (`uv pip install umap-learn embedding-atlas`) when they're missing
 
 ```python
 from cogniverse_dashboard.tabs.embedding_atlas import render_embedding_atlas_tab
@@ -227,15 +237,15 @@ render_embedding_atlas_tab()
 
 **Features:**
 
-- Routing accuracy by modality
+- Summary routing metrics from `RoutingEvaluator.calculate_metrics()`
+
+- Per-agent precision/recall/F1 table and bar chart
 
 - Confidence distribution analysis
 
-- Misrouting pattern identification
+- Temporal (time-windowed) analysis of routing decisions
 
-- Per-tier performance breakdown
-
-- Routing latency metrics
+- Human annotation of routing decisions via `AnnotationAgent` and an LLM auto-annotator (`LLMAutoAnnotator`), persisted through `RoutingAnnotationStorage`
 
 ```python
 from cogniverse_dashboard.tabs.routing_evaluation import render_routing_evaluation_tab
@@ -259,7 +269,7 @@ render_routing_evaluation_tab()
 
 - Identify workflow patterns
 
-- Feed annotations to optimizer
+- Persist annotations (workflow quality label, corrections) as Phoenix span annotations via `OrchestrationAnnotationStorage.store_annotation()`
 
 ```python
 from cogniverse_dashboard.tabs.orchestration_annotation import render_orchestration_annotation_tab
@@ -271,7 +281,14 @@ render_orchestration_annotation_tab()
 
 **File:** `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`
 
-**Purpose:** Per-profile routing performance metrics
+**Purpose:** Per-modality runtime observability, aggregated from
+`cogniverse.profile_selection` Phoenix spans emitted by the ProfileSelectionAgent
+
+**Features:**
+
+- Groups spans by the `profile_selection.modality` span attribute
+
+- Per-modality count, p50/p95/p99 latency, and success rate
 
 ```python
 from cogniverse_dashboard.tabs.profile_metrics import render_profile_metrics_tab
@@ -287,7 +304,7 @@ render_profile_metrics_tab()
 
 - Upload training examples (JSON) for routing, search relevance, and agent response optimization
 
-- Trigger DSPy optimization runs via the Runtime CLI
+- Trigger DSPy optimization runs (`gateway-thresholds`, `profile`, `entity-extraction`, etc.) via `POST /admin/tenant/{tenant}/optimize` on the Runtime
 
 ### Enhanced Optimization Tab
 
@@ -295,23 +312,23 @@ render_profile_metrics_tab()
 
 **Purpose:** Comprehensive optimization framework with multiple sub-tabs
 
-**Features:**
+**Features (sub-tabs):**
 
-- Search result annotation (thumbs up/down, star ratings)
+- Overview — quick stats across optimization workflows
 
-- Golden dataset builder from Phoenix annotations
+- Search Annotations — annotate search results (thumbs up/down, star rating, relevance score) for optimizer training
 
-- Synthetic data generation for all optimizers
+- Golden Dataset — golden dataset builder from Phoenix annotations
 
-- Routing optimization
+- Synthetic Data — synthetic data generation for optimizers
 
-- DSPy module optimization (teacher-student distillation)
+- Module Optimization — optimize routing/workflow/unified DSPy modules via Argo Workflows, with automatic optimizer selection (GEPA/Bootstrap/SIMBA/MIPRO) based on training data size
 
-- Reranking optimization from user feedback
+- Reranking Optimization — learn BM25-vs-semantic reranking weights from annotation feedback
 
-- Profile selection optimization
+- Profile Selection — learn which processing profile performs best per query type from telemetry
 
-- Unified metrics dashboard
+- Metrics Dashboard — unified metrics across optimization runs
 
 ```python
 from cogniverse_dashboard.tabs.optimization import render_enhanced_optimization_tab
@@ -327,15 +344,13 @@ render_enhanced_optimization_tab()
 
 **Features:**
 
-- View pending approval requests
+- View pending approval requests (items below the auto-approval confidence threshold), grouped in "Pending Review", "Approved Items", "Rejected Items", and "Statistics" sub-tabs
 
-- Approve/reject with comments
+- Approve, or reject with free-text feedback and optional entity corrections
 
-- Bulk approval operations
+- Decisions persisted via `ApprovalStorage.record_decision()` as `approval_decision` telemetry spans
 
-- Confidence-based filtering
-
-- Approval history
+- Per-status confidence-score statistics (mean confidence by status)
 
 ```python
 from cogniverse_dashboard.tabs.approval_queue import render_approval_queue_tab
@@ -349,9 +364,9 @@ render_approval_queue_tab()
 
 **Features:**
 
-- Video upload and processing with profile selection
+- Upload a test video and select one or more processing profiles plus pipeline options (max frames, chunk duration, transcription, descriptions, keyframe method, embedding precision)
 
-- Ingestion job status monitoring via Runtime API
+- Synchronous per-profile processing with a progress bar, calling `POST /ingestion/start` (`action: process_video`) via `call_agent_async`; results and per-profile analysis are shown after each call completes
 
 ### Interactive Search Tab
 
@@ -359,13 +374,13 @@ render_approval_queue_tab()
 
 **Features:**
 
-- Submit search queries with profile selection
+- Submit search queries with profile and ranking-strategy selection, streamed via the A2A endpoint (`display_streaming_result` / `stream_agent_call`) with progressive status/token events
 
-- View ranked results with scores
+- View per-strategy ranked results with scores, plus results/latency/profile summary metrics
 
-- Multi-turn conversation history
+- Per-session conversation history log, used both for display and for the session-level evaluation below
 
-- Session annotation for evaluation
+- Session annotation for evaluation — logs a manual session score/outcome via `EvaluationProvider.log_session_evaluation()`
 
 ### Chat Tab
 
@@ -373,11 +388,9 @@ render_approval_queue_tab()
 
 **Features:**
 
-- Send messages routed through `gateway_agent`
+- Send messages via `POST /agents/gateway_agent/process` (blocking request/response, not streamed)
 
-- Multi-turn conversation history
-
-- Streaming response display
+- Persistent chat history in `st.session_state.chat_messages`, with a "Clear History" control
 
 ### Configuration Management Tab
 
@@ -385,17 +398,15 @@ render_approval_queue_tab()
 
 **Purpose:** System configuration editor
 
-**Features:**
+**Features (sub-tabs):**
 
-- View all configuration types
+- System Config, Agent Configs, Routing Config, Telemetry Config — view and edit each configuration type
 
-- Edit configuration values
+- Backend Profiles — embeds the [Backend Profile Tab](#backend-profile-tab)
 
-- Profile management
+- History — configuration change history
 
-- Configuration history
-
-- Export/import configs
+- Import/Export — export/import configs
 
 ```python
 from cogniverse_dashboard.tabs.config_management import render_config_management_tab
@@ -409,6 +420,16 @@ render_config_management_tab()
 
 **Purpose:** Tenant registration and management
 
+**Features (sub-tabs):**
+
+- Organizations — list registered organizations
+
+- Create Organization — register a new organization
+
+- Tenants — list tenants within an organization
+
+- Create Tenant — register a new tenant, scoped to an organization and a set of profiles
+
 ```python
 from cogniverse_dashboard.tabs.tenant_management import render_tenant_management_tab
 
@@ -421,17 +442,17 @@ render_tenant_management_tab()
 
 **Purpose:** Memory system inspection
 
-**Features:**
+**Features (sub-tabs):**
 
-- View semantic memories
+- Search Memories — semantic memory search
 
-- Memory search
+- Add Memory — insert a new memory record
 
-- Memory statistics
+- View All — list all memories for the tenant
 
-- Clear/reset memory
+- Delete Memory — delete a specific memory by ID
 
-- Memory export
+- Clear All — wipe all memories for the tenant
 
 ```python
 from cogniverse_dashboard.tabs.memory_management import render_memory_management_tab
@@ -457,11 +478,13 @@ from cogniverse_dashboard.tabs.rlm_ab_compare import render_rlm_ab_compare_tab
 render_rlm_ab_compare_tab()
 ```
 
-### Backend Profile Tab (standalone module)
+### Backend Profile Tab
 
 **File:** `libs/dashboard/cogniverse_dashboard/tabs/backend_profile.py`
 
-**Purpose:** CRUD interface for backend profiles via ConfigManager — provides helper functions used by other parts of the dashboard
+**Purpose:** CRUD interface for backend profiles via ConfigManager. Not one of
+the 16 top-level tabs — it's a standalone module embedded inside the
+Configuration Management tab's "Backend Profiles" sub-tab.
 
 **Functions:**
 
@@ -500,6 +523,10 @@ uv run python scripts/manage_phoenix_data.py clean --older-than 30
 
 # Analyze
 uv run python scripts/manage_phoenix_data.py analyze
+
+# Export/import Phoenix datasets (experiment golden sets)
+uv run python scripts/manage_phoenix_data.py export-datasets ./exported_datasets
+uv run python scripts/manage_phoenix_data.py import-datasets ./exported_datasets
 ```
 
 ---
@@ -508,13 +535,23 @@ uv run python scripts/manage_phoenix_data.py analyze
 
 ### Environment Variables
 
+The dashboard does not read a `TENANT_ID`, `PHOENIX_ENDPOINT`, or `VESPA_URL`
+environment variable — tenant is chosen interactively via the sidebar's
+"Active Tenant" text input (format `org:tenant`), and the Phoenix/backend URLs
+come from `SystemConfig` (`telemetry_url`, `backend_url`, `backend_port`,
+`agent_registry_url`), which is loaded from the config backend via
+`create_default_config_manager()`. The environment variables that actually
+affect dashboard startup are:
+
 ```bash
-# Required
-export TENANT_ID="acme"
-export PHOENIX_ENDPOINT="http://localhost:6006"
+# Required — backend (Vespa) connection used to bootstrap ConfigManager
+export BACKEND_URL="http://localhost"
 
 # Optional
-export VESPA_URL="http://localhost:8080"
+export BACKEND_PORT="8080"               # default: 8080
+export COGNIVERSE_CONFIG="configs/config.json"  # override config.json location
+
+# Streamlit's own server settings (read by Streamlit, not by app.py)
 export STREAMLIT_SERVER_PORT="8501"
 export STREAMLIT_SERVER_ADDRESS="0.0.0.0"
 ```
@@ -570,7 +607,11 @@ traces = load_traces()
 flowchart TB
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
         Dashboard["<span style='color:#000'>cogniverse-dashboard ◄─ YOU ARE HERE<br/>Streamlit UI, Phoenix analytics, HITL workflows</span>"]
-        Runtime["<span style='color:#000'>cogniverse-runtime</span>"]
+    end
+
+    subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
+        Agents["<span style='color:#000'>cogniverse-agents</span>"]
+        Vespa["<span style='color:#000'>cogniverse-vespa</span>"]
     end
 
     subgraph CoreLayer["<span style='color:#000'>Core Layer</span>"]
@@ -584,12 +625,18 @@ flowchart TB
         SDK["<span style='color:#000'>cogniverse-sdk</span>"]
     end
 
-    AppLayer --> CoreLayer
+    Runtime["<span style='color:#000'>cogniverse-runtime<br/>(unified Runtime, separate process)</span>"]
+
+    AppLayer --> ImplLayer
+    ImplLayer --> CoreLayer
     CoreLayer --> FoundationLayer
+    Dashboard -.->|HTTP: REST + A2A| Runtime
 
     style AppLayer fill:#90caf9,stroke:#1565c0,color:#000
     style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
-    style Runtime fill:#90caf9,stroke:#1565c0,color:#000
+    style ImplLayer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Agents fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Vespa fill:#ffcc80,stroke:#ef6c00,color:#000
     style CoreLayer fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Core fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Evaluation fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -597,23 +644,31 @@ flowchart TB
     style FoundationLayer fill:#a5d6a7,stroke:#388e3c,color:#000
     style Foundation fill:#a5d6a7,stroke:#388e3c,color:#000
     style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Runtime fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
-**Dependencies:**
+**Dependencies** (from `libs/dashboard/pyproject.toml`):
 
 - `cogniverse-core`: Memory, orchestration
 
+- `cogniverse-agents`: Approval queue, routing annotation storage, and LLM auto-annotator used by the HITL/routing tabs
+
 - `cogniverse-evaluation`: Experiment tracking, metrics
 
-- `cogniverse-runtime`: FastAPI runtime with agent endpoints
+- `cogniverse-vespa`: Backend config store used by `ConfigManager` bootstrap
+
+- `cogniverse-telemetry-phoenix`: `PhoenixAnalytics` — trace/span queries for the Analytics tab
 
 - `cogniverse-sdk`: Core interfaces (Document, SearchResult)
 
+**Not a package dependency:** `cogniverse-runtime` — the dashboard never
+imports it. It talks to the unified Runtime purely over HTTP (see Overview).
+
 **External Dependencies:**
 
-- `streamlit>=1.29.0`: Web UI framework
+- `streamlit==1.56.0`: Web UI framework
 
-- `plotly>=6.0.0`: Interactive charts
+- `plotly==6.7.0`: Interactive charts
 
 ---
 
@@ -644,64 +699,77 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py \
 
 ### Docker
 
-```dockerfile
-FROM python:3.11-slim
+The real build is `libs/dashboard/Dockerfile` — a multi-stage build shared
+with the other workspace-package images. It requires a `TORCH_BACKEND`
+build-arg (`cpu`, `cuda`, or `rocm`) and fails the build if it is omitted:
 
-RUN pip install uv
-COPY . /app
-WORKDIR /app
-RUN uv sync
+```bash
+docker build \
+  --build-arg TORCH_BACKEND=cpu \
+  -f libs/dashboard/Dockerfile \
+  -t cogniverse/dashboard-cpu:dev \
+  .
 
-EXPOSE 8501
-CMD ["uv", "run", "streamlit", "run", \
-     "libs/dashboard/cogniverse_dashboard/app.py", \
-     "--server.port", "8501", \
-     "--server.address", "0.0.0.0"]
+docker run -p 8501:8501 \
+  -e BACKEND_URL=http://vespa \
+  -e BACKEND_PORT=8080 \
+  cogniverse/dashboard-cpu:dev
 ```
 
-### Docker Compose
+Key points from the actual Dockerfile:
 
-```yaml
-version: '3.8'
+- Builder stage: `python:3.12-slim`, copies `libs/sdk`, `libs/foundation`,
+  `libs/evaluation`, `libs/core`, `libs/synthetic`, `libs/vespa`,
+  `libs/agents`, `libs/telemetry-phoenix`, and `libs/dashboard`, then runs
+  `uv sync --package cogniverse-dashboard --no-dev --frozen`.
+- The `TORCH_BACKEND` build-arg swaps in the matching torch wheel (cpu/rocm)
+  or keeps the default cu128 wheel (cuda), and strips the unused
+  `nvidia`/`triton` packages when not building for CUDA.
+- Runtime stage: `python:3.12-slim`, runs as a non-root `cogniverse` user,
+  bakes `/home/cogniverse/.streamlit/config.toml`, exposes `8501`, and has a
+  `HEALTHCHECK` against `/_stcore/health`.
+- `CMD` is `streamlit run libs/dashboard/cogniverse_dashboard/app.py
+  --server.port=8501 --server.address=0.0.0.0`.
 
-services:
-  dashboard:
-    build: .
-    ports:
-      - "8501:8501"
-    environment:
-      - TENANT_ID=acme
-      - PHOENIX_ENDPOINT=http://phoenix:6006
-      - VESPA_URL=http://vespa:8080
-    depends_on:
-      - phoenix
-      - vespa
+### Kubernetes (Helm)
 
-  phoenix:
-    image: arizephoenix/phoenix:latest
-    ports:
-      - "6006:6006"
-      - "4317:4317"
+Production deployment is via the `charts/cogniverse` Helm chart, not
+docker-compose. The `dashboard.*` values block (`charts/cogniverse/values.yaml`)
+selects one of `cogniverse/dashboard-cpu`, `cogniverse/dashboard-cuda`, or
+`cogniverse/dashboard-rocm` per `dashboard.backend`, sets
+`STREAMLIT_SERVER_PORT`/`STREAMLIT_SERVER_ADDRESS`/CORS/XSRF env vars, and
+wires `livenessProbe`/`readinessProbe` to `/_stcore/health` on port `8501`.
+`BACKEND_URL`/`BACKEND_PORT` for the dashboard's `ConfigManager` bootstrap are
+injected by the chart's shared backend-connection block alongside the other
+workload deployments (ingestor, runtime, optimization workflows):
 
-  vespa:
-    image: vespaengine/vespa
-    ports:
-      - "8080:8080"
+```bash
+helm upgrade --install cogniverse ./charts/cogniverse \
+  --set dashboard.backend=cpu \
+  --set dashboard.image.tag=dev
 ```
 
 ---
 
 ## Testing
 
-```bash
-# Run dashboard tests
-uv run pytest tests/dashboard/ -v
+Dashboard unit tests live in `tests/dashboard/unit/` (one file per tab plus
+smoke and search-summary tests); a full sidebar-to-tab flow is covered by
+`tests/e2e/test_dashboard_e2e.py`, and RLM A/B tile wiring has an integration
+test at `tests/runtime/integration/test_rlm_ab_compare_dashboard_tile.py`.
 
-# Run profile UI integration tests
-uv run pytest tests/dashboard/test_profile_ui_integration.py -v
+```bash
+# Run dashboard unit tests
+uv run pytest tests/dashboard/unit/ -v
+
+# Run backend-profile form tests
+uv run pytest tests/dashboard/unit/test_backend_profile_forms.py -v
+
+# Run the dashboard end-to-end test
+uv run pytest tests/e2e/test_dashboard_e2e.py -v
 
 # Test with coverage
-uv run pytest tests/dashboard/ --cov=cogniverse_dashboard --cov-report=html
+uv run pytest tests/dashboard/unit/ --cov=cogniverse_dashboard --cov-report=html
 ```
 
 ---
@@ -716,4 +784,4 @@ uv run pytest tests/dashboard/ --cov=cogniverse_dashboard --cov-report=html
 
 ---
 
-**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, optimization, HITL workflows, configuration, memory, and backend profile management. Phoenix data backup/restore is handled by the `scripts/manage_phoenix_data.py` CLI. All tabs communicate with the unified Runtime via REST API for search, agent status, and configuration operations.
+**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, optimization, HITL workflows, configuration, memory, and backend profile management. Phoenix data backup/restore is handled by the `scripts/manage_phoenix_data.py` CLI. Tabs communicate with the unified Runtime over A2A streaming (search, summarization) and plain REST (chat, ingestion, agent status, admin operations); the dashboard never instantiates agents directly.

@@ -84,14 +84,34 @@ scripts/
 │   ├── atlas_viewer.py               # Standalone embedding atlas viewer
 │   └── simple_atlas.py               # Simplified atlas viewer
 │
-└── Utilities & Operations
-    ├── discover_tenants.py           # Tenant discovery
-    ├── export_backend_embeddings.py  # Backend embedding export (tenant-aware)
-    ├── manage_phoenix_data.py        # Phoenix data management
-    ├── modal_vlm_service.py          # Modal VLM service
-    ├── prune_config_metadata.py      # Config metadata pruning
-    ├── start_phoenix.py              # Start Phoenix service
-    └── version_bump.py               # Version management
+├── Utilities & Operations
+│   ├── discover_tenants.py           # Tenant discovery
+│   ├── export_backend_embeddings.py  # Backend embedding export (tenant-aware)
+│   ├── manage_phoenix_data.py        # Phoenix data management
+│   ├── modal_vlm_service.py          # Modal VLM service
+│   ├── prune_config_metadata.py      # Config metadata pruning
+│   ├── start_phoenix.py              # Start Phoenix service
+│   └── version_bump.py               # Version management
+│
+└── Shell Scripts (build, local dev, test infrastructure)
+    ├── build_packages.sh             # Build all SDK packages in dependency order
+    ├── publish_packages.sh           # Publish SDK packages to (Test)PyPI
+    ├── install_modular.sh            # Install cogniverse modules in dev mode
+    ├── install_with_gpu.sh           # uv sync with the PyTorch backend matching local hardware
+    ├── download_test_data.sh         # Download the evaluation dataset
+    ├── start_vespa.sh / stop_vespa.sh        # Vespa container lifecycle (persistent volumes)
+    ├── start_phoenix.sh              # Start/stop/restart Phoenix via Docker
+    ├── run_servers.sh / stop_servers.sh      # Launch/stop agent servers from config.json
+    ├── run_multi_video_agents.sh     # Run multiple video agent instances for comparison
+    ├── setup_evaluation.sh           # Set up the Cogniverse evaluation framework
+    ├── setup_local_tests.sh          # Probe every endpoint the local integration tests depend on
+    ├── run_local_tests.sh            # Run comprehensive local-only test coverage (skipped in CI)
+    ├── run_integration_per_package.sh # Run integration tests one package at a time (isolated processes)
+    ├── run_e2e_batched.sh            # Run the e2e suite in two batches with a runtime restart between them
+    ├── record_test_goldens.sh        # Re-record integration-test goldens against the live k3d cluster
+    ├── analyze_vespa_embeddings.sh   # Export Vespa embeddings and run an integrity check
+    ├── memsnap_sampler.sh            # Sample /admin/debug/memsnap at fixed intervals
+    └── sweep_state_snapshot.sh       # Snapshot cluster + Vespa + Mem0 registry state during a sweep
 ```
 
 ---
@@ -108,7 +128,7 @@ flowchart TB
     SimpleMode["<span style='color:#000'>Simple Mode<br/>build_simple_pipeline</span>"]
     AdvMode["<span style='color:#000'>Advanced Mode<br/>create_pipeline</span>"]
 
-    Pipeline["<span style='color:#000'>IngestionPipeline<br/>• Video Processing<br/>• Embedding Generation<br/>• Vespa Upload</span>"]
+    Pipeline["<span style='color:#000'>VideoIngestionPipeline<br/>• Video Processing<br/>• Embedding Generation<br/>• Vespa Upload</span>"]
 
     ColPali["<span style='color:#000'>ColPali Profile<br/>Frame-based</span>"]
     VideoPrism["<span style='color:#000'>VideoPrism Profile<br/>Global embeddings</span>"]
@@ -234,7 +254,6 @@ flowchart TB
     style Package2 fill:#ffcc80,stroke:#ef6c00,color:#000
     style Deploy1 fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Verify fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Extract fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -245,7 +264,7 @@ flowchart TB
 
 **Purpose:** Main entry point for video ingestion pipeline with builder pattern configuration
 
-**Location:** `scripts/run_ingestion.py` (284 lines)
+**Location:** `scripts/run_ingestion.py` (286 lines)
 
 **Command Line Arguments:**
 ```python
@@ -542,40 +561,51 @@ def init_telemetry(tenant_id: str) -> None:
 
 ### 5. cogniverse_runtime.optimization_cli
 
-**Purpose:** Per-agent optimization CLI with automatic DSPy optimizer selection and synthetic data generation
+**Purpose:** Per-agent optimization CLI, cluster maintenance sweep, and reporting jobs, all driven by DSPy `BootstrapFewShot` over Phoenix spans
 
-**Location:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
+**Location:** `libs/runtime/cogniverse_runtime/optimization_cli.py` (2592 lines)
 
-**What Gets Optimized (Modes):**
+**What Gets Optimized (`--mode`):**
 
-- `simba` - Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)
+- `simba` - Compiles the `QueryEnhancementAgent`'s DSPy module from `cogniverse.query_enhancement` spans (original_query → enhanced_query pairs)
 
 - `gateway-thresholds` - Gateway confidence threshold tuning
 
 - `entity-extraction` - Entity extraction optimization
 
-- `workflow` - Multi-agent workflow orchestration
+- `workflow` - Multi-agent workflow orchestration (runs after the per-agent optimizers so it sees their artifacts)
 
-- `profile` - Search profile selection
+- `profile` - Search profile selection optimization
 
-- `cleanup` - Remove stale optimization logs
+- `cleanup` - Daily maintenance sweep: per-tenant Mem0 TTL cleanup (schema-driven), log rotation under `LOG_DIR`, temp-file cleanup under `TEMP_DIR`, and `config_metadata` version vacuum
 
-**How They Get Optimized:**
+- `triggered` - On-demand optimization for a comma-separated `--agents` list, driven by a Phoenix `--trigger-dataset`
 
-- System automatically selects DSPy optimizer (GEPA/Bootstrap/SIMBA/MIPRO) based on training data size
+- `online-routing-eval` - Scores routing spans against ground truth without retraining anything
 
-- < 100 examples → Bootstrap
+- `synthetic` - Generates synthetic training data for one or more optimizer types (`--agents`, default `simba,profile,workflow`)
 
-- 100-500 examples → SIMBA
+- `rollback` - Restores a single agent's prompts/demonstrations to a prior version (`--agent`, `--prompts-version`/`--demos-version`)
 
-- 500-1000 examples → MIPRO
+- `ab-compare` - Runs an RLM A/B comparison over a Phoenix queries dataset (`--queries-dataset`, optional `--judge-substring`)
 
-- \> 1000 examples → GEPA
+- `egress-netpol` - Generates Kubernetes `NetworkPolicy` manifests from `configs/agent_policies/*.yaml` (no tenant, no Phoenix — pure codegen)
+
+- `monthly-reports` - Aggregates usage/performance data into JSON reports under `--reports-output-dir`
+
+**How Optimization Works:**
+
+Every DSPy-based mode (`simba`, `workflow`, `gateway-thresholds`, `profile`, `entity-extraction`) builds a training set from Phoenix spans and compiles the target module with `dspy.teleprompt.BootstrapFewShot`, scaled by trainset size (`_create_teleprompter`):
+
+- < 50 examples → `max_bootstrapped_demos=4, max_labeled_demos=8, max_rounds=1`
+- \>= 50 examples → `max_bootstrapped_demos=8, max_labeled_demos=16, max_rounds=2`
+
+There is no automatic switch between multiple DSPy optimizer algorithms (no GEPA/MIPRO/SIMBA-the-algorithm selection) — `BootstrapFewShot` is the only optimizer this CLI compiles with; `simba` here is the *mode name* for query-enhancement optimization, not the DSPy SIMBA optimizer.
 
 **Command Line Usage:**
 
 ```bash
-# Optimize modality routing (SIMBA)
+# Optimize query enhancement (mode: simba)
 uv run python -m cogniverse_runtime.optimization_cli \
   --mode simba \
   --tenant-id default
@@ -585,7 +615,7 @@ uv run python -m cogniverse_runtime.optimization_cli \
   --mode gateway-thresholds \
   --tenant-id acme_corp
 
-# Clean up old logs
+# Clean up old logs, memories, and config versions (global sweep)
 uv run python -m cogniverse_runtime.optimization_cli \
   --mode cleanup \
   --log-retention-days 7
@@ -593,40 +623,52 @@ uv run python -m cogniverse_runtime.optimization_cli \
 
 **Command Line Options:**
 ```bash
---mode CHOICE                # simba|gateway-thresholds|entity-extraction|workflow|profile|cleanup
-                             # (required; also accepts triggered|online-routing-eval|synthetic|
-                             # rollback|ab-compare|egress-netpol|monthly-reports)
---tenant-id ID               # Tenant identifier (required for every mode except cleanup and
-                             # monthly-reports; if omitted under --mode cleanup the sweep runs
-                             # globally across every tenant in every org — the path the
-                             # daily-cleanup CronWorkflow takes)
+--mode CHOICE                # cleanup|triggered|simba|workflow|gateway-thresholds|
+                             # online-routing-eval|profile|entity-extraction|synthetic|
+                             # rollback|ab-compare|egress-netpol|monthly-reports (required)
+--tenant-id ID               # Tenant identifier (required for every mode except cleanup,
+                             # egress-netpol, and monthly-reports; if omitted under
+                             # --mode cleanup the sweep runs globally across every tenant
+                             # in every org — the path the daily-cleanup CronWorkflow takes)
 --log-retention-days DAYS    # Days to retain logs (cleanup mode, default: 7)
+--memory-retention-days DAYS # Days to retain expired memories (cleanup mode, default: 30)
+--lookback-hours HOURS       # Span history window for DSPy-based modes (default: 24.0)
 ```
 
 **Integration with Argo Workflows:**
 
-The `optimization_cli` module is used by Argo Workflows for batch optimization:
+`optimization_cli` is invoked directly (not via a separate `workflows/` YAML) from CronWorkflow templates rendered by
+`charts/cogniverse/templates/optimization-workflows.yaml`, e.g. the weekly agent-optimization workflow's per-mode step:
 
 ```yaml
-# workflows/batch-optimization.yaml
-- name: run-optimization
-  container:
-    image: cogniverse/runtime:2.0.0
-    command: ["/bin/bash", "-c"]
-    args:
-      - |
-        uv run python -m cogniverse_runtime.optimization_cli \
-          --mode {{inputs.parameters.optimizer-mode}} \
-          --tenant-id {{workflow.parameters.tenant-id}}
+# charts/cogniverse/templates/optimization-workflows.yaml (run-optimizer step)
+- name: gateway-thresholds
+  templateRef:
+    name: {{ $fullName }}-optimization-runner
+    template: run-optimizer
+  arguments:
+    parameters:
+    - name: mode
+      value: gateway-thresholds
+    - name: tenant-id
+      value: "{{workflow.parameters.tenant-id}}"
+    - name: lookback-hours
+      value: "48"
 ```
+
+The dashboard's Optimization tab can also submit a one-off run of the same CLI on demand via
+`POST /admin/tenant/{tenant_id}/optimize`, which creates an Argo Workflow from the same template.
 
 **Scheduled Execution:**
 
-See `workflows/scheduled-optimization.yaml` for automatic scheduled optimization:
+CronWorkflow schedules are set in `charts/cogniverse/values.yaml` under `argo.optimization` / `argo.maintenance` and rendered by `charts/cogniverse/templates/optimization-workflows.yaml`:
 
-- **Weekly**: Sunday 3 AM UTC (all modes)
-
-- **Daily**: 4 AM UTC (gateway-thresholds mode)
+- **Daily cleanup** (`0 4 * * *`, 4 AM UTC): `--mode cleanup`
+- **Daily gateway tuning** (`0 4 * * *`, 4 AM UTC): `--mode gateway-thresholds` (48h lookback), then restarts the runtime deployment
+- **Weekly agent optimization** (`0 3 * * 0`, Sunday 3 AM UTC): `gateway-thresholds`, `entity-extraction`, `simba`, `profile` in parallel (48h lookback, 168h for `simba`), then `workflow`, then restarts the runtime deployment
+- **Saturday synthetic generation** (`0 1 * * 6`, 1 AM UTC): `--mode synthetic --agents workflow,profile`
+- **Daily scheduled distillation** (`0 5 * * *`, 5 AM UTC): runs `cogniverse_runtime.quality_monitor_cli --once`, a separate CLI, not `optimization_cli`
+- **Monthly reports** (`0 5 1 * *`, 1st of month 5 AM UTC): `--mode monthly-reports`, uploaded to MinIO by a follow-up step
 
 ---
 
@@ -634,20 +676,22 @@ See `workflows/scheduled-optimization.yaml` for automatic scheduled optimization
 
 **Purpose:** Run Phoenix experiments with comprehensive visualization and quality evaluators
 
-**Location:** `scripts/run_experiments_with_visualization.py` (148 lines)
+**Location:** `scripts/run_experiments_with_visualization.py` (155 lines)
 
 **Architecture:** This script is a thin CLI wrapper that delegates to `ExperimentTracker` from the `cogniverse_evaluation` SDK package.
 
 **Experiment Execution:**
 ```python
 def main():
-    # Parse CLI arguments (dataset-name, profiles, strategies, evaluators, etc.)
+    # Parse CLI arguments (tenant-id, dataset-name, profiles, strategies, evaluators, etc.)
     args = parser.parse_args()
 
     # Initialize ExperimentTracker from SDK
     from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
+    # tenant_id is required — ExperimentTracker has no default tenant
     tracker = ExperimentTracker(
+        tenant_id=args.tenant_id,
         experiment_project_name="experiments",
         enable_quality_evaluators=args.quality_evaluators,
         enable_llm_evaluators=args.llm_evaluators,
@@ -698,9 +742,12 @@ def main():
 
 **Command Line Arguments:**
 ```bash
+# --tenant-id is required; --dataset-path must be a CSV (query, expected_videos,
+# category columns) — create_or_get_dataset loads it with pandas.read_csv.
 python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
-  --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
+  --dataset-path data/testset/evaluation/video_search_queries.csv \
   --profiles frame_based_colpali \
   --quality-evaluators \
   --llm-evaluators \
@@ -797,79 +844,26 @@ def main():
 
 **Purpose:** Interactive Streamlit dashboard for analytics, configuration, and system management
 
-**Location:** `libs/dashboard/cogniverse_dashboard/app.py` (3054 lines, multi-tab)
+**Location:** `libs/dashboard/cogniverse_dashboard/app.py` (3013 lines, multi-tab)
 
-**Dashboard Tabs:**
+**Dashboard Tabs:** `app.py` builds one `st.tabs([...])` call with all 16 tabs (in this order); each is either rendered inline in `app.py` or delegates to a `render_*_tab()` function under `cogniverse_dashboard.tabs`:
 
-**1. Analytics Tab**:
-```python
-# Phoenix analytics are displayed via Streamlit components
-# Charts include:
-# - Performance metrics over time
-# - Latency distribution
-# - Error rate tracking
-# - Request throughput
-
-st.plotly_chart(
-    plot_latency_distribution(),
-    use_container_width=True
-)
-
-st.plotly_chart(
-    plot_error_rate_over_time(),
-    use_container_width=True
-)
-```
-
-**2. Evaluation Tab** (`cogniverse_dashboard.tabs.evaluation`):
-```python
-from cogniverse_dashboard.tabs.evaluation import render_evaluation_tab
-render_evaluation_tab()
-# - Experiment list
-# - Side-by-side comparison
-# - Metric visualization
-# - Dataset management
-```
-
-**3. Config Management Tab** (`cogniverse_dashboard.tabs.config_management`):
-```python
-from cogniverse_dashboard.tabs.config_management import render_config_management_tab
-render_config_management_tab()
-# - Create/update/delete configs
-# - Profile selection
-# - Strategy configuration
-# - Schema management
-```
-
-**4. Memory Management Tab** (`cogniverse_dashboard.tabs.memory_management`):
-```python
-from cogniverse_dashboard.tabs.memory_management import render_memory_management_tab
-render_memory_management_tab()
-# - View memories by tenant
-# - Search conversations
-# - Memory analytics
-# - Cache statistics
-```
-
-**5. Routing Evaluation Tab** (`cogniverse_dashboard.tabs.routing_evaluation`):
-```python
-from cogniverse_dashboard.tabs.routing_evaluation import render_routing_evaluation_tab
-render_routing_evaluation_tab()
-# - Routing accuracy metrics
-# - Confusion matrix
-# - Golden dataset comparison
-# - Per-query analysis
-```
-
-**6. Orchestration Annotation Tab** (`cogniverse_dashboard.tabs.orchestration_annotation`):
-```python
-from cogniverse_dashboard.tabs.orchestration_annotation import render_orchestration_annotation_tab
-render_orchestration_annotation_tab()
-# - Workflow visualization
-# - Agent communication logs
-# - Dependency graphs
-# - Performance bottlenecks
-```
+1. **📊 Analytics** — inline. Sub-tabs (its own nested `st.tabs`): Overview, Time Series, Distributions, Heatmaps, Outliers, Trace Explorer, and (if RCA is enabled) Root Cause Analysis. Pulls traces via `st.session_state.analytics.get_traces()` and renders Plotly charts (latency distribution, error rate, throughput).
+2. **🧪 Evaluation** (`cogniverse_dashboard.tabs.evaluation.render_evaluation_tab`) — experiment list, side-by-side comparison, metric visualization, dataset management.
+3. **🗺️ Embedding Atlas** (`cogniverse_dashboard.tabs.embedding_atlas.render_embedding_atlas_tab`) — lazy-imports `umap` + `embedding-atlas` inside the tab module so the base dashboard image stays lean when those optional libraries aren't installed.
+4. **🎯 Routing Evaluation** (`cogniverse_dashboard.tabs.routing_evaluation.render_routing_evaluation_tab`) — routing accuracy, confusion matrix, golden-dataset comparison, per-query analysis.
+5. **🔄 Orchestration Annotation** (`cogniverse_dashboard.tabs.orchestration_annotation.render_orchestration_annotation_tab`) — human annotation UI for multi-agent orchestration workflows.
+6. **📈 Profile Routing Metrics** (`cogniverse_dashboard.tabs.profile_metrics.render_profile_metrics_tab`).
+7. **🔧 Optimization** — inline. Uploads training-example JSON files, and submits an on-demand optimization run via `POST /admin/tenant/{tenant_id}/optimize` (mode selectable among `gateway-thresholds`, `simba`, `workflow`, `profile`, `entity-extraction`), then polls/cancels/retries the resulting Argo Workflow via `GET/POST {status_url}`.
+8. **🔬 Synthetic Data & Optimization** (`cogniverse_dashboard.tabs.optimization.render_enhanced_optimization_tab`) — synthetic data generation, golden dataset builder, broader optimization controls.
+9. **✅ Approval Queue** (`cogniverse_dashboard.tabs.approval_queue.render_approval_queue_tab`) — human-in-the-loop review for synthetic data and AI-generated outputs.
+10. **📥 Ingestion Testing** — inline. Uploads a test video, selects processing profiles, and calls the video-processing agent over A2A to compare embedding quality/latency across profiles.
+11. **🔍 Interactive Search** — inline. Live multi-turn search against `search_agent` (via `display_streaming_result`), per-result relevance annotation, and session-level evaluation logged through `get_evaluation_provider("phoenix", ...)`.
+12. **💬 Chat** — inline. Posts to `POST /agents/gateway_agent/process` and renders the routed response as a chat transcript.
+13. **⚙️ Configuration** (`cogniverse_dashboard.tabs.config_management.render_config_management_tab`) — create/update/delete configs, profile selection, strategy configuration, schema management; nests the Backend Profile sub-tab (`cogniverse_dashboard.tabs.backend_profile.render_backend_profile_tab`).
+14. **👥 Tenant Management** (`cogniverse_dashboard.tabs.tenant_management.render_tenant_management_tab`).
+15. **🧠 Memory** (`cogniverse_dashboard.tabs.memory_management.render_memory_management_tab`) — memories by tenant, conversation search, memory analytics, cache statistics.
+16. **🅰️🅱️ RLM A/B Compare** (`cogniverse_dashboard.tabs.rlm_ab_compare.render_rlm_ab_compare_tab`) — reads spans emitted by `cogniverse-optim --mode ab-compare` and shows per-row plus aggregate latency/token/judge deltas. Imported lazily so the dashboard still loads when the telemetry-phoenix package is unavailable.
 
 **Dashboard Features:**
 
@@ -896,49 +890,33 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 85
 
 ### 1. Video Ingestion Flow
 
-```text
-User Command
-    │
-    ├─> run_ingestion.py
-    │       │
-    │       ├─> Parse arguments
-    │       │   • video_dir
-    │       │   • profiles
-    │       │   • backend
-    │       │
-    │       ├─> Get profiles (from config or args)
-    │       │   default: video_colpali_smol500_mv_frame
-    │       │
-    │       └─> FOR each profile:
-    │               │
-    │               ├─> Build Pipeline
-    │               │   • Test mode → build_test_pipeline()
-    │               │   • Simple mode → build_simple_pipeline()
-    │               │   • Advanced mode → create_pipeline().with_*().build()
-    │               │
-    │               ├─> Discover Videos
-    │               │   • video_dir.glob('*.mp4')
-    │               │
-    │               ├─> Process Concurrently
-    │               │   • max_concurrent=3 (default)
-    │               │   • async video processing
-    │               │   │
-    │               │   └─> FOR each video:
-    │               │           ├─> Extract frames/chunks
-    │               │           ├─> Generate embeddings
-    │               │           ├─> Build documents
-    │               │           └─> Upload to Vespa
-    │               │
-    │               └─> Collect Results
-    │                   • successful videos
-    │                   • documents fed
-    │                   • processing time
-    │                   • throughput
-    │
-    └─> Print Summary
-        • Per-profile statistics
-        • Overall success rate
-        • Total documents processed
+```mermaid
+flowchart TB
+    User(["<span style='color:#000'>User Command</span>"])
+    Entry["<span style='color:#000'>run_ingestion.py<br/>Parse args: video_dir, profiles, backend</span>"]
+    GetProfiles["<span style='color:#000'>Resolve profiles<br/>(--profile or config default:<br/>video_colpali_smol500_mv_frame)</span>"]
+    Build["<span style='color:#000'>Build Pipeline<br/>Test → build_test_pipeline()<br/>Simple → build_simple_pipeline()<br/>Advanced → create_pipeline().with_*().build()</span>"]
+    Discover["<span style='color:#000'>Discover content files<br/>video_dir.glob('*.mp4') etc.</span>"]
+    Concurrent["<span style='color:#000'>process_videos_concurrent<br/>max_concurrent=3 (default), async</span>"]
+    PerVideo["<span style='color:#000'>Per video:<br/>Extract frames/chunks →<br/>Generate embeddings →<br/>Build documents →<br/>Upload to Vespa</span>"]
+    Collect["<span style='color:#000'>Collect Results<br/>successful/failed, docs fed,<br/>time, throughput</span>"]
+    Loop{"<span style='color:#000'>More profiles?</span>"}
+    Summary["<span style='color:#000'>Print Summary<br/>Per-profile stats, overall success rate,<br/>total documents processed</span>"]
+
+    User --> Entry --> GetProfiles --> Build --> Discover --> Concurrent --> PerVideo --> Collect --> Loop
+    Loop -->|yes, next profile| Build
+    Loop -->|no| Summary
+
+    style User fill:#90caf9,stroke:#1565c0,color:#000
+    style Entry fill:#90caf9,stroke:#1565c0,color:#000
+    style GetProfiles fill:#b0bec5,stroke:#546e7a,color:#000
+    style Build fill:#b0bec5,stroke:#546e7a,color:#000
+    style Discover fill:#b0bec5,stroke:#546e7a,color:#000
+    style Concurrent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style PerVideo fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Collect fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Loop fill:#b0bec5,stroke:#546e7a,color:#000
+    style Summary fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 2. Schema Deployment Flow
@@ -947,125 +925,94 @@ Per-tenant deployment flows through the runtime admin API rather than a
 bulk script; single-schema JSON deploys continue to work via
 ``deploy_json_schema.py`` for dev iteration.
 
-```text
-User / init-job
-    │
-    ├─> Per-tenant (production):
-    │   POST $RUNTIME_URL/admin/profiles/{profile}/deploy
-    │   body: {"tenant_id": "...", "force": false}
-    │     │
-    │     └─> SchemaRegistry.deploy_schema(tenant_id, base_schema_name)
-    │           │
-    │           ├─> Transform base schema → tenant-scoped schema name
-    │           ├─> Merge existing registry schemas + live Vespa document
-    │           │   types (VespaBackend.deploy_schemas)
-    │           ├─> ApplicationPackage with ``allow_schema_removal=False``
-    │           │   (refuses to drop peer-tenant schemas)
-    │           ├─> _deploy_package -> Vespa config server
-    │           │   POST /application/v2/tenant/default/prepareandactivate
-    │           └─> _wait_for_schema_convergence (source-ref visibility)
-    │
-    └─> Single-schema dev deploy:
-        deploy_json_schema.py → ApplicationPackage → Vespa
+```mermaid
+flowchart TB
+    Start(["<span style='color:#000'>User / init-job</span>"])
+    Post["<span style='color:#000'>POST $RUNTIME_URL/admin/profiles/{profile}/deploy<br/>body: {tenant_id, force: false}</span>"]
+    Deploy["<span style='color:#000'>SchemaRegistry.deploy_schema<br/>(tenant_id, base_schema_name)</span>"]
+    Transform["<span style='color:#000'>Transform base schema →<br/>tenant-scoped schema name</span>"]
+    Merge["<span style='color:#000'>Merge registry schemas + live Vespa<br/>document types<br/>(VespaBackend.deploy_schemas)</span>"]
+    Package["<span style='color:#000'>ApplicationPackage<br/>allow_schema_removal=False<br/>(refuses to drop peer-tenant schemas)</span>"]
+    VespaDeploy["<span style='color:#000'>_deploy_package → Vespa config server<br/>POST /application/v2/tenant/default/prepareandactivate</span>"]
+    Converge["<span style='color:#000'>_wait_for_schema_convergence<br/>(source-ref visibility)</span>"]
+    DevDeploy["<span style='color:#000'>Single-schema dev deploy:<br/>deploy_json_schema.py → ApplicationPackage → Vespa</span>"]
+
+    Start --> Post --> Deploy --> Transform --> Merge --> Package --> VespaDeploy --> Converge
+    Start -.->|dev iteration| DevDeploy
+
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style Post fill:#b0bec5,stroke:#546e7a,color:#000
+    style Deploy fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Transform fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Merge fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Package fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VespaDeploy fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Converge fill:#a5d6a7,stroke:#388e3c,color:#000
+    style DevDeploy fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 ### 3. Experiment Workflow Flow
 
-```text
-User Command
-    │
-    ├─> run_experiments_with_visualization.py
-    │       │
-    │       ├─> Initialize ExperimentTracker
-    │       │   • From cogniverse_evaluation.core.experiment_tracker
-    │       │   • Separate "experiments" project
-    │       │   • Quality evaluators: relevance, diversity, distribution
-    │       │   • LLM evaluators: reference-free, reference-based
-    │       │
-    │       ├─> Prepare Dataset
-    │       │   • create_or_get_dataset()
-    │       │   • Load or create dataset from CSV
-    │       │   • Register with Phoenix
-    │       │
-    │       ├─> Get Experiment Configurations
-    │       │   • tracker.get_experiment_configurations()
-    │       │   • Filter profiles (--profiles or all)
-    │       │   • Filter strategies (--strategies or common)
-    │       │   • Build profile × strategy matrix
-    │       │
-    │       ├─> Run Experiments
-    │       │   FOR each profile:
-    │       │       FOR each strategy:
-    │       │           │
-    │       │           ├─> Create Experiment
-    │       │           │   • Name: "{profile} - {strategy}"
-    │       │           │   • Attach to dataset
-    │       │           │
-    │       │           ├─> Run Search Queries
-    │       │           │   FOR each query in dataset:
-    │       │           │       • Execute search
-    │       │           │       • Record spans
-    │       │           │       • Collect results
-    │       │           │
-    │       │           ├─> Evaluate Results
-    │       │           │   IF quality_evaluators:
-    │       │           │       • Relevance score
-    │       │           │       • Diversity score
-    │       │           │       • Distribution metrics
-    │       │           │       • Temporal coverage
-    │       │           │   IF llm_evaluators:
-    │       │           │       • Reference-free evaluation
-    │       │           │       • Reference-based comparison
-    │       │           │
-    │       │           └─> Store Results
-    │       │               • Experiment ID
-    │       │               • Status (success/failed)
-    │       │               • Evaluation scores
-    │       │               • Span traces
-    │       │
-    │       ├─> Generate Visualizations
-    │       │   • Profile summary table
-    │       │   • Strategy comparison (grouped by profile)
-    │       │   • Detailed results (all experiments)
-    │       │   • Print to console with tabulate
-    │       │
-    │       ├─> Export Results
-    │       │   • CSV: outputs/experiment_results/experiment_summary_*.csv
-    │       │   • JSON: outputs/experiment_results/experiment_details_*.json
-    │       │   • HTML: generate_integrated_report() if quantitative tests exist
-    │       │
-    │       └─> Print Phoenix UI Links
-    │           • Dataset URL: http://localhost:6006/datasets/{id}
-    │           • Experiments Project: http://localhost:6006/projects/experiments
-    │           • Default Project: http://localhost:6006/projects/default
-    │
-    └─> Exit with Summary Statistics
+```mermaid
+flowchart TB
+    Start(["<span style='color:#000'>User Command</span>"])
+    Entry["<span style='color:#000'>run_experiments_with_visualization.py</span>"]
+    Init["<span style='color:#000'>Initialize ExperimentTracker(tenant_id, ...)<br/>cogniverse_evaluation.core.experiment_tracker<br/>Separate 'experiments' project</span>"]
+    Dataset["<span style='color:#000'>create_or_get_dataset()<br/>Load or create dataset from CSV,<br/>register with Phoenix</span>"]
+    Config["<span style='color:#000'>get_experiment_configurations()<br/>Filter profiles/strategies,<br/>build profile × strategy matrix</span>"]
+
+    subgraph PerCombo["<span style='color:#000'>FOR each profile × strategy</span>"]
+        Create["<span style='color:#000'>Create Experiment<br/>Name: '{profile} - {strategy}', attach to dataset</span>"]
+        RunQueries["<span style='color:#000'>Run Search Queries<br/>FOR each query: execute search,<br/>record spans, collect results</span>"]
+        Evaluate["<span style='color:#000'>Evaluate Results<br/>quality: relevance/diversity/distribution/temporal<br/>llm: reference-free/reference-based</span>"]
+        Store["<span style='color:#000'>Store Results<br/>experiment id, status, scores, span traces</span>"]
+        Create --> RunQueries --> Evaluate --> Store
+    end
+
+    Viz["<span style='color:#000'>Generate Visualizations<br/>Profile summary, strategy comparison,<br/>detailed results (tabulate)</span>"]
+    Export["<span style='color:#000'>Export Results<br/>CSV/JSON under outputs/experiment_results/,<br/>HTML report if quantitative tests exist</span>"]
+    Links["<span style='color:#000'>Print Phoenix UI Links<br/>dataset, experiments project, default project</span>"]
+    Exit(["<span style='color:#000'>Exit with Summary Statistics</span>"])
+
+    Start --> Entry --> Init --> Dataset --> Config --> PerCombo
+    PerCombo --> Viz --> Export --> Links --> Exit
+
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style Entry fill:#90caf9,stroke:#1565c0,color:#000
+    style Init fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Dataset fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Config fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Create fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style RunQueries fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Evaluate fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Store fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Viz fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Export fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Links fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Exit fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 4. Optimization & Deployment Flow
 
-```text
-User Command
-    │
-    ├─> python -m cogniverse_runtime.optimization_cli --mode <MODE> --tenant-id <TENANT>
-    │       │
-    │       ├─> Step 1: Run Per-Agent Optimizer
-    │       │   • Mode: simba | gateway-thresholds | entity-extraction | workflow | profile
-    │       │   • Collects Phoenix spans for the agent
-    │       │   • Selects DSPy optimizer based on training data size
-    │       │
-    │       ├─> Step 2: Persist Artifact (ArtifactManager.save_blob)
-    │       │       • Stores the optimized module / threshold config per tenant
-    │       │       • Returns an artifact_id
-    │       │
-    │       ├─> Step 3: Agents Load at Startup
-    │       │       • No redeploy: the runtime agents read the latest
-    │       │         tenant artifact via ArtifactManager on startup
-    │       │
-    │       └─> Print Summary
-    │           • Mode, tenant, artifact_id, status
-    │
-    └─> Exit with Status Code
+```mermaid
+flowchart TB
+    Start(["<span style='color:#000'>User Command</span>"])
+    Entry["<span style='color:#000'>python -m cogniverse_runtime.optimization_cli<br/>--mode &lt;MODE&gt; --tenant-id &lt;TENANT&gt;</span>"]
+    Step1["<span style='color:#000'>Step 1: Run Per-Agent Optimizer<br/>Mode: simba | gateway-thresholds |<br/>entity-extraction | workflow | profile<br/>Collects Phoenix spans; compiles the target<br/>DSPy module with BootstrapFewShot,<br/>scaled by trainset size (&lt;50 vs &gt;=50 examples)</span>"]
+    Step2["<span style='color:#000'>Step 2: Persist Artifact<br/>ArtifactManager.save_blob<br/>Stores optimized module / threshold config<br/>per tenant, returns an artifact_id</span>"]
+    Step3["<span style='color:#000'>Step 3: Agents Load at Startup<br/>No redeploy: runtime agents read the<br/>latest tenant artifact via ArtifactManager</span>"]
+    Summary["<span style='color:#000'>Print Summary<br/>Mode, tenant, artifact_id, status</span>"]
+    Exit(["<span style='color:#000'>Exit with Status Code</span>"])
+
+    Start --> Entry --> Step1 --> Step2 --> Step3 --> Summary --> Exit
+
+    style Start fill:#90caf9,stroke:#1565c0,color:#000
+    style Entry fill:#90caf9,stroke:#1565c0,color:#000
+    style Step1 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Step2 fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Step3 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Summary fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Exit fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -1196,7 +1143,7 @@ curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deplo
 uv run python scripts/run_experiments_with_visualization.py \
   --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
-  --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
+  --dataset-path data/testset/evaluation/video_search_queries.csv \
   --profiles frame_based_colpali \
   --quality-evaluators
 
@@ -1350,17 +1297,16 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 85
 #   Local URL: http://localhost:8501
 #   Network URL: http://192.168.1.100:8501
 #
-# Dashboard features:
-# - Analytics: Performance metrics, latency distribution, error rates
-# - Evaluation: Experiment comparison, metric visualization
-# - Config Management: Tenant configuration, profile selection
-# - Memory Management: Conversation history, cache stats
-# - Embedding Atlas: 2D/3D visualization, cluster analysis
-# - Routing Evaluation: Routing accuracy, confusion matrix
-# - Orchestration: Multi-agent workflow visualization
+# Dashboard tabs (top tab bar, left to right):
+# Analytics, Evaluation, Embedding Atlas, Routing Evaluation,
+# Orchestration Annotation, Profile Routing Metrics, Optimization,
+# Synthetic Data & Optimization, Approval Queue, Ingestion Testing,
+# Interactive Search, Chat, Configuration, Tenant Management,
+# Memory, RLM A/B Compare
 
 # Access in browser: http://localhost:8501
-# Select tab from sidebar to explore different features
+# The sidebar holds tenant selection, time range, and agent status —
+# pick a tab from the top tab bar to explore each feature area.
 ```
 
 ---
@@ -1430,10 +1376,17 @@ result = {
 # - "HTTP 400" → Schema validation failed
 # - "Timeout" → Vespa busy or unresponsive
 
-# Verification step catches deployment failures:
-if not verify_deployment(schema_name):
-    logger.error("Deployment verification failed")
+# deploy_json_schema() failures (non-200 from prepareandactivate, or an
+# exception during zip/POST) DO exit non-zero:
+if deploy_json_schema(args.schema_file, args.config_host, args.config_port, args.data_port):
+    ...
+else:
+    print("\n❌ Deployment failed")
     sys.exit(1)
+
+# verify_deployment() is called afterward as an informational health
+# check (prints a warning on non-200) but its return value is NOT
+# checked — a failed verification does not change the exit code.
 ```
 
 **Experiment Errors:**
@@ -1487,8 +1440,9 @@ tail -f outputs/logs/ingestion_pipeline.log
 # - Cache hit rate
 # - Throughput (requests/sec)
 
-# Auto-refresh every 30s (configurable)
-st.session_state.auto_refresh = True
+# Auto-refresh is off by default; the sidebar checkbox enables it with
+# a configurable interval (5-300s, default 30s):
+st.session_state.auto_refresh = auto_refresh  # from st.checkbox
 ```
 
 ### 4. Resource Management
@@ -1688,10 +1642,8 @@ This module serves as the operational backbone of the Cogniverse system, providi
 
 ---
 
-**Next Study Guides:**
+**Related Documentation:**
 
-- **15_UI_DASHBOARD.md**: Detailed Streamlit dashboard components
+- **[`docs/modules/dashboard.md`](../modules/dashboard.md)**: Detailed Streamlit dashboard components
 
-- **16_SYSTEM_INTEGRATION.md**: End-to-end system integration
-
-- **17_INSTRUMENTATION.md**: Phoenix telemetry and observability
+- **[`docs/development/instrumentation.md`](instrumentation.md)**: Phoenix telemetry and observability

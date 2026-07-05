@@ -37,8 +37,10 @@ cogniverse/
 │   │   └── cogniverse_foundation/
 │   │       ├── __init__.py
 │   │       ├── telemetry/      # Core telemetry
-│   │       ├── config/         # Base configuration
-│   │       └── utils/          # Common utilities
+│   │       ├── config/         # Base configuration (incl. config/utils.py)
+│   │       ├── caching/        # Cache backends
+│   │       ├── dspy/           # DSPy integration helpers
+│   │       └── registry/       # Provider entry-point registry
 │   │
 │   ├── CORE LAYER (business logic and frameworks)
 │   ├── evaluation/        # cogniverse_evaluation
@@ -48,20 +50,25 @@ cogniverse/
 │   │       ├── __init__.py
 │   │       ├── core/           # Evaluation framework
 │   │       ├── evaluators/     # Evaluator implementations
-│   │       └── metrics/        # Metric definitions
+│   │       ├── metrics/        # Metric definitions
+│   │       ├── analysis/       # Root-cause / plugin analyzers
+│   │       ├── data/           # Dataset & storage managers
+│   │       ├── plugins/        # Pluggable evaluator extensions
+│   │       └── providers/      # Telemetry provider interfaces
 │   ├── core/              # cogniverse_core
 │   │   ├── pyproject.toml
 │   │   ├── README.md
 │   │   └── cogniverse_core/
 │   │       ├── __init__.py
 │   │       ├── agents/         # Agent base classes
+│   │       ├── approval/       # Approval workflow interfaces
 │   │       ├── backends/       # Backend interfaces
 │   │       ├── common/         # Core business logic
-│   │       ├── config/         # System configuration
 │   │       ├── events/         # Event system
 │   │       ├── factories/      # Factory classes
 │   │       ├── interfaces/     # Core interfaces
-│   │       ├── memory/         # Memory management
+│   │       ├── memory/         # Memory management (Mem0, provenance, federation)
+│   │       ├── query/          # Query processing
 │   │       ├── registries/     # Component registries
 │   │       ├── schemas/        # Schema management
 │   │       ├── telemetry/      # Telemetry integration
@@ -72,34 +79,38 @@ cogniverse/
 │   │   ├── pyproject.toml
 │   │   ├── README.md
 │   │   └── cogniverse_telemetry_phoenix/
-│   │       └── __init__.py     # Phoenix telemetry implementation
-│   ├── agents/            # cogniverse_agents
+│   │       ├── __init__.py
+│   │       ├── provider.py     # PhoenixProvider (telemetry entry point)
+│   │       └── evaluation/     # PhoenixEvaluationProvider
+│   ├── agents/            # cogniverse_agents (23 A2A agents; see docs/modules/agents.md)
 │   │   ├── pyproject.toml
 │   │   ├── README.md
 │   │   └── cogniverse_agents/
 │   │       ├── __init__.py
 │   │       ├── orchestrator_agent.py   # A2A orchestrator
-│   │       ├── search_agent.py            # Search agent
+│   │       ├── search_agent.py         # Search agent
+│   │       ├── gateway_agent.py        # Query classification/routing gateway
+│   │       ├── ... (20 more *_agent.py modules)
 │   │       ├── approval/       # Approval workflow
+│   │       ├── graph/          # Knowledge-graph helpers
 │   │       ├── inference/      # Inference logic
 │   │       ├── mixins/         # Agent mixins
 │   │       ├── optimizer/      # Optimizer agents
 │   │       ├── orchestrator/   # Orchestration
-│   │       ├── query/          # Query processing
-│   │       ├── results/        # Result handling
 │   │       ├── routing/        # Routing strategies
 │   │       ├── search/         # Search implementations
 │   │       ├── tools/          # Agent tools
-│   │       └── workflow/       # Workflow management
+│   │       ├── wiki/           # Wiki-backed knowledge tools
+│   │       └── workflow/       # Workflow state machine & telemetry workflow store
 │   ├── vespa/             # cogniverse_vespa
 │   │   ├── pyproject.toml
 │   │   ├── README.md
 │   │   └── cogniverse_vespa/
 │   │       ├── backend.py      # Main backend implementation
 │   │       ├── search_backend.py  # Search backend
+│   │       ├── vespa_schema_manager.py  # Schema deployment
 │   │       ├── config/         # Vespa configuration
-│   │       ├── registry/       # Adapter registry
-│   │       └── workflow/       # Workflow store
+│   │       └── registry/       # Adapter registry
 │   ├── synthetic/         # cogniverse_synthetic
 │   │   ├── pyproject.toml
 │   │   ├── README.md
@@ -127,7 +138,8 @@ cogniverse/
 │   │       ├── admin/          # Admin endpoints
 │   │       ├── ingestion/      # Data ingestion
 │   │       ├── ingestion_worker/ # Redis-Streams ingestion worker
-│   │       └── routers/        # API routers
+│   │       ├── routers/        # API routers
+│   │       └── sidecars/       # In-process CLAP/face-embedding sidecars
 │   ├── dashboard/         # cogniverse_dashboard
 │   │   ├── pyproject.toml
 │   │   ├── README.md
@@ -145,8 +157,9 @@ cogniverse/
 │   └── messaging/         # cogniverse_messaging (standalone, no cogniverse deps)
 │       ├── pyproject.toml
 │       └── cogniverse_messaging/
-│           ├── gateway.py      # Telegram/Slack gateway
+│           ├── gateway.py      # Telegram gateway (MessagingGateway)
 │           ├── command_router.py
+│           ├── telegram_handler.py
 │           └── runtime_client.py
 ├── tests/                 # Workspace-level tests
 │   ├── admin/
@@ -181,7 +194,7 @@ cogniverse/
 flowchart TB
     subgraph Foundation["<span style='color:#000'>FOUNDATION LAYER</span>"]
         SDK["<span style='color:#000'>cogniverse_sdk<br/>Base types & protocols</span>"]
-        FoundationPkg["<span style='color:#000'>cogniverse_foundation<br/>Telemetry, config, cache, utils</span>"]
+        FoundationPkg["<span style='color:#000'>cogniverse_foundation<br/>Telemetry, config, cache, DSPy, registry</span>"]
     end
 
     subgraph Core["<span style='color:#000'>CORE LAYER</span>"]
@@ -201,7 +214,7 @@ flowchart TB
         Runtime["<span style='color:#000'>cogniverse_runtime<br/>FastAPI server</span>"]
         Dashboard["<span style='color:#000'>cogniverse_dashboard<br/>Streamlit UI</span>"]
         CLI["<span style='color:#000'>cogniverse_cli<br/>Click CLI (no cogniverse deps)</span>"]
-        Messaging["<span style='color:#000'>cogniverse_messaging<br/>Telegram/Slack gateway (no cogniverse deps)</span>"]
+        Messaging["<span style='color:#000'>cogniverse_messaging<br/>Telegram gateway (no cogniverse deps)</span>"]
     end
 
     FoundationPkg --> SDK
@@ -220,6 +233,7 @@ flowchart TB
     Vespa --> CorePkg
     Synthetic --> SDK
     Synthetic --> FoundationPkg
+    Synthetic --> CorePkg
     Finetuning --> SDK
     Finetuning --> CorePkg
     Finetuning --> Agents
@@ -228,6 +242,7 @@ flowchart TB
 
     Runtime --> SDK
     Runtime --> CorePkg
+    Runtime --> Synthetic
     Runtime -.-> Agents
     Runtime -.-> Vespa
     Dashboard --> SDK
@@ -274,19 +289,19 @@ flowchart TB
 
 - `cogniverse_vespa`: Depends on `sdk`, `core`
 
-- `cogniverse_synthetic`: Depends on `sdk`, `foundation`
+- `cogniverse_synthetic`: Depends on `sdk`, `foundation`, `core`
 
 - `cogniverse_finetuning`: Depends on `sdk`, `core`, `agents`, `synthetic`, `foundation`
 
 **Application Layer** (depends on lower layers as needed):
 
-- `cogniverse_runtime`: Depends on `sdk`, `core` (optional: `agents`, `vespa`)
+- `cogniverse_runtime`: Depends on `sdk`, `core`, `synthetic` (optional: `agents`, `vespa`)
 
 - `cogniverse_dashboard`: Depends on `sdk`, `core`, `evaluation`, `agents`, `vespa`, `telemetry_phoenix`
 
 - `cogniverse_cli`: Standalone Click CLI — no dependencies on other Cogniverse packages (talks to the runtime over HTTP)
 
-- `cogniverse_messaging`: Standalone Telegram/Slack gateway — no dependencies on other Cogniverse packages (talks to the runtime over HTTP)
+- `cogniverse_messaging`: Standalone Telegram gateway — no dependencies on other Cogniverse packages (talks to the runtime over HTTP)
 
 ---
 
@@ -385,7 +400,8 @@ cd libs/synthetic
 # Add dependencies
 uv add faker  # For synthetic data generation
 
-# Since synthetic depends on sdk only, keep dependencies minimal
+# synthetic depends on sdk, foundation, and core — keep dependencies
+# beyond those minimal
 from pydantic import BaseModel, Field
 
 # Run tests
@@ -410,7 +426,7 @@ telemetry = TelemetryManager()
 
 # 3. Update core package (core layer) for business logic
 cd ../core
-# Edit cogniverse_foundation/config/unified_config.py
+# Edit cogniverse_core/memory/backend_config.py
 # Add new configuration field for tenant memory settings
 
 # 4. Update agents package (implementation layer) to use new config
@@ -847,21 +863,25 @@ tests/
 ├── agents/              # cogniverse_agents tests
 │   ├── unit/
 │   │   ├── test_orchestrator_agent.py
-│   │   └── test_video_agent.py
+│   │   └── test_agent_registry_http.py
 │   └── integration/
-│       └── test_agent_pipeline.py
+│       └── test_a2a_real_services.py
 ├── common/              # cogniverse_core.common tests
-│   ├── test_cache.py
-│   └── test_utils.py
+│   ├── unit/
+│   │   ├── test_agent_config.py
+│   │   └── test_dynamic_dspy_mixin.py
+│   └── integration/
+│       └── test_config_persistence.py
 ├── evaluation/          # cogniverse_evaluation tests
-│   ├── test_experiment_tracker.py
-│   └── test_evaluators.py
+│   └── unit/
+│       ├── test_experiment_tracker.py
+│       └── test_evaluators.py
 ├── ingestion/           # cogniverse_runtime.ingestion tests
 │   ├── unit/
 │   │   └── test_pipeline.py
 │   └── integration/
 │       └── test_backend_ingestion.py
-├── memory/              # cogniverse_core.common.memory tests
+├── memory/              # cogniverse_core.memory tests
 │   ├── unit/
 │   │   └── test_mem0_memory_manager.py
 │   └── integration/
@@ -1121,9 +1141,9 @@ cd ../dashboard && uv publish
 | cogniverse-telemetry-phoenix | 0.2.0 | -  | -                   | >=0.2.0       | >=0.2.0             | -                 | -              | -                |
 | cogniverse-agents | 0.2.0   | >=0.2.0    | -                   | >=0.2.0       | -                   | >=0.2.0           | -              | -                |
 | cogniverse-vespa | 0.2.0   | >=0.2.0     | -                   | >=0.2.0       | -                   | -                 | -              | -                |
-| cogniverse-synthetic | 0.2.0 | >=0.2.0    | >=0.2.0             | -             | -                   | -                 | -              | -                |
+| cogniverse-synthetic | 0.2.0 | >=0.2.0    | >=0.2.0             | >=0.2.0       | -                   | -                 | -              | -                |
 | cogniverse-finetuning | 0.2.0 | >=0.2.0   | >=0.2.0             | >=0.2.0       | -                   | >=0.2.0           | >=0.2.0        | -                |
-| cogniverse-runtime | 0.2.0 | >=0.2.0     | -                   | >=0.2.0       | -                   | -                 | -              | -                |
+| cogniverse-runtime | 0.2.0 | >=0.2.0     | -                   | >=0.2.0       | -                   | >=0.2.0           | -              | -                |
 | cogniverse-dashboard | 0.2.0 | >=0.2.0   | -                   | >=0.2.0       | >=0.2.0             | -                 | >=0.2.0        | -                |
 
 Note: This shows required dependencies only (columns cover the packages most
@@ -1141,7 +1161,7 @@ on agents and vespa. Dashboard also requires vespa and telemetry-phoenix
 **Keep Packages Focused:**
 ```python
 # ✅ GOOD: Clear package boundaries
-# cogniverse_core - foundational utilities only
+# cogniverse_foundation - foundational utilities only
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 
@@ -1150,19 +1170,19 @@ from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 from cogniverse_agents.search_agent import SearchAgent
 
 # ❌ BAD: Mixing concerns
-# Don't put agent implementations in cogniverse_core
-# Don't put core utilities in cogniverse_agents
+# Don't put agent implementations in cogniverse_foundation
+# Don't put foundational utilities in cogniverse_agents
 ```
 
 **Avoid Circular Dependencies:**
 ```python
 # ❌ BAD: Circular dependency
 # libs/foundation/cogniverse_foundation/config/unified_config.py
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent  # ❌ core depends on agents
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent  # ❌ foundation depends on agents
 
 # ✅ GOOD: One-way dependency
 # libs/agents/cogniverse_agents/orchestrator_agent.py
-from cogniverse_foundation.config.unified_config import SystemConfig  # ✅ agents depends on core
+from cogniverse_foundation.config.unified_config import SystemConfig  # ✅ agents depends on foundation
 ```
 
 ### 2. Import Conventions

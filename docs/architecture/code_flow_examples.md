@@ -50,7 +50,7 @@ app_package.schema.add_fields(
 # 3. Add ranking profiles
 # Note: create_ranking_profile() is application-specific helper function
 for strategy in ["hybrid_float_bm25", "float_float", "phased"]:
-    app_package.add_rank_profile(
+    app_package.schema.add_rank_profile(
         create_ranking_profile(strategy)  # Application-defined helper
     )
 
@@ -110,6 +110,7 @@ from cogniverse_agents.orchestrator_agent import OrchestratorAgent, Orchestrator
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_core.common.tenant_utils import require_tenant_id
 from pathlib import Path
 
 config_manager = create_default_config_manager()
@@ -121,7 +122,9 @@ tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
 
 # 3. Initialize orchestrator (tenant-agnostic at construction)
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+orchestrator = OrchestratorAgent(
+    deps=OrchestratorDeps(), registry=registry, config_manager=config_manager
+)
 
 # 4. Route query with DSPy optimization (async)
 routing_decision = await orchestrator._process_impl(
@@ -146,7 +149,7 @@ results = search_agent.search_by_text(
 # Search service routes to correct tenant schema internally
 ```
 
-## Multi-Turn Conversation Flow
+## 3. Multi-Turn Conversation Flow
 
 ### Query Rewrite with Conversation History
 
@@ -207,7 +210,9 @@ rewritten = await self._rewrite_query_with_history(
 # rewritten = "show me longer cat videos"
 
 # 5. Search executes with rewritten query
-results = search_agent._process_impl(SearchInput(query="show me longer cat videos", ...))
+results = search_agent._process_impl(
+    SearchInput(query="show me longer cat videos", tenant_id=tenant_id)
+)
 
 # 6. Response includes both gateway routing and search results
 # {
@@ -258,7 +263,7 @@ sequenceDiagram
 
 ---
 
-## 3. DSPy Routing Optimization Flow
+## 4. DSPy Routing Optimization Flow
 
 ### On-Demand Gateway Optimization
 
@@ -266,7 +271,7 @@ Optimization runs on-demand via the dashboard or Argo Workflow submission. The `
 
 **Location**: `libs/runtime/cogniverse_runtime/optimization_cli.py`
 
-```python
+```bash
 # Trigger optimization via the runtime API
 # POST /admin/tenant/{tenant_id}/optimize
 # Body: {"mode": "gateway-thresholds"}
@@ -288,35 +293,50 @@ uv run python -m cogniverse_runtime.optimization_cli \
 from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
 
 # spans_df: DataFrame from Phoenix with GLiNER routing spans
-thresholds = _compute_gateway_thresholds(spans_df)
-# Returns: {"fast_path_confidence_threshold": 0.62, ...}
+result = _compute_gateway_thresholds(spans_df)
+# Returns: {
+#   "status": "ready",
+#   "spans_found": 340,
+#   "thresholds": {
+#     "fast_path_confidence_threshold": 0.45,
+#     "gliner_threshold": 0.32,
+#     "analysis": {"total_spans": 340, "simple_count": 210, ...}
+#   }
+# }
+thresholds = result["thresholds"]
 
-# GATEWAY_DEFAULT_THRESHOLD = 0.4 (module constant)
+# GATEWAY_DEFAULT_THRESHOLD = 0.4 (module constant; starting point for calibration)
 ```
 
-### DSPy Module Optimization (SIMBA/Profile)
+### DSPy Module Optimization (SIMBA/Profile modes)
 
 ```python
-# The simba and profile modes compile DSPy modules for agents
-# Adaptive selection based on training data size:
-#   < 100 examples → Bootstrap
-#   100-500 examples → SIMBA
-#   500-1000 examples → MIPRO
-#   > 1000 examples → GEPA
+# The "simba" and "profile" optimization_cli modes each build a DSPy
+# trainset from Phoenix spans (query_enhancement / profile_selection),
+# then compile it with a BootstrapFewShot teleprompter scaled by
+# trainset size (optimization_cli._create_teleprompter):
+#   < 50 examples  → BootstrapFewShot(max_bootstrapped_demos=4, max_labeled_demos=8, max_rounds=1)
+#   >= 50 examples → BootstrapFewShot(max_bootstrapped_demos=8, max_labeled_demos=16, max_rounds=2)
+#
+# cogniverse_foundation.config.agent_config.OptimizerType also declares
+# mipro_v2 and gepa members, and DSPyOptimizerRegistry wires mipro_v2 to
+# dspy.MIPROv2 for callers that request it explicitly — but the "simba"
+# and "profile" CLI modes always compile through the scaled
+# BootstrapFewShot path above, regardless of trainset size.
 
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_runtime.optimization_cli import (
+    run_simba_optimization,
+    run_profile_optimization,
+)
 
-config_manager = create_default_config_manager()
-registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+# Compile QueryEnhancementAgent's DSPy module from query_enhancement spans
+simba_result = await run_simba_optimization(tenant_id="customer_a", lookback_hours=24.0)
 
-# Process user query — GatewayAgent routes, OrchestratorAgent plans
-decision = await agent._process_impl(OrchestratorInput(query="cooking videos", tenant_id="customer_a"))
+# Compile ProfileSelectionAgent's DSPy module from profile_selection spans
+profile_result = await run_profile_optimization(tenant_id="customer_a", lookback_hours=24.0)
 ```
 
-## 4. Memory-Augmented Search Flow
+## 5. Memory-Augmented Search Flow
 
 ### Search with Context
 ```python
@@ -367,7 +387,7 @@ memory_manager.add_memory(
 )
 ```
 
-## 5. Experiment Flow
+## 6. Experiment Flow
 
 ### Run A/B Test
 ```python
@@ -417,7 +437,7 @@ for query in queries:
 # Or retrieve programmatically through provider.telemetry
 ```
 
-## 6. Error Recovery Flow
+## 7. Error Recovery Flow
 
 ### Graceful Degradation
 ```python
@@ -442,7 +462,7 @@ except Exception as e:
     # 2. Try alternate agent with different profile
     try:
         fallback_agent = SearchAgent(
-            deps=SearchAgentDeps(profile="frame_based_colpali"),
+            deps=SearchAgentDeps(profile="video_videoprism_base_mv_chunk_30s"),
             config_manager=config_manager,
             schema_loader=schema_loader
         )
@@ -467,7 +487,7 @@ except Exception as e:
         )
 ```
 
-## Performance Monitoring
+## 8. Performance Monitoring
 
 ### Request Tracing
 ```python
@@ -501,7 +521,7 @@ with tracer.start_as_current_span("search_request") as trace_span:
 
     # Search: 200ms
     with tracer.start_as_current_span("search"):
-        results = agent.search(query, top_k=10)
+        results = agent.search_by_text(query, tenant_id=tenant_id, top_k=10)
 
     # Reranking: 50ms (rerank is application-defined function)
     with tracer.start_as_current_span("rerank"):
@@ -519,6 +539,6 @@ with tracer.start_as_current_span("search_request") as trace_span:
 - **Foundation Layer**: cogniverse-sdk, cogniverse-foundation (config, telemetry)
 - **Core Layer**: cogniverse-core (base agents, memory), cogniverse-evaluation (experiments), cogniverse-telemetry-phoenix (Phoenix integration)
 - **Implementation Layer**: cogniverse-agents (routing, search), cogniverse-vespa (backends), cogniverse-synthetic (data generation)
-- **Application Layer**: cogniverse-runtime (ingestion, API), cogniverse-dashboard (UI)
+- **Application Layer**: cogniverse-runtime (ingestion, API), cogniverse-dashboard (UI), cogniverse-cli (deployment/management CLI), cogniverse-finetuning (LoRA/DPO fine-tuning), cogniverse-messaging (Telegram/Slack gateway)
 
 All code examples follow the correct import paths for the layered structure located in `libs/`.
