@@ -38,25 +38,34 @@ Example WRONG behavior:
 ## COMPLETENESS MANDATE (not just drift)
 
 Drift verification confirms that what IS written is correct. It does NOT catch
-what is MISSING. A doc that lists 3 of 23 agents — all spelled correctly — passes
-every drift check while being badly incomplete. You MUST also verify COVERAGE.
+what is MISSING. This mandate is about COVERAGE, and it applies to EVERYTHING the
+file's subject touches — **not only to lists the doc already happens to contain.**
 
-For every doc that ENUMERATES a category, cross-check the enumeration against the
-code and FILL every missing entry (do not merely flag it):
+Determine the file's SUBJECT (a module, a subsystem, the whole system, an
+operational surface, a workflow, an API) and verify the doc covers that subject
+**completely** against the code. Anything that exists in the code within the
+doc's scope but is absent from the doc is a completeness gap you MUST fill
+(accurately, from the code) — **whether or not the doc currently mentions
+anything like it.** A missing class nobody listed, a subsystem documented
+nowhere, a capability the code has but the prose never describes — all are gaps.
 
-- **Agents** — if the doc lists agents, it must list EVERY agent under
-  `libs/agents/cogniverse_agents/` / `configs/config.json` `agents.*` (there are
-  ~23), grouped and described from their real code. Grep the roster; add the
-  missing ones.
-- **API routes** — every mounted router/route in `libs/runtime/.../main.py` and
-  `routers/`.
-- **Packages / subpackages** — every `libs/*` package and every subpackage.
-- **Models, ranking strategies, config keys, CLI commands, dashboard tabs** — the
-  FULL real set, not a sample.
+How to check, by subject:
 
-If the doc's scope implies a complete list and the code has more, the doc is
-INCOMPLETE — add the missing items (accurately, from the code) before declaring
-verified. "The listed ones are correct" is NOT sufficient.
+- **Module doc** (`docs/modules/X.md`) — walk the actual package `libs/**/X/` and
+  confirm every public class, function, and subpackage is documented, not just
+  the few currently described.
+- **Architecture / README** — every major subsystem, layer, agent, and capability
+  the system actually has (all ~23 agents, the memory/knowledge layer, the
+  semantic router, ingestion, etc.), not a representative sample.
+- **Operations doc** — every operational surface in scope: every CLI command, env
+  var, mounted route, chart value.
+- **Any enumeration present** — must list ALL items of that category from the
+  code.
+
+Actively compare the doc's coverage against the code for its **whole subject**,
+and ADD what's missing. Do NOT treat "the things already listed are correct" as
+complete — a doc that omits a feature/module/class/agent/route that exists in the
+code and falls within its scope is INCOMPLETE and must not be declared verified.
 
 ## DIAGRAMS: MERMAID ONLY (hard rule)
 

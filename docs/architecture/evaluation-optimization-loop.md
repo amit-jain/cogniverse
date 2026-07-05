@@ -261,7 +261,7 @@ flowchart TD
     style VAL fill:#ffcc80,stroke:#ef6c00,color:#000
     style OUT fill:#a5d6a7,stroke:#388e3c,color:#000
     style RC fill:#ffcc80,stroke:#ef6c00,color:#000
-    style ERR fill:#ef9a9a,stroke:#c62828,color:#000
+    style ERR fill:#ffcccc,stroke:#c62828,color:#000
     style META fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
@@ -315,7 +315,7 @@ flowchart LR
     style PEND fill:#ffcc80,stroke:#ef6c00,color:#000
     style HUMAN fill:#ffcc80,stroke:#ef6c00,color:#000
     style APP fill:#a5d6a7,stroke:#388e3c,color:#000
-    style REJ fill:#ef9a9a,stroke:#c62828,color:#000
+    style REJ fill:#ffcccc,stroke:#c62828,color:#000
     style REGEN fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
@@ -463,7 +463,7 @@ flowchart LR
     style SP fill:#90caf9,stroke:#1565c0,color:#000
     style CL fill:#ffcc80,stroke:#ef6c00,color:#000
     style S fill:#a5d6a7,stroke:#388e3c,color:#000
-    style F fill:#ef9a9a,stroke:#c62828,color:#000
+    style F fill:#ffcccc,stroke:#c62828,color:#000
     style A fill:#ffcc80,stroke:#ef6c00,color:#000
     style RA fill:#ce93d8,stroke:#7b1fa2,color:#000
     style CC fill:#ce93d8,stroke:#7b1fa2,color:#000
