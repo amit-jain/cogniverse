@@ -18,7 +18,7 @@ uv run python scripts/run_ingestion.py --video_dir data/testset/evaluation/sampl
 JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py --profiles direct_video_global direct_video_global_large frame_based_colpali --test-multiple-strategies
 
 # Phoenix experiments with visualization (creates datasets and runs experiments)
-uv run python scripts/run_experiments_with_visualization.py --dataset-path data/testset/evaluation/video_search_queries.csv --dataset-name golden_eval_v1 --profiles frame_based_colpali --test-multiple-strategies
+uv run python scripts/run_experiments_with_visualization.py --tenant-id acme:acme --dataset-path data/testset/evaluation/video_search_queries.csv --dataset-name golden_eval_v1 --profiles frame_based_colpali --test-multiple-strategies
 
 # Phoenix dashboard (Analytics + Evaluation)
 uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501

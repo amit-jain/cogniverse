@@ -1194,6 +1194,7 @@ curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deplo
 ```bash
 # Run experiments with quality evaluators
 uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
   --profiles frame_based_colpali \

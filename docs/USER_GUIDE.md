@@ -529,6 +529,7 @@ Evaluate search quality on a dataset:
 ```bash
 # Run evaluation with Phoenix tracking
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
   --all-strategies \
@@ -570,6 +571,7 @@ Create your own evaluation dataset:
 ```bash
 # Run evaluation on custom dataset
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --csv-path evaluation_dataset.json \
   --profiles video_colpali_smol500_mv_frame
 ```
@@ -581,6 +583,7 @@ Compare different embedding models:
 ```bash
 # Run experiments with multiple profiles
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
              video_videoprism_base_mv_chunk_30s \

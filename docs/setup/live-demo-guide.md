@@ -419,12 +419,14 @@ After running queries, open Phoenix at `http://localhost:6006`:
 ```bash
 # Basic evaluation with quality metrics
 uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame
 
 # All strategies for a profile
 uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
@@ -432,6 +434,7 @@ uv run python scripts/run_experiments_with_visualization.py \
 
 # With LLM-based evaluators
 uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
@@ -1051,6 +1054,7 @@ curl -X POST http://localhost:8000/search/ \
 
 # 5. Evaluate retrieval quality
 uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-path data/testset/evaluation/sample_videos_retrieval_queries.json \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame --all-strategies

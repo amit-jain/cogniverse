@@ -818,6 +818,7 @@ uv run python scripts/run_ingestion.py \
 
 # Run experiments (uses agents + core + dashboard)
 uv run python scripts/run_experiments_with_visualization.py \
+    --tenant-id acme:acme \
     --dataset-path data/queries.csv \
     --profiles frame_based_colpali
 ```
