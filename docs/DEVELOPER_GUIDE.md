@@ -627,6 +627,7 @@ uv run python scripts/run_ingestion.py \
 
 # Experiments
 uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-path data/testset/evaluation/video_search_queries.csv \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame

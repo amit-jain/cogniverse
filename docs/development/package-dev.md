@@ -458,6 +458,7 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 85
 
 # Run experiments
 uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --profiles frame_based_colpali
 ```
