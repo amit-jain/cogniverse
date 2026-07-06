@@ -71,11 +71,11 @@ class DeepResearchOutput(AgentOutput):
 class DeepResearchDeps(AgentDeps):
     tenant_id: str
     multimodal_generation_enabled: bool = Field(
-        False,
+        True,
         description=(
-            "Attach retrieved keyframes to the synthesis LLM. Off by default: "
-            "enable only once keyframes are in MinIO and the answer model "
-            "accepts image inputs (an image:0 student rejects them)."
+            "Attach retrieved keyframes to the synthesis LLM. A keyframe not "
+            "yet in object storage is skipped, so this degrades to text-only "
+            "when frames are unavailable."
         ),
     )
     max_keyframes_to_llm: int = Field(
