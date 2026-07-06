@@ -224,6 +224,13 @@ class ProcessingStrategySet:
                     pipeline_context.logger.info(
                         f"  ♻️ Keyframes cache hit: {len(cached.get('keyframes', []))} frames"
                     )
+                    # A cache hit rehydrates the frames to this pod's disk, so
+                    # upload here too — otherwise a re-ingest (or a video first
+                    # ingested before this wiring existed) never lands its
+                    # keyframes in object storage.
+                    pipeline_context.upload_keyframes_to_object_store(
+                        video_path, cached
+                    )
                     return {"keyframes": cached}
                 # Full cv2 decode of the video — run off the event loop so
                 # the runtime keeps serving requests during extraction.
