@@ -17,9 +17,11 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 # Enhanced routing support
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
+from cogniverse_agents.multimodal import KeyframeImageResolver
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
 from cogniverse_foundation.config.semantic_router import routed_lm_context_for
@@ -113,6 +115,17 @@ class DetailedReportDeps(AgentDeps):
     technical_analysis_enabled: bool = Field(
         True, description="Enable technical analysis"
     )
+    multimodal_generation_enabled: bool = Field(
+        False,
+        description=(
+            "Attach retrieved keyframes to the report LLM. Off by default: "
+            "enable only once keyframes are in MinIO and the answer model "
+            "accepts image inputs (an image:0 student rejects them)."
+        ),
+    )
+    max_keyframes_to_llm: int = Field(
+        4, description="Cap on keyframes attached to the report LLM"
+    )
 
 
 # DSPy Signatures and Module
@@ -123,6 +136,12 @@ class ReportGenerationSignature(dspy.Signature):
     query = dspy.InputField(desc="Original user query")
     report_type = dspy.InputField(
         desc="Type of report: comprehensive, technical, analytical"
+    )
+    keyframes: list[dspy.Image] = dspy.InputField(
+        desc=(
+            "Key frames from the top video results. Ground the report in what "
+            "these frames actually show, not only the titles and scores."
+        )
     )
 
     executive_summary = dspy.OutputField(desc="Executive summary of findings")
@@ -138,10 +157,19 @@ class ReportGenerationModule(dspy.Module):
         super().__init__()
         self.report_generator = dspy.ChainOfThought(ReportGenerationSignature)
 
-    def forward(self, content: str, query: str, report_type: str = "comprehensive"):
+    def forward(
+        self,
+        content: str,
+        query: str,
+        report_type: str = "comprehensive",
+        keyframes: Optional[List[dspy.Image]] = None,
+    ):
         """Generate report using DSPy"""
         return self.report_generator(
-            content=content, query=query, report_type=report_type
+            content=content,
+            query=query,
+            report_type=report_type,
+            keyframes=keyframes or [],
         )
 
 
@@ -256,6 +284,14 @@ class DetailedReportAgent(
         self.thinking_enabled = deps.thinking_enabled
         self.visual_analysis_enabled = deps.visual_analysis_enabled
         self.technical_analysis_enabled = deps.technical_analysis_enabled
+        self.multimodal_generation_enabled = deps.multimodal_generation_enabled
+        self.max_keyframes_to_llm = deps.max_keyframes_to_llm
+
+        # Resolves top-K keyframes from search hits into dspy.Image inputs so
+        # the report LLM sees the frames, not just their titles.
+        self._keyframe_resolver = KeyframeImageResolver(
+            MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+        )
 
         logger.info("DetailedReportAgent initialized (tenant-agnostic)")
 
@@ -684,6 +720,17 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
         content_text = "\n".join(content_parts)
 
+        keyframe_images = []
+        if (
+            self.multimodal_generation_enabled
+            and self.visual_analysis_enabled
+            and request.include_visual_analysis
+        ):
+            keyframe_images = self._keyframe_resolver.collect(
+                request.search_results[: request.max_results_to_analyze],
+                max_images=self.max_keyframes_to_llm,
+            )
+
         try:
             dspy_result = await self.call_dspy(
                 self.report_module,
@@ -691,6 +738,7 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                 content=content_text,
                 query=request.query,
                 report_type=request.report_type,
+                keyframes=keyframe_images,
             )
 
             return dspy_result.executive_summary

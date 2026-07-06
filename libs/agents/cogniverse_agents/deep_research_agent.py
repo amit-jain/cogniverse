@@ -17,9 +17,12 @@ from pydantic import Field
 from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
+from cogniverse_agents.multimodal import KeyframeImageResolver
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_core.common.media import MediaConfig, MediaLocator
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,17 @@ class DeepResearchOutput(AgentOutput):
 
 class DeepResearchDeps(AgentDeps):
     tenant_id: str
+    multimodal_generation_enabled: bool = Field(
+        False,
+        description=(
+            "Attach retrieved keyframes to the synthesis LLM. Off by default: "
+            "enable only once keyframes are in MinIO and the answer model "
+            "accepts image inputs (an image:0 student rejects them)."
+        ),
+    )
+    max_keyframes_to_llm: int = Field(
+        4, description="Cap on keyframes attached to the synthesis LLM"
+    )
 
 
 class TaskDecompositionSignature(dspy.Signature):
@@ -98,6 +112,12 @@ class SynthesisSignature(dspy.Signature):
 
     query: str = dspy.InputField(desc="Original research question")
     evidence: str = dspy.InputField(desc="All collected evidence with sources")
+    keyframes: list[dspy.Image] = dspy.InputField(
+        desc=(
+            "Key frames from the top video evidence. Ground the report in what "
+            "these frames actually show, not only the cited text."
+        )
+    )
     summary: str = dspy.OutputField(
         desc="Comprehensive research summary with inline citations"
     )
@@ -141,6 +161,14 @@ class DeepResearchAgent(
         self._decomposer = dspy.ChainOfThought(TaskDecompositionSignature)
         self._evaluator = dspy.ChainOfThought(EvidenceEvaluationSignature)
         self._synthesizer = dspy.ChainOfThought(SynthesisSignature)
+
+        self.multimodal_generation_enabled = deps.multimodal_generation_enabled
+        self.max_keyframes_to_llm = deps.max_keyframes_to_llm
+        # Resolves top-K keyframes from the evidence hits into dspy.Image
+        # inputs so the synthesis LLM sees the frames, not just cited text.
+        self._keyframe_resolver = KeyframeImageResolver(
+            MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+        )
 
     async def _process_impl(self, input: DeepResearchInput) -> DeepResearchOutput:
         # Set tenant for memory/instructions injection and enrich the query
@@ -342,11 +370,24 @@ class DeepResearchAgent(
         if len(evidence_text) > self._SYNTHESIS_EVIDENCE_CHAR_BUDGET:
             evidence_text = evidence_text[: self._SYNTHESIS_EVIDENCE_CHAR_BUDGET] + "…"
 
+        keyframe_images = []
+        if self.multimodal_generation_enabled:
+            hits = [
+                r
+                for e in evidence
+                for r in (e.get("results") or [])
+                if isinstance(r, dict)
+            ]
+            keyframe_images = self._keyframe_resolver.collect(
+                hits, max_images=self.max_keyframes_to_llm
+            )
+
         result = await self.call_dspy(
             self._synthesizer,
             output_field="summary",
             query=query,
             evidence=evidence_text,
+            keyframes=keyframe_images,
         )
         return str(result.summary)
 

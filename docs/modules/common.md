@@ -994,6 +994,28 @@ Vespa `source_url` field at ingest time:
 - Otherwise: `file://<absolute>` when `default_uri_scheme` is `"file"`, or
   `<default_uri_scheme>://<basename>` for any other scheme.
 
+### Keyframe object-key contract
+
+`keyframe_object_key(tenant_id, video_id, segment_id)` and
+`keyframe_uri(bucket, ...)` are the single source of truth for where a video's
+keyframe lives in object storage:
+
+```python
+from cogniverse_core.common.media import keyframe_object_key, keyframe_uri
+
+keyframe_object_key("acme:acme", "vid123", 7)          # "acme:acme/keyframes/vid123/0007.jpg"
+keyframe_uri("media", "acme:acme", "vid123", 7)        # "s3://media/acme:acme/keyframes/vid123/0007.jpg"
+```
+
+`segment_id` is the keyframe's ordinal — the same value Vespa returns on a
+search hit and the `NNNN` in the extractor's
+`{video_id}_keyframe_{NNNN:04d}.jpg` filename. Both the ingestion write side
+and the answer-time agent read side derive the key through these functions, so
+they cannot diverge (a divergent key would silently make every keyframe
+unfetchable). The answer-time reader is
+`cogniverse_agents.multimodal.KeyframeImageResolver`, which localizes each key
+via `MediaLocator` and returns `list[dspy.Image]`.
+
 ### Cache layout
 
 The cache is content-addressed by `sha256(uri || etag)`, tenant-scoped via
