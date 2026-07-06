@@ -12,6 +12,7 @@ from .config import (
     MediaConfig,
     S3BackendConfig,
 )
+from .keyframes import keyframe_object_key, keyframe_uri
 from .locator import (
     DEFAULT_VIDEO_EXTENSIONS,
     LOCAL_SCHEMES,
@@ -33,4 +34,6 @@ __all__ = [
     "NETWORK_SCHEMES",
     "PVC_SCHEME",
     "S3BackendConfig",
+    "keyframe_object_key",
+    "keyframe_uri",
 ]

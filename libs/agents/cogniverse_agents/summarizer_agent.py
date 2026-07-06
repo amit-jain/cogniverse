@@ -15,8 +15,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.multimodal import KeyframeImageResolver
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
 from cogniverse_foundation.config.semantic_router import routed_lm_context_for
@@ -82,6 +84,17 @@ class SummarizerDeps(AgentDeps):
     max_summary_length: int = Field(500, description="Maximum summary length")
     thinking_enabled: bool = Field(True, description="Enable thinking phase")
     visual_analysis_enabled: bool = Field(True, description="Enable visual analysis")
+    multimodal_generation_enabled: bool = Field(
+        False,
+        description=(
+            "Attach retrieved keyframes to the summary LLM. Off by default: "
+            "enable only once keyframes are in MinIO and the answer model "
+            "accepts image inputs (an image:0 student rejects them)."
+        ),
+    )
+    max_keyframes_to_llm: int = Field(
+        4, description="Cap on keyframes attached to the summary LLM"
+    )
 
 
 # DSPy Signatures and Module
@@ -92,6 +105,12 @@ class SummaryGenerationSignature(dspy.Signature):
     query = dspy.InputField(desc="Original user query")
     summary_type = dspy.InputField(
         desc="Type of summary: brief, comprehensive, detailed"
+    )
+    keyframes: list[dspy.Image] = dspy.InputField(
+        desc=(
+            "Key frames from the top video results. Ground the summary in what "
+            "these frames actually show, not only the titles and scores."
+        )
     )
 
     summary = dspy.OutputField(desc="Generated summary text")
@@ -106,9 +125,20 @@ class SummarizationModule(dspy.Module):
         super().__init__()
         self.summarizer = dspy.ChainOfThought(SummaryGenerationSignature)
 
-    def forward(self, content: str, query: str, summary_type: str = "comprehensive"):
+    def forward(
+        self,
+        content: str,
+        query: str,
+        summary_type: str = "comprehensive",
+        keyframes: Optional[List[dspy.Image]] = None,
+    ):
         """Generate summary using DSPy"""
-        return self.summarizer(content=content, query=query, summary_type=summary_type)
+        return self.summarizer(
+            content=content,
+            query=query,
+            summary_type=summary_type,
+            keyframes=keyframes or [],
+        )
 
 
 @dataclass
@@ -238,6 +268,14 @@ class SummarizerAgent(
         self.max_summary_length = deps.max_summary_length
         self.thinking_enabled = deps.thinking_enabled
         self.visual_analysis_enabled = deps.visual_analysis_enabled
+        self.multimodal_generation_enabled = deps.multimodal_generation_enabled
+        self.max_keyframes_to_llm = deps.max_keyframes_to_llm
+
+        # Resolves top-K keyframes from search hits into dspy.Image inputs so
+        # the summary LLM sees the frames, not just their titles.
+        self._keyframe_resolver = KeyframeImageResolver(
+            MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+        )
 
         logger.info("SummarizerAgent initialized (tenant-agnostic)")
 
@@ -579,8 +617,27 @@ and structure summary based on identified themes and content categories.
             logger.error(f"Visual analysis failed: {e}")
             raise
 
+    def _collect_keyframes(
+        self, request: "SummaryRequest", results: List[Dict[str, Any]]
+    ) -> list:
+        """Top-K keyframes for the answer LLM, or [] when injection is off or
+        the request opted out of visual analysis."""
+        if not (
+            self.multimodal_generation_enabled
+            and self.visual_analysis_enabled
+            and request.include_visual_analysis
+        ):
+            return []
+        return self._keyframe_resolver.collect(
+            results, max_images=self.max_keyframes_to_llm
+        )
+
     async def _run_summarization(
-        self, content: str, query: str, summary_type: str
+        self,
+        content: str,
+        query: str,
+        summary_type: str,
+        keyframes: Optional[List[dspy.Image]] = None,
     ) -> str:
         """Run DSPy summarization, streaming tokens via emit_progress when active."""
         result = await self.call_dspy(
@@ -589,6 +646,7 @@ and structure summary based on identified themes and content categories.
             content=content,
             query=query,
             summary_type=summary_type,
+            keyframes=keyframes or [],
         )
         return result.summary
 
@@ -612,16 +670,17 @@ and structure summary based on identified themes and content categories.
 
         # Take top results for summary
         top_results = sorted_results[: request.max_results_to_analyze]
+        keyframe_images = self._collect_keyframes(request, top_results)
 
         if request.summary_type == "brief":
             return await self._generate_brief_summary(
-                request, top_results, thinking_phase
+                request, top_results, thinking_phase, keyframe_images
             )
         elif request.summary_type == "bullet_points":
             return self._generate_bullet_summary(request, top_results, thinking_phase)
         else:  # comprehensive
             return await self._generate_comprehensive_summary(
-                request, top_results, thinking_phase, visual_insights
+                request, top_results, thinking_phase, visual_insights, keyframe_images
             )
 
     async def _generate_brief_summary(
@@ -629,6 +688,7 @@ and structure summary based on identified themes and content categories.
         request: SummaryRequest,
         results: List[Dict[str, Any]],
         thinking_phase: ThinkingPhase,
+        keyframe_images: Optional[List[dspy.Image]] = None,
     ) -> str:
         """Generate brief summary using DSPy"""
         result_count = len(results)
@@ -646,7 +706,9 @@ and structure summary based on identified themes and content categories.
         content_text = "\n".join(content_parts)
 
         try:
-            return await self._run_summarization(content_text, request.query, "brief")
+            return await self._run_summarization(
+                content_text, request.query, "brief", keyframes=keyframe_images
+            )
         except Exception as e:
             logger.error(f"DSPy brief summarization failed: {e}")
             raise
@@ -679,6 +741,7 @@ and structure summary based on identified themes and content categories.
         results: List[Dict[str, Any]],
         thinking_phase: ThinkingPhase,
         visual_insights: List[str],
+        keyframe_images: Optional[List[dspy.Image]] = None,
     ) -> str:
         """Generate comprehensive summary using DSPy.
 
@@ -707,7 +770,7 @@ and structure summary based on identified themes and content categories.
 
         content_text = "\n".join(content_parts)
         return await self._run_summarization(
-            content_text, request.query, "comprehensive"
+            content_text, request.query, "comprehensive", keyframes=keyframe_images
         )
 
     def _extract_key_points(

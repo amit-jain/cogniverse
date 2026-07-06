@@ -2028,6 +2028,42 @@ print(result.executive_summary)
 print(result.confidence_assessment.get("overall", 0.0))
 ```
 
+**Multimodal generation (keyframe injection):**
+
+By default the report LLM sees only text (titles, scores). When
+`multimodal_generation_enabled` is set, the agent also attaches the top-K
+retrieved keyframes to the LLM so it grounds the report in the frames
+themselves rather than their filenames. Each keyframe is located through the
+shared keyframe-key contract (`cogniverse_core.common.media.keyframe_uri`) —
+the same function the ingestion write side uses, so the read and write paths
+cannot drift — fetched via `MediaLocator`, and passed as a
+`keyframes: list[dspy.Image]` input on `ReportGenerationSignature`.
+
+```mermaid
+flowchart LR
+    Hit["<span style='color:#000'>Search hit<br/>source_url + video_id + segment_id</span>"] --> URI["<span style='color:#000'>keyframe_uri()</span>"]
+    URI --> Loc["<span style='color:#000'>MediaLocator.localize (s3://)</span>"]
+    Loc --> Img["<span style='color:#000'>dspy.Image<br/>bounded encode cache</span>"]
+    Img --> LM["<span style='color:#000'>ReportGenerationSignature<br/>keyframes: list[dspy.Image]</span>"]
+
+    style Hit fill:#90caf9,stroke:#1565c0,color:#000
+    style URI fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Loc fill:#81d4fa,stroke:#0288d1,color:#000
+    style Img fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style LM fill:#a5d6a7,stroke:#388e3c,color:#000
+```
+
+**Dependencies (`DetailedReportDeps`):**
+| Dep | Type | Default | Description |
+|-----|------|---------|-------------|
+| `multimodal_generation_enabled` | bool | `False` | Attach retrieved keyframes to the report LLM. Enable only once keyframes are in MinIO and the answer model accepts image inputs (an `image:0` student rejects them). |
+| `max_keyframes_to_llm` | int | `4` | Cap on keyframes attached per report. |
+
+A keyframe not yet in object storage (or one that fails to fetch) is silently
+skipped — generation degrades to the text-only path, never errors. Encoded
+frames are cached in the agent by `s3://` key so repeated reports over the same
+clips reuse the encoding.
+
 ---
 
 ### 8. DocumentAgent
@@ -2228,6 +2264,16 @@ class SummarizerAgent(
 | `confidence_score` | float | Summary confidence |
 | `thinking_process` | Dict | Thinking phase details |
 | `metadata` | Dict | Additional metadata |
+
+**Multimodal generation (keyframe injection):**
+
+Like the DetailedReportAgent, the summarizer can attach the top-K retrieved
+keyframes to its answer LLM via the shared `KeyframeImageResolver` and a
+`keyframes: list[dspy.Image]` input on `SummaryGenerationSignature` (see
+[DetailedReportAgent](#7-detailedreportagent) for the shared mechanism and the
+keyframe-key contract). Gated behind `SummarizerDeps.multimodal_generation_enabled`
+(bool, default `False`) with `max_keyframes_to_llm` (int, default `4`); a
+keyframe not yet in object storage is silently skipped (text-only fallback).
 
 ---
 
@@ -2483,6 +2529,17 @@ output = await agent.process(
 )
 print(output.summary, output.citations)
 ```
+
+**Multimodal generation (keyframe injection):**
+
+`_synthesize` flattens the nested evidence hits (`evidence[i]["results"]`) and,
+via the shared `KeyframeImageResolver`, attaches the top-K retrieved keyframes
+to a `keyframes: list[dspy.Image]` input on `SynthesisSignature` (see
+[DetailedReportAgent](#7-detailedreportagent) for the shared mechanism). Gated
+behind `DeepResearchDeps.multimodal_generation_enabled` (bool, default `False`)
+with `max_keyframes_to_llm` (int, default `4`); an evidence hit lacking the
+`source_url`/`video_id`/`segment_id` fields (or whose keyframe isn't in object
+storage yet) is silently skipped.
 
 ---
 
