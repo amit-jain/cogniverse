@@ -61,6 +61,37 @@ def _runtime_container_env(manifests: list) -> dict:
     return {e["name"]: e.get("value") for e in runtime[0].get("env", [])}
 
 
+def _ingestor_container_env(manifests: list) -> dict:
+    deployments = [
+        m
+        for m in manifests
+        if m.get("kind") == "Deployment"
+        and m.get("metadata", {}).get("name") == "cogniverse-ingestor"
+    ]
+    assert len(deployments) == 1, (
+        f"Expected exactly one cogniverse-ingestor Deployment, got {len(deployments)}"
+    )
+    containers = deployments[0]["spec"]["template"]["spec"]["containers"]
+    ingestor = [c for c in containers if c["name"] == "ingestor"]
+    assert len(ingestor) == 1, "ingestor container missing from the Deployment"
+    return {e["name"]: e.get("value") for e in ingestor[0].get("env", [])}
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestIngestorMinioEnv:
+    def test_ingestor_has_minio_default_bucket_matching_runtime(self):
+        """The ingestor uploads extracted keyframes to object storage during
+        ingestion, so it needs MINIO_DEFAULT_BUCKET — the same bucket the videos
+        land in, so answer-time agents resolve keyframes from the hit's
+        source_url bucket."""
+        manifests = _render_chart()
+        ingestor = _ingestor_container_env(manifests)
+        runtime = _runtime_container_env(manifests)
+        assert ingestor.get("MINIO_DEFAULT_BUCKET")
+        assert ingestor["MINIO_DEFAULT_BUCKET"] == runtime.get("MINIO_DEFAULT_BUCKET")
+
+
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestRuntimeInstrumentationEnv:
