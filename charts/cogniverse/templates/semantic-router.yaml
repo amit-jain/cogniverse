@@ -47,7 +47,7 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       containers:
       - name: semantic-router
-        image: "{{ .Values.semanticRouter.router.image.repository }}:{{ .Values.semanticRouter.router.image.tag }}"
+        image: "{{ .Values.semanticRouter.router.image.repository }}{{ if .Values.semanticRouter.router.image.digest }}@{{ .Values.semanticRouter.router.image.digest }}{{ else }}:{{ .Values.semanticRouter.router.image.tag }}{{ end }}"
         imagePullPolicy: {{ .Values.semanticRouter.router.image.pullPolicy }}
         # The entrypoint reads its config from the CMD arg (default
         # /app/config.yaml); override it to the mounted file.

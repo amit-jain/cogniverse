@@ -35,9 +35,51 @@ Example WRONG behavior:
 
 ---
 
+## COMPLETENESS MANDATE (not just drift)
+
+Drift verification confirms that what IS written is correct. It does NOT catch
+what is MISSING. This mandate is about COVERAGE, and it applies to EVERYTHING the
+file's subject touches — **not only to lists the doc already happens to contain.**
+
+Determine the file's SUBJECT (a module, a subsystem, the whole system, an
+operational surface, a workflow, an API) and verify the doc covers that subject
+**completely** against the code. Anything that exists in the code within the
+doc's scope but is absent from the doc is a completeness gap you MUST fill
+(accurately, from the code) — **whether or not the doc currently mentions
+anything like it.** A missing class nobody listed, a subsystem documented
+nowhere, a capability the code has but the prose never describes — all are gaps.
+
+How to check, by subject:
+
+- **Module doc** (`docs/modules/X.md`) — walk the actual package `libs/**/X/` and
+  confirm every public class, function, and subpackage is documented, not just
+  the few currently described.
+- **Architecture / README** — every major subsystem, layer, agent, and capability
+  the system actually has (all ~23 agents, the memory/knowledge layer, the
+  semantic router, ingestion, etc.), not a representative sample.
+- **Operations doc** — every operational surface in scope: every CLI command, env
+  var, mounted route, chart value.
+- **Any enumeration present** — must list ALL items of that category from the
+  code.
+
+Actively compare the doc's coverage against the code for its **whole subject**,
+and ADD what's missing. Do NOT treat "the things already listed are correct" as
+complete — a doc that omits a feature/module/class/agent/route that exists in the
+code and falls within its scope is INCOMPLETE and must not be declared verified.
+
+## DIAGRAMS: MERMAID ONLY (hard rule)
+
+This repo uses **Mermaid diagrams exclusively**. NO ASCII / box-drawing diagrams
+(`┌ ┐ └ ┘ │ ─ ├ ┤` or `+---+` art) may remain in any doc. When you find one,
+CONVERT it to an equivalent Mermaid diagram (`flowchart` / `sequenceDiagram` /
+`graph`) — do not merely preserve it, and never replace a Mermaid diagram with
+ASCII. A "preserve structure" instruction NEVER overrides this: structure is
+preserved by keeping the same nodes and edges in Mermaid form. (Directory trees in
+```text``` fences are not diagrams and stay as text.)
+
 ## MANDATORY VERIFICATION CHECKLIST
 
-**YOU MUST EXECUTE AND REPORT ON ALL 18 ITEMS FOR EVERY FILE.**
+**YOU MUST EXECUTE AND REPORT ON ALL 18 ITEMS FOR EVERY FILE, PLUS THE COMPLETENESS MANDATE ABOVE.**
 
 Each item must have one of these statuses:
 - `✓ PASSED (N items)` - Checked, all items correct

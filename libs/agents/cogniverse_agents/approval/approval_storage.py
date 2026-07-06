@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import pandas as pd
 from opentelemetry.trace import Status, StatusCode
 
-from cogniverse_agents.approval.interfaces import (
+from cogniverse_core.approval.interfaces import (
     ApprovalBatch,
     ApprovalStatus,
     ApprovalStorage,

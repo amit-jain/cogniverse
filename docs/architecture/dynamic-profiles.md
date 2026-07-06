@@ -106,15 +106,26 @@ Centralized configuration manager with:
 **Thread Safety:**
 ```python
 class ConfigManager:
-    def __init__(self, store: ConfigStore, cache_size: int = 100):
+    def __init__(
+        self,
+        store: ConfigStore,
+        profile_change_listener: Optional[ProfileChangeListener] = None,
+        scoped_config_cache_ttl_s: float = 5.0,
+    ):
+        if store is None:
+            raise ValueError("store is required")
         self.store = store
         self._backend_lock = threading.Lock()  # Protects read-modify-write
+        self._profile_change_listener = profile_change_listener
 
-    def add_backend_profile(self, profile, tenant_id, service):
+    def add_backend_profile(self, profile, tenant_id=None, service="backend"):
+        tenant_id = require_tenant_id(tenant_id, source="ConfigManager.add_backend_profile")
         with self._backend_lock:  # Atomic operation
-            backend_config = self.get_backend_config(...)
+            backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
             backend_config.add_profile(profile)
-            self.set_backend_config(backend_config, ...)
+            self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
+        # Notified outside the lock so listener work can't deadlock on _backend_lock
+        self._notify_profile_change("added", profile.profile_name, profile.to_dict())
 ```
 
 **Why Locking?**
@@ -140,12 +151,21 @@ The `_backend_lock` ensures:
 
 **BackendConfig:**
 
-Pydantic model representing tenant's backend configuration:
+Dataclass representing tenant's backend configuration:
 
 ```python
+@dataclass
 class BackendConfig:
-    tenant_id: str
-    profiles: Dict[str, BackendProfileConfig]  # profile_name → config
+    tenant_id: Optional[str] = None
+    backend_type: str = "vespa"
+    url: str = "http://localhost"
+    port: int = 8080
+    profiles: Dict[str, BackendProfileConfig] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # tenant_id is required; raises via require_tenant_id if omitted
+        require_tenant_id(self.tenant_id, source="BackendConfig")
 
     def add_profile(self, profile: BackendProfileConfig):
         """Add or replace profile"""
@@ -173,7 +193,7 @@ Backend-agnostic configuration storage with:
 - Multi-tenant isolation
 - Version tracking
 - Concurrent access support
-- Transaction management
+- Bounded version history (old versions pruned on write)
 
 **Example: VespaConfigStore:**
 
@@ -187,19 +207,22 @@ class VespaConfigStore(ConfigStore):
         backend_url: str = "http://localhost",
         backend_port: int = 8080,
         schema_name: str = "config_metadata",
+        keep_versions: int = 10,
     ):
         if vespa_app is not None:
             self.vespa_app = vespa_app
         else:
-            self.vespa_app = Vespa(url=f"{backend_url}:{backend_port}")
+            self.vespa_app = make_vespa_app(url=backend_url, port=backend_port)
         self.schema_name = schema_name
+        self.keep_versions = max(1, keep_versions)
 
     def _get_latest_version(self, tenant_id, scope, service, config_key) -> int:
         """Get latest version number for a config"""
         config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
+        # yql_quote() escapes embedded quotes/backslashes before interpolation
         yql = (
             f"select version from {self.schema_name} "
-            f'where config_id contains "{config_id}" '
+            f"where config_id contains {yql_quote(config_id)} "
             f"order by version desc limit 1"
         )
         response = self.vespa_app.query(yql=yql)
@@ -207,17 +230,20 @@ class VespaConfigStore(ConfigStore):
             return response.hits[0]["fields"]["version"]
         return 0
 
-    def set_config(self, tenant_id, scope, service, config_key, config_value):
+    def set_config(self, tenant_id, scope, service, config_key, config_value) -> ConfigEntry:
         """Set config as Vespa document with versioning"""
-        # Get next version
         current_version = self._get_latest_version(tenant_id, scope, service, config_key)
         new_version = current_version + 1
+        now = datetime.now()
 
-        # Create document ID with version
+        entry = ConfigEntry(
+            tenant_id=tenant_id, scope=scope, service=service, config_key=config_key,
+            config_value=config_value, version=new_version, created_at=now, updated_at=now,
+        )
+
         config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
         doc_id = f"{self.schema_name}::{config_id}::{new_version}"
 
-        # Feed document to Vespa
         self.vespa_app.feed_data_point(
             schema=self.schema_name,
             data_id=doc_id,
@@ -229,11 +255,14 @@ class VespaConfigStore(ConfigStore):
                 "config_key": config_key,
                 "config_value": json.dumps(config_value),
                 "version": new_version,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
+                "created_at": entry.created_at.isoformat(),
+                "updated_at": entry.updated_at.isoformat(),
             }
         )
-        return ConfigEntry(...)  # Returns ConfigEntry with new version
+        # Prune older versions beyond keep_versions so config_metadata
+        # doesn't grow unbounded across repeated updates
+        self._prune_old_versions(config_id, keep=self.keep_versions)
+        return entry
 ```
 
 **Backend Benefits:**
@@ -274,15 +303,22 @@ class ProfileValidator:
     ) -> List[str]:
         """Validate complete profile"""
         errors = []
+        if not is_update:
+            errors.extend(self._validate_uniqueness(profile, tenant_id))
         errors.extend(self._validate_profile_name(profile.profile_name))
+        errors.extend(self._validate_profile_type(profile.type))
         errors.extend(self._validate_schema_template(profile.schema_name))
         errors.extend(self._validate_embedding_model(profile.embedding_model))
         errors.extend(self._validate_embedding_type(profile.embedding_type))
+        errors.extend(self._validate_strategies(profile.strategies))
+        errors.extend(self._validate_embedding_dimensions(profile))
         return errors
 
     def validate_update_fields(self, update_fields: dict) -> List[str]:
         """Validate that only mutable fields are being updated"""
-        immutable_fields = {"schema_name", "embedding_model", "schema_config", "type"}
+        immutable_fields = {
+            "schema_name", "embedding_model", "schema_config", "type", "model_loader",
+        }
         errors = []
         for field in immutable_fields:
             if field in update_fields:
@@ -290,17 +326,23 @@ class ProfileValidator:
                     f"Field '{field}' cannot be updated. "
                     "Create a new profile instead for schema changes."
                 )
+        # Values of mutable fields are validated too, so an update can't write
+        # a malformed strategies block that create-time validation would reject
+        if "strategies" in update_fields:
+            errors.extend(self._validate_strategies(update_fields["strategies"]))
         return errors
 ```
 
 **Validation Rules:**
 
-- Profile name: alphanumeric + underscore, unique within tenant
-- Schema name: must exist in schema directory
-- Embedding model: format `org/model` or `model-name`
-- Embedding type: enum (`multi_vector`, `multi_vector`, `multi_vector`, `single_vector`)
-- Strategies: valid JSON array
-- Pipeline config: valid JSON object
+- Profile name: alphanumeric, underscore, and hyphen; max 100 chars; unique within tenant (create only)
+- Profile type: enum (`video`, `image`, `audio`, `document`, `code`)
+- Schema name: must exist in schema directory (`configs/schemas/{schema_name}_schema.json`) with `name` and `document.fields`
+- Embedding model: format `org/model` or `model-name` (warns, does not reject, on unusual format)
+- Embedding type: enum (`multi_vector`, `single_vector`)
+- Embedding dimensions: `schema_config.embedding_dim`, if present, must be an integer in 1-100000
+- Strategies: each entry must be a dict with a `class` field naming an importable class
+- Immutable on update: `schema_name`, `embedding_model`, `schema_config`, `type`, `model_loader`
 
 ### 5. Dashboard UI Layer
 
@@ -313,15 +355,19 @@ def render_backend_profile_tab():
     """Main entry point for backend profile management UI"""
     st.subheader("Backend Profile Management")
 
+    if "current_tenant" not in st.session_state:
+        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
+        return
+
     # Initialize ConfigManager
     if "config_manager" not in st.session_state:
         st.session_state.config_manager = create_default_config_manager()
 
     manager = st.session_state.config_manager
-    tenant_id = st.session_state.get("current_tenant", "default")
+    tenant_id = st.session_state["current_tenant"]
 
-    # Profile list
-    profiles_dict = manager.list_backend_profiles(tenant_id, service="backend")
+    # Profile list — read directly off ConfigManager
+    profiles_dict = manager.list_backend_profiles(tenant_id, service="video_processing")
     profile_names = sorted(profiles_dict.keys()) if profiles_dict else []
 
     # Create new profile section
@@ -334,6 +380,8 @@ def render_backend_profile_tab():
         if selected_profile:
             render_profile_manager(manager, tenant_id, selected_profile)
 ```
+
+Profile **creation** itself goes through the admin HTTP API (`POST /admin/profiles`) rather than a direct `ConfigManager.add_backend_profile()` call, so the same code path that serves REST clients also serves the dashboard's create form. Note the service-scope difference: the admin router reads/writes profiles under `service="backend"`, while this tab's own list/get calls (above) read under `service="video_processing"` — the two service scopes are stored as separate `ConfigStore` entries, so a profile is only visible through whichever service key it was written under.
 
 **API Integration:**
 
@@ -350,11 +398,13 @@ def deploy_schema_via_api(profile_name: str, tenant_id: str, force: bool = False
             response = client.post(endpoint, json={"tenant_id": tenant_id, "force": force})
             if response.status_code == 200:
                 data = response.json()
+                deployment_status = data.get("deployment_status", "")
+                success = deployment_status not in ("failed",)
                 return {
-                    "success": True,
+                    "success": success,
                     "tenant_schema_name": data.get("tenant_schema_name", ""),
-                    "deployment_status": data.get("deployment_status", ""),
-                    "error": None
+                    "deployment_status": deployment_status,
+                    "error": data.get("error_message") if not success else None,
                 }
             else:
                 error_detail = response.json().get("detail", response.text) if response.text else "Unknown error"
@@ -364,9 +414,9 @@ def deploy_schema_via_api(profile_name: str, tenant_id: str, force: bool = False
                     "error": f"HTTP {response.status_code}: {error_detail}"
                 }
     except httpx.TimeoutException:
-        return {"success": False, "tenant_schema_name": None, "error": "Request timed out"}
+        return {"success": False, "tenant_schema_name": None, "error": "Request timed out (>30s)"}
     except Exception as e:
-        return {"success": False, "tenant_schema_name": None, "error": str(e)}
+        return {"success": False, "tenant_schema_name": None, "error": f"Failed to connect to API: {e}"}
 ```
 
 ## Data Flow
@@ -494,14 +544,14 @@ config = config_store.get_config(
 
 ### Schema Name Isolation
 
-Deployed schemas include tenant suffix:
+Deployed schemas include a tenant suffix. `VespaSchemaManager.get_tenant_schema_name()` first canonicalizes the tenant id to its `org:tenant` storage form (a simple id like `acme` becomes `acme:acme`) and then replaces `:` with `_`, so a simple-form tenant id is doubled in the suffix:
 
 ```text
-tenant_a → profile: video_colpali → base schema: video_colpali_smol500_mv_frame → deployed: video_colpali_smol500_mv_frame_tenant_a
-tenant_b → profile: video_colpali → base schema: video_colpali_smol500_mv_frame → deployed: video_colpali_smol500_mv_frame_tenant_b
+tenant_a  → canonical tenant_a:tenant_a → profile: video_colpali → base schema: video_colpali_smol500_mv_frame → deployed: video_colpali_smol500_mv_frame_tenant_a_tenant_a
+acme:prod → canonical acme:prod        → profile: video_colpali → base schema: video_colpali_smol500_mv_frame → deployed: video_colpali_smol500_mv_frame_acme_prod
 ```
 
-Tenant schema naming follows pattern: `{base_schema_name}_{tenant_id}`
+Tenant schema naming follows pattern: `{base_schema_name}_{canonical_tenant_id.replace(':', '_')}`
 
 No naming conflicts in Vespa.
 
@@ -592,7 +642,7 @@ class FilesystemSchemaLoader(SchemaLoader):
 Schema generation is handled by the backend's schema registry. The process:
 
 1. Load base schema template via `FilesystemSchemaLoader`
-2. Generate tenant-specific name: `{base_schema_name}_{tenant_id}`
+2. Canonicalize `tenant_id` and generate tenant-specific name: `{base_schema_name}_{canonical_tenant_id.replace(':', '_')}`
 3. Apply any tenant-specific configurations
 4. Deploy to backend
 
@@ -603,7 +653,8 @@ Example flow (handled by schema registry and backend):
 base_schema = schema_loader.load_schema(profile.schema_name)
 
 # Generate tenant-specific name (in VespaSchemaManager.get_tenant_schema_name())
-tenant_schema_name = f"{base_schema_name}_{tenant_id.replace(':', '_')}"
+canonical = canonical_tenant_id(tenant_id)  # "acme" -> "acme:acme"
+tenant_schema_name = f"{base_schema_name}_{canonical.replace(':', '_')}"
 
 # Deploy with tenant-specific naming (backend.deploy_schemas takes a list)
 backend.deploy_schemas([{"name": tenant_schema_name, "definition": base_schema}])
@@ -614,8 +665,8 @@ backend.deploy_schemas([{"name": tenant_schema_name, "definition": base_schema}]
 ### Unit Tests
 
 **Locations:**
-- `tests/admin/test_profile_api.py` - Admin API endpoint tests
-- `tests/common/unit/test_profile_validator.py` - ProfileValidator rules
+- `tests/backends/unit/test_backend_config.py` - ConfigManager backend methods, `BackendConfig`/`BackendProfileConfig` dataclass operations
+- `tests/common/unit/test_profile_validator.py` - ProfileValidator rules (name, type, schema template, embedding model/type/dimensions, strategies, uniqueness, update-field immutability)
 
 Test individual components:
 
@@ -625,63 +676,75 @@ Test individual components:
 
 ### Integration Tests
 
-**Multi-Tenant Tests** (`test_profile_multi_tenant.py`):
+**Multi-Tenant Tests** (`tests/admin/test_profile_multi_tenant.py`):
 
-- Tenant isolation
-- Cross-tenant access prevention
-- Same profile name across tenants
+- Tenant isolation when creating a profile with the same name in two tenants
+- Cross-tenant access prevention on get/update/delete
+- Empty `tenant_id` rejected
+- Isolation persists across create/update/delete operations
 
-**Concurrent Tests** (`test_profile_concurrent.py`):
+**Concurrent Tests** (`tests/admin/test_profile_concurrent.py`):
 
 - Concurrent profile creation
 - Concurrent updates (version tracking)
-- Concurrent reads during writes
-- Concurrent deletes
+- Concurrent same-profile-name creation across different tenants
+- Concurrent reads while an update is in flight
+- Concurrent list operations
+- Concurrent delete operations
 
-**UI Tests** (`tests/dashboard/test_profile_ui_integration.py`):
+**UI Tests** (`tests/dashboard/unit/test_profile_ui.py`):
 
-- Dashboard API helper functions
-- Deploy/delete/status workflows
-- Error handling
+- Dashboard API helper functions (deploy/delete/status)
+- End-to-end workflow via dashboard functions against a running API
+- Timeout, connection-error, and HTTP-error handling
 
 ### Test Fixtures
 
+`tests/admin/test_profile_api.py` builds a minimal FastAPI app around the admin router with a real, isolated Vespa instance (no mocks at the storage boundary):
+
 ```python
 @pytest.fixture
-def test_client(temp_schema_dir, tmp_path):
-    """Create test client with isolated backend"""
-    from cogniverse_foundation.config.utils import create_default_config_manager
-    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-    from cogniverse_runtime.routers import admin
+def test_client(self, vespa_instance, temp_schema_dir: Path):
+    """Create test client for profile API with isolated Vespa instance."""
+    from fastapi import FastAPI
     from cogniverse_core.registries.backend_registry import BackendRegistry
     from cogniverse_core.registries.schema_registry import SchemaRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_runtime.routers import admin
+    from cogniverse_vespa.config.config_store import VespaConfigStore
 
-    # Reset registries
     BackendRegistry._instance = None
+    BackendRegistry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
     SchemaRegistry._instance = None
 
-    # Create ConfigManager with default store
-    config_manager = create_default_config_manager()
+    # Config store pointing at the isolated Vespa instance (metadata schemas
+    # already deployed by the vespa_instance fixture)
+    store = VespaConfigStore(
+        backend_url="http://localhost", backend_port=vespa_instance["http_port"],
+    )
+    config_manager = ConfigManager(store=store)
+    config_manager.set_system_config(SystemConfig(backend_url="http://nonexistent", backend_port=9999))
 
-    # Set up system config
-    from cogniverse_foundation.config.unified_config import SystemConfig
-    system_config = SystemConfig()
-    config_manager.set_system_config(system_config)
-
-    # Set up test environment
     schema_loader = FilesystemSchemaLoader(temp_schema_dir)
+
+    # Minimal app with just the admin router (no lifespan needed for CRUD tests)
+    test_app = FastAPI()
+    test_app.include_router(admin.router, prefix="/admin")
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
     admin.set_profile_validator_schema_dir(temp_schema_dir)
 
     try:
-        from cogniverse_runtime.main import app
-        client = TestClient(app)
+        client = TestClient(test_app)
         yield client
     finally:
-        # Cleanup
         admin.reset_dependencies()
         BackendRegistry._instance = None
+        BackendRegistry._backend_instances.clear()
+        BackendRegistry._shared_schema_registry = None
         SchemaRegistry._instance = None
 ```
 
@@ -695,21 +758,20 @@ def test_client(temp_schema_dir, tmp_path):
 
 ### Write Performance
 
-- **Single write**: Backend-dependent (e.g., ~5-10ms for Vespa)
-- **Concurrent writes**: Serialized via threading lock, no deadlocks
-- **Transaction overhead**: Minimal with proper backend configuration
+- **Single write**: Backend-dependent; a Vespa write is a `_get_latest_version` query followed by `feed_data_point` plus a `_prune_old_versions` cleanup query (three round-trips), not benchmarked in this codebase
+- **Concurrent writes**: Serialized via `ConfigManager._backend_lock` (a single process-local `threading.Lock`), no deadlocks
+- **Version pruning overhead**: Each `set_config` call also prunes versions beyond `keep_versions` (default 10) for that config_id
 
 ### Concurrency Limits
 
 - **Read throughput**: Unlimited concurrent readers (backend-dependent)
-- **Write throughput**: Limited by threading lock (one writer at a time)
-- **Typical load**: 10-100 writes/sec per tenant
+- **Write throughput**: Limited by `_backend_lock` (one writer at a time, per process — the lock does not coordinate across separate runtime pods)
 
 ### Scaling Considerations
 
-For high concurrency (>1000 writes/sec):
+For high write concurrency:
 
-- Use distributed backend (e.g., Vespa cluster)
+- Use a distributed backend (e.g., Vespa cluster)
 - Implement write batching
 - Consider caching layer
 
@@ -723,14 +785,13 @@ For high concurrency (>1000 writes/sec):
 
 ### Input Validation
 
-- All inputs validated via Pydantic models
-- Profile names sanitized (alphanumeric + underscore)
+- All request bodies validated via Pydantic models
+- Profile names restricted to alphanumeric, underscore, and hyphen (max 100 chars)
 - JSON fields validated for syntax
 
 ### Query Safety
 
-- Parameterized queries via ConfigStore interface
-- No dynamic query construction
+- `VespaConfigStore` builds YQL query strings dynamically (there is no parameterized-query API in the `ConfigStore` interface); every interpolated value is escaped with `yql_quote()` from `cogniverse_vespa._yql` before being embedded in the `contains` clause
 - Backend-specific security defaults
 
 ### Future Enhancements

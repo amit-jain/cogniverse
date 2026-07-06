@@ -9,13 +9,13 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
-from cogniverse_agents.approval.interfaces import (
-    ApprovalBatch,
-    ReviewDecision,
-)
 from cogniverse_agents.workflow.state_machine import (
     WorkflowState,
     WorkflowStateMachine,
+)
+from cogniverse_core.approval.interfaces import (
+    ApprovalBatch,
+    ReviewDecision,
 )
 
 logger = logging.getLogger(__name__)

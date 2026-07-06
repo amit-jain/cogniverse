@@ -182,14 +182,14 @@ open http://localhost:6006
 **List Phoenix projects:**
 ```python
 # Run in Python REPL
-import phoenix as px
+from phoenix.client import Client
 
-client = px.Client(endpoint='http://localhost:6006')
+client = Client(base_url='http://localhost:6006')
 
-# List projects
-projects = client.list_projects()
+# List projects (returns a list of dict-like phoenix.client v1.Project)
+projects = client.projects.list()
 for project in projects:
-    print(f"Project: {project.name}")
+    print(f"Project: {project['name']}")
 ```
 
 **Expected projects:**
@@ -221,15 +221,18 @@ JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
 
 **Query spans from Phoenix:**
 ```python
-import phoenix as px
-from datetime import datetime, timedelta
+from phoenix.client import Client
+from datetime import datetime, timedelta, timezone
 
-client = px.Client()
+client = Client(base_url='http://localhost:6006')
 
-# Get search spans
-spans_df = client.get_spans_dataframe(
+# Get search spans. `timeout=` is required explicitly — the method's own
+# default is 5s (independent of any client-level timeout) and a loaded
+# project can easily exceed that, silently reading as "no spans".
+spans_df = client.spans.get_spans_dataframe(
     project_name="cogniverse-default-search",
-    start_time=datetime.now() - timedelta(hours=1)
+    start_time=datetime.now(timezone.utc) - timedelta(hours=1),
+    timeout=60,
 )
 
 print(f"Total spans collected: {len(spans_df)}")
@@ -300,8 +303,9 @@ manager.initialize(
     backend_host="localhost",
     backend_port=8080,
     llm_model="openai/google/gemma-4-e4b-it",
-    embedding_model="ollama/nomic-embed-text",
+    embedding_model="lightonai/DenseOn",
     llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:8002",  # DenseOn sidecar endpoint
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -345,9 +349,12 @@ results = manager.search_memory(
 for i, result in enumerate(results, 1):
     print(f"\nMemory {i}:")
     print(f"  Content: {result['memory']}")
-    print(f"  Score: {result.score:.3f}")
+    print(f"  Score: {result.get('score', 0.0):.3f}")
     print(f"  Metadata: {result.get('metadata', {})}")
 ```
+
+**Note**: `search_memory` returns `List[Dict[str, Any]]` (plain dicts, not
+objects) — always use `result[...]`/`result.get(...)`, never attribute access.
 
 **Learning Points:**
 
@@ -406,9 +413,9 @@ if memory_id:
 ```python
 from cogniverse_foundation.config.unified_config import SystemConfig
 
-# Get system config for tenant
+# SystemConfig is GLOBAL — one per deployment, not per-tenant.
+# It has no tenant_id field.
 system_config = SystemConfig(
-    tenant_id="your_org:production",
     llm_model="gpt-4",
     backend_url="http://localhost",
     backend_port=8080
@@ -420,25 +427,29 @@ print(f"Backend URL: {system_config.backend_url}")
 print(f"Backend Port: {system_config.backend_port}")
 ```
 
-**Test config override:**
+**Test tenant-specific override (via BackendConfig):**
 ```python
-# Create tenant-specific override
-tenant_config = SystemConfig(
-    tenant_id="test_tenant",
-    llm_model="gpt-3.5-turbo",
-    backend_url="http://localhost",
-    backend_port=8080
-)
+from cogniverse_foundation.config.unified_config import BackendConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Config would be saved via ConfigManager
-print(f"Tenant config LLM: {tenant_config.llm_model}")
+# Tenant-specific overrides use BackendConfig (not SystemConfig, which
+# is global) and are persisted via ConfigManager
+config_manager = create_default_config_manager()
+tenant_backend_config = BackendConfig(
+    tenant_id="test_tenant",
+    url="http://localhost",
+    port=8080,
+)
+config_manager.set_backend_config(tenant_backend_config)
+
+print(f"Tenant backend URL: {tenant_backend_config.url}")
 ```
 
 **Learning Points:**
 
-- SystemConfig defined in foundation layer
+- SystemConfig defined in foundation layer; it is GLOBAL (one per deployment), not per-tenant
 
-- Tenant-specific configurations supported
+- Tenant-specific configurations (backend URL, profiles) use BackendConfig via ConfigManager
 
 - Default configs in libs/foundation/
 
@@ -449,15 +460,19 @@ print(f"Tenant config LLM: {tenant_config.llm_model}")
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-# Initialize Phoenix provider (from telemetry-phoenix package)
+# TelemetryConfig is generic (provider-agnostic)
 config = TelemetryConfig()
-telemetry = PhoenixProvider(
-    config=config,
-    tenant_id="your_org:production"
-)
+
+# PhoenixProvider takes no constructor args — it's configured via initialize()
+telemetry = PhoenixProvider()
+telemetry.initialize({
+    "tenant_id": "your_org:production",
+    "http_endpoint": "http://localhost:6006",
+    "grpc_endpoint": "localhost:4317",
+})
 
 # Check Phoenix connection
-print(f"Phoenix endpoint: {config.provider_config.get('http_endpoint', 'default')}")
+print(f"Phoenix endpoint: http://localhost:6006")
 print(f"Telemetry enabled: {config.enabled}")
 ```
 
@@ -545,15 +560,15 @@ from cogniverse_foundation.config.utils import get_config
 config = get_config(tenant_id="your_org:production", config_manager=config_manager)
 
 # List available profiles from config
-profiles = config.backend_profile_configs
+profiles = config.get("backend")["profiles"]
 print(f"Available profiles: {list(profiles.keys())}")
 
 # Get profile config
 if "video_colpali_smol500_mv_frame" in profiles:
     profile_config = profiles["video_colpali_smol500_mv_frame"]
     print(f"\nProfile config:")
-    print(f"  Encoder type: {profile_config.get('encoder_type')}")
-    print(f"  Embedding dim: {profile_config.get('embedding_dimension')}")
+    print(f"  Model loader: {profile_config.get('model_loader')}")
+    print(f"  Embedding dim: {profile_config.get('schema_config', {}).get('embedding_dim')}")
 ```
 
 **Learning Points:**
@@ -686,9 +701,9 @@ print(f"Synthetic data generators available")
 ```python
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 
-# Create request
+# Create request ("routing" is a registered optimizer name — see 6.4)
 request = SyntheticDataRequest(
-    optimizer="modality",
+    optimizer="routing",
     count=10,
     vespa_sample_size=50,
     strategies=["diverse"],
@@ -716,13 +731,13 @@ print(f"Reasoning: {response.profile_selection_reasoning}")
 
 **Inspect generated data:**
 ```python
-# Check first example
+# Check first example (RoutingExperienceSchema fields)
 if response.data:
     example = response.data[0]
     print(f"\nSample example:")
     print(f"  Query: {example.get('query')}")
-    print(f"  Modality: {example.get('modality')}")
-    print(f"  Agent: {example.get('recommended_agent')}")
+    print(f"  Chosen agent: {example.get('chosen_agent')}")
+    print(f"  Routing confidence: {example.get('routing_confidence')}")
 ```
 
 **Test different optimizers:**
@@ -731,7 +746,8 @@ if response.data:
 request_profile = SyntheticDataRequest(
     optimizer="profile",
     count=5,
-    vespa_sample_size=20
+    vespa_sample_size=20,
+    tenant_id="your_org:production"
 )
 
 response_profile = await service.generate(request_profile)
@@ -767,7 +783,7 @@ for name in OPTIMIZER_REGISTRY.keys():
 
 - Registry maps optimizer → generator + schema
 
-- Supports: profile, routing, workflow, unified
+- Supports: profile, routing, workflow, unified, cross_modal
 
 - Extensible for new optimizers
 
@@ -811,24 +827,15 @@ print(f"  Videos found: {len(result)}")
 print(f"  Profile used: video_colpali_smol500_mv_frame")
 ```
 
-**Test orchestrator agents:**
+**Test the gateway router:**
 ```python
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 
-# OrchestratorAgent requires OrchestratorDeps (typed dependencies)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = OrchestratorDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-)
-router = OrchestratorAgent(deps=deps)  # deps is REQUIRED parameter
+# GatewayAgent classifies and routes with GLiNER — deps has no required fields
+router = GatewayAgent(deps=GatewayDeps())
 
 # process is async method
-decision = await router.process(OrchestratorInput(query="Find videos about Python", tenant_id="your_org:production"))
+decision = await router.process(GatewayInput(query="Find videos about Python", tenant_id="your_org:production"))
 
 print(f"Routing decision: {decision}")
 ```
@@ -841,31 +848,22 @@ print(f"Routing decision: {decision}")
 
 - Tenant-aware by default
 
-### 7.2 Orchestrator Agent
+### 7.2 Gateway Agent (Fast-Path Routing)
 
-**Test OrchestratorAgent:**
+**Test GatewayAgent:**
 ```python
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 
-# Initialize orchestrator agent with typed dependencies (OrchestratorDeps is REQUIRED)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = OrchestratorDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-)
-router = OrchestratorAgent(deps=deps)  # deps parameter is REQUIRED
+# GatewayAgent classifies and routes with GLiNER — no LLM call, no registry required
+router = GatewayAgent(deps=GatewayDeps())
 
 # Test routing decision (async method)
 routing_result = await router.process(
-    OrchestratorInput(query="Show me videos about Python programming", tenant_id="your_org:production")
+    GatewayInput(query="Show me videos about Python programming", tenant_id="your_org:production")
 )
 
 print(f"Routing decision:")
-print(f"  Recommended agent: {routing_result.recommended_agent}")
+print(f"  Routed to: {routing_result.routed_to}")
 print(f"  Confidence: {routing_result.confidence}")
 print(f"  Reasoning: {routing_result.reasoning}")
 ```
@@ -873,26 +871,26 @@ print(f"  Reasoning: {routing_result.reasoning}")
 **Test routing with different query types:**
 ```python
 # Video search query
-video_routing = await router.process(OrchestratorInput(query="Find cooking videos", tenant_id="your_org:production"))
+video_routing = await router.process(GatewayInput(query="Find cooking videos", tenant_id="your_org:production"))
 
 # Report query
-report_routing = await router.process(OrchestratorInput(query="Create a detailed analysis of climate change", tenant_id="your_org:production"))
+report_routing = await router.process(GatewayInput(query="Create a detailed analysis of climate change", tenant_id="your_org:production"))
 
 # Comparison queries
-compare_routing = await router.process(OrchestratorInput(query="Compare Python and Java for web development", tenant_id="your_org:production"))
+compare_routing = await router.process(GatewayInput(query="Compare Python and Java for web development", tenant_id="your_org:production"))
 
-print(f"Video query → {video_routing.recommended_agent}")
-print(f"Report query → {report_routing.recommended_agent}")
-print(f"Compare query → {compare_routing.recommended_agent}")
+print(f"Video query → {video_routing.routed_to}")
+print(f"Report query → {report_routing.routed_to}")
+print(f"Compare query → {compare_routing.routed_to}")
 ```
 
 **Learning Points:**
 
-- OrchestratorAgent decides which agent to use
+- GatewayAgent decides which agent handles a query, using GLiNER entity detection (no LLM call)
 
-- Uses tiered routing: GatewayAgent (GLiNER) → OrchestratorAgent (DSPy/LLM)
+- Uses tiered routing: GatewayAgent (GLiNER, fast path) → OrchestratorAgent (DSPy planning, for complex multi-agent workflows)
 
-- Returns OrchestratorOutput with recommended_agent + confidence + reasoning
+- Returns GatewayOutput with routed_to + confidence + reasoning
 
 ### 7.3 Gateway Threshold Optimization (On-Demand)
 
@@ -909,8 +907,8 @@ result = response.json()
 print(f"Workflow: {result['workflow_name']}")
 print(f"Status URL: {result['status_url']}")
 
-# Poll for completion
-status = requests.get(result["status_url"]).json()
+# status_url is a relative path — resolve against the runtime base URL
+status = requests.get(f"http://localhost:8000{result['status_url']}").json()
 print(f"Phase: {status['phase']}")
 ```
 
@@ -922,12 +920,19 @@ from cogniverse_runtime.optimization_cli import (
 )
 import pandas as pd
 
+# Phoenix stores gateway span attributes as a dict in the
+# "attributes.gateway" column (complexity + confidence per span)
 spans_df = pd.DataFrame({
-    "confidence": [0.9, 0.3, 0.8, 0.2, 0.7],
-    "routing_correct": [True, False, True, False, True],
+    "attributes.gateway": [
+        {"complexity": "simple", "confidence": 0.9},
+        {"complexity": "complex", "confidence": 0.3},
+        {"complexity": "simple", "confidence": 0.8},
+        {"complexity": "complex", "confidence": 0.2},
+        {"complexity": "simple", "confidence": 0.7},
+    ],
 })
-thresholds = _compute_gateway_thresholds(spans_df)
-print(f"Computed threshold: {thresholds['fast_path_confidence_threshold']:.3f}")
+result = _compute_gateway_thresholds(spans_df)
+print(f"Computed threshold: {result['thresholds']['fast_path_confidence_threshold']:.3f}")
 print(f"Default threshold: {GATEWAY_DEFAULT_THRESHOLD}")
 ```
 
@@ -938,6 +943,93 @@ print(f"Default threshold: {GATEWAY_DEFAULT_THRESHOLD}")
 - On-demand optimization via `POST /admin/tenant/{id}/optimize` submits an Argo Workflow
 
 - `GATEWAY_DEFAULT_THRESHOLD = 0.4` is the fallback when insufficient span data exists
+
+### 7.4 Full Agent Roster (23 Agents)
+
+`cogniverse_agents` ships 23 A2A agents (see `configs/config.json` → `agents`).
+Every dispatched agent is reachable through the unified runtime dispatcher at
+`POST /agents/{agent_name}/process` (registered by
+`libs/runtime/cogniverse_runtime/routers/agents.py`); the 7 knowledge-graph
+agents additionally have bespoke routes under
+`/admin/tenants/{tenant_id}/knowledge/...`
+(`libs/runtime/cogniverse_runtime/routers/knowledge.py`). Agents marked
+disabled below have `"enabled": false` in `configs/config.json` and must be
+enabled before the dispatcher will route to them.
+
+**Generation + Routing Agents:**
+
+| Agent | Port | Enabled | Purpose |
+|---|---|---|---|
+| `gateway_agent` | 8000 (mounted) | Yes | GLiNER-based fast-path classifier/router (see 7.2) |
+| `orchestrator_agent` | 8013 | Yes | DSPy two-phase planning + multi-agent execution for complex queries |
+| `summarizer_agent` | 8004 | Yes | Summarizes search/agent results |
+| `detailed_report_agent` | 8005 | Yes | Generates detailed multi-section reports |
+| `profile_selection_agent` | 8000 (mounted) | Yes | Picks the best backend profile for a query (modality + complexity + intent) |
+| `query_enhancement_agent` | 8000 (mounted) | Yes | Rewrites/expands queries before retrieval |
+| `entity_extraction_agent` | 8000 (mounted) | Yes | Extracts entities/relationships for routing and KG ingestion |
+
+**Search & Analysis Agents:**
+
+| Agent | Port | Enabled | Purpose |
+|---|---|---|---|
+| `search_agent` | 8002 | Yes | Video/multi-modal search via the backend (see 7.1) |
+| `image_search_agent` | 8006 | Yes | Image-specific search |
+| `document_agent` | 8008 | Yes | Document search and retrieval |
+| `text_analysis_agent` | 8003 | Yes | Text content analysis |
+| `audio_analysis_agent` | 8007 | Yes | Audio content analysis/transcription search |
+
+**Research + Coding Agents:**
+
+| Agent | Port | Enabled | Purpose |
+|---|---|---|---|
+| `deep_research_agent` | 8009 | Yes | Multi-step web/document research |
+| `coding_agent` | 8010 | Yes | Code generation/analysis tasks |
+
+**Knowledge-Graph & Reasoning Agents:**
+
+| Agent | Port | Enabled | Purpose |
+|---|---|---|---|
+| `citation_tracing_agent` | 8019 | No | Traces claims back to source citations |
+| `contradiction_reconciliation_agent` | 8020 | No | Reconciles contradictory claims in the knowledge graph |
+| `multi_document_synthesis_agent` | 8021 | No | Synthesizes findings across multiple documents |
+| `kg_traversal_agent` | 8022 | No | Multi-hop knowledge-graph traversal |
+| `temporal_reasoning_agent` | 8025 | No | Reasons about time-ordered facts/events |
+| `knowledge_summarization_agent` | 8026 | No | Summarizes knowledge-graph subgraphs |
+| `audit_explanation_agent` | 8027 | Yes | Explains why a decision/answer was produced |
+
+**Multi-Tenant + Federation Agents:**
+
+| Agent | Port | Enabled | Purpose |
+|---|---|---|---|
+| `cross_tenant_comparison_agent` | 8023 | No | Compares one subject's view across tenants in an org (ACL-gated, no LLM) |
+| `federated_query_agent` | 8024 | No | Aggregates federated reads across tenants in an org, with optional RLM summarization |
+
+**Generic per-agent smoke test (dispatcher path):**
+```bash
+# List all registered agents
+curl http://localhost:8000/agents/
+
+# Get one agent's card (capabilities, health endpoint)
+curl http://localhost:8000/agents/search_agent/card
+
+# Dispatch a request to any agent by name
+curl -X POST http://localhost:8000/agents/search_agent/process \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test video", "tenant_id": "default"}'
+```
+
+**Learning Points:**
+
+- 23 agents total: 15 enabled by default, 8 disabled (the KG-reasoning and
+  federation agents, except `audit_explanation_agent`)
+
+- `gateway_agent`, `profile_selection_agent`, `query_enhancement_agent`, and
+  `entity_extraction_agent` are mounted inside the main runtime process
+  (port 8000) rather than run as standalone services
+
+- KG-reasoning agents also expose direct REST routes under
+  `/admin/tenants/{tenant_id}/knowledge/*` in addition to the generic
+  dispatcher path
 
 **✅ Layer 7 Complete**: Individual agents working, routing decisions functional, optimizers trainable
 
@@ -962,7 +1054,11 @@ JAX_PLATFORM_NAME=cpu uv run python -m cogniverse_runtime.main
 ```bash
 curl http://localhost:8000/health
 
-# Expected: {"status": "healthy", "services": {...}}
+# Expected: {"status": "healthy", "service": "cogniverse-runtime",
+#            "backends": {"registered": N, "backends": [...]},
+#            "agents": {"registered": N, "agents": [...]}}
+# Returns HTTP 503 with {"status": "unhealthy", ...} if the registries
+# can't be assembled (e.g. missing BACKEND_URL)
 ```
 
 **Learning Points:**
@@ -1020,37 +1116,28 @@ curl -X POST http://localhost:8000/search/ \
 
 **Test routing via agent:**
 ```python
-# Routing is handled by OrchestratorAgent via POST /agents/orchestrator_agent/process
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+# Fast-path routing is handled by GatewayAgent via POST /agents/gateway_agent/process
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 
-# Initialize orchestrator agent with typed dependencies
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = OrchestratorDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-)
-router = OrchestratorAgent(deps=deps)  # deps is REQUIRED
+# GatewayAgent classifies and routes with GLiNER — deps has no required fields
+router = GatewayAgent(deps=GatewayDeps())
 
 # Route query (async method)
-decision = await router.process(OrchestratorInput(query="Show me cooking videos", tenant_id="your_org:production"))
+decision = await router.process(GatewayInput(query="Show me cooking videos", tenant_id="your_org:production"))
 
 print(f"Routing decision:")
-print(f"  Recommended agent: {decision.recommended_agent}")
+print(f"  Routed to: {decision.routed_to}")
 print(f"  Confidence: {decision.confidence}")
 print(f"  Reasoning: {decision.reasoning}")
 ```
 
 **Learning Points:**
 
-- Routing is handled by OrchestratorAgent via the A2A endpoint
+- Fast-path routing is handled by GatewayAgent via the A2A endpoint
 
-- Returns OrchestratorOutput with recommended agent, confidence, and reasoning
+- Returns GatewayOutput with routed_to, confidence, and reasoning
 
-- Includes enhanced query and extracted entities/relationships
+- Complex queries are routed to OrchestratorAgent for multi-step planning
 
 ### 8.4 Synthetic Data Endpoints
 
@@ -1071,9 +1158,9 @@ service = SyntheticDataService(
     generator_config=generator_config
 )
 
-# Create request
+# Create request ("routing" is a registered optimizer name)
 request = SyntheticDataRequest(
-    optimizer="modality",
+    optimizer="routing",
     count=10,
     vespa_sample_size=50,
     strategies=["diverse"],
@@ -1105,31 +1192,40 @@ for name in OPTIMIZER_REGISTRY.keys():
 
 ### 8.5 Admin Endpoints
 
-**Create organization** (standalone tenant manager on port 9000):
+`cogniverse_runtime.admin.tenant_manager` defines the `/admin/organizations`
+and `/admin/tenants` routes. `main.py` mounts this same router on the
+unified runtime (port 8000), so these endpoints work there in normal
+operation. The module can also run standalone
+(`uv run python -m cogniverse_runtime.admin.tenant_manager`, default port
+9000) for isolated testing without booting the full runtime.
+
+**Create organization** (via the unified runtime, port 8000):
 ```bash
-curl -X POST http://localhost:9000/admin/organizations \
+curl -X POST http://localhost:8000/admin/organizations \
   -H "Content-Type: application/json" \
   -d '{
     "org_id": "acme",
     "org_name": "Acme Corporation",
-    "contact_email": "admin@acme.com"
+    "created_by": "admin"
   }'
 ```
 
-**Create tenant** (standalone tenant manager on port 9000):
+**Create tenant** (via the unified runtime, port 8000):
 ```bash
-curl -X POST http://localhost:9000/admin/tenants \
+curl -X POST http://localhost:8000/admin/tenants \
   -H "Content-Type: application/json" \
   -d '{
     "tenant_id": "acme:production",
-    "tenant_name": "Acme Production",
-    "org_id": "acme"
+    "created_by": "admin"
   }'
 ```
 
 **Learning Points:**
 
-- Tenant management endpoints are on the standalone tenant_manager app (port 9000), not the main runtime (port 8000)
+- Tenant management endpoints are mounted on the main runtime (port 8000)
+  and are also runnable standalone via
+  `cogniverse_runtime.admin.tenant_manager` (default port 9000) for
+  isolated testing
 
 - Organization → Tenant hierarchy
 
@@ -1155,11 +1251,15 @@ open http://localhost:8501
 
 **Learning Points:**
 
-- Dashboard in application layer (one of 11 packages)
+- Dashboard in application layer (one of 13 packages)
 
 - Integrates with evaluation, telemetry-phoenix, and core packages
 
-- Tabs for analytics, evaluation, config, memory, and optimization
+- 16 top-level tabs (`libs/dashboard/cogniverse_dashboard/app.py`): Analytics,
+  Evaluation, Embedding Atlas, Routing Evaluation, Orchestration Annotation,
+  Profile Routing Metrics, Optimization, Synthetic Data & Optimization,
+  Approval Queue, Ingestion Testing, Interactive Search, Chat,
+  Configuration, Tenant Management, Memory, RLM A/B Compare
 
 ### 9.2 Analytics Tab
 
@@ -1205,9 +1305,9 @@ open http://localhost:8501
 
 **Verify evaluation data:**
 
-- NDCG@10 scores
+- MRR score
 
-- Precision/Recall
+- Recall@1 / Recall@5
 
 - Profile comparison
 
@@ -1215,21 +1315,117 @@ open http://localhost:8501
 
 **Learning Points:**
 
-- Evaluation uses Phoenix experiments
+- Evaluation uses Phoenix experiments (`GET /v1/datasets/{id}/experiments`)
 
-- Compares different profiles/strategies
+- Per-query metrics are MRR, Recall@1, Recall@5 (`evaluation.py` computes
+  these directly; there is no NDCG in this tab)
 
-- Visualizes performance differences
+- Visualizes performance differences across profiles/strategies
 
-### 9.4 Config Management Tab
+### 9.4 Embedding Atlas Tab
 
-**Test Config Management:**
+**Test Embedding Atlas:**
 
-1. Navigate to "⚙️ Config Management" tab
+1. Navigate to "🗺️ Embedding Atlas" tab
 
-2. Select tenant: "default"
+2. Provide a parquet file of embeddings (reads from `outputs/embeddings/`
+   by default, written by `scripts/export_backend_embeddings.py`; falls
+   back to a file-upload widget if none exist locally)
 
-3. View System Config
+3. View the UMAP projection
+
+**Learning Points:**
+
+- Lazy-imports `umap` + `embedding_atlas` (+ `sklearn`) so the dashboard
+  still starts if these optional deps are missing
+
+- Shows an install-instructions message instead of crashing when deps
+  are absent
+
+### 9.5 Routing Evaluation Tab
+
+**Test Routing Evaluation:**
+
+1. Navigate to "🎯 Routing Evaluation" tab
+
+2. Select a time range
+
+3. Review routing accuracy and confidence calibration
+
+**Learning Points:**
+
+- Sourced from `RoutingEvaluator`
+
+- Shows per-agent performance and temporal analysis of routing decisions
+
+- Distinct from the gateway/orchestrator routing decision itself — this
+  tab evaluates historical routing quality from spans
+
+### 9.6 Orchestration Annotation Tab
+
+**Test Orchestration Annotation:**
+
+1. Navigate to "🔄 Orchestration Annotation" tab
+
+2. Review a completed orchestration workflow span
+
+3. Annotate its quality (human-in-the-loop label)
+
+**Learning Points:**
+
+- Human-in-the-loop side of the optimization feedback path
+
+- Annotations feed back into workflow-optimizer training data
+
+### 9.7 Profile Routing Metrics Tab
+
+**Test Profile Routing Metrics:**
+
+1. Navigate to "📈 Profile Routing Metrics" tab
+
+2. Select a tenant and time range
+
+3. Review per-modality query counts and P95 latency
+
+**Learning Points:**
+
+- Reads `cogniverse.profile_selection` spans and aggregates by the
+  `profile_selection.modality` attribute the ProfileSelectionAgent emits
+  on every dispatch
+
+- Replaces the removed "Multi-Modal Performance" tab, whose backing
+  `ModalityMetricsTracker` was never populated by the runtime
+
+### 9.8 Optimization Tab (Upload Training Examples)
+
+**Test manual example upload:**
+
+1. Navigate to "🔧 Optimization" tab
+
+2. Upload a routing/search-relevance/agent-response examples JSON file
+   (or click "📋 Download Routing Examples Template" for a starting point)
+
+3. Verify the preview validates `good_routes` / `bad_routes` keys
+
+**Learning Points:**
+
+- This tab is distinct from "🔬 Synthetic Data & Optimization" (9.9) — it
+  is for manually curated training examples, not generated ones
+
+- Triggers/monitors optimization of routing, ingestion, and agent systems
+
+### 9.9 Configuration Tab
+
+This tab has 7 sub-tabs: System Config, Agent Configs, Routing Config,
+Telemetry Config, Backend Profiles, History, Import/Export.
+
+**Test Configuration:**
+
+1. Navigate to "⚙️ Configuration" tab
+
+2. Enter tenant ID (defaults to the sidebar's active tenant)
+
+3. Go to "🖥️ System Config" sub-tab
 
 4. Make a change (e.g., routing threshold)
 
@@ -1241,7 +1437,7 @@ open http://localhost:8501
 
 1. Navigate to "💾 Import/Export" sub-tab
 
-2. Click "📥 Download JSON"
+2. Click "💾 Download JSON"
 
 3. Modify JSON
 
@@ -1251,17 +1447,40 @@ open http://localhost:8501
 
 **Learning Points:**
 
-- Full CRUD for all config types
+- Full CRUD across System Config, Agent Configs, Routing Config, Telemetry
+  Config, and Backend Profiles
 
 - Import/Export for backup
 
-- Version history tracked
+- "📜 History" sub-tab tracks version history
 
-### 9.5 Memory Management Tab
+- Storage backend type and store health are shown at the top of the tab
 
-**Test Memory Management:**
+### 9.10 Tenant Management Tab
 
-1. Navigate to "🧠 Memory Management" tab
+**Test Tenant Management:**
+
+1. Navigate to "👥 Tenant Management" tab
+
+2. Under "Create Organization", create an org
+
+3. Under "Create Tenant", create a tenant in that org
+
+4. Verify both appear in the "Organizations" / "Tenants" lists
+
+**Learning Points:**
+
+- Calls the runtime API's `/admin/organizations` and `/admin/tenants`
+  routes (same routes served by the standalone tenant manager, see 8.5)
+
+- Uses `st.session_state["runtime_url"]` to resolve the API base — in
+  k3d/production this points at the in-cluster runtime service
+
+### 9.11 Memory Tab
+
+**Test Memory:**
+
+1. Navigate to "🧠 Memory" tab
 
 2. Enter tenant: "default", agent: "orchestrator_agent"
 
@@ -1283,25 +1502,35 @@ open http://localhost:8501
 
 2. Enter search query
 
-3. View results with scores
+3. Click "🔍 Search"
+
+4. View results with scores
+
+**Other sub-tabs:** "📋 View All" (🔄 Load All Memories), "🗑️ Delete Memory",
+"⚠️ Clear All" (🗑️ CLEAR ALL MEMORIES)
 
 **Learning Points:**
 
-- UI for Mem0 operations
+- UI for Mem0 operations (`libs/dashboard/cogniverse_dashboard/tabs/memory_management.py`)
 
 - Semantic search interface
 
 - Metadata management
 
-### 9.6 Optimization Tab
+### 9.12 Synthetic Data & Optimization Tab
+
+This tab (header: "🔧 Optimization Framework") has 8 sub-tabs: Overview,
+Search Annotations, Golden Dataset, Synthetic Data, Module Optimization,
+Reranking Optimization, Profile Selection, Metrics Dashboard.
 
 **Test Synthetic Data Generation:**
 
-1. Navigate to "🔧 Optimization Framework" tab
+1. Navigate to "🔬 Synthetic Data & Optimization" tab
 
 2. Go to "🔬 Synthetic Data" sub-tab
 
-3. Select optimizer: "modality"
+3. Select optimizer type: "profile" (valid values: `profile`, `routing`,
+   `workflow`, `unified`)
 
 4. Set count: 10
 
@@ -1313,13 +1542,14 @@ open http://localhost:8501
 
 1. Go to "🎯 Module Optimization" sub-tab
 
-2. Select module: "modality"
+2. Select module to optimize: "routing" (valid values: `routing`,
+   `workflow`, `unified`)
 
 3. Set max iterations: 100
 
 4. Check "Use Synthetic Data"
 
-5. Click "🚀 Submit Routing Optimization Workflow"
+5. Click "🚀 Submit Module Optimization Workflow"
 
 6. Verify Argo workflow submitted
 
@@ -1327,17 +1557,107 @@ open http://localhost:8501
 
 - UI integrates with Argo Workflows
 
-- Synthetic data preview
+- The Synthetic Data optimizer list (`profile`/`routing`/`workflow`/`unified`)
+  omits `cross_modal`, even though `OPTIMIZER_REGISTRY` defines it (see 6.4)
 
 - Workflow submission from UI
 
-**✅ Layer 9 Complete**: Dashboard functional (application layer), all tabs working, UI integrations validated
+### 9.13 Approval Queue Tab
+
+**Test Approval Queue:**
+
+1. Navigate to "✅ Approval Queue" tab
+
+2. Review pending AI-generated outputs (synthetic data, annotations)
+
+3. Approve or reject an item
+
+**Learning Points:**
+
+- Human-in-the-loop review surface for synthetic data generation and
+  other AI outputs requiring approval before use in optimization
+
+### 9.14 Ingestion Testing Tab
+
+**Test Ingestion Pipeline Testing:**
+
+1. Navigate to "📥 Ingestion Testing" tab
+
+2. Upload a test video (mp4/mov/avi)
+
+3. Select processing profiles to test (multi-select, e.g.
+   `video_colpali_smol500_mv_frame`)
+
+4. Configure pipeline options (max frames, chunk duration, transcription,
+   frame descriptions, keyframe extraction method, embedding precision)
+
+**Learning Points:**
+
+- Interactive testing/configuration of ingestion pipelines without going
+  through `scripts/run_ingestion.py`
+
+- Lets you compare multiple profiles against the same uploaded video
+
+### 9.15 Interactive Search Tab
+
+**Test Interactive Search:**
+
+1. Navigate to "🔍 Interactive Search" tab
+
+2. Enter a query and run a search
+
+3. Review conversation history (session-scoped, shown in an expander)
+
+4. Click "🔄 New Session" to reset
+
+**Learning Points:**
+
+- Live search testing with multiple ranking strategies and real-time results
+
+- Tracks a session ID and per-turn conversation history in
+  `st.session_state`
+
+### 9.16 Chat Tab
+
+**Test Chat:**
+
+1. Navigate to "💬 Chat" tab
+
+2. Send a message
+
+3. Verify the routing layer dispatches it to the appropriate agent
+
+**Learning Points:**
+
+- Chats with agents via the routing layer (gateway/orchestrator), not a
+  direct single-agent call
+
+### 9.17 RLM A/B Compare Tab
+
+**Test RLM A/B Compare:**
+
+1. Navigate to "🅰️🅱️ RLM A/B Compare" tab
+
+2. Review per-row and aggregate latency/token/judge-score deltas
+
+**Learning Points:**
+
+- Reads `rlm.ab_compare` spans emitted by
+  `cogniverse-optim --mode ab-compare`
+
+- Each span carries `RLMABRunner.to_telemetry_dict()` as
+  `openinference.*` attributes, including a per-row `ab_id` that ties
+  paired arms together
+
+- Lazy-imported so the dashboard still loads without telemetry-phoenix
+
+**✅ Layer 9 Complete**: Dashboard functional (application layer), all 16 tabs working, UI integrations validated
 
 ---
 
 ## Layer 10: End-to-End Integration Tests
 
-**All 11 Packages Working Together**
+**All 13 Packages Working Together**
 
 **Purpose**: Validate complete workflows across all layers
 
@@ -1363,11 +1683,12 @@ JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
 
 **Validate in Phoenix:**
 ```python
-import phoenix as px
+from phoenix.client import Client
 
-client = px.Client()
-spans_df = client.get_spans_dataframe(
-    project_name="cogniverse-e2e_test-search"
+client = Client(base_url='http://localhost:6006')
+spans_df = client.spans.get_spans_dataframe(
+    project_name="cogniverse-e2e_test-search",
+    timeout=60,
 )
 
 print(f"Search spans collected: {len(spans_df)}")
@@ -1387,29 +1708,20 @@ print(f"Avg latency: {spans_df['latency_ms'].mean():.2f}ms")
 **Test routing to search:**
 ```python
 # Complete routing + search workflow
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
-# 1. Route the query (async method)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = OrchestratorDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-)
-router = OrchestratorAgent(deps=deps)  # deps is REQUIRED
-decision = await router.process(OrchestratorInput(query="Find videos about machine learning", tenant_id="your_org:production"))
+# 1. Route the query (async method) — GatewayAgent classifies with GLiNER
+router = GatewayAgent(deps=GatewayDeps())
+decision = await router.process(GatewayInput(query="Find videos about machine learning", tenant_id="your_org:production"))
 
-print(f"Routing: {decision.recommended_agent}")
+print(f"Routing: {decision.routed_to}")
 
-# 2. If video_search_agent, execute search
-if decision.recommended_agent == "video_search_agent":
+# 2. If search_agent, execute search
+if decision.routed_to == "search_agent":
     config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     agent = SearchAgent(
@@ -1436,19 +1748,15 @@ if decision.recommended_agent == "video_search_agent":
 # 1. Generate synthetic data (if needed)
 # This is typically done programmatically, see Layer 6 examples above
 
-# 2. Run module optimization
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
-  --module modality \
-  --tenant-id default \
-  --use-synthetic-data \
-  --force-training \
-  --output /tmp/optimization_results.json
+# 2. Run profile optimization
+JAX_PLATFORM_NAME=cpu uv run python -m cogniverse_runtime.optimization_cli \
+  --mode profile --tenant-id default
 
-# 3. Check results
-cat /tmp/optimization_results.json | jq '.results'
+# 3. Check results in Phoenix — the optimization run creates a new
+# experiment with the optimized module's scores vs baseline
 
-# 4. Verify model was saved
-ls -la outputs/models/modality/
+# 4. Verify the compiled artifact was saved to the telemetry provider's
+# dataset store (loaded by agents automatically on next restart)
 ```
 
 **Learning Points:**
@@ -1463,15 +1771,15 @@ ls -la outputs/models/modality/
 
 **Test tenant isolation:**
 ```bash
-# 1. Create organization
+# 1. Create organization (unified runtime, port 8000 — see 8.5)
 curl -X POST http://localhost:8000/admin/organizations \
   -H "Content-Type: application/json" \
-  -d '{"org_id": "test_org", "org_name": "Test Org"}'
+  -d '{"org_id": "test_org", "org_name": "Test Org", "created_by": "admin"}'
 
-# 2. Create tenant
+# 2. Create tenant (unified runtime, port 8000 — see 8.5)
 curl -X POST http://localhost:8000/admin/tenants \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id": "test_org:dev", "org_id": "test_org"}'
+  -d '{"tenant_id": "test_org:dev", "org_id": "test_org", "created_by": "admin"}'
 
 # 3. Ingest video for tenant
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
@@ -1503,16 +1811,22 @@ curl -X POST http://localhost:8000/search/ \
 
 ### 10.5 Argo Workflow Integration
 
+The scheduled optimization CronWorkflows are Helm templates
+(`charts/cogniverse/templates/optimization-workflows.yaml`), not a
+standalone `kubectl apply -f` manifest — they're deployed as part of the
+`cogniverse` chart release.
+
 **Test scheduled optimization:**
 ```bash
-# 1. Deploy workflows
-kubectl apply -f workflows/scheduled-optimization.yaml
+# 1. Deploy/upgrade the chart (installs the CronWorkflows)
+helm upgrade --install cogniverse ./charts/cogniverse -n cogniverse
 
-# 2. Check CronWorkflow created
-kubectl get cronworkflow weekly-optimization -n cogniverse
+# 2. Check CronWorkflows created (names are {release}-agent-optimization,
+#    {release}-daily-cleanup, etc.)
+kubectl get cronworkflow -n cogniverse
 
-# 3. Trigger manually
-argo submit --from cronwf/weekly-optimization -n cogniverse
+# 3. Trigger the weekly agent-optimization CronWorkflow manually
+argo submit --from cronwf/cogniverse-agent-optimization -n cogniverse
 
 # 4. Monitor workflow
 argo list -n cogniverse
@@ -1525,11 +1839,13 @@ argo get <workflow-name> -n cogniverse -o json | \
 
 **Learning Points:**
 
-- Argo Workflows for batch jobs
+- Argo CronWorkflows for batch jobs, defined as Helm templates under
+  `charts/cogniverse/templates/`
 
-- Scheduled optimization automation
+- `agentOptimization` runs weekly by default (`"0 3 * * 0"`, Sunday 3 AM
+  UTC, per `values.yaml`); `dailyGateway` and `dailyCleanup` run daily
 
-- Kubernetes integration
+- Kubernetes integration via the Argo Workflows CRDs
 
 **✅ Layer 10 Complete**: End-to-end workflows validated, multi-tenant isolation verified, all integrations working
 
@@ -1562,16 +1878,20 @@ argo get <workflow-name> -n cogniverse -o json | \
 - [ ] Profile management operational
 
 ### Agents
-- [ ] Individual agents (video, summarizer, report) working
-- [ ] Routing agent making correct decisions
+- [ ] Individual agents (search, summarizer, detailed_report, and others
+      from the 23-agent roster in 7.4) working
+- [ ] Gateway agent (fast-path) and orchestrator agent (complex-query
+      planning) making correct routing decisions
 - [ ] Agent memory integration functional
 - [ ] Multi-agent orchestration working
 
 ### Optimization
-- [ ] Synthetic data generation producing quality examples
-- [ ] Modality optimizer training successfully
+- [ ] Synthetic data generation producing quality examples for each
+      registered optimizer (profile, routing, workflow, unified, cross_modal)
+- [ ] Profile optimizer improving profile-selection accuracy
 - [ ] Cross-modal optimizer learning fusion patterns
-- [ ] GRPO optimizer improving routing decisions
+- [ ] DSPy-based routing optimizer (SIMBA/MIPROv2/BootstrapFewShot,
+      auto-selected by training-data size) improving routing decisions
 - [ ] Argo workflows submitting and executing
 
 ### Multi-Tenant
@@ -1610,11 +1930,12 @@ argo get <workflow-name> -n cogniverse -o json | \
 
 **Memory Manager Initialization Failed:**
 
-- Check: Mem0 dependencies installed
+- Check: `mem0ai` dependency installed (pinned as `mem0ai==1.0.11` in
+  `pyproject.toml`; already present after `uv sync`)
 
-- Fix: `uv pip install mem0`
+- Fix: `uv sync` (or `uv pip install mem0ai==1.0.11` to add it standalone)
 
-- Verify: Can create Mem0MemoryManager(tenant_id="your_org:production")
+- Verify: Can create `Mem0MemoryManager(tenant_id="your_org:production")`
 
 **Backend Config Not Found:**
 
@@ -1622,15 +1943,19 @@ argo get <workflow-name> -n cogniverse -o json | \
 
 - Fix: Create config.json with backend section
 
-- Verify: get_backend() succeeds
+- Verify: `create_default_config_manager().get_backend_config(tenant_id=...)` succeeds
 
 **Optimization Training Failed:**
 
-- Check: Sufficient training data (>50 examples)
+- Check: Enough training examples exist for the mode
+  (`--mode simba`/`profile`/`entity-extraction` scale their DSPy
+  teleprompter choice by training-set size; too few examples still runs,
+  but with weaker few-shot demos)
 
-- Fix: Use --force-training or generate synthetic data
+- Fix: Generate more examples first via `--mode synthetic`, or the
+  "🔬 Synthetic Data" sub-tab in the dashboard (see 9.12)
 
-- Verify: /tmp/optimization_results.json created
+- Verify: check the CLI's logged `training_examples` count in the run output
 
 **Argo Workflow Submission Failed:**
 

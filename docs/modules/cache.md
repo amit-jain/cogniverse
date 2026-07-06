@@ -26,8 +26,8 @@ The Cache Module provides a **comprehensive caching infrastructure** for the Cog
 
 - **Tiered Caching Architecture**: Multi-level cache hierarchy support with automatic tier population
 - **Backend Abstraction**: Pluggable backend architecture via registry pattern
-- **Current Implementation**: Structured filesystem backend with TTL support
-- **Specialized Caches**: Domain-specific caches for embeddings and pipeline artifacts
+- **Current Implementation**: Structured filesystem (L1) and S3/MinIO (L2) backends with TTL support
+- **Specialized Caches**: `PipelineArtifactCache` for video processing artifacts (keyframes, transcripts, descriptions, segments)
 - **Efficient Storage**: Binary format support, smart serialization
 - **Cache Invalidation**: Pattern-based clearing, TTL expiration, manual invalidation
 - **Performance Tracking**: Hit/miss statistics, size monitoring, eviction tracking
@@ -91,6 +91,8 @@ libs/core/cogniverse_core/common/cache/
 - `aiofiles`: Async file I/O
 
 - `msgpack`: Binary serialization (optional)
+
+- `boto3` / `botocore`: S3/MinIO client for the `S3CacheBackend` (imported lazily on first cache use, not at config-load time)
 
 ---
 
@@ -285,46 +287,6 @@ flowchart TB
 - Profile-based isolation
 
 - Efficient disk usage (deduplicated by video_id)
-
----
-
-### 4. Embedding Cache Format
-
-```mermaid
-flowchart TB
-    ORIG["<span style='color:#000'>Original Array<br/>numpy.ndarray<br/>shape: 128<br/>dtype: float32<br/>size: 512 bytes</span>"]
-
-    STORAGE["<span style='color:#000'>CACHE STORAGE FORMAT<br/>dtype: float32<br/>shape: 128<br/>data: binary bytes<br/>text_preview: query text<br/>model: colpali<br/>timestamp: 2025-10-07T<br/>Total size: ~550 bytes 512 data + 38 metadata<br/>Compared to: ~1200 bytes JSON list of floats<br/>Space savings: ~54%</span>"]
-
-    RETR["<span style='color:#000'>Retrieval</span>"]
-
-    DESER["<span style='color:#000'>DESERIALIZATION PROCESS<br/>1. Read cached_data from backend<br/>2. Extract dtype shape data<br/>3. np.frombuffer data dtype=dtype Zero-copy<br/>4. .reshape shape Restore dimensions<br/>5. Return numpy array<br/>Performance: ~1ms binary vs ~10ms JSON deserialize</span>"]
-
-    KEYGEN["<span style='color:#000'>Cache Key Generation<br/>text = Marie Curie radioactivity discovery<br/>model = colpali<br/>content = model:text<br/>hash = sha256 content hexdigest 16<br/>key = embedding:model:hash<br/>→ embedding:colpali:a3f2e9d8c7b6a5f4</span>"]
-
-    ORIG --> STORAGE
-    STORAGE --> RETR
-    RETR --> DESER
-    STORAGE -.-> KEYGEN
-
-    style ORIG fill:#90caf9,stroke:#1565c0,color:#000
-    style STORAGE fill:#ffcc80,stroke:#ef6c00,color:#000
-    style RETR fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style DESER fill:#a5d6a7,stroke:#388e3c,color:#000
-    style KEYGEN fill:#ffcc80,stroke:#ef6c00,color:#000
-```
-
-**Embedding Cache Optimizations:**
-
-- Binary serialization (50%+ space savings)
-
-- Deterministic key generation (same text = same key)
-
-- Zero-copy deserialization with frombuffer
-
-- Model-specific namespacing
-
-- Metadata for debugging
 
 ---
 
@@ -541,9 +503,14 @@ Initialize cache manager with configuration.
 
 3. Set up statistics tracking
 
+Note: although `CacheConfig.backends` is typed `List[BackendConfig]`,
+`CacheManager._initialize_backends()` calls `.get(...)` on each entry, so at
+runtime `backends` must be a list of plain **dicts** (as in every example in
+this doc and in `configs/config.json`), not `BackendConfig` instances.
+
 **Example:**
 ```python
-from cogniverse_core.common.cache.base import CacheConfig, BackendConfig
+from cogniverse_core.common.cache.base import CacheConfig
 
 config = CacheConfig(
     backends=[
@@ -727,6 +694,37 @@ await self.backends[0].set(key, value, self.config.default_ttl)
 
 ---
 
+#### `async list_keys(pattern: Optional[str] = None, include_metadata: bool = False) -> List[Tuple[str, Optional[Dict[str, Any]]]]`
+List keys from the primary (first, highest-priority) backend only — does not merge keys across tiers.
+
+**Parameters:**
+
+- `pattern`: Optional glob pattern
+
+- `include_metadata`: Include metadata in results
+
+**Returns:** List of (key, metadata) tuples from `self.backends[0]`, or `[]` if no backends configured
+
+**Example:**
+```python
+keys = await cache_manager.list_keys(pattern="video_colpali_mv:*", include_metadata=True)
+```
+
+---
+
+#### `async cleanup_expired() -> int`
+Run `cleanup_expired()` on every configured backend and sum the results.
+
+**Returns:** Total number of expired entries removed across all tiers
+
+**Example:**
+```python
+cleaned = await cache_manager.cleanup_expired()
+print(f"Removed {cleaned} expired entries across all tiers")
+```
+
+---
+
 ### 3. CacheBackendRegistry (registry.py:11-48)
 
 **Purpose:** Plugin registry for cache backend types.
@@ -801,14 +799,14 @@ List all registered backend types.
 **Example:**
 ```python
 backends = CacheBackendRegistry.list_backends()
-# ["structured_filesystem", "memory", "redis", ...]
+# ["structured_filesystem", "s3"]  # the two currently-registered backend types
 ```
 
 ---
 
 ## Cache Backends
 
-### StructuredFilesystemBackend (backends/structured_filesystem.py:35-554)
+### StructuredFilesystemBackend (backends/structured_filesystem.py:36-555)
 
 **Purpose:** Filesystem cache with human-readable directory structure.
 
@@ -1530,33 +1528,84 @@ print(f"Cleared {cleared} cache entries")
 
 ---
 
+#### `async get_cache_stats() -> Dict[str, Any]`
+Get cache statistics wrapped with a per-artifact-type placeholder breakdown.
+
+**Returns:**
+```python
+{
+    "overall": { ... },  # same shape as CacheManager.get_stats()
+    "artifacts": {
+        "keyframes": "Not implemented",
+        "transcripts": "Not implemented",
+        "descriptions": "Not implemented",
+    },
+}
+```
+
+Per-artifact-type stats are not implemented — `get_cache_stats()` currently
+just wraps `CacheManager.get_stats()` (the `"overall"` key) alongside a fixed
+placeholder dict.
+
+**Example:**
+```python
+stats = await pipeline_cache.get_cache_stats()
+print(stats["overall"]["manager"]["hit_rate"])
+```
+
+---
+
+### 2. VideoArtifacts (pipeline_cache.py:20-43)
+
+**Purpose:** Dataclass container returned by `get_all_artifacts()`, bundling every artifact type cached for one video.
+
+**Fields:**
+```python
+@dataclass
+class VideoArtifacts:
+    video_id: str
+    keyframes: Optional[Dict[str, Any]] = None
+    audio_transcript: Optional[Dict[str, Any]] = None
+    frame_descriptions: Optional[Dict[str, Any]] = None
+    embeddings: Optional[Dict[str, Any]] = None
+```
+
+Note: `get_all_artifacts()` only ever populates `keyframes`, `audio_transcript`,
+and `frame_descriptions` — the `embeddings` field exists on the dataclass but
+is never set by the current pipeline cache.
+
+#### `is_complete(pipeline_config: Dict[str, Any]) -> bool`
+Check whether every artifact type enabled in `pipeline_config` (via
+`extract_keyframes`, `transcribe_audio`, `generate_descriptions`,
+`generate_embeddings`) is present on this instance.
+
+**Example:**
+```python
+artifacts = await pipeline_cache.get_all_artifacts(video_path, pipeline_config)
+if not artifacts.is_complete(pipeline_config):
+    print("Some artifacts still need to be computed")
+```
+
+---
+
 ## Data Flow
 
 ### Complete Cache Lookup Flow
 
 ```mermaid
 flowchart TB
-    REQ["<span style='color:#000'>APPLICATION REQUEST<br/>video_search_agent.search query profile=video_colpali_mv</span>"]
-    EMB["<span style='color:#000'>EMBEDDING CACHE LOOKUP<br/>embedding = await embedding_cache.get_embedding query model</span>"]
-    EMB_HIT["<span style='color:#000'>CACHE HIT ✓</span>"]
-    CMGET["<span style='color:#000'>Key: embedding:colpali:a3f2e9d8<br/>CacheManager.get<br/>└─ Check Tier 1 Filesystem: HIT ✓<br/>   • Path: ~/.cache/cogniverse/embeddings/colpali/a3f2e9d8.pkl<br/>   • Read binary data<br/>   • Deserialize: np.frombuffer<br/>Return: np.ndarray shape 128 dtype float32</span>"]
+    REQ["<span style='color:#000'>PIPELINE REQUEST<br/>ProcessingStrategySet.process video_path</span>"]
     PIPE["<span style='color:#000'>PIPELINE ARTIFACT LOOKUP<br/>keyframes = await pipeline_cache.get_keyframes video_path</span>"]
     PIPE_HIT["<span style='color:#000'>CACHE HIT ✓</span>"]
     CMGET2["<span style='color:#000'>Key: profile:video:robot_soccer:keyframes:strategy=...<br/>CacheManager.get<br/>└─ Check Tier 1 Filesystem: HIT ✓<br/>   • Path: ~/.cache/.../profile/keyframes/robot_soccer/<br/>   • Read metadata.pkl<br/>   • Check TTL: OK not expired<br/>   • If load_images: load frame_*.jpg files<br/>Return: video_id robot_soccer num_keyframes 50 keyframes</span>"]
-    CONT["<span style='color:#000'>APPLICATION CONTINUES<br/>• Use cached embeddings for search<br/>• Use cached keyframes to avoid re-extraction<br/>• Total time saved: ~5-10 seconds vs recompute</span>"]
+    CONT["<span style='color:#000'>PIPELINE CONTINUES<br/>• Use cached keyframes to avoid re-extraction<br/>• Total time saved: ~5-10 seconds vs recompute</span>"]
 
-    REQ --> EMB
-    EMB --> EMB_HIT
-    EMB_HIT --> CMGET
-    CMGET --> PIPE
+    REQ --> PIPE
     PIPE --> PIPE_HIT
     PIPE_HIT --> CMGET2
     CMGET2 --> CONT
 
     style REQ fill:#90caf9,stroke:#1565c0,color:#000
-    style EMB fill:#ffcc80,stroke:#ef6c00,color:#000
-    style EMB_HIT fill:#a5d6a7,stroke:#388e3c,color:#000
-    style CMGET fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PIPE fill:#ffcc80,stroke:#ef6c00,color:#000
     style PIPE_HIT fill:#a5d6a7,stroke:#388e3c,color:#000
     style CMGET2 fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -1569,14 +1618,15 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Miss["<span style='color:#000'>CACHE MISS DETECTED<br/>embedding = await embedding_cache.get_embedding(query, model)<br/>→ Returns None (not in any tier)</span>"]
+    Miss["<span style='color:#000'>CACHE MISS DETECTED<br/>keyframes = await pipeline_cache.get_keyframes(video_path)<br/>→ Returns None (not in any tier)</span>"]
 
-    Compute["<span style='color:#000'>COMPUTE EMBEDDING (EXPENSIVE)<br/>embedding = encoder.encode(query)<br/>• Load model from disk/memory<br/>• Forward pass through neural network<br/>• Cost: ~50-200ms</span>"]
+    Compute["<span style='color:#000'>EXTRACT KEYFRAMES (EXPENSIVE)<br/>KeyframeProcessor.extract_keyframes(video_path)<br/>• Histogram-based scene detection<br/>• Cost: seconds per video</span>"]
 
-    Store["<span style='color:#000'>STORE IN CACHE<br/>await embedding_cache.set_embedding(query, model, embedding)</span>"]
+    Store["<span style='color:#000'>STORE IN CACHE<br/>await pipeline_cache.set_keyframes(video_path, metadata, images)</span>"]
 
     subgraph CacheManager["<span style='color:#000'>CacheManager.set()</span>"]
-        Tier1["<span style='color:#000'>Tier 1 (Filesystem)<br/>• Serialize: embedding.tobytes()<br/>• Write to ~/.cache/.../colpali/xxx.pkl<br/>• Create .meta file with TTL<br/>• Success ✓</span>"]
+        Tier1["<span style='color:#000'>Tier 1 (Filesystem)<br/>• Serialize: pickle/json/msgpack<br/>• Write to ~/.cache/.../keyframes/xxx/<br/>• Create .meta file with TTL<br/>• Success ✓</span>"]
+        Tier2["<span style='color:#000'>Tier 2 (S3/MinIO, if enabled)<br/>• Same key, shared bucket<br/>• Survives pod restart<br/>• Success ✓</span>"]
     end
 
     Miss --> Compute
@@ -2329,15 +2379,15 @@ value = await get_with_retry(cache_manager, key)
 
 **Unit Tests:**
 
-- `tests/routing/unit/test_modality_cache.py` - LRU cache and per-modality caching
+- `tests/core/unit/test_s3_cache_backend.py` - S3 cache backend against an in-memory fake boto3 client (serialization, key-shaping, TTL)
+
+- `tests/ingestion/unit/test_cache_key_collision_fix.py` - `PipelineArtifactCache._generate_video_key` SHA-256 URI hashing (regression for cross-root filename collisions)
 
 **Integration Tests:**
 
-- `tests/routing/integration/test_e2e_cache_lazy_metrics.py` - End-to-end caching with lazy metrics
+- `tests/core/integration/test_s3_cache_backend_real.py` - Real MinIO container: full `PipelineArtifactCache` → `CacheManager` → `S3CacheBackend` path, including the pod-restart/shared-L2 scenario
 
-- `tests/routing/integration/test_routing_agent_cache_metrics_integration.py` - Cache metrics integration
-
-- `tests/agents/unit/test_routing_agent_cache_metrics.py` - Routing agent cache metrics
+- `tests/ingestion/integration/test_pipeline_cache_live_path.py` - Real `ProcessingStrategySet` strategies against a real `PipelineArtifactCache` + filesystem backend, including the fresh-pod keyframe rehydration path
 
 ### Test Scenarios
 
@@ -2563,11 +2613,9 @@ The Cache Module provides **production-ready caching infrastructure** for the Co
 
 **Integration Points:**
 
-- VideoSearchAgent uses embedding cache for query vectors
+- Ingestion pipeline processors use `PipelineArtifactCache` for keyframes, transcripts, descriptions, and segment frames
 
-- Pipeline processors use artifact cache for keyframes, transcripts, descriptions
-
-- Multi-agent orchestrator leverages caching for efficiency
+- `VideoIngestionPipeline` wires a `CacheManager` + `PipelineArtifactCache` directly from `pipeline_cache` config (`libs/runtime/cogniverse_runtime/ingestion/pipeline.py`)
 
 - All caches support async operations for high concurrency
 

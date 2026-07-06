@@ -4,7 +4,7 @@
 **Import Name**: `cogniverse_sdk`
 **Layer**: Foundation Layer
 **Version**: 0.1.0
-**Last Updated**: 2026-01-25
+**Last Updated**: 2026-07-05
 
 ---
 
@@ -46,25 +46,49 @@ The **cogniverse-sdk** package is the **pure foundation** of the Cogniverse syst
 
 ```mermaid
 flowchart TB
-    SDK["<span style='color:#000'>cogniverse-sdk<br/>Pure Interfaces<br/>Zero Dependencies</span>"]
-    Foundation["<span style='color:#000'>cogniverse-foundation</span>"]
-    Core["<span style='color:#000'>cogniverse-core</span>"]
-    Evaluation["<span style='color:#000'>cogniverse-evaluation</span>"]
-    Implementations["<span style='color:#000'>Implementation Layer<br/>agents, vespa, synthetic</span>"]
+    subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
+        Runtime["<span style='color:#000'>cogniverse-runtime</span>"]
+        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
+    end
 
-    Foundation --> SDK
-    Core --> SDK
-    Evaluation --> SDK
-    Implementations --> SDK
+    subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
+        Agents["<span style='color:#000'>cogniverse-agents</span>"]
+        Vespa["<span style='color:#000'>cogniverse-vespa</span>"]
+        Synthetic["<span style='color:#000'>cogniverse-synthetic</span>"]
+        Finetuning["<span style='color:#000'>cogniverse-finetuning</span>"]
+    end
 
-    style SDK fill:#90caf9,stroke:#1565c0,color:#000
-    style Foundation fill:#64b5f6,stroke:#1565c0,color:#000
+    subgraph CoreLayer["<span style='color:#000'>Core Layer</span>"]
+        Core["<span style='color:#000'>cogniverse-core</span>"]
+        Evaluation["<span style='color:#000'>cogniverse-evaluation</span>"]
+    end
+
+    subgraph FoundationLayer["<span style='color:#000'>Foundation Layer</span>"]
+        Foundation["<span style='color:#000'>cogniverse-foundation</span>"]
+        SDK["<span style='color:#000'>cogniverse-sdk ◄─ YOU ARE HERE<br/>Pure Interfaces, Zero Dependencies</span>"]
+    end
+
+    AppLayer --> ImplLayer
+    ImplLayer --> CoreLayer
+    CoreLayer --> FoundationLayer
+
+    style AppLayer fill:#90caf9,stroke:#1565c0,color:#000
+    style Runtime fill:#90caf9,stroke:#1565c0,color:#000
+    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style ImplLayer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Agents fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Vespa fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Synthetic fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Finetuning fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CoreLayer fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Core fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Evaluation fill:#ba68c8,stroke:#7b1fa2,color:#000
-    style Implementations fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Evaluation fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FoundationLayer fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Foundation fill:#a5d6a7,stroke:#388e3c,color:#000
+    style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-**SDK is the foundation** - all other packages depend on it, but it depends on nothing (except numpy).
+**SDK is the foundation** - every other workspace package that touches backends, config, schemas, or workflow/adapter storage depends on it directly (`agents`, `core`, `dashboard`, `evaluation`, `finetuning`, `foundation`, `runtime`, `synthetic`, `vespa`), but it depends on nothing except numpy. (`cli`, `messaging`, and `telemetry-phoenix` have no direct dependency on `cogniverse-sdk`.)
 
 ---
 
@@ -144,6 +168,9 @@ class Backend(IngestionBackend, SearchBackend):
             self._initialize_backend(config)
             self._initialized = True
 
+    # _initialize_backend(config) -> None: abstract - subclasses implement
+    # backend-specific connection setup; called exactly once by initialize()
+
     # Inherited from SearchBackend (abstract - must implement):
     # search(query_embeddings, query_text, top_k, filters, ranking_strategy) -> List[Dict]
     # get_document(document_id) -> Optional[Document]
@@ -151,6 +178,11 @@ class Backend(IngestionBackend, SearchBackend):
     # get_statistics() -> Dict[str, Any]
     # health_check() -> bool
     # get_embedding_requirements(schema_name) -> Dict[str, Any]
+
+    # Inherited from SearchBackend (concrete no-ops - override to support
+    # runtime profile mutation without a restart):
+    # add_profile(profile_name, profile_config) -> None
+    # remove_profile(profile_name) -> None
 
     # Inherited from IngestionBackend (abstract - must implement):
     # ingest_documents(documents, schema_name) -> Dict[str, Any]
@@ -360,7 +392,7 @@ class ConfigEntry:
 
 **Benefits:**
 
-- **Storage-Agnostic**: Pluggable backend via `ConfigStore` interface (e.g., Vespa, SQLite)
+- **Storage-Agnostic**: Pluggable backend via `ConfigStore` interface (e.g., Vespa)
 - **Versioned**: All updates are versioned with history retrieval
 - **Scoped**: Configuration organized by scope (system, agent, routing, etc.)
 - **Service-Aware**: Configuration tied to specific services
@@ -520,7 +552,9 @@ class WorkflowTemplate:
 
 ### 6. Adapter Store Interface
 
-Storage for adapter metadata and activation management:
+Storage for adapter metadata and activation management. Implementations register
+against the `cogniverse.adapter.stores` entry-point group and are resolved via
+`AdapterStoreRegistry` (e.g., `VespaAdapterStore` registered by `cogniverse-vespa`):
 
 ```python
 from cogniverse_sdk.interfaces.adapter_store import AdapterStore
@@ -653,6 +687,8 @@ cogniverse_sdk/
 - `get_statistics()`: Get search backend statistics
 - `health_check()`: Check backend health
 - `get_embedding_requirements(schema_name)`: Get embedding requirements for schema
+- `add_profile(profile_name, profile_config)`: Register a new ranking/retrieval profile at runtime (concrete, default no-op; override to support hot-reload without a restart)
+- `remove_profile(profile_name)`: Unregister a profile at runtime (concrete, default no-op)
 
 **Methods (IngestionBackend):**
 
@@ -666,6 +702,7 @@ cogniverse_sdk/
 
 **Methods (Backend — schema management and metadata ops):**
 
+- `_initialize_backend(config)`: Abstract; backend-specific connection/client setup, called exactly once by the concrete `initialize()`
 - `deploy_schemas(schema_definitions)`: Deploy multiple schemas together
 - `delete_schema(schema_name, tenant_id)`: Delete tenant schema(s); returns `List[str]` of deleted names
 - `schema_exists(schema_name, tenant_id)`: Check if schema exists
@@ -675,7 +712,7 @@ cogniverse_sdk/
 - `query_metadata_documents(schema, query, yql, **kwargs)`: Query metadata documents
 - `delete_metadata_document(schema, doc_id)`: Delete metadata document
 
-**Lines of Code**: ~494
+**Lines of Code**: ~516
 
 #### `interfaces/config_store.py`
 **Purpose**: Configuration storage interface with versioning
@@ -847,6 +884,32 @@ doc_dict = doc.to_dict()
 
 # From dict
 doc = Document.from_dict(doc_dict)
+```
+
+### SearchResult Class
+
+Pairs a `Document` with a relevance score for search-response construction:
+
+```python
+from cogniverse_sdk.document import Document, SearchResult
+
+result = SearchResult(
+    document=doc,               # Document: the matched document
+    score=0.87,                 # float: relevance score
+    highlights={"text": "..."},  # Optional[Dict[str, Any]]: highlighted snippets
+)
+
+# Convert to a dict for an API response
+result_dict = result.to_dict()
+# {
+#     "document_id": doc.id,
+#     "score": 0.87,
+#     "metadata": doc.metadata,
+#     "highlights": {"text": "..."},
+#     # "source_id" included if present in doc.metadata
+#     # "temporal_info" (start_time/end_time/duration) included if both
+#     # start_time and end_time are present in doc.metadata
+# }
 ```
 
 ### Backend Interface
@@ -1256,6 +1319,13 @@ config_manager = create_default_config_manager()
 
 ### Example 4: Schema Loader Implementation
 
+The real production implementation is `cogniverse_core.schemas.filesystem_loader.FilesystemSchemaLoader`
+(constructor: `FilesystemSchemaLoader(base_path: Path)`; raises `ValueError` if
+`base_path` is missing or not a directory, and `SchemaLoadError` if
+`ranking_strategies.json` is missing). The example below implements the same
+interface from scratch, with intentionally simplified behavior, to show what a
+minimal `SchemaLoader` implementation looks like:
+
 ```python
 from cogniverse_sdk.interfaces.schema_loader import (
     SchemaLoader,
@@ -1266,8 +1336,8 @@ from pathlib import Path
 import json
 from typing import Any, Dict, List
 
-class FilesystemSchemaLoader(SchemaLoader):
-    """Filesystem-based schema loader"""
+class CustomSchemaLoader(SchemaLoader):
+    """Minimal filesystem-based schema loader (example)"""
 
     def __init__(self, schema_dir: Path):
         self.schema_dir = schema_dir
@@ -1305,7 +1375,7 @@ class FilesystemSchemaLoader(SchemaLoader):
             return json.load(f)
 
 # Usage
-loader = FilesystemSchemaLoader(Path("schemas/"))
+loader = CustomSchemaLoader(Path("schemas/"))
 
 # List available schemas
 available = loader.list_available_schemas()
@@ -1330,7 +1400,7 @@ for name, config in strategies.items():
 
 ```toml
 dependencies = [
-    "numpy>=1.24.0",  # For embedding arrays in backend interface
+    "numpy==2.4.4",  # For embedding arrays in backend interface
 ]
 ```
 
@@ -1449,7 +1519,7 @@ uv publish --token $PYPI_TOKEN
 
 ### Package Stats
 
-- **Total Lines**: ~1,729
+- **Total Lines**: ~1,570
 - **Files**: 8 Python files
 - **Interfaces**: 6 main interfaces (Backend, ConfigStore, SchemaLoader, WorkflowStore, AdapterStore, Document)
 - **Dependencies**: 1 external (numpy)

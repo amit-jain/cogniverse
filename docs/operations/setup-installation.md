@@ -63,12 +63,14 @@ on AMD or CPU-only hosts and ~700 MB of useless NVIDIA libraries on machines
 without an NVIDIA GPU. See ["PyTorch backend selection"](#pytorch-backend-selection)
 below for the full story.
 
-**Workspace contents** (installed in editable mode):
+**Workspace contents** (installed in editable mode, all 13 packages —
+`cogniverse-cli` comes from the `dev` dependency group, which `uv sync`
+installs by default alongside the rest):
 
 - Foundation Layer: `cogniverse_sdk` (libs/sdk/), `cogniverse_foundation` (libs/foundation/)
 - Core Layer: `cogniverse_core`, `cogniverse_evaluation`, `cogniverse_telemetry_phoenix`
 - Implementation Layer: `cogniverse_agents`, `cogniverse_vespa`, `cogniverse_synthetic`, `cogniverse_finetuning`
-- Application Layer: `cogniverse_runtime`, `cogniverse_dashboard`
+- Application Layer: `cogniverse_runtime`, `cogniverse_dashboard`, `cogniverse_cli`, `cogniverse_messaging`
 
 ### 2a. PyTorch backend selection
 
@@ -206,8 +208,7 @@ embedding routing via `inference_services.embedding`. `AudioProcessor`
 
 ```bash
 # Pull Ollama models
-docker exec ollama ollama pull llama3.2
-docker exec ollama ollama pull nomic-embed-text
+docker exec ollama ollama pull gemma3:4b
 ```
 
 ### 5. Verify Installation
@@ -231,7 +232,7 @@ Cogniverse uses a **UV workspace** with a layered architecture:
 
 ```text
 cogniverse/
-├── libs/                         # UV Workspace Packages (10 core + 1 standalone)
+├── libs/                         # UV Workspace Packages (13 total)
 │   # FOUNDATION LAYER (Pure Interfaces)
 │   ├── sdk/                      # cogniverse_sdk
 │   │   ├── pyproject.toml
@@ -290,11 +291,21 @@ cogniverse/
 │   │   └── cogniverse_runtime/
 │   │       ├── routers/          # FastAPI routers
 │   │       └── ingestion/        # Video processing pipeline
-│   └── dashboard/                # cogniverse_dashboard
+│   ├── dashboard/                # cogniverse_dashboard
+│   │   ├── pyproject.toml
+│   │   └── cogniverse_dashboard/
+│   │       ├── app.py            # Main Streamlit application
+│   │       └── utils/            # Utilities (Phoenix launcher, data manager)
+│   ├── cli/                      # cogniverse_cli — the `cogniverse` CLI
+│   │   ├── pyproject.toml
+│   │   └── cogniverse_cli/
+│   │       ├── main.py           # click entry point (`cogniverse up`, `status`, `admin`)
+│   │       └── cluster.py        # k3d cluster lifecycle
+│   └── messaging/                # cogniverse_messaging
 │       ├── pyproject.toml
-│       └── cogniverse_dashboard/
-│           ├── app.py            # Main Streamlit application
-│           └── utils/            # Utilities (Phoenix launcher, data manager)
+│       └── cogniverse_messaging/
+│           ├── gateway.py        # Messaging gateway (Telegram, etc.)
+│           └── runtime_client.py # Client for the runtime's agent API
 ├── pyproject.toml                # Workspace root
 └── uv.lock                       # Unified lockfile
 ```
@@ -402,7 +413,13 @@ flowchart TB
 | **Phoenix Web** | 6006 | Dashboard & experiments |
 | **Phoenix Collector** | 4317 | OTLP span collection (gRPC) |
 | **Ollama** | 11434 | LLM inference API |
-| **vLLM ASR (Whisper)** | 29005 | OpenAI-compat ASR (`/v1/audio/transcriptions`, `/health`) |
+| **vLLM ASR (Whisper)** | 29005† | OpenAI-compat ASR (`/v1/audio/transcriptions`, `/health`) |
+
+† `29005` is the k3d/Helm chart `nodePort` (`charts/cogniverse/values.yaml`
+`inference.vllm_asr.service.nodePort`). The standalone `docker run` command
+in [step 3a](#3a-optional-whisper-asr-via-vllm) above maps the container's
+port `8000` directly to host port `8000` instead — there is no local-Docker
+equivalent of the chart's NodePort.
 
 For the canonical inventory of every model, image source, and
 deployment style (CPU vs ROCm, custom sidecar vs official vLLM
@@ -417,20 +434,16 @@ Create `.env` file in the workspace root:
 
 ```bash
 cat > .env <<EOF
-# Environment
-ENVIRONMENT=development
 LOG_LEVEL=DEBUG
 
 # Tenant ID is per-request (in A2A task payload), not an env var
 
-# Backend (Vespa)
+# Backend (Vespa) — read by BootstrapConfig, REQUIRED
 BACKEND_URL=http://localhost
 BACKEND_PORT=8080
-BACKEND_CONFIG_PORT=19071
 
-# Phoenix
-PHOENIX_ENABLED=true
-PHOENIX_COLLECTOR_ENDPOINT=localhost:4317
+# Phoenix OTLP endpoint (gRPC)
+TELEMETRY_OTLP_ENDPOINT=localhost:4317
 
 # Test LM endpoint (any OpenAI-compatible server)
 TEST_LLM_API_BASE=http://localhost:11434
@@ -449,7 +462,7 @@ EOF
 
 - **AUDIO**: Speech and audio analysis extracted from video
 
-- **IMAGE**: Visual similarity search with ColQwen2 or ColPali
+- **IMAGE**: Visual similarity search with ColQwen3 or ColPali
 
 - **DOCUMENT**: PDF, DOCX processing with vision models
 
@@ -467,18 +480,20 @@ EOF
 # List installed packages
 uv pip list | grep cogniverse
 
-# Expected output (10 core packages):
-# cogniverse-sdk                 0.1.0
-# cogniverse-foundation          0.1.0
-# cogniverse-core                0.1.0
-# cogniverse-evaluation          0.1.0
-# cogniverse-telemetry-phoenix   0.1.0
-# cogniverse-agents              0.1.0
-# cogniverse-vespa               0.1.0
-# cogniverse-synthetic           0.1.0
-# cogniverse-finetuning          0.1.0
-# cogniverse-runtime             0.1.0
-# Note: cogniverse-dashboard is not installed by default
+# Expected output (all 13 workspace packages):
+# cogniverse-agents               0.1.0
+# cogniverse-cli                  0.1.0
+# cogniverse-core                 0.1.0
+# cogniverse-dashboard            0.1.0
+# cogniverse-evaluation           0.1.0
+# cogniverse-finetuning           0.1.0
+# cogniverse-foundation           0.1.0
+# cogniverse-messaging            0.1.0
+# cogniverse-runtime              0.1.0
+# cogniverse-sdk                  0.1.0
+# cogniverse-synthetic            0.1.0
+# cogniverse-telemetry-phoenix    0.1.0
+# cogniverse-vespa                0.1.0
 ```
 
 ### 2. Deploy Vespa Schemas
@@ -518,10 +533,27 @@ Without this step, fixture-gated tests (`tests/e2e/`, ingestion integration)
 will `pytest.skip` on missing files such as
 `data/testset/evaluation/sample_videos/v_-nl4G-00PtA.mp4`.
 
-### 4. Run Test Ingestion
+### 4. Start the Runtime Server & Register a Tenant
+
+There is no default tenant — every tenant, including one named `default`,
+must be created via `POST /admin/tenants` before ingestion or search will
+accept its `tenant_id`. That endpoint is served by the runtime, so start it
+first:
 
 ```bash
-# Ingest sample videos (default tenant)
+# Start the FastAPI runtime (foreground; use --reload during development)
+JAX_PLATFORM_NAME=cpu uv run uvicorn cogniverse_runtime.main:app --port 8000 &
+
+# Register the "default" tenant used by the ingestion command below
+curl -X POST http://localhost:8000/admin/tenants \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "default", "created_by": "setup-guide"}'
+```
+
+### 5. Run Test Ingestion
+
+```bash
+# Ingest sample videos into the tenant registered above
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
@@ -529,7 +561,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --tenant-id default
 ```
 
-### 5. Verify End-to-End
+### 6. Verify End-to-End
 
 ```bash
 # Run comprehensive test suite
@@ -564,8 +596,8 @@ docker logs vespa
 # Check Phoenix is running
 docker ps | grep phoenix
 
-# Verify endpoint
-echo $PHOENIX_COLLECTOR_ENDPOINT
+# Verify endpoint (set in .env — see Environment Configuration above)
+echo $TELEMETRY_OTLP_ENDPOINT
 
 # Check Phoenix logs
 docker logs phoenix
@@ -578,8 +610,8 @@ docker logs phoenix
 docker exec ollama ollama list
 
 # Remove and re-pull model
-docker exec ollama ollama rm llama3.2
-docker exec ollama ollama pull llama3.2
+docker exec ollama ollama rm gemma3:4b
+docker exec ollama ollama pull gemma3:4b
 ```
 
 ---
@@ -597,15 +629,20 @@ uv pip install -e .
 cd libs/agents
 uv pip install -e .
 
-# Install all packages in development mode
-uv sync --all-extras
+# Install all workspace packages (dev group, including cogniverse-cli,
+# is installed by default). `--all-extras` is NOT valid here: the cpu/
+# cuda/rocm torch extras are declared mutually exclusive in
+# `[tool.uv] conflicts`, so pick one with `scripts/install_with_gpu.sh`
+# or `uv sync --extra <cpu|cuda|rocm>` (see "PyTorch backend selection").
+uv sync
 ```
 
 ### Development Installation
 
 ```bash
-# Install with development dependencies
-uv sync --all-extras --dev
+# Same as above — the `dev` dependency group is a default group, so a
+# plain `uv sync` already installs ruff/mypy/pytest-playwright/etc.
+uv sync
 
 # Install pre-commit hooks
 uv run pre-commit install
@@ -618,7 +655,7 @@ uv run ruff format .
 ### Package Import Verification
 
 ```bash
-# Verify package imports work correctly for all 10 core packages
+# Verify package imports work correctly for all 13 workspace packages
 uv run python -c "
 # Foundation Layer
 from cogniverse_sdk.interfaces.backend import Backend
@@ -638,11 +675,14 @@ from cogniverse_synthetic.service import SyntheticDataService
 
 # Application Layer
 from cogniverse_runtime.main import app
-# Note: cogniverse_dashboard is NOT installed by default.
-# It's a standalone Streamlit app, run directly via:
+from cogniverse_cli.main import cli
+from cogniverse_messaging.gateway import MessagingGateway
+import cogniverse_dashboard
+# cogniverse_dashboard is a package import; the Streamlit app itself is
+# run directly, not imported as a script:
 #   uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 
-print('All 10 core packages imported successfully!')
+print('All 13 workspace packages imported successfully!')
 "
 ```
 
@@ -698,7 +738,7 @@ uv build
 
 ## Common Import Patterns
 
-After installation, use these import patterns for all 10 core packages:
+After installation, use these import patterns for all 13 workspace packages:
 
 ```python
 # ===== FOUNDATION LAYER =====
@@ -735,7 +775,6 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 # Agents - Orchestration and Search
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # Vespa - Backend and Schema Management
@@ -758,15 +797,22 @@ from cogniverse_synthetic.generators.workflow import WorkflowGenerator
 from cogniverse_runtime.main import app
 from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-# Dashboard - NOT installed by default
-# Run directly as a Streamlit app (not importable as a package):
+# Dashboard - installed like every other workspace package; the
+# Streamlit app itself is run directly, not executed as a script:
 #   uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
-# Dashboard utilities can be imported if needed with sys.path manipulation
+import cogniverse_dashboard
+
+# CLI - the `cogniverse` command (installed via the `dev` dependency group)
+from cogniverse_cli.main import cli
+
+# Messaging - gateway + runtime client for chat-platform integrations
+from cogniverse_messaging.gateway import MessagingGateway
+from cogniverse_messaging.runtime_client import RuntimeClient
 ```
 
 ---
 
-## Troubleshooting
+## Workspace & Import Troubleshooting
 
 ### Workspace Issues
 
@@ -789,9 +835,9 @@ If you see `ModuleNotFoundError: No module named 'cogniverse_core'`:
 
 ```bash
 # Ensure you're using the workspace virtual environment
-source .venv/bin/activate  # Linux/macOS
-# or
-.venv\Scripts\activate     # Windows
+# (Linux/x86_64 or macOS arm64 — Windows is not a supported target,
+# see Prerequisites > System Requirements above)
+source .venv/bin/activate
 
 # Verify packages are installed
 uv pip list | grep cogniverse

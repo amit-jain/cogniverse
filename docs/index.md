@@ -60,6 +60,7 @@ flowchart TD
 
 - **Multi-Modal Processing** — Video, audio, images, documents with unified embeddings
 - **Agent Orchestration** — A2A protocol with OrchestratorAgent entry point, agent discovery via AgentRegistry
+- **23 Specialized Agents** — Gateway/routing (GatewayAgent, OrchestratorAgent, ProfileSelection, QueryEnhancement, EntityExtraction), search & analysis (Search, ImageSearch, Document, TextAnalysis, AudioAnalysis), generation (Summarizer, DetailedReport), research & coding (DeepResearch, Coding), and 9 knowledge/audit agents — see [Agents Module](modules/agents.md) for the full roster
 - **Knowledge Management Layer** — Schema-driven memory with provenance tracking, contradiction detection, trust ranking, federation (org trunk + tenant overlays), pinning, and schema-driven lifecycle cleanup
 - **9 Knowledge Agents** — MultiDocumentSynthesis, KnowledgeGraphTraversal, CrossTenantComparison, ContradictionReconciliation, CitationTracing, TemporalReasoning, FederatedQuery, KnowledgeSummarization, AuditExplanation
 - **Self-Optimization** — Continuous learning via GEPA, MIPRO, and synthetic data; regression-reject gate; per-tenant canary promotion; rollback

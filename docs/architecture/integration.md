@@ -1,6 +1,6 @@
 # Cogniverse Study Guide: System Integration Module
 
-**Module Path:** `tests/system/`, `tests/agents/e2e/`
+**Module Path:** `tests/system/`, `tests/e2e/`
 
 ---
 
@@ -44,6 +44,8 @@ graph TD
     subgraph Application["<span style='color:#000'>Application Layer</span>"]
         RUNTIME["<span style='color:#000'>cogniverse-runtime<br/>FastAPI server and ingestion pipelines</span>"]
         DASH["<span style='color:#000'>cogniverse-dashboard<br/>Streamlit analytics UI</span>"]
+        CLI["<span style='color:#000'>cogniverse-cli<br/>Deployment and cluster management CLI</span>"]
+        MSG["<span style='color:#000'>cogniverse-messaging<br/>Telegram/Slack messaging gateway</span>"]
     end
 
     CORE --> SDK
@@ -57,6 +59,8 @@ graph TD
     RUNTIME --> AGENTS
     RUNTIME --> VESPA
     DASH --> EVAL
+    CLI -.->|HTTP| RUNTIME
+    MSG -.->|HTTP| RUNTIME
 
     style Foundation fill:#b0bec5,stroke:#546e7a,color:#000
     style Core fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -73,15 +77,32 @@ graph TD
     style FINE fill:#81d4fa,stroke:#0288d1,color:#000
     style RUNTIME fill:#a5d6a7,stroke:#388e3c,color:#000
     style DASH fill:#a5d6a7,stroke:#388e3c,color:#000
+    style CLI fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MSG fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
+
+The workspace has 13 packages total (`libs/*`); all are shown above. `cogniverse-cli` and `cogniverse-messaging` have no internal `cogniverse-*` package dependencies — they talk to the runtime over HTTP rather than by import.
 
 ### Test Categories
 
-**System Integration Tests:**
-- `tests/system/test_real_system_integration.py` - Vespa + Agent integration and full E2E
+**System Integration Tests** (`tests/system/`):
+- `test_ensemble_search_e2e.py` - Ensemble search RRF-fusion plumbing across multiple Vespa schemas
+- `test_ensemble_comprehensive.py` - Ensemble search against real ColPali/VideoPrism/ColQwen profiles
 
-**Agent End-to-End Tests:**
-- `tests/agents/e2e/test_real_multi_agent_integration.py` - Multi-agent workflows
+**Agent End-to-End Tests** (`tests/e2e/`, ~50 files, real LLM + real Vespa/Phoenix, no mocks):
+- `test_api_e2e.py` - Gateway/orchestrator REST routing and downstream execution
+- `test_a2a_gateway_e2e.py`, `test_a2a_multiturn_e2e.py` - A2A JSON-RPC and multi-turn conversations
+- `test_orchestrator_inbound_e2e.py` - Orchestrator planning and A2A fan-out
+- `test_citation_and_audit_agents_e2e.py`, `test_contradiction_reconciliation_agent_e2e.py`,
+  `test_cross_tenant_comparison_agent_e2e.py`, `test_federated_query_agent_e2e.py`,
+  `test_kg_traversal_agent_e2e.py`, `test_knowledge_summarization_agent_e2e.py`,
+  `test_multi_document_synthesis_agent_e2e.py`, `test_temporal_reasoning_agent_e2e.py` - knowledge/audit agent tier
+- `test_messaging_e2e.py`, `test_messaging_gateway_e2e.py` - Telegram/Slack gateway integration
+- `test_wiki_e2e.py`, `test_provenance_e2e.py`, `test_trust_ranking_e2e.py`, `test_pinning_quotas_e2e.py` - memory/knowledge layer
+- See `tests/e2e/` for the complete set
+
+Note: `tests/agents/e2e/` contains only test configuration (`test_config.py`) — the real
+agent end-to-end suite lives in `tests/e2e/`.
 
 ---
 
@@ -96,10 +117,10 @@ class TestRealVespaIntegration:
     async def test_comprehensive_agentic_system_test(self, vespa_test_manager):
         # 1. Setup: Initialize all components across packages
         from cogniverse_foundation.config.utils import create_default_config_manager
-        from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-        from cogniverse_core.registries.agent_registry import AgentRegistry
+        from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
         from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
+        tenant_id = "test"
         config_manager = create_default_config_manager()
 
         # cogniverse-vespa package
@@ -119,9 +140,10 @@ class TestRealVespaIntegration:
             schema_loader=schema_loader,
         )
 
-        # cogniverse-agents package - OrchestratorAgent is tenant-agnostic at construction
-        registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-        orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+        # cogniverse-agents package - GatewayAgent classifies simple vs.
+        # complex queries with no LLM call (GLiNER + deterministic rules)
+        # and routes simple queries directly to an execution agent.
+        gateway = GatewayAgent(deps=GatewayDeps())
 
         # SearchAgent requires SearchAgentDeps with backend connection details
         # Note: profile and tenant_id are passed per-request at search() time, not at construction
@@ -131,9 +153,6 @@ class TestRealVespaIntegration:
         )
         # schema_loader is REQUIRED (raises ValueError if None)
         # config_manager is optional (creates default if None)
-        from pathlib import Path
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         search_agent = SearchAgent(
             deps=search_deps,
             schema_loader=schema_loader,
@@ -143,17 +162,18 @@ class TestRealVespaIntegration:
         # 2. Query Processing
         user_query = "Show me cooking videos"
 
-        # 3. Routing Decision via OrchestratorAgent
-        routing_result = await orchestrator._process_impl(
-            OrchestratorInput(query=user_query, tenant_id="test")
+        # 3. Routing Decision via GatewayAgent
+        routing_result = await gateway._process_impl(
+            GatewayInput(query=user_query, tenant_id=tenant_id)
         )
-        assert routing_result.recommended_agent == "search_agent"
+        assert routing_result.routed_to == "search_agent"
         assert routing_result.confidence > 0.7
 
         # 4. Agent Execution (SearchAgent uses search_by_text method)
         # Returns List[Dict[str, Any]] with search results
         search_results = search_agent.search_by_text(
             query=user_query,
+            tenant_id=tenant_id,
             modality="video",
             top_k=10
         )
@@ -172,6 +192,10 @@ class TestRealVespaIntegration:
 # Example: Use OrchestratorAgent as the central A2A entry point
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+tenant_id = "test_tenant"
+config_manager = create_default_config_manager()
 
 # OrchestratorAgent discovers agents via AgentRegistry (from config.json > agents section)
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
@@ -179,14 +203,15 @@ deps = OrchestratorDeps()
 orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
 # Execute via A2A task protocol
-from cogniverse_agents.orchestrator_agent import OrchestratorInput
-
-input_data = OrchestratorInput(query=user_query, tenant_id="test_tenant")
+input_data = OrchestratorInput(query="Show me cooking videos", tenant_id=tenant_id)
 result = await orchestrator._process_impl(input_data)
 
-# Validate execution
+# Validate execution — OrchestratorOutput carries the plan, per-agent
+# results, and the fused final_output (no top-level "result" field)
 assert result is not None
-assert result.result is not None
+assert result.workflow_id
+assert result.final_output
+assert result.agent_results
 ```
 
 ### 3. Backend Integration
@@ -285,14 +310,15 @@ flowchart LR
 ```python
 # Example: Video search integration
 query = "pasta cooking tutorial"
+tenant_id = "test"
 
-# Route via OrchestratorAgent
-route = await orchestrator._process_impl(OrchestratorInput(query=query, tenant_id="test"))
-assert route.recommended_agent == "search_agent"
+# Route via GatewayAgent (GLiNER classification, no LLM call)
+route = await gateway._process_impl(GatewayInput(query=query, tenant_id=tenant_id))
+assert route.routed_to == "search_agent"
 assert route.confidence > 0.7
 
 # Search (using SearchAgent - returns List[Dict[str, Any]])
-results = search_agent.search_by_text(query, modality="video", top_k=10)
+results = search_agent.search_by_text(query, tenant_id=tenant_id, modality="video", top_k=10)
 assert len(results) > 0
 
 # Verify (results have id, score, plus metadata like video_id at top level)
@@ -335,19 +361,21 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 query = "How does photosynthesis work?"
+tenant_id = "test"
 
 config_manager = create_default_config_manager()
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 deps = OrchestratorDeps()
 orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
-input_data = OrchestratorInput(query=query, tenant_id="test")
+input_data = OrchestratorInput(query=query, tenant_id=tenant_id)
 result = await orchestrator._process_impl(input_data)
 
-# Validate orchestration occurred
+# Validate orchestration occurred — final_output carries the fused
+# cross-modal result, agent_results the per-agent raw outputs
 assert result is not None
-assert result.result is not None
-# Result contains fused outputs from multiple agents
+assert result.final_output
+assert result.agent_results
 ```
 
 ### Scenario 3: Memory-Enhanced Routing
@@ -376,22 +404,40 @@ flowchart LR
 ```python
 # Example: Memory-enhanced routing
 from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# 1. Add memory
-memory_manager = Mem0MemoryManager(tenant_id="user123")
+tenant_id = "user123"
+
+# 1. Initialize and add memory. Mem0MemoryManager is a per-tenant singleton;
+# initialize() must run once before add_memory()/get_relevant_context() are
+# usable (agents normally do this via MemoryAwareMixin.initialize_memory,
+# which wraps this same call with config-driven arguments).
+memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
+memory_manager.initialize(
+    backend_host="http://localhost",
+    backend_port=8080,
+    llm_model="qwen2.5:0.5b",
+    embedding_model="lightonai/DenseOn",
+    llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:8001",
+    config_manager=config_manager,
+    schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+)
 memory_manager.add_memory(
     content="User prefers video tutorials",
-    tenant_id="user123",
-    agent_name="orchestrator_agent"
+    tenant_id=tenant_id,
+    agent_name="gateway_agent"
 )
 
-# 2. Route with memory (memory automatically loaded by MemoryAwareMixin)
-route = await orchestrator._process_impl(
-    OrchestratorInput(query="Show me how to cook", tenant_id="user123")
+# 2. Route with memory (memory automatically loaded by MemoryAwareMixin
+# on agents that mix it in, e.g. GatewayAgent's downstream execution agents)
+route = await gateway._process_impl(
+    GatewayInput(query="Show me how to cook", tenant_id=tenant_id)
 )
 
 # 3. Verify routing decision
-assert route.recommended_agent == "search_agent"
+assert route.routed_to == "search_agent"
 assert route.confidence > 0.7
 ```
 
@@ -402,7 +448,9 @@ assert route.confidence > 0.7
 ### Load Testing
 
 ```python
-# Example: Concurrent query processing
+# Example: Concurrent query processing.
+# Reuses `orchestrator` constructed as in "Multi-Agent Orchestration" above.
+# `generate_test_queries` is a test-side helper returning a list of query strings.
 import asyncio
 import time
 
@@ -436,13 +484,14 @@ from cogniverse_agents.orchestrator_agent import OrchestratorAgent, Orchestrator
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 
+tenant_id = "test"
 config_manager = create_default_config_manager()
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 deps = OrchestratorDeps()
 orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
 # Execute query that may fail
-input_data = OrchestratorInput(query="test query", tenant_id="test")
+input_data = OrchestratorInput(query="test query", tenant_id=tenant_id)
 result = await orchestrator._process_impl(input_data)
 
 # On failure, orchestrator raises RuntimeError (no silent fallbacks)
@@ -493,30 +542,33 @@ deps = AgentDeps()  # No tenant_id at construction
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
+from cogniverse_foundation.config.utils import create_default_config_manager
 
+tenant_id = "test"
+config_manager = create_default_config_manager()
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
 # Create experiment tracker for evaluation
-# Note: ExperimentTracker has optional tenant_id (defaults to "default")
+# Note: tenant_id is REQUIRED (no default) — experiment_project_name defaults to "experiments"
 tracker = ExperimentTracker(
     experiment_project_name="test_exp",
-    tenant_id="test"
+    tenant_id=tenant_id
 )
 
 # Execute orchestration query (tracked via telemetry)
-result = await agent._process_impl(OrchestratorInput(query="test query", tenant_id="test"))
-assert result.recommended_agent is not None
+result = await agent._process_impl(OrchestratorInput(query="test query", tenant_id=tenant_id))
+assert result.workflow_id
 
 # Example: Verify Phoenix telemetry plugin integration
 from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-# Verify plugin registration via entry points (classmethod)
+# Verify plugin registration via entry points (classmethod `get`, tenant-scoped)
 # Requires config with http_endpoint and grpc_endpoint
-provider = TelemetryRegistry.get_telemetry_provider(
+provider = TelemetryRegistry.get(
     name="phoenix",
-    tenant_id="test",
+    tenant_id=tenant_id,
     config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"}
 )
 assert isinstance(provider, PhoenixProvider)
@@ -529,17 +581,19 @@ from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_foundation.config.utils import create_default_config_manager
 
+tenant_id = "test"
+
 # Setup tenant schemas
 config_manager = create_default_config_manager()
 schema_mgr = VespaSchemaManager(backend_endpoint="http://localhost", backend_port=8080)
-tenant_schema = schema_mgr.get_tenant_schema_name("test", "video_colpali_smol500_mv_frame")
+tenant_schema = schema_mgr.get_tenant_schema_name(tenant_id, "video_colpali_smol500_mv_frame")
 
 # Initialize agent with Vespa backend
 search_deps = SearchAgentDeps(
     backend_url="http://localhost",
     backend_port=8080,
 )
-# tenant_id and profile are per-request, not at construction
+# profile is per-request, not at construction; tenant_id is per-request on search_by_text()
 # schema_loader is REQUIRED (raises ValueError if None)
 from pathlib import Path
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -550,7 +604,7 @@ agent = SearchAgent(
     config_manager=config_manager
 )
 
-results = agent.search_by_text("test query", modality="video")
+results = agent.search_by_text("test query", tenant_id=tenant_id, modality="video")
 assert len(results) >= 0
 
 # Example: Verify agents work with synthetic data
@@ -579,18 +633,17 @@ sampled_content = [
 synthetic_data = await generator.generate(sampled_content=sampled_content, target_count=10)
 
 # Test orchestrator with synthetic queries
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_core.registries.agent_registry import AgentRegistry
 orchestrator = OrchestratorAgent(
     deps=OrchestratorDeps(),
     registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
+    config_manager=config_manager,
 )
 for example in synthetic_data:
     result = await orchestrator._process_impl(
-        OrchestratorInput(query=example.query, tenant_id="test")
+        OrchestratorInput(query=example.query, tenant_id=tenant_id)
     )
     assert result is not None
-    assert result.recommended_agent is not None
+    assert result.workflow_id
 ```
 
 ### Testing Application Layer
@@ -599,21 +652,24 @@ for example in synthetic_data:
 from cogniverse_runtime.main import app
 from fastapi.testclient import TestClient
 
-client = TestClient(app)
+# Dependency overrides (config_manager, schema_loader) are wired in the
+# app's lifespan handler, so TestClient must be used as a context manager
+# to trigger startup — a bare `TestClient(app)` skips lifespan and every
+# route depending on those overrides returns 503.
+with TestClient(app) as client:
+    # Test end-to-end search request
+    response = client.post(
+        "/search/",
+        json={"query": "cooking videos", "tenant_id": "test", "top_k": 10}
+    )
 
-# Test end-to-end search request
-response = client.post(
-    "/search/",
-    json={"query": "cooking videos", "tenant_id": "test", "top_k": 10}
-)
-
-assert response.status_code == 200
-assert "results" in response.json()
+    assert response.status_code == 200
+    assert "results" in response.json()
 
 # Example: experiment tracking against Phoenix
 from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
-# Create experiment tracker (tenant_id is optional, defaults to "default")
+# Create experiment tracker (tenant_id is REQUIRED — no default)
 tracker = ExperimentTracker(
     experiment_project_name="dash_test",
     tenant_id="test"

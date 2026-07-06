@@ -315,7 +315,7 @@ class TrainingMethodSelector:
         Raises:
             ValueError: If approval fails or insufficient approvals
         """
-        from cogniverse_agents.approval.interfaces import (
+        from cogniverse_core.approval.interfaces import (
             ApprovalBatch,
             ApprovalStatus,
             ReviewItem,

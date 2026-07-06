@@ -14,44 +14,48 @@ The `cogniverse-runtime` package provides:
 - **FastAPI Server**: Production-ready HTTP server with async support
 - **Ingestion Pipeline**: Video/document upload and processing endpoints
 - **Search API**: Multi-modal search with routing and reranking
-- **Agent Orchestration**: Route queries to appropriate agents
+- **Agent Orchestration**: Dispatch queries to registered agents in-process
 - **Multi-Tenant**: Tenant isolation at API level
-- **Middleware**: Logging, error handling, CORS, rate limiting
+- **Middleware**: CORS (the only middleware installed on the app)
 
 ---
 
 ## Architecture
 
-### Position in 10-Package Structure
+### Position in the 13-Package Workspace
 
 ```
-Foundation Layer (Blue)
+Foundation Layer
 ├── cogniverse-sdk
 └── cogniverse-foundation
 
-Core Layer (Pink)
+Core Layer
 ├── cogniverse-core
-├── cogniverse-evaluation
-└── cogniverse-telemetry-phoenix
+└── cogniverse-evaluation
 
-Implementation Layer (Yellow/Green)
-├── cogniverse-agents ← cogniverse-runtime depends on this
-├── cogniverse-vespa ← cogniverse-runtime depends on this
-└── cogniverse-synthetic ← cogniverse-runtime depends on this
+Implementation Layer
+├── cogniverse-telemetry-phoenix
+├── cogniverse-agents ← cogniverse-runtime depends on this (optional extra)
+├── cogniverse-vespa ← cogniverse-runtime depends on this (optional extra)
+├── cogniverse-synthetic ← pulled in transitively via the `agents` extra
+└── cogniverse-finetuning
 
-Application Layer (Light Blue/Purple)
+Application Layer
 ├── cogniverse-runtime ← YOU ARE HERE
+├── cogniverse-cli
+├── cogniverse-messaging
 └── cogniverse-dashboard
 ```
 
 ### Dependencies
 
-**Workspace Dependencies:**
-- `cogniverse-core` (required) - Multi-agent orchestration, memory, cache
-- `cogniverse-agents` (required) - Routing, search, ingestion agents
-- `cogniverse-vespa` (required) - Vespa backend operations
-- `cogniverse-synthetic` (required) - Synthetic data generation
-- `cogniverse-foundation` (transitive) - Base configuration and telemetry
+**Workspace Dependencies (see `pyproject.toml`):**
+- `cogniverse-sdk` (required) - Backend/config-store interfaces
+- `cogniverse-core` (required) - Registries, memory, tenant utilities
+- `cogniverse-foundation` (transitive, via `cogniverse-core`) - Base configuration and telemetry
+- `cogniverse-vespa` (optional extra `[vespa]`) - Vespa backend operations
+- `cogniverse-agents` (optional extra `[agents]`) - Routing, search, ingestion agents
+- `cogniverse-synthetic` (transitive, via the `agents` extra) - Synthetic data generation; the `/synthetic/*` routes are always mounted (`main.py` imports the router unconditionally) so a deployment needs the `agents` extra installed for them to work
 
 **External Dependencies:**
 - `fastapi>=0.104.0` - Web framework
@@ -65,69 +69,66 @@ Application Layer (Light Blue/Purple)
 
 ### 1. Video Ingestion Pipeline
 
-Upload and process videos with automatic frame/chunk extraction:
+Start a directory-based ingestion job (`tenant_id` travels in the JSON body, not a header):
 
-```python
-# POST /ingestion/videos
-curl -X POST http://localhost:8000/ingestion/videos \
+```bash
+# POST /ingestion/start
+curl -X POST http://localhost:8000/ingestion/start \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: acme_corp" \
   -d '{
-    "video_path": "/data/videos/ml_tutorial.mp4",
-    "profile": "frame_based",
-    "metadata": {
-      "title": "Machine Learning Tutorial",
-      "tags": ["ml", "tutorial"]
-    }
+    "video_dir": "/data/videos/ml_tutorials",
+    "profile": "frame_based_colpali",
+    "backend": "vespa",
+    "tenant_id": "acme_corp",
+    "batch_size": 10
   }'
 ```
+
+For single-file uploads, `POST /ingestion/upload` accepts a multipart form (`file`, `profile`, `backend`, `tenant_id` as form fields) and streams the upload to MinIO/Redis for queue-driven processing.
 
 ### 2. Multi-Modal Search
 
-Search across video, image, and document modalities:
+Search across configured backend profiles (`tenant_id` is a field on the request body):
 
-```python
-# POST /search
-curl -X POST http://localhost:8000/search \
+```bash
+# POST /search/
+curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: acme_corp" \
   -d '{
     "query": "machine learning tutorial",
-    "modality": "video",
-    "profile": "frame_based",
-    "limit": 10,
-    "rerank": true
+    "profile": "frame_based_colpali",
+    "top_k": 10,
+    "tenant_id": "acme_corp"
   }'
 ```
 
-### 3. Query Routing
+### 3. Agent Task Dispatch
 
-Automatically route queries to appropriate agents:
+Dispatch a query to a specific registered agent (there is no standalone `/route` endpoint — routing happens by calling an agent, e.g. `gateway_agent`, directly):
 
-```python
-# POST /route
-curl -X POST http://localhost:8000/route \
+```bash
+# POST /agents/{agent_name}/process
+curl -X POST http://localhost:8000/agents/gateway_agent/process \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: acme_corp" \
   -d '{
+    "agent_name": "gateway_agent",
     "query": "show me videos about neural networks",
-    "strategy": "llm"
+    "top_k": 5
   }'
 ```
 
 ### 4. Synthetic Data Generation
 
-Generate training data for optimizers:
+Generate training data for optimizers (`optimizer` must be one of `profile`, `routing`, `workflow`, `unified`):
 
-```python
+```bash
 # POST /synthetic/generate
 curl -X POST http://localhost:8000/synthetic/generate \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: acme_corp" \
   -d '{
-    "optimizer": "modality",
+    "optimizer": "profile",
     "count": 100,
-    "modalities": ["video", "image", "pdf"]
+    "tenant_id": "acme_corp"
   }'
 ```
 
@@ -148,12 +149,12 @@ uv pip install -e libs/runtime
 ### Production
 
 ```bash
-pip install cogniverse-runtime
+pip install cogniverse-runtime[vespa,agents]
 
-# Automatically installs all dependencies:
-# - cogniverse-core, cogniverse-agents
-# - cogniverse-vespa, cogniverse-synthetic
-# - cogniverse-foundation
+# Installs:
+# - cogniverse-sdk, cogniverse-core (required; cogniverse-foundation transitively)
+# - cogniverse-vespa (via the `vespa` extra)
+# - cogniverse-agents, and cogniverse-synthetic transitively (via the `agents` extra)
 # - fastapi, uvicorn, pydantic
 ```
 
@@ -171,9 +172,9 @@ uv run uvicorn cogniverse_runtime.main:app --reload --port 8000
 uv run uvicorn cogniverse_runtime.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 # With environment variables
-export TENANT_ID="acme_corp"
-export VESPA_URL="http://localhost:8080"
-export PHOENIX_ENDPOINT="http://localhost:6006"
+export BACKEND_URL="http://localhost"
+export BACKEND_PORT="8080"
+export TELEMETRY_OTLP_ENDPOINT="localhost:4317"
 uv run uvicorn cogniverse_runtime.main:app --port 8000
 ```
 
@@ -195,67 +196,94 @@ if __name__ == "__main__":
 
 ### Ingestion
 
-**POST /ingestion/videos**
-- Upload and process videos
-- Extracts frames/chunks, generates embeddings
-- Stores in Vespa with tenant isolation
-
-**POST /ingestion/documents**
-- Upload PDF/text documents
-- Extracts text, generates embeddings
-- Stores in Vespa
+**POST /ingestion/start**
+- Start a directory-based ingestion job in the background
+- Body: `video_dir`, `profile`, `backend`, `tenant_id`, `org_id`, `max_videos`, `batch_size`
+- Returns a `job_id` immediately; poll status separately
 
 **GET /ingestion/status/{job_id}**
 - Check ingestion job status
 - Returns progress and errors
 
+**POST /ingestion/upload**
+- Multipart upload of a single file; streams to MinIO and enqueues via Redis
+- Requires `REDIS_URL` and `MINIO_ENDPOINT` to be configured (503 otherwise)
+- Query params `wait`, `wait_timeout`, `force` control synchronous behavior and idempotency
+
 ### Search
 
-**POST /search**
-- Multi-modal search across videos, images, documents
-- Supports vector search, hybrid search, reranking
-- Tenant-isolated results
+**POST /search/**
+- Search a configured backend profile
+- Body includes `query`, `profile`, `strategy`, `top_k`, `filters`, `tenant_id`, `stream`
+- `stream: true` returns a Server-Sent Events response instead of JSON
 
-**POST /search/video**
-- Video-specific search
-- Frame-based or chunk-based search
-- ColPali or VideoPrism profiles
+**GET /search/strategies**
+- List available ranking strategies (semantic, bm25, hybrid, learned, multi_modal)
 
-**POST /search/image**
-- Image-specific search
-- CLIP embeddings
-- Visual similarity
+**GET /search/profiles?tenant_id=...**
+- List backend profiles visible to a tenant (name, model, type)
 
-### Routing
+**POST /search/rerank**
+- Rerank a previously fetched result set using a named strategy
 
-**POST /route**
-- Route queries to appropriate agents
-- GLiNER or LLM-based routing
-- Returns modality and strategy
+### Agents
 
-**GET /route/strategies**
-- List available routing strategies
-- GLiNER, LLM, hybrid
+**GET /agents/**
+- List all registered agents
+
+**GET /agents/stats**
+- Registry statistics including health status
+
+**GET /agents/by-capability/{capability}**
+- Find agents that advertise a given capability
+
+**GET /agents/{agent_name}**
+- Get metadata for a specific agent
+
+**POST /agents/{agent_name}/process**
+- Dispatch a task to an agent in-process; body is `AgentTask` (`agent_name`, `query`, `context`, `top_k`, plus optional multi-turn/enrichment fields)
+
+**POST /agents/{agent_name}/message**
+- Enqueue an inbound steering message for a running agent session
+
+**GET /agents/{agent_name}/sessions/{session_id}?tenant_id=...**
+- Check whether an agent session is currently active
+
+**POST /agents/register** / **DELETE /agents/{agent_name}**
+- Self-register or unregister an agent (Curated Registry / A2A pattern)
+
+There is no standalone `/route` endpoint — query routing is performed by dispatching to an agent (e.g. `gateway_agent`) via `POST /agents/{agent_name}/process`.
 
 ### Synthetic Data
 
 **POST /synthetic/generate**
-- Generate training data
-- Supports modality, crossmodal, routing, workflow optimizers
-- Returns validated examples
+- Generate training data for one optimizer per call
+- `optimizer` must be one of `profile`, `routing`, `workflow`, `unified`; `count` and `tenant_id` are required
 
 **GET /synthetic/optimizers**
 - List available optimizers
 
-### Health & Metrics
+**GET /synthetic/optimizers/{optimizer_name}**
+- Get details for one optimizer
+
+**GET /synthetic/health**
+- Health check for the synthetic data service
+
+**POST /synthetic/batch/generate**
+- Generate data for multiple optimizers in one call
+
+### Health
 
 **GET /health**
-- Health check endpoint
-- Returns status of all dependencies
+- Health check endpoint; returns registered backend/agent counts, or 503 if the service can't assemble its status
 
-**GET /metrics**
-- Prometheus metrics endpoint
-- Request counts, latencies, errors
+**GET /health/live**
+- Kubernetes liveness probe
+
+**GET /health/ready**
+- Kubernetes readiness probe; 503 until at least one backend is registered
+
+There is no `/metrics` endpoint — the runtime does not expose Prometheus metrics.
 
 ---
 
@@ -274,31 +302,40 @@ from cogniverse_runtime.main import app  # module-level FastAPI instance
 
 ### Environment Variables
 
+Tenant identity is per-request (see [Multi-Tenant Isolation](#multi-tenant-isolation) below), not a server-wide env var — there is no `TENANT_ID` variable.
+
 ```bash
 # Required
-export TENANT_ID="acme_corp"
-export VESPA_URL="http://localhost:8080"
+export BACKEND_URL="http://localhost"
+export BACKEND_PORT="8080"
 
-# Optional
-export VESPA_CONFIG_URL="http://localhost:19071"
-export PHOENIX_ENDPOINT="http://localhost:6006"
+# Optional (deployment overrides read at startup — see main.py lifespan)
+export TELEMETRY_OTLP_ENDPOINT="cogniverse-phoenix:4317"
+export TELEMETRY_HTTP_ENDPOINT="http://localhost:6006"
 export REDIS_URL="redis://localhost:6379"
-export LOG_LEVEL="INFO"
-export ENABLE_CORS="true"
-export ALLOWED_ORIGINS="http://localhost:3000,https://app.example.com"
+export MINIO_ENDPOINT="http://localhost:9000"
+export LLM_ENGINE="ollama"
+export LLM_MODEL="gemma-4-e4b-it"
 ```
 
 ---
 
 ## Multi-Tenant Isolation
 
-The runtime enforces tenant isolation at multiple levels:
+There is no tenant middleware and no `X-Tenant-ID` header. Tenant identity travels
+in the request itself and is validated per-endpoint:
 
-### 1. Header-Based Tenant ID
+### 1. Body/Query-Based Tenant ID
 
-```python
-# All requests must include X-Tenant-ID header
-curl -H "X-Tenant-ID: acme_corp" http://localhost:8000/search
+Each request model carries its own `tenant_id` field (or query parameter where
+the route has no body, e.g. `GET /search/profiles`). `cogniverse_core.common.
+tenant_utils.require_tenant_id` rejects a missing value with HTTP 400, and
+`assert_tenant_exists` rejects an unregistered tenant with HTTP 404:
+
+```bash
+curl -X POST http://localhost:8000/search/ \
+  -H "Content-Type: application/json" \
+  -d '{"query": "...", "profile": "frame_based_colpali", "tenant_id": "acme_corp"}'
 ```
 
 ### 2. Automatic Schema Suffixing
@@ -309,10 +346,13 @@ curl -H "X-Tenant-ID: acme_corp" http://localhost:8000/search
 # Actual: video_colpali_mv_frame_acme_corp
 ```
 
-### 3. Tenant Routing
+### 3. Tenant Self-Service
 
-Tenant context is extracted from the `X-Tenant-ID` header and validated by the
-`cogniverse_runtime.routers.tenant` router on every request.
+`cogniverse_runtime.routers.tenant` is mounted at `/admin/tenant` and provides
+per-tenant self-service endpoints (instructions, memory browsing/deletion,
+scheduled jobs) — it is a regular router, not a middleware, and does not run
+on every request. Tenant registration/lifecycle (create, list, delete) lives
+in `cogniverse_runtime.admin.tenant_manager`, mounted under `/admin`.
 
 ---
 
@@ -394,9 +434,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - TENANT_ID=acme_corp
-      - VESPA_URL=http://vespa:8080
-      - PHOENIX_ENDPOINT=http://phoenix:6006
+      - BACKEND_URL=http://vespa
+      - BACKEND_PORT=8080
+      - TELEMETRY_OTLP_ENDPOINT=phoenix:4317
       - REDIS_URL=redis://redis:6379
     depends_on:
       - vespa
@@ -444,15 +484,12 @@ spec:
         ports:
         - containerPort: 8000
         env:
-        - name: TENANT_ID
-          valueFrom:
-            secretKeyRef:
-              name: cogniverse-secrets
-              key: tenant-id
-        - name: VESPA_URL
-          value: "http://vespa-service:8080"
-        - name: PHOENIX_ENDPOINT
-          value: "http://phoenix-service:6006"
+        - name: BACKEND_URL
+          value: "http://vespa-service"
+        - name: BACKEND_PORT
+          value: "8080"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "phoenix-service:4317"
         resources:
           requests:
             memory: "512Mi"
@@ -466,32 +503,21 @@ spec:
 
 ## Monitoring & Observability
 
-### Prometheus Metrics
-
-```python
-# Available at /metrics endpoint
-from prometheus_client import Counter, Histogram
-
-# Request metrics
-http_requests_total = Counter('http_requests_total', 'Total HTTP requests')
-http_request_duration = Histogram('http_request_duration_seconds', 'HTTP request duration')
-
-# Business metrics
-video_ingestions_total = Counter('video_ingestions_total', 'Total video ingestions')
-search_queries_total = Counter('search_queries_total', 'Total search queries')
-routing_decisions_total = Counter('routing_decisions_total', 'Total routing decisions')
-```
+The runtime does not expose a `/metrics` endpoint or Prometheus counters.
 
 ### OpenTelemetry Integration
 
 ```python
-from cogniverse_foundation.telemetry import TelemetryManager
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-# Automatic tracing via foundation layer
-telemetry = TelemetryManager(tenant_id="acme_corp")
+# Global singleton, loaded from ConfigManager on first call
+telemetry = get_telemetry_manager()
 
-# All requests automatically traced
-# Spans sent to Phoenix for visualization
+with telemetry.span("search_service.search", tenant_id="acme_corp") as span:
+    span.set_attribute("query", "test")
+    # ... search logic ...
+
+# Spans are sent to Phoenix (TELEMETRY_OTLP_ENDPOINT) for visualization
 ```
 
 ### Logging
@@ -547,7 +573,7 @@ config = SystemConfig(
 
 ## Documentation
 
-- **Architecture**: [10-Package Architecture](../../docs/architecture/10-package-architecture.md)
+- **Architecture**: [System Architecture](../../docs/architecture/overview.md)
 - **Multi-Tenant**: [Multi-Tenant Architecture](../../docs/architecture/multi-tenant.md)
 - **API Docs**: [FastAPI Swagger UI](http://localhost:8000/docs)
 - **Diagrams**: [SDK Architecture Diagrams](../../docs/diagrams/sdk-architecture-diagrams.md)
@@ -569,8 +595,11 @@ uv run python -c "import cogniverse_runtime; print('OK')"
 
 **2. Tenant ID Not Found**
 ```bash
-# Ensure X-Tenant-ID header is present
-curl -H "X-Tenant-ID: acme_corp" http://localhost:8000/health
+# Ensure tenant_id is set in the request body (or query param) and the
+# tenant has been registered via POST /admin/tenants first
+curl -X POST http://localhost:8000/search/ \
+  -H "Content-Type: application/json" \
+  -d '{"query": "...", "profile": "frame_based_colpali", "tenant_id": "acme_corp"}'
 ```
 
 **3. Vespa Connection Failed**
@@ -614,8 +643,8 @@ MIT License - See [LICENSE](../../LICENSE) for details.
 
 ## Related Packages
 
-- **cogniverse-core**: Multi-agent orchestration (depends on this)
-- **cogniverse-agents**: Agent implementations (depends on this)
-- **cogniverse-vespa**: Vespa backend (depends on this)
-- **cogniverse-synthetic**: Synthetic data (depends on this)
+- **cogniverse-core**: Registries, memory, tenant utilities (required dependency)
+- **cogniverse-agents**: Agent implementations (optional `agents` extra)
+- **cogniverse-vespa**: Vespa backend (optional `vespa` extra)
+- **cogniverse-synthetic**: Synthetic data generation (transitive, via the `agents` extra)
 - **cogniverse-dashboard**: Streamlit UI (companion application)

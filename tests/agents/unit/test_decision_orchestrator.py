@@ -15,7 +15,7 @@ import asyncio
 import pytest
 
 from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
-from cogniverse_agents.approval.interfaces import ConfidenceExtractor
+from cogniverse_core.approval.interfaces import ConfidenceExtractor
 from cogniverse_agents.approval.orchestrator import DecisionOrchestrator
 from cogniverse_agents.workflow.state_machine import WorkflowState
 

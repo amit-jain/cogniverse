@@ -85,7 +85,7 @@ cogniverse up
 curl http://localhost:8080/ApplicationStatus
 
 # Check Phoenix (should return "ok")
-curl http://localhost:6006/health
+curl http://localhost:26006/health
 
 # Check Ollama (should return list of models)
 curl http://localhost:11434/api/tags
@@ -114,8 +114,8 @@ JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
 
 ### Next Steps
 
-- **View Results**: Open Phoenix dashboard at http://localhost:8501
-- **Try API**: Use the REST API at http://localhost:8000/docs
+- **View Results**: Open Phoenix dashboard at http://localhost:28501
+- **Try API**: Use the REST API at http://localhost:28000/docs
 - **Configure**: Customize profiles in `configs/config.json`
 - **Coding Agent**: Run `cogniverse code` to start an interactive coding REPL with streaming — see [Coding Agent CLI](user/coding-agent-cli.md)
 - **Knowledge Graph**: Run `cogniverse index ./path --type code` to build a searchable knowledge graph — see [Knowledge Graph](user/knowledge-graph.md)
@@ -127,12 +127,12 @@ The `cogniverse` CLI manages the full stack:
 
 | Command | Purpose |
 |---------|---------|
-| `cogniverse up` | Deploy all services (Vespa, Phoenix, Ollama, Runtime, Dashboard) via k3d |
+| `cogniverse up` | Deploy all services (Vespa, Phoenix, LLM, Runtime, Dashboard) via k3d |
 | `cogniverse up --messaging` | Deploy with Telegram gateway enabled |
 | `cogniverse down` | Stop all services |
 | `cogniverse down --keep-data` | Stop services but preserve volumes |
 | `cogniverse status` | Show health of all services |
-| `cogniverse logs <service>` | View logs (`runtime`, `vespa`, `dashboard`, `phoenix`, `ollama`) |
+| `cogniverse logs <service>` | View logs (`runtime`, `dashboard`, `vespa`, `phoenix`, `llm`, `argo`) |
 | `cogniverse logs <service> --follow` | Stream logs in real-time |
 | `cogniverse code` | Interactive coding agent REPL |
 | `cogniverse index <path> --type code` | Build a knowledge graph from code |
@@ -140,8 +140,10 @@ The `cogniverse` CLI manages the full stack:
 | `cogniverse graph search <query>` | Search the knowledge graph |
 | `cogniverse graph neighbors <node>` | Find related nodes |
 | `cogniverse graph path <src> <dst>` | Find path between nodes |
-| `cogniverse sandbox sync` | Sync code to Deno sandbox |
-| `cogniverse sandbox status` | Check sandbox state |
+| `cogniverse sandbox sync` | Sync OpenShell gateway mTLS certs into the cluster (after rotation) |
+| `cogniverse sandbox status` | Show OpenShell gateway status and cluster sync state |
+| `cogniverse secrets sync` | Re-sync the `hf-token` Secret from local HuggingFace credentials |
+| `cogniverse admin reconcile-orphans` | Find (and, with `--confirm`, drop) Vespa schema orphans not in the schema registry |
 
 ---
 
@@ -174,7 +176,7 @@ results = agent.search_by_text(
 
 for result in results:
     print(f"Video: {result.get('video_id', 'unknown')}")
-    print(f"Score: {result.get('relevance', 0):.2f}")
+    print(f"Score: {result.get('score', 0):.2f}")
 ```
 
 #### Multi-Profile Search
@@ -263,11 +265,11 @@ Choose the best embedding model for your use case:
 
 | Model | Type | Best For | Dimensions |
 |-------|------|----------|------------|
-| **ColPali SmolVLM** | Frame-level | Visual documents, text-rich videos | 128 (patch) |
+| **ColPali** | Frame-level | Visual documents, text-rich videos | 320 (patch) |
 | **VideoPrism Base** | Global video | Semantic video understanding | 768 |
 | **VideoPrism LVT Base** | Temporal | Action/motion detection | 768 |
 | **VideoPrism LVT Large** | Temporal | Enhanced temporal understanding | 1024 |
-| **ColQwen2 Omni** | Multi-modal | Text+visual fusion | 128 (patch) |
+| **ColQwen3 Omni** | Multi-modal | Text+visual fusion | 320 (patch) |
 
 **Switching Models:**
 ```bash
@@ -325,9 +327,9 @@ memory.initialize(
     backend_host="localhost",
     backend_port=8080,
     llm_model="openai/google/gemma-4-e4b-it",
-    embedding_model="ollama/nomic-embed-text",
+    embedding_model="lightonai/DenseOn",
     llm_base_url="http://localhost:11434",
-    embedder_base_url="http://localhost:8101/v1",
+    embedder_base_url="http://localhost:29006",
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -402,13 +404,16 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 
 **Ingestion Options:**
 
-- `--video_dir`: Directory containing videos
+- `--video_dir`: Directory containing content files
+- `--content-dir`: Alias for `--video_dir`
+- `--media-root-uri`: Media root URI (e.g. `s3://corpus/`, `pvc://media/`) for non-filesystem sources; overrides `--video_dir` / `--content-dir` when set
+- `--content-type`: Content type to ingest (choices: video, image, audio, document; default: video)
 - `--profile`: Embedding profile(s) - can specify multiple space-separated values
 - `--tenant-id`: Tenant ID for multi-tenancy (required — no default)
 - `--backend`: Backend to use (choices: byaldi, vespa; default: vespa)
-- `--max-concurrent`: Maximum concurrent videos to process (default: 3)
+- `--max-concurrent`: Maximum concurrent items to process (default: 3)
 - `--output_dir`: Output directory for processed data
-- `--max-frames`: Maximum frames per video
+- `--max-frames`: Maximum frames per video / images per batch
 - `--test-mode`: Use test mode with limited frames
 - `--debug`: Enable debug mode
 
@@ -419,7 +424,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 ```bash
 # Confirm documents are searchable via the production /search/ endpoint.
 # A non-empty results list means content was indexed for the tenant.
-curl -X POST http://localhost:8000/search/ \
+curl -X POST http://localhost:28000/search/ \
   -H "Content-Type: application/json" \
   -d '{
     "query": "test",
@@ -429,7 +434,7 @@ curl -X POST http://localhost:8000/search/ \
   }'
 
 # For an async ingestion job, poll its status instead:
-# curl http://localhost:8000/ingestion/status/{job_id}
+# curl http://localhost:28000/ingestion/status/{job_id}
 ```
 
 ### Searching Videos
@@ -440,12 +445,12 @@ Use the REST API for production applications:
 
 ```bash
 # Text search
-curl -X POST http://localhost:8000/search/ \
+curl -X POST http://localhost:28000/search/ \
   -H "Content-Type: application/json" \
   -d '{
     "query": "machine learning tutorial",
     "top_k": 10,
-    "strategy": "hybrid",
+    "strategy": "hybrid_float_bm25",
     "tenant_id": "default"
   }'
 ```
@@ -455,7 +460,7 @@ curl -X POST http://localhost:8000/search/ \
 {
   "query": "machine learning tutorial",
   "profile": "video_colpali_smol500_mv_frame",
-  "strategy": "hybrid",
+  "strategy": "hybrid_float_bm25",
   "results_count": 10,
   "results": [
     {
@@ -497,7 +502,7 @@ results = agent.search_by_text(
 
 for result in results:
     print(f"Video: {result.get('video_id', 'unknown')}")
-    print(f"Score: {result.get('relevance', 0):.2f}")
+    print(f"Score: {result.get('score', 0):.2f}")
 ```
 
 #### Advanced Search Options
@@ -529,6 +534,7 @@ Evaluate search quality on a dataset:
 ```bash
 # Run evaluation with Phoenix tracking
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
   --all-strategies \
@@ -545,32 +551,19 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.p
 
 #### Custom Evaluation Dataset
 
-Create your own evaluation dataset:
+Create your own evaluation dataset as a CSV file with `query`, `expected_videos` (comma-separated video IDs), and an optional `category` column:
 
-```python
-# evaluation_dataset.json
-{
-  "queries": [
-    {
-      "query_id": "q1",
-      "query_text": "machine learning basics",
-      "relevant_videos": ["video_123", "video_456"],
-      "relevance_scores": [1.0, 0.8]
-    },
-    {
-      "query_id": "q2",
-      "query_text": "Python tutorial for beginners",
-      "relevant_videos": ["video_789"],
-      "relevance_scores": [1.0]
-    }
-  ]
-}
+```text
+query,expected_videos,category
+machine learning basics,"video_123,video_456",general
+Python tutorial for beginners,video_789,general
 ```
 
 ```bash
 # Run evaluation on custom dataset
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
-  --csv-path evaluation_dataset.json \
+  --tenant-id acme:acme \
+  --csv-path evaluation_dataset.csv \
   --profiles video_colpali_smol500_mv_frame
 ```
 
@@ -581,6 +574,7 @@ Compare different embedding models:
 ```bash
 # Run experiments with multiple profiles
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
+  --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
              video_videoprism_base_mv_chunk_30s \
@@ -622,7 +616,11 @@ deps = SearchAgentDeps(profile="video_colpali_smol500_mv_frame")
 agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
 
 # Each tenant_id produces isolated results:
-# - Vespa documents are filtered by tenant: video_frames_acme_corp
+# - Vespa documents are filtered by a tenant-scoped schema. A bare tenant_id
+#   like "acme_corp" is canonicalized to "acme_corp:acme_corp" (org:tenant),
+#   giving the schema name video_colpali_smol500_mv_frame_acme_corp_acme_corp
+#   (use "org:tenant" form, e.g. "acme_corp:production", to avoid the
+#   doubled suffix).
 # - Memory: separate Mem0 namespaces
 results_acme = agent.search_by_text(query="tutorial", tenant_id="acme_corp", top_k=10)
 results_startup = agent.search_by_text(query="tutorial", tenant_id="startup_inc", top_k=10)
@@ -637,8 +635,11 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --profile video_colpali_smol500_mv_frame \
   --tenant-id new_customer
 
-# Note: Explicit tenant creation/deletion APIs are available via
-# the standalone tenant_manager service (not the main runtime)
+# Explicit tenant creation/deletion APIs are also available directly on
+# the main runtime:
+# curl -X POST http://localhost:28000/admin/tenants \
+#   -d '{"tenant_id": "new_customer", "created_by": "admin"}'
+# curl -X DELETE http://localhost:28000/admin/tenants/new_customer
 ```
 
 ### Custom Embedding Profiles
@@ -714,7 +715,8 @@ python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id defaul
 
 # Triggered optimization (run when quality degrades)
 python -m cogniverse_runtime.optimization_cli --mode triggered \
-  --tenant-id default --runtime-url http://localhost:8000
+  --tenant-id default --agents search_agent,summarizer_agent \
+  --trigger-dataset optimization-trigger-default-20260403_040000
 
 # Cleanup old logs
 python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
@@ -729,7 +731,14 @@ Available optimization modes:
 | `profile` | Profile performance ranking |
 | `workflow` | Full end-to-end optimization pipeline |
 | `triggered` | On-demand when quality monitor fires |
-| `cleanup` | Purge old optimization logs |
+| `simba` | Query enhancement (SIMBA), from `cogniverse.query_enhancement` spans |
+| `online-routing-eval` | Scores `cogniverse.routing` spans (routing_outcome + confidence) without retraining |
+| `synthetic` | Generates synthetic training data for one or more optimizer types (`simba`, `profile`, `workflow` by default) |
+| `rollback` | Restores an agent's active prompts/demos artifact to a previously-snapshotted version |
+| `ab-compare` | Runs an RLM A/B comparison over a Phoenix queries dataset |
+| `egress-netpol` | Emits Kubernetes `NetworkPolicy` CRDs from per-agent policy YAMLs (no `--tenant-id`) |
+| `monthly-reports` | Generates the monthly usage + performance report (no `--tenant-id`) |
+| `cleanup` | Purge old optimization logs and expired memories (no `--tenant-id`) |
 
 ### Batch Processing
 
@@ -743,7 +752,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --tenant-id default
 
 # Or via the API
-curl -X POST http://localhost:8000/ingestion/start \
+curl -X POST http://localhost:28000/ingestion/start \
   -H "Content-Type: application/json" \
   -d '{
     "video_dir": "data/batch1",
@@ -753,7 +762,7 @@ curl -X POST http://localhost:8000/ingestion/start \
   }'
 
 # Check status
-curl http://localhost:8000/ingestion/status/{job_id}
+curl http://localhost:28000/ingestion/status/{job_id}
 ```
 
 ### API Authentication
@@ -762,7 +771,7 @@ Authentication is handled via tenant isolation. Each request includes a `tenant_
 
 ```bash
 # Search with tenant ID
-curl -X POST http://localhost:8000/search/ \
+curl -X POST http://localhost:28000/search/ \
   -H "Content-Type: application/json" \
   -d '{
     "query": "tutorial",
@@ -779,7 +788,7 @@ Users can interact with Cogniverse via Telegram after receiving an invite token:
 
 **Admin: generate an invite token**
 ```bash
-curl -X POST http://localhost:8000/admin/messaging/invite \
+curl -X POST http://localhost:28000/admin/messaging/invite \
   -H "Content-Type: application/json" \
   -d '{"tenant_id": "acme_corp", "expires_in_hours": 24}'
 
@@ -803,7 +812,14 @@ curl -X POST http://localhost:8000/admin/messaging/invite \
 | `/wiki topic <name>` | — | Look up a topic page by name |
 | `/wiki index` | — | Show the full wiki index |
 | `/wiki lint` | — | Check wiki for orphan, stale, or empty pages |
-| Plain text | orchestrator_agent | `what videos do you have on transformers?` |
+| `/instructions set <text>` | — | Set custom agent instructions for your tenant |
+| `/instructions show` | — | Show current tenant instructions |
+| `/memories list` | — | List memories (add `agent=<name>` to filter) |
+| `/memories clear strategies` | — | Clear strategy learner memories |
+| `/jobs list` | — | List scheduled agent jobs |
+| `/jobs create "<cron>" <query>` | — | Create a new scheduled job |
+| `/jobs delete <job_id>` | — | Delete a scheduled job |
+| Plain text | gateway_agent | `what videos do you have on transformers?` |
 | Photo/video | search_agent | Send a frame to search for similar content |
 | `/help` | — | Show all available commands |
 
@@ -881,10 +897,10 @@ sequenceDiagram
 
     USR->>BOT: what else do you have on this topic?
     BOT->>GW: Update (plain text)
-    GW->>GW: parse_message() → orchestrator_agent
+    GW->>GW: parse_message() → gateway_agent
     GW->>MEM: ConversationManager.get_history(chat_id)
     MEM-->>GW: prior turns (multi-turn context)
-    GW->>RT: POST /agents/orchestrator_agent/process<br/>(with conversation_history)
+    GW->>RT: POST /agents/gateway_agent/process<br/>(with conversation_history)
     RT-->>GW: {message: "..."}
     GW-->>USR: routed response
     GW->>MEM: ConversationManager.store_turn()
@@ -971,7 +987,7 @@ Use these commands in Telegram to interact with the wiki directly:
 
 ```bash
 # Save a wiki page
-curl -X POST http://localhost:8000/wiki/save \
+curl -X POST http://localhost:28000/wiki/save \
   -H "Content-Type: application/json" \
   -d '{
     "query": "machine learning basics",
@@ -982,21 +998,21 @@ curl -X POST http://localhost:8000/wiki/save \
   }'
 
 # Search wiki pages
-curl -X POST http://localhost:8000/wiki/search \
+curl -X POST http://localhost:28000/wiki/search \
   -H "Content-Type: application/json" \
   -d '{"query": "machine learning", "tenant_id": "acme_corp", "top_k": 5}'
 
 # Get a topic page
-curl http://localhost:8000/wiki/topic/machine_learning
+curl http://localhost:28000/wiki/topic/machine_learning
 
 # Get the wiki index
-curl http://localhost:8000/wiki/index
+curl http://localhost:28000/wiki/index
 
 # Run lint checks
-curl http://localhost:8000/wiki/lint
+curl http://localhost:28000/wiki/lint
 
 # Delete a topic page
-curl -X DELETE http://localhost:8000/wiki/topic/machine_learning
+curl -X DELETE http://localhost:28000/wiki/topic/machine_learning
 ```
 
 ---
@@ -1005,11 +1021,33 @@ curl -X DELETE http://localhost:8000/wiki/topic/machine_learning
 
 RLM enables agents to process context that exceeds normal token limits by recursively decomposing inputs using a Python REPL. Available on search, report, code, and research agents.
 
-To activate, pass `rlm` in the request:
-```bash
-curl -X POST http://localhost:28000/agents/detailed_report_agent/process \
-  -H 'Content-Type: application/json' \
-  -d '{"agent_name": "detailed_report_agent", "query": "Analyze these results", "context": {"tenant_id": "default"}, "rlm": {"enabled": true, "max_iterations": 5}}'
+To activate, set the `rlm` field on the agent's typed input. **Note:** the unified runtime's REST shortcut (`POST /agents/{name}/process`) does not forward an `rlm` field — activate RLM via the Python SDK, which calls the agent's typed `process()` entrypoint directly:
+
+```python
+import asyncio
+from cogniverse_agents.detailed_report_agent import (
+    DetailedReportAgent,
+    DetailedReportDeps,
+    DetailedReportInput,
+)
+from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+async def main():
+    config_manager = create_default_config_manager()
+    deps = DetailedReportDeps()  # deps are tenant-agnostic; tenant_id is per-request
+    agent = DetailedReportAgent(deps=deps, config_manager=config_manager)
+
+    result = await agent.process(
+        DetailedReportInput(
+            query="Analyze these results",
+            tenant_id="default",
+            rlm=RLMOptions(enabled=True, max_iterations=5),
+        )
+    )
+    print(result.rlm_synthesis)
+
+asyncio.run(main())
 ```
 
 RLM is opt-in and disabled by default. When enabled, telemetry metrics (depth, calls, tokens, latency) are included in the response for A/B testing.
@@ -1039,7 +1077,7 @@ When two memories disagree about the same subject, `ContradictionDetector` group
 
 #### Trust ranking
 
-Trust is derived from the schema's `default_trust` and the write's `derivation_kind`. It ages slowly (≈0.5 pt/day above baseline), and can be boosted by user/admin endorsements. At retrieval, results are ranked by `relevance × trust × confidence`. Direct human assertions (`user_assert`) outrank agent inferences by default.
+Trust is derived from the schema's `default_trust` and the write's `derivation_kind`. It ages slowly (≈0.005 pt/day above baseline), and can be boosted by user/admin endorsements. At retrieval, results are ranked by `relevance × trust × confidence`. Direct human assertions (`user_assert`) outrank agent inferences by default.
 
 #### Federation (org trunk + tenant overlays)
 
@@ -1084,7 +1122,7 @@ POST /search/
 {
   "query": "string",
   "top_k": 10,
-  "strategy": "hybrid",
+  "strategy": "hybrid_float_bm25",
   "profile": "video_colpali_smol500_mv_frame",
   "tenant_id": "default",
   "filters": {}
@@ -1096,7 +1134,7 @@ POST /search/
 {
   "query": "string",
   "profile": "video_colpali_smol500_mv_frame",
-  "strategy": "hybrid",
+  "strategy": "hybrid_float_bm25",
   "results_count": 10,
   "results": [
     {
@@ -1219,7 +1257,7 @@ result = await orchestrator._process_impl(
 # OrchestratorOutput.final_output contains the aggregated execution result.
 # Enrichment (enhanced_query, entities, relationships, query_variants) is threaded
 # from preprocessing agent outputs onto execution agent inputs via AgentTask fields
-# by OrchestratorAgent._merge_enrichment — not returned as a top-level field.
+# by the module-level _merge_enrichment() helper — not returned as a top-level field.
 print(result.execution_summary)
 ```
 
@@ -1243,9 +1281,9 @@ memory.initialize(
     backend_host="localhost",
     backend_port=8080,
     llm_model="openai/google/gemma-4-e4b-it",
-    embedding_model="ollama/nomic-embed-text",
+    embedding_model="lightonai/DenseOn",
     llm_base_url="http://localhost:11434",
-    embedder_base_url="http://localhost:8101/v1",
+    embedder_base_url="http://localhost:29006",
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -1362,13 +1400,14 @@ source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 **Solution:**
 ```bash
 # Check if Vespa is running
-docker ps | grep vespa
-
-# Restart Vespa
-docker restart vespa
+cogniverse status
 
 # Check logs
-docker logs vespa --tail 100
+cogniverse logs vespa
+
+# Vespa runs as a k3d-managed StatefulSet pod, not a standalone
+# container — restart via kubectl, not `docker restart`:
+kubectl rollout restart statefulset/cogniverse-vespa -n cogniverse
 ```
 
 #### Issue: "Phoenix not recording spans"
@@ -1376,12 +1415,12 @@ docker logs vespa --tail 100
 **Solution:**
 ```bash
 # Verify Phoenix endpoint
-echo $PHOENIX_COLLECTOR_ENDPOINT
+echo $TELEMETRY_OTLP_ENDPOINT
 
 # Should be: localhost:4317 (gRPC)
 
 # Test connectivity
-curl http://localhost:6006/health
+curl http://localhost:26006/health
 ```
 
 #### Issue: "Out of memory during ingestion"
@@ -1437,8 +1476,8 @@ tail -f outputs/logs/*.log
 
 - **Documentation**: [Home](index.md)
 - **GitHub Issues**: [Report bugs](https://github.com/org/cogniverse/issues)
-- **Phoenix Dashboard**: http://localhost:8501 for system metrics
-- **API Docs**: http://localhost:8000/docs for interactive API documentation
+- **Phoenix Dashboard**: http://localhost:28501 for system metrics
+- **API Docs**: http://localhost:28000/docs for interactive API documentation
 
 ---
 

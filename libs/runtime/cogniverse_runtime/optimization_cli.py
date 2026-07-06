@@ -610,7 +610,7 @@ async def _load_approved_synthetic_data(
         return []
 
     try:
-        from cogniverse_agents.approval.interfaces import ApprovalStatus
+        from cogniverse_core.approval.interfaces import ApprovalStatus
 
         approved_statuses = {
             ApprovalStatus.APPROVED.value,

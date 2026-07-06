@@ -7,9 +7,70 @@
 Cogniverse uses Argo Workflows for batch processing and scheduled maintenance:
 
 - **Video Ingestion**: Bulk video processing workflows
-- **Batch Optimization**: DSPy model optimization at scale
+- **Batch Optimization**: DSPy/optimizer-mode runs at scale, scheduled or on-demand
 - **Tenant Provisioning**: Automated tenant setup
-- **Scheduled Maintenance**: Cron-based cleanup, backups, reports
+- **Tenant Scheduled Jobs**: Per-tenant, user-defined recurring agent runs
+- **Scheduled Maintenance**: Cron-based cleanup, backups, agent optimization, reports
+
+Two chart-installed `WorkflowTemplate`s are the shared execution primitive; everything else either calls one of them on a schedule (`CronWorkflow`) or submits a one-off `Workflow` against them from the runtime API:
+
+```mermaid
+flowchart LR
+    subgraph triggers["Triggers"]
+        API["<span style='color:#000'><b>Runtime admin API</b><br/>POST /admin/tenant/{id}/jobs<br/>POST /admin/tenant/{id}/optimize</span>"]
+        CRONS["<span style='color:#000'><b>Chart CronWorkflows</b><br/>agent-optimization, daily-gateway,<br/>synthetic-generation, tenant-job-*</span>"]
+    end
+
+    subgraph templates["Shared WorkflowTemplates"]
+        JR["<span style='color:#000'><b>{release}-job-runner</b></span>"]
+        OR["<span style='color:#000'><b>{release}-optimization-runner</b></span>"]
+    end
+
+    subgraph pods["Runtime-image pods"]
+        JE["<span style='color:#000'><b>job_executor</b><br/>orchestrator query + post_actions</span>"]
+        OC["<span style='color:#000'><b>optimization_cli --mode</b><br/>simba/workflow/profile/...</span>"]
+    end
+
+    subgraph standalone["Standalone CronWorkflows (own templates)"]
+        BACKUP["<span style='color:#000'><b>{release}-backup-vespa/phoenix</b></span>"]
+        CLEANUP["<span style='color:#000'><b>cogniverse-daily-cleanup</b></span>"]
+        DISTILL["<span style='color:#000'><b>cogniverse-scheduled-distillation</b></span>"]
+        REPORTS["<span style='color:#000'><b>cogniverse-monthly-reports</b></span>"]
+    end
+
+    STORES[("<span style='color:#000'><b>Vespa / Phoenix / MinIO</b></span>")]
+
+    API -->|"job-id/tenant-id"| JR
+    API -->|"mode/tenant-id"| OR
+    CRONS -->|"templateRef"| JR
+    CRONS -->|"templateRef"| OR
+    JR --> JE
+    OR --> OC
+    JE --> STORES
+    OC --> STORES
+    BACKUP --> STORES
+    CLEANUP --> STORES
+    DISTILL --> STORES
+    REPORTS --> STORES
+
+    style triggers fill:#90caf9,stroke:#1565c0,color:#000
+    style templates fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style pods fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style standalone fill:#ffcc80,stroke:#ef6c00,color:#000
+    style API fill:#64b5f6,stroke:#1565c0,color:#000
+    style CRONS fill:#64b5f6,stroke:#1565c0,color:#000
+    style JR fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style OR fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style JE fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style OC fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style BACKUP fill:#ffb74d,stroke:#ef6c00,color:#000
+    style CLEANUP fill:#ffb74d,stroke:#ef6c00,color:#000
+    style DISTILL fill:#ffb74d,stroke:#ef6c00,color:#000
+    style REPORTS fill:#ffb74d,stroke:#ef6c00,color:#000
+    style STORES fill:#90caf9,stroke:#1565c0,color:#000
+```
+
+The standalone `workflows/*.yaml` templates (video ingestion, tenant provisioning, and the ad-hoc maintenance prototypes) are separate, self-contained `WorkflowTemplate`/`CronWorkflow` definitions applied directly via `kubectl apply` — they don't go through `job-runner` or `optimization-runner` and are covered in their own sections below.
 
 ---
 
@@ -45,12 +106,15 @@ open http://localhost:2746
 For production Kubernetes clusters:
 
 ```bash
-# Install Argo Workflows controller
+# Install Argo Workflows controller — pin to v3.7.4 to match the
+# argo-workflows subchart version bundled in charts/cogniverse/charts/
+# (avoids CronWorkflow/Workflow CRD skew between a manual install and the
+# chart-managed dev/staging clusters)
 kubectl create namespace argo
-kubectl apply -n argo -f https://github.com/argoproj/argo-workflows/releases/download/v3.5.0/install.yaml
+kubectl apply -n argo -f https://github.com/argoproj/argo-workflows/releases/download/v3.7.4/install.yaml
 
 # Install Argo CLI
-curl -sLO https://github.com/argoproj/argo-workflows/releases/download/v3.5.0/argo-linux-amd64.gz
+curl -sLO https://github.com/argoproj/argo-workflows/releases/download/v3.7.4/argo-linux-amd64.gz
 gunzip argo-linux-amd64.gz
 chmod +x argo-linux-amd64
 sudo mv argo-linux-amd64 /usr/local/bin/argo
@@ -63,7 +127,7 @@ argo version
 
 The chart installs `WorkflowTemplate` and `CronWorkflow` resources automatically via Helm. The chart-managed templates are:
 
-- `{release}-job-runner` — runs `cogniverse_runtime.job_executor` for tenant batch jobs (`charts/cogniverse/templates/job-workflow-template.yaml`)
+- `{release}-job-runner` — runs `cogniverse_runtime.job_executor` for tenant-scheduled jobs created via `POST /admin/tenant/{id}/jobs` (`charts/cogniverse/templates/job-workflow-template.yaml`; see [Tenant Scheduled Jobs](#tenant-scheduled-jobs))
 - `{release}-optimization-runner` — runs `optimization_cli --mode <mode>` for scheduled and on-demand optimization (`charts/cogniverse/templates/optimization-workflow-template.yaml`)
 
 Standalone workflow files for ad-hoc use live in `workflows/`:
@@ -147,15 +211,11 @@ argo get <workflow-name> -n cogniverse
 ## Batch Optimization Workflow
 
 ### Purpose
-Run DSPy optimization experiments at scale.
+Run DSPy/optimizer modes (see [Optimization Modes Reference](#optimization-modes-reference) below) against a tenant's Phoenix telemetry at scale.
 
 ### Workflow Steps
-1. **Validate Config**: Check optimizer and dataset
-2. **Prepare Dataset**: Load evaluation data
-3. **Run Optimization**: Execute DSPy optimizer
-4. **Evaluate Results**: Compare baseline vs optimized
-5. **Deploy Model**: Deploy if improvement > 5%
-6. **Notify Completion**: Send results
+
+The `{release}-optimization-runner` `WorkflowTemplate` is a single step, `run-optimizer`: it launches one runtime-image pod running `python -m cogniverse_runtime.optimization_cli --mode <mode> --tenant-id <tenant-id> --lookback-hours <lookback-hours>` under a per-tenant Argo mutex (`optimize-<tenant-id>`) so concurrent submits for the same tenant queue instead of racing. Multi-step pipelines (e.g. running several modes then restarting the runtime) are composed by CronWorkflows that call this template repeatedly with `templateRef` — see [Weekly Agent Optimization](#weekly-agent-optimization-release-agent-optimization-default-sunday-3-am-utc) for the concrete example.
 
 ### Submit Workflow
 
@@ -165,12 +225,19 @@ Optimization runs via the chart-installed `{release}-optimization-runner` Workfl
 # Submit via the chart WorkflowTemplate (uses workflowTemplateRef)
 argo submit -n cogniverse \
   --from wftmpl/cogniverse-optimization-runner \
-  -p mode=distill \
+  -p mode=simba \
   -p tenant-id="acme_corp" \
   -p lookback-hours=48
 
-# Available modes: gateway-thresholds, simba, workflow, profile,
-#                  entity-extraction, synthetic, distill, cleanup, monthly-reports
+# Full --mode choice list accepted by `cogniverse_runtime.optimization_cli`
+# (see libs/runtime/cogniverse_runtime/optimization_cli.py build_parser()):
+#   cleanup, triggered, simba, workflow, gateway-thresholds,
+#   online-routing-eval, profile, entity-extraction, synthetic,
+#   rollback, ab-compare, egress-netpol, monthly-reports
+#
+# The runtime's POST /admin/tenant/{id}/optimize endpoint only allows the
+# subset it considers safe for on-demand, per-tenant triggering:
+#   gateway-thresholds, simba, workflow, profile, entity-extraction
 ```
 
 For on-demand optimization via the runtime API:
@@ -183,13 +250,14 @@ curl -X POST http://localhost:8000/admin/tenant/acme_corp/optimize \
 
 ### Check Results
 
-```bash
-# Get output parameters
-argo get <workflow-name> -n cogniverse -o json | jq '.status.outputs.parameters'
+The `run-optimizer` template declares no Argo output parameters — results live in the pod's stdout (each `optimization_cli` mode logs a JSON result dict) and in whatever `ArtifactManager` persisted for the tenant.
 
-# View improvement
-argo get <workflow-name> -n cogniverse -o json | \
-  jq -r '.status.nodes | .[] | select(.displayName=="run-optimization") | .outputs.parameters[] | select(.name=="improvement") | .value'
+```bash
+# Read the run's log output (JSON result dict from optimization_cli)
+argo logs <workflow-name> -n cogniverse
+
+# Confirm the run succeeded
+argo get <workflow-name> -n cogniverse -o json | jq -r '.status.phase'
 ```
 
 ---
@@ -197,18 +265,30 @@ argo get <workflow-name> -n cogniverse -o json | \
 ## Tenant Provisioning Workflow
 
 ### Purpose
-Cold-bootstrap of a new tenant's backend resources (memory schema and telemetry project) without a live runtime.
+Cold-bootstrap a new tenant's full backend footprint (K8s namespace, Vespa schemas, Phoenix project, resource quotas, storage, memory schema) in one Argo run, without needing a live runtime to drive it.
 
 ### How it works
 
-The standalone `workflows/tenant-provisioning.yaml` WorkflowTemplate calls `scripts/provision_tenant.py` for the cold-bootstrap steps that talk directly to Vespa and Phoenix. Schema deployment is handled separately via the runtime admin API (or `scripts/deploy_json_schema.py` for dev).
+The standalone `workflows/tenant-provisioning.yaml` `WorkflowTemplate` (`provisioning-pipeline` entrypoint) runs nine sequential steps:
 
-`provision_tenant.py` supports two `--step` values:
+1. `validate-tenant` — regex-checks the tenant ID format (lowercase alphanumeric + underscores).
+2. `create-namespace` — creates a `cogniverse-<tenant-id>` `Namespace` (`resource: action: create`).
+3. `deploy-schemas` — for each comma-separated profile, runs `uv run python scripts/deploy_json_schema.py configs/schemas/<profile>.json` against Vespa directly.
+4. `create-phoenix-project` — runs `scripts/provision_tenant.py --step telemetry --tenant-id <id>`.
+5. `setup-resource-quotas` — creates a `ResourceQuota` in the tenant namespace from the `cpu-quota` / `memory-quota` / `storage-quota` parameters.
+6. `create-storage` — creates a `PersistentVolumeClaim` in the tenant namespace sized to `storage-quota`.
+7. `initialize-memory` — runs `scripts/provision_tenant.py --step memory --tenant-id <id>`.
+8. `verify-tenant` — checks the namespace, each schema, and the PVC exist.
+9. `notify-completion` — logs a completion summary (webhook call commented out).
+
+`scripts/provision_tenant.py` (used by steps 4 and 7) supports two `--step` values:
 
 | Step | What it does |
 |---|---|
 | `memory` | Creates the tenant's Mem0 memory schema via `Mem0MemoryManager` + `lazy_init_memory` |
 | `telemetry` | Emits a probe span so the tenant's Phoenix project is created |
+
+If a runtime is already live for the target cluster, the lighter-weight alternative is to skip this Argo template and drive the same two `provision_tenant.py` steps plus schema deployment through the runtime admin API — see [Register the tenant and deploy schemas](#register-the-tenant-and-deploy-schemas) below.
 
 ### Submit Workflow
 
@@ -237,7 +317,7 @@ uv run python scripts/provision_tenant.py --tenant-id newcorp_inc --step telemet
 Schema deployment is a separate step via the runtime admin API:
 
 ```bash
-RUNTIME_URL=http://localhost:9000
+RUNTIME_URL=http://localhost:8000
 
 # Register tenant
 curl -sfX POST "$RUNTIME_URL/admin/tenants" \
@@ -250,40 +330,113 @@ curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deplo
   -d '{"tenant_id": "newcorp_inc"}'
 ```
 
+Profile configs read and written by these admin endpoints go through `ConfigManager` with `service="backend"` (the default `service` for profile CRUD in `libs/runtime/cogniverse_runtime/routers/admin.py`) — the same config-service scope the dashboard's backend-profile views read from.
+
+---
+
+## Tenant Scheduled Jobs
+
+### Purpose
+Per-tenant, user-defined recurring agent runs (e.g. "run this query every morning and save the result to wiki") — distinct from the built-in system optimization/maintenance crons above.
+
+### How it works
+
+`POST /admin/tenant/{tenant_id}/jobs` (`libs/runtime/cogniverse_runtime/routers/tenant.py`) persists the job (`name`, `schedule`, `query`, `post_actions`) into `ConfigStore` under service `tenant_jobs`, then submits an Argo `CronWorkflow` named `tenant-job-<sanitized-tenant-id>-<sanitized-job-id>` that runs the chart's `{release}-job-runner` `WorkflowTemplate` on the given `schedule`. If the Argo submission fails, the ConfigStore write is not committed — a job never shows as `created` without a live schedule backing it.
+
+Each firing invokes `python -m cogniverse_runtime.job_executor --job-id <id> --tenant-id <tenant-id> --runtime-url <runtime-url>` (`libs/runtime/cogniverse_runtime/job_executor.py`), which:
+
+1. Reads the job's `query` + `post_actions` back out of `ConfigStore`.
+2. Routes the query through the orchestrator agent to get a result.
+3. For each `post_action` string (e.g. `"save to wiki"`, `"send me a summary on Telegram"`), routes it through the orchestrator and, using DenseOn embedding similarity against destination keyword phrases (threshold `0.3`), delivers the result to the detected destination (wiki, Telegram) — or just produces the result with no delivery if no destination matches (e.g. `"create a detailed report"`).
+
+```bash
+# Create a scheduled job
+curl -sfX POST http://localhost:8000/admin/tenant/acme_corp/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "daily-digest", "schedule": "0 8 * * *", "query": "summarize yesterday'"'"'s ingested videos", "post_actions": ["save to wiki"]}'
+
+# List jobs for a tenant
+curl http://localhost:8000/admin/tenant/acme_corp/jobs
+
+# Delete a job (also deletes the backing CronWorkflow)
+curl -sfX DELETE http://localhost:8000/admin/tenant/acme_corp/jobs/<job-id>
+
+# Inspect the backing CronWorkflow directly (tenant_id is lowercased and
+# '_'/':' replaced with '-' to form a valid RFC-1123 CronWorkflow name)
+kubectl get cronworkflow tenant-job-acme-corp-<job-id> -n cogniverse
+```
+
 ---
 
 ## Scheduled Maintenance Workflows
 
-### Daily Backup (2 AM UTC)
+The chart renders one `CronWorkflow` per maintenance/optimization concern, gated by its own `argo.*.enabled` value. All are disabled at once if `argo.enabled=false`.
 
-Backs up Vespa and Phoenix data daily.
+### Daily Backup (`{release}-backup-<service>`, default 3 AM UTC)
+
+Rendered by `charts/cogniverse/templates/data-backup-cronworkflows.yaml`, gated by `hostStorage.backup.enabled`. One `CronWorkflow` per entry in `hostStorage.backup.services` (default: `vespa` via `kubectl exec` + `tar`, `phoenix` via a volume-mount snapshot), all sharing `hostStorage.backup.schedule` (default `"0 3 * * *"`). Each runs two steps — `dump` (tar the service's data into a workflow-scoped staging PVC) then `upload` (`mc cp` the tarball to `s3://<hostStorage.backup.bucket>/<service>/<timestamp>.tar`, then prune all but the most recent `hostStorage.backup.retainLast` snapshots, default 7).
 
 ```bash
-# View cron workflow
-kubectl get cronworkflow daily-backup -n cogniverse -o yaml
+# View cron workflows (one per backed-up service)
+kubectl get cronworkflow -n cogniverse -l app.kubernetes.io/component=backup
 
 # Trigger manually
-argo cron create workflows/scheduled-maintenance.yaml -n cogniverse
-argo submit --from cronwf/daily-backup -n cogniverse
+argo submit --from cronwf/cogniverse-backup-vespa -n cogniverse
 
 # View history
-argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=daily-backup
+argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=cogniverse-backup-vespa
 ```
 
-### Weekly DSPy Optimization (Sunday 3 AM UTC)
+A standalone `daily-backup` `CronWorkflow` (2 AM UTC, `find -mtime +30 -delete` retention) also exists in `workflows/scheduled-maintenance.yaml` for ad-hoc `kubectl apply` use outside the chart; it is not installed by `cogniverse up` / Helm and is independent of `hostStorage.backup.*`.
 
-Runs DSPy optimization for all tenants weekly.
+### Weekly Agent Optimization (`{release}-agent-optimization`, default Sunday 3 AM UTC)
+
+Chart `CronWorkflow` (`argo.optimization.agentOptimization`, schedule `0 3 * * 0`, tenant `"default"`) that runs all DSPy-based per-agent optimizers in parallel, then the workflow optimizer, then restarts the runtime deployment to pick up the new artifacts:
+
+1. **Step 1 (parallel)** — `gateway-thresholds` (48h lookback), `entity-extraction` (48h), `simba` (168h — spans the full week between runs), `profile` (48h), each via `templateRef` to `{release}-optimization-runner`.
+2. **Step 2** — `workflow` optimization (depends on the agent artifacts from step 1).
+3. **Step 3** — `kubectl rollout restart deployment/{release}-runtime` so the runtime picks up the freshly compiled DSPy modules.
 
 ```bash
 # View schedule
-kubectl get cronworkflow weekly-dspy-optimization -n cogniverse
+kubectl get cronworkflow cogniverse-agent-optimization -n cogniverse
 
-# Modify schedule
-kubectl edit cronworkflow weekly-dspy-optimization -n cogniverse
+# Trigger manually
+argo submit --from cronwf/cogniverse-agent-optimization -n cogniverse
 
 # Suspend/resume
-argo cron suspend weekly-dspy-optimization -n cogniverse
-argo cron resume weekly-dspy-optimization -n cogniverse
+argo cron suspend cogniverse-agent-optimization -n cogniverse
+argo cron resume cogniverse-agent-optimization -n cogniverse
+```
+
+A standalone `weekly-dspy-optimization` `CronWorkflow` (also `workflows/scheduled-maintenance.yaml`) runs a simpler `--mode simba` loop over a hardcoded tenant list (`default`, `acme_corp`, `globex_inc`) for ad-hoc / non-Helm clusters; it is not what `cogniverse up` installs.
+
+### Daily Gateway Threshold Tuning (`{release}-daily-gateway`, default 4 AM UTC)
+
+Chart `CronWorkflow` (`argo.optimization.dailyGateway`, schedule `0 4 * * *`, tenant `"__system__"`) — a lightweight, single-mode version of the weekly pipeline: runs `gateway-thresholds` (24h lookback) via `templateRef` to `{release}-optimization-runner`, then restarts the runtime deployment.
+
+```bash
+kubectl get cronworkflow cogniverse-daily-gateway -n cogniverse
+argo submit --from cronwf/cogniverse-daily-gateway -n cogniverse
+argo cron suspend cogniverse-daily-gateway -n cogniverse
+```
+
+### Synthetic Data Generation (`{release}-synthetic-generation`, default Saturday 1 AM UTC)
+
+Chart `CronWorkflow` (`argo.optimization.syntheticGeneration`, schedule `0 1 * * 6`) running `optimization_cli --mode synthetic --tenant-id default --agents workflow,profile`. Generates training examples via `SyntheticDataService` and saves them as demonstrations through `ArtifactManager` for the next optimization run to merge in. Restricted to the `workflow,profile` generators because `routing` needs `optimizer_configs['routing'].query_templates` (not populated by the chart) and `simba` is an agent-optimization mode, not a synthetic generator.
+
+```bash
+kubectl get cronworkflow cogniverse-synthetic-generation -n cogniverse
+argo submit --from cronwf/cogniverse-synthetic-generation -n cogniverse
+```
+
+### Scheduled Distillation (`{release}-scheduled-distillation`, default 5 AM UTC)
+
+Chart `CronWorkflow` (`argo.optimization.scheduledDistillation`, schedule `0 5 * * *`) running `python -m cogniverse_runtime.quality_monitor_cli --once --tenant-id default` against the in-cluster runtime and Phoenix. Forces a strategy-distillation pass on a fixed schedule so long stable periods (no detected quality drop) still produce new distilled strategies, rather than relying solely on `QualityMonitor`'s degradation trigger. Uses `cogniverse.primaryLLMModelBare` for its `--llm-model` argument since `quality_monitor_cli` posts directly to `/v1/chat/completions`.
+
+```bash
+kubectl get cronworkflow cogniverse-scheduled-distillation -n cogniverse
+argo submit --from cronwf/cogniverse-scheduled-distillation -n cogniverse
 ```
 
 ### Daily Cleanup (`cogniverse-daily-cleanup`, 4 AM UTC)
@@ -295,7 +448,7 @@ Chart `CronWorkflow` (`argo.maintenance.cleanup`, schedule `0 4 * * *`) running 
 - **Temp file cleanup** — `TEMP_DIR` (default `/tmp`), files older than `TEMP_RETENTION_DAYS` env (default 1) removed.
 - **Config metadata vacuum** — `VespaConfigStore.prune_all_configs(keep=CONFIG_KEEP_VERSIONS)` (default 10) — drains legacy `config_metadata` row bloat down to the latest N per `config_id`.
 
-Each section reports exact counts in the result dict — see [optimization.md `--mode cleanup`](../modules/optimization.md#8-mode-cleanup-memory--logs--temp--config-vacuum).
+Each section reports exact counts in the result dict — see [optimization.md `--mode cleanup`](../modules/optimization.md#17-mode-cleanup-memory-logs-temp-config-vacuum).
 
 ```bash
 # View workflow
@@ -332,104 +485,25 @@ Resolution order for both: `runtime.primaryLLM.model` if set, else the engine-de
 
 ---
 
-## Scheduled Module Optimization Workflows
+## Optimization Modes Reference
 
-Cogniverse includes automated optimization workflows that run on a schedule to continuously improve system performance.
+All scheduled and on-demand optimization ultimately runs one `--mode` of `cogniverse_runtime.optimization_cli` in a pod templated by `{release}-optimization-runner` (see [Batch Optimization Workflow](#batch-optimization-workflow) above) or, for cleanup/reports, a dedicated `CronWorkflow` (see [Scheduled Maintenance Workflows](#scheduled-maintenance-workflows) above). There is no separate "module optimizer" vs. "DSPy optimizer" category split in the code — every mode below reads Phoenix spans (or a golden dataset, for `triggered`) and writes an artifact via `ArtifactManager`:
 
-### Weekly Module Optimization (Sunday 3 AM UTC)
-
-Comprehensive optimization of all routing/workflow modules when sufficient annotations are collected.
-
-**What it does:**
-
-- Checks Phoenix for annotation count (threshold: 50)
-
-- Runs optimization for all modules if threshold met:
-  - Modality optimizer (per-modality routing)
-  - Cross-modal optimizer (fusion decisions)
-  - Routing optimizer (entity-based routing)
-  - Workflow optimizer (orchestration)
-  - DSPy optimizer (GEPA by default)
-- Generates synthetic training data from backend storage using DSPy modules
-- Auto-selects DSPy optimizer based on data size
-
-```bash
-# View schedule
-kubectl get cronworkflow weekly-optimization -n cogniverse
-
-# Check last run
-argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=weekly-optimization --limit 1
-
-# Trigger manually
-argo submit --from cronwf/weekly-optimization -n cogniverse
-
-# Modify parameters
-kubectl edit cronworkflow weekly-optimization -n cogniverse
-```
-
-**Configuration:**
-
-- `annotation-threshold`: Minimum annotations needed (default: 50)
-
-- `improvement-threshold`: Minimum improvement % to deploy (default: 5%)
-
-- `tenant-id`: Target tenant (default: "default")
-
-### Daily Optimization Check (4 AM UTC)
-
-Lightweight routing optimization triggered by new annotations.
-
-**What it does:**
-
-- Checks Phoenix for annotations in last 24 hours (threshold: 20)
-
-- Runs quick routing optimization if threshold met
-
-- Uses synthetic data generation for training
-
-- Faster than weekly optimization (single module)
-
-```bash
-# View schedule
-kubectl get cronworkflow daily-optimization-check -n cogniverse
-
-# Check last run
-argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=daily-optimization-check --limit 1
-
-# Suspend/resume
-argo cron suspend daily-optimization-check -n cogniverse
-argo cron resume daily-optimization-check -n cogniverse
-```
-
-**Configuration:**
-
-- `annotation-threshold`: Minimum new annotations (default: 20)
-
-- `tenant-id`: Target tenant (default: "default")
-
-### Module Optimization vs DSPy Optimization
-
-The workflows support two optimizer categories:
-
-**Module Optimization** (`optimizer-category: routing`):
-
-- **What gets optimized**: modality, cross_modal, routing, workflow, unified modules
-
-- **How they get optimized**: Auto-selected DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA)
-
-- **Data source**: Phoenix traces + synthetic data generation
-
-- **Use case**: Optimize routing decisions and workflow planning
-
-**DSPy Optimization** (`optimizer-category: dspy`):
-
-- **What gets optimized**: DSPy modules (prompt templates, reasoning chains)
-
-- **How they get optimized**: Explicit DSPy optimizer (GEPA/Bootstrap/SIMBA/MIPRO)
-
-- **Data source**: Golden evaluation datasets
-
-- **Use case**: Teacher-student distillation for local models
+| Mode | What it optimizes | Reads |
+|---|---|---|
+| `simba` | `QueryEnhancementAgent`'s DSPy module (BootstrapFewShot over original→enhanced query pairs) | `cogniverse.query_enhancement` spans |
+| `workflow` | Workflow templates + agent performance profiles | `cogniverse.orchestration` spans (via `OrchestrationEvaluator`) |
+| `gateway-thresholds` | GLiNER confidence thresholds for the routing gateway | `cogniverse.gateway` spans |
+| `online-routing-eval` | Persists per-span routing/confidence scores as telemetry annotations (no artifact) | `cogniverse.routing` spans (via `OnlineEvaluator`) |
+| `profile` | `ProfileSelectionAgent`'s DSPy module | `cogniverse.profile_selection` spans |
+| `entity-extraction` | `EntityExtractionModule`'s DSPy module | `cogniverse.entity_extraction` spans |
+| `synthetic` | Generates training examples for other modes via `SyntheticDataService` | none (LLM-generated) |
+| `triggered` | Strategy distillation from the trigger dataset (`strategies_distilled` output) | golden/trigger dataset |
+| `rollback` | Restores a tenant's active prompts/demos artifacts to a prior snapshotted version (self-reversible — snapshots the current version first) | `ArtifactManager` version history |
+| `ab-compare` | Runs `RLMABRunner` over a Phoenix queries dataset to compare two RLM configurations ("arms"), emitting an `rlm.ab_compare` span per row | a saved Phoenix dataset (`query`/`context` columns) |
+| `egress-netpol` | Emits Kubernetes `NetworkPolicy` YAMLs from each agent's `network_policies.deny_all_other` policy config | policy YAMLs on disk, not spans |
+| `cleanup` | Memory/log/temp/config housekeeping (no tenant) — see [Daily Cleanup](#daily-cleanup-cogniverse-daily-cleanup-4-am-utc) | DB/filesystem state |
+| `monthly-reports` | Usage + performance JSON reports (no tenant) — see [Monthly Reports](#monthly-reports-cogniverse-monthly-reports-1st-of-month-5-am-utc) | Phoenix spans |
 
 ### Manual Workflow Submission
 
@@ -443,29 +517,35 @@ argo submit -n cogniverse \
   -p tenant-id="acme_corp" \
   -p lookback-hours=48
 
-# Or via the runtime API (creates and tracks the Argo Workflow for you)
+# Or via the runtime API (creates and tracks the Argo Workflow for you;
+# restricted to gateway-thresholds, simba, workflow, profile, entity-extraction)
 curl -X POST http://localhost:8000/admin/tenant/acme_corp/optimize \
   -H 'Content-Type: application/json' \
   -d '{"mode": "simba"}'
+
+# Poll the on-demand run's status (dashboard uses this to render progress)
+curl http://localhost:8000/admin/tenant/acme_corp/optimize/runs/<workflow-name>
 ```
 
 ### Monitoring Optimization Workflows
 
 ```bash
-# List optimization workflows
-argo list -n cogniverse --selector workflow-type=optimization
+# On-demand runs submitted via POST /admin/tenant/{id}/optimize carry
+# cogniverse.ai/* labels (see _build_optimization_workflow_manifest in
+# libs/runtime/cogniverse_runtime/routers/tenant.py)
+argo list -n cogniverse -l cogniverse.ai/trigger=manual
+argo list -n cogniverse -l cogniverse.ai/tenant=acme_corp
 
-# Get workflow results
-argo get <workflow-name> -n cogniverse -o json | \
-  jq '.status.nodes | .[] | select(.displayName=="run-optimization") | .outputs.parameters'
+# Scheduled runs are selected per-CronWorkflow (Argo doesn't propagate the
+# CronWorkflow's own labels to the Workflows it spawns)
+argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=cogniverse-agent-optimization
 
-# View improvement metrics
-argo get <workflow-name> -n cogniverse -o json | \
-  jq -r '.status.outputs.parameters[] | select(.name=="improvement") | .value'
+# Follow a specific run's logs
+argo logs <workflow-name> -n cogniverse -f
 
-# Check annotation count
-argo get <workflow-name> -n cogniverse -o json | \
-  jq -r '.status.outputs.parameters[] | select(.name=="annotation-count") | .value'
+# Inspect its node statuses (the optimization_cli process's stdout/exit code
+# is the source of truth; the WorkflowTemplate declares no output parameters)
+argo get <workflow-name> -n cogniverse -o json | jq '.status.nodes'
 ```
 
 ---

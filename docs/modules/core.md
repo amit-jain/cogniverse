@@ -13,13 +13,24 @@
    - [AgentBase](#agentbase)
    - [AgentInput / AgentOutput / AgentDeps](#agentinput-agentoutput-agentdeps)
    - [A2AAgent](#a2aagent)
-4. [Agent Mixins](#agent-mixins)
-5. [Registries](#registries)
-6. [Memory Management](#memory-management)
-7. [Configuration](#configuration)
-8. [Usage Examples](#usage-examples)
-9. [Architecture Position](#architecture-position)
-10. [Testing](#testing)
+4. [Content Rails](#content-rails)
+5. [RLM Options](#rlm-options)
+6. [Agent Mixins](#agent-mixins)
+7. [Registries](#registries)
+8. [Memory Management](#memory-management)
+9. [Query Encoding](#query-encoding)
+10. [Event System](#event-system)
+11. [Approval Interfaces](#approval-interfaces)
+12. [Media Access](#media-access)
+13. [Configuration](#configuration)
+14. [Usage Examples](#usage-examples)
+15. [Architecture Position](#architecture-position)
+16. [Testing](#testing)
+17. [Cache Subsystem](#cache-subsystem)
+18. [Utility Modules](#utility-modules)
+19. [VLM Interface](#vlm-interface)
+20. [Model Loaders](#model-loaders)
+21. [Backend Factory & Profile Validation](#backend-factory--profile-validation)
 
 ---
 
@@ -46,15 +57,18 @@ cogniverse_core/
 │   ├── base.py                  # AgentBase[InputT, OutputT, DepsT]
 │   ├── a2a_agent.py             # A2AAgent with A2A protocol + DSPy
 │   ├── tenant_aware_mixin.py    # Multi-tenancy mixin
-│   ├── a2a_mixin.py             # A2A communication mixin
+│   ├── a2a_mixin.py             # A2AEndpointsMixin (standalone-agent agent-card endpoint)
 │   ├── rails.py                 # Content rails (topic/safety/format) for agent I/O
-│   └── rlm_options.py           # Remote LM configuration options
+│   └── rlm_options.py           # RLMOptions — per-query Recursive Language Model config
+├── approval/                    # Human-in-the-loop approval interfaces
+│   └── interfaces.py            # ApprovalStatus, ReviewItem, ReviewDecision, ApprovalBatch,
+│                                 # ConfidenceExtractor, FeedbackHandler, ApprovalStorage
 ├── registries/                  # Component registries
 │   ├── agent_registry.py        # Agent class registration
 │   ├── backend_registry.py      # Backend provider registration
 │   ├── schema_registry.py       # Schema template registration
-│   ├── adapter_store_registry.py # Adapter store registration
-│   ├── workflow_store_registry.py # Workflow store registration
+│   ├── adapter_store_registry.py # AdapterStoreRegistry (entry-point auto-discovery)
+│   ├── workflow_store_registry.py # WorkflowStoreRegistry (entry-point auto-discovery)
 │   ├── exceptions.py            # Registry exceptions
 │   └── registry.py              # Base registry class
 ├── memory/                      # Memory system
@@ -69,10 +83,12 @@ cogniverse_core/
 │   ├── lifecycle_scheduler.py   # LifecycleScheduler (schema-driven periodic cleanup)
 │   ├── mem0_embedder.py         # DenseOnMem0Embedder (DenseOn prompt + L2-norm adapter for Mem0)
 │   ├── backend_config.py        # Memory backend configuration
-│   └── backend_vector_store.py  # Vector store integration
+│   ├── backend_vector_store.py  # Vector store integration
+│   └── _timestamps.py           # Internal timestamp normalization helpers
 ├── common/                      # Shared utilities
 │   ├── cache/                   # Caching subsystem (see Cache Subsystem section)
 │   ├── models/                  # Model loaders (see Model Loaders section)
+│   ├── media/                   # Media access abstraction (see Media Access section)
 │   ├── utils/                   # Utility functions (see Utility Modules section)
 │   ├── tenant_utils.py          # Tenant utilities
 │   ├── dspy_module_registry.py  # DSPy module management
@@ -80,24 +96,26 @@ cogniverse_core/
 │   ├── health_mixin.py          # Health check mixin
 │   ├── agent_models.py          # AgentEndpoint and shared agent models
 │   └── vlm_interface.py         # Vision Language Model interface
-├── events/                      # Real-time event notification system
+├── events/                      # Real-time event notification system (see Event System section)
 │   ├── types.py                 # Event type definitions (StatusEvent, ProgressEvent, etc.)
 │   ├── queue.py                 # EventQueue and QueueManager protocols
 │   └── backends/                # Backend implementations
 │       └── memory.py            # In-memory EventQueue backend
-├── query/                       # Query encoding utilities
-│   └── encoders.py              # Query encoder implementations
+├── query/                       # Query encoding utilities (see Query Encoding section)
+│   └── encoders.py              # QueryEncoder implementations + QueryEncoderFactory
 ├── factories/                   # Factory classes
-│   └── backend_factory.py       # Backend factory for creating backend instances
-├── interfaces/                  # Protocol interfaces
+│   └── backend_factory.py       # BackendFactory for creating backend instances
+├── interfaces/                  # Protocol interfaces (re-exports, no local classes)
 ├── validation/                  # Validation utilities
-│   └── profile_validator.py     # Profile configuration validation
-├── telemetry/                   # Telemetry integration
-├── config/                      # Configuration management
+│   └── profile_validator.py     # ProfileValidator — backend profile config validation
 ├── schemas/                     # Data schemas
-│   └── filesystem_loader.py     # Schema loading from files
-└── backends/                    # Backend abstractions
+│   └── filesystem_loader.py     # FilesystemSchemaLoader — schema loading from files
+└── backends/                    # Backend abstractions (re-exports, no local classes)
 ```
+
+`config/` and `telemetry/` backward-compatibility shims (which re-exported
+`cogniverse_foundation.config` / telemetry symbols under the `cogniverse_core`
+namespace) have been removed; import directly from `cogniverse_foundation`.
 
 ---
 
@@ -223,18 +241,28 @@ agent = MyAgent(deps=deps, config=config)
 # not embedded in the agent. Agents expose a /process endpoint via the runtime.
 ```
 
-**A2A Endpoints** (served by the runtime's `A2AStarletteApplication` at `/a2a`):
+**A2A Endpoints** (served by the runtime's `A2AStarletteApplication`, an
+`a2a-sdk` JSON-RPC 2.0 app, mounted at `/a2a`):
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/.well-known/agent-card.json` | GET | Agent card per A2A spec |
-| `/agent.json` | GET | Legacy agent card |
-| `/tasks/send` | POST | Process A2A task |
-| `/health` | GET | Health check with metrics |
-| `/metrics` | GET | Detailed performance metrics |
-| `/schema` | GET | Input/output JSON schemas |
+| `/a2a/` | POST | JSON-RPC 2.0 endpoint — methods `message/send`, `message/stream` (SSE), `tasks/get`, `tasks/cancel`, `tasks/pushNotificationConfig/*` |
+| `/a2a/.well-known/agent-card.json` | GET | Agent card per A2A spec |
+| `/a2a/.well-known/agent.json` | GET | Deprecated agent-card alias, kept for backward compatibility |
 
-Individual agents also expose a `/process` endpoint accepting a dict payload (not A2A Task objects).
+A2A requests are executed by `CogniverseAgentExecutor`, which dispatches through
+the runtime's `AgentDispatcher`. Separately, each agent is also reachable
+in-process via the agents router:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/agents/{agent_name}/process` | POST | Process a task (dict payload, not an A2A `Task` object) |
+| `/agents/{agent_name}/message` | POST | Enqueue an inbound steering message (`stop`/`constraint`/`interrupt`) for a running agent session |
+
+Standalone agent apps built outside the unified runtime can mix in
+`A2AEndpointsMixin` (`agents/a2a_mixin.py`) for a single
+`GET /.well-known/agent-card.json` endpoint plus a `register_with_registry()`
+helper that POSTs the agent's card to a central registry.
 
 ---
 
@@ -274,6 +302,42 @@ Rails are configured under the `rails` block in `config.json`
 
 ---
 
+## RLM Options
+
+`agents/rlm_options.py` defines `RLMOptions`, a per-query Pydantic config for
+enabling **RLM (Recursive Language Model)** inference — a DSPy 3.1+ paradigm
+that lets an LLM examine, decompose, and recursively call itself over
+near-infinite context instead of stuffing everything into one prompt window.
+It is attached to an agent's input type (e.g. `SearchInput(query=..., rlm=...)`)
+so callers can A/B test RLM against standard inference per request.
+
+```python
+from cogniverse_core.agents.rlm_options import RLMOptions
+
+# Explicit enable (A/B test group B)
+rlm = RLMOptions(enabled=True, max_iterations=3)
+
+# Auto-enable once context exceeds a character threshold
+rlm = RLMOptions(auto_detect=True, context_threshold=50_000)
+
+rlm.should_use_rlm(context_size=80_000)  # -> True
+```
+
+| Field | Default | Purpose |
+|---|---|---|
+| `enabled` | `False` | Explicitly force RLM for this query |
+| `auto_detect` | `False` | Enable RLM when context exceeds `context_threshold` |
+| `context_threshold` | `50_000` | Character threshold for `auto_detect` |
+| `max_iterations` | `3` (1-10) | Max REPL iterations |
+| `max_llm_calls` | `30` (1-100) | Max LLM sub-calls |
+| `timeout_seconds` | `300` (10-1800) | RLM processing timeout |
+| `backend` | `"openai"` | litellm backend id (openai, anthropic, litellm) |
+| `model` / `api_base` / `api_key` | `None` | Overrides; `None` falls back to the agent's model / provider defaults |
+| `include_trajectory` | `False` | Attach a bounded REPL trajectory to the result for auditing |
+| `trajectory_max_entries` | `32` (1-200) | Caps trajectory size when `include_trajectory=True` |
+
+---
+
 ## Agent Mixins
 
 Mixins provide composable functionality that can be added to any agent:
@@ -289,13 +353,18 @@ def initialize_memory(
     self,
     agent_name: str,
     tenant_id: str,
+    embedder_base_url: str,          # Required — DenseOn /v1/embeddings endpoint
+    *,
+    llm_model: str,                  # Required — no fallback default
     backend_host: str = "localhost",
     backend_port: int = 8080,
-    llm_model: str = "google/gemma-4-e4b-it",
-    embedding_model: str = "nomic-embed-text",
+    embedding_model: str = "lightonai/DenseOn",
     llm_base_url: str = "http://localhost:11434",
+    llm_api_key: str = "not-required",
     config_manager=None,             # Required for schema deployment
     schema_loader=None,              # Required for schema templates
+    backend_config_port: Optional[int] = None,
+    auto_create_schema: bool = True,
 ) -> bool:
 ```
 
@@ -317,9 +386,10 @@ class MyAgent(AgentBase[...], MemoryAwareMixin):
         self.initialize_memory(
             agent_name="my_agent",
             tenant_id=input.tenant_id,  # Per-request, not from deps
+            embedder_base_url=memory_config.get("embedder_base_url"),
+            llm_model=memory_config.get("llm_model"),
             backend_host=system_config.get("backend_url"),
             backend_port=system_config.get("backend_port"),
-            llm_model=memory_config.get("llm_model"),
             embedding_model=memory_config.get("embedding_model"),
             llm_base_url=memory_config.get("llm_base_url"),
             config_manager=self._config_manager,
@@ -507,6 +577,163 @@ exists = registry.schema_exists("acme", "video_content")
 schemas = registry.get_tenant_schemas("acme")
 ```
 
+### AdapterStoreRegistry / WorkflowStoreRegistry
+
+Thin subclasses of `cogniverse_foundation.registry.EntryPointRegistry` that
+auto-discover implementations registered via Python entry points, so
+`cogniverse_core` never imports a concrete backend package directly.
+
+```python
+from cogniverse_core.registries import AdapterStoreRegistry, WorkflowStoreRegistry
+
+# Implementations register under these entry-point groups in pyproject.toml:
+#   [project.entry-points."cogniverse.adapter.stores"]
+#   vespa = "cogniverse_vespa.registry.adapter_store:VespaAdapterStore"
+#
+#   [project.entry-points."cogniverse.workflow.stores"]
+#   telemetry = "cogniverse_agents.workflow.telemetry_workflow_store:TelemetryWorkflowStore"
+
+adapter_store = AdapterStoreRegistry.get(
+    name="vespa", config={"backend_url": "http://localhost", "backend_port": 8080}
+)
+workflow_store = WorkflowStoreRegistry.get(
+    name="telemetry", config={"telemetry_provider": telemetry_provider}
+)
+```
+
+---
+
+## Query Encoding
+
+`query/encoders.py` provides the `QueryEncoder` abstraction search agents use
+to turn a text query into the embedding shape a Vespa profile expects, plus a
+caching factory that picks the right encoder from `configs/config.json`.
+
+```python
+from cogniverse_core.query.encoders import QueryEncoderFactory
+
+# Cached by (model_name, inference_service, embedding_dim) — a repeat
+# call for the same profile reuses the already-loaded encoder.
+encoder = QueryEncoderFactory.create_encoder(
+    profile="frame_based_colpali",
+    config=system_config,  # SystemConfig instance, required
+)
+embedding = encoder.encode("find manufacturing defects")
+dim = encoder.get_embedding_dim()
+
+QueryEncoderFactory.get_supported_profiles(config=system_config)
+```
+
+| Class | Model family | Notes |
+|---|---|---|
+| `ColBERTQueryEncoder` | ColBERT / LateOn | Per-token multi-vector; `embedding_dim` is required (read from `schema_config.embedding_dim`); supports joint query+CoT-trace encoding |
+| `ColPaliFamilyQueryEncoder` | ColPali, ColQwen, ColSmol | 128-d patch multi-vector (`get_embedding_dim()` returns the class-level `embedding_dim = 320`); local or remote (`inference_service_url`) |
+| `ColPaliQueryEncoder(...)` / `ColQwenQueryEncoder(...)` | — | Thin factory functions over `ColPaliFamilyQueryEncoder` with `model_loader="colpali"`/`"colqwen"` |
+| `VideoPrismQueryEncoder` | VideoPrism | Single-vector (global, `_lvt_`/`global` in name) or patch-based (768/1024-d) |
+
+`QueryEncoderFactory._create_encoder_instance` resolves the encoder in this
+order: `profile_config["model_loader"]` (authoritative) → model-name substring
+→ profile-name substring, raising `ValueError` if none match.
+
+---
+
+## Event System
+
+`events/` defines the Pydantic event vocabulary and queue protocols the
+runtime uses to stream agent progress over SSE (see `AgentBase.emit_progress`
+/ `process(stream=True)`).
+
+```python
+from cogniverse_core.events.types import TaskState, create_status_event
+from cogniverse_core.events.backends.memory import get_queue_manager
+
+manager = get_queue_manager()
+queue = await manager.get_or_create_queue(task_id="task-123", tenant_id="acme")
+await queue.enqueue(
+    create_status_event(
+        task_id="task-123", tenant_id="acme", state=TaskState.WORKING, message="starting"
+    )
+)
+async for event in queue.subscribe():
+    ...  # stream to the client (SSE)
+```
+
+| Component | Purpose |
+|---|---|
+| `EventType`, `TaskState` | Enums for event kind and A2A task lifecycle state |
+| `StatusEvent`, `ProgressEvent`, `ArtifactEvent`, `ErrorEvent`, `CompleteEvent` | `BaseEvent` subclasses emitted during processing |
+| `EventQueue` / `QueueManager` (Protocols) | Per-task event queue and queue-lifecycle contracts |
+| `BaseEventQueue` / `BaseQueueManager` | ABCs implementing the shared queue bookkeeping |
+| `InMemoryEventQueue` / `InMemoryQueueManager` (`events/backends/memory.py`) | Default in-process implementation; `get_queue_manager()` / `reset_queue_manager()` manage the process-wide singleton |
+| `CancellationToken` (`events/queue.py`) | Cooperative cancellation signal threaded through a running task |
+
+---
+
+## Approval Interfaces
+
+`approval/interfaces.py` defines domain-agnostic human-in-the-loop review
+contracts. They live in `cogniverse_core` (rather than in one implementation
+package) specifically so both `cogniverse_agents` and `cogniverse_synthetic`
+can depend on the same interfaces without depending on each other.
+
+```python
+from cogniverse_core.approval import (
+    ApprovalBatch,
+    ApprovalStatus,
+    ApprovalStorage,
+    ConfidenceExtractor,
+    FeedbackHandler,
+    ReviewDecision,
+    ReviewItem,
+)
+
+item = ReviewItem(item_id="q1", data={"query": "..."}, confidence=0.42)
+batch = ApprovalBatch(batch_id="b1", items=[item])
+batch.pending_review   # items awaiting human review
+batch.approval_rate     # (auto_approved + approved) / total
+```
+
+| Type | Role |
+|---|---|
+| `ApprovalStatus` | `auto_approved` / `pending_review` / `approved` / `rejected` / `regenerated` |
+| `ReviewItem` / `ReviewDecision` / `ApprovalBatch` | Dataclasses carrying domain-specific `data` + review outcome |
+| `ConfidenceExtractor` (ABC) | `extract(data) -> float` — domain-specific confidence scoring |
+| `FeedbackHandler` (ABC) | `process_rejection(item, decision) -> Optional[ReviewItem]` — regenerate on rejection |
+| `ApprovalStorage` (ABC) | `save_batch` / `get_batch` / `update_item` / `get_pending_batches` — persistence backend |
+
+---
+
+## Media Access
+
+`common/media/` is the URI → local-`Path` resolver used by both ingestion
+(writing `source_url`) and evaluation (reading frames for the visual judge).
+It is tenant-scoped and fsspec-backed for network schemes.
+
+```python
+from cogniverse_core.common.media import MediaConfig, MediaLocator
+
+config = MediaConfig.from_dict({
+    "default_uri_scheme": "file",
+    "cache": {"max_bytes_gb": 50, "ttl_days": 7},
+    "backends": {"s3": {"endpoint_url": "http://minio:9000"}},
+})
+locator = MediaLocator(tenant_id="acme", config=config)
+
+path = locator.localize("s3://bucket/videos/clip.mp4")  # downloads + caches, returns local Path
+locator.exists("pvc://videos/clip.mp4")
+stat = locator.stat("https://example.com/clip.mp4")     # MediaStat(size, etag, ...)
+```
+
+| Scheme | Behavior |
+|---|---|
+| `file://` / bare path | Short-circuits to the local path, no copy |
+| `pvc://<volume>/<rest>` | Resolves to `<config.pvc_mount_root>/<volume>/<rest>` |
+| `s3://`, `http(s)://`, `gs://`, `az://` | Fetched via fsspec and cached locally through `MediaCache` |
+
+`MediaCache` (`common/media/cache.py`) is a content-addressed, tenant-scoped
+local cache with atomic staged writes (`os.replace`) and LRU eviction by
+`atime` once `max_bytes` is exceeded.
+
 ---
 
 ## Memory Management
@@ -583,7 +810,7 @@ action) embed a document. Without this adapter, stored memory vectors
 would silently change value and drift Mem0's `closeness` ranking against
 existing `agent_memories` rows.
 
-### Federation: org trunk + tenant overlays (A.5)
+### Federation: org trunk + tenant overlays
 
 `FederationService` lets multiple tenants under the same org share a
 trunk of knowledge while overlaying tenant-specific facts.
@@ -627,7 +854,7 @@ ACLs are enforced at query time: `federated_get_all` only ever reads
 from the caller's tenant + that tenant's org trunk, so cross-org leakage
 is structurally prevented.
 
-### Contradiction detection + reconciliation (A.3)
+### Contradiction detection + reconciliation
 
 Two memories about the same subject can disagree. The
 `ContradictionDetector` groups candidate memories by `metadata.subject_key`
@@ -657,11 +884,12 @@ visible = reconcile(memories, ContradictionPolicy.TRUST_RANKED)
 
 Memories without a `subject_key` pass through unchanged — the detector
 has no way to know what they are claims *about*. Conflict sets persist
-under sentinel `agent_name="_conflict_store"` (matching the A.6 pinning
-pattern) so they don't pollute normal-agent search results; a future
+under sentinel `agent_name="_conflict_store"` (matching the pinning
+service's sentinel-agent pattern) so they don't pollute normal-agent search
+results; a future
 `ContradictionReconciliationAgent` will consume them.
 
-### Trust / source ranking (A.4)
+### Trust / source ranking
 
 Each memory carries a `TrustRecord` derived at write time from the
 schema's `default_trust` and the provenance's `derivation_kind`. Trust
@@ -706,13 +934,13 @@ ranked = rank_with_trust(search_results)
 
 Decay floor is `initial_score` — a memory never loses more trust than it
 had originally gained above the schema baseline. Endorsements raise the
-effective ceiling without changing the floor; A.5 (federation) and A.3
-(contradiction) will plug into this scoring loop.
+effective ceiling without changing the floor; federation and contradiction
+reconciliation both plug into this scoring loop.
 
-### Provenance + citation graph (A.2)
+### Provenance + citation graph
 
 Every memory write carries a `Provenance` record describing where the
-content came from. The schema's `provenance_required` flag (A.1) gates
+content came from. The schema's `provenance_required` flag gates
 writes that omit it.
 
 ```python
@@ -756,8 +984,8 @@ memory record (no separate Vespa schema in V1). Walker traversal is O(N)
 in chain length; cycle and depth limits (`max_depth`, `max_nodes`) protect
 against runaway chains.
 
-A.3 (contradiction detection) and A.4 (trust ranking) will read this
-provenance graph to score conflicting claims.
+Contradiction detection and trust ranking both read this provenance graph
+to score conflicting claims.
 
 ### Pinning service
 
@@ -818,8 +1046,8 @@ write hits Vespa.
 
 Each kind of memory carries a `KnowledgeSchema` describing its retention,
 sensitivity, pin authority, provenance requirement, contradiction policy,
-and default trust. The registry is the single source of truth A.6 (pinning)
-and A.7 (lifecycle) and A.2 (provenance) all read from.
+and default trust. The registry is the single source of truth the pinning
+service, the lifecycle scheduler, and provenance handling all read from.
 
 ```python
 from cogniverse_core.memory.schema import (
@@ -849,7 +1077,7 @@ schema.validate_write(provenance=my_provenance, pinned_by=Pinnable.USER)
 Register custom kinds at boot — replace=True is required to overwrite an
 existing kind so accidental redefinition fails loudly.
 
-### Strategy decay (A.8)
+### Strategy decay
 
 `StrategyLearner` tracks `confirmation_count` + `last_confirmed_at` on
 each strategy. When the dedup search finds a near-duplicate (Jaccard
@@ -1209,6 +1437,13 @@ backend = CacheBackendRegistry.create({"backend_type": "structured_filesystem", 
 backends = CacheBackendRegistry.list_backends()  # ["structured_filesystem", ...]
 ```
 
+**Built-in `CacheBackend` implementations** (`common/cache/backends/`):
+
+| Backend | Registered name | Storage |
+|---|---|---|
+| `StructuredFilesystemBackend` | `structured_filesystem` | Local filesystem, keyed directory layout |
+| `S3CacheBackend` | `s3` | S3-compatible object storage (works with MinIO) |
+
 ---
 
 ## Utility Modules
@@ -1346,7 +1581,7 @@ model, processor = loader.load_model()
 | `colpali` | `ColPaliModelLoader` | `RemoteColPaliLoader` |
 | `colqwen` | `ColQwenModelLoader` | `RemoteColPaliLoader` |
 | `videoprism` | `VideoPrismModelLoader` | `RemoteVideoPrismLoader` |
-| `colbert` | `ColBERTModelLoader` | *(not yet supported)* |
+| `colbert` | `ColBERTModelLoader` | `RemoteColBERTLoader` |
 
 Remote loaders are selected when `remote_inference_url` is set in config.
 
@@ -1478,6 +1713,102 @@ result = model.extract_embeddings(video_input)
 
 - `videoprism_repo_path` in config.json or `VIDEOPRISM_REPO_PATH` env var
 - JAX forced to CPU backend to avoid Metal issues on macOS
+
+### VideoPrismTextEncoder (videoprism_text_encoder.py)
+
+Production-hardened VideoPrism LVT text encoder with an LRU model cache,
+circuit breaker, and performance metrics — distinct from the lighter-weight
+`VideoPrismQueryEncoder` in `query/encoders.py`.
+
+```python
+from cogniverse_core.common.models.videoprism_text_encoder import create_text_encoder
+
+encoder = create_text_encoder(
+    model_name="videoprism_public_v1_base_hf",
+    embedding_dim=768,
+    enable_circuit_breaker=True,
+    enable_metrics=True,
+)
+```
+
+| Component | Purpose |
+|---|---|
+| `VideoPrismTextEncoder` | Main encoder; class-level `_model_cache` shares loaded models across instances |
+| `CircuitBreaker` / `CircuitState` | Trips after repeated encode failures to avoid hammering a broken model |
+| `ModelPool` | Pools loaded model handles for reuse under concurrent requests |
+| `PerformanceMetrics` | Tracks latency/error counters for the encoder |
+
+### SemanticEmbedder (semantic_embedder.py)
+
+Pluggable text embedder used by memory/dedup code paths that need a plain
+sentence embedding (not the multi-vector ColBERT/ColPali contract). Prefers a
+remote OpenAI-compatible `/v1/embeddings` endpoint, falls back to an in-process
+SentenceTransformer.
+
+```python
+from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
+
+# Resolution order: explicit remote_url/model_name arg ->
+# COGNIVERSE_SEMANTIC_EMBED_URL / _MODEL env vars -> local SentenceTransformer.
+embedder = get_semantic_embedder()
+vectors = embedder.encode(["find manufacturing defects"], is_query=True)  # (1, D)
+```
+
+| Class | Backend |
+|---|---|
+| `LocalSentenceTransformerEmbedder` | In-process `sentence-transformers` model |
+| `RemoteOpenAIEmbedder` | HTTP client for any OpenAI-compatible `/v1/embeddings` server (vLLM, Infinity, TEI); restores DenseOn's `query: `/`document: ` prompt prefixes and L2-normalization client-side |
+
+Instances are cached module-level by `(backend, model)` so concurrent agents
+share one embedder; `reset_semantic_embedder_cache()` clears it for tests.
+
+---
+
+## Backend Factory & Profile Validation
+
+### BackendFactory (factories/backend_factory.py)
+
+Centralizes backend construction so the Backend ↔ SchemaRegistry circular
+dependency is resolved in one place instead of scattered ad hoc wiring:
+
+```python
+from cogniverse_core.factories.backend_factory import BackendFactory
+
+backend = BackendFactory.create_backend_with_dependencies(
+    backend_class=MyBackendClass,
+    backend_config=backend_config,
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+    backend_init_config={"profile": "video_colpali_mv_frame"},
+)
+```
+
+Sequence: construct the backend (without a registry) -> build or reuse a
+`SchemaRegistry` -> inject it into the backend -> call `backend.initialize()`
+-> inject the registry into the backend's internal schema manager if present.
+
+### ProfileValidator (validation/profile_validator.py)
+
+Validates a `BackendProfileConfig` before it is created or updated — schema
+template existence, importable strategy classes, and consistent profile
+settings — so a broken profile fails at admin-API time, not at first search.
+
+```python
+from cogniverse_core.validation.profile_validator import ProfileValidator
+
+validator = ProfileValidator(config_manager, schema_templates_dir=Path("configs/schemas"))
+errors = validator.validate_profile(profile, tenant_id="acme", is_update=False)
+```
+
+`VALID_EMBEDDING_TYPES = ["multi_vector", "single_vector"]` and
+`VALID_PROFILE_TYPES = ["video", "image", "audio", "document", "code"]` are
+the only values accepted for the corresponding profile fields.
+
+### FilesystemSchemaLoader (schemas/filesystem_loader.py)
+
+Loads Vespa schema template files (`.sd` content + JSON metadata) from disk
+for `SchemaRegistry` and `BackendFactory` to deploy; implements the
+`SchemaLoader` interface from `cogniverse_sdk`.
 
 ---
 

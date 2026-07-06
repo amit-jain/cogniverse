@@ -11,9 +11,15 @@ The system extends DSPy optimization to all routing and orchestration components
 
 ### Supported Optimizers
 
-1. **ProfileSelectionAgent** - Per-query backend profile classification (modality, complexity, intent)
-2. **RoutingOptimizer** - Entity-based advanced routing
-3. **WorkflowOptimizer** - Multi-agent workflow orchestration
+The `OPTIMIZER_REGISTRY` (`registry.py`) currently registers five optimizer
+names. Two of them (`unified`, `cross_modal`) reuse the generator and schema
+of another entry rather than shipping a dedicated generator:
+
+1. **profile** (`ProfileGenerator` / `ProfileSelectionExampleSchema`) - Per-query backend profile classification (modality, complexity, intent) for `ProfileSelectionAgent`
+2. **routing** (`RoutingGenerator` / `RoutingExperienceSchema`) - Entity-based advanced routing
+3. **workflow** (`WorkflowGenerator` / `WorkflowExecutionSchema`) - Multi-agent workflow orchestration
+4. **unified** (`WorkflowGenerator` / `WorkflowExecutionSchema`, same as `workflow`) - Combines routing decisions with workflow planning for end-to-end optimization
+5. **cross_modal** (`ProfileGenerator` / `ProfileSelectionExampleSchema`, same as `profile`) - Generates queries spanning video + audio + text modalities so multi-vector fusion profiles get exercised together
 
 ## Architecture
 
@@ -53,7 +59,7 @@ flowchart TB
     end
 
     ProfileSelector -.-> LLM
-    ProfileSelector --> BackendConfig
+    Service --> BackendConfig
     BackendQuerier --> Backend
 
     subgraph DataFlow["<span style='color:#000'>Data Flow</span>"]
@@ -80,16 +86,23 @@ flowchart TB
 
 ### Generation Pipeline
 
+Steps 1, 2, and 4 are the same for every optimizer. Step 3 is shown here for
+the `routing` optimizer, the only one that exercises `PatternExtractor`,
+`AgentInferrer`, and DSPy together — `profile` and `workflow` generate
+directly from templates without those collaborators (see "Generators" in
+Core Components below).
+
 ```mermaid
 sequenceDiagram
     participant API as REST API / Python
     participant Service as SyntheticDataService
     participant PS as ProfileSelector
     participant BQ as BackendQuerier
-    participant Gen as Generator
-    participant Utils as PatternExtractor
+    participant Gen as RoutingGenerator
+    participant PE as PatternExtractor
+    participant AI as AgentInferrer
     participant Backend as Backend DB
-    participant DSPy as DSPy Modules
+    participant DSPy as ValidatedEntityQueryGenerator
 
     API->>Service: generate(request)
 
@@ -100,19 +113,19 @@ sequenceDiagram
 
     Note over Service: Step 2: Content Sampling
     Service->>BQ: query_profiles(profiles, strategy)
-    BQ->>Backend: Query via Backend interface
+    BQ->>Backend: query_metadata_documents(schema, yql)
     Backend-->>BQ: sampled documents
     BQ-->>Service: sampled_content
 
-    Note over Service: Step 3: Data Generation
+    Note over Service: Step 3: Data Generation (routing example)
     Service->>Gen: generate(content, count)
-    Gen->>Utils: extract_topics(content)
-    Gen->>Utils: extract_entities(content)
-    Gen->>Utils: infer_from_characteristics(...)
-    Utils-->>Gen: patterns
-    Gen->>DSPy: Generate queries with<br/>validation & reasoning
-    DSPy-->>Gen: validated queries
-    Gen-->>Service: List[BaseModel]
+    Gen->>PE: extract(content)
+    PE-->>Gen: patterns (topics, entities,<br/>temporal, content_types)
+    Gen->>AI: infer_from_characteristics(content,<br/>entities, relationships)
+    AI-->>Gen: chosen_agent
+    Gen->>DSPy: forward(topics, entities, entity_types)
+    DSPy-->>Gen: validated query (or<br/>template fallback)
+    Gen-->>Service: List[RoutingExperienceSchema]
 
     Note over Service: Step 4: Response
     Service->>Service: build response with<br/>metadata
@@ -148,11 +161,14 @@ Selects optimal backend profiles for data generation:
 from cogniverse_synthetic.profile_selector import ProfileSelector
 
 selector = ProfileSelector(llm_client=llm)  # or None for rule-based
-# available_profiles is a Dict[str, Dict] of profile_name -> profile_config
+# available_profiles is a Dict[str, Dict] of profile_name -> profile_config;
+# BackendConfig.profiles holds BackendProfileConfig objects, so convert first.
 profiles, reasoning = await selector.select_profiles(
     optimizer_name="modality",
     optimizer_task="Per-modality routing optimization",
-    available_profiles=backend_config.profiles,  # BackendConfig.profiles: Dict[str, BackendProfileConfig]
+    available_profiles={
+        name: p.to_dict() for name, p in backend_config.profiles.items()
+    },
     max_profiles=3
 )
 # Returns: (["video_colpali_smol500_mv_frame", ...], "reasoning...")
@@ -276,25 +292,34 @@ examples = await workflow_gen.generate(
 
 **PatternExtractor** (`utils/pattern_extraction.py`):
 
-- Extract topics (bigrams, trigrams)
+- Extract topics — bigrams, trigrams (`extract_topics`)
 
-- Extract entities (capitalized terms)
+- Extract entities — capitalized terms, CamelCase/technical terms (`extract_entities`)
 
-- Extract temporal patterns (years, dates)
+- Extract temporal patterns — years, recency modifiers (`extract_temporal_patterns`)
 
-- Extract content types (tutorial, guide, overview)
+- Extract content types — tutorial, guide, overview, etc. (`extract_content_types`)
 
-- Extract relationships (co-occurrence)
+- Extract relationships — entity co-occurrence (`extract_relationships`)
+
+- `extract(content_samples)` runs all four extractors above and returns the combined `{topics, entities, temporal, content_types}` dict (this is the single call `RoutingGenerator` makes)
 
 **AgentInferrer** (`utils/agent_inference.py`):
 
-- Map modality → agent
+Builds its modality→agent and role→agent mappings from the `agents` section
+of `config.json` at construction time (no hardcoded agent names).
 
-- Infer agents from content characteristics
+- Map modality → agent (`infer_from_modality`)
 
-- Generate workflow sequences
+- Infer agent from content characteristics — schema/embedding type, then description keywords (`infer_from_characteristics`)
 
-- Validate agent sequences
+- Infer agent from a natural-language task description (`get_agent_for_task`)
+
+- Generate a workflow agent sequence for a complexity/modality/task combination (`infer_workflow_sequence`)
+
+- List agents compatible with a modality (`get_compatible_agents`)
+
+- Validate that an agent sequence is well-formed (`validate_agent_sequence`)
 
 #### 7. DSPy Signatures and Modules
 
@@ -339,7 +364,8 @@ class ValidatedEntityQueryGenerator(dspy.Module):
     """
     Entity query generator with validation.
     Uses ChainOfThought for better quality - LLM reasons about which entities to include.
-    Validates output and retries if needed (max 3 attempts).
+    Validates output and retries if needed (max 3 attempts by default).
+    Falls back to a deterministic template query if all retries fail.
     """
 
     def __init__(self, max_retries: int = 3):
@@ -348,26 +374,97 @@ class ValidatedEntityQueryGenerator(dspy.Module):
         self.generate = dspy.ChainOfThought(GenerateEntityQuery)
 
     def forward(self, topics: str, entities: str, entity_types: str) -> dspy.Prediction:
-        # Retry loop with validation
+        entity_list = [e.strip() for e in entities.split(",") if e.strip()]
+        # Match on individual words (len > 3) so a multi-word entity like
+        # "Neural Networks" counts as present if either word appears.
+        entity_words = [
+            w.lower() for e in entity_list for w in e.split() if len(w) > 3
+        ] or [e.lower() for e in entity_list]
+
         for attempt in range(self.max_retries):
             result = self.generate(topics=topics, entities=entities, entity_types=entity_types)
 
-            # Validate: at least one entity must appear in query (case-insensitive)
-            query_lower = result.query.lower()
-            if any(entity.lower() in query_lower for entity in entity_list):
+            if result.query and any(w in result.query.lower() for w in entity_words):
+                result._retry_count = attempt
+                result._max_retries = self.max_retries
                 return result  # Valid query found!
 
-        # After max retries, raise error (no arbitrary fallbacks)
-        raise ValueError(f"Failed to generate valid query after {self.max_retries} attempts")
+        # Retries exhausted: synthesize a deterministic fallback query so the
+        # pipeline still produces output (e.g. an unreliable local LM).
+        topic_hint = topics.split(",")[0].strip() if topics else ""
+        entity_text = entity_list[0] if entity_list else "content"
+        fallback_query = (
+            f"find {topic_hint} about {entity_text}" if topic_hint else f"find {entity_text}"
+        )
+        result = dspy.Prediction(
+            query=fallback_query,
+            reasoning="Template fallback after validation retries exhausted",
+        )
+        result._retry_count = self.max_retries
+        result._max_retries = self.max_retries
+        result._fallback_used = True
+        return result
 ```
 
 **Key Features**:
 
 - **ChainOfThought**: LLM reasons before generating (better quality)
 - **Validation**: Ensures output meets requirements (e.g., entity presence)
-- **Retry Logic**: Up to 3 attempts to generate valid output
-- **No Fallbacks**: Raises exception if validation fails (no arbitrary defaults)
+- **Retry Logic**: Up to `max_retries` attempts (default 3) to generate a query containing at least one entity
+- **Template Fallback**: If every retry fails validation (or the LM returns an empty query), synthesizes a deterministic `"find {topic} about {entity}"` query and sets `_fallback_used=True` on the prediction, so `RoutingGenerator` can flag the example's `metadata["_generation_metadata"]["fallback_used"]` for downstream filtering
 - **Optimization Ready**: Can be compiled with DSPy optimizers (BootstrapFewShot, MIPRO, etc.)
+
+#### 8. Approval System (`approval/`)
+
+Human-in-the-loop review and feedback loop for low-confidence synthetic
+examples. Implements the domain-agnostic `ConfidenceExtractor` and
+`FeedbackHandler` interfaces from `cogniverse_core.approval.interfaces`.
+
+**SyntheticDataConfidenceExtractor** (`approval/confidence_extractor.py`):
+Scores a generated example 0-1 from DSPy generation signals — DSPy retry
+count, entity presence in the query, query length, and reasoning presence —
+so low-confidence examples can be routed to human review instead of used
+directly for training.
+
+```python
+from cogniverse_synthetic.approval.confidence_extractor import (
+    SyntheticDataConfidenceExtractor,
+)
+
+extractor = SyntheticDataConfidenceExtractor(
+    min_query_length=10, max_query_length=200, retry_penalty=0.15
+)
+confidence = extractor.extract({
+    "query": "find TensorFlow tutorial",
+    "entities": ["TensorFlow"],
+    "reasoning": "Including TensorFlow as the primary entity",
+    "_generation_metadata": {"retry_count": 0},
+})
+# confidence: float in [0, 1]; extractor.get_confidence_breakdown(...) explains the factors
+```
+
+**SyntheticDataFeedbackHandler** (`approval/feedback_handler.py`):
+Regenerates a rejected example by calling `ValidatedEntityQueryGenerator.forward`
+directly, applying any human-supplied `entities`/`topics` corrections from the
+`ReviewDecision`. Returns a new `ReviewItem` with
+`status=ApprovalStatus.REGENERATED`, or `None` after
+`max_regeneration_attempts` failed attempts.
+
+```python
+from cogniverse_synthetic.approval.feedback_handler import SyntheticDataFeedbackHandler
+from cogniverse_core.approval.interfaces import ReviewDecision
+
+handler = SyntheticDataFeedbackHandler(max_regeneration_attempts=2)
+new_item = await handler.process_rejection(
+    item,
+    ReviewDecision(
+        item_id=item.item_id,
+        approved=False,
+        feedback="entity should be PyTorch, not TensorFlow",
+        corrections={"entities": ["PyTorch"]},
+    ),
+)
+```
 
 ## Usage
 
@@ -487,7 +584,8 @@ curl -X POST http://localhost:8000/synthetic/generate \
     "optimizer": "profile",
     "count": 50,
     "vespa_sample_size": 100,
-    "max_profiles": 2
+    "max_profiles": 2,
+    "tenant_id": "your_org:production"
   }'
 ```
 
@@ -511,9 +609,26 @@ curl http://localhost:8000/synthetic/health
 
 **POST /synthetic/batch/generate**
 ```bash
-curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=routing&count_per_batch=100&num_batches=5"
+curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=routing&count_per_batch=100&num_batches=5&tenant_id=your_org:production"
 # Generates 500 examples across 5 batches
 ```
+
+### CLI
+
+`cogniverse_runtime.optimization_cli` exposes a `synthetic` mode that wraps
+`SyntheticDataService` directly (`run_synthetic_generation` in
+`optimization_cli.py`), then saves the generated examples as demonstrations
+via `ArtifactManager` for later merge into batch optimization jobs:
+
+```bash
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode synthetic --tenant-id your_org:production --agents profile,workflow
+```
+
+`--agents` is a comma-separated list of optimizer types (defaults to
+`simba,profile,workflow` if omitted). `RoutingGenerator`'s DSPy module is
+configured from the tenant's LM settings before generation runs, since the
+mode executes inside an asyncio task where `dspy.configure` cannot be called.
 
 ## Integration with Optimizers
 
@@ -525,7 +640,9 @@ from cogniverse_synthetic.schemas import SyntheticDataRequest
 
 # Generate training data for ProfileSelectionAgent
 service = SyntheticDataService()
-request = SyntheticDataRequest(optimizer="profile", count=200)
+request = SyntheticDataRequest(
+    optimizer="profile", count=200, tenant_id="your_org:production"
+)
 response = await service.generate(request)
 
 # Pass examples to run_profile_optimization (cogniverse_runtime.optimization_cli)
@@ -542,7 +659,9 @@ from cogniverse_synthetic.schemas import SyntheticDataRequest
 
 # Generate workflow execution patterns
 service = SyntheticDataService()
-request = SyntheticDataRequest(optimizer="workflow", count=200)
+request = SyntheticDataRequest(
+    optimizer="workflow", count=200, tenant_id="your_org:production"
+)
 response = await service.generate(request)
 
 # Convert to WorkflowExecution
@@ -628,6 +747,7 @@ uv run pytest tests/routing/unit/synthetic/test_generators_integration.py -v
 - Schema tests (`test_schemas.py`)
 - Service tests (`test_service.py`)
 - Approval system tests (`test_approval_system.py`)
+- Backend querier tests (`test_backend_querier.py`)
 
 ## Development
 
@@ -664,12 +784,11 @@ class NewOptimizerGenerator(BaseGenerator):
         return examples
 ```
 
-4. **Add to Service** in `service.py`:
+4. **Wire into `_get_generator`** in `service.py` (generators are created lazily,
+   dispatched on `optimizer_name`):
 ```python
-self.generators = {
-    # ... existing
-    "NewOptimizerGenerator": NewOptimizerGenerator(),
-}
+elif optimizer_name == "new_optimizer":
+    generator = NewOptimizerGenerator()
 ```
 
 5. **Write Tests**:
@@ -703,13 +822,13 @@ async def test_new_optimizer_generator():
 - **Fix**: Provide `backend_config` with actual profile definitions
 - **Note**: System uses defaults if no config provided
 
-**Issue**: `ValueError: RoutingGenerator requires optimizer_config`
+**Issue**: `ValueError: RoutingGenerator requires optimizer configuration`
 - **Fix**: Provide `OptimizerGenerationConfig` with DSPy modules configuration
 - **Note**: Configuration is required - no defaults or fallbacks
 
-**Issue**: `ValueError: Failed to generate query containing entities after 3 attempts`
-- **Fix**: Check DSPy LM is configured correctly (use `create_dspy_lm()` and `dspy.context(lm=...)`)
-- **Note**: ValidatedEntityQueryGenerator retries 3 times before raising error
+**Issue**: Generated routing queries don't mention any of the requested entities
+- **Fix**: Check DSPy LM is configured correctly (use `create_dspy_lm()` and `dspy.context(lm=...)`); a misconfigured or unreliable LM causes every retry to fail validation
+- **Note**: `ValidatedEntityQueryGenerator` does not raise after exhausting `max_retries` — it emits a deterministic `"find {topic} about {entity}"` template query and sets `_fallback_used=True` / `metadata["_generation_metadata"]["fallback_used"]` on the example, so these lower-quality examples can be filtered out downstream instead of crashing generation
 
 **Issue**: Tests fail with import errors
 - **Fix**: Reinstall package: `uv pip install -e libs/synthetic`
@@ -748,7 +867,7 @@ tests/
 ├── synthetic/
 │   ├── integration/                # Integration tests (test_profile_synthetic_service.py, etc.)
 │   └── unit/                       # Unit tests (test_profile_generator.py, etc.)
-└── routing/unit/synthetic/         # Routing-focused synthetic unit tests (6 test files + conftest.py)
+└── routing/unit/synthetic/         # Routing-focused synthetic unit tests (7 test files + conftest.py)
 ```
 
 ## Related Documentation

@@ -39,9 +39,15 @@ libs/agents/cogniverse_agents/search/
 ├── hybrid_reranker.py         # Hybrid fusion strategies
 ├── rerank_service.py          # Strategy selection + dict<->result conversion
 ├── temporal_query.py          # Query temporal-range extraction (extract_time_range)
+├── types.py                   # Shared types (QueryModality, RerankerSearchResult)
 └── rerankers/                 # Reserved for future reranker implementations
     └── __init__.py
 ```
+
+`SearchResult` and `SearchBackend` are **not** defined in this package — `__init__.py`
+re-exports them from `cogniverse_sdk` (the canonical home). Earlier byte-identical
+duplicates in `cogniverse_agents.search.base` and `cogniverse_runtime.search.base`
+have been removed.
 
 ---
 
@@ -207,11 +213,55 @@ class SearchBackend(ABC):
 
 - `initialize(config: Dict[str, Any]) -> None`: Initialize the backend with configuration
 
-- `get_document(document_id: str) -> Optional[Document]`: Retrieve specific document
+- `get_document(document_id: str) -> Optional[Document]`: Retrieve a specific document
+
+- `batch_get_documents(document_ids: List[str]) -> List[Optional[Document]]`: Retrieve multiple documents by ID
+
+- `get_statistics() -> Dict[str, Any]`: Backend statistics (document count, index size, etc.)
 
 ---
 
-### 3. SearchService (service.py:18-305)
+### 3. Shared Types (types.py)
+
+```python
+class QueryModality(Enum):
+    """Content-modality taxonomy for queries and search results."""
+
+    VIDEO = "video"
+    IMAGE = "image"
+    AUDIO = "audio"
+    DOCUMENT = "document"
+    TEXT = "text"
+    MIXED = "mixed"
+
+
+@dataclass
+class RerankerSearchResult:
+    """Search result shape consumed by rerankers for scoring and comparison.
+
+    Distinct from `cogniverse_sdk.document.SearchResult` (Document-object based,
+    used for API responses) — this dataclass is the reranker's internal view:
+    flat fields for fast access during scoring loops.
+    """
+
+    id: str
+    title: str
+    content: str
+    modality: str
+    score: float
+    metadata: Dict[str, Any]
+    timestamp: Optional[datetime] = None
+```
+
+`QueryModality` is a closed taxonomy shared with the offline routing/optimization
+pipeline (`routing/modality_*` modules, `routing/xgboost_meta_models.py`, dashboards,
+`evaluation/quality_monitor.py`) — it doubles as a dict key for per-modality
+analytics buckets and XGBoost feature schemas, so adding or removing a value is a
+training-contract change for the offline optimization pipeline, not a local edit.
+
+---
+
+### 4. SearchService (service.py:18-280)
 
 ```python
 class SearchService:
@@ -258,7 +308,7 @@ def search(
 
     Args:
         query: Text query
-        profile: Backend profile to use (e.g. "frame_based_colpali")
+        profile: Backend profile to use (e.g. "video_colpali_smol500_mv_frame")
         tenant_id: Tenant identifier
         top_k: Number of results to return
         filters: Optional filters (date range, etc.)
@@ -267,11 +317,26 @@ def search(
     Returns:
         List of SearchResult objects
     """
+
+def get_document(
+    self, document_id: str, tenant_id: str, profile: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve a specific document by ID.
+
+    Returns a plain dict (document_id, source_id, content_type, metadata,
+    temporal_info) rather than a Document/SearchResult object, or None if
+    the backend has no matching document.
+    """
 ```
 
 **Integration Points:**
 
-- **Telemetry**: `search_span`, `encode_span`, `backend_search_span` for multi-tenant tracking
+- **Telemetry**: `SearchService.search()` opens `search_span` (whole request) and
+  `backend_search_span` (backend call) for multi-tenant tracking.
+  Query encoding is delegated to the backend, which opens its own `encode_span`
+  only when the resolved ranking strategy actually needs embeddings — encoding
+  is no longer performed eagerly in `SearchService` itself.
 
 - **Query Encoder**: `QueryEncoderFactory` for strategy-aware encoding
 
@@ -279,7 +344,7 @@ def search(
 
 ---
 
-### 4. MultiModalReranker (multi_modal_reranker.py:21-383)
+### 5. MultiModalReranker (multi_modal_reranker.py:21-383)
 
 ```python
 class MultiModalReranker:
@@ -308,13 +373,26 @@ class MultiModalReranker:
 **Key Methods:**
 
 ```python
+async def rerank(
+    self,
+    query: str,
+    results: List[RerankerSearchResult],
+    modalities: Optional[List[QueryModality]] = None,
+    context: Optional[Dict] = None,
+) -> List[RerankerSearchResult]:
+    """Uniform reranker entry point shared by all rerankers (MultiModalReranker,
+    LearnedReranker, HybridReranker all expose this same signature). Delegates
+    to `rerank_results`, defaulting modalities to []. This is what
+    `rerank_service.build_reranker(...).rerank(...)` calls regardless of strategy.
+    """
+
 async def rerank_results(
     self,
-    results: List[SearchResult],
+    results: List[RerankerSearchResult],
     query: str,
     modalities: List[QueryModality],
     context: Optional[Dict] = None
-) -> List[SearchResult]:
+) -> List[RerankerSearchResult]:
     """
     Rerank using heuristic multi-modal scoring
 
@@ -330,33 +408,38 @@ async def rerank_results(
     """
 ```
 
+**Other Methods:**
+
+- `get_modality_distribution(results) -> Dict[str, int]`: Count of results per modality
+- `analyze_ranking_quality(results) -> Dict[str, Any]`: Diversity entropy, average score, temporal coverage
+
 **Scoring Logic:**
 
-1. **Cross-Modal Score** (multi_modal_reranker.py:163-204):
+1. **Cross-Modal Score** (multi_modal_reranker.py:145-186):
    - Direct modality match: 1.0
    - Compatible modalities (video↔image): 0.7
    - Mixed query accepts all: 0.8
    - Unrelated modalities: 0.3
 
-2. **Temporal Score** (multi_modal_reranker.py:206-251):
+2. **Temporal Score** (multi_modal_reranker.py:188-236):
    - Inside time range (centered): 0.7-1.0
    - <30 days outside: 0.5
    - 30-90 days: 0.3
    - >365 days: 0.1
-   - The time range is supplied by `rerank_service` via `temporal_query.extract_time_range(query)`, which returns a `(start, end)` UTC window only for queries with explicit temporal intent ("last 7 days", "in 2023", "yesterday"). Non-temporal queries get no range, so the score stays neutral (0.5).
+   - The time range is supplied by `rerank_service` via `temporal_query.extract_time_range(query)`, which returns a `(start, end)` UTC window only for queries matching one of its recognized patterns: `last/past/previous N day(s)/week(s)/month(s)/year(s)`, `last/past/previous day/week/month/year`, `this week/month/year`, `yesterday`, `today`, or `in/from/since/during <YYYY>`. Non-temporal queries get no range, so the score stays neutral (0.5).
 
-3. **Complementarity Score** (multi_modal_reranker.py:253-292):
+3. **Complementarity Score** (multi_modal_reranker.py:238-277):
    - Keyword overlap analysis
    - Low overlap = high complementarity
    - Score = 1.0 - avg_overlap
 
-4. **Diversity Score** (multi_modal_reranker.py:294-327):
+4. **Diversity Score** (multi_modal_reranker.py:279-312):
    - First result from modality: 1.0
    - Second: 0.8, Third: 0.6, Fourth: 0.4, Fifth+: 0.2
 
 ---
 
-### 5. LearnedReranker (learned_reranker.py:28-239)
+### 6. LearnedReranker (learned_reranker.py:28-245)
 
 ```python
 class LearnedReranker:
@@ -392,9 +475,9 @@ class LearnedReranker:
             "model": "cohere",
             "supported_models": {
               "cohere": "cohere/rerank-english-v3.0",
-              "ollama": "openai/bge-reranker-v2-m3"
+              "ollama_bge": "openai/bge-reranker-v2-m3"
             },
-            "api_base": "http://localhost:11434"  # For Ollama
+            "api_base": "http://localhost:11434/v1"  # For Ollama (OpenAI-compat endpoint)
           }
         }
         """
@@ -406,9 +489,9 @@ class LearnedReranker:
 async def rerank(
     self,
     query: str,
-    results: List[SearchResult],
+    results: List[RerankerSearchResult],
     top_n: Optional[int] = None
-) -> List[SearchResult]:
+) -> List[RerankerSearchResult]:
     """
     Rerank using LiteLLM neural model
 
@@ -416,7 +499,7 @@ async def rerank(
     1. Limit to max_results_to_rerank (default 100)
     2. Prepare documents as "title content" strings
     3. Call LiteLLM arerank API
-    4. Map relevance scores back to SearchResult
+    4. Map relevance scores back to RerankerSearchResult
     5. Add metadata: reranking_score, reranker_model, original_rank
 
     Returns:
@@ -424,19 +507,24 @@ async def rerank(
     """
 ```
 
+**Other Methods:**
+
+- `rerank_sync(query, results, top_n=None) -> List[RerankerSearchResult]`: Synchronous variant that calls LiteLLM's `rerank` instead of `arerank`
+- `get_model_info() -> Dict[str, Any]`: Returns `{"model", "max_results_to_rerank", "default_top_n"}`
+
 **LiteLLM Integration:**
 
 - Unified API for all reranking models
 
 - For Ollama: uses OpenAI-compatible endpoint with custom `api_base`
 
-- Automatic batching and error handling
-
-- Fallback to original results on failure
+- On failure, `rerank`/`rerank_sync` log the error and **re-raise** — they do not
+  silently fall back to the original order. Callers that want a heuristic
+  fallback must catch the exception themselves (see Error Handling below).
 
 ---
 
-### 6. HybridReranker (hybrid_reranker.py:26-286)
+### 7. HybridReranker (hybrid_reranker.py:26-286)
 
 ```python
 class HybridReranker:
@@ -471,9 +559,26 @@ class HybridReranker:
         """
 ```
 
-**Strategy Implementations:**
+**Key Methods:**
 
-1. **Weighted Ensemble** (hybrid_reranker.py:148-193):
+```python
+async def rerank(
+    self,
+    query: str,
+    results: List[RerankerSearchResult],
+    modalities: Optional[List[QueryModality]] = None,
+    context: Optional[Dict] = None,
+) -> List[RerankerSearchResult]:
+    """Uniform reranker entry point shared by all rerankers.
+
+    Delegates to `rerank_hybrid`; callers without modality detection pass
+    none and the heuristic/learned scoring degrades gracefully.
+    """
+```
+
+**Strategy Implementations** (all reached via `rerank_hybrid`, hybrid_reranker.py:129-158):
+
+1. **Weighted Ensemble** (hybrid_reranker.py:160-205):
 ```python
 # Both rerankers run in parallel
 heuristic_results = await self.heuristic_reranker.rerank_results(...)
@@ -488,7 +593,7 @@ final_score = (
 # Metadata includes: heuristic_score, learned_score, fusion_strategy
 ```
 
-2. **Cascade** (hybrid_reranker.py:195-222):
+2. **Cascade** (hybrid_reranker.py:207-234):
 ```python
 # Step 1: Heuristic filtering (top 50% or min 10)
 heuristic_results = await self.heuristic_reranker.rerank_results(...)
@@ -499,7 +604,7 @@ filtered = heuristic_results[:top_k]
 final_results = await self.learned_reranker.rerank(query, filtered)
 ```
 
-3. **Consensus** (hybrid_reranker.py:224-274):
+3. **Consensus** (hybrid_reranker.py:236-286):
 ```python
 # Get both rankings
 heuristic_results = await self.heuristic_reranker.rerank_results(...)
@@ -517,7 +622,7 @@ consensus_score = (h_score * l_score) ** 0.5
 
 ---
 
-### 7. Strategy Selection (search router)
+### 8. Strategy Selection (search router)
 
 Strategy routing is performed by `rerank_service.py`, which exposes two
 functions: `build_reranker()` constructs the live reranker for a named
@@ -551,9 +656,46 @@ reranked_dicts = await rerank_result_dicts(
 
 ---
 
+### 9. Evaluation Bridge (cogniverse_evaluation/core/reranking.py)
+
+**Package:** `cogniverse_evaluation` (Core Layer)
+
+The evaluation harness reranks each trace's retrieved results with the same
+live reranker the search path ships, via the shared `rerank_result_dicts`
+service — so offline metrics measure what production actually does, not a
+separate eval-only reranking implementation.
+
+```python
+async def apply_reranking_to_traces(
+    traces: List[Dict[str, Any]],
+    strategy: str,
+    config: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Rerank each trace's ``results`` with the live ``strategy`` reranker.
+
+    Args:
+        traces: trace dicts, each with a ``query`` and a ``results`` list of dicts.
+        strategy: live reranker name ("learned" / "hybrid" / "multi_modal").
+        config: optional; reads ``tenant_id`` and ``config_manager`` (needed by
+            the learned/hybrid rerankers to load their tenant-scoped settings).
+
+    Returns:
+        The same traces, with each ``results`` reordered by the reranker. A
+        per-trace failure is logged and leaves that trace's results unchanged
+        rather than crashing the whole evaluation run.
+    """
+```
+
+---
+
 ## Reranking Strategies
 
 ### Strategy Comparison
+
+Speed figures below are indicative order-of-magnitude estimates for the
+underlying call pattern (in-process scoring vs. a network round-trip to a
+reranking API/model) — the repo has no pinned latency benchmark for these
+numbers.
 
 | Strategy | Speed | Quality | Use Case |
 |----------|-------|---------|----------|
@@ -597,11 +739,11 @@ reranked_dicts = await rerank_result_dicts(
 {
   "reranking": {
     "enabled": true,
-    "model": "ollama",
+    "model": "ollama_bge",
     "supported_models": {
-      "ollama": "openai/bge-reranker-v2-m3"
+      "ollama_bge": "openai/bge-reranker-v2-m3"
     },
-    "api_base": "http://localhost:11434",
+    "api_base": "http://localhost:11434/v1",
     "use_hybrid": false
   }
 }
@@ -626,7 +768,11 @@ reranked_dicts = await rerank_result_dicts(
 {
   "reranking": {
     "enabled": true,
-    "model": "ollama",
+    "model": "ollama_bge",
+    "supported_models": {
+      "ollama_bge": "openai/bge-reranker-v2-m3"
+    },
+    "api_base": "http://localhost:11434/v1",
     "use_hybrid": true,
     "hybrid_strategy": "cascade"
   }
@@ -640,21 +786,20 @@ reranked_dicts = await rerank_result_dicts(
 ### Example 1: Basic Search with SearchService
 
 ```python
-from cogniverse_agents.search.service import SearchService
-
-# Initialize search service
-from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
-
-config = {
-    "backend_url": "http://localhost",
-    "backend_port": 8080,
-    "search_backend": "vespa"
-}
-config_manager = create_default_config_manager()
-# Note: SchemaLoader is an abstract interface; use concrete implementation
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
+
+from cogniverse_agents.search.service import SearchService
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+# `config` is the full config.json content; SearchService reads `search_backend`
+# and `config["backend"]` directly, but profile/URL/port resolution happens
+# through `config_manager` at query time (see _get_profile_config/_get_backend),
+# so a minimal dict is enough here.
+config = {"search_backend": "vespa"}
+config_manager = create_default_config_manager()
+# SchemaLoader is an abstract interface (cogniverse_sdk.interfaces.schema_loader);
+# pass a concrete implementation.
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
 service = SearchService(
@@ -666,7 +811,7 @@ service = SearchService(
 # Perform search
 results = service.search(
     query="Show me videos about quantum computing",
-    profile="frame_based_colpali",
+    profile="video_colpali_smol500_mv_frame",
     tenant_id="user_123",
     top_k=10,
 )
@@ -761,6 +906,7 @@ print(f"Max rerank: {info['max_results_to_rerank']}")
 from cogniverse_agents.search.hybrid_reranker import HybridReranker
 from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
 from cogniverse_agents.search.learned_reranker import LearnedReranker
+from cogniverse_agents.search.types import QueryModality
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Initialize hybrid reranker
@@ -798,6 +944,8 @@ for result in reranked[:3]:
 ### Example 5: Strategy Selection (Production)
 
 ```python
+import asyncio
+
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Initialize config manager (REQUIRED for learned/hybrid)
@@ -820,13 +968,17 @@ else:  # "multi_modal" — heuristic base, no config needed
 
     reranker = MultiModalReranker()
 
-reranked = reranker.rerank(query="deep learning frameworks", results=search_results)
+# rerank() is async and has the same signature on all three reranker classes
+reranked = asyncio.run(
+    reranker.rerank(query="deep learning frameworks", results=search_results)
+)
 ```
 
 ### Example 6: Cascade Strategy for Efficiency
 
 ```python
 from cogniverse_agents.search.hybrid_reranker import HybridReranker
+from cogniverse_agents.search.types import QueryModality
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Cascade: Fast heuristic filter → Expensive learned rerank
@@ -855,6 +1007,11 @@ print(f"Reranked {len(reranked)} results efficiently")
 ## Production Considerations
 
 ### Performance Characteristics
+
+The figures below are indicative estimates for the call pattern involved (pure
+in-process scoring vs. a network round-trip to an external API or local model
+server) — the repo has no pinned latency benchmark for reranking, so treat
+these as starting points to validate against your own deployment.
 
 **Heuristic Reranking**:
 
@@ -968,20 +1125,22 @@ except Exception as e:
 
 **Key Test Files**:
 
-- `tests/routing/unit/test_multi_modal_reranker.py`: Heuristic scoring logic
-- `tests/routing/unit/test_learned_reranker.py`: LiteLLM integration
-- `tests/evaluation/unit/test_reranking.py`: Reranking evaluation
+- `tests/routing/unit/test_multi_modal_reranker.py`: Heuristic scoring logic (`TestMultiModalReranker`, `TestRankingDiversity`)
+- `tests/routing/unit/test_learned_reranker.py`: `LearnedReranker` config loading, `rerank`/`rerank_sync`/`get_model_info` (mocked LiteLLM)
+- `tests/routing/unit/test_learned_reranker_integration.py`: End-to-end learned + hybrid reranking scenarios (`TestLearnedRerankingIntegration`, `TestHybridRerankingIntegration`, `TestRerankingOAICompat`, `TestRerankingCorrectsRetrievalOrder`) — named "integration" but lives in `unit/` and mocks LiteLLM
+- `tests/evaluation/unit/test_reranking.py`: `apply_reranking_to_traces` evaluation bridge (reorders trace results, no-op on unknown strategy, timestamp parsing)
 
-**Example Test**:
+**Example Test** (adapted from `tests/routing/unit/test_multi_modal_reranker.py::test_cross_modal_score`):
 ```python
 from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
 from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
 
 # Note: There are TWO distinct result classes:
-# 1. cogniverse_agents.search.base.SearchResult (uses Document object, for API responses)
+# 1. cogniverse_sdk.document.SearchResult (Document-object based, for API
+#    responses; re-exported from cogniverse_agents.search)
 # 2. cogniverse_agents.search.types.RerankerSearchResult (dataclass, for reranking)
 
-def test_cross_modal_scoring():
+def test_cross_modal_score():
     """Test cross-modal scoring logic (see tests/routing/unit/test_multi_modal_reranker.py)"""
     reranker = MultiModalReranker()
 
@@ -1010,35 +1169,36 @@ def test_cross_modal_scoring():
 
 ### Integration Tests
 
-**Location**: `tests/routing/integration/`
+**Location**: `tests/routing/unit/test_learned_reranker_integration.py` and
+`tests/evaluation/unit/test_reranking.py` (there is no `tests/routing/integration/`
+suite dedicated to reranking; that directory covers deep-research, feature, and
+trace-connectivity integration instead).
 
-**Test Scenarios**:
-1. End-to-end search with reranking (`test_learned_reranker_integration.py`)
-2. Query expansion with reranking (`test_query_expansion_reranking_integration.py`)
-3. Production routing integration (`test_production_routing_integration.py`)
-4. Modality optimization integration (`test_modality_optimization_integration.py`)
+**Test Scenarios** (`test_learned_reranker_integration.py`):
+1. Learned reranker against a mocked LiteLLM response, and against a local OAI-compatible model (`TestLearnedRerankingIntegration`)
+2. Hybrid weighted-ensemble, cascade, and consensus strategies end-to-end (`TestHybridRerankingIntegration`)
+3. OpenAI-compatible local reranker endpoint (`TestRerankingOAICompat`)
+4. Reranker promotes the correct answer over a misleading top hit from initial retrieval (`TestRerankingCorrectsRetrievalOrder`)
 
-**Example**:
+**Example** (adapted from `TestHybridRerankingIntegration.test_hybrid_weighted_ensemble`):
 ```python
 @pytest.mark.asyncio
-async def test_hybrid_weighted_ensemble():
-    # Setup
-    search_service = SearchService(config, config_manager=config_manager, schema_loader=schema_loader)
-    hybrid_reranker = HybridReranker(strategy="weighted_ensemble")
+async def test_hybrid_weighted_ensemble(sample_results, mock_config_manager):
+    hybrid_reranker = HybridReranker(
+        strategy="weighted_ensemble",
+        tenant_id="test:unit",
+        config_manager=mock_config_manager,
+    )
 
-    # Initial search
-    results = search_service.search("quantum computing", profile="frame_based_colpali", tenant_id="default", top_k=50)
-
-    # Rerank
     reranked = await hybrid_reranker.rerank_hybrid(
         query="quantum computing",
-        results=results,
+        results=sample_results,
         modalities=[QueryModality.VIDEO],
         context={}
     )
 
     # Verify
-    assert len(reranked) <= 50
+    assert len(reranked) == len(sample_results)
     assert all("reranking_score" in r.metadata for r in reranked)
     assert all("fusion_strategy" in r.metadata for r in reranked)
 
@@ -1049,8 +1209,14 @@ async def test_hybrid_weighted_ensemble():
 
 ### Performance Tests
 
-**Benchmarks**:
+There is no pinned latency benchmark in the repo for reranking; the snippet
+below illustrates how you'd measure it locally (`results`, `query`, and
+`modalities` are assumed to come from a prior search call, and
+`config_manager`/`tenant_id` follow the same dependency-injection contract as
+every other reranker constructor):
+
 ```python
+import asyncio
 import timeit
 
 # Heuristic reranking benchmark
@@ -1059,26 +1225,27 @@ def bench_heuristic():
     asyncio.run(reranker.rerank_results(results, query, modalities, {}))
 
 time = timeit.timeit(bench_heuristic, number=100) / 100
-print(f"Heuristic: {time*1000:.1f}ms")  # Expected: 5-10ms
+print(f"Heuristic: {time*1000:.1f}ms")
 
 # Learned reranking benchmark
 def bench_learned():
-    reranker = LearnedReranker()
+    reranker = LearnedReranker(tenant_id=tenant_id, config_manager=config_manager)
     asyncio.run(reranker.rerank(query, results))
 
 time = timeit.timeit(bench_learned, number=10) / 10
-print(f"Learned: {time*1000:.1f}ms")  # Expected: 200-500ms
+print(f"Learned: {time*1000:.1f}ms")  # dominated by the network round-trip to the reranking API/model
 ```
 
 ---
 
 ## Related Modules
 
-- **Agents Module** (01): VideoSearchAgent uses SearchService
-- **Routing Module** (02): Routes queries to search
-- **Backends Module** (04): Vespa provides initial search results
-- **Cache Module** (10): Caches reranked results
-- **Telemetry Module** (05): Tracks reranking performance
+- **[runtime.md](runtime.md)**: `routers/search.py` (the `/search` route) and `agent_dispatcher.py` construct `SearchService` directly — `SearchAgent` (`cogniverse_agents/search_agent.py`) does its own encoding/backend calls and does not go through `SearchService`
+- **[routing.md](routing.md)**: Routes queries to search and selects the reranking strategy
+- **[backends.md](backends.md)**: Vespa `SearchBackend` implementation provides the initial search results this module reranks
+- **[cache.md](cache.md)**: General-purpose caching infrastructure (filesystem/S3/MinIO backends) that can be used to cache reranked results, as shown in Scalability Strategies above — reranking has no dedicated built-in cache
+- **[telemetry.md](telemetry.md)**: `search_span`, `encode_span`, and `backend_search_span` instrument the search/rerank path
+- **[evaluation.md](evaluation.md)**: `apply_reranking_to_traces` reruns the live reranker over evaluation traces (see Evaluation Bridge above); `core/solvers.py` also constructs `SearchService` directly to run fresh searches
 
 ---
 
@@ -1096,4 +1263,4 @@ print(f"Learned: {time*1000:.1f}ms")  # Expected: 200-500ms
 
 ---
 
-**Total Lines:** ~1100
+**Total Lines:** ~1260

@@ -12,8 +12,8 @@ Generates high-quality training data for DSPy optimizers by sampling real conten
 
 The `cogniverse-synthetic` package provides:
 - **DSPy-Driven Generation**: Uses DSPy signatures and modules for LLM-driven query generation
-- **Backend-Agnostic Sampling**: Works with any vector database (Vespa, Pinecone, Weaviate)
-- **Optimizer Support**: Generates data for Modality, CrossModal, Routing, and Workflow optimizers
+- **Backend-Agnostic Sampling**: Works with any backend implementing the `Backend` interface (VespaBackend ships today)
+- **Optimizer Support**: Generates data for the `profile`, `routing`, `workflow`, `unified`, and `cross_modal` optimizers
 - **Validated Output**: Built-in validation with retry logic to ensure quality
 - **REST API**: FastAPI router for HTTP endpoints
 
@@ -21,7 +21,7 @@ The `cogniverse-synthetic` package provides:
 
 ## Architecture
 
-### Position in 10-Package Structure
+### Position in the 13-Package Workspace
 
 ```
 Foundation Layer (Blue)
@@ -40,20 +40,24 @@ Implementation Layer (Yellow/Green)
 
 Application Layer (Light Blue/Purple)
 ├── cogniverse-runtime ← Uses synthetic data
-└── cogniverse-dashboard
+├── cogniverse-dashboard
+├── cogniverse-cli
+├── cogniverse-finetuning ← Reuses cogniverse-synthetic
+└── cogniverse-messaging
 ```
 
 ### Dependencies
 
 **Workspace Dependencies:**
-- `cogniverse-core` (required) - Configuration, agent context, utilities
-- `cogniverse-foundation` (transitive) - Base configuration and telemetry
+- `cogniverse-sdk` (required) - Backend interface
+- `cogniverse-foundation` (required) - Configuration classes (`BackendConfig`, `SyntheticGeneratorConfig`, etc.)
+- `cogniverse-core` (imported at runtime for `SYSTEM_TENANT_ID`, though not declared in `pyproject.toml`)
 
 **External Dependencies:**
-- `dspy-ai>=2.5.0` - DSPy framework for LLM programs
-- `pydantic>=2.0.0` - Data validation and schemas
-- `fastapi>=0.104.0` - REST API framework
-- `litellm>=1.0.0` - Unified LLM interface
+- `dspy-ai==3.1.3` - DSPy framework for LLM programs
+- `pydantic==2.12.5` - Data validation and schemas
+- `fastapi==0.135.3` - REST API framework
+- `httpx==0.28.1` - HTTP client
 
 ---
 
@@ -71,13 +75,14 @@ service = SyntheticDataService(backend=vespa_backend)
 
 # Generate data with DSPy-driven query generation
 request = SyntheticDataRequest(
-    optimizer="modality",
-    count=100
+    optimizer="profile",
+    count=100,
+    tenant_id="acme:production",
 )
 
 response = await service.generate(request)
 print(f"Generated {response.count} examples")
-print(f"DSPy modules used: {response.metadata.get('dspy_modules_used')}")
+print(f"Backend query strategy: {response.metadata['backend_query_strategy']}")
 ```
 
 ### 2. Backend-Agnostic Sampling
@@ -88,47 +93,51 @@ Works with any vector database through Backend interface:
 from cogniverse_vespa import VespaBackend
 from cogniverse_synthetic import SyntheticDataService
 
-# Use Vespa backend
-vespa_backend = VespaBackend(config)
+# Use Vespa backend (backend_config, schema_loader, config_manager are all required)
+vespa_backend = VespaBackend(
+    backend_config=backend_config,
+    schema_loader=schema_loader,
+    config_manager=config_manager,
+)
 service = SyntheticDataService(backend=vespa_backend)
 
-# Or use Pinecone, Weaviate, etc.
-# pinecone_backend = PineconeBackend(config)
-# service = SyntheticDataService(backend=pinecone_backend)
+# Any other backend implementing cogniverse_sdk.interfaces.backend.Backend
+# can be substituted the same way — VespaBackend is the implementation
+# that ships today.
 ```
 
 ### 3. Optimizer Support
 
-Supports multiple DSPy optimizers:
+Supports the optimizers registered in `OPTIMIZER_REGISTRY` (`profile`,
+`routing`, `workflow`, `unified`, `cross_modal`):
 
 ```python
-# Modality Optimizer
+# Profile Optimizer
 request = SyntheticDataRequest(
-    optimizer="modality",
+    optimizer="profile",
     count=100,
-    modalities=["video", "image", "pdf"]
-)
-
-# CrossModal Optimizer
-request = SyntheticDataRequest(
-    optimizer="crossmodal",
-    count=50,
-    source_modality="video",
-    target_modality="image"
+    tenant_id="acme:production",
 )
 
 # Routing Optimizer
 request = SyntheticDataRequest(
     optimizer="routing",
     count=75,
-    route_types=["direct", "fallback", "hybrid"]
+    tenant_id="acme:production",
 )
 
 # Workflow Optimizer
 request = SyntheticDataRequest(
     optimizer="workflow",
     count=100,
-    workflow_types=["ingestion", "search", "analysis"]
+    tenant_id="acme:production",
+)
+
+# Cross-Modal Optimizer
+request = SyntheticDataRequest(
+    optimizer="cross_modal",
+    count=50,
+    tenant_id="acme:production",
 )
 ```
 
@@ -140,11 +149,13 @@ Built-in validation ensures quality:
 # Automatic validation with 3 retries
 response = await service.generate(request)
 
-# All examples are validated
-for example in response.examples:
-    assert example.query  # Non-empty query
-    assert example.modality  # Valid modality
-    assert example.ground_truth  # Expected answer
+# response.data is a list of dicts conforming to the optimizer's schema
+# (ProfileSelectionExampleSchema for "profile", RoutingExperienceSchema for
+# "routing", WorkflowExecutionSchema for "workflow"/"unified"/"cross_modal")
+for example in response.data:
+    assert example["query"]              # Non-empty query
+    assert example["modality"]           # Valid modality
+    assert example["selected_profile"]   # Chosen backend profile
 ```
 
 ---
@@ -167,12 +178,12 @@ uv pip install -e libs/synthetic
 pip install cogniverse-synthetic
 
 # Automatically installs:
-# - cogniverse-core
+# - cogniverse-sdk
 # - cogniverse-foundation
 # - dspy-ai
 # - pydantic
 # - fastapi
-# - litellm
+# - httpx
 ```
 
 ---
@@ -186,8 +197,12 @@ from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 from cogniverse_vespa import VespaBackend
 
-# Initialize backend
-backend = VespaBackend(config)
+# Initialize backend (backend_config, schema_loader, config_manager are all required)
+backend = VespaBackend(
+    backend_config=backend_config,
+    schema_loader=schema_loader,
+    config_manager=config_manager,
+)
 
 # Initialize service
 service = SyntheticDataService(backend=backend)
@@ -196,24 +211,25 @@ service = SyntheticDataService(backend=backend)
 ### Generate Training Data
 
 ```python
-# Generate modality routing examples
+# Generate profile-selection training examples
 request = SyntheticDataRequest(
-    optimizer="modality",
+    optimizer="profile",
     count=100,
-    modalities=["video", "image", "pdf"],
-    profile="frame_based"  # Optional: specify profile
+    vespa_sample_size=200,
+    max_profiles=3,
+    tenant_id="acme:production",
 )
 
 response = await service.generate(request)
 
 print(f"Generated {response.count} examples")
-print(f"Success rate: {response.metadata['success_rate']}")
+print(f"Sampled content count: {response.metadata['sampled_content_count']}")
 
-# Use examples for training
-for example in response.examples:
-    print(f"Query: {example.query}")
-    print(f"Modality: {example.modality}")
-    print(f"Ground Truth: {example.ground_truth}")
+# Use examples for training (response.data is a list of dicts)
+for example in response.data:
+    print(f"Query: {example['query']}")
+    print(f"Modality: {example['modality']}")
+    print(f"Selected profile: {example['selected_profile']}")
 ```
 
 ### REST API Integration
@@ -223,7 +239,7 @@ from fastapi import FastAPI
 from cogniverse_synthetic import router
 
 app = FastAPI()
-app.include_router(router, prefix="/synthetic", tags=["synthetic"])
+app.include_router(router, tags=["synthetic-data"])  # router already carries prefix="/synthetic"
 
 # Endpoints available:
 # POST /synthetic/generate - Generate training data
@@ -240,29 +256,23 @@ app.include_router(router, prefix="/synthetic", tags=["synthetic"])
 curl -X POST http://localhost:8000/synthetic/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "optimizer": "modality",
+    "optimizer": "profile",
     "count": 100,
-    "modalities": ["video", "image", "pdf"]
+    "tenant_id": "acme:production"
   }'
 
 # List optimizers
 curl http://localhost:8000/synthetic/optimizers
 
 # Get optimizer config
-curl http://localhost:8000/synthetic/optimizers/modality
+curl http://localhost:8000/synthetic/optimizers/profile
 
 # Health check
 curl http://localhost:8000/synthetic/health
 
-# Batch generation
-curl -X POST http://localhost:8000/synthetic/batch/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "requests": [
-      {"optimizer": "modality", "count": 100},
-      {"optimizer": "routing", "count": 50}
-    ]
-  }'
+# Batch generation - optimizer/count_per_batch/num_batches/tenant_id are
+# query parameters, not a JSON body
+curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=profile&count_per_batch=100&num_batches=5&tenant_id=acme:production"
 ```
 
 ---
@@ -306,12 +316,12 @@ libs/synthetic/cogniverse_synthetic/
 # Run all synthetic tests
 uv run pytest tests/routing/unit/synthetic/ -v
 
-# 82 tests covering:
+# 101 tests covering:
 # - Schemas and validation
-# - Generators (modality, crossmodal, routing, workflow)
+# - Generators (profile, routing, workflow, cross_modal)
+# - Backend querying and optimizer registry lookups
 # - Service orchestration
-# - API endpoints
-# - Integration tests
+# - Approval workflow
 ```
 
 ### Code Style
@@ -331,18 +341,24 @@ uv run mypy libs/synthetic
 
 ## Configuration
 
-Configuration is provided via `SystemConfig` from `cogniverse-foundation`:
+Configuration is provided via `BackendConfig` and `SyntheticGeneratorConfig`
+from `cogniverse-foundation` (both require `tenant_id`):
 
 ```python
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
 
-config = SystemConfig(
+backend_config = BackendConfig(
     tenant_id="acme_corp",
-    llm_model="gpt-4",
-    llm_api_key="sk-...",
-    search_backend="vespa",
-    backend_url="http://localhost",
-    backend_port=8080,
+    backend_type="vespa",
+    url="http://localhost",
+    port=8080,
+)
+generator_config = SyntheticGeneratorConfig(tenant_id="acme_corp")
+
+service = SyntheticDataService(
+    backend=backend,
+    backend_config=backend_config,
+    generator_config=generator_config,
 )
 ```
 
@@ -351,7 +367,6 @@ config = SystemConfig(
 ```bash
 export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"  # Works with any LiteLLM-supported provider
 export LLM_MODEL="claude-3-5-sonnet-20241022"
-export TENANT_ID="acme_corp"
 ```
 
 ---
@@ -438,22 +453,24 @@ The package works with any backend that implements the Backend interface:
 
 ```python
 from cogniverse_synthetic.backend_querier import BackendQuerier
+from cogniverse_foundation.config.unified_config import BackendConfig, FieldMappingConfig
 
-querier = BackendQuerier(backend=your_backend)
-
-# Sample documents from any backend
-documents = await querier.sample_documents(
-    schema_name="video_colpali_mv_frame",
-    count=10,
-    modality="video"
+querier = BackendQuerier(
+    backend=your_backend,
+    backend_config=BackendConfig(tenant_id="acme_corp"),
+    field_mappings=FieldMappingConfig(),
 )
 
-# Works with:
-# - VespaBackend
-# - PineconeBackend
-# - WeaviateBackend
-# - ChromaBackend
-# - Custom backends implementing Backend interface
+# Sample documents from any backend
+documents = await querier.query_profiles(
+    profile_configs=[{"schema_name": "video_colpali_mv_frame"}],
+    sample_size=10,
+    strategy="diverse",
+)
+
+# Works with any backend implementing cogniverse_sdk.interfaces.backend.Backend.
+# VespaBackend is the implementation that ships today; other backends can be
+# added the same way.
 ```
 
 ---
@@ -461,7 +478,7 @@ documents = await querier.sample_documents(
 ## Documentation
 
 - **Full Docs**: [Synthetic Data Generation](../../docs/synthetic-data-generation.md)
-- **Architecture**: [10-Package Architecture](../../docs/architecture/10-package-architecture.md)
+- **Architecture**: [SDK Architecture](../../docs/architecture/sdk-architecture.md)
 - **Diagrams**: [SDK Architecture Diagrams](../../docs/diagrams/sdk-architecture-diagrams.md)
 - **DSPy Docs**: [DSPy Documentation](https://dspy-docs.vercel.app/)
 
@@ -484,12 +501,16 @@ export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"
 **3. Backend Connection Issues**
 ```python
 # Test backend connection
-backend = VespaBackend(config)
-await backend.ping()
+backend = VespaBackend(
+    backend_config=backend_config,
+    schema_loader=schema_loader,
+    config_manager=config_manager,
+)
+backend.health_check()
 ```
 
 **4. No Documents Sampled**
-- Verify schema exists: `await backend.list_schemas()`
+- Verify schema exists: `backend.schema_exists(schema_name, tenant_id=...)`
 - Check tenant isolation: schema should include tenant suffix
 - Ensure documents exist in schema
 
@@ -498,8 +519,8 @@ await backend.ping()
 ## Performance
 
 **Generation Speed:**
-- Modality: ~10-15 examples/minute (with GPT-4)
-- CrossModal: ~8-12 examples/minute
+- Profile: ~10-15 examples/minute (with GPT-4)
+- Cross-Modal: ~8-12 examples/minute
 - Routing: ~12-18 examples/minute
 - Workflow: ~10-14 examples/minute
 
@@ -536,7 +557,7 @@ MIT License - See [LICENSE](../../LICENSE) for details.
 
 ## Related Packages
 
-- **cogniverse-core**: Multi-agent orchestration (depends on this)
-- **cogniverse-agents**: Uses synthetic data for training
-- **cogniverse-vespa**: Backend for sampling documents
-- **cogniverse-runtime**: FastAPI server integration
+- **cogniverse-core**: Provides tenant utilities (`SYSTEM_TENANT_ID`) used by this package
+- **cogniverse-agents**: Depends on this package to generate training data
+- **cogniverse-vespa**: Backend implementation used for sampling documents
+- **cogniverse-runtime**: Mounts the synthetic API router
