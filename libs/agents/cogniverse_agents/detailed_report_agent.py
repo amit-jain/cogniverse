@@ -162,14 +162,15 @@ class ReportGenerationModule(dspy.Module):
         content: str,
         query: str,
         report_type: str = "comprehensive",
-        keyframes: Optional[List[dspy.Image]] = None,
+        *,
+        keyframes: List[dspy.Image],
     ):
         """Generate report using DSPy"""
         return self.report_generator(
             content=content,
             query=query,
             report_type=report_type,
-            keyframes=keyframes or [],
+            keyframes=keyframes,
         )
 
 

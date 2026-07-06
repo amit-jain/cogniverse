@@ -130,14 +130,15 @@ class SummarizationModule(dspy.Module):
         content: str,
         query: str,
         summary_type: str = "comprehensive",
-        keyframes: Optional[List[dspy.Image]] = None,
+        *,
+        keyframes: List[dspy.Image],
     ):
         """Generate summary using DSPy"""
         return self.summarizer(
             content=content,
             query=query,
             summary_type=summary_type,
-            keyframes=keyframes or [],
+            keyframes=keyframes,
         )
 
 
@@ -637,7 +638,7 @@ and structure summary based on identified themes and content categories.
         content: str,
         query: str,
         summary_type: str,
-        keyframes: Optional[List[dspy.Image]] = None,
+        keyframes: List[dspy.Image],
     ) -> str:
         """Run DSPy summarization, streaming tokens via emit_progress when active."""
         result = await self.call_dspy(
@@ -646,7 +647,7 @@ and structure summary based on identified themes and content categories.
             content=content,
             query=query,
             summary_type=summary_type,
-            keyframes=keyframes or [],
+            keyframes=keyframes,
         )
         return result.summary
 
@@ -688,7 +689,7 @@ and structure summary based on identified themes and content categories.
         request: SummaryRequest,
         results: List[Dict[str, Any]],
         thinking_phase: ThinkingPhase,
-        keyframe_images: Optional[List[dspy.Image]] = None,
+        keyframe_images: List[dspy.Image],
     ) -> str:
         """Generate brief summary using DSPy"""
         result_count = len(results)
@@ -741,7 +742,7 @@ and structure summary based on identified themes and content categories.
         results: List[Dict[str, Any]],
         thinking_phase: ThinkingPhase,
         visual_insights: List[str],
-        keyframe_images: Optional[List[dspy.Image]] = None,
+        keyframe_images: List[dspy.Image],
     ) -> str:
         """Generate comprehensive summary using DSPy.
 

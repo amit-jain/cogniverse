@@ -429,7 +429,7 @@ class TestSummarizerAgentCoreFunctionality:
 
         results = sample_summary_request.search_results
         brief_summary = await agent._generate_brief_summary(
-            sample_summary_request, results, thinking_phase
+            sample_summary_request, results, thinking_phase, []
         )
 
         # DSPy output is returned verbatim — the agent does not post-process it.
@@ -484,6 +484,7 @@ class TestSummarizerAgentCoreFunctionality:
             sample_summary_request.search_results,
             thinking_phase,
             ["Technical demo"],
+            [],
         )
 
         assert summary == "A comprehensive LLM-written synthesis of the results."
