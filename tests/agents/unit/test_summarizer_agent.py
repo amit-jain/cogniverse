@@ -415,7 +415,7 @@ class TestSummarizerAgentCoreFunctionality:
         captured = {}
 
         async def _fake_call_dspy(
-            module, *, output_field, content, query, summary_type
+            module, *, output_field, content, query, summary_type, keyframes
         ):
             captured.update(
                 output_field=output_field,
@@ -467,7 +467,7 @@ class TestSummarizerAgentCoreFunctionality:
         captured = {}
 
         async def _fake_call_dspy(
-            module, *, output_field, content, query, summary_type
+            module, *, output_field, content, query, summary_type, keyframes
         ):
             captured.update(
                 output_field=output_field,
@@ -556,7 +556,7 @@ class TestSummarizerAgentCoreFunctionality:
         )
 
         async def _fake_call_dspy(
-            module, *, output_field, content, query, summary_type
+            module, *, output_field, content, query, summary_type, keyframes
         ):
             assert summary_type == "comprehensive"
             return Mock(summary=comprehensive_summary)
@@ -593,7 +593,7 @@ class TestSummarizerAgentCoreFunctionality:
         )
 
         async def _fake_call_dspy(
-            module, *, output_field, content, query, summary_type
+            module, *, output_field, content, query, summary_type, keyframes
         ):
             return Mock(summary="Enhanced summary with routing context")
 
