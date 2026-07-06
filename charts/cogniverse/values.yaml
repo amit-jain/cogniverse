@@ -1177,15 +1177,16 @@ inference:
     # ~10-15% slower per token but the pod doesn't OOMKill on cold
     # start, which matters far more here.
     #
-    # ``--limit-mm-per-prompt {"video":0,"image":0}`` tells vLLM not
-    # to reserve encoder-cache space for multimodal inputs. gemma-4-
-    # e4b-it is a vision-language model, so the warmup pass profiles
-    # the largest video the encoder can ingest (default budget grows
-    # with video frames × patches × bf16 — easily 30+ GiB transient).
-    # The runtime only exercises chat-completions on text, so we
-    # disable multimodal capacity entirely. ``--max-num-seqs 1`` keeps
-    # batched-prefill memory at single-request size; the runtime
-    # serializes generation requests so >1 buys nothing.
+    # ``--limit-mm-per-prompt {"video":0,"image":4}`` reserves encoder-cache
+    # space for up to 4 still images per prompt — the keyframes the answer
+    # agents attach on the multimodal generation path — while keeping video at
+    # 0. gemma-4-e4b-it is a vision-language model; what blows memory is
+    # profiling the largest VIDEO the encoder can ingest (frames × patches ×
+    # bf16 — easily 30+ GiB transient), so video stays disabled. A few still
+    # images is a bounded cost. Keep image ≥ the agents' ``max_keyframes_to_llm``
+    # (default 4). ``--max-num-seqs 1`` keeps batched-prefill memory at
+    # single-request size; the runtime serializes generation requests so >1
+    # buys nothing.
     extraArgs:
       - "--max-model-len"
       - "8192"
@@ -1193,7 +1194,7 @@ inference:
       - "--max-num-seqs"
       - "1"
       - "--limit-mm-per-prompt"
-      - '{"video":0,"image":0}'
+      - '{"video":0,"image":4}'
     # See vllm_colpali kvCacheGiB note. Gemma 4 E4B at bfloat16 is
     # ~9.6 GiB of weights; 4 GiB KV cache + ~6 GiB activations +
     # ~4 GiB transient buffers (load-time HF cache copies, NCCL/UCX

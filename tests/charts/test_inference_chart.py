@@ -224,6 +224,19 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     assert args[args.index("--limit-mm-per-prompt") + 1] == '{"video":0,"image":1}'
 
 
+def test_vllm_llm_student_allows_keyframe_images():
+    """The answer/student LLM accepts up to 4 still images per prompt — the
+    keyframes the multimodal generation agents attach — while keeping video at
+    0. Profiling the video encoder cache is what blows startup memory; a few
+    still images is bounded. image must stay >= the agents' max_keyframes_to_llm."""
+    docs = _render("inference.vllm_llm_student.enabled=true")
+    c = _inference_deployments(docs)["vllm_llm_student"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    args = c["args"]
+    assert args[args.index("--limit-mm-per-prompt") + 1] == '{"video":0,"image":4}'
+
+
 def test_vllm_asr_enabled_by_default():
     """vllm_asr ships enabled in base values.yaml because the default
     video-ingestion profiles hard-require transcription. Operators that

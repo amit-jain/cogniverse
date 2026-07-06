@@ -73,7 +73,10 @@ inference:
     # (zero extra GPU memory) to batch the concurrent multi-tenant agent
     # load; host-side per-seq state stays bounded (MALLOC_ARENA_MAX caps the
     # arena ratchet). Do NOT restore the 256 default.
-    # --limit-mm-per-prompt: text-only chat hot path never uses multimodal.
+    # --limit-mm-per-prompt: allow up to 4 still images (the answer agents'
+    # keyframes on the multimodal generation path); video stays 0 — profiling
+    # video encoder cache is what blows memory, still images are bounded. Keep
+    # image >= the agents' max_keyframes_to_llm (default 4).
     extraArgs:
       - "--max-model-len"
       - "16384"
@@ -83,7 +86,7 @@ inference:
       - "--max-num-seqs"
       - "8"
       - "--limit-mm-per-prompt"
-      - '{"video":0,"image":0}'
+      - '{"video":0,"image":4}'
     resources:
       limits:
         cpu: "4"
