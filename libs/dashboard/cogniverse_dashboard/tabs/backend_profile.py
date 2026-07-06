@@ -249,13 +249,11 @@ def render_create_profile_form(manager, tenant_id: str):
             embedding_type = st.selectbox(
                 "Embedding Type *",
                 options=[
-                    "frame_based",
-                    "video_chunks",
-                    "direct_video_segment",
+                    "multi_vector",
                     "single_vector",
                 ],
                 index=0,
-                help="How content is embedded",
+                help="Embedding vector layout (must match ProfileValidator.VALID_EMBEDDING_TYPES)",
             )
 
         # Model configuration

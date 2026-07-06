@@ -89,11 +89,11 @@ class VLMDescriptor:
         if self._service_started:
             self.logger.info("Modal VLM service will auto-stop after inactivity")
             # Modal serverless functions automatically stop after ~5-10 minutes of inactivity
-            # The 'modal stop' command is primarily for long-running services, not serverless functions
+            # The 'modal app stop' command is primarily for long-running services, not serverless functions
             # Optionally try to stop it explicitly
             try:
                 result = subprocess.run(
-                    ["modal", "stop", "cogniverse-vlm"],
+                    ["modal", "app", "stop", "cogniverse-vlm"],
                     capture_output=True,
                     text=True,
                     timeout=5,

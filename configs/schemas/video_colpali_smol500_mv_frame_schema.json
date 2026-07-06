@@ -404,9 +404,9 @@
           "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
-      "first_phase": "text_sim_no_desc",
+      "first_phase": "visual_sim_binary",
       "second_phase": {
-        "expression": "visual_sim_binary",
+        "expression": "text_sim_no_desc",
         "rerank_count": 100
       },
       "timeout": 2.0
