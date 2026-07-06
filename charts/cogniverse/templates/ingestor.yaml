@@ -78,6 +78,8 @@ spec:
           value: {{ .Values.llm.model | quote }}
         - name: MINIO_ENDPOINT
           value: "http://{{ $fullName }}-minio:{{ .Values.minio.service.apiPort }}"
+        - name: MINIO_DEFAULT_BUCKET
+          value: {{ .Values.minio.defaultBucket | quote }}
         - name: MINIO_ACCESS_KEY
           valueFrom:
             secretKeyRef:
