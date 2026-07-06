@@ -478,3 +478,29 @@ class TestDashboardProfileIntegration:
 
                 assert result["success"] is False
                 assert "404" in result["error"]
+
+
+@pytest.mark.unit
+def test_profile_manager_reads_profiles_under_backend_service(monkeypatch):
+    """The dashboard must read backend profiles under the SAME config service
+    the runtime API writes them to (``service="backend"``). It previously read
+    them under ``service="video_processing"``, so a profile created via
+    ``POST /admin/profiles`` never appeared in the dashboard tab."""
+    from unittest.mock import MagicMock
+
+    from cogniverse_dashboard.tabs import backend_profile
+
+    monkeypatch.setattr(backend_profile, "st", MagicMock())
+    manager = MagicMock()
+    manager.get_backend_profile.return_value = {"name": "p1", "backend": "vespa"}
+
+    try:
+        backend_profile.render_profile_manager(manager, "acme:acme", "p1")
+    except Exception:
+        # Downstream Streamlit widget branches vary under a MagicMock st; the
+        # profile READ happens first and is what this test pins.
+        pass
+
+    manager.get_backend_profile.assert_called_once_with(
+        profile_name="p1", tenant_id="acme:acme", service="backend"
+    )
