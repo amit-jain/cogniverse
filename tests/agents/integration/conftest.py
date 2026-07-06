@@ -243,6 +243,42 @@ def clear_singleton_state_between_tests():
         _sb._RANKING_STRATEGIES_CACHE = None
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _set_test_backend_env(shared_memory_vespa):  # noqa: F811
+    """Point ``BACKEND_URL``/``BACKEND_PORT`` at the test-owned Vespa so
+    ``create_default_config_manager()`` resolves to it, never the running
+    cluster's persisted config store.
+
+    Without this a developer host resolves ``BACKEND_URL`` to the live cluster,
+    whose deployed config enables the semantic router at an in-cluster envoy
+    the host cannot reach — turning every agent LM call into a connection
+    error. Resets the config-manager singleton so the new env is picked up per
+    module. Mirrors ``tests/runtime/integration/conftest.py``.
+    """
+    import os
+
+    from cogniverse_foundation.config import utils as config_utils
+
+    original_url = os.environ.get("BACKEND_URL")
+    original_port = os.environ.get("BACKEND_PORT")
+
+    os.environ["BACKEND_URL"] = "http://localhost"
+    os.environ["BACKEND_PORT"] = str(shared_memory_vespa["http_port"])
+    config_utils._config_manager_singleton = None
+
+    yield
+
+    config_utils._config_manager_singleton = None
+    if original_url is not None:
+        os.environ["BACKEND_URL"] = original_url
+    else:
+        os.environ.pop("BACKEND_URL", None)
+    if original_port is not None:
+        os.environ["BACKEND_PORT"] = original_port
+    else:
+        os.environ.pop("BACKEND_PORT", None)
+
+
 class _SharedVespaManagerAdapter:
     """Drop-in replacement for VespaTestManager when consumers only need
     ``config_manager`` + ``get_backend_via_registry`` against a Vespa they
