@@ -41,7 +41,12 @@ def real_dspy_lm():
 
 @pytest.fixture
 def test_config_manager():
-    """Real ConfigManager for integration tests."""
+    """ConfigManager for integration tests.
+
+    The autouse ``_set_test_backend_env`` fixture points ``BACKEND_URL`` at the
+    test-owned Vespa, so this resolves to the test config store (semantic router
+    off) rather than the running cluster's persisted config.
+    """
     return create_default_config_manager()
 
 
