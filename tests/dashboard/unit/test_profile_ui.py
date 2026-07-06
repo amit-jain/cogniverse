@@ -504,3 +504,38 @@ def test_profile_manager_reads_profiles_under_backend_service(monkeypatch):
     manager.get_backend_profile.assert_called_once_with(
         profile_name="p1", tenant_id="acme:acme", service="backend"
     )
+
+
+@pytest.mark.unit
+def test_create_form_offers_only_valid_embedding_types(monkeypatch):
+    """The create-profile form's 'Embedding Type' selectbox must offer only
+    ProfileValidator.VALID_EMBEDDING_TYPES (multi_vector/single_vector). It
+    previously offered processing modes (frame_based/video_chunks/...) that
+    fail validation when a profile is created from the dashboard."""
+    from unittest.mock import MagicMock
+
+    from cogniverse_core.validation.profile_validator import ProfileValidator
+    from cogniverse_dashboard.tabs import backend_profile
+
+    st_mock = MagicMock()
+    st_mock.columns.side_effect = lambda spec=2, **k: [
+        MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))
+    ]
+    monkeypatch.setattr(backend_profile, "st", st_mock)
+
+    try:
+        backend_profile.render_create_profile_form(MagicMock(), "acme:acme")
+    except Exception:
+        # The embedding-type selectbox renders early; downstream form widgets
+        # under a MagicMock st may diverge, which is fine for this assertion.
+        pass
+
+    options = None
+    for call in st_mock.selectbox.call_args_list:
+        label = call.args[0] if call.args else call.kwargs.get("label")
+        if label == "Embedding Type *":
+            options = call.kwargs.get("options")
+    assert options is not None, "Embedding Type selectbox was not rendered"
+    assert set(options) <= set(ProfileValidator.VALID_EMBEDDING_TYPES), (
+        f"form offers embedding types outside VALID_EMBEDDING_TYPES: {options}"
+    )
