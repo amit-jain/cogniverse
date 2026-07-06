@@ -208,7 +208,7 @@ class Agent:
 ### File Names
 
 - **snake_case** for Python files: `search_agent.py`
-- **No prefixes**: Avoid `base_`, `simple_`, `final_`, `v2_`
+- **No prefixes**: Avoid `base`, `simple`, `final`, `full`, `generic`, `comprehensive`, `v2` in class/file names
 - **Module structure**: `package/subpackage/module.py`
 
 ---
@@ -248,8 +248,8 @@ from cogniverse_foundation.config.manager import ConfigManager
 # In cogniverse_agents/search_agent.py
 
 # Cross-package (absolute)
-from cogniverse_core.agents.a2a_agent import A2AAgent
-from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 
 # Within package (absolute form - commonly used)
 from cogniverse_core.query.encoders import QueryEncoderFactory
@@ -321,8 +321,8 @@ class MySearchAgent(A2AAgent[MySearchInput, MySearchOutput, MySearchDeps]):
     Integrates with backend for vector search.
 
     Attributes:
-        AGENT_NAME: Unique identifier for registration
-        CAPABILITIES: List of supported operations
+        agent_name: Unique identifier, set from config.agent_name
+        capabilities: List of supported operations, set from config.capabilities
 
     Example:
         # Standard A2AAgent initialization pattern
@@ -428,26 +428,30 @@ tests/
 │   ├── integration/
 │   │   └── test_autonomous_agents_integration.py
 │   └── e2e/
-│       └── test_real_multi_agent_integration.py
+│       └── test_config.py
 ├── ingestion/
 │   ├── unit/
 │   │   └── test_pipeline.py
 │   └── integration/
-│       └── test_ingestion_end_to_end.py
+│       └── test_backend_ingestion.py
 ├── routing/
 │   ├── unit/
-│   │   └── test_router_unit.py
+│   │   └── test_annotation_queue.py
 │   └── integration/
+│       └── test_deep_research_integration.py
 ├── evaluation/
 │   ├── unit/
 │   │   └── test_metrics.py
 │   ├── integration/
-│   └── conftest.py
+│   └── fixtures/
 ├── backends/
 │   ├── unit/
+│   │   └── test_backend_config.py
 │   └── integration/
+│       └── test_config_store.py
 ├── memory/
 │   ├── unit/
+│   │   └── test_mem0_memory_manager.py
 │   └── integration/
 ├── admin/
 │   ├── unit/
@@ -465,11 +469,39 @@ tests/
 ├── common/
 │   ├── unit/
 │   └── integration/
-├── ui/
+├── core/
+│   ├── unit/
 │   └── integration/
+├── foundation/
+│   ├── unit/
+│   └── integration/
+├── runtime/
+│   ├── unit/
+│   └── integration/
+├── messaging/
+│   ├── unit/
+│   └── integration/
+├── telemetry/
+│   ├── unit/
+│   └── integration/
+├── synthetic/
+│   ├── unit/
+│   └── integration/
+├── events/
+│   ├── unit/
+│   └── integration/
+├── dashboard/
+│   └── unit/
+├── charts/
+│   └── test_semantic_router_chart.py
+├── cli/
+│   └── unit/
+├── e2e/
+│   ├── deployment/
+│   └── test_a2a_gateway_e2e.py  # top-level cross-service e2e suites
+├── fixtures/
 ├── utils/
 │   └── memory_store.py
-├── unit/
 └── conftest.py  # Shared fixtures
 ```
 
@@ -565,8 +597,9 @@ uv run mypy libs/
 # 4. Test
 JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
 
-# 5. All at once
-uv run make lint-all
+# 5. Module-scoped Make targets (ingestion, routing, evaluation, agents)
+uv run make lint-all       # ruff check for those 4 modules
+uv run make check-all      # format + typecheck + test for those 4 modules
 ```
 
 ### Editor Configuration
@@ -608,6 +641,7 @@ ignore = [
     "C401",  # set comprehensions vs generator
     "C408",  # dict() vs {}
     "W291",  # trailing whitespace
+    "W293",  # blank line with whitespace
 ]
 
 [tool.ruff.lint.isort]
@@ -624,4 +658,4 @@ known-first-party = ["cogniverse_sdk", "cogniverse_foundation", "cogniverse_core
 4. Organize imports: stdlib → third-party → local
 5. Write Google-style docstrings for public APIs
 6. Catch specific exceptions, raise with context
-7. Run `uv run make lint-all` before every commit
+7. Run `uv run ruff check` and `uv run ruff format --check` before every commit

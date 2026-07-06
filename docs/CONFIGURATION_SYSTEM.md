@@ -1,6 +1,6 @@
 # Configuration Management System
 
-**Spans**: SDK (interfaces), Foundation (base), Core (system configuration)
+**Spans**: SDK (interfaces), Foundation (`ConfigManager`, dataclasses, system configuration), Core (schema/profile registries), Implementation (Vespa backend)
 
 Multi-tenant, versioned configuration system with pluggable storage backends for the Cogniverse layered architecture.
 
@@ -21,54 +21,78 @@ See [System Architecture](architecture/overview.md) for the complete package str
 
 The configuration system spans:
 
-- **SDK Layer**: ConfigStore interface, type definitions
-- **Foundation Layer**: Base config classes, ConfigManager, serialization
-- **Core Layer**: Tenant and schema registries that consume ConfigManager
-- **Implementation Layer**: VespaConfigStore (default backend)
+- **SDK Layer**: `ConfigStore` interface, `ConfigEntry`/`ConfigScope` type definitions
+- **Foundation Layer**: `ConfigManager`, `unified_config` dataclasses, `ConfigUtils`/`get_config()`, `BootstrapConfig`, `ConfigAPIMixin`, semantic-router application helpers
+- **Core Layer**: `SchemaRegistry` (per-tenant schema lifecycle, stored under `ConfigScope.SCHEMA`), `ProfileValidator`, `BackendRegistry` — all consume `ConfigManager`
+- **Implementation Layer**: `VespaConfigStore` (default backend)
+
+```mermaid
+flowchart LR
+    SDK["<span style='color:#000'><b>SDK Layer</b><br/>ConfigStore interface<br/>ConfigEntry / ConfigScope</span>"]
+    Foundation["<span style='color:#000'><b>Foundation Layer</b><br/>ConfigManager<br/>unified_config dataclasses<br/>ConfigUtils / BootstrapConfig</span>"]
+    Core["<span style='color:#000'><b>Core Layer</b><br/>SchemaRegistry<br/>ProfileValidator<br/>BackendRegistry</span>"]
+    Impl["<span style='color:#000'><b>Implementation Layer</b><br/>VespaConfigStore</span>"]
+    Consumers["<span style='color:#000'><b>Consumers</b><br/>Admin REST API<br/>Dashboard<br/>Agents / DSPy</span>"]
+
+    SDK --> Foundation
+    Foundation --> Core
+    Foundation --> Impl
+    Core --> Impl
+    Core --> Consumers
+    Foundation --> Consumers
+
+    style SDK fill:#90caf9,stroke:#1565c0,color:#000
+    style Foundation fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Core fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Impl fill:#81d4fa,stroke:#0288d1,color:#000
+    style Consumers fill:#ffcc80,stroke:#ef6c00,color:#000
+```
 
 ## Configuration Scopes
 
 ### System Configuration
 
-Global infrastructure settings shared across all agents:
+Global, deployment-wide infrastructure settings shared across all agents (`SystemConfig` in `cogniverse_foundation.config.unified_config` — one instance for the whole deployment, not per-tenant):
 
-- LLM providers and models
-- Backend URLs and connection settings
-- Telemetry endpoints
-- Memory configuration
-- Default resource limits
+- LLM model/engine and endpoint (`llm_model`, `llm_engine`, `base_url`, `llm_api_key`), plus opt-in `semantic_router` settings
+- Backend connection settings (`search_backend`, `backend_url`, `backend_port`, `application_name`)
+- Telemetry endpoints (`telemetry_url`, `telemetry_collector_endpoint`)
+- Agent service URLs and registry (`agents` dict, `agent_registry_url`, `video_agent_url`, `summarizer_agent_url`, `ingestion_api_url`)
+- Inference service URLs (`inference_service_urls`, `colpali_inference_url`)
+- Iterative-retrieval budgets (`iter_retrieval_max_iter`, `iter_retrieval_token_budget`, `iter_retrieval_wall_clock_ms`)
+- Cross-pod messaging, finetuning cache, and ingestion-upload endpoints (`redis_url`, `adapter_cache_dir`, `minio_endpoint`)
 
 ### Agent Configuration
 
-Per-agent DSPy module and optimizer settings:
+Per-agent DSPy module and optimizer settings (`AgentConfig` in `cogniverse_foundation.config.agent_config`):
 
-- DSPy module types (ChainOfThought, ReAct, etc.)
-- Optimizer selection (Bootstrap, SIMBA, MIPRO, GEPA)
+- DSPy module types (`predict`, `chain_of_thought`, `react`)
+- Optimizer selection (`bootstrap_few_shot`, `labeled_few_shot`, `bootstrap_few_shot_with_random_search`, `copro`, `mipro_v2`, `gepa`, `simba`)
 - Model-specific parameters
-- Prompt templates and signatures
-- Resource allocations
+- Prompt templates and signatures (DSPy module `signature`)
+- Resource allocations (`max_processing_time`)
 
 ### Routing Configuration
 
-Routing optimizer and strategy settings:
+Routing strategy settings (`RoutingConfigUnified` in `cogniverse_foundation.config.unified_config`). Only `routing_mode="tiered"` is implemented end-to-end; other mode strings are accepted for forward-compat but produce no dispatch-time behavior change:
 
-- Routing tiers (FAST, BALANCED, COMPREHENSIVE)
-- Strategy weights and thresholds
-- Experience buffer configuration
-- GEPA optimizer parameters
-- Multi-tenant routing rules
+- Tier toggles and confidence thresholds: `enable_fast_path` / `enable_slow_path` / `enable_fallback`, `fast_path_confidence_threshold`, `slow_path_confidence_threshold`, `max_routing_time_ms`
+- Fast-path GLiNER settings: model, threshold, device, labels
+- Slow-path LLM settings: provider, endpoint, temperature, max tokens, chain-of-thought toggle
+- DSPy auto-optimization: `dspy_enabled`, bootstrapped/labeled demo counts, `optimization_interval_seconds`, `min_samples_for_optimization`
+- Caching: `enable_caching`, `cache_ttl_seconds`, `max_cache_size`
+- Multi-tenant routing rules (per-tenant `RoutingConfigUnified` via `set_routing_config`)
 
 ### Telemetry Configuration
 
-Observability settings:
+Observability settings (`TelemetryConfig` in `cogniverse_foundation.telemetry.config`):
 
-- Project isolation per tenant
-- Span export configuration
-- Experiment tracking settings
-- Metric collection intervals
-- Dashboard customization
+- Project isolation per tenant (`tenant_project_template`, `tenant_service_template`, LRU-cached via `max_cached_tenants`/`tenant_cache_ttl_seconds`)
+- Span export configuration (`otlp_enabled`, `otlp_endpoint`, `otlp_use_tls`, `batch_config`)
+- Telemetry level (`disabled`/`basic`/`detailed`/`verbose` — gates which components emit spans via `should_instrument_component`)
+- Provider selection for querying spans/annotations/datasets (`provider`: `"phoenix"`/`"langsmith"`/auto-detect, plus opaque `provider_config`)
 
-**Environment variables** (read at startup boundary in `runtime/main.py`):
+**Environment variables** (read at startup boundary in `runtime/main.py`, applied as overrides onto `SystemConfig`):
 
 | Variable | Purpose |
 |----------|---------|
@@ -76,6 +100,11 @@ Observability settings:
 | `TELEMETRY_OTLP_ENDPOINT` | OTLP collector gRPC endpoint |
 | `OPENINFERENCE_DSPY` | `1` enables OpenInference DSPy instrumentation — LM call spans (full prompt/completion) exported to the `cogniverse-dspy-instrumentation` Phoenix project. Set by the chart on the runtime deployment. |
 | `ITER_RETRIEVAL_MAX_ITER` / `ITER_RETRIEVAL_TOKEN_BUDGET` / `ITER_RETRIEVAL_WALL_CLOCK_MS` | Override `SystemConfig` iterative-retrieval budgets at runtime startup. The chart sets the wall clock from `runtime.iterRetrieval.wallClockMs`. |
+| `BACKEND_URL` / `BACKEND_PORT` | Backend connection info consumed by `BootstrapConfig` to construct the `ConfigStore` itself (see "Bootstrap: Breaking the Chicken-and-Egg Problem" below), and re-applied onto `SystemConfig.backend_url`/`backend_port`. |
+| `INFERENCE_SERVICE_URLS` | JSON object mapping inference-service logical names (e.g. `vllm_colpali`, `vllm_llm_student`, `vllm_asr`) to URLs. Populates `SystemConfig.inference_service_urls`. |
+| `REDIS_URL` | Enables the Redis-backed `InboundQueueRegistry` for cross-pod inbound-messaging routing. Empty (default) uses the in-pod registry. Populates `SystemConfig.redis_url`. |
+| `COGNIVERSE_ADAPTER_CACHE` | Local directory the finetuning adapter resolver downloads to. Populates `SystemConfig.adapter_cache_dir`; empty means `resolve_adapter_path` raises rather than falling back to `/tmp`. |
+| `MINIO_ENDPOINT` | MinIO object-store endpoint for `POST /ingestion/upload`. Populates `SystemConfig.minio_endpoint`; empty means the upload route responds 503. |
 
 ### Messaging Gateway Configuration
 
@@ -98,15 +127,22 @@ curl -X POST http://localhost:8000/admin/messaging/invite \
 
 ### Wiki Knowledge Base Configuration
 
-The wiki knowledge base uses a dedicated Vespa schema (`wiki_pages`) that is deployed automatically at runtime startup for the `default` tenant. No manual configuration is required.
+The wiki knowledge base uses a dedicated Vespa schema (`wiki_pages`) per tenant. No manual configuration is required: the runtime installs a per-tenant `WikiManager` factory at startup, and each tenant's `wiki_pages_{tenant_id}` schema is deployed **lazily on first access** for that tenant (not pre-deployed for every tenant at startup).
 
-**Schema deployment** (happens automatically in `startup_event`):
+**Schema deployment** (lazy, on first per-tenant access):
 
 ```python
-# Deployed via schema_registry.deploy_schema() during startup
+# On first request for a tenant, the factory calls:
+#   wiki_backend.schema_registry.deploy_schema(
+#       tenant_id=tenant_id, base_schema_name="wiki_pages"
+#   )
 # Schema name follows the pattern: wiki_pages_{tenant_id}
 # e.g. wiki_pages_default, wiki_pages_acme_production
+# (colons in tenant_id are sanitized to underscores — Vespa's /document/v1
+# URL uses ':' as a path delimiter — via backend.get_tenant_schema_name())
 ```
+
+The cluster-wide `wiki_pages` backend profile (type `"wiki"`, embedding model `google/embeddinggemma-300m`) is registered once under the system tenant at startup so `WikiManager.search` can resolve it through the shared profile registry.
 
 **Schema file**: `configs/schemas/wiki_pages_schema.json`
 
@@ -138,7 +174,9 @@ from cogniverse_agents.wiki.wiki_manager import WikiManager
 wm = WikiManager(
     backend=vespa_backend,      # VespaSearchBackend instance
     tenant_id="your_org:production",        # Tenant identifier
-    schema_name="wiki_pages_default",  # Vespa schema name for this tenant
+    schema_name="wiki_pages_default",  # Vespa schema name for this tenant (no colons)
+    llm_endpoint_config=llm_config.primary,  # Optional: needed for the RLM topic-page merge path
+    config_manager=config_manager,           # Optional: routes the RLM merge call through the gateway
 )
 ```
 
@@ -152,12 +190,13 @@ Sidecar configuration (Helm values under `runtime.qualityMonitor.*`):
 | `goldenIntervalSeconds` | `7200` | Seconds between golden set evaluations (2h) |
 | `liveIntervalSeconds` | `14400` | Seconds between live traffic evaluations (4h) |
 | `liveSampleCount` | `20` | Number of spans sampled per agent for live eval |
-| `goldenDatasetPath` | (configured path) | Path to golden evaluation dataset JSON |
+| `goldenDatasetPath` | `/app/data/quality-monitor/golden_dataset.json` | Path to golden evaluation dataset JSON, mounted from a ConfigMap |
+| `llmModel` | `qwen3:4b` | Bare model id passed to `--llm-model` (must match `evaluators.llm_judge.model` in `config.json`) |
 
 CLI equivalent:
 
 ```bash
-python -m cogniverse_runtime.quality_monitor_cli \
+uv run python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id default \
   --llm-model qwen3:4b \
   --golden-interval 7200 \
@@ -171,12 +210,30 @@ python -m cogniverse_runtime.quality_monitor_cli \
 
 Backend-specific settings for video processing and storage:
 
-- Backend type (vespa, elasticsearch, etc.)
+- Backend type (currently `vespa`; the `ConfigStore`/backend registry pattern is pluggable for future backends, but only Vespa is implemented)
 - Backend connection parameters (URL, port)
 - Profile-based video processing configuration
 - Pipeline settings (frame extraction, transcription)
 - Embedding strategies and models
 - Per-tenant backend overrides
+
+Backend profiles are read/written under the config service `"backend"`
+(`ConfigManager`'s backend/profile methods default `service="backend"`)
+by three surfaces: the Python API below, the runtime Admin REST API
+(`/admin/profiles`, see "Backend Configuration API" below), and the
+dashboard's Backend Profile tab (`libs/dashboard/cogniverse_dashboard/tabs/backend_profile.py`).
+
+### Schema Configuration
+
+Per-tenant Vespa schema deployment bookkeeping, managed by `SchemaRegistry`
+(`cogniverse_core.registries.schema_registry`) under `ConfigScope.SCHEMA`,
+service `"schema_registry"`. Each deployed `(tenant_id, base_schema_name)`
+pair is persisted as `config_key=f"schema_{base_schema_name}"` with the
+full schema name, schema definition, and deployment timestamp. On startup,
+`SchemaRegistry._load_schemas_from_storage()` rebuilds its in-memory
+registry from these entries via `store.list_all_configs(scope=ConfigScope.SCHEMA, service="schema_registry")`.
+Vespa itself is the source of truth; the registry is bookkeeping — see
+[Schema Lifecycle: Source of Truth](./architecture/multi-tenant.md#schema-lifecycle-source-of-truth).
 
 ### ConfigScope Enum
 
@@ -190,7 +247,7 @@ class ConfigScope(Enum):
     AGENT = "agent"          # Per-agent DSPy configuration
     ROUTING = "routing"      # Routing optimizer settings
     TELEMETRY = "telemetry"  # Observability settings
-    SCHEMA = "schema"        # Schema configuration
+    SCHEMA = "schema"        # Per-tenant schema deployment bookkeeping (SchemaRegistry)
     BACKEND = "backend"      # Backend and profile configuration
 ```
 
@@ -255,6 +312,23 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 # Automatically uses default backend with settings from environment
 # Reads BACKEND_URL and BACKEND_PORT from environment variables
 manager = create_default_config_manager()
+```
+
+**Bootstrap: Breaking the Chicken-and-Egg Problem**
+
+`create_default_config_manager()` needs backend connection info to build
+the `ConfigStore` — but that connection info would normally live *in*
+the `ConfigStore`. `BootstrapConfig` (`cogniverse_foundation.config.bootstrap`)
+breaks the cycle by reading connection info from environment variables
+and `config.json` directly, before any `ConfigStore` exists:
+
+```python
+from cogniverse_foundation.config.bootstrap import BootstrapConfig
+
+# Requires BACKEND_URL env var; reads backend.type from configs/config.json
+# (defaults to reading BACKEND_PORT, falling back to 8080)
+bootstrap = BootstrapConfig.from_environment()
+print(bootstrap.backend_type, bootstrap.backend_url, bootstrap.backend_port)
 ```
 
 **Schema Deployment (Vespa):**
@@ -366,7 +440,10 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
 manager = create_default_config_manager()
 
-# Configure per-tenant routing for Tenant A
+# Configure per-tenant routing for Tenant A. "tiered" is the only
+# routing_mode implemented end-to-end (fast + slow + fallback path with
+# enable_* flags) — other string values are accepted by the schema for
+# forward-compat but produce no behavior change at dispatch time.
 routing_a = RoutingConfigUnified(
     tenant_id="tenant_a",
     routing_mode="tiered",
@@ -374,18 +451,18 @@ routing_a = RoutingConfigUnified(
 )
 manager.set_routing_config(routing_a, tenant_id="tenant_a")
 
-# Configure per-tenant routing for Tenant B
+# Configure per-tenant routing for Tenant B (tighter fast-path threshold)
 routing_b = RoutingConfigUnified(
     tenant_id="tenant_b",
-    routing_mode="ensemble",
-    fast_path_confidence_threshold=0.8,
+    routing_mode="tiered",
+    fast_path_confidence_threshold=0.9,
 )
 manager.set_routing_config(routing_b, tenant_id="tenant_b")
 
 # Retrieve per-tenant configuration via get_config()
 config_a = get_config(tenant_id="tenant_a", config_manager=manager)
 config_b = get_config(tenant_id="tenant_b", config_manager=manager)
-assert config_a["routing_mode"] != config_b["routing_mode"]
+assert config_a["routing_mode"] == config_b["routing_mode"] == "tiered"
 ```
 
 ### Tenant Lifecycle Management
@@ -467,13 +544,15 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 manager = create_default_config_manager()
 
-# Configure Video Search Agent with ReAct and GEPA optimizer
+# Configure the video/visual Search Agent with ReAct and GEPA optimizer.
+# "search_agent" is the registered agent name (configs/config.json ->
+# agents.search_agent); its URL matches SystemConfig.video_agent_url.
 video_agent_config = AgentConfig(
-    agent_name="video_search_agent",
+    agent_name="search_agent",
     agent_version="1.0.0",
-    agent_description="Video search and analysis agent",
+    agent_description="Video/image search and analysis agent (ColPali/VideoPrism via Vespa)",
     agent_url="http://localhost:8002",
-    capabilities=["video_search", "visual_analysis"],
+    capabilities=["search", "video_search", "retrieval"],
     skills=[],
     module_config=ModuleConfig(
         module_type=DSPyModuleType.REACT,  # Available: PREDICT, CHAIN_OF_THOUGHT, REACT
@@ -492,10 +571,40 @@ video_agent_config = AgentConfig(
 
 manager.set_agent_config(
     tenant_id="your_org:production",
-    agent_name="video_search_agent",
+    agent_name="search_agent",
     agent_config=video_agent_config
 )
 ```
+
+### Agent Runtime Configuration REST API
+
+`ConfigAPIMixin` (`cogniverse_foundation.config.api_mixin`) adds
+FastAPI endpoints to an agent for reading and hot-updating its own DSPy
+module/optimizer/LLM configuration, persisting every change through
+`ConfigManager.set_agent_config`:
+
+```python
+class MyAgent(DynamicDSPyMixin, ConfigAPIMixin):
+    def __init__(self, tenant_id, config_manager):
+        config = AgentConfig(...)
+        self.initialize_dynamic_dspy(config)
+
+        app = FastAPI()
+        self.setup_config_endpoints(app, config_manager, tenant_id=tenant_id)
+```
+
+Endpoints added by `setup_config_endpoints`:
+
+| Method | Path | Effect |
+|--------|------|--------|
+| `GET` | `/config` | Return the agent's current `AgentConfig` |
+| `GET` | `/config/module` | Return current DSPy module info |
+| `POST` | `/config/module` | Update module type/signature/params, persist via `set_agent_config` |
+| `GET` | `/config/optimizer` | Return current optimizer info |
+| `POST` | `/config/optimizer` | Update optimizer type/params, persist via `set_agent_config` |
+| `POST` | `/config/llm` | Update LLM model/base_url/api_key/temperature/max_tokens, reconfigure the DSPy LM, persist |
+| `GET` | `/config/modules/available` | List valid `DSPyModuleType` values |
+| `GET` | `/config/optimizers/available` | List valid `OptimizerType` values |
 
 ### Centralized LLM Configuration
 
@@ -547,7 +656,7 @@ with dspy.context(lm=lm):
     result = module(query="machine learning videos")
 ```
 
-- `LLMEndpointConfig`: Dataclass with `model` (required), `api_base`, `api_key`, `temperature`, `max_tokens`, `extra_body` (provider-specific request params, e.g., `{"think": False}` for qwen3), `request_timeout` (default `120.0`), `num_retries` (default `1`). Provider is encoded in the model string using litellm's provider prefix (e.g., `"openai/google/gemma-4-e4b-it"` for vLLM/Ollama via OpenAI-compat wire, `"anthropic/claude-3-5-sonnet-20241022"` for Anthropic SaaS). The chart always emits `openai/` for in-cluster backends; `api_base` selects the actual destination.
+- `LLMEndpointConfig`: Dataclass with `model` (required), `api_base`, `api_key`, `temperature` (default `0.1`), `max_tokens` (default `1000`), `adapter_path` (bookkeeping only — LM construction never reads it, vLLM serves adapters server-side by model name), `extra_body` (provider-specific request params, e.g., `{"think": False}` for qwen3), `extra_headers` (static HTTP headers forwarded to litellm as `extra_headers`, used for semantic-router authz), `seed` (vLLM sampling seed, forwarded into `extra_body`), `request_timeout` (default `120.0`), `num_retries` (default `1`). Provider is encoded in the model string using litellm's provider prefix (e.g., `"openai/google/gemma-4-e4b-it"` for vLLM/Ollama via OpenAI-compat wire, `"anthropic/claude-3-5-sonnet-20241022"` for Anthropic SaaS). The chart always emits `openai/` for in-cluster backends; `api_base` selects the actual destination.
 - `LLMConfig`: Holds `primary`, `teacher`, and `overrides` dict. `resolve(component_name)` returns the override if present, else `primary`
 - `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM`: Factory that creates a DSPy LM from endpoint config. All DSPy LM creation goes through this factory. When `api_base` is set and `api_key` is `None`, the factory fills the placeholder key `not-required` — the OpenAI client refuses to construct without one, while self-hosted OAI-compat servers (vLLM, Ollama) ignore its value. Endpoints that enforce auth need an explicit `api_key`.
 
@@ -559,6 +668,35 @@ The chart resolves the primary model into two templates in `charts/cogniverse/te
 - `cogniverse.primaryLLMModelBare` — same id **without** the provider prefix. OpenAI-compatible `/v1/chat/completions` servers (vLLM, llama.cpp, Ollama) serve the bare name and reject the prefixed form with 404. Used by the `quality-monitor` sidecar and the `cogniverse-scheduled-distillation` cron (both call vLLM directly over HTTP rather than through DSPy).
 
 Both resolve in the same order: `runtime.primaryLLM.model` if set, else engine-derived (`inference.vllm_llm_student.model` when `llm.engine: vllm`, else `llm.model`).
+
+### Opt-in Semantic Router
+
+`SystemConfig.semantic_router` (a `SemanticRouterConfig`) opt-in routes LLM
+calls through a vLLM Semantic Router instead of the model backend directly.
+Disabled by default (`enabled=False`), so the direct-to-backend path is
+unchanged unless explicitly turned on:
+
+```python
+from cogniverse_foundation.config.unified_config import SemanticRouterConfig
+
+router_config = SemanticRouterConfig(
+    enabled=True,
+    semantic_router_url="http://semantic-router:8801/v1",
+    tenant_tiers={"acme": "premium"},
+    default_tier="default",
+)
+```
+
+When enabled, `cogniverse_foundation.config.semantic_router` rewrites the
+endpoint's `api_base` to `semantic_router_url` and `model` to
+`routed_model` (default `"openai/auto"` — the router resolves models by
+its own catalog and rejects raw provider model ids), and attaches two
+authz headers per request: the tenant identity (`user_id_header`, default
+`x-authz-user-id`) and the tenant tier (`tier_header`, default
+`x-authz-user-groups`, resolved from `tenant_tiers` with `default_tier`
+fallback). `routed_lm_context_for(config_manager, tenant_id, agent_name)`
+is the single entry point agents use to get a `dspy.context`-bound LM that
+is automatically router-aware when enabled.
 
 ## Backend Configuration API
 
@@ -624,6 +762,32 @@ manager.update_backend_profile(
 manager.delete_backend_profile(profile_name="custom_profile", tenant_id="acme")
 ```
 
+### REST API and Dashboard
+
+The same profile operations are exposed over HTTP by the runtime's Admin
+API (`libs/runtime/cogniverse_runtime/routers/admin.py`, mounted under
+`/admin`) — every route calls the `ConfigManager` methods above with
+`service="backend"`:
+
+| Method | Path | ConfigManager call |
+|--------|------|---------------------|
+| `POST` | `/admin/profiles` | `add_backend_profile` (+ optional schema deploy) |
+| `GET` | `/admin/profiles?tenant_id=...` | `list_backend_profiles` |
+| `GET` | `/admin/profiles/{profile_name}?tenant_id=...` | `get_backend_profile` |
+| `PUT` | `/admin/profiles/{profile_name}` | `update_backend_profile` |
+| `DELETE` | `/admin/profiles/{profile_name}` | `delete_backend_profile` |
+| `POST` | `/admin/profiles/{profile_name}/deploy` | schema deployment via `SchemaRegistry` |
+
+```bash
+curl -X POST http://localhost:8000/admin/profiles \
+  -H "Content-Type: application/json" \
+  -d '{"profile_name": "custom_profile", "tenant_id": "acme", "schema_name": "custom_schema_acme", "embedding_model": "colpali", "embedding_type": "multi_vector"}'
+```
+
+The dashboard exposes the same operations through its Backend Profile tab
+(`libs/dashboard/cogniverse_dashboard/tabs/backend_profile.py`), which
+reads/writes profiles via the same `ConfigManager` instance.
+
 ## Configuration Versioning
 
 ### Version Tracking
@@ -654,6 +818,7 @@ Rollback is achieved by retrieving a previous version from history and re-applyi
 
 ```python
 from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_foundation.config.unified_config import SystemConfig
 
 # Get current version (SystemConfig is global — no tenant_id argument)
 current = manager.get_system_config()
@@ -671,14 +836,13 @@ history = manager.store.get_config_history(
 # Find the target version (e.g., version 5)
 target_entry = next((e for e in history if e.version == 5), None)
 if target_entry:
-    # Re-apply the historical configuration
-    manager.store.set_config(
-        tenant_id="_system",
-        scope=ConfigScope.SYSTEM,
-        service="system",
-        config_key="system_config",
-        config_value=target_entry.config_value
-    )
+    # Re-apply the historical configuration through set_system_config() —
+    # NOT manager.store.set_config() directly. ConfigManager caches
+    # get_system_config() on the instance and only busts that cache inside
+    # set_system_config(); writing straight to the store would leave a
+    # stale SystemConfig cached and "verify rollback" below would silently
+    # print the pre-rollback value.
+    manager.set_system_config(SystemConfig.from_dict(target_entry.config_value))
     print(f"Rolled back to version {target_entry.version}")
 
 # Verify rollback
@@ -748,11 +912,19 @@ print(f"Configs by scope: {stats['configs_per_scope']}")
 ### Unit Tests
 
 ```bash
-# Run all configuration tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_config_*.py -v
+# Run configuration unit tests (spread across each package's own test tree)
+JAX_PLATFORM_NAME=cpu uv run pytest \
+  tests/common/unit/test_agent_config.py \
+  tests/common/unit/test_config_api_mixin.py \
+  tests/foundation/unit/test_config_utils.py \
+  tests/backends/unit/test_backend_config.py \
+  -v
 
-# Test specific backend
-JAX_PLATFORM_NAME=cpu uv run pytest tests/backends/unit/test_config_store_yql_escape.py -v
+# Test the Vespa config store backend (YQL escaping, selection quoting)
+JAX_PLATFORM_NAME=cpu uv run pytest \
+  tests/backends/unit/test_config_store_yql_escape.py \
+  tests/backends/unit/test_list_all_configs_selection_quoting.py \
+  -v
 ```
 
 ### Integration Tests
@@ -934,20 +1106,36 @@ except ConnectionError as e:
 
 ### SDK Layer (cogniverse-sdk)
 
-- Defines configuration interfaces and type contracts
+- Defines `ConfigStore`/`ConfigEntry`/`ConfigScope` interfaces and type contracts
 - No implementation, just pure interfaces
 - Used by all other layers for type safety
 
 ### Foundation Layer (cogniverse-foundation)
 
-- Implements ConfigManager and base ConfigStore interface
-- Provides common configuration utilities
-- Handles serialization/deserialization
+- Implements `ConfigManager` (consumes the SDK's `ConfigStore` interface — never implements storage itself)
+- Defines all `unified_config` dataclasses (`SystemConfig`, `RoutingConfigUnified`, `BackendConfig`/`BackendProfileConfig`, `LLMConfig`/`LLMEndpointConfig`, `SemanticRouterConfig`, `TenantConfig`, and the synthetic-data-generation dataclasses below)
+- `BootstrapConfig` — breaks the chicken-and-egg problem of needing backend connection info before a `ConfigStore` exists
+- `ConfigUtils`/`get_config()` — dict-like read access merging system + tenant + JSON config
+- `ConfigAPIMixin` — REST endpoints for hot-updating an agent's own config
+- `cogniverse_foundation.config.semantic_router` — applies opt-in semantic-router routing to LLM endpoint configs
+- Handles serialization/deserialization (`to_dict`/`from_dict` on every dataclass)
+
+Additional `unified_config` dataclasses support synthetic data generation
+for the optimization pipeline (see [Optimization Module](modules/optimization.md)):
+`FieldMappingConfig` (semantic field-role mapping), `DSPyModuleConfig`
+(query-generation module config), `AgentMappingRule` (modality → agent
+routing), `ProfileScoringRule` (profile-selection scoring),
+`OptimizerGenerationConfig` (per-optimizer generation settings),
+`ApprovalConfig` (human-in-the-loop approval thresholds), and
+`SyntheticGeneratorConfig` (the top-level per-tenant container for all of
+the above).
 
 ### Core Layer (cogniverse-core)
 
-- Tenant and schema registries that consume ConfigManager
-- Profile validation and backend factory
+- `SchemaRegistry` — per-tenant schema deployment bookkeeping, consumes `ConfigManager` under `ConfigScope.SCHEMA`
+- `ProfileValidator` — validates `BackendProfileConfig` instances before they're persisted
+- `BackendRegistry` — backend factory/cache that resolves `ConfigManager`-backed profiles into live `VespaSearchBackend` instances
+- `tenant_utils` (`require_tenant_id`, `canonical_tenant_id`, `SYSTEM_TENANT_ID`) — the tenant-identity contract every scoped config method enforces
 
 ## Related Documentation
 

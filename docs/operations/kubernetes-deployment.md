@@ -6,14 +6,24 @@
 
 Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
 
-- **Helm Chart**: `charts/cogniverse/`
+- **Helm Chart**: `charts/cogniverse/` (plus the bundled `openshell`
+  subchart at `charts/cogniverse/charts/openshell`)
 
-- **StatefulSets**: Vespa, Phoenix (with persistent storage)
+- **StatefulSets** (persistent storage): Vespa, Phoenix, and LLM — only
+  when `llm.engine: ollama` (the chart default); `llm.engine: vllm`
+  deploys the LLM as a Deployment instead (see LLM serving below)
 
-- **Deployments**: Runtime, Dashboard, vLLM inference sidecars
-  (`vllm_llm_student`, `vllm_llm_teacher`, `vllm_colpali` — serves the
-  ColQwen3 token-embed model, `vllm_asr`), `colbert_pylate`,
-  `code_colbert_pylate`, `denseon`, `videoprism_jax` (remote sidecar)
+- **Deployments**: Runtime (with an optional in-pod `quality-monitor`
+  sidecar container), Dashboard, Ingestor workers (dequeue ingestion
+  jobs from Redis), MinIO, Redis, Semantic Router (`Envoy` +
+  `vllm-sr` router), Messaging Gateway (Telegram/Slack, disabled by
+  default), LLM (only when `llm.engine: vllm`), and one Deployment per
+  entry under `inference.*` — `vllm_colpali` (ColQwen3 token-embed),
+  `colbert_pylate`, `code_colbert_pylate`, `denseon` (dense
+  single-vector embeddings), `gliner` (zero-shot NER), `clap_embed`
+  (audio embeddings), `face_embed`, `vllm_asr` (transcription),
+  `vllm_llm_student`, `vllm_llm_teacher`, and `videoprism_jax` (remote
+  sidecar)
 
 - **LLM serving**: `llm.engine: ollama` is the chart default (deploys
   `Ollama` as a StatefulSet). Set `llm.engine: vllm` to deploy a
@@ -28,11 +38,23 @@ Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
 > (custom-built sidecars vs official vLLM/Ollama images, CPU vs ROCm,
 > student vs teacher LLM).
 
+- **Argo Workflows**: chart-managed `WorkflowTemplate`s (`job-runner`,
+  `optimization-runner`) plus scheduled `CronWorkflow`s for
+  optimization, distillation, synthetic-data generation, monthly
+  reports, and backup/cleanup maintenance — see
+  [`argo-workflows.md`](./argo-workflows.md)
+
 - **Auto-scaling**: HPA for Runtime
 
-- **Ingress**: NGINX with TLS/SSL
+- **Ingress**: NGINX (Traefik on K3s) with TLS/SSL
 
-- **Init Jobs**: Schema deployment, model pulling
+- **Init Jobs**: Schema deployment, model pulling — plus the optional
+  HF-cache MinIO-populate Job and openshell mTLS-cert Job when their
+  features are enabled
+
+- **Networking**: optional cluster-wide `NetworkPolicy`
+  (`networkPolicy.enabled`) and per-agent egress allow-listing
+  (`networkPolicy.agentEgress.enabled`)
 
 ---
 
@@ -308,7 +330,12 @@ kubectl get nodes
 
 ### K3s-Specific Configuration
 
-Create `values.k3s.yaml` for optimized K3s deployment:
+The chart already ships `charts/cogniverse/values.k3s.yaml`, which
+`cogniverse up` applies automatically — you don't need to write your
+own for the dev CLI path. The example below shows the structure to
+follow if you're deploying to a standalone K3s cluster by hand (`helm
+install` without `cogniverse up`) and want your own
+`values.k3s.yaml` overrides:
 
 ```yaml
 # K3s-specific Helm values
@@ -448,9 +475,14 @@ kubectl get pods -n cogniverse -w
 ```
 
 `cogniverse up` (the dev CLI) composes these layers automatically when
-it detects a GPU host: see
-[`development/scripts-operations.md`](../development/scripts-operations.md)
-for the auto-detection path.
+it detects a GPU host — `detect_torch_backend()`
+(`libs/cli/cogniverse_cli/images.py`) picks `values.rocm.yaml` or
+`values.cuda.yaml` to overlay on `values.k3s.yaml`, and labels the k3d
+node accordingly (see the `up` command in
+`libs/cli/cogniverse_cli/main.py`). A CPU-only host gets no overlay —
+the CPU defaults already baked into `values.yaml` apply (see also
+`values.cpu.yaml` for the standalone CPU-override profile used outside
+`cogniverse up`).
 
 ### GPU passthrough (ROCm + CUDA)
 
@@ -970,6 +1002,8 @@ See `cogniverse --help` for full options.
 ## Related Documentation
 
 - [Deployment](deployment.md) - Deployment overview (use `cogniverse up`)
+- [Models & Inference](models-and-inference.md) - Every model, image source, and inference-sidecar deployment style
+- [Persistence & Backup](persistence-and-backup.md) - Storage durability matrix, backup destinations, restore procedure
 - [Argo Workflows](argo-workflows.md) - Batch processing workflows
 - [Multi-Tenant Operations](multi-tenant-ops.md) - Tenant management
 - [SDK Architecture](../architecture/sdk-architecture.md) - System architecture

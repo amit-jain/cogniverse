@@ -2,22 +2,24 @@
 
 Every served model, the container image that serves it, and how the
 deployment differs between CPU, ROCm, and CUDA. The chart's
-`values.yaml`, `values.rocm.yaml`, `values.cuda.yaml`, and the
-`deploy/` sidecars are the underlying source of truth; this page
-flattens them into one reference.
+`values.yaml` (chart defaults), `values.k3s.yaml` (the local k3d dev
+overlay `cogniverse up` applies by default), `values.rocm.yaml`,
+`values.cuda.yaml`, and the `deploy/` sidecars are the underlying
+source of truth; this page flattens them into one reference.
 
 ---
 
 ## Overview
 
-Cogniverse runs four classes of inference services:
+Cogniverse runs five classes of inference services:
 
 | Class | Purpose |
 |---|---|
 | **LLMs** (chat / generation) | Agent reasoning, query enhancement, distillation. Two tiers: a small **student** model used at runtime, and a larger **teacher** model used only during DSPy MIPROv2 optimization. |
-| **Visual / multimodal embeddings** | ColPali + ColQwen for video/image patch embeddings, VideoPrism for chunk embeddings. |
+| **Visual / multimodal embeddings** | ColPali/ColQwen (one pod, one model, shared by both retrieval families) for video/image patch embeddings, VideoPrism for chunk embeddings. |
 | **Text embeddings** | ColBERT-style late-interaction (LateOn, served by vLLM) for documents/code, DenseOn (ModernBERT) for query/single-vector text. |
-| **Audio (ASR)** | Whisper transcription of audio files. |
+| **Audio (ASR + acoustic embeddings)** | Whisper transcription of audio files; CLAP for a joint audio/text acoustic embedding space. |
+| **Vision/NLP sidecars** | GLiNER zero-shot entity extraction (gateway routing + entity extraction agents), InsightFace face embeddings (knowledge-graph face clustering). |
 
 Each service lives in `charts/cogniverse/values.yaml` under the
 `inference:` block (or under top-level `llm:` for the LLM serving
@@ -27,20 +29,25 @@ path). The chart renders one Deployment + Service per enabled service.
 
 ## LLM serving
 
-### Student (default chat / generation LLM)
+### Student (vLLM chat / generation LLM)
 
 | Field | Value |
 |---|---|
-| Chart key | `inference.vllm_llm_student` (and the `llm.*` block when `engine: vllm`) |
+| Chart key | `inference.vllm_llm_student` |
 | Model | `google/gemma-4-e4b-it` |
-| Image (CPU) | `vllm/vllm-openai-cpu:latest` (official) |
+| Image (CPU / CUDA) | `vllm/vllm-openai-cpu:v0.23.0` / `vllm/vllm-openai:v0.23.0` (official) |
 | Image (ROCm) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | NodePort | 29010 |
-| Default state | enabled |
+| Default state | **`enabled: false`** in base `values.yaml` — turned on by the ROCm overlay (`values.rocm.yaml` sets `enabled: true`, `llm.engine: vllm`, `llm.builtin.enabled: false`) |
 | ROCm GPU memory | `--gpu-memory-utilization 0.30` (≈19 GiB on 62 GiB unified memory) |
 
-The student is the primary chat LLM used by every agent for
-DSPy/litellm calls. The Helm template (`cogniverse.primaryLLMModel` in
+The **base default LLM engine is Ollama**, not the vLLM student (see
+[Optional: Ollama instead of vLLM](#optional-ollama-instead-of-vllm) below —
+despite the name, Ollama is what a fresh CPU install and the local k3d dev
+overlay (`values.k3s.yaml`) actually run). The vLLM student pod is the
+production path used once a ROCm (or manually configured CUDA) GPU is
+available: when enabled, it becomes the primary chat LLM used by every agent
+for DSPy/litellm calls. The Helm template (`cogniverse.primaryLLMModel` in
 `templates/_helpers.tpl`) always prepends the `openai/` provider prefix
 and writes the resulting model id verbatim into `config.json`;
 `create_dspy_lm()` passes it through unchanged. The actual destination
@@ -52,10 +59,10 @@ is determined by `api_base`, not the prefix.
 |---|---|
 | Chart key | `inference.vllm_llm_teacher` |
 | Model | `cyankiwi/Qwen3.6-27B-AWQ-INT4` (AWQ-INT4, ~14 GiB) |
-| Image (CPU) | `vllm/vllm-openai-cpu:latest` (official) |
+| Image (CPU) | `vllm/vllm-openai-cpu:v0.23.0` (official) |
 | Image (ROCm) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | NodePort | 29011 |
-| Default state | **`replicaCount: 0`** — scale-to-zero |
+| Default state | **`enabled: false`, `replicaCount: 0`** — scale-to-zero |
 | `--max-model-len` | 262144 |
 
 The teacher is **scaled to zero by default** because it's only needed
@@ -81,13 +88,16 @@ side that consumes the optimized program.
 
 | Field | Value |
 |---|---|
-| Chart key | `llm.ollama` (only when `llm.engine: ollama`) |
+| Chart key | `llm.ollama` (active when `llm.engine: ollama`) |
 | Model | `gemma3:4b` (configurable via `llm.model`) |
 | Image | `ollama/ollama:0.20.5` (official) |
 | Deployment style | StatefulSet + PVC for the model cache |
-| Default state | opt-in via `llm.engine: ollama`, `llm.builtin.enabled: true` |
+| Default state | **the base default** — `values.yaml` and the local k3d dev overlay (`values.k3s.yaml`) both ship `llm.engine: ollama`, `llm.builtin.enabled: true` (implicit default) |
 
-Use Ollama for local development on machines without a vLLM-ready GPU.
+Ollama is what a fresh CPU install and local development actually run;
+"instead of vLLM" here means instead of the `vllm_llm_student` pod described
+above, which is disabled until the ROCm (or a manually configured CUDA)
+overlay turns it on. Use Ollama on machines without a vLLM-ready GPU.
 The Helm template (`cogniverse.primaryLLMModel`) writes `openai/<model>`
 into `config.json` regardless of engine; `llm.engine` only selects the
 `api_base` URL (pointing at the in-cluster Ollama `/v1` endpoint in this
@@ -178,44 +188,43 @@ pins the rendered upstream endpoint and served model per `llm.engine`.
 
 ## Visual embeddings
 
-### ColPali (per-tenant visual retrieval)
+### ColPali / ColQwen (visual multi-vector retrieval — one pod)
+
+There is a single chart entry, `inference.vllm_colpali`, that serves both the
+ColPali and ColQwen retrieval families — both route to the same
+`TomoroAI/tomoro-colqwen3-embed-4b` (ColQwen3, 320-dim per-patch multi-vector)
+checkpoint. The `video_colpali_smol500_mv_frame`, `image_colpali_mv`, and
+`video_colqwen_omni_mv_chunk_30s` profiles all set
+`inference_service: "vllm_colpali"` — there is no separate `vllm_colqwen`
+chart key.
 
 | Field | Value |
 |---|---|
 | Chart key | `inference.vllm_colpali` |
 | Model | `TomoroAI/tomoro-colqwen3-embed-4b` |
-| Image (CPU / k3s default) | **`cogniverse/colpali:dev` (CUSTOM, built from `deploy/colpali/`)** |
-| Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
-| Engine flag | `colpali_native` (CPU) or `vllm_token_embed` (ROCm) |
+| Image (base `values.yaml`, no device overlay) | `vllm/vllm-openai-cpu:v0.23.0` (official), `engine: vllm_token_embed`, `enabled: false` |
+| Image (k3d local dev, `values.k3s.yaml`) | **`cogniverse/colpali:dev` (CUSTOM, built from `deploy/colpali/`), `engine: colpali_native`, `enabled: true`** |
+| Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:v0.23.0` (official), `engine: vllm_token_embed` |
+| Image (CUDA) | `vllm/vllm-openai:v0.23.0` (official), `engine: vllm_token_embed`, `replicaCount: 3` |
 | NodePort | 29001 |
-| Default state | enabled |
+| Default state | `cogniverse up` (k3d dev, no GPU) enables it via the `values.k3s.yaml` overlay above |
 
 **Why custom on CPU**: vLLM's `ColPaliForRetrieval` registers
 `/v1/score` (cross-encoder scoring) instead of `/v1/embeddings`.
-The runtime needs per-token multi-vector embeddings so we ship a
-custom FastAPI sidecar (`deploy/colpali/server.py`) that wraps
+The runtime needs per-token multi-vector embeddings so the k3d dev overlay
+ships a custom FastAPI sidecar (`deploy/colpali/server.py`) that wraps
 colpali-engine directly.
 
-**On ROCm 7.12+ with gfx1151**: the `vllm_token_embed` path serves
-the multi-vector contract correctly, so the chart's ROCm overlay
-overrides `engine: vllm_token_embed` and uses the official vLLM image.
-
-### ColQwen (alternative multi-vector visual encoder)
-
-| Field | Value |
-|---|---|
-| Chart key | `inference.vllm_colqwen` |
-| Model | `TomoroAI/tomoro-colqwen3-embed-4b` |
-| Image | `vllm/vllm-openai-cpu:latest` / `vllm/vllm-openai-rocm` |
-| Default state | disabled |
-
-Used by the `video_colqwen_omni_mv_chunk_30s` profile when enabled.
+**On ROCm 7.12+ with gfx1151 (and on CUDA)**: the `vllm_token_embed` path
+serves the multi-vector contract correctly, so the device overlay overrides
+`engine: vllm_token_embed` and uses the official vLLM image instead of the
+custom sidecar.
 
 ### VideoPrism (chunk-level video embeddings)
 
 | Field | Value |
 |---|---|
-| Chart key | `inference.videoprism` |
+| Chart key | `inference.videoprism_jax` |
 | Model | `videoprism_public_v1_base_hf` |
 | Image | **`cogniverse/videoprism:dev` (CUSTOM, built from `deploy/videoprism/`)** |
 | Engine | `videoprism_jax` |
@@ -278,7 +287,7 @@ reshape), matching DenseOn's dense-retrieval semantics.
 
 ---
 
-## Audio (ASR)
+## Audio (ASR + acoustic embeddings)
 
 ### Whisper
 
@@ -286,7 +295,7 @@ reshape), matching DenseOn's dense-retrieval semantics.
 |---|---|
 | Chart key | `inference.vllm_asr` |
 | Model | `openai/whisper-large-v3-turbo` |
-| Image | `vllm/vllm-openai-cpu:latest` / `vllm/vllm-openai-rocm:v0.23.0` (official) |
+| Image | `vllm/vllm-openai-cpu:v0.23.0` / `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | Engine | `vllm_transcription` |
 | NodePort | 29005 |
 | Default state | enabled |
@@ -321,20 +330,71 @@ chart) or librosa's numba JIT crashes with "no locator available".
 
 ---
 
+## Vision/NLP sidecars
+
+These two sidecars keep heavy ML dependencies (torch + gliner,
+torch + insightface) out of the slim runtime image. Both are FastAPI
+services with a single `/health` liveness endpoint plus one predict route.
+
+### GLiNER (zero-shot entity extraction)
+
+| Field | Value |
+|---|---|
+| Chart key | `inference.gliner` |
+| Model | `urchade/gliner_mediumv2.1` (sidecar default; callers can override per request) |
+| Image | `cogniverse/gliner` (CUSTOM, `deploy/gliner/Dockerfile` + `deploy/gliner/server.py`) |
+| Endpoint | `POST /predict_entities` (mirrors the in-process `model.predict_entities(text, labels, threshold)` shape) |
+| NodePort | 29007 |
+| Default state | enabled |
+
+`GatewayAgent` classifies queries by modality/generation-type using GLiNER
+zero-shot NER (`urchade/gliner_large-v2.1`), and `EntityExtractionAgent` /
+the knowledge-graph doc extractor use the same sidecar for entity extraction
+(`urchade/gliner_large-v2.1` by default there too). The sidecar loads
+multiple models on demand keyed by the request's `model` field, so one pod
+serves both callers' model choices. `RemoteGlinerLoader` is the client-side
+loader that replaces the in-process GLiNER loader transparently.
+
+### InsightFace (face embeddings, `face_embed` sidecar)
+
+| Field | Value |
+|---|---|
+| Chart key | `inference.face_embed` |
+| Model | `buffalo_l` (InsightFace bundle: RetinaFace detector + ArcFace `w600k_r50` recognizer, 512-dim) |
+| Image | `cogniverse/face-embed` (CUSTOM, `deploy/face_embed/Dockerfile`, module `cogniverse_runtime/sidecars/face_embed.py`) |
+| Endpoint | `POST /embed` (`{"image_url": ...}` or `{"image_b64": ...}` → `{"faces": [{bbox, vec}], "n": int}`) |
+| NodePort | 29007 (**shares the same `nodePort` as `gliner` in `values.yaml`** — enabling both simultaneously without overriding one will fail Kubernetes Service admission) |
+| Default state | disabled |
+
+CPU-only, stateless — no persistence. The knowledge-graph face pipeline
+(`libs/agents/cogniverse_agents/graph/face_extractor.py`) POSTs one keyframe
+per request and clusters the returned 512-dim L2-normalized ArcFace vectors
+per `source_doc_id` to discover anonymous identity groups, attributing each
+cluster to a temporally-aligned named person where possible. It's wired the
+same way as CLAP: opt-in via `inference_service_urls["face_embed"]`
+(`_lookup_face_embed_endpoint` in `libs/runtime/cogniverse_runtime/routers/ingestion.py`),
+additive — an unreachable sidecar degrades the pipeline rather than failing
+the whole ingest.
+
+---
+
 ## Deployment style summary
 
 | Service | Image source | Custom build? |
 |---|---|---|
-| `vllm_llm_student` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
+| `vllm_llm_student` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai` / `vllm/vllm-openai-rocm` | No (official) |
 | `vllm_llm_teacher` | same as student | No |
-| `vllm_colpali` (CPU/k3s) | `cogniverse/colpali:dev` | **Yes** (`deploy/colpali/`) |
-| `vllm_colpali` (ROCm 7.12+) | `vllm/vllm-openai-rocm` | No |
-| `vllm_colqwen` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No |
+| `vllm_colpali` (base `values.yaml`, no overlay) | `vllm/vllm-openai-cpu` | No |
+| `vllm_colpali` (CPU/k3d dev overlay) | `cogniverse/colpali:dev` | **Yes** (`deploy/colpali/`) |
+| `vllm_colpali` (ROCm 7.12+ / CUDA) | `vllm/vllm-openai-rocm` / `vllm/vllm-openai` | No |
 | `vllm_asr` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No |
 | `colbert_pylate` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
 | `code_colbert_pylate` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
 | `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
-| `videoprism` | `cogniverse/videoprism:dev` | **Yes** (`deploy/videoprism/`) |
+| `videoprism_jax` | `cogniverse/videoprism:dev` | **Yes** (`deploy/videoprism/`) |
+| `clap_embed` | `cogniverse/clap-embed` | **Yes** (`deploy/clap_embed/`) |
+| `gliner` | `cogniverse/gliner` | **Yes** (`deploy/gliner/`) |
+| `face_embed` | `cogniverse/face-embed` | **Yes** (`deploy/face_embed/`) |
 | `llm.builtin` (Ollama) | `ollama/ollama` | No (official) |
 
 Custom images are built locally by `cogniverse up` (which calls
@@ -347,7 +407,10 @@ containerd via `k3d image import`.
 
 ## Device selection (`device:` per service)
 
-Each `inference.<svc>` block has a `device:` key. Values:
+Each vLLM-backed `inference.<svc>` block has a `device:` key (the FastAPI
+sidecars that are always CPU-only — `clap_embed`, `face_embed` — omit it
+entirely; `gliner` sets `device: cpu` for documentation even though nothing
+reads it for GPU scheduling). Values:
 
 | Value | Meaning |
 |---|---|
@@ -404,5 +467,6 @@ the schema lifecycle.
 - [`docs/operations/kubernetes-deployment.md`](./kubernetes-deployment.md) — chart structure, GPU passthrough, manual `helm install`
 - [`docs/architecture/overview.md`](../architecture/overview.md) — service graph
 - [`charts/cogniverse/values.yaml`](../../charts/cogniverse/values.yaml) — canonical defaults
+- [`charts/cogniverse/values.k3s.yaml`](../../charts/cogniverse/values.k3s.yaml) — local k3d dev overlay (`cogniverse up`)
 - [`charts/cogniverse/values.rocm.yaml`](../../charts/cogniverse/values.rocm.yaml) — ROCm overlay
 - [`charts/cogniverse/values.cuda.yaml`](../../charts/cogniverse/values.cuda.yaml) — CUDA overlay
