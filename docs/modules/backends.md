@@ -1525,6 +1525,19 @@ the schema's available rank profiles (there is no enum). Valid names:
 | `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float` | Hybrid | Visual + text; embeddings required |
 | `hybrid_*_no_description` variants | Hybrid | Same as above, ignoring the description field |
 
+> **Where a strategy's phase order lives.** The two-phase ranking
+> (`first_phase` / `second_phase`) that defines a strategy's actual behavior is
+> authoritative in the schema's `rank_profiles` (the schema JSON). By naming
+> convention `hybrid_binary_bm25*` ranks the binary visual phase first and
+> `hybrid_bm25_binary*` ranks the text/BM25 phase first.
+> `configs/schemas/ranking_strategies.json` is a **generated** artifact holding
+> phase-agnostic metadata (which embeddings/tensors each strategy needs) —
+> `StrategyAwareProcessor` writes it at ingestion via `extract_all_ranking_strategies`,
+> and query time re-extracts from the schema, not from that file. To change ranking
+> behavior (e.g. phase order), edit the schema `rank_profiles`; do **not** hand-edit
+> `ranking_strategies.json` (it is regenerated). See
+> [`docs/architecture/schema_driven_flow.md`](../architecture/schema_driven_flow.md).
+
 ```python
 # Pure text search (fast, no embeddings)
 results = backend.search({
