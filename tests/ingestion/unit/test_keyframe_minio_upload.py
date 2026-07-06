@@ -9,9 +9,12 @@ contract; this pins that they agree end to end.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+import pytest
 
 from cogniverse_agents.multimodal import hit_keyframe_uri
+from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
 from cogniverse_runtime.ingestion_worker import minio_client
 
 
@@ -70,3 +73,54 @@ def test_upload_keyframes_uses_default_bucket(tmp_path, monkeypatch):
             tenant_id="t:t", video_id="v", keyframe_paths=[str(p)]
         )
     assert uris == ["s3://corpus/t:t/keyframes/v/0000.jpg"]
+
+
+def _keyframe_strategy():
+    strat = Mock()
+    strat.get_required_processors.return_value = ["keyframe"]
+    return strat
+
+
+@pytest.mark.asyncio
+async def test_segmentation_uploads_keyframes_on_fresh_extraction(tmp_path):
+    """A fresh keyframe extraction uploads the frames to object storage."""
+    result = {"keyframes": [{"path": "y", "frame_id": 0}]}
+    ctx = Mock()
+    ctx.get_cached_keyframes = AsyncMock(return_value=None)
+    ctx.set_cached_keyframes = AsyncMock()
+    ctx.upload_keyframes_to_object_store = Mock()
+    ctx.logger = Mock()
+    ctx.profile_output_dir = tmp_path
+    proc = Mock()
+    proc.extract_keyframes = Mock(return_value=result)
+    pm = Mock()
+    pm.get_processor.return_value = proc
+    video = tmp_path / "v.mp4"
+
+    out = await ProcessingStrategySet()._process_segmentation(
+        _keyframe_strategy(), video, pm, ctx
+    )
+
+    assert out == {"keyframes": result}
+    ctx.upload_keyframes_to_object_store.assert_called_once_with(video, result)
+
+
+@pytest.mark.asyncio
+async def test_segmentation_uploads_keyframes_on_cache_hit(tmp_path):
+    """A cache hit ALSO uploads — a re-ingest, or a video first ingested before
+    this wiring existed, must still land its keyframes in object storage."""
+    cached = {"keyframes": [{"path": "x", "frame_id": 0}]}
+    ctx = Mock()
+    ctx.get_cached_keyframes = AsyncMock(return_value=cached)
+    ctx.upload_keyframes_to_object_store = Mock()
+    ctx.logger = Mock()
+    pm = Mock()
+    pm.get_processor.return_value = Mock()
+    video = tmp_path / "v.mp4"
+
+    out = await ProcessingStrategySet()._process_segmentation(
+        _keyframe_strategy(), video, pm, ctx
+    )
+
+    assert out == {"keyframes": cached}
+    ctx.upload_keyframes_to_object_store.assert_called_once_with(video, cached)
