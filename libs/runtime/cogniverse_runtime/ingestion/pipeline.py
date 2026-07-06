@@ -523,6 +523,37 @@ class VideoIngestionPipeline:
                     images[str(kf["frame_id"])] = image
         return images
 
+    def upload_keyframes_to_object_store(
+        self, video_path: Path, keyframes_metadata: dict[str, Any]
+    ) -> None:
+        """Upload the extracted keyframes to MinIO under the shared keyframe-key
+        contract so answer-time agents can fetch them for the LLM.
+
+        Best-effort: MinIO not being configured (local dev) or an upload error
+        must never fail ingestion — the agent read path degrades to text-only.
+        The i-th keyframe is uploaded under segment_id ``i``, matching the
+        ``segment_id`` the embedding step assigns and the hit later carries.
+        """
+        frames = keyframes_metadata.get("keyframes", []) if keyframes_metadata else []
+        paths = [kf.get("path") for kf in frames]
+        if not paths or not all(paths):
+            return
+        from cogniverse_runtime.ingestion_worker.minio_client import upload_keyframes
+
+        try:
+            upload_keyframes(
+                tenant_id=self.tenant_id,
+                video_id=video_path.stem,
+                keyframe_paths=paths,
+            )
+            self.logger.info("  ☁️ Uploaded %d keyframes to MinIO", len(paths))
+        except Exception as e:
+            # Enrichment for the multimodal answer path — never break the core
+            # ingestion (embeddings) if the object store is down or unset.
+            self.logger.warning(
+                "keyframe MinIO upload skipped for %s: %r", video_path.stem, e
+            )
+
     def _rehydrate_keyframe_images(
         self,
         video_path: Path,

@@ -235,6 +235,7 @@ class ProcessingStrategySet:
                 num_frames = len(result.get("keyframes", [])) if result else 0
                 pipeline_context.logger.info(f"  🖼️ Extracted {num_frames} keyframes")
                 await pipeline_context.set_cached_keyframes(video_path, result)
+                pipeline_context.upload_keyframes_to_object_store(video_path, result)
                 return {"keyframes": result}
 
         elif "chunk" in requirements:

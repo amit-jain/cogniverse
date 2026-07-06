@@ -79,3 +79,36 @@ def upload_bytes(
         extra["ContentType"] = content_type
     client.put_object(Bucket=bucket_name, Key=key, Body=content, **extra)
     return f"s3://{bucket_name}/{key}"
+
+
+def upload_keyframes(
+    *,
+    tenant_id: str,
+    video_id: str,
+    keyframe_paths: list,
+    bucket: Optional[str] = None,
+) -> list[str]:
+    """Upload extracted keyframes to MinIO under the shared keyframe-key
+    contract, so answer-time agents fetch them by deriving the same key from a
+    search hit.
+
+    ``keyframe_paths`` MUST be ordered by segment: the i-th path is uploaded
+    under ``keyframe_object_key(tenant_id, video_id, i)`` — the same ``i`` the
+    embedding step assigns as ``segment_id`` and the hit later carries. Returns
+    the ``s3://`` URIs in that order.
+    """
+    from cogniverse_core.common.media import keyframe_object_key
+
+    bucket_name = bucket or _default_bucket()
+    client = _client()
+    uris: list[str] = []
+    for segment_id, path in enumerate(keyframe_paths):
+        key = keyframe_object_key(tenant_id, video_id, segment_id)
+        client.put_object(
+            Bucket=bucket_name,
+            Key=key,
+            Body=Path(path).read_bytes(),
+            ContentType="image/jpeg",
+        )
+        uris.append(f"s3://{bucket_name}/{key}")
+    return uris
