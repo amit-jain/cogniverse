@@ -31,27 +31,44 @@ All endpoints return standard HTTP error responses:
 }
 ```
 
-Or for validation errors:
+Or for business-rule validation errors raised by `ProfileValidator` (e.g. duplicate profile name, invalid profile name characters, unknown embedding type, missing schema template):
 
 ```json
 {
   "detail": {
-    "message": "Invalid request",
+    "message": "Profile validation failed",
     "errors": [
-      "Field 'profile_name' is required",
-      "Field 'embedding_type' must be one of: multi_vector, single_vector"
+      "Profile 'video_test' already exists for tenant 'acme_corp'",
+      "Invalid embedding type 'wrong_type'. Must be one of: ['multi_vector', 'single_vector']"
     ]
   }
 }
 ```
 
+Or for request-schema validation errors (missing/malformed required field, caught by FastAPI/Pydantic before the route body runs):
+
+```json
+{
+  "detail": [
+    {
+      "type": "missing",
+      "loc": ["body", "tenant_id"],
+      "msg": "Field required",
+      "input": {"profile_name": "test", "...": "..."}
+    }
+  ]
+}
+```
+
 Common status codes:
 
-- `400`: Bad request (validation error)
+- `400`: Bad request (business-rule validation error — e.g. duplicate profile name, invalid profile name, unknown embedding type, missing schema template)
 
 - `404`: Resource not found
 
-- `409`: Conflict (duplicate profile name)
+- `409`: Conflict — only returned by Delete Profile when `delete_schema=true` and another profile still references the same schema
+
+- `422`: Unprocessable entity (request body missing a required field or failing Pydantic type validation, e.g. `tenant_id` omitted entirely)
 
 - `500`: Internal server error
 
@@ -94,6 +111,10 @@ Create a new backend profile for a tenant.
   },
   "model_specific": {
     "quantization": "int8"
+  },
+  "schema_config": {
+    "embedding_dim": 128,
+    "num_patches": 1024
   },
   "deploy_schema": "boolean (optional, default: false)"
 }
@@ -146,15 +167,16 @@ curl -X POST http://localhost:8000/admin/profiles \
 
 **Validation Rules:**
 
-- `profile_name`: Must be unique within tenant, alphanumeric + underscore + hyphen
+- `profile_name`: Must be unique within tenant, max 100 chars, alphanumeric + underscore + hyphen only
 - `tenant_id`: Required, non-empty — identifies the tenant owning the profile
 - `type`: Optional (defaults to "video"), must be one of: "video", "image", "audio", "document", "code"
-- `schema_name`: Must exist in schema directory
+- `schema_name`: Must have a matching template file `{schema_name}_schema.json` in the configured schema templates directory (defaults to `configs/schemas/`); the template must contain top-level `name` and `document.fields`
 - `embedding_model`: Format `org/model` or `model-name`
 - `embedding_type`: Must be `multi_vector` or `single_vector`
-- `strategies`: Optional (defaults to empty dict), must be valid JSON object
+- `strategies`: Optional (defaults to empty dict); each entry must be an object with a `class` key naming an importable strategy class
 - `pipeline_config`: Optional (defaults to empty dict), must be valid JSON object
 - `model_specific`: Optional (defaults to null), must be valid JSON object
+- `schema_config`: Optional (defaults to empty dict); if it includes `embedding_dim`, the value must be an integer between 1 and 100000
 - `deploy_schema`: Optional (defaults to false), boolean flag
 
 ---
@@ -196,7 +218,7 @@ curl "http://localhost:8000/admin/profiles?tenant_id=acme_corp"
       "embedding_model": "videoprism_public_v1_base_hf",
       "description": "VideoPrism global embeddings",
       "schema_deployed": false,
-      "created_at": "2024-01-15T11:00:00.000Z"
+      "created_at": "2024-01-15T10:00:00.000Z"
     }
   ],
   "total_count": 2,
@@ -209,6 +231,8 @@ curl "http://localhost:8000/admin/profiles?tenant_id=acme_corp"
 - Returns empty array if no profiles exist for tenant
 
 - Profiles are tenant-isolated (cannot see other tenants' profiles)
+
+- `created_at` in this list response is NOT a persisted per-profile creation timestamp — the config store doesn't track it, so the route fills it in as the current time of the list request. Every profile in a given response therefore shows the same `created_at`. Use Get Profile for a real per-profile version/timestamp derived from the config store's version history.
 
 ---
 
@@ -294,9 +318,9 @@ Update mutable fields of an existing profile.
 {
   "tenant_id": "string (required)",
   "description": "string (optional)",
-  "strategies": {...} (optional),
-  "pipeline_config": {...} (optional),
-  "model_specific": {...} (optional)
+  "strategies": "object (optional)",
+  "pipeline_config": "object (optional)",
+  "model_specific": "object (optional)"
 }
 ```
 
@@ -319,6 +343,10 @@ Update mutable fields of an existing profile.
 - `embedding_model`
 
 - `schema_config`
+
+- `model_loader`
+
+`ProfileUpdateRequest` only declares `tenant_id`, `description`, `strategies`, `pipeline_config`, and `model_specific`, so any immutable field name sent in the request body (e.g. `schema_name`) is silently dropped by Pydantic before the route body runs — it never reaches the update logic. If that leaves no recognized fields to change, the request fails with `400 Bad Request: "No fields to update provided"` (see below) rather than a "cannot update immutable field" error.
 
 **Example Request:**
 
@@ -348,26 +376,21 @@ curl -X PUT http://localhost:8000/admin/profiles/video_colpali_mv_frame \
 }
 ```
 
-**Error Response:** `400 Bad Request` (trying to update immutable field)
+**Error Response:** `400 Bad Request` (no mutable fields provided, e.g. body only contained an immutable field name)
 
 ```json
 {
-  "detail": {
-    "message": "Invalid update fields",
-    "errors": [
-      "Cannot update immutable field: embedding_model"
-    ]
-  }
+  "detail": "No fields to update provided"
 }
 ```
 
+If `strategies` is one of the provided mutable fields, its value is re-validated with the same strategy-class checks used at creation time; a bad `strategies` block returns `400` with `{"message": "Invalid update fields", "errors": [...]}`.
+
 **Concurrency:**
 
-- Uses optimistic concurrency control
+- Updates are serialized via a single in-process lock on the shared `ConfigManager` instance — it guards backend-profile reads/writes for every tenant in that runtime process, not just the tenant being updated; it does not span multiple runtime processes
 
-- Version number increments on each update
-
-- Concurrent updates are serialized via database locks
+- The config store versions every write — each successful update creates a new version and `version` in the response is the resulting version number
 
 ---
 
@@ -414,6 +437,14 @@ curl -X DELETE "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tena
 ```json
 {
   "detail": "Profile 'video_colpali_mv_frame' not found for tenant 'acme_corp'"
+}
+```
+
+**Error Response:** `409 Conflict` (only when `delete_schema=true` and another profile in the same tenant still references the schema)
+
+```json
+{
+  "detail": "Cannot delete schema 'video_colpali_smol500_mv_frame': other profiles using it: ['video_colpali_other_profile']"
 }
 ```
 
@@ -468,7 +499,7 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
   "profile_name": "video_colpali_mv_frame",
   "tenant_id": "acme_corp",
   "schema_name": "video_colpali_smol500_mv_frame",
-  "tenant_schema_name": "video_colpali_smol500_mv_frame_acme_corp",
+  "tenant_schema_name": "video_colpali_smol500_mv_frame_acme_corp_acme_corp",
   "deployment_status": "success",
   "deployed_at": "2024-01-15T10:30:00.000Z"
 }
@@ -492,7 +523,7 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
 
 1. Check if schema already exists (skip if exists and force=false)
 2. Call backend.schema_registry.deploy_schema() with tenant_id, base_schema_name, optional config, and optional force parameter
-3. Generate tenant-specific schema name: `{base_schema_name}_{tenant_id}` (colons in tenant_id replaced with underscores, e.g., `acme:prod` becomes `_acme_prod`)
+3. Generate tenant-specific schema name via `backend.get_tenant_schema_name(tenant_id, base_schema_name)`: the tenant_id is first canonicalized to `org:tenant` form (a bare tenant like `acme_corp` canonicalizes to `acme_corp:acme_corp`; an explicit `org:tenant` value like `acme:prod` is used as-is), then the colon is replaced with an underscore and appended — so `tenant_id="acme_corp"` yields `{base_schema_name}_acme_corp_acme_corp`, and `tenant_id="acme:prod"` yields `{base_schema_name}_acme_prod`
 4. Return deployment status ("success", "failed", or "already_deployed")
 
 **Prerequisites:**

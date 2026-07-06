@@ -11,6 +11,8 @@ Backend profiles define how videos are processed and indexed in Cogniverse. Each
 - **Embedding Type**: Processing approach (multi_vector, single_vector)
 - **Strategies**: Processing strategy configurations (segmentation, embedding, etc.)
 - **Pipeline Configuration**: Processing pipeline settings
+- **Schema Config**: Schema metadata (embedding dimensions, model name, patch count, etc.)
+- **Model-Specific Config**: Optional model-specific parameters (e.g., quantization, batch size)
 
 Profiles are **tenant-scoped**, allowing each tenant to have isolated configurations.
 
@@ -21,9 +23,11 @@ Profiles are **tenant-scoped**, allowing each tenant to have isolated configurat
    uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
    ```
 
-2. Navigate to the **⚙️ Configuration** tab, then select the **🔧 Backend Profiles** sub-tab (5th sub-tab)
+2. Set the **Active Tenant** in the sidebar. This is required — the dashboard
+   blocks every tab, including Backend Profiles, until a tenant is entered
+   here. There is no default tenant fallback.
 
-3. Select your **Tenant ID** from the dropdown (or enter a new one)
+3. Navigate to the **⚙️ Configuration** tab, then select the **🔧 Backend Profiles** sub-tab (5th sub-tab). The Configuration tab also shows an editable **Tenant ID** text field, pre-filled from the sidebar's Active Tenant, that applies to all its sub-tabs.
 
 ## Creating a Profile
 
@@ -39,7 +43,7 @@ The create form will appear with the following fields:
   - Use naming convention: `{type}_{model}_{variant}_{strategy}`
   - Must be unique within the tenant
 
-- **Type**: Profile type (e.g., `video`, `image`, `audio`)
+- **Type**: Profile type — must be one of `video`, `image`, `audio`, `document`, `code`
 
 - **Description**: Human-readable description (optional but recommended)
 
@@ -48,6 +52,9 @@ The create form will appear with the following fields:
 - **Schema Name**: Vespa schema template name
   - Must exist in your schema directory
   - Example: `video_colpali_smol500_mv_frame`, `video_videoprism_base_mv_chunk_30s`
+
+- **Schema Config** (optional JSON, defaults to `{}`): Schema metadata such as `embedding_dim`, `model_name`, `num_patches`, `binary_dim`
+  - If `embedding_dim` is set, it must be an integer between 1 and 100000
 
 **Embedding Configuration:**
 
@@ -105,6 +112,10 @@ The create form will appear with the following fields:
   }
   ```
 
+**Deployment (Optional):**
+
+- **Deploy Schema Immediately**: Checkbox — when checked, the schema is deployed to the backend as part of profile creation (equivalent to setting `deploy_schema: true` in the create API request). Leave unchecked to deploy later from the Deploy Schema tab.
+
 ### Step 3: Submit
 
 Click **Create Profile** button. You'll see:
@@ -119,13 +130,21 @@ Click **Create Profile** button. You'll see:
 
 The system validates:
 
-- Profile name is unique within tenant
+- Profile name is unique within tenant (checked on create only)
 
-- Schema name exists in schema directory
+- Profile name contains only alphanumeric characters, underscores, and hyphens (max 100 chars)
 
-- Embedding model format is correct
+- Profile type is one of: `video`, `image`, `audio`, `document`, `code`
 
-- Embedding type is valid enum value
+- Schema name exists in schema directory (`configs/schemas/{schema_name}_schema.json`)
+
+- Embedding model is a non-empty string (a warning, not a hard error, is logged if it doesn't look like `org/model` or `model-name`)
+
+- Embedding type is a valid enum value (`multi_vector` or `single_vector`)
+
+- Each strategy's `class` is importable (e.g., `FrameSegmentationStrategy`)
+
+- If `schema_config.embedding_dim` is set, it must be an integer between 1 and 100000
 
 - JSON fields are valid JSON
 
@@ -164,7 +183,7 @@ Only these fields can be updated after creation:
 3. Modify any of the 4 mutable fields
 4. Click **Save Changes**
 
-The system uses **optimistic concurrency control** - each update increments the version number to detect conflicts.
+Every update is versioned — each write creates a new, incrementing version number that is visible via the profile detail response and the History sub-tab. There is no client-supplied version check: updates are not rejected for being based on a stale read, and two concurrent writers will silently overwrite each other (the last write wins). A single dashboard/runtime process serializes its own writes with an internal lock, but this does not protect against concurrent writes from separate processes.
 
 ## Deploying a Schema
 
@@ -187,11 +206,15 @@ Deploying a schema creates the Vespa document schema in your configured backend.
 ### Deployment Process
 
 The system will:
-1. Generate tenant-specific schema name: `{schema_name}_{tenant_id}`
-2. Load schema template from disk
-3. Apply profile-specific configurations
-4. Submit to Vespa via admin API
-5. Wait for deployment confirmation
+1. Generate a tenant-specific schema name. The tenant ID is canonicalized to
+   `org:tenant` form first (a simple ID like `acme` becomes `acme:acme`), then
+   the colon is replaced with an underscore and appended to the base schema
+   name — e.g., schema `video_colpali` + tenant `acme` → `video_colpali_acme_acme`;
+   tenant `acme:prod` → `video_colpali_acme_prod`
+2. Skip deployment and report `already_deployed` if the schema already exists and Force Redeployment is off
+3. Load schema template from disk and apply profile-specific configurations
+4. Submit to Vespa via the schema registry
+5. Return the deployment status (`success`, `failed`, or `already_deployed`)
 
 ### Deployment Status
 
@@ -253,7 +276,7 @@ Profiles are **strictly isolated** by tenant:
 - Each tenant sees only their own profiles
 - Same profile name can exist in different tenants
 - Cannot access, edit, or delete other tenants' profiles
-- Tenant ID defaults to "default" if not specified
+- Tenant ID is required on every operation — there is no default/fallback tenant. Omitting it raises an error via the API and blocks every tab in the dashboard
 
 Example:
 ```text
@@ -284,8 +307,8 @@ Both can coexist without conflict.
 
 ### Workflow 3: Clone for Different Tenant
 
-1. Export profile JSON from tenant_a
-2. Switch to tenant_b
+1. Fetch the profile JSON from tenant_a via `GET /admin/profiles/{profile_name}?tenant_id=tenant_a` (the dashboard's Import/Export tab exports a tenant's whole configuration, not a single profile)
+2. Switch the Active Tenant to tenant_b
 3. Create profile with same config
 4. Deploy (creates tenant_b-specific schema)
 5. Both tenants have isolated instances
@@ -311,9 +334,9 @@ Both can coexist without conflict.
 - Profile doesn't exist (check tenant ID)
 - Validation error (check JSON syntax)
 
-### "Version conflict"
-- Another user updated the profile concurrently
-- Refresh the page and retry your changes
+### Changes appear lost after a concurrent edit
+- Updates are not conflict-checked — the last write wins, and the profile's version number simply keeps incrementing
+- If two people (or two browser tabs) edit the same profile at once, reload the profile before editing again and re-apply your change
 
 ## API Alternative
 
@@ -362,6 +385,7 @@ curl -X POST http://localhost:8000/admin/profiles \
 6. **Tenant Strategy**: Use meaningful tenant IDs
    - Good: `customer_acme`, `team_research`
    - Bad: `tenant1`, `test`
+   - Tenant IDs may be a simple name (`acme`) or `org:tenant` form (`acme:production`); both are canonicalized to `org:tenant` internally
 
 ## Next Steps
 

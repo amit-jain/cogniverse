@@ -14,6 +14,8 @@ Modal provides serverless GPU infrastructure for:
 
 - **Agent LLMs**: Deploy agent models on GPUs instead of local Ollama
 
+- **LLM/VLM-as-Judge Evaluation**: Run experiment evaluators against a Modal-hosted vision model
+
 ## Use Cases in Cogniverse
 
 ### 1. DSPy Optimization (Teacher/Student)
@@ -95,6 +97,35 @@ Deploy:
 modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 ```
 
+### 4. LLM/VLM-as-Judge Evaluation
+
+Experiment evaluators can score results with a vision-capable judge model hosted on Modal
+instead of a local LM. `LLMJudgeCore` (`libs/evaluation/cogniverse_evaluation/evaluators/llm_judge.py`)
+is provider-agnostic — it POSTs to any OpenAI-compatible `/v1/chat/completions` endpoint —
+so pointing it at a Modal deployment only requires a config entry:
+
+```json
+{
+  "evaluators": {
+    "modal_visual_judge": {
+      "provider": "modal",
+      "model": "qwen2-vl",
+      "base_url": "https://your-modal-endpoint.modal.run/",
+      "api_key": "your-modal-api-key"
+    }
+  }
+}
+```
+
+Select it when running experiments:
+```bash
+uv run python scripts/run_experiments_with_visualization.py \
+    --dataset-path data/testset/evaluation/video_search_queries.csv \
+    --dataset-name golden_eval_v1 \
+    --profiles frame_based_colpali \
+    --evaluator modal_visual_judge
+```
+
 ## Modal Deployments
 
 ### LLM Inference Service
@@ -133,18 +164,28 @@ with dspy.context(lm=lm):
 
 ### VLM Service Deployment
 
-# Actual location: scripts/modal_vlm_service.py
-# App name: cogniverse-vlm
-# Uses: SGLang + Qwen3-VL-8B-Instruct
-# GPU: H100 by default (configurable via GPU_TYPE env var)
+- Actual location: `scripts/modal_vlm_service.py`
+- App name: `cogniverse-vlm`
+- Uses: SGLang + Qwen3-VL-8B-Instruct
+- GPU: `h100` by default (configurable via `GPU_TYPE` env var)
 
-# The VLMModel class provides:
-# - generate_description: Single frame description (supports frame_base64, frame_path, remote_frame_path)
-# - upload_and_process_frames: Batch processing via zip upload
+The `VLMModel` class (on `@app.cls`) exposes two `@modal.fastapi_endpoint` methods, each
+its own web URL of the form `https://<user>--cogniverse-vlm-vlmmodel-<method-name>.modal.run`
+(underscores in the method name become dashes in the URL):
 
-# Key endpoints after deployment:
-# POST /generate_description - Single frame analysis
-# POST /upload_and_process_frames - Batch frame processing
+- `generate_description` (`POST .../cogniverse-vlm-vlmmodel-generate-description.modal.run`):
+  single frame description (accepts `frame_base64`, `frame_path`, or `remote_frame_path`)
+- `upload_and_process_frames` (`POST .../cogniverse-vlm-vlmmodel-upload-and-process-frames.modal.run`):
+  batch processing — upload a zip of frames, get back a description per frame
+
+There is also a standalone `upload_app` ASGI function (`@app.function` + `@modal.asgi_app()`)
+that extracts an uploaded zip into the shared `cogniverse-frames` volume for later processing.
+It is not currently invoked by the ingestion pipeline — `VLMDescriptor` calls
+`upload_and_process_frames` directly instead.
+
+`VLMProcessor`/`VLMDescriptor` (`libs/runtime/cogniverse_runtime/ingestion/processors/`)
+default `auto_start=True`: if the configured `vlm_endpoint` isn't reachable, the ingestion
+pipeline runs `modal deploy scripts/modal_vlm_service.py` for you before the first batch.
 
 Deploy:
 ```bash
@@ -155,19 +196,27 @@ modal deploy scripts/modal_vlm_service.py
 
 Train models on Modal GPUs with the finetuning module:
 
-# Actual location: libs/finetuning/cogniverse_finetuning/training/modal_app.py
-# App name: cogniverse-finetuning
+- Actual location: `libs/finetuning/cogniverse_finetuning/training/modal_app.py`
+- App name: `cogniverse-finetuning`
 
-# The ModalTrainingRunner provides:
-# - SFT (Supervised Fine-Tuning) on Modal GPUs
-# - DPO (Direct Preference Optimization) on Modal GPUs
-# - Configurable GPU selection (T4, A10G, A100-40GB, A100-80GB, H100)
-# - Direct dataset passing (no upload needed) and adapter download
+The Modal app (`modal_app.py`) provides three GPU functions:
+- `train_sft_remote` — SFT (Supervised Fine-Tuning)
+- `train_dpo_remote` — DPO (Direct Preference Optimization)
+- `train_embedding_remote` — triplet-loss embedding training
+- Configurable GPU selection (T4, A10G, A100-40GB, A100-80GB, H100)
+- Direct dataset passing (no upload needed) and adapter download as bytes
 
 Deploy:
 ```bash
 modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 ```
+
+`ModalTrainingRunner` (`libs/finetuning/cogniverse_finetuning/training/modal_runner.py`) wraps
+those three functions and is the low-level client shown below. The finetuning module also
+provides a higher-level `RemoteTrainingBackend` (`libs/finetuning/cogniverse_finetuning/training/backend.py`)
+that wraps `ModalTrainingRunner` behind the same `TrainingBackend` interface used by
+`LocalTrainingBackend`, so orchestration code can switch between local and Modal training by
+changing one config field. See [High-Level Orchestration](#high-level-orchestration) below.
 
 Usage:
 ```python
@@ -186,6 +235,31 @@ result = await runner.run_sft(
 
 # DPO (Direct Preference Optimization) also available
 result = await runner.run_dpo(dataset, base_model, output_dir, dpo_config)
+```
+
+### High-Level Orchestration
+
+Rather than calling `ModalTrainingRunner` directly, most callers use the module-level
+`finetune()` convenience function (`libs/finetuning/cogniverse_finetuning/orchestrator.py`),
+which extracts a dataset from telemetry, auto-selects SFT/DPO/embedding, generates synthetic
+data if needed, and trains via whichever backend you pick — `backend="remote"` with
+`backend_provider="modal"` routes through `RemoteTrainingBackend` → `ModalTrainingRunner`
+under the hood:
+
+```python
+from cogniverse_finetuning.orchestrator import finetune
+
+result = await finetune(
+    telemetry_provider=provider,
+    tenant_id="tenant1",
+    project="cogniverse-tenant1",
+    model_type="llm",
+    agent_type="routing",
+    backend="remote",
+    backend_provider="modal",
+    gpu="A10G",  # T4, A10G, A100-40GB, A100-80GB, H100
+)
+# result.adapter_path / result.metrics — same OrchestrationResult shape as backend="local"
 ```
 
 ### Embedding Model Training on Modal
@@ -252,7 +326,8 @@ Teacher (Claude/GPT-4):
 - Total: ~$5-50 for full optimization
 
 Student (Modal SmolLM3-3B):
-- GPU: A10G (24GB) - configured in optimization.providers.modal
+- GPU: A10G (24GB) - chosen when you deploy your custom vLLM inference
+  app (see "LLM Inference Service" above); not an in-repo config key
 - Duration: 15-30 minutes
 - Cost: ~$1.10/hour = ~$0.55
 ```
@@ -391,8 +466,9 @@ curl https://your-username--general-inference-service-health.modal.run
 
 ### Integration Tests
 ```bash
-# Test Modal provider factory
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -k "provider" -v
+# Test the local/remote training-backend dispatch (RemoteTrainingBackend
+# wraps ModalTrainingRunner behind the same TrainingBackend interface)
+uv run pytest tests/finetuning/test_training_backend.py tests/finetuning/test_orchestrator.py -v
 
 # Test VLM service locally (requires Modal CLI)
 modal run scripts/modal_vlm_service.py::test_vlm --frame-path path/to/frame.jpg
@@ -404,36 +480,40 @@ modal run scripts/modal_vlm_service.py::test_vlm --frame-path path/to/frame.jpg
 ```bash
 # Refresh Modal credentials
 modal token new
-
-# Set secrets for API keys
-modal secret create teacher-key ROUTER_OPTIMIZER_TEACHER_KEY=your-api-key
-modal secret create annotation-key ANNOTATION_API_KEY=your-api-key
 ```
+
+`ROUTER_OPTIMIZER_TEACHER_KEY` and `ANNOTATION_API_KEY` (used by the local DSPy
+optimizer/annotation processes, not by any Modal-deployed function) are plain local
+environment variables — `export ROUTER_OPTIMIZER_TEACHER_KEY=your-api-key`. Neither
+`scripts/modal_vlm_service.py` nor `libs/finetuning/cogniverse_finetuning/training/modal_app.py`
+attaches a `modal.Secret` today; `modal secret create` only matters if you extend one of
+those apps yourself with `secrets=[modal.Secret.from_name("...")]`.
 
 ### GPU Availability
-```bash
-# Check available GPUs
-modal gpu list
 
-# Use different GPU if needed
-# Change in deployment: gpu="T4" instead of gpu="A10G"
-```
+Modal's CLI has no `gpu list` command. Check current GPU pricing/availability on the
+[Modal pricing page](https://modal.com/pricing), then change the GPU in the deployment
+code itself, e.g. `gpu="T4"` instead of `gpu="A10G"` in `modal_app.py`, or
+`GPU_TYPE=t4 modal deploy scripts/modal_vlm_service.py` for the VLM service.
 
 ### Cost Management
 ```bash
-# Monitor usage
-modal billing current
+# Monitor usage (billing has no "current" subcommand — use report with --for)
+modal billing report --for today
 
-# Set spending limits
-modal billing limit set --monthly 100
+# Detailed report for a date range
+modal billing report --start 2026-06-01 --end 2026-07-01 --csv > report.csv
 ```
+
+Spending limits are configured in the Modal dashboard (Settings → Billing) — there is no
+CLI command for setting them.
 
 ## Monitoring
 
 ### Modal Dashboard
 - View all deployments: `modal app list`
-- Check logs: `modal logs app-name`
-- Monitor costs: `modal billing`
+- Check logs: `modal app logs <app-name>`
+- Monitor costs: `modal billing report --for "this month"`
 
 ### Phoenix Integration
 ```python

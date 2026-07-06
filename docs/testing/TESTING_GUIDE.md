@@ -14,6 +14,7 @@ Comprehensive guide to testing practices in Cogniverse.
 7. [Test Coverage](#test-coverage)
 8. [CI/CD Testing](#cicd-testing)
 9. [Troubleshooting](#troubleshooting)
+10. [Related Documentation](#related-documentation)
 
 ---
 
@@ -47,27 +48,47 @@ tests/
 │   │   └── ...
 │   ├── integration/
 │   │   └── ...
-│   └── e2e/
+│   └── e2e/                         # Standalone-agent e2e config (test_config.py)
+├── core/
+│   ├── unit/
+│   └── integration/
+├── runtime/
+│   ├── unit/
+│   └── integration/
+├── foundation/
+│   ├── unit/
+│   └── integration/
+├── messaging/
+│   ├── unit/
+│   └── integration/
+├── cli/
+│   └── unit/
+├── charts/                          # Helm chart unit tests (test_*_chart.py)
 ├── system/
 │   ├── test_ensemble_comprehensive.py
 │   ├── test_ensemble_search_e2e.py
+│   ├── vespa_test_manager.py
+│   ├── minio_test_manager.py        # MinIOTestManager
 │   └── conftest.py
 ├── ingestion/
 │   ├── unit/
 │   ├── integration/
-│   └── conftest.py
+│   ├── fixtures/
+│   └── pytest.ini                   # Ingestion-scoped markers/addopts
 ├── evaluation/
 │   ├── unit/
 │   ├── integration/
+│   ├── fixtures/
 │   └── conftest.py
 ├── routing/
 │   ├── unit/
 │   ├── integration/
-│   └── conftest.py
+│   └── pytest.ini                   # Routing-scoped markers/addopts
 ├── telemetry/
 │   ├── unit/
 │   └── integration/
 ├── finetuning/
+│   ├── test_*.py                    # Unit tests live at this level (no unit/ subdir)
 │   ├── integration/
 │   └── conftest.py
 ├── memory/
@@ -91,10 +112,16 @@ tests/
 │   ├── unit/
 │   └── integration/
 ├── dashboard/
-├── ui/
+│   └── unit/
+├── ui/                              # Currently empty
 ├── synthetic/
+│   ├── unit/
 │   └── integration/
-├── utils/
+├── e2e/                             # Cross-package e2e (A2A gateway, canary, CLI, ...)
+│   └── deployment/
+├── fixtures/                        # Shared LM + sidecar fixtures (llm.py, sidecars.py)
+├── utils/                           # Shared test helpers (vespa_test_helpers, tenant_helpers,
+│                                     # docker_utils, vllm_sidecar, markers, memory_store, ...)
 └── conftest.py                      # Shared fixtures (shared_vespa, phoenix_container, etc.)
 ```
 
@@ -142,6 +169,40 @@ uv run pytest tests/agents/unit/test_search_agent.py -v
 
 # Run specific test
 uv run pytest tests/agents/unit/test_search_agent.py::TestSearchAgent::test_search_by_text -v
+```
+
+### Test Markers
+
+Markers are registered in the root `pytest.ini` (`--strict-markers` rejects
+any unregistered marker) plus per-package overrides in `tests/ingestion/pytest.ini`
+and `tests/routing/pytest.ini`. The commonly used ones:
+
+- `unit`, `integration`, `e2e`, `system` — test tier
+- `ci_fast` — small, essential subset run on every CI push
+- `ci_safe` — safe to run in CI (no local-only dependencies)
+- `local_only` — should only run locally, not in CI/CD
+- `slow`, `benchmark` — long-running or performance tests
+- `e2e_heavy` — full CronWorkflow-driven e2e (DSPy optimization, synthetic
+  data generation, distillation); opt-in only, 5-10+ minutes
+- `browser` — Playwright-driven browser e2e tests
+- `telemetry` — requires the telemetry/Phoenix provider
+- `requires_vespa`, `requires_docker`, `requires_gpu`, `requires_ollama`,
+  `requires_gliner`, `requires_models`, `requires_cv2`, `requires_ffmpeg` —
+  infrastructure/model dependencies
+- `requires_colpali`, `requires_videoprism`, `requires_colqwen`,
+  `requires_whisper` — specific ML model dependencies
+- `requires_teacher_model` — scales up the vllm-llm-teacher pod (off by default)
+- `requires_optimizer_data` — exercises non-router optimizers end-to-end
+  against the live cluster (off by default)
+- `phoenix`, `inspect`, `ragas` — evaluation-framework dependencies
+- `timeout` — tests with custom timeout values
+
+```bash
+# Run only the fast CI subset
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -m ci_fast -v
+
+# Run integration tests but skip anything needing Ollama
+uv run pytest tests/agents/integration/ -m "integration and not requires_ollama" -v
 ```
 
 ### With Timeout
@@ -350,10 +411,15 @@ from cogniverse_foundation.config.manager import ConfigManager
 
 class TestConfigManager:
 
-    def test_missing_system_config_raises_error(self, config_manager):
-        """Test that accessing system config when none is stored raises an error."""
-        with pytest.raises((ValueError, KeyError)):
-            config_manager.get_system_config()
+    def test_missing_store_raises_error(self):
+        """ConfigManager requires a store — passing None raises ValueError.
+
+        Note: get_system_config() itself does NOT raise when no system
+        config is stored — it logs a warning and returns SystemConfig()
+        defaults. Test the actual required-argument validation instead.
+        """
+        with pytest.raises(ValueError):
+            ConfigManager(store=None)
 ```
 
 ---
@@ -387,12 +453,14 @@ def config_manager_memory():
 
 @pytest.fixture
 def workflow_store(telemetry_manager_with_phoenix):
-    """Resolve the telemetry-backed workflow store via the registry."""
+    """Resolve a workflow store via the registry — same path production uses."""
     from cogniverse_core.registries import WorkflowStoreRegistry
 
     provider = telemetry_manager_with_phoenix.get_provider(
         tenant_id="workflow-store-test"
     )
+    # Evict any instance cached under a stale provider so each test resolves clean.
+    WorkflowStoreRegistry.clear_cache()
     store = WorkflowStoreRegistry.get(
         name="telemetry",
         config={"telemetry_provider": provider},
@@ -468,7 +536,7 @@ class TestWithPatching:
     def test_with_patched_backend(self, mock_registry, config_manager, schema_loader):
         """Test with patched backend registry."""
         mock_backend = MagicMock()
-        mock_registry.return_value.get_backend.return_value = mock_backend
+        mock_registry.return_value.get_search_backend.return_value = mock_backend
 
         deps = SearchAgentDeps(
             backend_url="http://localhost",
@@ -557,22 +625,28 @@ the provider-agnostic ``llm_endpoint`` fixture defined in
 endpoint from, in order:
 
 1. Env vars ``COGNIVERSE_TEST_LLM_PROVIDER_URI`` (required) and
-   ``COGNIVERSE_TEST_LLM_BASE_URL`` (optional — sets
-   ``OPENAI_BASE_URL`` / ``OLLAMA_HOST`` etc. for the chosen provider).
+   ``COGNIVERSE_TEST_LLM_BASE_URL`` (optional). When a base URL is set, it
+   is propagated to the provider's own env var — only ``openai``/``vllm``
+   (→ ``OPENAI_BASE_URL``) and ``anthropic`` (→ ``ANTHROPIC_BASE_URL``)
+   prefixes are mapped today; a matching ``*_API_KEY`` of ``"not-required"``
+   is also injected so Inspect AI's provider client doesn't refuse to
+   initialize against a keyless local endpoint. ``TEST_LLM_MODEL`` /
+   ``TEST_LLM_API_BASE`` (as set by the ``ensure_host_ollama`` fixture in
+   ``tests/conftest.py``) are also accepted as a same-priority alternative.
 2. JSON file at ``tests/evaluation/integration/resources/test_llm.json``
-   (gitignored; an ``test_llm.example.json`` is checked in).
-3. Otherwise, the fixture skips the test — there is no built-in default
-   provider, since different tests need chat vs. vision models and forcing
-   one would couple the test class to an implementation.
+   (gitignored; a ``test_llm.example.json`` is checked in).
+3. ``llm_config.primary`` from ``configs/config.json`` — if neither of the
+   above is set, the fixture first tries to self-provision the hermetic
+   test-LM sidecar (``tests/utils/hermetic_llm.ensure_llm``), which exports
+   ``COGNIVERSE_CONFIG`` pointing at a session config targeting the
+   sidecar; that config (or the project's own ``configs/config.json`` if
+   the sidecar can't start) is then read for ``llm_config.primary``.
+4. Otherwise, the fixture skips the test with a message explaining how to
+   configure an endpoint.
 
 Examples:
 
 ```bash
-# Local Ollama with a vision-capable model, for the visual judge e2e:
-COGNIVERSE_TEST_LLM_PROVIDER_URI="ollama/moondream" \
-COGNIVERSE_TEST_LLM_BASE_URL="http://localhost:11434" \
-uv run pytest tests/evaluation/integration/test_visual_judge_e2e.py
-
 # OpenAI for inspect_eval-driven retrieval tests; OPENAI_API_KEY picked up
 # automatically by the provider SDK.
 COGNIVERSE_TEST_LLM_PROVIDER_URI="openai/gpt-4o-mini" \
@@ -582,6 +656,10 @@ uv run pytest tests/evaluation/integration/test_end_to_end.py
 COGNIVERSE_TEST_LLM_PROVIDER_URI="vllm/Qwen/Qwen2.5-7B-Instruct" \
 COGNIVERSE_TEST_LLM_BASE_URL="http://vllm.internal:8000/v1" \
 uv run pytest tests/evaluation/integration/
+
+# No env vars set: the fixture self-provisions the hermetic test-LM sidecar
+# (or falls back to configs/config.json's llm_config.primary) automatically.
+uv run pytest tests/evaluation/integration/test_visual_judge_e2e.py
 ```
 
 Test classes never reference any specific provider, model, or container
@@ -600,7 +678,7 @@ filesystem paths. The pipeline accepts a ``media_root_uri`` config (e.g.
 each video's relative path to produce the canonical ``source_url`` written
 into Vespa. See ``tests/ingestion/integration/test_pipeline_minio_round_trip.py``
 for the end-to-end pattern (MinIO docker fixture managed by
-``MinioTestManager``); the schema-level field is documented in
+``MinIOTestManager``); the schema-level field is documented in
 ``docs/modules/common.md`` under "MediaLocator".
 
 ---
@@ -626,26 +704,26 @@ uv run pytest tests/ \
 
 ### Coverage Configuration
 
-**pytest.ini**:
-```ini
-[pytest]
-# Coverage configuration is handled per-module in pytest.ini
-# Not configured globally in pyproject.toml
-
-# Run tests with coverage:
-# uv run pytest tests/module/ --cov=libs/module/cogniverse_module
-```
-
-Note: Coverage settings are not in pyproject.toml - they're specified per command.
+Coverage is not configured in `pyproject.toml` or the root `pytest.ini` — it's
+specified per invocation via `--cov=<path>` flags, either on the command line
+or in a workflow's test step. Per-package `pytest.ini` files (e.g.
+`tests/ingestion/pytest.ini`, `tests/routing/pytest.ini`) explicitly note this
+in their `addopts` comments ("no coverage here — handled by CI/Make targets").
 
 ### Coverage Targets
 
-| Package | Target |
-|---------|--------|
-| cogniverse-core | 80% |
-| cogniverse-agents | 75% |
-| cogniverse-foundation | 80% |
-| cogniverse-runtime | 70% |
+Most CI workflows collect and report coverage (`--cov-report=term-missing`,
+`--cov-report=xml`) without enforcing a minimum. Only two currently gate the
+build on a coverage floor via `--cov-fail-under`:
+
+| Workflow | Package | Enforced Minimum |
+|----------|---------|-------------------|
+| `evaluation-tests.yml` | cogniverse-evaluation | 50% |
+| `routing-tests.yml` | cogniverse-agents (routing) | 15% |
+
+All other workflows (agents, core, dashboard, finetuning, ingestion,
+synthetic, telemetry, vespa, runtime) report coverage but do not fail the
+build below any specific percentage.
 
 ---
 
@@ -653,22 +731,24 @@ Note: Coverage settings are not in pyproject.toml - they're specified per comman
 
 ### GitHub Actions Workflows
 
-The project has **12 GitHub workflow files** organized by module:
+The project has **14 GitHub workflow files** organized by module:
 
 | Workflow | Module | Tests | Docker Services |
 |----------|--------|-------|-----------------|
-| `agents-tests.yml` | cogniverse-agents | unit + integration | None (mocked) |
+| `agents-tests.yml` | cogniverse-agents | unit + integration | Vespa (ci_fast subset) |
+| `chart-validation.yml` | Helm chart (`charts/cogniverse`) | lint + template + kubeconform | None |
 | `core-tests.yml` | cogniverse-core | unit + integration | Vespa |
 | `dashboard-tests.yml` | cogniverse-dashboard | unit + integration | None (TestClient) |
 | `evaluation-tests.yml` | cogniverse-evaluation | unit + integration | Phoenix |
 | `finetuning-tests.yml` | cogniverse-finetuning | unit + integration | Vespa |
 | `ingestion-tests.yml` | cogniverse-runtime (ingestion) | unit + integration | Vespa |
 | `routing-tests.yml` | cogniverse-agents (routing) | unit + integration | Vespa |
+| `runtime-tests.yml` | cogniverse-runtime, cogniverse-core, cogniverse-foundation | unit + integration | Vespa |
 | `synthetic-tests.yml` | cogniverse-synthetic | unit + integration | Phoenix |
 | `telemetry-tests.yml` | cogniverse-telemetry-phoenix | unit + integration | Phoenix |
 | `vespa-tests.yml` | cogniverse-vespa | unit + integration | Vespa |
-| `docs.yml` | Documentation | build check | None |
-| `publish-packages.yml` | Package publishing | N/A | None |
+| `docs.yml` | Documentation | mkdocs build + deploy to GitHub Pages | None |
+| `publish-packages.yml` | Package publishing (PyPI/TestPyPI) | N/A | None |
 
 ### Workflow Structure
 
@@ -756,7 +836,7 @@ and provides a compatibility shim under whatever fixture name its tests expect:
 # e.g. tests/backends/integration/conftest.py
 from tests.conftest import shared_vespa  # noqa: F401
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def vespa_instance(shared_vespa):
     """Shim: yields the dict shape tests expect, backed by shared_vespa."""
     yield {
@@ -791,15 +871,21 @@ def my_schema(shared_vespa, request):
 **Phoenix:**
 
 The `phoenix_container` fixture is defined in `tests/conftest.py` (module-scoped).
-It uses non-default ports to avoid conflicts with local Phoenix instances:
+It allocates non-default, per-process ports to avoid conflicts both with
+local Phoenix instances and with other concurrent pytest sweeps:
 
-- HTTP: 16006 (instead of 6006)
-- gRPC: 14317 (instead of 4317)
+- HTTP: `16006 + port_offset` (instead of 6006)
+- gRPC: `14317 + port_offset` (instead of 4317)
+
+where `port_offset = (os.getpid() % 1000) * 10`, giving each process a
+distinct 10-port-spaced slot in a ~1000-process range.
 
 Image: `arizephoenix/phoenix:14.2.1` (pinned version, not `:latest`).
 
-Kills any leftover `phoenix_test_*` containers before starting, so reruns on
-the same host don't fail with "port already in use".
+Containers are named `phoenix_test_pid<pid>_<timestamp>` and tagged with the
+owning pid; on startup the fixture only kills leftover containers matching
+`phoenix_test_pid<its own pid>_*` from a prior crashed run of that same
+process — never another concurrent session's container.
 
 ### Pre-commit Checklist
 
@@ -842,6 +928,9 @@ os.environ["JAX_PLATFORM_NAME"] = "cpu"
 # In pytest.ini (already configured):
 # asyncio_mode = auto
 # asyncio_default_fixture_loop_scope = function
+# asyncio_default_test_loop_scope = function  # pinned so a leaked coroutine
+#   in one async test can't fail every subsequent async test in the same
+#   module/session scope (pytest-asyncio 1.3+ default)
 
 # Use decorator for async tests
 @pytest.mark.asyncio
@@ -906,6 +995,20 @@ def expensive_resource():
 def database():
     return setup_database()
 ```
+
+---
+
+## Related Documentation
+
+Several `tests/` subpackages carry their own more detailed testing guide;
+this file covers cross-cutting practices, these cover package-specific
+scenarios and fixtures:
+
+- `tests/README.md` / `tests/CONSOLIDATED_TEST_README.md` — full test suite overview
+- `tests/agents/README.md` — multi-agent routing, A2A protocol, DSPy/GEPA testing
+- `tests/agents/e2e/README.md` — real-LLM end-to-end tests (Ollama, Vespa, Phoenix)
+- `tests/ingestion/README.md` — ingestion pipeline test suite
+- `tests/routing/README.md` — query routing and classification test suite
 
 ---
 

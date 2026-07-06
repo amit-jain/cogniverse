@@ -7,10 +7,51 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 ### Multi-Agent Orchestration
 | Component | P50 Target | P95 Target | P99 Target |
 |-----------|------------|------------|------------|
-| **OrchestratorAgent** | < 50ms | < 100ms | < 150ms |
-| **VideoSearchAgent** | < 200ms | < 500ms | < 750ms |
+| **GatewayAgent** (LLM-free GLiNER classify + route) | < 50ms | < 100ms | < 150ms |
+| **OrchestratorAgent** (DSPy multi-agent planning) | < 50ms | < 100ms | < 150ms |
+| **SearchAgent** (multi-modal Vespa retrieval) | < 200ms | < 500ms | < 750ms |
 | **Routing Decision** | < 10ms | < 25ms | < 50ms |
 | **Result Aggregation** | < 20ms | < 50ms | < 100ms |
+
+> **Note**: All 23 agents in the roster (`configs/config.json` → `agents.*`) run as
+> handlers inside one unified `runtime` deployment (`libs/runtime/cogniverse_runtime/`),
+> not as separate per-agent containers — see [Full Agent Roster](#full-agent-roster)
+> below and [Container Resources](#container-resources) for the actual deployment
+> topology.
+
+### Full Agent Roster
+
+| Agent | Port | Status | Latency Tier |
+|-------|------|--------|---------------|
+| **gateway_agent** (`GatewayAgent`) | 8000 | enabled | GatewayAgent tier above |
+| **orchestrator_agent** (`OrchestratorAgent`) | 8013 | enabled | OrchestratorAgent tier above |
+| **search_agent** (`SearchAgent`) | 8002 | enabled | SearchAgent tier above |
+| **image_search_agent** (`ImageSearchAgent`) | 8006 | enabled | Simple Text / Complex Multi-Modal (Query Performance) |
+| **document_agent** (`DocumentAgent`) | 8008 | enabled | Simple Text / Complex Multi-Modal (Query Performance) |
+| **text_analysis_agent** (`TextAnalysisAgent`) | 8003 | enabled | Simple Text / Complex Multi-Modal (Query Performance) |
+| **audio_analysis_agent** (`AudioAnalysisAgent`) | 8007 | enabled | Simple Text / Complex Multi-Modal (Query Performance) |
+| **summarizer_agent** (`SummarizerAgent`) | 8004 | enabled | Complex Multi-Modal / With Visual Reranking (Query Performance) |
+| **detailed_report_agent** (`DetailedReportAgent`) | 8005 | enabled | Complex Multi-Modal / With Visual Reranking (Query Performance) |
+| **profile_selection_agent** (`ProfileSelectionAgent`) | 8000 | enabled | Routing Decision tier above |
+| **query_enhancement_agent** (`QueryEnhancementAgent`) | 8000 | enabled | See [Query Enhancement Performance](#query-enhancement-performance) |
+| **entity_extraction_agent** (`EntityExtractionAgent`) | 8000 | enabled | GatewayAgent tier above (GLiNER/SpaCy fast path) |
+| **deep_research_agent** (`DeepResearchAgent`) | 8009 | enabled | Multi-step iterative — seconds, not covered by the ms tiers above |
+| **coding_agent** (`CodingAgent`) | 8010 | enabled | Multi-step iterative — seconds, not covered by the ms tiers above |
+| **citation_tracing_agent** (`CitationTracingAgent`) | 8019 | disabled | With Memory Lookup (Query Performance) |
+| **contradiction_reconciliation_agent** (`ContradictionReconciliationAgent`) | 8020 | disabled | With Memory Lookup (Query Performance) |
+| **multi_document_synthesis_agent** (`MultiDocumentSynthesisAgent`) | 8021 | disabled | Complex Multi-Modal (Query Performance) |
+| **kg_traversal_agent** (`KnowledgeGraphTraversalAgent`) | 8022 | disabled | With Memory Lookup (Query Performance) |
+| **temporal_reasoning_agent** (`TemporalReasoningAgent`) | 8025 | disabled | With Memory Lookup (Query Performance) |
+| **knowledge_summarization_agent** (`KnowledgeSummarizationAgent`) | 8026 | disabled | Complex Multi-Modal (Query Performance) |
+| **audit_explanation_agent** (`AuditExplanationAgent`) | 8027 | enabled | With Memory Lookup (Query Performance) |
+| **cross_tenant_comparison_agent** (`CrossTenantComparisonAgent`) | 8023 | disabled | With Visual Reranking tier (federated multi-tenant reads) |
+| **federated_query_agent** (`FederatedQueryAgent`) | 8024 | disabled | With Visual Reranking tier (federated multi-tenant reads) |
+
+> **Source**: agent roster and enabled/disabled flags from `configs/config.json` →
+> `agents.*`; class names from `libs/agents/cogniverse_agents/*.py`. "disabled"
+> agents ship code and tests but are not started by default
+> (`agents.<name>.enabled: false`); their latency tiers are targets for when
+> enabled, mapped to the closest existing tier above rather than measured.
 
 ### Backend Performance (Vespa)
 | Operation | P50 Target | P95 Target | P99 Target |
@@ -35,10 +76,20 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 ### Embedding Model Performance
 | Model | Dimensions | Inference Time | Memory |
 |-------|------------|----------------|--------|
-| **ColPali** (frame-based) | Patch-based (1024 patches × 320D) | < 100ms/frame | 2GB |
-| **ColQwen3** (chunk-based, `TomoroAI/tomoro-colqwen3-embed-4b`) | Patch-based (1024 patches × 320D) | < 150ms/frame | 4GB |
-| **VideoPrism Base** | 768 (global) | < 200ms/chunk | 3GB |
-| **VideoPrism LVT** | 1024 (global) | < 300ms/chunk | 4GB |
+| **ColPali** (frame-based, `TomoroAI/tomoro-colqwen3-embed-4b`) | Patch-based (1024 patches × 320D) | < 100ms/frame | 2GB |
+| **ColQwen2** (chunk-based, 30s chunks, `TomoroAI/tomoro-colqwen3-embed-4b` weights) | Patch-based (1024 patches × 320D) | < 150ms/frame | 4GB |
+| **VideoPrism Base** (multi-vector, 30s chunks) | 768 (4096 patches) | < 200ms/chunk | 3GB |
+| **VideoPrism Large** (multi-vector, 30s chunks) | 1024 (2048 patches) | < 250ms/chunk | 4GB |
+| **VideoPrism LVT Base** (single-vector, 6s chunks) | 768 | < 250ms/chunk | 3GB |
+| **VideoPrism LVT Large** (single-vector, 6s chunks) | 1024 | < 300ms/chunk | 4GB |
+
+> **Source**: `configs/config.json` → `video_colpali_smol500_mv_frame`,
+> `video_colqwen_omni_mv_chunk_30s`, `video_videoprism_base_mv_chunk_30s`,
+> `video_videoprism_large_mv_chunk_30s`, `video_videoprism_lvt_base_sv_chunk_6s`,
+> `video_videoprism_lvt_large_sv_chunk_6s` (`schema_config.embedding_dim` /
+> `num_patches`). The chunk-based profile's own `schema_config.model_name` is
+> `ColQwen2`; both it and the frame-based ColPali profile load
+> `TomoroAI/tomoro-colqwen3-embed-4b` weights.
 
 ## Query Performance
 
@@ -136,9 +187,15 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 | Metric | Target | Description |
 |--------|--------|-------------|
 | **Span Export** | < 10ms | Async export latency |
-| **Batch Size** | 1000 | Spans per batch |
-| **Export Interval** | 5s | Batch export frequency |
-| **Span Storage** | 30 days | Retention period |
+| **Batch Size** | 512 | Spans per batch (`BatchExportConfig.max_export_batch_size` default) |
+| **Export Interval** | 500ms | Batch export frequency (`BatchExportConfig.schedule_delay_millis` default) |
+| **Max Queue Size** | 2048 | In-memory span queue before drops (`BatchExportConfig.max_queue_size` default) |
+| **Span Storage** | 30 days | Retention target (not currently enforced by a Phoenix-side TTL) |
+
+> **Source**: `libs/foundation/cogniverse_foundation/telemetry/config.py` →
+> `BatchExportConfig` defaults, applied by
+> `PhoenixTelemetryProvider.configure_span_export` in
+> `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/provider.py`.
 
 ### Experiment Tracking
 | Operation | Target | Description |
@@ -159,14 +216,20 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 | **Network I/O** | < 50MB/s | < 200MB/s | < 500MB/s |
 
 ### Container Resources
-| Service | CPU Request | Memory Request | Replicas |
-|---------|-------------|----------------|----------|
-| **OrchestratorAgent** | 2 cores | 4GB | 3 |
-| **VideoSearchAgent** | 4 cores | 8GB | 5 |
-| **Vespa Container** | 8 cores | 16GB | 3 |
-| **Vespa Content** | 4 cores | 32GB | 5 |
-| **Phoenix** | 2 cores | 4GB | 1 |
-| **Memory Service** | 2 cores | 4GB | 2 |
+| Service | CPU Request / Limit | Memory Request / Limit | Replicas |
+|---------|---------------------|-------------------------|----------|
+| **runtime** (all 23 agents, unified deployment) | 2 / 4 cores | 4Gi / 8Gi | 2 (autoscales 2–10) |
+| **vespa** | 4 / 8 cores | 8Gi / 20Gi | 1 |
+| **phoenix** | 1 / 2 cores | 2Gi / 4Gi | 1 |
+
+> **Source**: `charts/cogniverse/values.yaml` → `runtime.resources`,
+> `runtime.replicaCount`/`runtime.autoscaling`, `vespa.resources`/`vespa.replicaCount`,
+> `phoenix.resources`/`phoenix.replicaCount`. There is no per-agent container —
+> `libs/runtime/cogniverse_runtime/` hosts every agent from the roster above as
+> handlers inside one FastAPI process, and Vespa runs as a single node (no
+> separate container/content-cluster split) in this chart. There is no
+> standalone "memory service" container; memory operations run in-process via
+> `libs/core/cogniverse_core/memory/`.
 
 ## Evaluation Metrics
 
@@ -215,10 +278,18 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 ### Horizontal Scaling
 | Component | Auto-scale Trigger | Min | Max |
 |-----------|-------------------|-----|-----|
-| **OrchestratorAgent** | CPU > 70% | 2 | 10 |
-| **VideoSearchAgent** | CPU > 70% | 3 | 20 |
-| **Vespa Container** | QPS > 100 | 3 | 10 |
-| **Vespa Content** | Storage > 80% | 3 | 20 |
+| **runtime** (all 23 agents) | CPU > 70% or memory > 80% | 2 | 10 |
+| **vespa** | Not autoscaled — fixed single node | 1 | 1 |
+| **phoenix** | Not autoscaled — fixed single replica | 1 | 1 |
+
+> **Source**: `charts/cogniverse/templates/hpa.yaml` (only the `runtime`
+> deployment has a `HorizontalPodAutoscaler`, gated on
+> `runtime.autoscaling.enabled`) and `charts/cogniverse/values.yaml` →
+> `runtime.autoscaling.{minReplicas,maxReplicas,targetCPUUtilizationPercentage,
+> targetMemoryUtilizationPercentage}`. `vespa.replicaCount` and
+> `phoenix.replicaCount` are fixed values with no HPA in this chart; scaling
+> either requires a manual `replicaCount` change and Vespa content
+> redistribution.
 
 ### Vertical Scaling
 | Trigger | Action |

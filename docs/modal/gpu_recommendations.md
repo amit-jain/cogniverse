@@ -22,27 +22,47 @@ Cogniverse processes **multi-modal content** across six content types:
 
 This guide covers GPU requirements for embedding models used in ingestion and search pipelines.
 
+### Important: ColPali, ColQwen3, image and document-visual profiles share one sidecar
+
+The `video_colpali_smol500_mv_frame` (frame video), `video_colqwen_omni_mv_chunk_30s`
+(chunk video, legacy `ColQwen2` schema label), `image_colpali_mv`, and
+`document_visual_colpali` backend profiles all set
+`embedding_model: TomoroAI/tomoro-colqwen3-embed-4b` — the **same** model,
+served remotely by **one** vLLM `ColPaliForRetrieval` sidecar
+(`RemoteColPaliLoader`). Local in-process loading of this model is
+unsupported (`_is_colqwen3()` raises before any `from_pretrained` call); the
+GPU sizing below is for that shared sidecar, not per-profile. Only size a
+second GPU if you deploy the smaller local-loading fallback checkpoints
+(`vidore/colpali-v1.2`, `vidore/colpali-v1.3-hf`, `vidore/colqwen2-v0.1`) for
+a given profile instead of the shared sidecar.
+
+VideoPrism (chunk and LVT single-vector profiles), CLAP (audio semantic
+embeddings), and LateOn/LateOn-Code-edge (document and code text
+embeddings) are separate model families with their own sidecars — see
+[Model Requirements](#model-requirements) below.
+
 ---
 
 ## Quick Recommendations
 
 ### Production Setup (Recommended)
-- **ColPali (Frame-Based)**: A100-40GB (~$3.00/hour for ingestion, minimal for search)
+- **ColPali / ColQwen3 / Image / Document-visual (shared Tomoro sidecar)**: A100-40GB (~$3.00/hour for ingestion, minimal for search)
 - **VideoPrism (Chunk-Based)**: L4 (~$1.00/hour for ingestion)
-- **ColQwen3 (Image/Document)**: L4 or T4 (~$1.00/hour for ingestion)
-- **Total**: ~$50-100 one-time ingestion per 1000 videos + minimal search costs
+- **CLAP (Audio Semantic)**: CPU only — no GPU required (see [CLAP](#4-clap-audio-semantic-embeddings))
+- **LateOn / LateOn-Code-edge (Document & Code Text)**: L4 or T4 (~$1.00/hour for ingestion)
+- **Total**: ~$200-250 one-time ingestion per 1000 videos + minimal search costs
 
 ### Budget Setup
-- **ColPali**: L4 GPU (~$1.00/hour, tight fit)
+- **ColPali / ColQwen3 (shared sidecar)**: L4 GPU (~$1.00/hour, tight fit)
 - **VideoPrism**: T4 (~$0.60/hour, base model only)
-- **ColQwen3**: T4 (~$0.60/hour)
-- **Total**: ~$30-60 per 1000 videos ingestion
+- **LateOn**: T4 (~$0.60/hour)
+- **Total**: ~$120-130 per 1000 videos ingestion
 
 ### Performance Setup
-- **ColPali**: A100-80GB (~$3.20/hour, optimal throughput)
+- **ColPali / ColQwen3 (shared sidecar)**: A100-80GB (~$3.20/hour, optimal throughput)
 - **VideoPrism**: A100-40GB (~$3.00/hour, large batches)
-- **ColQwen3**: A10G (~$1.10/hour)
-- **Total**: ~$100-150 per 1000 videos ingestion
+- **LateOn**: A10G (~$1.10/hour)
+- **Total**: ~$300-350 per 1000 videos ingestion
 
 ---
 
@@ -51,25 +71,31 @@ This guide covers GPU requirements for embedding models used in ingestion and se
 ### 1. ColPali (Frame-Based Video Embeddings)
 
 **Model:** `TomoroAI/tomoro-colqwen3-embed-4b` (production default, served remotely
-via a vLLM `ColPaliForRetrieval` sidecar). `vidore/colpali-v1.2` /
-`vidore/colpali-v1.3-hf` remain supported for local, in-process loading
-(`ColPaliModelLoader`) when no remote inference URL is configured.
+via a vLLM `ColPaliForRetrieval` sidecar). Local in-process loading of this
+model is **unsupported** — `model_loaders._is_colqwen3()` raises
+`RuntimeError` before any `from_pretrained` call ("ColQwen3/Tomoro models
+are remote-only"), because the architecture (`qwen3_vl`) needs
+`transformers>=4.57`, which the pinned `transformers==4.56.2` (capped for
+pylate) cannot build. `vidore/colpali-v1.2` / `vidore/colpali-v1.3-hf`
+remain supported for local, in-process loading (`ColPaliModelLoader`) as a
+smaller fallback when no remote inference URL is configured — this GPU
+guide covers both.
 **Content Types:** VIDEO (frames), IMAGE, DOCUMENT
 
 #### Memory Requirements
 
-**TomoroAI/tomoro-colqwen3-embed-4b (Full Model, 4B params)**
+**TomoroAI/tomoro-colqwen3-embed-4b (production, remote vLLM sidecar, 4B params)**
 - Model weights: ~8GB (4B params × 2 bytes, bfloat16)
 - Image preprocessing: ~2GB per batch
 - Patch embeddings: ~4GB (1024 patches × 320 dims × batch size)
 - CUDA overhead: ~2GB
-- **Total: ~16GB minimum, 24GB recommended**
+- **Total: ~16GB minimum, 24GB recommended** — sized for the shared vLLM sidecar, not the calling ingestion function
 
-**ColSmol 500M (Smaller)**
-- Model weights: ~2GB
-- Preprocessing: ~1.5GB
-- Embeddings: ~3GB
-- **Total: ~7GB minimum, 12GB recommended**
+**vidore/colpali-v1.2 / vidore/colpali-v1.3-hf (local fallback, ~3B params)**
+- Model weights: ~6GB (3B params × 2 bytes, bfloat16)
+- Preprocessing: ~2GB per batch
+- Patch embeddings: ~3GB
+- **Total: ~12GB minimum, 16GB recommended**
 
 #### GPU Options
 
@@ -110,15 +136,19 @@ via a vLLM `ColPaliForRetrieval` sidecar). `vidore/colpali-v1.2` /
     timeout=3600
 )
 def encode_video_frames_colpali(frames: list):
-    """Generate ColPali embeddings using colpali-engine API."""
+    """Generate ColPali embeddings using colpali-engine API (local fallback
+    checkpoint; production traffic hits the remote vLLM sidecar instead —
+    see RemoteColPaliLoader)."""
     from colpali_engine.models import ColIdefics3, ColIdefics3Processor
     import torch
 
+    # Avoid device_map= here: it routes through accelerate's meta-tensor
+    # dispatch, which raises NotImplementedError on repeated loads in the
+    # same process (see ColPaliModelLoader.load_model).
     model = ColIdefics3.from_pretrained(
         "vidore/colpali-v1.2",
         torch_dtype=torch.bfloat16,
-        device_map="cuda"
-    ).eval()
+    ).eval().to("cuda")
     processor = ColIdefics3Processor.from_pretrained("vidore/colpali-v1.2")
 
     batch_inputs = processor.process_images(frames).to(model.device)
@@ -134,15 +164,14 @@ def encode_video_frames_colpali(frames: list):
     timeout=3600
 )
 def encode_video_frames_budget(frames: list):
-    """Generate ColPali embeddings with smaller model for budget GPUs."""
+    """Generate ColPali embeddings with the v1.3-hf checkpoint for budget GPUs."""
     from colpali_engine.models import ColIdefics3, ColIdefics3Processor
     import torch
 
     model = ColIdefics3.from_pretrained(
         "vidore/colpali-v1.3-hf",
         torch_dtype=torch.bfloat16,
-        device_map="cuda"
-    ).eval()
+    ).eval().to("cuda")
     processor = ColIdefics3Processor.from_pretrained("vidore/colpali-v1.3-hf")
 
     batch_inputs = processor.process_images(frames).to(model.device)
@@ -210,9 +239,10 @@ VideoPrism uses JAX/Flax with a custom loader (not the standard HuggingFace patt
     memory=24000,
     timeout=7200
 )
-def encode_video_chunks_videoprism():
+def encode_video_chunks_videoprism(video_path: str):
     """Generate VideoPrism embeddings using the custom JAX loader."""
     import jax
+    from pathlib import Path
     from cogniverse_core.common.models.model_loaders import get_or_load_model
 
     jax.config.update('jax_platform_name', 'gpu')
@@ -223,7 +253,7 @@ def encode_video_chunks_videoprism():
 
     # The loader provides extract_embeddings(frames) for pre-extracted frames,
     # or process_entire_video(video_path, sampling_fps) for full video processing
-    result = loader.process_entire_video(video_path, sampling_fps=1.0)
+    result = loader.process_entire_video(Path(video_path), sampling_fps=1.0)
     return result["embeddings"]
 
 # High-performance ingestion on Modal
@@ -233,9 +263,10 @@ def encode_video_chunks_videoprism():
     memory=40000,
     timeout=3600
 )
-def encode_video_chunks_performance():
+def encode_video_chunks_performance(video_path: str):
     """Same pipeline on A100 for higher throughput."""
     import jax
+    from pathlib import Path
     from cogniverse_core.common.models.model_loaders import get_or_load_model
 
     jax.config.update('jax_platform_name', 'gpu')
@@ -243,20 +274,38 @@ def encode_video_chunks_performance():
     config = {"model_name": "videoprism_public_v1_base_hf"}
     loader, _ = get_or_load_model("videoprism_public_v1_base_hf", config, logger)
 
-    result = loader.process_entire_video(video_path, sampling_fps=1.0)
+    result = loader.process_entire_video(Path(video_path), sampling_fps=1.0)
     return result["embeddings"]
 ```
+
+#### LVT (single-vector) variants
+
+The `video_videoprism_lvt_base_sv_chunk_6s` and
+`video_videoprism_lvt_large_sv_chunk_6s` profiles use
+`videoprism_lvt_public_v1_base` / `videoprism_lvt_public_v1_large` — global
+(single-vector) embeddings over 6-second chunks instead of 30-second
+multi-vector chunks. `VideoPrismModelLoader` detects `_lvt_` in the model
+name and additionally loads a text encoder (`loader.load_text_encoder()`)
+so the same embedding space can be queried with text, which adds to the
+memory footprint above (allow the same GPU tier as the "Large" row, since
+the LVT large text encoder is loaded alongside the vision tower).
 
 ---
 
 ### 3. ColQwen3 (Multi-Modal Image/Document Embeddings)
 
 **Model:** `TomoroAI/tomoro-colqwen3-embed-4b` (production default — the same
-model backing the ColPali profile above, served remotely via vLLM; the
-chunk-based ingestion profile keeps the legacy `ColQwen2` schema/model label).
-`vidore/colqwen-omni-v0.1` / `vidore/colpali-v1.3-hf` remain supported for
-local loading.
-**Content Types:** IMAGE, DOCUMENT, TEXT
+model backing the ColPali profile above, served remotely via the same vLLM
+sidecar; the `video_colqwen_omni_mv_chunk_30s` chunk-based video profile
+keeps the legacy `ColQwen2` schema/model label but also resolves to this
+model). `ColQwenQueryEncoder`'s local-loading default is
+`vidore/colqwen-omni-v0.1`, but the `"omni"` branch of
+`ColQwenModelLoader.load_model()` imports `ColQwen2_5Omni` /
+`ColQwen2_5OmniProcessor`, which the pinned `colpali-engine==0.3.13` does
+not export — that local path currently fails with `ImportError`. For a
+working local fallback use the non-omni `vidore/colqwen2-v0.1` checkpoint
+with `ColQwen2` / `ColQwen2Processor` (both present in 0.3.13), shown below.
+**Content Types:** IMAGE, DOCUMENT, TEXT, VIDEO (chunks, 30s)
 
 #### Memory Requirements
 
@@ -311,16 +360,16 @@ local loading.
     timeout=3600
 )
 def encode_images_colqwen(images: list):
-    """Generate ColQwen embeddings using colpali-engine API."""
-    from colpali_engine.models import ColQwen2_5Omni, ColQwen2_5OmniProcessor
+    """Generate ColQwen embeddings using colpali-engine API (local fallback
+    checkpoint; production traffic hits the shared vLLM sidecar instead)."""
+    from colpali_engine.models import ColQwen2, ColQwen2Processor
     import torch
 
-    model = ColQwen2_5Omni.from_pretrained(
-        "vidore/colqwen-omni-v0.1",
+    model = ColQwen2.from_pretrained(
+        "vidore/colqwen2-v0.1",
         torch_dtype=torch.bfloat16,
-        device_map="cuda"
-    ).eval()
-    processor = ColQwen2_5OmniProcessor.from_pretrained("vidore/colqwen-omni-v0.1")
+    ).eval().to("cuda")
+    processor = ColQwen2Processor.from_pretrained("vidore/colqwen2-v0.1")
 
     # Process images (optimal batch_size=8 for L4)
     batch_inputs = processor.process_images(images).to(model.device)
@@ -349,11 +398,10 @@ def encode_images_budget(images: list):
     )
 
     model = ColQwen2.from_pretrained(
-        "vidore/colpali-v1.3-hf",
+        "vidore/colqwen2-v0.1",
         quantization_config=quantization_config,
-        device_map="cuda"
-    ).eval()
-    processor = ColQwen2Processor.from_pretrained("vidore/colpali-v1.3-hf")
+    ).eval().to("cuda")
+    processor = ColQwen2Processor.from_pretrained("vidore/colqwen2-v0.1")
 
     # Smaller batch for T4 (batch_size=4)
     batch_inputs = processor.process_images(images).to(model.device)
@@ -363,6 +411,53 @@ def encode_images_budget(images: list):
 
     return embeddings.cpu().to(torch.float32).numpy()
 ```
+
+---
+
+### 4. CLAP (Audio Semantic Embeddings)
+
+**Model:** `laion/clap-htsat-unfused`, served by the `clap_embed` FastAPI
+sidecar (`libs/runtime/cogniverse_runtime/sidecars/clap_embed.py`), used by
+the `audio_clap_semantic` backend profile.
+**Content Types:** AUDIO
+
+#### GPU Requirements: none
+
+The `clap_embed` sidecar image (`deploy/clap_embed/Dockerfile`) installs
+CPU-only `torch` from the PyTorch CPU wheel index specifically to keep this
+service GPU-free — CLAP (~150M params) runs fast enough on CPU for the
+ingestion and query-time volumes this profile sees. Deploy it as a CPU-only
+Modal function/container; no GPU line item is needed for this model.
+
+#### API Shape
+
+- `POST /embed/audio` — body `{"audio_b64": "..."}`, returns `{"vec": [512 floats]}` (`ClapModel.get_audio_features`)
+- `POST /embed/text` — body `{"text": "..."}`, returns the matching 512-dim text vector (`get_text_features`), used by the audio-analysis agent to encode acoustic-mode queries
+- `GET /health` — liveness probe
+
+---
+
+### 5. LateOn / LateOn-Code-edge (Document & Code Text Embeddings)
+
+**Model:** `lightonai/LateOn` (backing the `document_text_semantic` and
+`lateon_mv` profiles) and `lightonai/LateOn-Code-edge` (backing
+`code_lateon_mv`) — ColBERT-family multi-vector text encoders, served
+remotely (pylate sidecar or vLLM with `--hf-overrides
+ColBERTModernBertModel`; see `cogniverse_core.query.encoders`).
+**Content Types:** DOCUMENT, TEXT
+
+#### GPU Options
+
+| GPU | Memory | Price/Hour | Performance | Best For |
+|-----|--------|------------|-------------|----------|
+| **L4** ✅ | 24GB | $1.00 | Good | **Production** |
+| **A10G** | 24GB | $1.10 | Good | Alternative to L4 |
+| **T4** | 16GB | $0.60 | Fair | Small batches |
+
+`inference_health_check.py` probes the deployed service at boot and refuses
+to start if it serves a different model than the profile's
+`embedding_model` expects — a mismatched sidecar would otherwise silently
+produce wrong-but-valid-shaped 128-dim token vectors.
 
 ---
 
@@ -380,7 +475,7 @@ def encode_images_budget(images: list):
    - Time: ~2-5 minutes per 1-hour video
 
 2. **Chunk-Based (VideoPrism)**
-   - Split video into 30-second chunks
+   - Split video into 30-second chunks (base/large) or 6-second chunks (LVT single-vector)
    - Encode temporal context
    - Best for: Coarse-grained search, video-level understanding
    - GPU: L4 (recommended) or T4 (base model)
@@ -390,30 +485,29 @@ def encode_images_budget(images: list):
 
 ### AUDIO Content
 
-- Transcribed with Whisper for speech-to-text
-- Text transcripts indexed via BM25 text search
-- GPU: T4 sufficient for Whisper inference
-- Alternative: CPU-based Whisper for lower cost
+- Transcribed with `openai/whisper-large-v3-turbo` via the remote `vllm_asr` inference service (`AudioTranscriptionStrategy`); text transcripts indexed via BM25 text search
+- Separately, semantically embedded with CLAP (`laion/clap-htsat-unfused`) for acoustic similarity search (`audio_clap_semantic` profile)
+- GPU: whisper-large-v3-turbo needs a GPU-backed `vllm_asr` sidecar (L4/T4-class); CLAP embedding is CPU-only (see [CLAP](#4-clap-audio-semantic-embeddings))
 
 ### IMAGE Content
 
 - Single images or extracted frames
-- Processed with ColQwen3 or ColPali
-- GPU: L4 or A10G
+- Processed with ColPali/ColQwen3 (shared `TomoroAI/tomoro-colqwen3-embed-4b` sidecar)
+- GPU: L4 or A10G (on the shared sidecar)
 - Time: ~100-200ms per image
 
 ### DOCUMENT Content
 
 - PDF, DOCX, text extraction
-- Convert to images for vision models (ColQwen3)
-- Or use text embeddings (faster, CPU-based)
-- GPU: L4 for vision-based, CPU for text-based
+- Convert to images for vision models (ColPali/ColQwen3, `document_visual_colpali` profile) — GPU-backed sidecar (L4 or A10G)
+- Or use text embeddings via LateOn (`lightonai/LateOn`, `document_text_semantic` profile) — also GPU-backed (L4/T4), not CPU-based
+- GPU: L4 for either the vision-based or LateOn text-based path
 
 ### TEXT Content
 
 - Natural language text
-- Typically CPU-based (nomic-embed-text, sentence-transformers)
-- GPU: Optional, T4 sufficient for large batches
+- Embedded with DenseOn (`lightonai/DenseOn`) via a remote OpenAI-compatible endpoint when configured, or locally with `sentence-transformers/all-mpnet-base-v2` (`get_semantic_embedder()`) — used for agent memory, semantic caching, and wiki embeddings
+- GPU: Optional — the local `all-mpnet-base-v2` fallback (~420MB) runs fine on CPU for typical batch sizes; DenseOn's remote endpoint runs GPU-backed if served via vLLM
 
 ### DATAFRAME Content
 
@@ -432,21 +526,23 @@ def encode_images_budget(images: list):
 
 | Model | GPU | Hours | Cost/Hour | Total Cost |
 |-------|-----|-------|-----------|------------|
-| ColPali (frames) | A100-40GB | 50 | $3.00 | $150 |
+| ColPali/ColQwen3 (shared Tomoro sidecar: frames, chunks, image, document-visual) | A100-40GB | 50 | $3.00 | $150 |
 | VideoPrism (chunks) | L4 | 60 | $1.00 | $60 |
-| **Total** | | | | **$210** |
+| LateOn (document/code text) | L4 | 20 | $1.00 | $20 |
+| CLAP (audio semantic) | CPU only | — | $0.00 | $0 |
+| **Total** | | | | **$230** |
 
-**Budget Alternative:**
+**Budget Alternative** (local fallback checkpoint instead of the shared sidecar):
 | Model | GPU | Hours | Cost/Hour | Total Cost |
 |-------|-----|-------|-----------|------------|
-| ColSmol (frames) | L4 | 80 | $1.00 | $80 |
+| vidore/colpali-v1.3-hf (local fallback, frames) | L4 | 80 | $1.00 | $80 |
 | VideoPrism (chunks) | T4 | 80 | $0.60 | $48 |
 | **Total** | | | | **$128** |
 
 **Per 10,000 Images:**
 | Model | GPU | Hours | Cost/Hour | Total Cost |
 |-------|-----|-------|-----------|------------|
-| ColQwen3 | L4 | 3 | $1.00 | $3 |
+| ColPali/ColQwen3 (shared sidecar) | L4 | 3 | $1.00 | $3 |
 
 ### Search Costs (Ongoing)
 
@@ -509,6 +605,8 @@ def ingest_multimodal_content(content_path: str, content_type: str):
         return doc.id
 
     elif content_type == "DOCUMENT":
+        # convert_pdf_to_images is a user-supplied utility (e.g. pdf2image);
+        # not part of cogniverse_core — shown here for illustration only.
         doc_images = convert_pdf_to_images(content_path)
         colqwen_embeddings = encode_images_colqwen(doc_images)
 
@@ -520,6 +618,9 @@ def ingest_multimodal_content(content_path: str, content_type: str):
         return doc.id
 
     elif content_type == "TEXT":
+        # encode_text_cpu/read_text are user-supplied helpers illustrating
+        # the DenseOn/all-mpnet-base-v2 path (get_semantic_embedder()) —
+        # not literal cogniverse_core function names.
         text_embeddings = encode_text_cpu(content_path)
 
         doc = Document(
@@ -547,8 +648,8 @@ def batch_encode_frames(frame_batches: list[list]):
     import torch
 
     model = ColIdefics3.from_pretrained(
-        "vidore/colpali-v1.3-hf", torch_dtype=torch.bfloat16, device_map="cuda"
-    ).eval()
+        "vidore/colpali-v1.3-hf", torch_dtype=torch.bfloat16
+    ).eval().to("cuda")
     processor = ColIdefics3Processor.from_pretrained("vidore/colpali-v1.3-hf")
 
     results = []
@@ -589,7 +690,7 @@ quantization_config = BitsAndBytesConfig(
 )
 
 model = ColQwen2.from_pretrained(
-    "vidore/colpali-v1.3-hf",
+    "vidore/colqwen2-v0.1",
     quantization_config=quantization_config
 )
 ```
@@ -604,7 +705,7 @@ model = ColQwen2.from_pretrained(
 
 - Reduce batch size: 32 → 16 → 8 → 4
 
-- Use ColSmol 500M instead of ColPali v1.2
+- Use the smaller local-fallback checkpoint (`vidore/colpali-v1.3-hf`, ~3B) instead of the production `TomoroAI/tomoro-colqwen3-embed-4b` (~4B) — see [Memory Requirements](#memory-requirements)
 
 - Enable gradient checkpointing
 
@@ -653,7 +754,7 @@ nvidia-smi dmon -s u -d 1
 
 - Use budget GPUs (L4 instead of A100-40GB)
 
-- Use smaller models (ColSmol instead of ColPali)
+- Use the smaller local-fallback checkpoint (`vidore/colpali-v1.3-hf`) instead of the shared production sidecar model
 
 - Batch processing (process multiple videos per GPU hour)
 
@@ -675,15 +776,16 @@ nvidia-smi dmon -s u -d 1
 
 **Key Takeaways:**
 
-1. **ColPali (Frame-Based Video)**: A100-40GB recommended, L4 budget option
-2. **VideoPrism (Chunk-Based Video)**: L4 recommended (114M params base), T4 budget option
-3. **ColQwen3 (Image/Document)**: L4 recommended, T4 budget option
-4. **Multi-Modal Support**: All six content types supported (VIDEO, AUDIO, IMAGE, DOCUMENT, TEXT, DATAFRAME)
-5. **Cost Efficiency**: ~$200-250 per 1000 videos one-time ingestion, ~$50-100/month search
+1. **ColPali / ColQwen3 (Frame Video, Chunk Video, Image, Document-Visual)**: one shared `TomoroAI/tomoro-colqwen3-embed-4b` vLLM sidecar — A100-40GB recommended, L4 budget option, local `vidore/colpali-v1.2`/`v1.3-hf`/`colqwen2-v0.1` fallback for smaller deployments
+2. **VideoPrism (Chunk-Based Video)**: L4 recommended (114M params base, also 354M large and LVT single-vector variants), T4 budget option
+3. **CLAP (Audio Semantic)**: CPU only — no GPU needed
+4. **LateOn / LateOn-Code-edge (Document & Code Text)**: L4 recommended, T4 budget option
+5. **Multi-Modal Support**: All six content types supported (VIDEO, AUDIO, IMAGE, DOCUMENT, TEXT, DATAFRAME)
+6. **Cost Efficiency**: ~$200-250 per 1000 videos one-time ingestion, ~$50-100/month search
 
 **Recommended Production Setup:**
 
-- **Ingestion**: A100-40GB (ColPali) + L4 (VideoPrism) + L4 (ColQwen3)
+- **Ingestion**: A100-40GB (shared ColPali/ColQwen3 sidecar) + L4 (VideoPrism) + L4 (LateOn) + CPU (CLAP)
 
 - **Search**: T4 or L4 (or CPU for text-based)
 
