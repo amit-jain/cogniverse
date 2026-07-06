@@ -119,7 +119,15 @@ class TestConfigTranscriptionRouting:
                 f"profile {name!r} transcription model must be "
                 f"openai/whisper-large-v3-turbo; got {params.get('model')!r}"
             )
-            processor = _build_audio_processor(profile, {"vllm_asr": VLLM_ASR_URL})
+            # A profile may run transcription (vllm_asr) alongside an embedding
+            # on another service; deploy every service it references so the full
+            # profile resolves. vllm_asr's generated URL equals VLLM_ASR_URL, so
+            # the assertion still pins the audio processor to vllm_asr.
+            service_urls = {
+                svc: f"http://cogniverse-{svc.replace('_', '-')}:8000"
+                for svc in inf.values()
+            }
+            processor = _build_audio_processor(profile, service_urls)
             assert processor.endpoint == VLLM_ASR_URL, (
                 f"profile {name!r} must build a REMOTE audio processor"
             )
