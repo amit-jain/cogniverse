@@ -193,7 +193,7 @@ class TestVLMDescriptor:
         vlm_descriptor.stop_service()
 
         mock_run.assert_called_once_with(
-            ["modal", "stop", "cogniverse-vlm"],
+            ["modal", "app", "stop", "cogniverse-vlm"],
             capture_output=True,
             text=True,
             timeout=5,

@@ -95,6 +95,10 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
+      plugins:
+        - type: semantic-cache
+          configuration:
+            enabled: true
     - name: pro-technical-domain
       priority: 250
       rules:
@@ -107,6 +111,10 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
+      plugins:
+        - type: semantic-cache
+          configuration:
+            enabled: true
     - name: pro-default
       priority: 200
       rules:
@@ -117,6 +125,10 @@ routing:
       modelRefs:
         - model: pro-reasoning
           use_reasoning: false
+      plugins:
+        - type: semantic-cache
+          configuration:
+            enabled: true
     - name: free-default
       priority: 100
       rules:
@@ -127,6 +139,10 @@ routing:
       modelRefs:
         - model: basic-chat
           use_reasoning: false
+      plugins:
+        - type: semantic-cache
+          configuration:
+            enabled: true
 
 global:
   services:
@@ -144,11 +160,26 @@ global:
         enabled: false
   stores:
     semantic_cache:
-      enabled: false
+      enabled: true
+      backend_type: memory
+      similarity_threshold: 0.95
+      max_entries: 1024
+      ttl_seconds: 3600
+      eviction_policy: lru
+      embedding_model: mmbert
   model_catalog:
     embeddings:
       semantic:
+        mmbert_model_path: models/mmbert-embed-32k-2d-matryoshka
         use_cpu: true
+        embedding_config:
+          model_type: mmbert
+          preload_embeddings: true
+          target_dimension: 768
+          target_layer: 22
+          enable_soft_matching: true
+          top_k: 1
+          min_score_threshold: 0.5
     system:
       domain_classifier: models/mmbert32k-intent-classifier-merged
     modules:

@@ -9,12 +9,24 @@
 
 1. [Module Overview](#module-overview)
 2. [Package Structure](#package-structure)
-3. [Multi-Tenant Schema Management](#multi-tenant-schema-management)
-4. [Search Client](#search-client)
-5. [Ingestion Client](#ingestion-client)
-6. [Metadata Schema Management](#metadata-schema-management)
-7. [Usage Examples](#usage-examples)
-8. [Testing](#testing)
+3. [Backend Configuration Architecture](#backend-configuration-architecture)
+4. [Backend Abstraction Layer](#backend-abstraction-layer)
+5. [Profile-Based Architecture](#profile-based-architecture)
+6. [Connection Pool Management](#connection-pool-management)
+7. [Multi-Tenant Schema Management](#multi-tenant-schema-management)
+8. [Search Backend](#search-backend)
+9. [Ingestion Client](#ingestion-client)
+10. [Schema Deployment](#schema-deployment)
+11. [Metadata Schema Management](#metadata-schema-management)
+12. [Supporting Modules](#supporting-modules)
+13. [Usage Examples](#usage-examples)
+14. [Testing](#testing)
+15. [Best Practices](#best-practices)
+16. [VespaConfigStore API](#vespaconfigstore-api)
+17. [VespaEmbeddingProcessor](#vespaembeddingprocessor)
+18. [BackendVectorStore (Mem0 Backend)](#backendvectorstore-mem0-backend)
+19. [RankingStrategyExtractor](#rankingstrategyextractor)
+20. [Tenant-Scoped Search via VespaSearchBackend](#tenant-scoped-search-via-vespasearchbackend)
 
 ---
 
@@ -87,9 +99,9 @@ libs/vespa/cogniverse_vespa/
 
 - `vespa_schema_manager.py`: 1093 lines - Core tenant management
 - `json_schema_parser.py`: 189 lines - Schema parsing
-- `ingestion_client.py`: 595 lines - PyVespa wrapper for ingestion
-- `search_backend.py`: 1511 lines - Search backend with connection pooling
-- `backend.py`: 1577 lines - Unified backend abstraction
+- `ingestion_client.py`: 597 lines - PyVespa wrapper for ingestion
+- `search_backend.py`: 1550 lines - Search backend with connection pooling
+- `backend.py`: 1589 lines - Unified backend abstraction
 
 **Note**: Schema templates are JSON files located in `configs/schemas/` at project root
 
@@ -497,6 +509,12 @@ flowchart TB
 
 **Purpose**: Unified backend interface that wraps VespaSearchBackend and VespaPyClient, providing a single abstraction for both search and ingestion operations.
 
+**Self-registration**: `backend.py` calls its own module-level `register()`
+function on import, which registers `VespaBackend` under the name `"vespa"`
+via `cogniverse_core.registries.backend_registry.register_backend` — this is
+what makes `BackendRegistry.get_search_backend(name="vespa", ...)` and
+`get_ingestion_backend(name="vespa", ...)` resolve below.
+
 **Recommended Pattern**: Use the BackendRegistry to obtain backend instances:
 
 ```python
@@ -578,6 +596,28 @@ flowchart TB
 - **Consistent interface**: Same initialization and method signatures
 - **Future-proof**: Can swap Vespa with other backends without changing application code
 
+### Key Methods
+
+`VespaBackend` implements both `IngestionBackend` and `SearchBackend` (from
+`cogniverse_sdk.interfaces.backend`) plus schema-lifecycle and metadata-document
+operations:
+
+| Method | Purpose |
+|--------|---------|
+| `search(query_dict)` | Tenant-scoped search (delegates to `VespaSearchBackend`) |
+| `ingest_documents(documents, schema_name)` | Batch ingest via a per-tenant `VespaPyClient` |
+| `feed(document, schema_name)` | Feed a single document |
+| `ingest_stream(documents)` | Stream ingestion for large datasets |
+| `update_document(document_id, document, schema_name)` | Partial or full document update |
+| `delete_document(document_id, schema_name)` | Delete a single document |
+| `get_document(document_id, schema_name)` / `batch_get_documents(document_ids)` | Point lookups |
+| `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package |
+| `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle |
+| `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
+| `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD |
+| `add_profile(profile_name, profile_config)` / `remove_profile(profile_name)` | Runtime profile management |
+| `health_check()` / `close()` | Lifecycle management |
+
 ---
 
 ## Profile-Based Architecture
@@ -618,10 +658,10 @@ flowchart TB
         SelectColQwen["<span style='color:#000'>ColQwen</span>"] --> ChunkSeg["<span style='color:#000'>ChunkSegmentationStrategy<br/>30s audio+visual chunks</span>"]
     end
 
-    subgraph VespaSchemas["<span style='color:#000'>Vespa Schemas per Tenant</span>"]
-        FrameSeg --> ColPaliSchema["<span style='color:#000'>video_colpali_smol500_mv_frame_acme<br/>Multi-vector binary</span>"]
-        DirectVideo --> VideoPrismSchema["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme<br/>Global float vectors</span>"]
-        ChunkSeg --> ColQwenSchema["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_acme<br/>Multi-modal vectors</span>"]
+    subgraph VespaSchemas["<span style='color:#000'>Vespa Schemas per Tenant (bare tenant_id 'acme' canonicalizes to 'acme:acme')</span>"]
+        FrameSeg --> ColPaliSchema["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_acme<br/>Multi-vector binary</span>"]
+        DirectVideo --> VideoPrismSchema["<span style='color:#000'>video_videoprism_base_mv_chunk_30s_acme_acme<br/>Global float vectors</span>"]
+        ChunkSeg --> ColQwenSchema["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_acme_acme<br/>Multi-modal vectors</span>"]
     end
 
     style Profiles fill:#90caf9,stroke:#1565c0,color:#000
@@ -781,7 +821,7 @@ flowchart TD
 
 #### Implementation Details
 
-**Location:** `libs/vespa/cogniverse_vespa/search_backend.py` - `search()` method (starting line 562)
+**Location:** `libs/vespa/cogniverse_vespa/search_backend.py` - `search()` method (starting line 592)
 
 **Profile Resolution Logic** (inline in search() method):
 ```python
@@ -828,12 +868,17 @@ requested_strategy = query_dict.get("strategy")
 
 **Tenant Schema Scoping** (inline construction):
 ```python
-# tenant_id is extracted from query_dict (REQUIRED), then canonicalized
+# tenant_id is extracted from query_dict (REQUIRED), then canonicalized.
+# canonical_tenant_id() maps a BARE tenant_id to "org:tenant" form
+# ("acme" -> "acme:acme") before the colon is replaced with "_" — so a
+# bare tenant_id's suffix is doubled. Only an already-canonical
+# "org:tenant" input (e.g. "acme:prod") produces a single suffix.
 tenant_id = query_dict.get("tenant_id")  # raises ValueError if missing
 safe_tenant_id = canonical_tenant_id(tenant_id).replace(":", "_")
 base_schema_name = profile_config.get("schema_name", profile_name)
 schema_name = f"{base_schema_name}_{safe_tenant_id}"
-# Example: "video_colpali_smol500_mv_frame_acme"
+# tenant_id="acme"      -> "video_colpali_smol500_mv_frame_acme_acme"
+# tenant_id="acme:prod" -> "video_colpali_smol500_mv_frame_acme_prod"
 ```
 
 #### Usage Example
@@ -844,6 +889,7 @@ schema_name = f"{base_schema_name}_{safe_tenant_id}"
 query_dict = {
     "query": "machine learning tutorial",
     "type": "video",  # REQUIRED for profile resolution
+    "tenant_id": "acme:prod",  # REQUIRED for every search() call
     "top_k": 10,
     # No 'profile' or 'strategy' specified
 }
@@ -853,9 +899,10 @@ query_dict = {
 # 2. If single profile → auto-select
 #    If multiple → uses default_profiles["video"]["profile"]
 # 3. Similar logic for strategy
-# 4. Schema: base_schema_name + "_" + tenant_id
+# 4. Schema: base_schema_name + "_" + canonicalized tenant_id
+#    ("acme:prod" canonicalizes to itself -> "..._acme_prod")
 
-results = backend.search(query_dict)  # tenant_id already set in backend config
+results = backend.search(query_dict)
 ```
 
 **Request with Explicit Parameters**:
@@ -863,6 +910,7 @@ results = backend.search(query_dict)  # tenant_id already set in backend config
 query_dict = {
     "query": "cooking videos",
     "type": "video",  # REQUIRED
+    "tenant_id": "acme:prod",  # REQUIRED
     "profile": "video_videoprism_base_mv_chunk_30s",  # Explicit
     "strategy": "float_float",  # Explicit
     "top_k": 20
@@ -871,7 +919,7 @@ query_dict = {
 # Backend uses explicit values:
 # 1. Profile: "video_videoprism_base_mv_chunk_30s" (explicit)
 # 2. Strategy: "float_float" (explicit, validated against profile)
-# 3. Schema: "video_videoprism_base_mv_chunk_30s_acme" (tenant-scoped)
+# 3. Schema: "video_videoprism_base_mv_chunk_30s_acme_prod" (tenant-scoped)
 
 results = backend.search(query_dict)
 ```
@@ -894,66 +942,68 @@ The `VespaSearchBackend` implements connection pooling for efficient Vespa clien
 
 **Key Features**:
 
-- **Connection Reuse**: Pool of healthy Vespa clients per schema
-- **Health Monitoring**: Background health checks with circuit breaker pattern
-- **Automatic Recovery**: Failed connections marked unhealthy and recovered
-- **Schema-Specific Pools**: Separate connection pools per tenant schema
-- **Metrics Tracking**: Connection health metrics via SearchMetrics
+- **Connection Reuse**: A single, URL-scoped pool of persistent Vespa HTTP clients (not per-schema — the same pool serves every tenant schema at that backend URL)
+- **Health Monitoring**: A background thread probes every connection on `health_check_interval` with a real Vespa query
+- **Automatic Recovery**: Unhealthy or over-idle connections are closed and dropped; a fresh connection is created on the next demand up to `max_connections`
+- **Bounded Growth**: Pool grows from `min_connections` up to `max_connections`, blocking (with timeout) once the ceiling is reached
+- **Metrics Tracking**: Query-level latency and success/failure counts via `SearchMetrics` (separate from connection health)
 
 ### Architecture
 
 ```mermaid
 flowchart TB
-    Backend["<span style='color:#000'>VespaSearchBackend</span>"] --> GetPool["<span style='color:#000'>Get ConnectionPool<br/>for schema</span>"]
+    Backend["<span style='color:#000'>VespaSearchBackend</span>"] --> GetConn["<span style='color:#000'>pool.get_connection()</span>"]
 
-    GetPool --> CheckHealthy{"<span style='color:#000'>Healthy<br/>connections<br/>available?</span>"}
+    GetConn --> HasAvailable{"<span style='color:#000'>_available<br/>non-empty?</span>"}
+    HasAvailable -->|Yes| PopConn["<span style='color:#000'>Pop connection<br/>from _available</span>"]
+    HasAvailable -->|No| UnderMax{"<span style='color:#000'>len(_connections)<br/>&lt; max_connections?</span>"}
 
-    CheckHealthy -->|Yes| SelectConn["<span style='color:#000'>Select Connection<br/>Round-Robin</span>"]
-    CheckHealthy -->|No| Error["<span style='color:#000'>Raise TimeoutError: No connections available</span>"]
+    UnderMax -->|Yes| CreateConn["<span style='color:#000'>Create new VespaConnection</span>"]
+    UnderMax -->|No| WaitCond["<span style='color:#000'>Wait on condition variable<br/>until connection_timeout</span>"]
 
-    SelectConn --> ExecuteQuery["<span style='color:#000'>Execute Query</span>"]
+    WaitCond --> Returned{"<span style='color:#000'>Connection returned<br/>before timeout?</span>"}
+    Returned -->|Yes| PopConn
+    Returned -->|No| TimeoutErr["<span style='color:#000'>Raise TimeoutError:<br/>No connections available</span>"]
 
-    ExecuteQuery --> QuerySuccess{"<span style='color:#000'>Query<br/>successful?</span>"}
+    PopConn --> ExecuteQuery["<span style='color:#000'>conn.query() over persistent<br/>VespaSync HTTP client</span>"]
+    CreateConn --> ExecuteQuery
 
-    QuerySuccess -->|Yes| ResetErrors["<span style='color:#000'>Reset error_count = 0</span>"]
-    QuerySuccess -->|No| IncrementErrors["<span style='color:#000'>Increment error_count</span>"]
+    ExecuteQuery --> ReturnPool["<span style='color:#000'>finally: append to _available,<br/>notify waiters</span>"]
 
-    IncrementErrors --> CheckThreshold{"<span style='color:#000'>error_count >= 3?</span>"}
-
-    CheckThreshold -->|Yes| MarkUnhealthy["<span style='color:#000'>Mark Connection Unhealthy<br/>is_healthy = False</span>"]
-    CheckThreshold -->|No| ReturnConn["<span style='color:#000'>Return Connection to Pool</span>"]
-
-    MarkUnhealthy --> TriggerRecovery["<span style='color:#000'>Background Health Check<br/>Attempts Recovery</span>"]
-
-    TriggerRecovery --> HealthCheckLoop{"<span style='color:#000'>Health Check<br/>Query Succeeds?</span>"}
-
-    HealthCheckLoop -->|Yes| RecoverConn["<span style='color:#000'>Mark Healthy<br/>is_healthy = True<br/>error_count = 0</span>"]
-    HealthCheckLoop -->|No| StayUnhealthy["<span style='color:#000'>Remain Unhealthy<br/>Retry Next Interval</span>"]
-
-    ResetErrors --> ReturnConn
-    RecoverConn --> ReturnConn
+    subgraph HealthLoop["<span style='color:#000'>Background thread: _health_check_loop (every health_check_interval)</span>"]
+        Snapshot["<span style='color:#000'>Snapshot _connections under lock</span>"] --> Probe["<span style='color:#000'>conn.health_check():<br/>real Vespa query</span>"]
+        Probe --> Healthy{"<span style='color:#000'>Query<br/>succeeded?</span>"}
+        Healthy -->|No| Unhealthy["<span style='color:#000'>is_healthy = False</span>"]
+        Healthy -->|Yes| IdleCheck{"<span style='color:#000'>idle_time &gt; idle_timeout<br/>and above min_connections?</span>"}
+        IdleCheck -->|Yes| Unhealthy
+        IdleCheck -->|No| KeepConn["<span style='color:#000'>Keep connection in pool</span>"]
+        Unhealthy --> RemoveConn["<span style='color:#000'>_remove_connection:<br/>close + drop from pool</span>"]
+    end
 
     style Backend fill:#90caf9,stroke:#1565c0,color:#000
-    style GetPool fill:#90caf9,stroke:#1565c0,color:#000
-    style CheckHealthy fill:#ffcc80,stroke:#ef6c00,color:#000
-    style SelectConn fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style ExecuteQuery fill:#ffcc80,stroke:#ef6c00,color:#000
-    style QuerySuccess fill:#ffcc80,stroke:#ef6c00,color:#000
-    style ResetErrors fill:#a5d6a7,stroke:#388e3c,color:#000
-    style IncrementErrors fill:#b0bec5,stroke:#546e7a,color:#000
-    style CheckThreshold fill:#ffcc80,stroke:#ef6c00,color:#000
-    style MarkUnhealthy fill:#ffcccc,stroke:#c62828,color:#000
-    style TriggerRecovery fill:#b0bec5,stroke:#546e7a,color:#000
-    style HealthCheckLoop fill:#ffcc80,stroke:#ef6c00,color:#000
-    style RecoverConn fill:#a5d6a7,stroke:#388e3c,color:#000
-    style StayUnhealthy fill:#ffcccc,stroke:#c62828,color:#000
-    style ReturnConn fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Error fill:#ffcccc,stroke:#c62828,color:#000
+    style GetConn fill:#90caf9,stroke:#1565c0,color:#000
+    style HasAvailable fill:#ffcc80,stroke:#ef6c00,color:#000
+    style UnderMax fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Returned fill:#ffcc80,stroke:#ef6c00,color:#000
+    style PopConn fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style CreateConn fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style WaitCond fill:#b0bec5,stroke:#546e7a,color:#000
+    style ExecuteQuery fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ReturnPool fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TimeoutErr fill:#ffcccc,stroke:#c62828,color:#000
+    style HealthLoop fill:#b0bec5,stroke:#546e7a,color:#000
+    style Snapshot fill:#b0bec5,stroke:#546e7a,color:#000
+    style Probe fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Healthy fill:#ffcc80,stroke:#ef6c00,color:#000
+    style IdleCheck fill:#ffcc80,stroke:#ef6c00,color:#000
+    style KeepConn fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Unhealthy fill:#ffcccc,stroke:#c62828,color:#000
+    style RemoveConn fill:#ffcccc,stroke:#c62828,color:#000
 ```
 
 ### Connection Pool Implementation
 
-**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (lines 89-256)
+**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (lines 89-340)
 
 #### ConnectionPoolConfig Class
 
@@ -976,6 +1026,12 @@ class VespaConnection:
     """
     Managed Vespa connection with health checking.
 
+    Queries run over a persistent VespaSync HTTP client (self._sync) so
+    TCP connections are reused across searches — plain Vespa.query()
+    builds and tears down a fresh client per call. health_check() stays
+    on the per-call self.vespa.query() path since it may run from the
+    pool's background thread while the connection is checked out.
+
     Attributes:
         url: Vespa endpoint URL
         connection_id: Unique connection identifier
@@ -989,16 +1045,22 @@ class VespaConnection:
         self.url = url
         self.connection_id = connection_id
         self.vespa = make_vespa_app(url=url)  # Created internally via make_vespa_app, not passed in
+        self._sync = self.vespa.syncio(connections=4)
+        self._sync._open_http_client()
         self.created_at = time.time()
         self.last_used = time.time()
         self.is_healthy = True
         self._lock = threading.Lock()
 
     def query(self, *args, **kwargs):
-        """Execute query and update last used time."""
+        """Execute query over the persistent client and update last used time."""
         with self._lock:
             self.last_used = time.time()
-        return self.vespa.query(*args, **kwargs)
+        return self._sync.query(*args, **kwargs)
+
+    def close(self) -> None:
+        """Release the persistent HTTP client."""
+        self._sync._close_http_client()
 
     def health_check(self) -> bool:
         """
@@ -1043,6 +1105,9 @@ class ConnectionPool:
         self._connections: List[VespaConnection] = []
         self._available: List[VespaConnection] = []
         self._lock = threading.Lock()
+        # Signalled whenever a connection returns to the pool, so waiters
+        # wake immediately instead of polling on a sleep loop.
+        self._returned = threading.Condition(self._lock)
         self._stop_health_check = threading.Event()
 
         # Initialize minimum connections
@@ -1070,51 +1135,56 @@ class ConnectionPool:
             TimeoutError: If no connection available within timeout
         """
         conn = None
-        start_time = time.time()
+        deadline = time.monotonic() + self.config.connection_timeout
 
         try:
-            # Try to get available connection or create new one
-            with self._lock:
-                if self._available:
-                    conn = self._available.pop()
-                elif len(self._connections) < self.config.max_connections:
-                    conn = VespaConnection(self.url, f"conn-{uuid.uuid4().hex[:8]}")
-                    self._connections.append(conn)
-
-            # Wait for connection if none available
-            while conn is None and (time.time() - start_time) < self.config.connection_timeout:
-                time.sleep(0.1)
-                with self._lock:
+            with self._returned:
+                while conn is None:
                     if self._available:
                         conn = self._available.pop()
-
-            if conn is None:
-                raise TimeoutError("No connections available")
+                    elif len(self._connections) < self.config.max_connections:
+                        conn = VespaConnection(self.url, f"conn-{uuid.uuid4().hex[:8]}")
+                        self._connections.append(conn)
+                    else:
+                        # Block until a connection returns, instead of
+                        # sleep-polling
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not self._returned.wait(remaining):
+                            if not self._available:
+                                raise TimeoutError("No connections available")
 
             yield conn
 
         finally:
             # Return connection to pool
             if conn is not None:
-                with self._lock:
+                with self._returned:
                     self._available.append(conn)
+                    self._returned.notify()
 
     def close(self):
-        """Close all connections and stop health checks."""
+        """Close all connections (releasing their persistent HTTP
+        clients) and stop health checks."""
         self._stop_health_check.set()
         if self._health_check_thread.is_alive():
             self._health_check_thread.join(timeout=5)
 
         with self._lock:
+            for conn in self._connections:
+                conn.close()
             self._connections.clear()
             self._available.clear()
 ```
 
 ### Usage in VespaSearchBackend
 
+Simplified illustration (the real profile/strategy resolution is inline in
+`search()` itself — see [Profile Resolution Logic](#implementation-details)
+above, not delegated to separate helper methods):
+
 ```python
 class VespaSearchBackend:
-    def __init__(self, config: Dict[str, Any], ...):
+    def __init__(self, config: Dict[str, Any], **kwargs):
         self.backend_url = config.get("url", "http://localhost")
         self.backend_port = config.get("port", 8080)
         full_url = f"{self.backend_url}:{self.backend_port}"
@@ -1133,14 +1203,14 @@ class VespaSearchBackend:
         """
         # tenant_id is REQUIRED in query_dict; raises ValueError if missing
         tenant_id = query_dict.get("tenant_id")
-        # Resolve profile and strategy from query_dict
-        profile = self._resolve_profile_for_query(query_dict)
-        strategy = self._resolve_strategy_for_profile(profile, query_dict)
+        # Profile and strategy resolution happens inline (see above)
+        profile_name = ...
+        strategy = ...
 
         # Get connection from pool (context manager pattern)
         with self.pool.get_connection() as conn:
             results = conn.query(
-                yql=self._build_yql(query_dict, strategy),
+                yql=self._build_query(query_dict, strategy),
                 ranking=strategy,
                 hits=query_dict.get("top_k", 10)
             )
@@ -1185,24 +1255,32 @@ Connection health is tracked per-connection via `VespaConnection.is_healthy` (se
 ### Benefits
 
 1. **Performance**: Connection reuse eliminates connection overhead per query
-2. **Reliability**: Automatic recovery from transient failures
+2. **Reliability**: Automatic removal and replacement of connections that fail their periodic health check
 3. **Observability**: Health metrics for monitoring connection status
-4. **Scalability**: Per-schema pools isolate tenant impact
-5. **Resilience**: Circuit breaker prevents cascading failures
+4. **Bounded resource use**: One pool per backend URL grows from `min_connections` to `max_connections`, shared across every tenant schema at that URL
 
 ### Configuration
 
+`ConnectionPoolConfig` is passed as the `pool_config` constructor argument —
+it is not read from the `config` dict used for `url`/`port`/`profiles`:
+
 ```python
-# Configure connection pool in backend config
-backend_config = {
-    "vespa": {
-        "connection_pool": {
-            "max_connections": 10,         # Max connections per schema
-            "health_check_interval": 30.0, # Health check frequency (seconds)
-            "circuit_breaker_threshold": 3 # Failures before marking unhealthy
-        }
-    }
-}
+from cogniverse_vespa.search_backend import ConnectionPoolConfig, VespaSearchBackend
+
+pool_config = ConnectionPoolConfig(
+    max_connections=10,          # Maximum connections in pool
+    min_connections=2,           # Minimum connections to maintain
+    connection_timeout=30.0,     # Seconds to wait for a free connection
+    idle_timeout=300.0,          # Close idle connections above min_connections after this
+    health_check_interval=60.0,  # Background health-check frequency (seconds)
+)
+
+backend = VespaSearchBackend(
+    config={"url": "http://localhost", "port": 8080, "profiles": profiles},
+    pool_config=pool_config,
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+)
 ```
 
 ---
@@ -1220,23 +1298,23 @@ See [Multi-Tenant Architecture](../architecture/multi-tenant.md) for comprehensi
 
 ```mermaid
 flowchart TB
-    API["<span style='color:#000'>API Request<br/>tenant_id: acme</span>"] --> Middleware["<span style='color:#000'>Tenant Middleware</span>"]
-    Middleware --> SchemaManager["<span style='color:#000'>VespaSchemaManager</span>"]
+    API["<span style='color:#000'>API Request<br/>body.tenant_id: acme</span>"] --> Router["<span style='color:#000'>FastAPI Router<br/>require_tenant_id()</span>"]
+    Router --> SchemaManager["<span style='color:#000'>VespaSchemaManager</span>"]
 
     SchemaManager --> CheckCache{"<span style='color:#000'>Schema in cache?</span>"}
-    CheckCache -->|Yes| UseSchema["<span style='color:#000'>Use schema: video_frames_acme</span>"]
+    CheckCache -->|Yes| UseSchema["<span style='color:#000'>Use schema: video_frames_acme_acme</span>"]
     CheckCache -->|No| LoadTemplate["<span style='color:#000'>Load base template</span>"]
 
-    LoadTemplate --> Transform["<span style='color:#000'>Transform for tenant:<br/>video_frames → video_frames_acme</span>"]
+    LoadTemplate --> Transform["<span style='color:#000'>Transform for tenant:<br/>video_frames → video_frames_acme_acme<br/>(bare 'acme' canonicalizes to 'acme:acme')</span>"]
     Transform --> Deploy["<span style='color:#000'>Deploy to Vespa</span>"]
     Deploy --> Cache["<span style='color:#000'>Cache deployment</span>"]
     Cache --> UseSchema
 
-    UseSchema --> VespaClient["<span style='color:#000'>VespaSearchBackend<br/>schema=video_frames_acme</span>"]
+    UseSchema --> VespaClient["<span style='color:#000'>VespaSearchBackend<br/>schema=video_frames_acme_acme</span>"]
     VespaClient --> Search["<span style='color:#000'>Search tenant data</span>"]
 
     style API fill:#90caf9,stroke:#1565c0,color:#000
-    style Middleware fill:#90caf9,stroke:#1565c0,color:#000
+    style Router fill:#90caf9,stroke:#1565c0,color:#000
     style SchemaManager fill:#ffcc80,stroke:#ef6c00,color:#000
     style CheckCache fill:#ffcc80,stroke:#ef6c00,color:#000
     style UseSchema fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -1291,12 +1369,14 @@ schema_manager.upload_content_type_schemas(
 )
 # Schema definitions live in configs/schemas/ as JSON (single source of truth).
 
-# Get tenant-specific schema name (colon in tenant_id converted to underscore)
+# Get tenant-specific schema name. tenant_id is canonicalized to "org:tenant"
+# first (a bare "acme" becomes "acme:acme"), then the colon is converted to
+# an underscore, so deploy and search paths always agree on the schema name.
 schema_name = schema_manager.get_tenant_schema_name(
     tenant_id="acme",
     base_schema_name="video_colpali_smol500_mv_frame"
 )
-# Returns: "video_colpali_smol500_mv_frame_acme"
+# Returns: "video_colpali_smol500_mv_frame_acme_acme"
 # Example: "acme:production" -> "video_colpali_smol500_mv_frame_acme_production"
 
 # Check if tenant schema exists
@@ -1317,14 +1397,14 @@ deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 
 #### Schema Naming Convention
 
-**Pattern**: `{base_schema}_{tenant_id}`
+**Pattern**: `{base_schema}_{canonical_tenant_id with ":" replaced by "_"}` — a bare tenant id (no org prefix) is canonicalized to `{tenant_id}:{tenant_id}` before the suffix is built.
 
 **Examples**:
 
 | Base Schema | Tenant ID | Tenant Schema |
 |------------|-----------|---------------|
-| video_colpali_smol500_mv_frame | acme | video_colpali_smol500_mv_frame_acme |
-| video_videoprism_base_mv_chunk_30s | startup | video_videoprism_base_mv_chunk_30s_startup |
+| video_colpali_smol500_mv_frame | acme | video_colpali_smol500_mv_frame_acme_acme |
+| video_videoprism_base_mv_chunk_30s | startup | video_videoprism_base_mv_chunk_30s_startup_startup |
 | agent_memories | acme:production | agent_memories_acme_production |
 
 #### Schema Lifecycle
@@ -1365,6 +1445,11 @@ backend = VespaSearchBackend(
     schema_loader=schema_loader,
 )
 ```
+
+A lower-level `create_vespa_search_backend(schema_name, backend_url="http://localhost:8080", **kwargs)`
+factory function is also available; it builds a `VespaSearchBackend` from the
+non-`config` (single fixed `schema_name`/`profile`) constructor path rather
+than the multi-profile `config` dict shown above.
 
 #### search(query_dict)
 
@@ -1440,6 +1525,19 @@ the schema's available rank profiles (there is no enum). Valid names:
 | `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float` | Hybrid | Visual + text; embeddings required |
 | `hybrid_*_no_description` variants | Hybrid | Same as above, ignoring the description field |
 
+> **Where a strategy's phase order lives.** The two-phase ranking
+> (`first_phase` / `second_phase`) that defines a strategy's actual behavior is
+> authoritative in the schema's `rank_profiles` (the schema JSON). By naming
+> convention `hybrid_binary_bm25*` ranks the binary visual phase first and
+> `hybrid_bm25_binary*` ranks the text/BM25 phase first.
+> `configs/schemas/ranking_strategies.json` is a **generated** artifact holding
+> phase-agnostic metadata (which embeddings/tensors each strategy needs) —
+> `StrategyAwareProcessor` writes it at ingestion via `extract_all_ranking_strategies`,
+> and query time re-extracts from the schema, not from that file. To change ranking
+> behavior (e.g. phase order), edit the schema `rank_profiles`; do **not** hand-edit
+> `ranking_strategies.json` (it is regenerated). See
+> [`docs/architecture/schema_driven_flow.md`](../architecture/schema_driven_flow.md).
+
 ```python
 # Pure text search (fast, no embeddings)
 results = backend.search({
@@ -1512,19 +1610,23 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 import numpy as np
 
-# 1. Get tenant-specific schema name using naming convention
-tenant_id = "acme"
-base_schema_name = "video_colpali_smol500_mv_frame"
-tenant_schema = f"{base_schema_name}_{tenant_id}"
-
-# 2. Create schema loader (required for VespaPyClient)
+# 1. Create schema loader (required for VespaPyClient)
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# 3. VespaSchemaManager for schema parsing (deployment uses pyvespa)
+# 2. VespaSchemaManager for schema parsing (deployment uses pyvespa)
 schema_manager = VespaSchemaManager(
     backend_endpoint="http://localhost",
     backend_port=8080
 )
+
+# 3. Get tenant-specific schema name using the canonical naming convention
+# (never string-format the suffix by hand — get_tenant_schema_name()
+# canonicalizes tenant_id first, so a bare "acme" doubles to "acme_acme")
+base_schema_name = "video_colpali_smol500_mv_frame"
+tenant_schema = schema_manager.get_tenant_schema_name(
+    tenant_id="acme", base_schema_name=base_schema_name
+)
+# -> "video_colpali_smol500_mv_frame_acme_acme"
 
 # 4. Create sample documents
 documents = [
@@ -1532,13 +1634,13 @@ documents = [
         id="video123_segment_0",
         content="Cooking demonstration",
         metadata={"start_time": 0.0, "end_time": 1.0},
-        embeddings={"embedding": np.random.randn(1024, 128)}
+        embeddings={"embedding": np.random.randn(1024, 320)}
     )
 ]
 
 # 5. Initialize client with configuration
 config = {
-    "schema_name": tenant_schema,  # video_colpali_smol500_mv_frame_acme
+    "schema_name": tenant_schema,  # video_colpali_smol500_mv_frame_acme_acme
     "base_schema_name": "video_colpali_smol500_mv_frame",
     "url": "http://localhost",
     "port": 8080,
@@ -1578,7 +1680,7 @@ doc = Document(
         "description": "Cooking tutorial scene"
     },
     embeddings={
-        "embedding": np.random.randn(1024, 128)  # ColPali embeddings
+        "embedding": np.random.randn(1024, 320)  # ColPali embeddings
     }
 )
 
@@ -1591,7 +1693,7 @@ vespa_doc = client.process(doc)
 
 # vespa_doc structure:
 # {
-#     "put": "id:video:video_colpali_smol500_mv_frame_acme::video123_segment_0",
+#     "put": "id:video:video_colpali_smol500_mv_frame_acme_acme::video123_segment_0",
 #     "fields": {
 #         "creation_timestamp": 1729350000000,
 #         "embedding": "0x4142...",  # Hex-encoded float embeddings
@@ -1811,10 +1913,9 @@ Metadata schemas follow the same JSON format as video schemas:
 
 ### Adding New Metadata Schemas
 
-1. **Create JSON schema file** in `configs/schemas/`:
+1. **Create JSON schema file** in `configs/schemas/my_metadata_schema.json`:
 
 ```json
-// configs/schemas/my_metadata_schema.json
 {
   "name": "my_metadata",
   "document": {
@@ -1876,6 +1977,102 @@ schema_manager._deploy_package(app_package)
 
 ---
 
+## Supporting Modules
+
+Smaller modules in `libs/vespa/cogniverse_vespa/` that back the classes above.
+
+### make_vespa_app (`_vespa_factory.py`)
+
+Single source of truth for constructing pyvespa `Vespa` clients — every other
+module in the package (search backend, config store, adapter store, schema
+manager) builds its `Vespa` instance through this function instead of calling
+`Vespa(url=...)` directly.
+
+```python
+from cogniverse_vespa._vespa_factory import make_vespa_app
+
+# url + port combined into "host:port" before handing to pyvespa
+app = make_vespa_app(url="http://localhost", port=8080)
+
+# url already fully-formed (e.g. a connection-pool entry)
+app = make_vespa_app(url="http://localhost:8080")
+```
+
+### yql_quote (`_yql.py`)
+
+Escapes a value for safe interpolation into a YQL string literal (`field
+contains "value"`). Every module that builds YQL by hand (`config_store.py`,
+`vespa_schema_manager.py`) uses this instead of ad hoc `.replace('"', ...)`
+calls, since an unescaped `"` or `\` both breaks the query and is a YQL
+injection vector.
+
+```python
+from cogniverse_vespa._yql import yql_quote
+
+yql = f"select * from config_metadata where tenant_id contains {yql_quote(tenant_id)}"
+```
+
+### Port utilities (`config_utils.py`)
+
+```python
+from cogniverse_vespa.config_utils import (
+    VESPA_DEFAULT_DATA_PORT,      # 8080
+    VESPA_DEFAULT_CONFIG_PORT,    # 19071
+    calculate_config_port,
+)
+
+calculate_config_port(8080)   # -> 19071 (standard)
+calculate_config_port(8100)   # -> 19091 (custom data port + 10991 offset)
+```
+
+### VespaConfig (`memory_config.py`)
+
+Pydantic model for Mem0's Vespa vector-store config block; raises on any
+field not in `{collection_name, embedding_model_dims, host, port}`.
+
+```python
+from cogniverse_vespa.memory_config import VespaConfig
+
+config = VespaConfig(collection_name="agent_memories", host="localhost", port=8080)
+```
+
+### StrategyAwareProcessor (`strategy_aware_processor.py`)
+
+Determines which embedding formats (float, binary) a schema's ranking
+strategies actually read, so ingestion only computes and stores the formats
+that will be queried.
+
+```python
+from cogniverse_vespa.strategy_aware_processor import StrategyAwareProcessor
+
+processor = StrategyAwareProcessor(schema_loader)  # schema_loader is REQUIRED
+
+needs = processor.get_required_embeddings("video_colpali_smol500_mv_frame")
+# {"needs_float": True, "needs_binary": True}
+
+fields = processor.get_embedding_field_names("video_colpali_smol500_mv_frame")
+# {"binary_field": "embedding_binary", "float_field": "embedding"}
+```
+
+### VespaAdapterStore (`registry/adapter_store.py`)
+
+Vespa-backed storage for trained LoRA adapter metadata, implementing
+`cogniverse_sdk.interfaces.adapter_store.AdapterStore`. Stores documents in
+the `adapter_registry` schema (see [Metadata Schema Types](#metadata-schema-types)).
+
+```python
+from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
+
+store = VespaAdapterStore(
+    backend_url="http://localhost",
+    backend_port=8080,
+    schema_name="adapter_registry",
+)
+store.initialize()
+```
+
+---
+
 ## Usage Examples
 
 ### Example 1: Tenant Onboarding
@@ -1904,10 +2101,11 @@ for base_schema in schemas_to_deploy:
     print(f"Tenant schema name: {tenant_schema}")
     # Deploy schema via Vespa CLI: vespa deploy
 
-# Expected tenant schemas follow naming convention:
-# ['video_colpali_smol500_mv_frame_acme',
-#  'video_videoprism_base_mv_chunk_30s_acme',
-#  'agent_memories_acme']
+# Expected tenant schemas follow naming convention (a bare tenant_id
+# canonicalizes to "acme:acme" before the suffix is built, doubling it):
+# ['video_colpali_smol500_mv_frame_acme_acme',
+#  'video_videoprism_base_mv_chunk_30s_acme_acme',
+#  'agent_memories_acme_acme']
 ```
 
 ### Example 2: Tenant-Scoped Search
@@ -1947,13 +2145,18 @@ startup_results = search_for_tenant(backend, "startup:prod", "cooking videos")
 ### Example 3: Tenant-Scoped Ingestion
 
 ```python
+from pathlib import Path
+
+import numpy as np
+
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_vespa.ingestion_client import VespaPyClient
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-import numpy as np
 
 def ingest_videos_for_tenant(
     tenant_id: str,
-    video_frames: list
+    video_frames: list,
+    schema_loader: FilesystemSchemaLoader,
 ) -> tuple[int, list]:
     """
     Ingest video frames for specific tenant.
@@ -1961,6 +2164,7 @@ def ingest_videos_for_tenant(
     Args:
         tenant_id: Tenant identifier
         video_frames: List of frame documents
+        schema_loader: SchemaLoader instance (required by VespaPyClient)
 
     Returns:
         (success_count, failed_ids)
@@ -2002,15 +2206,16 @@ frames_acme = [
         "fields": {
             "video_id": "video1",
             "frame_id": i,
-            "embedding": np.random.randn(1024, 128),
+            "embedding": np.random.randn(1024, 320),
             "video_title": "Cooking Tutorial"
         }
     }
     for i in range(100)
 ]
 
-success, failed = ingest_videos_for_tenant("acme", frames_acme)
-# Ingests to video_colpali_smol500_mv_frame_acme
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+success, failed = ingest_videos_for_tenant("acme", frames_acme, schema_loader)
+# Ingests to video_colpali_smol500_mv_frame_acme_acme (bare "acme" doubles)
 ```
 
 ### Example 4: Agent Integration
@@ -2038,7 +2243,7 @@ agent = SearchAgent(
 # 4. All searches automatically scoped to tenant
 
 results = agent.search_by_text(query="cooking videos", tenant_id="acme", top_k=10)  # synchronous
-# Searches video_colpali_smol500_mv_frame_acme
+# Searches video_colpali_smol500_mv_frame_acme_acme (bare "acme" doubles)
 ```
 
 ---
@@ -2047,120 +2252,106 @@ results = agent.search_by_text(query="cooking videos", tenant_id="acme", top_k=1
 
 ### Unit Tests
 
-**Location**: `tests/backends/unit/`
+**Location**: `tests/backends/unit/` — real files include `test_schema_registry.py`
+(`TestSchemaRegistryValidation`, `TestSchemaRegistryDeployment`,
+`TestSchemaRegistryTracking`, `TestSchemaRegistryInitialization`),
+`test_backend_config.py`, `test_backend_registry_tenant.py`,
+`test_schema_name_matching.py`, `test_embedding_binarization.py`,
+`test_ranking_strategy_extractor.py`, and others listed in
+[Package Structure](#package-structure). The pattern below illustrates the
+naming-convention contract those tests pin (it is not a copy of any single
+file):
 
 ```python
-# tests/backends/unit/test_schema_registry.py
-
 import pytest
-from cogniverse_core.registries.schema_registry import SchemaRegistry
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
-class TestSchemaRegistry:
-    def test_schema_name_generation(self):
-        """Test tenant schema naming"""
-        manager = VespaSchemaManager(
+class TestTenantSchemaNaming:
+    @pytest.fixture
+    def manager(self):
+        return VespaSchemaManager(
             backend_endpoint="http://localhost",
             backend_port=8080
         )
 
-        # Simple format
+    def test_bare_tenant_id_canonicalizes_and_doubles(self, manager):
+        """A bare tenant_id canonicalizes to 'org:tenant' (acme -> acme:acme)
+        before the schema suffix is built, so the suffix is doubled."""
         schema = manager.get_tenant_schema_name("acme", "video_frames")
-        assert schema == "video_frames_acme"
+        assert schema == "video_frames_acme_acme"
 
-        # Org:tenant format
+    def test_org_tenant_format_is_not_doubled(self, manager):
+        """An already-canonical 'org:tenant' id is not doubled."""
         schema = manager.get_tenant_schema_name("acme:production", "video_frames")
         assert schema == "video_frames_acme_production"
 
-    def test_tenant_schema_naming(self):
-        """Test tenant schema name generation"""
-        manager = VespaSchemaManager(
-            backend_endpoint="http://localhost",
-            backend_port=8080
-        )
-
-        # Get tenant schema name
-        schema = manager.get_tenant_schema_name("test_tenant", "video_frames")
-        assert schema == "video_frames_test_tenant"
-
-        # Verify consistent naming
-        schema_again = manager.get_tenant_schema_name("test_tenant", "video_frames")
-        assert schema == schema_again
-
-    def test_tenant_isolation(self):
-        """Verify tenants have separate schemas"""
-        manager = VespaSchemaManager(
-            backend_endpoint="http://localhost",
-            backend_port=8080
-        )
-
+    def test_tenant_isolation(self, manager):
+        """Verify tenants get distinct schema names."""
         schema_a = manager.get_tenant_schema_name("tenant_a", "video_frames")
         schema_b = manager.get_tenant_schema_name("tenant_b", "video_frames")
 
         assert schema_a != schema_b
-        assert schema_a == "video_frames_tenant_a"
-        assert schema_b == "video_frames_tenant_b"
+        assert schema_a == "video_frames_tenant_a_tenant_a"
+        assert schema_b == "video_frames_tenant_b_tenant_b"
 ```
 
 ### Integration Tests
 
-**Location**: `tests/backends/integration/`
+**Location**: `tests/backends/integration/` — real files include
+`test_tenant_schema_lifecycle.py` (`TestSchemaRegistryDeployment`,
+`TestSchemaRegistryDeletion`, against a real Vespa Docker instance via the
+`vespa_instance` fixture), `test_config_store.py`,
+`test_dynamic_profile_search_visibility.py`, `test_partial_update_roundtrip.py`,
+and `test_vespa_factory.py`. Illustrative pattern (real fixtures wire
+`config_manager`/`schema_loader` through `get_backend(tenant_id)` factory
+fixtures, not `self.` attributes):
 
 ```python
-# tests/backends/integration/test_tenant_schema_lifecycle.py
-
 import pytest
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from cogniverse_core.registries.schema_registry import SchemaRegistry
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
 @pytest.mark.integration
-class TestTenantSchemaLifecycle:
+class TestTenantScopedSearch:
     @pytest.fixture
-    def tenant_id(self):
-        return "test_tenant_integration"
-
-    @pytest.fixture
-    def backend(self):
-        """Create a search backend wired to a real Vespa connection"""
-        from cogniverse_vespa.search_backend import VespaSearchBackend
-
+    def backend(self, config_manager, schema_loader):
+        """Search backend wired to a real Vespa connection."""
+        backend_section = config_manager.get_backend_config(tenant_id="__system__")
         return VespaSearchBackend(
             config={
                 "url": "http://localhost",
                 "port": 8080,
-                "profiles": self.config_manager.get("backend")["profiles"],
-                "default_profiles": self.config_manager.get("backend")["default_profiles"],
+                "profiles": {n: p.to_dict() for n, p in backend_section.profiles.items()},
             },
-            config_manager=self.config_manager,
-            schema_loader=self.schema_loader,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
 
-    def test_search_with_tenant_schema(self, backend, tenant_id):
-        """Test search uses tenant schema"""
+    def test_search_with_tenant_schema(self, backend):
+        """Search routes to the tenant-scoped schema."""
         results = backend.search({
             "query": "test query",
             "type": "video",
             "profile": "test_colpali",
             "top_k": 5,
-            "tenant_id": tenant_id,
+            "tenant_id": "acme:prod",
         })
 
         assert isinstance(results, list)
         # Results depend on ingested data
 
     def test_tenant_isolation(self, backend):
-        """Verify tenants cannot access each other's data"""
-        # The tenant_id in each query routes to a different schema
+        """tenant_id in each query routes to a different physical schema."""
         results_a = backend.search({
             "query": "test",
             "type": "video",
             "profile": "test_colpali",
-            "tenant_id": "tenant_a",
+            "tenant_id": "acme:prod",
         })
         results_b = backend.search({
             "query": "test",
             "type": "video",
             "profile": "test_colpali",
-            "tenant_id": "tenant_b",
+            "tenant_id": "startup:prod",
         })
 
         # Results are from different schemas (different data)
@@ -2170,15 +2361,17 @@ class TestTenantSchemaLifecycle:
 ### Test Fixtures
 
 ```python
-# tests/conftest.py
+# tests/backends/integration/conftest.py
+
+import uuid
 
 import pytest
+
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 @pytest.fixture
 def test_tenant_id():
     """Unique tenant ID for tests"""
-    import uuid
     return f"test_tenant_{uuid.uuid4().hex[:8]}"
 
 @pytest.fixture
@@ -2253,26 +2446,35 @@ def test_tenant_isolation():
 
 ```python
 # ✅ Good: Batch ingestion
-config = {"schema_name": tenant_schema}
+config = {
+    "schema_name": tenant_schema,
+    "url": "http://localhost",
+    "port": 8080,
+    "schema_loader": schema_loader,
+}
 client = VespaPyClient(config=config)
 client.connect()
 processed = [client.process(doc) for doc in documents]
 success, failed = client._feed_prepared_batch(processed, batch_size=100)
 
-# ❌ Bad: Individual document feeding
+# ❌ Bad: One document per feed call defeats pyvespa's connection reuse
 for doc in documents:
-    client.feed_single(doc)  # Slow!
+    client._feed_prepared_batch([client.process(doc)], batch_size=1)  # Slow!
 ```
 
 ---
 
 ## VespaConfigStore API
 
-**Location:** `config/config_store.py`
+**Location:** `libs/vespa/cogniverse_vespa/config/config_store.py`
 
 Vespa-based configuration storage with multi-tenant support, implementing the `ConfigStore` interface.
 
 ### Document Structure
+
+`config_value` is stored as a JSON-serialized string (`json.dumps(config_value)`
+on write, `json.loads(...)` on read) since Vespa's `config_metadata` schema
+types the field as `string`, not a nested object:
 
 ```json
 {
@@ -2282,7 +2484,7 @@ Vespa-based configuration storage with multi-tenant support, implementing the `C
     "scope": "system",
     "service": "system",
     "config_key": "system_config",
-    "config_value": {...},
+    "config_value": "{\"model\": \"gemini-pro\", \"temperature\": 0.7}",
     "version": 1,
     "created_at": "2024-01-01T00:00:00",
     "updated_at": "2024-01-01T00:00:00"
@@ -2305,7 +2507,7 @@ store = VespaConfigStore(
 # Store configuration (versioned)
 entry = store.set_config(
     tenant_id="acme",
-    scope=ConfigScope.TENANT,
+    scope=ConfigScope.ROUTING,
     service="routing",
     config_key="model_settings",
     config_value={"model": "gemini-pro", "temperature": 0.7}
@@ -2315,7 +2517,7 @@ entry = store.set_config(
 # Retrieve latest version
 entry = store.get_config(
     tenant_id="acme",
-    scope=ConfigScope.TENANT,
+    scope=ConfigScope.ROUTING,
     service="routing",
     config_key="model_settings"
 )
@@ -2326,7 +2528,7 @@ entries = store.list_configs(tenant_id="acme")
 # Delete config
 store.delete_config(
     tenant_id="acme",
-    scope=ConfigScope.TENANT,
+    scope=ConfigScope.ROUTING,
     service="routing",
     config_key="model_settings"
 )
@@ -2336,7 +2538,7 @@ store.delete_config(
 
 ## VespaEmbeddingProcessor
 
-**Location:** `embedding_processor.py`
+**Location:** `libs/vespa/cogniverse_vespa/embedding_processor.py`
 
 Handles Vespa-specific embedding format conversions (numpy → hex/binary).
 
@@ -2344,7 +2546,7 @@ Handles Vespa-specific embedding format conversions (numpy → hex/binary).
 
 | Schema Type | Float Format | Binary Format |
 |-------------|--------------|---------------|
-| **Single-vector** (`_sv_`, `lvt`) | Raw float list | Hex-encoded int8 |
+| **Single-vector** (`_sv_`, `_lvt_` tokens) | Raw float list | Hex-encoded int8 |
 | **Patch-based** | Dict of hex-encoded bfloat16 | Dict of hex-encoded int8 |
 
 ### Key Methods
@@ -2389,8 +2591,9 @@ binarized = np.packbits(np.where(embeddings > 0, 1, 0), axis=1).astype(np.int8)
 Implements Mem0's `VectorStoreBase` interface for agent memory persistence,
 routing every operation through the SDK's `Backend` interface
 (`cogniverse_sdk.interfaces.backend.Backend`) instead of talking to Vespa
-directly. Registered in `Mem0MemoryManager._register_backend_provider()` as
-the `"backend"` provider, so any Mem0 config with `vector_store.provider:
+directly. Registered by the module-level `_register_backend_provider()` (in
+`cogniverse_core.memory.manager`, invoked automatically on import) as the
+`"backend"` provider, so any Mem0 config with `vector_store.provider:
 "backend"` lands here.
 
 ### Why through the Backend interface
@@ -2414,10 +2617,13 @@ on every call — all for free.
 from cogniverse_core.memory.backend_vector_store import BackendVectorStore
 
 # In production this is constructed by Mem0's VectorStoreFactory after
-# Mem0MemoryManager._register_backend_provider() registers "backend".
+# the module-level _register_backend_provider() registers "backend".
 # Direct construction is only used in tests.
 store = BackendVectorStore(
-    collection_name="agent_memories_acme",
+    # Tenant-scoped schema name, e.g. from
+    # schema_manager.get_tenant_schema_name("acme", "agent_memories")
+    # -> "agent_memories_acme_acme" for the bare tenant_id "acme"
+    collection_name="agent_memories_acme_acme",
     backend_client=vespa_backend,    # an SDK Backend implementation
     embedding_model_dims=768,
 )
@@ -2429,8 +2635,8 @@ store.insert(
     ids=["mem_001"],
 )
 
-# Search (routes to backend.query_metadata_documents)
-hits = store.search(query="...", vectors=[[0.1, ...]], limit=5)
+# Search (routes to backend.search)
+hits = store.search(query="...", vectors=[0.1, 0.2, ...], limit=5)
 
 # Delete (routes to backend.delete_document)
 store.delete(vector_id="mem_001")
@@ -2440,7 +2646,7 @@ store.delete(vector_id="mem_001")
 
 ## RankingStrategyExtractor
 
-**Location:** `ranking_strategy_extractor.py`
+**Location:** `libs/vespa/cogniverse_vespa/ranking_strategy_extractor.py`
 
 Extracts ranking profile configurations from schema JSON files.
 
@@ -2473,14 +2679,14 @@ print(strategy.strategy_type)           # SearchStrategyType.HYBRID
 print(strategy.needs_float_embeddings)  # True
 print(strategy.needs_binary_embeddings) # False
 print(strategy.needs_text_query)        # True
-print(strategy.use_nearestneighbor)     # True (for global schemas)
+print(strategy.use_nearestneighbor)     # False (patch-based schema; True for global schemas)
 print(strategy.inputs)                  # {"qt": "tensor<float>(...)"}
 print(strategy.query_tensors_needed)    # ["qt"]
 ```
 
 ### Detection Logic
 
-- **needs_text_query**: Profile name contains "bm25" OR first-phase has "bm25(" OR "userInput"
+- **needs_text_query**: Profile name contains "bm25" or "text" OR first-phase has "bm25(" OR "userInput"
 - **needs_float_embeddings**: Input types contain "float"
 - **needs_binary_embeddings**: Input types contain "int8"
 - **use_nearestneighbor**: Global schemas + visual strategies
@@ -2489,7 +2695,7 @@ print(strategy.query_tensors_needed)    # ["qt"]
 
 ## Tenant-Scoped Search via VespaSearchBackend
 
-**Location:** `search_backend.py`
+**Location:** `libs/vespa/cogniverse_vespa/search_backend.py`
 
 `VespaSearchBackend` is the tenant-scoped search entry point. Tenant isolation is
 enforced per query: `tenant_id` is required in the `query_dict` passed to `search()`,
@@ -2499,7 +2705,9 @@ query.
 ### Key Features
 
 - Per-query tenant scoping: `tenant_id` is **required** in `query_dict`
-- Automatic schema name resolution: `base_schema + tenant_id → tenant_schema`
+- Automatic schema name resolution: `base_schema + canonicalized tenant_id → tenant_schema`
+  (the base schema name comes from the resolved profile's `schema_name`, not from a
+  `query_dict` key — there is no `"schema"` key in `query_dict`)
 - Schema/profile resolved at query time when constructed with `config`
 - Thread-safe profile management
 
@@ -2518,23 +2726,26 @@ backend = VespaSearchBackend(
 # tenant_id is REQUIRED in query_dict; search() raises if it is missing
 results = backend.search({
     "query": "robots playing soccer",
-    "tenant_id": "acme",                                # REQUIRED
-    "schema": "video_colpali_smol500_mv_frame",         # base schema name
+    "tenant_id": "acme:prod",                           # REQUIRED
     "profile": "video_colpali_smol500_mv_frame",
     "strategy": "hybrid_float_bm25",
     "top_k": 10,
 })
-# Searches tenant-scoped schema: video_colpali_smol500_mv_frame_acme
+# Searches tenant-scoped schema: video_colpali_smol500_mv_frame_acme_prod
 ```
 
 ### Schema Resolution
 
 ```python
-# Pattern: {base_schema}_{tenant_id} (colon in tenant_id replaced with underscore)
-# Input: tenant_id="acme", base schema "video_colpali_smol500_mv_frame"
-# Result: "video_colpali_smol500_mv_frame_acme"
+# Pattern: {base_schema}_{canonicalized tenant_id} (colon replaced with underscore).
+# canonical_tenant_id() maps a bare tenant_id to "org:tenant" form first
+# (e.g. "acme" -> "acme:acme"), so a bare tenant_id's suffix is doubled.
 
-# For org:tenant format
+# Bare tenant_id
+# Input: tenant_id="acme", base schema "video_colpali_smol500_mv_frame"
+# Result: "video_colpali_smol500_mv_frame_acme_acme"
+
+# Org:tenant format (already canonical — not doubled)
 # Input: tenant_id="acme:production"
 # Result: "video_colpali_smol500_mv_frame_acme_production"
 ```

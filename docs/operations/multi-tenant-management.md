@@ -10,10 +10,11 @@ Cogniverse implements a **schema-per-tenant** multi-tenant architecture providin
 
 - **Physical Isolation**: Schema-per-tenant architecture in Vespa
 - **Organizational Hierarchy**: Organizations contain multiple tenants
-- **Lazy Schema Creation**: Schemas created on first tenant access
+- **Eager Primary-Schema Deployment**: `POST /admin/tenants` deploys the tenant's content schemas (e.g. `video_colpali_smol500_mv_frame`) immediately; auxiliary schemas such as `knowledge_graph` are instead deployed lazily on that tenant's first write (`libs/runtime/cogniverse_runtime/ingestion_worker/worker.py`)
 - **REST API Management**: Complete tenant lifecycle via HTTP API
 - **Automatic Routing**: Tenant-aware query routing in all agents
 - **Storage Isolation**: Dedicated directories per tenant
+- **Controlled Cross-Tenant Federation**: Org-trunk sharing and admin-gated, same-org federated reads (see [Cross-Tenant Federation](#cross-tenant-federation))
 
 ### Architecture at a Glance
 
@@ -62,8 +63,8 @@ flowchart TB
 - Purpose: Group related tenants under common ownership
 
 **Tenant**: Environment or deployment within an organization
-- Examples: `production`, `staging`, `dev`, `customer-123`
-- Validation: Alphanumeric, underscore, and hyphen (`^[a-zA-Z0-9_-]+$`)
+- Examples: `production`, `staging`, `dev`, `customer_123`
+- Validation: Alphanumeric and underscore only (`^[a-zA-Z0-9_]+$`) — no hyphens; the tenant name becomes part of the Vespa schema name, which only allows `[a-zA-Z0-9_]`
 - Purpose: Isolated data environment for specific use case
 
 ### Tenant ID Format
@@ -93,11 +94,12 @@ Examples:
 | Component | Pattern | Valid Examples | Invalid Examples |
 |-----------|---------|----------------|------------------|
 | **Organization** | `^[a-zA-Z0-9_]+$` | `acme`, `org_123`, `ACME` | `acme-corp`, `acme.com`, `acme corp` |
-| **Tenant Name** | `^[a-zA-Z0-9_-]+$` | `production`, `dev-2024`, `cust_1` | `prod.env`, `staging:v2`, `test env` |
+| **Tenant Name** | `^[a-zA-Z0-9_]+$` | `production`, `dev_2024`, `cust_1` | `dev-2024`, `prod.env`, `staging:v2`, `test env` |
 
 **Common Validation Errors**:
 
 - ❌ `acme-corp:production` - Hyphen not allowed in organization
+- ❌ `acme:dev-2024` - Hyphen not allowed in tenant name either (schema names only permit `[a-zA-Z0-9_]`)
 - ❌ `acme:prod.env` - Dot not allowed in tenant name
 - ❌ `acme:prod env` - Space not allowed
 - ❌ `acme::production` - Empty component
@@ -232,7 +234,7 @@ curl -X POST http://localhost:9000/admin/tenants \
 **Validation**:
 
 - Organization must exist before creating tenant
-- `tenant_id` must match `^[a-zA-Z0-9_-]+$` (if using org_id + tenant_id format)
+- `tenant_id` must match `^[a-zA-Z0-9_]+$` (if using org_id + tenant_id format; no hyphens)
 - Full `tenant_id` must be valid org:tenant format
 - Tenant must not already exist in organization
 
@@ -437,7 +439,7 @@ sequenceDiagram
 
     API->>SchemaManager: Create tenant schemas via BackendRegistry
 
-    SchemaManager->>SchemaManager: Initialize tenant-specific schemas<br/>(lazy creation via SchemaRegistry)
+    SchemaManager->>SchemaManager: Deploy tenant-specific schemas<br/>(idempotent via SchemaRegistry.deploy_schema)
 
     SchemaManager->>VespaClient: Feed tenant_metadata
     VespaClient-->>SchemaManager: Success
@@ -461,7 +463,7 @@ sequenceDiagram
 
     Client->>Agent: search(query="tutorial",<br/>tenant_id="acme:production")
 
-    Agent->>Backend: search({query, tenant_id, schema, profile})
+    Agent->>Backend: search({query, type, tenant_id, profile})
 
     alt tenant_id missing from query_dict
         Backend-->>Client: ValueError (tenant_id required)
@@ -525,11 +527,11 @@ sequenceDiagram
 
 **Location**: `libs/vespa/cogniverse_vespa/vespa_schema_manager.py` (implementation layer)
 
-**Purpose**: Manages the lifecycle of tenant-specific Vespa schemas with lazy creation and automatic tenant isolation.
+**Purpose**: Manages the lifecycle of tenant-specific Vespa schemas with idempotent deployment and automatic tenant isolation.
 
 **Key Responsibilities**:
 
-- Lazy schema creation on first tenant access
+- Idempotent schema deployment (`SchemaRegistry.deploy_schema` skips redeploying a schema that is already tracked, unless `force=True`); primary content schemas deploy eagerly from `POST /admin/tenants`, while auxiliary schemas like `knowledge_graph` deploy lazily on a tenant's first write
 - Tenant registration and validation
 - Schema naming with tenant isolation
 - Metadata schema management (organization_metadata, tenant_metadata)
@@ -548,13 +550,25 @@ Examples:
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager  # Implementation layer
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_core.registries.schema_registry import SchemaRegistry
+from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 from pathlib import Path
 
 # Initialize dependencies
 schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))  # For loading schema templates
 config_manager = create_default_config_manager()
-schema_registry = SchemaRegistry(config_manager=config_manager, backend=None, schema_loader=schema_loader)
+
+# backend is REQUIRED by SchemaRegistry (raises ValueError if None).
+# "system" is the tenant_id tenant_manager.py itself uses for the shared
+# metadata backend (organization_metadata / tenant_metadata span all tenants).
+backend = BackendRegistry.get_instance().get_ingestion_backend(
+    "vespa",
+    tenant_id="system",
+    config={"url": "http://localhost", "port": 8080},
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+)
+schema_registry = SchemaRegistry(config_manager=config_manager, backend=backend, schema_loader=schema_loader)
 
 # Initialize schema manager (backend_endpoint and backend_port are REQUIRED)
 schema_manager = VespaSchemaManager(
@@ -601,11 +615,12 @@ backend = VespaSearchBackend(
     schema_loader=schema_loader,
 )
 
-# tenant_id is REQUIRED in query_dict; search() raises if it is missing
+# tenant_id and type are REQUIRED in query_dict; search() raises if either is missing.
+# The base schema name comes from the resolved profile's config, not from a "schema" key.
 results = backend.search({
     "query": "machine learning tutorial",
-    "tenant_id": "acme:production",                  # REQUIRED
-    "schema": "video_colpali_smol500_mv_frame",      # base schema name
+    "type": "video",                                  # REQUIRED content type
+    "tenant_id": "acme:production",                   # REQUIRED
     "profile": "video_colpali_smol500_mv_frame",
     "strategy": "hybrid_float_bm25",
     "top_k": 10,
@@ -659,9 +674,18 @@ parse_tenant_id("acme:")     # ValueError: both org and tenant parts must be non
 
 ### Agent Factory Pattern
 
-**Purpose**: Per-tenant agent instances with caching
+**Purpose**: Tenant-aware agent instantiation and dispatch.
 
-All agents implement a factory function for tenant-aware instantiation:
+Cogniverse ships 23 agents (`configs/config.json` `agents.*`). All 23 enforce
+tenant isolation, but via one of two patterns:
+
+| Pattern | Agents | How tenant_id is enforced | Instance lifecycle |
+|---|---|---|---|
+| **Per-request `AgentDeps`** (22 agents) | `search_agent`, `image_search_agent`, `document_agent`, `audio_analysis_agent`, `gateway_agent`, `orchestrator_agent`, `summarizer_agent`, `detailed_report_agent`, `profile_selection_agent`, `query_enhancement_agent`, `entity_extraction_agent`, `deep_research_agent`, `coding_agent`, `citation_tracing_agent`, `contradiction_reconciliation_agent`, `multi_document_synthesis_agent`, `kg_traversal_agent`, `temporal_reasoning_agent`, `knowledge_summarization_agent`, `audit_explanation_agent`, `cross_tenant_comparison_agent`, `federated_query_agent` | `tenant_id` arrives on the agent's `AgentInput`/`AgentDeps`. Some declare it required (`search_agent.SearchInput`, `orchestrator_agent.OrchestratorInput`, `deep_research_agent`'s input: `Field(...)`, no default — Pydantic raises a validation error, a `ValueError` subclass, if omitted); others declare it `Optional[str] = None` and validate it explicitly with `cogniverse_core.common.tenant_utils.require_tenant_id()`, either in `_process_impl` (e.g. `gateway_agent`, `entity_extraction_agent`, `profile_selection_agent`, `query_enhancement_agent`) or at construction from `deps.tenant_id` (`coding_agent.__init__`), which raises `ValueError` | `AgentDispatcher.dispatch()` (`libs/runtime/cogniverse_runtime/agent_dispatcher.py`) "instantiates a fresh agent (stateless, per-request)" for most of these; `SearchAgent` is the one exception with a small per-profile (not per-tenant) instance cache |
+| **`TenantAwareAgentMixin` + per-tenant cache** (1 agent) | `text_analysis_agent` | `TenantAwareAgentMixin.__init__` (`libs/core/cogniverse_core/agents/tenant_aware_mixin.py`) raises `ValueError` if `tenant_id` is empty/whitespace at construction time | Its standalone FastAPI app keeps a `TenantLRUCache` (`libs/foundation/cogniverse_foundation/caching/tenant_lru.py`, capacity 16) of agent instances keyed by `tenant_id`, since each instance loads persisted per-tenant DSPy module config |
+
+The examples below use the per-request pattern, which covers all agents reached
+through `AgentDispatcher` (the A2A `/a2a` endpoint and the `/agents` REST route):
 
 ```python
 # Search Agent (implementation layer)
@@ -682,23 +706,34 @@ agent = SearchAgent(
 
 # Orchestrator Agent (implementation layer)
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 
-# OrchestratorDeps is tenant-agnostic — no tenant_id at construction
-deps = OrchestratorDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
+# AgentRegistry itself needs a tenant_id (used for config isolation when
+# resolving agent endpoints), but OrchestratorDeps is an empty, tenant-agnostic
+# dependency object — tenant_id for a query arrives per-request via
+# OrchestratorInput(tenant_id=...), not at construction.
+registry = AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+router = OrchestratorAgent(
+    deps=OrchestratorDeps(),
+    registry=registry,          # REQUIRED — no default
+    config_manager=config_manager,
 )
-router = OrchestratorAgent(deps=deps)
 ```
 
-**Caching**: Agents are cached per tenant_id to avoid re-initialization overhead.
+**Caching**: Most agents are tenant-agnostic and either shared or freshly
+constructed per dispatch call — see the table above; only `text_analysis_agent`
+caches whole agent instances per tenant_id.
 
-**Validation**: All agents raise `ValueError` if tenant_id is empty or None.
+**Validation**: The framework provides two standard tenant-validation
+mechanisms that raise `ValueError` on a missing/empty tenant_id — a required
+`tenant_id` field (Pydantic) on the per-request input model, or an explicit
+`require_tenant_id()` call inside `_process_impl` — plus `TenantAwareAgentMixin`
+for `text_analysis_agent`'s construction-time check. Not every agent's read
+path calls one of these (e.g. `citation_tracing_agent` falls back to an empty
+tenant_id string rather than raising when neither the dispatcher-stamped
+tenant nor `input.tenant_id` is set), so this is the standard contract rather
+than a proof that every code path enforces it.
 
 ---
 
@@ -801,6 +836,74 @@ curl -X DELETE http://localhost:9000/admin/tenants/acme:staging
 
 ---
 
+## Cross-Tenant Federation
+
+Schema-per-tenant isolation is the default and cannot be bypassed by ordinary
+search or ingestion traffic. Two disabled-by-default agents provide the one
+sanctioned, explicitly ACL-gated exception: controlled cross-tenant reads
+**within a single organization**.
+
+### Org Trunk
+
+`FederationService` (`libs/core/cogniverse_core/memory/federation.py`) treats
+a synthetic tenant `{org_id}:_org_trunk` as a shared namespace for an
+organization — `org_trunk_tenant_id("acme:production")` returns
+`"acme:_org_trunk"`.
+
+- **Federated read** (`federated_get_all(tenant_id, agent_name)`): merges
+  memories from a tenant's own namespace and its org trunk, deduped by
+  `subject_key` — the tenant's own memory wins over a trunk entry on the
+  same subject.
+- **Promotion** (`promote_to_org_trunk(...)`): copies one tenant's memory
+  into the org trunk so every tenant in the org can see it. Requires the
+  actor's role to be `tenant_admin` or `org_admin` (checked against the
+  knowledge schema's `pinnable_by` floor); `tenant_private` memories are
+  never eligible — only memories classified `org_shared` can be promoted.
+
+### cross_tenant_comparison_agent and federated_query_agent
+
+| Agent | Port | Purpose |
+|---|---|---|
+| `cross_tenant_comparison_agent` | 8023 (`enabled: false`) | Compares per-tenant views of the same subject across every tenant in an org via `FederationService.federated_get_all`, reporting whether tenants agree via `distinct_signatures_count` |
+| `federated_query_agent` | 8024 (`enabled: false`) | Answers a free-text query by aggregating federated reads across multiple tenants in the same org, with an optional RLM summary over the results |
+
+Both agents enforce the same ACL gate before reading anything:
+
+1. `actor_role` must be `tenant_admin` or `org_admin` — any other role raises `ACLRejected`.
+2. Every requested `tenant_id` must share the caller's `org_id` (parsed via `parse_tenant_id`) — a cross-org request is rejected.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Agent as federated_query_agent
+    participant Fed as FederationService
+    participant TenantMem as Tenant memories
+    participant Trunk as Org trunk memories
+
+    Client->>Agent: query(actor_role, tenant_ids=[A, B])
+    Agent->>Agent: Check actor_role in {tenant_admin, org_admin}
+    alt role not privileged
+        Agent-->>Client: ACLRejected
+    end
+    Agent->>Agent: Check all tenant_ids share caller's org_id
+    alt cross-org tenant_id present
+        Agent-->>Client: ACLRejected
+    end
+    loop for each tenant_id
+        Agent->>Fed: federated_get_all(tenant_id, agent_name)
+        Fed->>TenantMem: get_all_memories(tenant_id)
+        Fed->>Trunk: get_all_memories(org_trunk_tenant_id)
+        Fed-->>Agent: tenant + trunk rows, deduped by subject_key
+    end
+    Agent-->>Client: FederatedHitOut list (+ optional RLM summary)
+```
+
+This is the only sanctioned way one tenant's data becomes visible to another
+tenant's request: both agents ship disabled (`enabled: false` in
+`configs/config.json`) and remain role-gated even when enabled.
+
+---
+
 ## Security and Isolation Guarantees
 
 ### Physical Data Isolation
@@ -819,7 +922,8 @@ curl -X DELETE http://localhost:9000/admin/tenants/acme:staging
 ### Query Isolation
 
 - **Tenant-specific schemas**: Queries only search tenant's schemas
-- **No cross-tenant queries**: Impossible to query data from different tenant
+- **No cross-tenant queries by default**: Search and ingestion paths (`VespaSearchBackend`, `VideoIngestionPipeline`) cannot address another tenant's schema
+- **One sanctioned, ACL-gated exception**: `cross_tenant_comparison_agent` / `federated_query_agent` can read across tenants in the same org, but only for `tenant_admin`/`org_admin` actors — see [Cross-Tenant Federation](#cross-tenant-federation)
 - **Validated routing**: parse_tenant_id() validates before schema selection
 
 ### Metadata Isolation
@@ -834,5 +938,6 @@ curl -X DELETE http://localhost:9000/admin/tenants/acme:staging
 
 - [Deployment Guide](deployment.md) - Multi-tenant deployment procedures
 - [Configuration Guide](configuration.md) - Multi-tenant configuration spanning foundation and core layers
-- [Multi-Tenant Operations](multi-tenant-ops.md) - Day-to-day tenant operations
+- [Multi-Tenant Operations](multi-tenant-ops.md) - Day-to-day tenant operations, including orphan reconciliation
 - [Architecture Documentation](../architecture/sdk-architecture.md) - layered architecture
+- [Agents Module Guide](../modules/agents.md) - full roster and per-agent implementation detail for all 23 agents

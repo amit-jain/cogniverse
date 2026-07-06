@@ -95,3 +95,54 @@ def test_extract_all_strips_only_trailing_schema_suffix(tmp_path):
 
     assert "code_schema_index" in all_strategies
     assert "code_index" not in all_strategies
+
+
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_HYBRID_SCHEMAS = [
+    "configs/schemas/video_colpali_smol500_mv_frame_schema.json",
+    "configs/schemas/video_colqwen_omni_mv_chunk_30s_schema.json",
+    "tests/system/resources/schemas/video_colpali_smol500_mv_frame_schema.json",
+    "tests/system/resources/schemas/video_colqwen_omni_mv_chunk_30s_schema.json",
+]
+
+
+def _rank_profiles(path: Path) -> dict:
+    data = json.loads(path.read_text())
+
+    def find(o):
+        if isinstance(o, dict):
+            if "rank_profiles" in o:
+                return o["rank_profiles"]
+            for v in o.values():
+                r = find(v)
+                if r is not None:
+                    return r
+        return None
+
+    return {r["name"]: r for r in (find(data) or []) if "name" in r}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("schema", _HYBRID_SCHEMAS)
+def test_hybrid_rank_profiles_honor_phase_order_naming(schema):
+    """A ``hybrid_binary_bm25*`` profile must be binary-first and a
+    ``hybrid_bm25_binary*`` profile text-first; the ``_no_description`` pair
+    were once byte-identical (both text-first), silently giving
+    hybrid_binary_bm25_no_description the wrong phase order."""
+    profiles = _rank_profiles(_REPO_ROOT / schema)
+    for suffix in ("", "_no_description"):
+        binary_first = profiles[f"hybrid_binary_bm25{suffix}"]
+        text_first = profiles[f"hybrid_bm25_binary{suffix}"]
+        assert binary_first["first_phase"] == "visual_sim_binary", (
+            f"hybrid_binary_bm25{suffix} must rank binary first"
+        )
+        assert "text_sim" in json.dumps(text_first["first_phase"]), (
+            f"hybrid_bm25_binary{suffix} must rank text/bm25 first"
+        )
+        assert binary_first["first_phase"] != text_first["first_phase"], (
+            f"opposite-named hybrid profiles must differ (suffix={suffix!r})"
+        )

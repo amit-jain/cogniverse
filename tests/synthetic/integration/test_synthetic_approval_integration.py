@@ -21,7 +21,7 @@ import pytest
 
 from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
-from cogniverse_agents.approval.interfaces import (
+from cogniverse_core.approval.interfaces import (
     ApprovalBatch,
     ApprovalStatus,
     ReviewDecision,

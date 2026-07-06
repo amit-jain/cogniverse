@@ -8,7 +8,7 @@ Works for any domain by accepting ConfidenceExtractor and FeedbackHandler.
 import logging
 from typing import Any, Dict, List, Optional
 
-from cogniverse_agents.approval.interfaces import (
+from cogniverse_core.approval.interfaces import (
     ApprovalBatch,
     ApprovalStatus,
     ApprovalStorage,

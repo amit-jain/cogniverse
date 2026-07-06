@@ -15,6 +15,8 @@ This tutorial walks you through creating a custom agent from scratch, covering t
 7. [Step 6: Register the Agent](#step-6-register-the-agent)
 8. [Step 7: Write Tests](#step-7-write-tests)
 9. [Complete Example](#complete-example)
+10. [Real-World Examples](#real-world-examples)
+11. [Next Steps](#next-steps)
 
 ---
 
@@ -22,10 +24,17 @@ This tutorial walks you through creating a custom agent from scratch, covering t
 
 Cogniverse agents are built on a type-safe foundation:
 
-```text
-AgentBase[InputT, OutputT, DepsT]  # Generic base class
-    └── A2AAgent[InputT, OutputT, DepsT]  # A2A protocol + DSPy
-            └── YourCustomAgent  # Your implementation
+```mermaid
+flowchart TB
+    AgentBase["<span style='color:#000'><b>AgentBase[InputT, OutputT, DepsT]</b><br/>Generic base class</span>"]
+    A2AAgent["<span style='color:#000'><b>A2AAgent[InputT, OutputT, DepsT]</b><br/>A2A protocol + DSPy</span>"]
+    YourAgent["<span style='color:#000'><b>YourCustomAgent</b><br/>Your implementation</span>"]
+
+    AgentBase --> A2AAgent --> YourAgent
+
+    style AgentBase fill:#90caf9,stroke:#1565c0,color:#000
+    style A2AAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style YourAgent fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### Agent Creation Flowchart
@@ -187,7 +196,7 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
         Initialize summarization agent.
 
         Args:
-            deps: Typed dependencies (must include tenant_id)
+            deps: Typed dependencies (tenant_id arrives per-request, not here)
             port: A2A server port
 
         Raises:
@@ -356,8 +365,8 @@ print(result.summary)
 # With dict input (auto-converted to SummarizationInput)
 result = await agent.process({"content": "...", "max_length": 100})
 
-# Streaming call (returns AsyncGenerator)
-async for event in agent.process(input, stream=True):
+# Streaming call (returns AsyncGenerator; process() is a coroutine, so await it first)
+async for event in await agent.process(input, stream=True):
     if event["type"] == "status":
         print(f"Status: {event['message']}")
     elif event["type"] == "final":
@@ -786,6 +795,42 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
                 word_count=0, style_used=input.style, error=str(e)
             )
 ```
+
+---
+
+## Real-World Examples
+
+The `SummarizationAgent` above is a minimal teaching example. Cogniverse ships 23
+production agents (see [Agents Module](../modules/agents.md) for the full roster);
+these show the same patterns with real mixins and dependencies:
+
+- **`MemoryAwareMixin`** — used by `SummarizerAgent`, `SearchAgent`, `DocumentAgent`,
+  `OrchestratorAgent`, `QueryEnhancementAgent`, `EntityExtractionAgent`, and 14 other
+  agents in `libs/agents/cogniverse_agents/` to persist and recall conversation
+  context across turns.
+- **`DynamicDSPyMixin`** (`cogniverse_core.common.dynamic_dspy_mixin`) — used by
+  `TextAnalysisAgent` (`libs/agents/cogniverse_agents/text_analysis_agent.py`) to
+  load and hot-swap DSPy modules at runtime instead of hardcoding one at `__init__`.
+- **`HealthCheckMixin`** (`cogniverse_core.common.health_mixin`) — also used by
+  `TextAnalysisAgent`, which combines it with `A2AEndpointsMixin`, `ConfigAPIMixin`,
+  `TenantAwareAgentMixin`, and `MemoryAwareMixin` in a single class to compose
+  A2A endpoints, health checks, config API, tenancy, and memory:
+
+  ```python
+  class TextAnalysisAgent(
+      A2AEndpointsMixin,
+      DynamicDSPyMixin,
+      ConfigAPIMixin,
+      HealthCheckMixin,
+      TenantAwareAgentMixin,
+      MemoryAwareMixin,
+  ):
+      ...
+  ```
+
+Mixins compose via standard Python multiple inheritance — list them before the
+`A2AAgent[...]` base (as `TextAnalysisAgent` does) or alongside it (as
+`SummarizerAgent` does with `MemoryAwareMixin, A2AAgent[SummarizerInput, ...]`).
 
 ---
 

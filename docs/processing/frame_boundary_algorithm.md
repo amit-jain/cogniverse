@@ -21,7 +21,44 @@ This document describes a planned enhancement for calculating keyframe temporal 
 
 The planned feature would combine visual scene change detection with audio transcription to create semantically meaningful frame boundaries. Each keyframe would represent a visual scene that may span multiple audio segments or partial segments.
 
-**Current State**: The system currently extracts keyframes at visual scene changes using histogram comparison, but only records a single timestamp per frame. Audio transcription is processed separately without mapping to visual boundaries.
+**Current State**: `KeyframeProcessor` extracts keyframes either at visual scene changes (histogram comparison) or at fixed FPS intervals, but only records a single timestamp per frame either way. Audio transcription is processed separately without mapping to visual boundaries. See [Configuration](#configuration) below for which mode the shipped profiles actually use.
+
+```mermaid
+flowchart LR
+    V["<span style='color:#000'><b>Video File</b></span>"] --> KF["<span style='color:#000'><b>KeyframeProcessor</b><br/>histogram or fps mode</span>"]
+    V --> AP["<span style='color:#000'><b>AudioProcessor</b><br/>transcription</span>"]
+    KF --> KOUT[("<span style='color:#000'><b>keyframes.json</b><br/>timestamp, correlation</span>")]
+    AP --> AOUT[("<span style='color:#000'><b>transcript.json</b><br/>start, end, text</span>")]
+    KOUT -.->|"no mapping today"| SEARCH["<span style='color:#000'><b>Search Index</b></span>"]
+    AOUT -.->|"no mapping today"| SEARCH
+
+    classDef input fill:#a5d6a7,stroke:#388e3c,color:#000
+    classDef process fill:#ce93d8,stroke:#7b1fa2,color:#000
+    classDef store fill:#90caf9,stroke:#1565c0,color:#000
+    class V input
+    class KF,AP process
+    class KOUT,AOUT,SEARCH store
+```
+
+```mermaid
+flowchart LR
+    V2["<span style='color:#000'><b>Video File</b></span>"] --> KF2["<span style='color:#000'><b>Planned: boundary-aware<br/>keyframe extraction</b></span>"]
+    V2 --> AP2["<span style='color:#000'><b>AudioProcessor</b><br/>transcription</span>"]
+    KF2 --> BOUT[("<span style='color:#000'><b>keyframes.json</b><br/>start_time, end_time, duration</span>")]
+    AP2 --> AOUT2[("<span style='color:#000'><b>transcript.json</b><br/>start, end, text</span>")]
+    BOUT -->|"overlap match on<br/>start_time/end_time"| MAP["<span style='color:#000'><b>Audio-to-Visual<br/>Boundary Mapping</b></span>"]
+    AOUT2 --> MAP
+    MAP --> SEARCH2["<span style='color:#000'><b>Search Index</b></span>"]
+
+    classDef input fill:#a5d6a7,stroke:#388e3c,color:#000
+    classDef process fill:#ce93d8,stroke:#7b1fa2,color:#000
+    classDef store fill:#90caf9,stroke:#1565c0,color:#000
+    classDef planned fill:#ffcc80,stroke:#ef6c00,color:#000
+    class V2 input
+    class AP2 process
+    class KF2,MAP planned
+    class BOUT,AOUT2,SEARCH2 store
+```
 
 ## Algorithm Components
 
@@ -121,7 +158,8 @@ Audio transcripts would be mapped TO the existing keyframe boundaries:
 # Example: {"start": 29.28, "end": 31.6, "text": "protecting your head"}
 
 # Step 2: For each keyframe, find overlapping audio segments
-for i, (frame_img, start_time, end_time) in enumerate(keyframes_data):
+# `keyframes` is the list of (frame, start_time, end_time) tuples from Step 1
+for i, (frame, start_time, end_time) in enumerate(keyframes):
     # Find segments that overlap with this visual scene
     overlapping_segments = [
         seg['text'] for seg in transcription_segments
@@ -194,7 +232,7 @@ Once boundary calculation is implemented, frame durations would exhibit these ch
     "frame_number": 901,
     "timestamp": 30.03,          # Point-in-time when frame was extracted
     "filename": "v_-IMXSEIabMM_keyframe_0041.jpg",
-    "path": "outputs/processing/<profile>/keyframes/v_-IMXSEIabMM/v_-IMXSEIabMM_keyframe_0041.jpg",
+    "path": "outputs/processing/profile_<profile_name>/keyframes/v_-IMXSEIabMM/v_-IMXSEIabMM_keyframe_0041.jpg",
     "correlation": 0.987         # Histogram correlation score (histogram mode only)
 }
 ```
@@ -205,15 +243,36 @@ Once boundary calculation is implemented, frame durations would exhibit these ch
     "frame_number": 901,
     "timestamp": 30.03,
     "filename": "v_-IMXSEIabMM_keyframe_0041.jpg",
-    "path": "outputs/processing/<profile>/keyframes/v_-IMXSEIabMM/v_-IMXSEIabMM_keyframe_0041.jpg"
+    "path": "outputs/processing/profile_<profile_name>/keyframes/v_-IMXSEIabMM/v_-IMXSEIabMM_keyframe_0041.jpg"
 }
 ```
+
+`<profile_name>` is the backend profile driving the pipeline run (e.g. `video_colpali_smol500_mv_frame`) — `ProcessingStrategySet` passes `pipeline_context.profile_output_dir` (`outputs/processing/profile_<schema_name>`) into `KeyframeProcessor.extract_keyframes()` as `output_dir`, which then appends `keyframes/<video_id>/`.
 
 **What it does NOT provide**:
 - No `start_time` field (when scene starts)
 - No `end_time` field (when scene ends)
 - No `duration` field (how long scene persists)
 - No boundary calculation between successive keyframes
+
+### Configuration
+
+`KeyframeProcessor.__init__` accepts `threshold` (default `0.999`), `max_frames` (default `3000`), and an optional `fps` — passing `fps` switches `extraction_mode` from `histogram` to `fps`. These are wired per backend profile through the `strategies.segmentation` block:
+
+```json
+{
+  "strategies": {
+    "segmentation": {
+      "class": "FrameSegmentationStrategy",
+      "params": { "fps": 1.0, "threshold": 0.999, "max_frames": 3000 }
+    }
+  }
+}
+```
+
+Backend profiles are read and written through `ConfigManager.get_backend_profile(profile_name, tenant_id, service="backend")` / `add_backend_profile(...)` / `update_backend_profile(...)` (the `service` argument defaults to `"backend"` on all of `ConfigManager`'s profile methods), and are editable from the dashboard's backend-profile tab or the runtime admin API.
+
+As of this writing, `video_colpali_smol500_mv_frame` is the only shipped profile whose segmentation strategy is `FrameSegmentationStrategy` (all other video profiles use `ChunkSegmentationStrategy`, which already produces full `start_time`/`end_time`/`duration` boundaries — see the warning at the top of this document). That profile sets `fps: 1.0`, so in practice keyframe extraction currently runs in **FPS mode**, not histogram mode — the `histogram` extraction path described above is the code's default when `fps` is omitted, but no shipped profile currently selects it.
 
 ### Future Enhancement (NOT YET IMPLEMENTED)
 The sophisticated boundary detection described in this document (with `start_time`, `end_time`, `duration`) is a planned enhancement. The current system extracts keyframes at scene change points but does not calculate the temporal duration of each visual scene.
@@ -229,7 +288,7 @@ Each frame in the metadata currently contains:
   "frame_number": 901,
   "timestamp": 30.03,
   "filename": "v_-IMXSEIabMM_keyframe_0041.jpg",
-  "path": "outputs/processing/<profile>/keyframes/v_-IMXSEIabMM/v_-IMXSEIabMM_keyframe_0041.jpg",
+  "path": "outputs/processing/profile_<profile_name>/keyframes/v_-IMXSEIabMM/v_-IMXSEIabMM_keyframe_0041.jpg",
   "correlation": 0.987
 }
 ```
@@ -254,7 +313,7 @@ The boundary-based format would add temporal scene boundaries to the existing fi
   "start_time": 30.03,
   "end_time": 46.8468,
   "duration": 16.8168,
-  "path": "outputs/processing/<profile>/keyframes/v_-IMXSEIabMM/v_-IMXSEIabMM_keyframe_0041.jpg",
+  "path": "outputs/processing/profile_<profile_name>/keyframes/v_-IMXSEIabMM/v_-IMXSEIabMM_keyframe_0041.jpg",
   "correlation": 0.987
 }
 ```
@@ -272,7 +331,7 @@ This enhanced format would enable precise audio-to-visual boundary mapping for i
 1. **Point-in-Time Timestamps Only**: Each frame has a single `timestamp` marking when it was extracted
 2. **No Scene Duration Information**: Cannot determine how long a visual scene persists
 3. **Separate Processing**: Audio and visual content are processed independently without temporal alignment
-4. **Scene Change Detection**: Frames are extracted at visual scene changes (histogram-based), but boundaries between scenes are not recorded
+4. **Scene Change Detection**: `KeyframeProcessor` supports histogram-based scene-change extraction, but the one shipped profile that uses it (`video_colpali_smol500_mv_frame`) runs it in fixed-FPS mode instead; either way, boundaries between frames are not recorded
 
 ### Planned Enhancement Benefits (once boundary calculation is implemented):
 1. **Semantic Scene Representation**: Frame boundaries would align with actual visual scene changes

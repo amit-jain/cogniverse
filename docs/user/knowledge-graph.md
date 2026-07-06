@@ -3,7 +3,7 @@
 Cogniverse extracts a knowledge graph from any codebase or document corpus you index. Every run of `cogniverse index` produces two things in parallel:
 
 1. **Content index** — the existing semantic search (vectors in Vespa)
-2. **Knowledge graph** — nodes (concepts, functions, entities) and typed edges (calls, imports, mentions) in a separate Vespa schema
+2. **Knowledge graph** — nodes (concepts, functions, entities) and typed edges (`calls`, `imports`, `born_in`, `same_as`, ...) in a separate Vespa schema
 
 Both are tenant-scoped and queryable at runtime. The graph answers questions the content index can't: "what connects X to Y?", "what does SearchAgent call?", "what are the hub concepts in this codebase?"
 
@@ -15,18 +15,26 @@ Extended with graph extraction. No new flags — the existing `--type` flag cont
 
 ```bash
 cogniverse index ./src --type code   # tree-sitter extraction → nodes + edges
-cogniverse index ./docs --type docs  # entity extraction → nodes + edges
+cogniverse index ./docs --type docs  # GLiNER entity extraction → nodes only
 ```
+
+> **Note:** The `cogniverse index` CLI command currently only accepts
+> `--type code`; `--type docs` and `--type video` are rejected with a
+> "not yet implemented" message. The extraction pipeline described below
+> (per-extension profile fan-out, GLiNER entities, multimodal graph
+> extraction) is fully implemented server-side and reachable directly via
+> `POST /ingestion/upload` + `POST /graph/upsert` — it just isn't wired
+> up to the `index` CLI command yet for non-code content types.
 
 The `docs` type now fans out per file extension to the right content profile:
 
 | Extension | Content profile | Graph extraction |
 |---|---|---|
-| `.md` `.txt` `.rst` `.html` | `document_text_semantic` | GLiNER entities + co-mention edges |
-| `.pdf` | `document_text_semantic` | PDF text → GLiNER entities |
-| `.mp4` `.mov` `.mkv` `.avi` | `video_colpali_smol500_mv_frame` | Whisper transcript + VLM captions → GLiNER entities |
-| `.jpg` `.png` `.webp` | `image_colpali_mv` | VLM captions + OCR → GLiNER entities |
-| `.wav` `.mp3` `.m4a` | `audio_clap_semantic` | Whisper transcript → GLiNER entities |
+| `.md` `.txt` `.rst` `.html` `.htm` | `document_text_semantic` | GLiNER entities + `ClaimExtractor` SPO edges |
+| `.pdf` | `document_text_semantic` | PDF text → GLiNER entities + `ClaimExtractor` SPO edges |
+| `.mp4` `.mov` `.mkv` `.avi` `.webm` | `video_colpali_smol500_mv_frame` | Whisper transcript + VLM captions → GLiNER entities |
+| `.jpg` `.jpeg` `.png` `.webp` `.gif` | `image_colpali_mv` | VLM captions + OCR → GLiNER entities |
+| `.wav` `.mp3` `.m4a` `.flac` | `audio_clap_semantic` | Whisper transcript → GLiNER entities |
 
 Multimodal graph extraction reuses the text that the content pipelines already produce — Whisper transcripts for audio/video, VLM captions for images and keyframes. No extra model calls. After the content pipeline processes a file, the runtime reads its transcript/description outputs and runs the same DocExtractor that text files use.
 
@@ -94,7 +102,7 @@ Neighbors of SearchAgent
   Outgoing:
     → vespabackend (calls, EXTRACTED)
     → codeextractor (imports, EXTRACTED)
-    → memoryawaremixin (inherits, EXTRACTED)
+    → search_optimization_module (defines, EXTRACTED)
   Incoming:
     → routingagent (calls, EXTRACTED)
 ```
@@ -123,7 +131,10 @@ Every node, regardless of whether it came from code or docs, has the same shape:
 | `label` | string | GLiNER entity-type tag (`Person`, `Location`, `Organization`, `Substance`, `Concept`, ...). Defaults to `Concept`. Used by `CrossModalLinker` to gate `same_as` linking — a Person-named transcript mention only co-refers with a Concept/Location VLM caption when the caption contains person-indicator words or shares a name token. |
 | `mentions` | list\[Mention\] | Per-segment grounded mentions (source_doc_id, segment_id, ts_start, ts_end, modality, evidence_span) |
 | `degree` | int | Number of edges touching this node (computed) |
-| `embedding` | tensor(token{}, v[128]) | ColBERT multi-vector (LateOn 128-dim per token) of `name + description` |
+| `embedding` | `tensor<bfloat16>(token{}, v[128])` | ColBERT multi-vector (LateOn 128-dim per token, `colbert_pylate` sidecar) of `name + description` |
+| `embedding_binary` | `tensor<int8>(token{}, v[16])` | 1-bit-packed copy of `embedding` for the hamming pre-filter stage |
+
+Search ranks nodes with `hybrid_binary_bm25`: hamming distance on `embedding_binary` narrows candidates, then a full bfloat16 MaxSim rerank on `embedding` combines with BM25 over `name`/`description`.
 
 The `node_id` is deterministic: "SearchAgent" and "searchagent" normalize to the same id, so the same symbol extracted from different files is a single node with merged `mentions`.
 
@@ -135,13 +146,13 @@ Every edge has the same shape:
 |---|---|---|
 | `source_node_id` | string | Normalized source node id |
 | `target_node_id` | string | Normalized target node id |
-| `relation` | string | Free-text label: `calls`, `imports`, `defines`, `mentioned_with`, etc. |
+| `relation` | string | Free-text label: `calls`, `imports`, `defines` (code, EXTRACTED); `born_in`, `discovered`, `worked_at`, `won`, `contradicts`, `same_as`, ... (claims/cross-modal, INFERRED) |
 | `evidence_span` | string | Verbatim text span that grounded this edge |
 | `segment_id` | string | Segment (e.g. `frame_0`, `transcript_0`) where the edge was found |
 | `ts_start` | float | Segment start timestamp (seconds; 0.0 for non-temporal content) |
 | `ts_end` | float | Segment end timestamp |
 | `modality` | string | Content modality (`code`, `text`, `video`, `image`, `audio`) |
-| `provenance` | `EXTRACTED` \| `INFERRED` | `EXTRACTED` = found structurally (AST); `INFERRED` = LLM guess |
+| `provenance` | string | `EXTRACTED` = found structurally (AST); `INFERRED` = LLM/claim guess; `video_subject_inference` = `CrossModalLinker`'s video-subject/per-window `same_as` edges (a third value, not a strict two-value enum) |
 | `source_doc_id` | string | Source file where this edge was found |
 | `confidence` | float | 0.0-1.0 confidence score |
 
@@ -174,9 +185,9 @@ All code edges are `EXTRACTED` — these are structural facts, not LLM guesses.
 
 ### Doc extractor (GLiNER + regex fallback)
 
-Supported extensions: `.md`, `.txt`, `.rst`, `.html`, `.pdf`.
+Supported extensions: `.md`, `.txt`, `.rst`, `.html`, `.htm`, `.pdf`.
 
-- **Primary path:** GLiNER (`urchade/gliner_large-v2.1`) predicts entities with labels: Person, Organization, Technology, Concept, Location, Product, Algorithm, Model, Framework, Language
+- **Primary path:** GLiNER (`urchade/gliner_large-v2.1`) predicts entities with labels: Person, Organization, Location, Date, Substance, Award, Field, Event, Concept, Technology, Product, Algorithm, Model, Framework, Language
 - **Fallback path:** regex for capitalized multi-word phrases when GLiNER is unavailable (stripping leading articles like "The")
 - Text is chunked into paragraph-aware blocks of ~2000 chars before extraction
 
@@ -185,30 +196,48 @@ Supported extensions: `.md`, `.txt`, `.rst`, `.html`, `.pdf`.
 | Named entities | GLiNER prediction |
 | Capitalized concepts | Regex fallback |
 
-| Edge type | Relation | Provenance |
-|---|---|---|
-| Entity A → Entity B (found in same chunk) | `mentioned_with` | INFERRED |
+Co-occurrence `mentioned_with` edges have been removed from the codebase —
+edges are now produced only by `ClaimExtractor` (real SPO relations, see the
+extractor below). `DocExtractor` itself is edge-capable only when
+constructed with a `claim_extractor`. Two separate call sites use it
+differently:
 
-All doc edges are `INFERRED` because co-mention isn't a proven relationship — it's a heuristic.
+- **CLI local pass** (`_extract_and_upsert_graph` in `cli/index.py`, used for
+  `--type code`'s text-like siblings and — once `--type docs` is wired up —
+  local text/PDF files) constructs `DocExtractor()` with no `claim_extractor`,
+  so this pass produces **nodes only, zero edges**.
+- **Automatic server-side pass** (`_extract_graph_per_segment`, triggered on
+  every completed `POST /ingestion/upload` whose pipeline output contains
+  transcript/description/document-file text — not just video/image/audio but
+  also plain `.md`/`.pdf` uploads via `document_text_semantic`) constructs
+  `DocExtractor` **with** a `ClaimExtractor`, so it emits real SPO edges. This
+  pass runs independently of the CLI's local pass, so a document uploaded via
+  `cogniverse index` or directly via `POST /ingestion/upload` ends up with
+  real edges in Vespa even though the CLI's own local extraction step
+  reports `0` for that file — the CLI's node/edge summary counts only its own
+  local pass, not the automatic per-upload one.
 
-### Multimodal extractor (video / image / audio)
+### Multimodal extractor (video / image / audio / document)
 
-Unlike the code and doc paths which run in the CLI process, multimodal extraction happens **inside the runtime**, after the content pipeline produces text outputs.
+Unlike the CLI's local code/text extraction pass, this extractor runs
+**inside the runtime**, automatically, on every completed `POST
+/ingestion/upload` whose content pipeline produces text output — that
+includes video/image/audio profiles and also the plain `document_text_semantic`
+profile used for `.md`/`.pdf` uploads.
 
 **The flow** (per-segment, with `Mention` provenance + SPO claim edges + cross-modal linking):
 
-1. User runs `cogniverse index ./stuff --type docs` and a `.mp4` is found.
-2. CLI uploads it via `POST /ingestion/upload` with the `video_colpali_smol500_mv_frame` profile.
-3. Runtime's `VideoIngestionPipeline` processes the file normally — runs Whisper for audio transcription, extracts keyframes, calls the VLM descriptor on each keyframe, generates embeddings, feeds Vespa.
-4. After the pipeline returns, `routers/ingestion.py` iterates the result with `_iter_segments_for_graph()`, which yields one `SegmentRecord` per text-emitting source:
+1. A file completes ingestion via `POST /ingestion/upload` — e.g. a `.mp4` uploaded with the `video_colpali_smol500_mv_frame` profile (the CLI's `cogniverse index` calls this same endpoint for every file).
+2. Runtime's ingestion pipeline processes the file normally — for video, that means Whisper audio transcription, keyframe extraction, a VLM descriptor call per keyframe, embedding generation, and a Vespa feed.
+3. After the pipeline returns, `routers/ingestion.py` iterates the result with `_iter_segments_for_graph()`, which yields one `SegmentRecord` per text-emitting source:
    - one per Whisper transcript segment (carries `ts_start`/`ts_end` from the Whisper output)
    - one per VLM keyframe description (`segment_id="frame_<idx>"`, anchored at the frame timestamp)
    - one per OCR/caption block on a keyframe
    - one per document file (PDF / OCR'd page)
-5. `_extract_graph_per_segment()` calls `DocExtractor.extract_from_text(text, ..., segment_anchor=mention)` per segment. Each entity GLiNER finds gets a structured `Mention` (source_doc_id + segment_id + ts_start + ts_end + modality + verbatim evidence_span) instead of a bare doc-id string. A cross-segment `entity_pool` is threaded forward so the `ClaimExtractor` resolves pronouns ("She later won the Nobel Prize" → Marie Curie when introduced in an earlier segment).
-6. `ClaimExtractor` (DSPy ChainOfThought + `InstrumentedRLM` promotion for inputs > 3000 chars) produces real SPO edges with predicates from a locked 16-element vocabulary (`born_in`, `discovered`, `worked_at`, `won`, `contradicts`, ...). Predicate normalization + a vocabulary filter drop free-form LM emissions ("was_born_in" → `born_in`, "yellow" / "in" / "glass" → dropped).
-7. `CrossModalLinker` runs once per `source_doc_id` after all per-segment passes, emitting `same_as` edges between cross-modal `Mention` pairs whose temporal windows overlap within `±temporal_window_s` AND whose Node labels pass the type gate (Person↔Person, or Person↔Concept with shared name token / person-indicator word).
-8. The accumulated `ExtractionResult` is `GraphManager.upsert()`'d to the tenant's shared `knowledge_graph_default` schema, then per-segment back-references (`entity_ids` / `relation_ids` / `claim_ids`) are PATCHed onto each content document so a single Vespa join finds every claim grounded in a given segment.
+4. `_extract_graph_per_segment()` calls `DocExtractor.extract_from_text(text, ..., segment_anchor=mention)` per segment. Each entity GLiNER finds gets a structured `Mention` (source_doc_id + segment_id + ts_start + ts_end + modality + verbatim evidence_span) instead of a bare doc-id string. A cross-segment `entity_pool` is threaded forward so the `ClaimExtractor` resolves pronouns ("She later won the Nobel Prize" → Marie Curie when introduced in an earlier segment).
+5. `ClaimExtractor` (DSPy ChainOfThought + `InstrumentedRLM` promotion for inputs > 3000 chars) produces real SPO edges with predicates from a locked 16-element vocabulary (`born_in`, `discovered`, `worked_at`, `won`, `contradicts`, ...). Predicate normalization + a vocabulary filter drop free-form LM emissions ("was_born_in" → `born_in`, "yellow" / "in" / "glass" → dropped).
+6. `CrossModalLinker` runs once per `source_doc_id` after all per-segment passes, emitting `same_as` edges via three structural-inference primitives (no pairwise text-similarity scoring): **shared-name-token coreference** (two cross-modal mentions whose Node names share a substantive token, e.g. "Marie Curie" / "Curie 1903" — `provenance="INFERRED"`); **video-subject inference** (when one Person holds ≥60% of a doc's transcript Person-mentions, every generic VLM/OCR caption in that doc links to that subject — `provenance="video_subject_inference"`); and **per-window subject inference** (when no Person dominates the whole video, each VLM/OCR mention falls back to the dominant Person inside a `±window_s` window — default 15s — around its timestamp, same `video_subject_inference` provenance tag). A caption only qualifies for subject attribution if it isn't already a Person node and its tokens contain a person-indicator word (`woman`, `scientist`, `speaker`, ...).
+7. The accumulated `ExtractionResult` is `GraphManager.upsert()`'d to the tenant's shared `knowledge_graph_<tenant>` schema, then per-segment back-references (`entity_ids` / `relation_ids` / `claim_ids`) are PATCHed onto each content document so a single Vespa join finds every claim grounded in a given segment.
 
 **No new model calls** — the multimodal path reuses Whisper/VLM outputs that the content pipelines already produce. Whether a file gets graph extraction or not depends on whether its pipeline emits text:
 
@@ -282,13 +311,17 @@ Response:
 ## Consumer agents (query time)
 
 The knowledge graph built at ingestion is **complementary** to each agent's
-own Mem0 memory — not a competing store. Six knowledge agents expose a public
+own Mem0 memory — not a competing store. `libs/runtime/cogniverse_runtime/routers/knowledge.py`
+exposes nine `/admin/tenants/{tenant_id}/knowledge/...` routes, one per
+knowledge-tier agent (the seven Knowledge-Graph & Reasoning agents plus the
+two Multi-tenant & federation agents). Six of those nine expose a public
 graph method (`KnowledgeGraphTraversalAgent.traverse`,
 `TemporalReasoningAgent.compare_over_time`,
 `MultiDocumentSynthesisAgent.synthesize`,
 `ContradictionReconciliationAgent.detect`,
 `KnowledgeSummarizationAgent.summarize`, `CitationTracingAgent.trace`) that
-reads the shared, provenance-rich KG.
+reads the shared, provenance-rich KG and merges the result into a `kg_*`
+output field on every request.
 
 At dispatch, the tenant's `GraphManager` is bound onto the agent —
 `agent_dispatcher._bind_graph_manager` on the orchestrator-routing path, and
@@ -308,8 +341,21 @@ fields (named below):
 
 The complement is fail-safe: with no graph bound (or the backend unconfigured)
 the bind is a no-op, the `kg_*` fields stay empty, and the agent returns its
-Mem0-only answer. See
-[Knowledge System Diagrams → 9-Agent Knowledge Dispatch](../diagrams/knowledge-system-diagrams.md#9-agent-knowledge-dispatch).
+Mem0-only answer.
+
+The remaining three knowledge-tier routes — `audit/explain`,
+`cross_tenant/compare`, `federated/query` — do **not** call `_bind_graph` and
+have no `kg_*` output field, but their agents still ship graph-consuming code:
+
+| Agent | Group | Graph method | Wiring status |
+|---|---|---|---|
+| `AuditExplanationAgent` | Knowledge-Graph & Reasoning | `explain(answer_id)` — renders a Claim/Source/Evidence/Confidence block from a KG Edge via `GraphBindableMixin` | Not called from `_process_impl` or the `audit/explain` route; reachable only by binding a `GraphManager` and invoking it directly |
+| `CrossTenantComparisonAgent` | Multi-tenant & federation | `compare(tenant_a, tenant_b)` — diffs two tenants' node_id sets (plus an optional org-trunk manager) into shared/tenant_only/trunk_only | Uses the plural `set_graph_managers(...)`, not the singular `set_graph_manager` the dispatcher auto-binds; no route wires it up |
+| `FederatedQueryAgent` | Multi-tenant & federation | `query(text, tenants_or_overlays)` — scans bound `GraphManager`s for nodes whose name contains the query text, deduped by `node_id` | Same `set_graph_managers(...)` gap as above |
+
+See
+[Knowledge System Diagrams → 9-Agent Knowledge Dispatch](../diagrams/knowledge-system-diagrams.md#9-agent-knowledge-dispatch)
+for the full nine-route breakdown.
 
 ## Storage
 
@@ -340,14 +386,34 @@ flowchart TD
     Iter --> PerSegLoop["<span style='color:#000'><b>for each segment:</b></span>"]
     PerSegLoop --> DocExtract["<span style='color:#000'>DocExtractor.extract_from_text(<br/>text, segment_anchor=Mention(...),<br/>prior_entities=&lt;cumulative pool&gt;)</span>"]
     DocExtract --> Claim["<span style='color:#000'><b>ClaimExtractor</b><br/>DSPy CoT, RLM if &gt;3000 chars,<br/>16-predicate vocab → SPO Edges</span>"]
-    Claim --> CrossModal["<span style='color:#000'><b>CrossModalLinker.link(combined)</b><br/>same_as edges across modalities<br/>gated by Node.label + ±5s temporal</span>"]
+    Claim --> CrossModal["<span style='color:#000'><b>CrossModalLinker.link(combined)</b><br/>same_as via shared-name-token +<br/>video-subject + per-window (±15s)<br/>subject inference</span>"]
     CrossModal --> MultiUpsert["<span style='color:#000'>GraphManager.upsert(linked_result)</span>"]
     MultiUpsert --> Vespa
     MultiUpsert --> BackRefs["<span style='color:#000'>PATCH content docs<br/>(entity_ids / relation_ids / claim_ids)</span>"]
     BackRefs --> Response["<span style='color:#000'>Response: graph_nodes / graph_edges counts</span>"]
+
+    style CLI fill:#90caf9,stroke:#1565c0,color:#000
+    style Collect fill:#b0bec5,stroke:#546e7a,color:#000
+    style Files fill:#b0bec5,stroke:#546e7a,color:#000
+    style CodePath fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style MultiPath fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style CodeContent fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style LocalExtract fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style LocalUpsert fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style MultiContent fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Pipeline fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Iter fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style PerSegLoop fill:#b0bec5,stroke:#546e7a,color:#000
+    style DocExtract fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Claim fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style CrossModal fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style MultiUpsert fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style BackRefs fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Response fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Vespa fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
-**Two extraction paths, one graph.** Code and text files are extracted locally in the CLI process so the runtime doesn't re-read them. Multimodal files (video/image/audio) are extracted server-side, inside the ingestion pipeline, because that's where Whisper/VLM/OCR already run. Both paths write to the tenant's `knowledge_graph_<tenant>` schema in the same way.
+**Two extraction paths, one graph.** Code is extracted only locally in the CLI process (AST-based, no server round-trip needed). Video/image/audio/document files are extracted server-side, inside the ingestion pipeline, because that's where Whisper/VLM/OCR/`ClaimExtractor` already run — this is the only path that produces real SPO edges. Text/PDF files that also go through the CLI's local pass pick up a redundant, edge-less node extraction on top. Both paths write to the tenant's `knowledge_graph_<tenant>` schema in the same way, and upserts are idempotent so the redundancy is harmless.
 
 ## Comparison with graphify
 
@@ -368,11 +434,12 @@ flowchart TD
 - Integration with the rest of the cogniverse stack (memory, agents, runtime API)
 - Vespa-backed (clustered, persistent) rather than file-based
 - Ties to the existing content index — the same `cogniverse index` call feeds both
+- Provenance-grounded LLM-based SPO claim extraction from text/video/audio (`ClaimExtractor`, DSPy ChainOfThought over a locked 16-predicate vocabulary, per-`Mention` timestamp/segment grounding) plus structural cross-modal `same_as` linking (`CrossModalLinker`)
 
 **What graphify has that cogniverse doesn't (yet):**
 
 - **Community detection** (Leiden clustering) for topic grouping — would need `graspologic`
-- **LLM-based edge inference** — currently only simple co-mention; graphify uses Claude to infer typed relationships ("X implements Y", "X depends on Z")
+- **LLM-based inference of code relationships** — cogniverse's code edges (`calls`/`imports`/`defines`) are purely AST-structural; it doesn't LLM-infer semantic code relationships like graphify's "X implements Y", "X depends on Z". (Cogniverse does have LLM-based typed edge inference for extracted text/video/audio via `ClaimExtractor` — that gap has closed.)
 - **Interactive HTML visualization, Obsidian export, Gephi, Neo4j cypher** — cosmetic output formats
 - **MCP server, git post-commit hook, watch mode** — integration conveniences
 - **Token reduction benchmark** — measuring query-time token savings

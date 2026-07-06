@@ -45,7 +45,6 @@ libs/core/cogniverse_core/
 │   ├── health_mixin.py              # Health check mixin
 │   ├── vlm_interface.py             # Vision-language model interface
 │   ├── agent_models.py              # Agent data models
-│   ├── document.py                  # Document models
 │   ├── cache/                       # Caching infrastructure
 │   ├── media/                       # Media URI dispatch (file://, pvc://, s3://, http://)
 │   ├── models/                      # Model loaders (VideoPrism, etc.)
@@ -53,7 +52,17 @@ libs/core/cogniverse_core/
 └── memory/                           # Memory management
     ├── manager.py                   # Mem0MemoryManager
     ├── backend_config.py            # Backend config for Mem0
-    └── backend_vector_store.py      # Backend vector store adapter
+    ├── backend_vector_store.py      # Backend vector store adapter
+    ├── _timestamps.py               # Epoch/ISO timestamp normalization helpers
+    ├── mem0_embedder.py             # DenseOnMem0Embedder (registers DenseOn as a Mem0 embedder provider)
+    ├── schema.py                    # KnowledgeSchema, KnowledgeRegistry, Retention, Sensitivity, Pinnable
+    ├── provenance.py                # Provenance, CitationRef, CitationGraph, ProvenanceWalker
+    ├── provenance_store.py          # ProvenanceStore (persisted provenance records)
+    ├── trust.py                     # TrustRecord, compute_initial_trust, rank_with_trust
+    ├── contradiction.py             # ContradictionDetector, ConflictSet, reconcile()
+    ├── federation.py                # FederationService (org-trunk + tenant overlays, cross-tenant ACLs)
+    ├── pinning.py                   # PinService, PinQuotas, PinRecord
+    └── lifecycle_scheduler.py       # LifecycleScheduler (schema-driven periodic cleanup)
 
 # Configuration lives in cogniverse-foundation:
 libs/foundation/cogniverse_foundation/config/
@@ -61,7 +70,6 @@ libs/foundation/cogniverse_foundation/config/
     ├── agent_config.py              # AgentConfig, ModuleConfig, OptimizerConfig
     ├── api_mixin.py                 # Config API mixin
     ├── utils.py                     # create_default_config_manager()
-    ├── schema.py                    # Config schemas
     └── manager.py                   # ConfigManager (central API)
 
 # Configuration storage is provided by:
@@ -125,7 +133,7 @@ flowchart TB
     end
 
     subgraph External
-        Mem0Lib["<span style='color:#000'>Mem0 Library<br/>• LLM: Ollama llama3.2<br/>• Embedder: nomic-embed-text<br/>• Vector Store: Vespa</span>"]
+        Mem0Lib["<span style='color:#000'>Mem0 Library<br/>• LLM: configurable via llm_model (e.g. google/gemma-4-e4b-it)<br/>• Embedder: lightonai/DenseOn (768-dim)<br/>• Vector Store: Vespa</span>"]
         VespaDB[("<span style='color:#000'>Vespa<br/>Schema per tenant<br/>agent_memories_acme</span>")]
     end
 
@@ -172,7 +180,7 @@ flowchart LR
 
 ### SystemConfig
 
-**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:161-`
+**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:230-`
 
 **Purpose:** System-level configuration for global settings
 
@@ -203,6 +211,10 @@ class SystemConfig:
     llm_engine: str = "vllm"
     base_url: str = "http://localhost:8101/v1"
     llm_api_key: Optional[str] = None
+
+    # Opt-in routing of LLM calls through an OpenAI-compatible semantic
+    # router. Disabled by default.
+    semantic_router: SemanticRouterConfig = field(default_factory=SemanticRouterConfig)
 
     # Phoenix/Telemetry
     telemetry_url: str = "http://localhost:6006"
@@ -270,7 +282,7 @@ loaded_config = SystemConfig.from_dict(config_dict)
 
 ### RoutingConfigUnified
 
-**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:325-`
+**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:403-`
 
 **Purpose:** Per-tenant routing configuration
 
@@ -285,8 +297,11 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 class RoutingConfigUnified:
     tenant_id: Optional[str] = None  # required — __post_init__ raises ValueError if None
 
-    # Routing strategy
-    routing_mode: str = "tiered"  # tiered, ensemble, hybrid
+    # Routing strategy. Only "tiered" is implemented end-to-end (fast +
+    # slow + fallback path via the enable_* flags below); other values are
+    # accepted by the schema for forward-compat but produce no dispatch
+    # behavior change.
+    routing_mode: str = "tiered"
 
     # Tier thresholds
     enable_fast_path: bool = True
@@ -333,7 +348,7 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 # Create tenant-specific routing config
 config = RoutingConfigUnified(
     tenant_id="acme",
-    routing_mode="ensemble",
+    routing_mode="tiered",
     fast_path_confidence_threshold=0.8,
     enable_auto_optimization=True,
     cache_ttl_seconds=7200
@@ -425,6 +440,15 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 - **Agent Namespacing**: Within tenant, memories are namespaced by agent_name
 - **Mem0 Integration**: Uses Mem0 for LLM-processed memories with semantic search
 
+> The `memory/` package also implements a knowledge-governance layer on top of
+> `Mem0MemoryManager` — schema-driven retention/sensitivity (`schema.py`),
+> provenance chains (`provenance.py`, `provenance_store.py`), trust scoring
+> (`trust.py`), contradiction reconciliation (`contradiction.py`), cross-tenant
+> federation (`federation.py`), pinning (`pinning.py`), and a periodic cleanup
+> scheduler (`lifecycle_scheduler.py`). This guide covers the base
+> `Mem0MemoryManager` API; see `core.md` for the full governance-layer
+> walkthrough.
+
 **Key Methods:**
 
 #### initialize()
@@ -478,13 +502,14 @@ def add_memory(
     tenant_id: str,
     agent_name: str,
     metadata: Optional[Dict[str, Any]] = None,
-) -> str:
+    infer: bool = True,
+) -> Optional[str]:
     """
     Add content to agent's memory.
 
     Process:
-    1. Mem0 processes content with configured LLM
-    2. Generates embedding with configured embedding model (768-dim for nomic-embed-text)
+    1. Mem0 processes content with configured LLM (skipped when infer=False)
+    2. Generates embedding with configured embedding model (768-dim for DenseOn)
     3. Stores in tenant-specific Vespa schema
 
     Args:
@@ -492,9 +517,16 @@ def add_memory(
         tenant_id: Tenant identifier
         agent_name: Agent name (e.g., "orchestrator_agent")
         metadata: Optional metadata dict
+        infer: If True (default), Mem0 runs an LLM extraction pass before
+            storing. If False, content is stored verbatim — use this for
+            user-provided memories where the text is already curated.
 
     Returns:
-        Memory ID (string)
+        Memory ID (string), or None when Mem0 deliberately stored nothing
+        (no extractable facts, or deduplicated against an existing memory).
+
+    Raises:
+        RuntimeError: If the backend is not initialized.
 
     Example:
         memory_id = manager.add_memory(
@@ -514,12 +546,14 @@ def search_memory(
     tenant_id: str,
     agent_name: str,
     top_k: int = 5,
+    filters: Optional[Dict[str, Any]] = None,
+    include_archived: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Search agent's memory for relevant content.
 
     Process:
-    1. Encode query to embedding (nomic-embed-text)
+    1. Encode query to embedding (DenseOn)
     2. Semantic search in tenant's Vespa schema
     3. Return top_k most similar memories
 
@@ -528,6 +562,10 @@ def search_memory(
         tenant_id: Tenant identifier
         agent_name: Agent name
         top_k: Number of results
+        filters: Optional Mem0 metadata filters (e.g. {"agent": "search_agent"}),
+            passed directly to memory.search()
+        include_archived: When False (default), soft-deleted memories
+            (metadata.archived=true) are filtered out post-fetch
 
     Returns:
         List of memories with scores:
@@ -560,12 +598,42 @@ def get_all_memories(
     self,
     tenant_id: str,
     agent_name: str,
+    include_archived: bool = False,
+    filters: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Get all memories for an agent.
 
+    Args:
+        tenant_id: Tenant identifier
+        agent_name: Agent name
+        include_archived: When False (default), soft-deleted memories are excluded
+        filters: Optional server-side filters (e.g. {"subject_key": ...})
+
     Returns:
-        List of all memories (no filtering)
+        List of all memories
+    """
+```
+
+#### delete_memory()
+```python
+def delete_memory(
+    self,
+    memory_id: str,
+    tenant_id: str,
+    agent_name: str,
+) -> bool:
+    """
+    Delete a specific memory.
+
+    Args:
+        memory_id: Memory ID to delete
+        tenant_id: Tenant identifier (accepted for API symmetry; not used
+            to scope the delete — Mem0 deletes by memory_id alone)
+        agent_name: Agent name (accepted for API symmetry; not used)
+
+    Returns:
+        Success status
     """
 ```
 
@@ -806,10 +874,9 @@ from cogniverse_core.common.tenant_utils import validate_tenant_id
 
 # Valid IDs
 validate_tenant_id("acme")                  # OK
-validate_tenant_id("acme-corp")             # OK
 validate_tenant_id("acme_corp")             # OK
 validate_tenant_id("acme:production")       # OK
-validate_tenant_id("acme-corp:prod-env")    # OK
+validate_tenant_id("acme_corp:prod_env")    # OK
 
 # Invalid IDs
 try:
@@ -823,9 +890,51 @@ except ValueError as e:
     print(f"Error: {e}")
 
 try:
+    # No hyphens: the tenant_id becomes part of the Vespa schema name
+    # ([a-zA-Z0-9_] only), so hyphens are rejected rather than silently
+    # sanitized (which would collide "acme-corp" and "acme_corp").
+    validate_tenant_id("acme-corp")         # ValueError: invalid chars
+except ValueError as e:
+    print(f"Error: {e}")
+
+try:
     validate_tenant_id("acme@corp")         # ValueError: invalid chars
 except ValueError as e:
     print(f"Error: {e}")
+```
+
+---
+
+### Other tenant_utils exports
+
+**Location:** `libs/core/cogniverse_core/common/tenant_utils.py`
+
+Beyond the four functions above, `tenant_utils` exports:
+
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `SYSTEM_TENANT_ID` | constant (`"__system__"`) | Reserved cluster identity for state that isn't tenant-specific (SystemConfig lookups, startup telemetry probes). `validate_tenant_id` rejects any user tenant_id starting with `"__"` so it can't be spoofed. |
+| `TEST_TENANT_ID` | constant (`"test:unit"`) | Sentinel tenant_id used by test fixtures; registered once per session via `POST /admin/tenants`. |
+| `require_tenant_id(tenant_id, *, source)` | function | Raises `ValueError` if `tenant_id` is `None`/empty/non-string, then returns it canonicalized via `canonical_tenant_id`. `source` names the caller (e.g. `"RoutingConfigUnified"`) for the error message. Used by `RoutingConfigUnified.__post_init__` and `ConfigManager` to enforce a required tenant_id. |
+| `invalidate_tenant_exists(tenant_id)` | function | Drops a tenant from the positive-only existence cache after deletion, so a deleted tenant doesn't keep passing `assert_tenant_exists` for the remainder of the TTL. |
+| `assert_tenant_exists(tenant_id)` | async function | Raises `HTTPException(404)` if `tenant_id` was never registered (looked up via `TenantManager.get_tenant_internal`). `SYSTEM_TENANT_ID` bypasses the check. Positive results are cached for 30 seconds since this runs on every search/ingestion/graph request. |
+
+```python
+from cogniverse_core.common.tenant_utils import (
+    SYSTEM_TENANT_ID,
+    require_tenant_id,
+    assert_tenant_exists,
+    invalidate_tenant_exists,
+)
+
+# Enforce a tenant_id is present before proceeding
+tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
+
+# Confirm the tenant is registered (raises HTTPException(404) otherwise)
+await assert_tenant_exists(tenant_id)
+
+# After deleting a tenant, evict it from the existence cache
+invalidate_tenant_exists(tenant_id)
 ```
 
 ---
@@ -931,14 +1040,17 @@ fsspec supports `gs://` (via `gcsfs`) and `az://` (via `adlfs`) out of the
 box — adding them is a matter of installing the optional dependency and
 configuring credentials, no code change in the locator.
 
-### Required at ingest time
+### Populated at ingest time
 
-`DocumentMetadata.source_url` is **required** (not optional). Every Vespa
-document carries the canonical URI of its source video; build_document raises
-``ValueError`` when the field is missing. Visual evaluators rely on this
-field to localize bytes regardless of where the consumer runs (pod, CI,
-local dev). Pre-existing corpora can be backfilled with
-`scripts/backfill_source_url.py`.
+`source_url` is a `Document` metadata field (`doc.add_metadata("source_url", ...)`,
+set via `Document` in `cogniverse_sdk.document`), not a validated/required
+dataclass field. `VideoIngestionPipeline._extract_base_video_data` always
+populates it from `MediaLocator.to_canonical_uri` (or falls back to `""` if no
+video path is available), so every document emitted by the live ingestion
+path carries the canonical URI of its source video. Visual evaluators rely on
+this field to localize bytes regardless of where the consumer runs (pod, CI,
+local dev). Pre-existing corpora ingested before this field existed can be
+backfilled with `scripts/backfill_source_url.py`.
 
 ### Tests
 
@@ -1048,6 +1160,20 @@ def create_module(
     """
 ```
 
+#### get_or_create_module()
+```python
+def get_or_create_module(self, signature_name: str) -> dspy.Module:
+    """
+    Get cached module or create new one via create_module().
+
+    Args:
+        signature_name: Name of registered signature
+
+    Returns:
+        DSPy module instance
+    """
+```
+
 #### create_optimizer()
 ```python
 def create_optimizer(
@@ -1057,11 +1183,15 @@ def create_optimizer(
     """
     Create DSPy optimizer dynamically.
 
-    Optimizer types:
+    Optimizer types registered in DSPyOptimizerRegistry:
     - BootstrapFewShot: Basic few-shot learning
-    - SIMBA: Similarity-based memory augmentation
+    - LabeledFewShot: Few-shot from labeled examples only
+    - BootstrapFewShotWithRandomSearch: Bootstrap + random search over demos
+    - COPRO: Coordinate-ascent prompt optimization
     - MIPROv2: Metric-aware instruction optimization
-    - GEPA: Reflective prompt evolution
+
+    Note: OptimizerType also defines SIMBA and GEPA, but neither is wired
+    into DSPyOptimizerRegistry — requesting either raises ValueError.
 
     Example:
         optimizer = self.create_optimizer()
@@ -1509,7 +1639,7 @@ print("✓ Memory isolation verified")
 
 **Key Test Files:**
 
-- `tests/common/unit/test_vespa_config_store.py` - Configuration storage tests
+- `tests/backends/unit/test_config_store_yql_escape.py` - Configuration storage YQL escaping tests
 - `tests/memory/unit/test_mem0_memory_manager.py` - Memory manager tests
 - `tests/common/unit/test_tenant_utils.py` - Tenant utilities tests
 - `tests/common/unit/test_dynamic_dspy_mixin.py` - DSPy mixin tests
@@ -1618,6 +1748,12 @@ For related modules:
 - **Backends Module** (`backends.md`) - Vespa integration details (libs/vespa/cogniverse_vespa/)
 
 - **Telemetry Module** (`telemetry.md`) - Multi-tenant telemetry (libs/foundation/cogniverse_foundation/telemetry/)
+
+- **Core Module** (`core.md`) - Deep dive on `common/health_mixin.py`, `agent_models.py`, `dspy_module_registry.py`, `vlm_interface.py`, `common/models/`, and the full memory knowledge-governance layer (schema, provenance, trust, contradiction, federation, pinning, lifecycle)
+
+- **Cache Module** (`cache.md`) - `common/cache/` — `PipelineArtifactCache`, `CacheBackendRegistry`, filesystem/S3 backends
+
+- **Utils Module** (`utils.md`) - `common/utils/` — retry, async polling, output manager
 
 - **SDK Architecture** (`../architecture/sdk-architecture.md`) - UV workspace and package structure
 

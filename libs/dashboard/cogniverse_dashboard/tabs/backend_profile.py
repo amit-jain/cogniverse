@@ -176,9 +176,7 @@ def render_backend_profile_tab():
 
     # Profile list
     try:
-        profiles_dict = manager.list_backend_profiles(
-            tenant_id, service="video_processing"
-        )
+        profiles_dict = manager.list_backend_profiles(tenant_id, service="backend")
         profile_names = sorted(profiles_dict.keys()) if profiles_dict else []
     except Exception as e:
         st.error(f"Failed to load profiles: {e}")
@@ -251,13 +249,11 @@ def render_create_profile_form(manager, tenant_id: str):
             embedding_type = st.selectbox(
                 "Embedding Type *",
                 options=[
-                    "frame_based",
-                    "video_chunks",
-                    "direct_video_segment",
+                    "multi_vector",
                     "single_vector",
                 ],
                 index=0,
-                help="How content is embedded",
+                help="Embedding vector layout (must match ProfileValidator.VALID_EMBEDDING_TYPES)",
             )
 
         # Model configuration
@@ -435,7 +431,7 @@ def render_profile_manager(manager, tenant_id: str, profile_name: str):
 
     try:
         profile = manager.get_backend_profile(
-            profile_name=profile_name, tenant_id=tenant_id, service="video_processing"
+            profile_name=profile_name, tenant_id=tenant_id, service="backend"
         )
     except Exception as e:
         st.error(f"Failed to load profile: {e}")
@@ -577,7 +573,7 @@ def render_edit_profile_form(
                     overrides=updates,
                     base_tenant_id=tenant_id,
                     target_tenant_id=tenant_id,
-                    service="video_processing",
+                    service="backend",
                 )
                 st.success(f"✅ Profile '{profile_name}' updated successfully!")
                 st.rerun()

@@ -12,26 +12,87 @@
 
 ## Dependency Graph
 
-```text
-Application Layer
-├── cogniverse-runtime      → sdk, core (optional: vespa, agents)
-├── cogniverse-dashboard    → sdk, core, evaluation, runtime
-└── cogniverse-finetuning   → sdk, core, foundation, agents, synthetic
+13 packages in the UV workspace. Arrows point from a package to what it depends on.
 
-Implementation Layer
-├── cogniverse-agents       → sdk, core, synthetic
-├── cogniverse-vespa        → sdk, core
-└── cogniverse-synthetic    → sdk, foundation
+```mermaid
+flowchart TD
+    subgraph APP["Application Layer"]
+        runtime["cogniverse-runtime"]
+        dashboard["cogniverse-dashboard"]
+        finetuning["cogniverse-finetuning"]
+    end
 
-Core Layer
-├── cogniverse-core                → sdk, foundation, evaluation
-├── cogniverse-evaluation          → foundation, sdk
-└── cogniverse-telemetry-phoenix   → core, evaluation
+    subgraph TOOLS["Standalone Operator Tooling (zero internal deps, talk to runtime over HTTP)"]
+        cli["cogniverse-cli"]
+        messaging["cogniverse-messaging"]
+    end
 
-Foundation Layer
-├── cogniverse-foundation   → sdk
-└── cogniverse-sdk          → (zero dependencies)
+    subgraph IMPL["Implementation Layer"]
+        agents["cogniverse-agents"]
+        vespa["cogniverse-vespa"]
+        synthetic["cogniverse-synthetic"]
+    end
+
+    subgraph CORE["Core Layer"]
+        core["cogniverse-core"]
+        evaluation["cogniverse-evaluation"]
+        telemetry["cogniverse-telemetry-phoenix"]
+    end
+
+    subgraph FOUND["Foundation Layer"]
+        foundation["cogniverse-foundation"]
+        sdk["cogniverse-sdk"]
+    end
+
+    runtime --> sdk
+    runtime --> core
+    runtime -.->|optional| vespa
+    runtime -.->|optional| agents
+    dashboard --> sdk
+    dashboard --> core
+    dashboard --> agents
+    dashboard --> evaluation
+    dashboard --> vespa
+    dashboard --> telemetry
+    finetuning --> sdk
+    finetuning --> core
+    finetuning --> agents
+    finetuning --> synthetic
+    finetuning --> foundation
+
+    agents --> sdk
+    agents --> core
+    agents --> synthetic
+    vespa --> sdk
+    vespa --> core
+    synthetic --> sdk
+    synthetic --> foundation
+    synthetic --> core
+
+    core --> sdk
+    core --> foundation
+    core --> evaluation
+    evaluation --> foundation
+    evaluation --> sdk
+    telemetry --> core
+    telemetry --> evaluation
+
+    foundation --> sdk
+
+    classDef appLayer fill:#90caf9,stroke:#1565c0,color:#000
+    classDef toolLayer fill:#ffcc80,stroke:#ef6c00,color:#000
+    classDef implLayer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    classDef coreLayer fill:#81d4fa,stroke:#0288d1,color:#000
+    classDef foundLayer fill:#b0bec5,stroke:#546e7a,color:#000
+
+    class runtime,dashboard,finetuning appLayer
+    class cli,messaging toolLayer
+    class agents,vespa,synthetic implLayer
+    class core,evaluation,telemetry coreLayer
+    class foundation,sdk foundLayer
 ```
+
+`cogniverse-cli` (`libs/cli/`, see [modules/cli.md](../modules/cli.md)) and `cogniverse-messaging` (`libs/messaging/`, see [modules/messaging.md](../modules/messaging.md)) have no internal cogniverse dependencies — they're operator-facing HTTP clients of the runtime (CLI for local dev/ops, a Telegram bot gateway) and aren't part of the bottom-up layering below, but are worth a skim after Step 8.
 
 ---
 
@@ -46,7 +107,7 @@ Foundation Layer
 **Key Files**:
 
 - `libs/sdk/cogniverse_sdk/document.py` — Universal Document model
-- `libs/sdk/cogniverse_sdk/interfaces/` — Backend/Memory interfaces (directory)
+- `libs/sdk/cogniverse_sdk/interfaces/` — abstract interfaces: `Backend`/`SearchBackend`/`IngestionBackend`, `ConfigStore`, `AdapterStore`, `WorkflowStore`, `SchemaLoader`
 
 ---
 
@@ -87,7 +148,7 @@ Foundation Layer
 **Key Files**:
 
 - `libs/evaluation/cogniverse_evaluation/core/experiment_tracker.py` — Experiment tracking
-- `libs/evaluation/cogniverse_evaluation/metrics/` — RAGAS-like metrics
+- `libs/evaluation/cogniverse_evaluation/metrics/` — retrieval metrics (MRR, NDCG, precision/recall/F1@K, MAP)
 - `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/provider.py` — Phoenix provider
 
 ---
@@ -98,11 +159,35 @@ Foundation Layer
 
 **Documentation**: [modules/agents.md](../modules/agents.md) | [tutorials/creating-agents.md](../tutorials/creating-agents.md)
 
-**Key Files**:
+**Key Files** (start here — the triage/orchestration entry points):
 
-- `libs/agents/cogniverse_agents/gateway_agent.py` — GatewayAgent (GLiNER-based triage)
+- `libs/agents/cogniverse_agents/gateway_agent.py` — GatewayAgent (GLiNER-based triage, LLM-free)
 - `libs/agents/cogniverse_agents/search_agent.py` — SearchAgent
 - `libs/agents/cogniverse_agents/orchestrator_agent.py` — OrchestratorAgent (A2A entry point with DSPy planning)
+
+**Full roster (23 agents, all in `libs/agents/cogniverse_agents/`)**. The 9 knowledge/federation agents are covered separately in [Knowledge Subsystem → Knowledge Agents](#5-knowledge-agents-9); the remaining 14 group as follows:
+
+*Generation + Routing*:
+- `gateway_agent.py` — LLM-free entry triage (GLiNER + deterministic rules), hands off to the orchestrator or a direct execution agent
+- `orchestrator_agent.py` — DSPy planning + A2A fan-out to sub-agents, checkpoint/resume, cross-modal fusion
+- `summarizer_agent.py` — structured summaries with a thinking phase and VLM visual analysis
+- `detailed_report_agent.py` — comprehensive multi-section reports with optional RLM synthesis
+- `profile_selection_agent.py` — DSPy-driven backend search profile selection with a heuristic fallback
+- `query_enhancement_agent.py` — query expansion/rewriting and RRF query-variant generation
+- `entity_extraction_agent.py` — tiered NER (fast GLiNER+SpaCy path, DSPy ChainOfThought fallback)
+
+*Search & Analysis*:
+- `search_agent.py` — multi-modal Vespa retrieval with query rewriting and RRF ensemble fusion
+- `image_search_agent.py` — ColPali multi-vector image similarity search (semantic/hybrid)
+- `document_agent.py` — ColPali visual + ColBERT/BM25 text document search with auto strategy selection
+- `text_analysis_agent.py` — runtime-configurable DSPy sentiment/summary/entity analysis
+- `audio_analysis_agent.py` — Whisper transcription + Vespa transcript/acoustic/hybrid search
+
+*Research + Coding*:
+- `deep_research_agent.py` — decompose → parallel search → evaluate → synthesize research loop
+- `coding_agent.py` — search → plan → generate → execute (OpenShell sandbox) → evaluate loop
+
+See [modules/agents.md](../modules/agents.md) for the complete roster with capabilities and ports.
 
 ---
 
@@ -242,7 +327,7 @@ Cross-cutting track for the memory/provenance/trust stack and the agents that co
 
 **Key Files**:
 
-- `libs/agents/cogniverse_agents/optimizer/signature_variants.py` — `register_variant`, `selected_for_tenant` fallback
+- `libs/agents/cogniverse_agents/optimizer/signature_variants.py` — `SignatureVariantRegistry.register`, `selected_for_tenant` fallback
 - `libs/agents/cogniverse_agents/optimizer/artifact_manager.py` — canary FSM: `promote_to_canary`, `promote_canary_to_active`, `retire_canary`, `rollback_to_version`
 - `libs/runtime/cogniverse_runtime/optimization_cli.py` — `--mode rollback` CLI
 
@@ -277,9 +362,9 @@ Cross-cutting track for the memory/provenance/trust stack and the agents that co
 4. Key: `tenant_id` and `session_id` flow per-request through every A2A call
 
 ### Exercise 3: Understand Config Overlay
-1. Start: `ConfigManager.get_system_config()`
-2. Follow: Base config → Tenant overlay → Profile loading
-3. Files: foundation/config/manager.py → config/unified_config.py
+1. Start: `ConfigManager.get_backend_config(tenant_id)` — `service` defaults to `"backend"` (same default used by the runtime admin API and the dashboard)
+2. Follow: system base (`backend` section of `configs/config.json`) → tenant overrides fetched via `ConfigManager.get_backend_config` → deep-merged per-profile in `ConfigUtils._ensure_backend_config` → profile lookup via `ConfigManager.get_backend_profile`
+3. Files: `foundation/config/manager.py` → `foundation/config/utils.py` (`ConfigUtils._ensure_backend_config`) → `foundation/config/unified_config.py` (`BackendConfig`, `BackendProfileConfig`)
 
 ### Exercise 4: Understand Checkpoint Recovery
 1. Start: `OrchestratorAgent._process_impl(...)` with checkpoint support

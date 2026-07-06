@@ -21,113 +21,178 @@
 ## Module Overview
 
 ### Purpose
-The Routing Module provides intelligent query routing via A2A agents: `GatewayAgent` for fast GLiNER classification, `OrchestratorAgent` for complex multi-agent coordination, `QueryEnhancementAgent` for query enrichment, and supporting infrastructure in `routing/` for optimization, caching, and cross-modal fusion.
+The Routing Module provides intelligent query routing via A2A agents: `GatewayAgent` for fast rule-based/GLiNER classification, `OrchestratorAgent` for complex multi-agent coordination, `QueryEnhancementAgent` for query enrichment, `ProfileSelectionAgent` for backend-profile selection, and supporting infrastructure in `routing/` and `orchestrator/` for offline optimization, annotation, checkpointing, and relationship extraction.
 
 ### Key Features
-- **Gateway Classification**: `GatewayAgent` uses GLiNER (<100ms) to classify simple vs complex queries
-- **Orchestrated Routing**: Complex queries handed to `OrchestratorAgent` (DSPy planner + A2A HTTP)
-- **Query Enhancement**: `QueryEnhancementAgent` enriches queries via `ComposableQueryAnalysisModule`
-- **Advanced Optimization**: GRPO (DSPy 3.0) with GEPA, MIPROv2, SIMBA optimizers (batch jobs)
-- **Cross-Modal Optimization**: Multi-modal fusion benefit prediction
-- **Production Features**: Per-modality caching (LRU), parallel execution, metrics
+- **Gateway Classification**: `GatewayAgent` uses GLiNER zero-shot NER (with a deterministic keyword fallback) to classify modality, generation type, and simple-vs-complex — **no LLM call**, targeting <100ms
+- **Orchestrated Routing**: Complex queries hand off to `OrchestratorAgent` (DSPy planner + A2A HTTP fan-out)
+- **Query Enhancement**: `QueryEnhancementAgent` enriches queries via a DSPy `ChainOfThought` module with a heuristic fallback
+- **Composable Query Analysis**: `OrchestratorAgent`'s iterative retrieval loop uses `ComposableQueryAnalysisModule` (GLiNER fast path / LLM unified path) from `routing/dspy_relationship_router.py` for query reformulation
+- **Profile Selection**: `ProfileSelectionAgent` uses DSPy reasoning (with a keyword fallback) to pick the best backend search profile; `ProfilePerformanceOptimizer` learns profile choice from Phoenix evaluation data via XGBoost
+- **Offline Optimization**: An annotation-driven feedback loop (`AnnotationAgent`, `LLMAutoAnnotator`, `OrchestrationEvaluator`) plus XGBoost meta-models feed a batch optimization CLI that recompiles DSPy modules (`BootstrapFewShot`) and gateway thresholds as tenant artifacts
+- **Checkpoint/Resume**: `OrchestratorAgent` workflows can be checkpointed (`orchestrator/checkpoint_storage.py`, `checkpoint_types.py`) and resumed
 
 ### Package Structure
 ```text
 libs/agents/cogniverse_agents/
-├── gateway_agent.py                    # GLiNER-based query classification (<100ms)
-├── orchestrator_agent.py               # A2A orchestrator (DSPy planner + HTTP dispatch)
-├── query_enhancement_agent.py          # Query enhancement A2A agent
-├── profile_selection_agent.py          # Per-query backend profile classifier
+├── gateway_agent.py                       # GLiNER + keyword-fallback classification (<100ms, no LLM)
+├── orchestrator_agent.py                  # A2A orchestrator (DSPy planner + HTTP dispatch, ~2800 LOC)
+├── query_enhancement_agent.py             # Query enhancement A2A agent (DSPy ChainOfThought + fallback)
+├── profile_selection_agent.py             # Per-query backend profile classifier (DSPy + heuristic fallback)
+├── orchestrator/
+│   ├── __init__.py
+│   ├── checkpoint_storage.py              # WorkflowCheckpointStorage (durable checkpoint persistence)
+│   ├── checkpoint_types.py                # CheckpointLevel, CheckpointStatus, TaskCheckpoint, WorkflowCheckpoint, CheckpointConfig
+│   └── sufficient_context_signature.py    # SufficientContextSignature (DSPy gate for the iterative retrieval loop)
 ├── routing/
-│   ├── dspy_routing_signatures.py      # DSPy routing signatures
-│   ├── config.py                       # Configuration system
-│   ├── xgboost_meta_models.py          # XGBoost meta-learning
-│   └── ... (additional DSPy and utility files)
+│   ├── __init__.py
+│   ├── annotation_agent.py                # AnnotationAgent (identifies routing spans needing human review)
+│   ├── annotation_queue.py                # AnnotationQueue (in-memory pending/assigned/completed queue)
+│   ├── annotation_storage.py              # RoutingAnnotationStorage (persists routing annotations)
+│   ├── config.py                          # AutomationRulesConfig + annotation/optimization threshold schemas
+│   ├── dspy_relationship_router.py        # ComposableQueryAnalysisModule, DSPyBasicRoutingModule, DSPyAdvancedRoutingModule
+│   ├── dspy_routing_signatures.py         # DSPy signatures (BasicQueryAnalysis, QueryReformulation, AdvancedRouting, ...)
+│   ├── llm_auto_annotator.py              # LLMAutoAnnotator (LLM-based auto-labeling of routing spans)
+│   ├── orchestration_annotation_storage.py # OrchestrationAnnotationStorage (persists orchestration-workflow annotations)
+│   ├── orchestration_evaluator.py         # OrchestrationEvaluator (extracts WorkflowExecution from telemetry spans)
+│   ├── profile_performance_optimizer.py   # ProfilePerformanceOptimizer (XGBoost profile-choice learner)
+│   ├── relationship_extraction_tools.py   # GLiNERRelationshipExtractor, SpaCyDependencyAnalyzer, RelationshipExtractorTool
+│   └── xgboost_meta_models.py             # TrainingDecisionModel, TrainingStrategyModel, FusionBenefitModel
 ```
+
+`RoutingConfigUnified` — the tenant routing config dataclass referenced throughout this guide — lives in
+**`libs/foundation/cogniverse_foundation/config/unified_config.py`** (Foundation layer), not in `cogniverse_agents`.
+`routing/config.py` in this package hosts a *different* schema: `AutomationRulesConfig` and its nested
+annotation/optimization/feedback threshold models, consumed by `AnnotationAgent` and the optimization CLI.
 
 ---
 
 ## Architecture
 
-### Tiered Routing Decision Tree
+### Gateway Decision Flow
+
+`GatewayAgent` makes no LLM call. It runs GLiNER zero-shot NER (or a keyword fallback when GLiNER is
+unavailable) to detect modality and generation type, then applies a pure rule-based complexity check.
 
 ```mermaid
 flowchart TB
-    QueryInput["<span style='color:#000'>Query Input</span>"] --> Tier1["<span style='color:#000'>TIER 1: GLiNER Fast Path<br/>• NER-based entity detection<br/>• Rule-based classification<br/>• Latency: ~50-100ms<br/>• Confidence threshold: 0.7</span>"]
+    QueryInput["<span style='color:#000'>Query Input</span>"] --> GLiNER["<span style='color:#000'>GLiNER Entity Detection<br/>+ deterministic MODALITY_KEYWORDS fallback<br/>No LLM call — targets &lt;100ms</span>"]
 
-    Tier1 -->|confidence >= 0.7| Decision1["<span style='color:#000'>Routing Decision</span>"]
-    Tier1 -->|confidence < 0.7| Tier2["<span style='color:#000'>TIER 2: LLM Medium Path<br/>• Local LLM Ollama: google/gemma-4-e4b-it<br/>• Chain-of-thought reasoning<br/>• Latency: ~500-1000ms<br/>• Confidence threshold: 0.6</span>"]
+    GLiNER --> Classify["<span style='color:#000'>_classify_modality / _classify_generation_type<br/>modality: video/text/audio/image/document/both<br/>generation_type: raw_results/summary/detailed_report</span>"]
 
-    Tier2 -->|confidence >= 0.6| Decision2["<span style='color:#000'>Routing Decision</span>"]
-    Tier2 -->|confidence < 0.6| Tier3["<span style='color:#000'>TIER 3: LangExtract Slow Path<br/>• Structured extraction Gemini<br/>• Source grounding + visualization<br/>• Latency: ~2000-3000ms<br/>• Always succeeds fallback</span>"]
+    Classify --> IsComplex{"<span style='color:#000'>_is_complex?<br/>confidence &lt; fast_path_confidence_threshold (0.4)<br/>OR modality == both<br/>OR generation_type == detailed_report<br/>OR analysis/synthesis verbs present<br/>OR multi-step markers / 3+ commas / 2+ 'and'</span>"}
 
-    Tier3 --> Decision3["<span style='color:#000'>Routing Decision</span>"]
+    IsComplex -->|No: simple| RouteMap["<span style='color:#000'>SIMPLE_ROUTE_MAP[(modality, generation_type)]<br/>e.g. (video, raw_results) → search_agent<br/>(*, summary) → summarizer_agent<br/>(*, detailed_report) → detailed_report_agent</span>"]
+
+    IsComplex -->|Yes: complex| Orchestrator["<span style='color:#000'>OrchestratorAgent<br/>DSPy planning + A2A HTTP fan-out</span>"]
+
+    RouteMap --> ExecAgent["<span style='color:#000'>Execution Agent<br/>(search_agent, summarizer_agent, ...)</span>"]
 
     style QueryInput fill:#90caf9,stroke:#1565c0,color:#000
-    style Tier1 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Tier2 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Tier3 fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Decision1 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Decision2 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Decision3 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style GLiNER fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Classify fill:#a5d6a7,stroke:#388e3c,color:#000
+    style IsComplex fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RouteMap fill:#b0bec5,stroke:#546e7a,color:#000
+    style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ExecAgent fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-### GRPO Optimization Loop
+`fast_path_confidence_threshold` defaults to **0.4** on `GatewayDeps` (not the `RoutingConfigUnified.fast_path_confidence_threshold`
+default of 0.7 — the two are separate config objects for separate components). A query with no modality signal at
+all (confidence below the threshold) is always routed to the orchestrator, never guessed.
+
+### Annotation-Driven Optimization Loop
+
+There is no reinforcement-learning ("GRPO") loop in this codebase. Routing/orchestration quality improves
+through an offline, telemetry-driven annotation pipeline that feeds DSPy recompilation and XGBoost meta-models.
 
 ```mermaid
 flowchart TB
-    Experience["<span style='color:#000'>Routing Experience<br/>• Query, entities, relationships<br/>• Agent chosen, confidence<br/>• Search quality, user satisfaction</span>"]
+    Spans["<span style='color:#000'>Telemetry Spans<br/>cogniverse.gateway / cogniverse.routing /<br/>cogniverse.orchestration (Phoenix)</span>"]
 
-    Experience --> Reward["<span style='color:#000'>Reward Computation<br/>reward = search_quality × 0.4<br/>+ agent_success × 0.3<br/>+ user_satisfaction × 0.3<br/>- time_penalty</span>"]
+    AnnotationAgent["<span style='color:#000'>AnnotationAgent<br/>RoutingEvaluator scores each span<br/>flags low-confidence / ambiguous / failed spans<br/>(HIGH/MEDIUM/LOW priority)</span>"]
 
-    Reward --> Buffer["<span style='color:#000'>Experience Replay Buffer<br/>• LRU buffer max 1000 experiences<br/>• Sampling for training</span>"]
+    OrchEvaluator["<span style='color:#000'>OrchestrationEvaluator<br/>extracts WorkflowExecution<br/>(pattern, agents, timing, success,<br/>parallel efficiency)</span>"]
 
-    Buffer -->|every N experiences| Optimizer["<span style='color:#000'>Advanced Multi-Stage Optimizer<br/>1. Select optimizer based on dataset size:<br/>- <20 samples: Bootstrap<br/>- 20-50: SIMBA<br/>- 50-100: MIPROv2<br/>- 100+: GEPA<br/>2. Compile routing policy<br/>3. Update confidence calibrator<br/>4. Decay exploration rate ε-greedy</span>"]
+    Queue["<span style='color:#000'>AnnotationQueue<br/>pending → assigned → completed</span>"]
 
-    Optimizer --> Policy["<span style='color:#000'>Optimized Routing Policy<br/>• Improved agent selection<br/>• Calibrated confidence scores<br/>• Better generalization</span>"]
+    AutoAnnotator["<span style='color:#000'>LLMAutoAnnotator<br/>LLM labels: CORRECT_ROUTING / WRONG_ROUTING /<br/>AMBIGUOUS / INSUFFICIENT_INFO<br/>(or human review via dashboard)</span>"]
 
-    style Experience fill:#90caf9,stroke:#1565c0,color:#000
-    style Reward fill:#b0bec5,stroke:#546e7a,color:#000
-    style Buffer fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Optimizer fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Policy fill:#a5d6a7,stroke:#388e3c,color:#000
+    Storage["<span style='color:#000'>RoutingAnnotationStorage /<br/>OrchestrationAnnotationStorage</span>"]
+
+    Meta["<span style='color:#000'>XGBoost Meta-Models<br/>TrainingDecisionModel.should_train<br/>TrainingStrategyModel.select_strategy<br/>ProfilePerformanceOptimizer (profile choice)</span>"]
+
+    CLI["<span style='color:#000'>optimization_cli.py (batch job)<br/>_create_teleprompter: BootstrapFewShot<br/>scaled by trainset size (4/8 or 8/16 demos)<br/>_compute_gateway_thresholds</span>"]
+
+    Artifact["<span style='color:#000'>ArtifactManager<br/>persists compiled DSPy state +<br/>gateway thresholds per tenant</span>"]
+
+    Loaded["<span style='color:#000'>Loaded at next agent startup<br/>QueryEnhancementAgent._load_artifact<br/>GatewayAgent._load_artifact</span>"]
+
+    Spans --> AnnotationAgent
+    Spans --> OrchEvaluator
+    AnnotationAgent --> Queue
+    Queue --> AutoAnnotator
+    AutoAnnotator --> Storage
+    OrchEvaluator --> Storage
+    Storage --> Meta
+    Meta --> CLI
+    CLI --> Artifact
+    Artifact --> Loaded
+
+    style Spans fill:#90caf9,stroke:#1565c0,color:#000
+    style AnnotationAgent fill:#a5d6a7,stroke:#388e3c,color:#000
+    style OrchEvaluator fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Queue fill:#b0bec5,stroke:#546e7a,color:#000
+    style AutoAnnotator fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Storage fill:#b0bec5,stroke:#546e7a,color:#000
+    style Meta fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CLI fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Artifact fill:#81d4fa,stroke:#0288d1,color:#000
+    style Loaded fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-### Query Enhancement Pipeline
+`FusionBenefitModel` (part of the XGBoost meta-models) is implemented and trainable but has **no caller** in the
+current codebase outside its own tests — it is not wired into any live fusion decision. Document it as an
+available, standalone model, not as an active pipeline stage.
+
+### Composable Query Analysis (used by OrchestratorAgent)
+
+`ComposableQueryAnalysisModule` (in `routing/dspy_relationship_router.py`) is lazily built and cached by
+`OrchestratorAgent._get_query_analysis_module()` for reuse across iterations of the orchestrator's iterative
+retrieval loop — it is **not** part of `QueryEnhancementAgent`, which uses a separate, simpler DSPy module
+(see [QueryEnhancementAgent](#3-queryenhancementagent-query_enhancement_agentpy)).
 
 ```mermaid
 flowchart TB
-    OriginalQuery["<span style='color:#000'>Original Query</span>"] --> SimbaCheck["<span style='color:#000'>SIMBA Pattern Matching<br/>• Find similar queries in memory<br/>• Retrieve successful enhancement patterns</span>"]
+    Query["<span style='color:#000'>Query (orchestrator retrieval-loop iteration)</span>"] --> GlinerExtract["<span style='color:#000'>GLiNERRelationshipExtractor.extract_entities</span>"]
 
-    SimbaCheck -->|SIMBA match found| SimbaEnhance["<span style='color:#000'>Apply Learned Patterns<br/>• Expansion terms<br/>• Relationship phrases</span>"]
-    SimbaCheck -->|No match / below threshold| Composable["<span style='color:#000'>ComposableQueryAnalysisModule</span>"]
+    GlinerExtract --> PathDecision{"<span style='color:#000'>GLiNER available AND<br/>entity count ≥ min_entities_for_fast_path AND<br/>avg confidence ≥ entity_confidence_threshold (0.6)?</span>"}
 
-    Composable --> GLiNER["<span style='color:#000'>GLiNER Entity Extraction<br/>• Entities with confidence scores</span>"]
+    PathDecision -->|Yes| PathA["<span style='color:#000'>Path A: GLiNER fast path<br/>• GLiNER + SpaCy heuristic relationships<br/>• LLM reformulates query only</span>"]
+    PathDecision -->|No| PathB["<span style='color:#000'>Path B: LLM unified path<br/>• Single LLM call: entities +<br/>  relationships + reformulation + variants</span>"]
 
-    GLiNER -->|"high confidence (≥0.6)"| PathA["<span style='color:#000'>Path A: GLiNER Fast<br/>• Heuristic relationships<br/>• SpaCy enrichment<br/>• LLM reformulates + generates variants</span>"]
-    GLiNER -->|"low confidence / no entities"| PathB["<span style='color:#000'>Path B: LLM Unified<br/>• Single LLM call: entities +<br/>  relationships + reformulation +<br/>  variant generation</span>"]
+    PathA --> Prediction["<span style='color:#000'>dspy.Prediction<br/>entities, relationships, enhanced_query,<br/>query_variants, confidence, path_used</span>"]
+    PathB --> Prediction
 
-    SimbaEnhance --> Enhanced["<span style='color:#000'>Enhanced Query + Query Variants<br/>+ metadata + quality score</span>"]
-    PathA --> Enhanced
-    PathB --> Enhanced
-
-    style OriginalQuery fill:#90caf9,stroke:#1565c0,color:#000
-    style SimbaCheck fill:#ffcc80,stroke:#ef6c00,color:#000
-    style SimbaEnhance fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Composable fill:#b0bec5,stroke:#546e7a,color:#000
-    style GLiNER fill:#b0bec5,stroke:#546e7a,color:#000
+    style Query fill:#90caf9,stroke:#1565c0,color:#000
+    style GlinerExtract fill:#a5d6a7,stroke:#388e3c,color:#000
+    style PathDecision fill:#ffcc80,stroke:#ef6c00,color:#000
     style PathA fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PathB fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Enhanced fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Prediction fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
+
+Both paths are individually optimizable via DSPy optimizers (SIMBA, MIPROv2, BootstrapFewShot, GEPA — per the
+module's own docstring); the batch optimization CLI (`optimization_cli.py`) currently wires up `BootstrapFewShot`
+only (see [Optimization Systems](#optimization-systems)).
 
 ---
 
 ## Core Components
 
-### 1. RoutingConfigUnified (unified_config.py:325)
+### 1. RoutingConfigUnified (`libs/foundation/cogniverse_foundation/config/unified_config.py:403`)
 
-**Purpose**: Complete configuration system for routing with tenant isolation
+**Purpose**: Tenant-scoped routing configuration schema. Lives in the Foundation layer, not `cogniverse_agents`.
 
 **Key Attributes**:
 ```python
@@ -136,33 +201,35 @@ class RoutingConfigUnified:
     # tenant_id is REQUIRED — omitting it raises ValueError via __post_init__
     tenant_id: Optional[str] = None  # runtime-required
 
-    # Routing mode ("tiered" is the only fully-implemented mode)
+    # Routing mode. Only "tiered" is meaningful — enable_fast_path/enable_slow_path/
+    # enable_fallback below are accepted by the schema but are NOT read by any
+    # dispatch-time decision logic today (only by the dashboard config UI and
+    # tenant-persistence tests). Do not document them as behavior-changing.
     routing_mode: str = "tiered"
-
-    # Tier enable flags
     enable_fast_path: bool = True
     enable_slow_path: bool = True
     enable_fallback: bool = True
 
-    # Confidence thresholds
+    # Confidence thresholds (schema-level; not consumed by GatewayAgent, which
+    # has its own fast_path_confidence_threshold on GatewayDeps, default 0.4)
     fast_path_confidence_threshold: float = 0.7
     slow_path_confidence_threshold: float = 0.6
     max_routing_time_ms: int = 1000
 
-    # GLiNER configuration (Fast Path)
+    # GLiNER configuration
     gliner_model: str = "urchade/gliner_large-v2.1"
     gliner_threshold: float = 0.3
     gliner_device: str = "cpu"
     gliner_labels: List[str] = field(default_factory=list)
 
-    # LLM configuration (Slow Path)
+    # LLM configuration
     llm_provider: str = "local"
     llm_endpoint: str = "http://localhost:11434"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 150
     use_chain_of_thought: bool = True
 
-    # Optimization settings
+    # Optimization settings — consumed by scripts/auto_optimization_trigger.py
     enable_auto_optimization: bool = True
     optimization_interval_seconds: int = 3600
     min_samples_for_optimization: int = 100
@@ -170,12 +237,12 @@ class RoutingConfigUnified:
     dspy_max_bootstrapped_demos: int = 10
     dspy_max_labeled_demos: int = 50
 
-    # Caching
+    # Caching — exposed via config/utils.py feature-flag getters; no in-process
+    # modality-keyed LRU cache implementation currently reads these fields.
     enable_caching: bool = True
     cache_ttl_seconds: int = 300
     max_cache_size: int = 1000
 
-    # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
 ```
 
@@ -191,6 +258,8 @@ def to_dict(self) -> dict:
 
 **Usage**:
 ```python
+from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
 # tenant_id is REQUIRED — a no-arg RoutingConfigUnified() raises ValueError
 config = RoutingConfigUnified(tenant_id="acme:production")
 
@@ -206,125 +275,144 @@ config_dict = config.to_dict()
 
 ---
 
-### 2. GatewayAgent (gateway_agent.py)
+### 2. GatewayAgent (`gateway_agent.py`)
 
-**Purpose**: Entry-point A2A agent that classifies queries as simple or complex using GLiNER (<100ms)
+**Purpose**: Entry-point A2A agent that classifies queries as simple or complex — no LLM call, GLiNER-only
+(with a deterministic keyword fallback).
 
 **Key Features**:
 
-- GLiNER entity detection with configurable label types
-- Rule-based modality and complexity classification
-- Circuit breaker for fault tolerance
-- Returns `GatewayOutput` with `complexity`, `modality`, `routed_to`, `confidence`
+- GLiNER zero-shot entity detection (`gliner_large-v2.1`, sidecar URL or in-process) plus `MODALITY_KEYWORDS`
+  deterministic fallback when GLiNER misses or is unavailable
+- Rule-based modality (`_classify_modality`) and generation-type (`_classify_generation_type`) classification
+- `SIMPLE_ROUTE_MAP[(modality, generation_type)]` direct dispatch for simple queries
+- Returns `GatewayOutput` with `complexity`, `modality`, `generation_type`, `routed_to`, `confidence`
+- No circuit breaker in this class — GLiNER failures are handled by falling through to the keyword classifier,
+  not by a circuit-breaker/retry wrapper
 
 **Key Method**:
 ```python
-async def _process_impl(
-    self,
-    input_data: GatewayInput,
-) -> GatewayOutput:
+async def _process_impl(self, input: GatewayInput) -> GatewayOutput:
     """
     Classify query complexity and target agent
 
     Process:
-    1. Extract entities with GLiNER
-    2. Classify modality from entity labels
-    3. Determine complexity (simple vs complex)
-    4. Return routing decision with target agent name
+    1. Extract entities with GLiNER (or keyword fallback)
+    2. Classify modality and generation_type from entity/keyword labels
+    3. Determine complexity via _is_complex()
+    4. Return routing decision with target agent name (SIMPLE_ROUTE_MAP or "orchestrator_agent")
     """
 ```
 
-**Complexity Classification Logic**:
+**Complexity Classification Logic** (`_is_complex`, actual code):
 ```python
-# Query classified as complex when any holds:
-# 1. No entities detected by GLiNER
-# 2. Classification confidence below fast_path_confidence_threshold (default: 0.7)
-# 3. Entities span more than one modality (e.g., video + audio)
+# Query classified as complex when ANY holds:
+# 1. Combined confidence < GatewayDeps.fast_path_confidence_threshold (default: 0.4)
+#    — i.e. neither GLiNER nor the keyword fallback could classify the query
+# 2. modality == "both" (entities/keywords span more than one modality)
+# 3. generation_type == "detailed_report" (always needs search -> analysis -> report)
+# 4. Query contains an analysis/synthesis verb (analyze, compare, summarize, evaluate, ...)
+# 5. Query contains a multi-step marker (then, after that, first...next, ...)
+# 6. Query has multiple clauses (3+ commas or 2+ "and")
 ```
 
 **Performance**:
 
-- Latency: <100ms (GLiNER, no LLM call)
-- Confidence threshold: 0.7 (configurable)
-- Simple queries route directly; complex queries go to OrchestratorAgent
+- No LLM call — GLiNER (or keyword fallback) only, targeting <100ms
+- `fast_path_confidence_threshold`: 0.4 (on `GatewayDeps`, configurable)
+- Simple queries route directly via `SIMPLE_ROUTE_MAP`; complex queries go to `OrchestratorAgent`
+
+**SIMPLE_ROUTE_MAP** (`(modality, generation_type) -> agent name`):
+
+| Modality | raw_results | summary | detailed_report |
+|---|---|---|---|
+| video | `search_agent` | `summarizer_agent` | `detailed_report_agent` |
+| text | `search_agent` | `summarizer_agent` | `detailed_report_agent` |
+| audio | `audio_analysis_agent` | `summarizer_agent` | `detailed_report_agent` |
+| image | `image_search_agent` | `summarizer_agent` | `detailed_report_agent` |
+| document | `document_agent` | `summarizer_agent` | `detailed_report_agent` |
 
 ---
 
-### 3. QueryEnhancementAgent (query_enhancement_agent.py)
+### 3. QueryEnhancementAgent (`query_enhancement_agent.py`)
 
-**Purpose**: A2A agent that enriches queries via `ComposableQueryAnalysisModule` — part of the orchestration pipeline for complex queries
+**Purpose**: A2A agent that expands and rewrites a query with synonyms, context, and RRF query variants using a
+single DSPy `ChainOfThought` module, with a heuristic fallback. This is a separate, simpler component from the
+`ComposableQueryAnalysisModule` used internally by `OrchestratorAgent` (see
+[Composable Query Analysis](#composable-query-analysis-used-by-orchestratoragent)).
 
 **Key Features**:
 
-- ComposableQueryAnalysisModule integration (Path A: GLiNER fast, Path B: LLM unified)
-- LLM-generated query variant generation for multi-query fusion
-- Invoked by `OrchestratorAgent` during complex query workflows
-- SIMBA optimization runs as Argo batch job (not inline)
+- `QueryEnhancementModule`: `dspy.ChainOfThought(QueryEnhancementSignature)` producing `enhanced_query`,
+  `expansion_terms`, `synonyms`, `context`, `confidence`, `reasoning`
+- Falls back to a heuristic expander when the LLM call raises, returns empty fields, or **echoes the input
+  verbatim** (an echo would otherwise poison the SIMBA training set with identity pairs)
+- Folds in upstream `EntityExtractionAgent` output (entities/relationships) as extra prompt context
+- Applies per-tenant memory injection (`MemoryAwareMixin`) while preserving the caller's original query in the
+  response
+- Can load a previously-optimized DSPy module state from the `simba_query_enhancement` artifact blob at startup
 
 **Key Method**:
-
 ```python
-async def _process_impl(
-    self,
-    input_data: QueryEnhancementInput,
-) -> QueryEnhancementOutput:
+async def _process_impl(self, input: QueryEnhancementInput) -> QueryEnhancementOutput:
     """
-    Complete end-to-end query enhancement
+    Enhance a query with synonyms, context, and RRF variants.
 
     Process:
-    1. Run ComposableQueryAnalysisModule (Path A or Path B)
-    2. Apply include_original flag and build result metadata
-
-    Returns QueryEnhancementOutput with:
-        {
-            "original_query": str,
-            "extracted_entities": List[Dict],
-            "extracted_relationships": List[Dict],
-            "enhanced_query": str,
-            "enhancement_strategy": str,  # "composable_A" or "composable_B"
-            "quality_score": float,
-            "query_variants": List[Dict[str, str]],  # [{"name": str, "query": str}]
-            "processing_metadata": {"enhancement_method": str, "analysis_path": str, ...},
-            ...
-        }
+    1. Build entity/relationship context string from input.entities/relationships
+    2. Run the DSPy QueryEnhancementModule (fallback heuristic on failure)
+    3. Parse comma-separated expansion_terms/synonyms/context into lists
+    4. Generate RRF query_variants (List[str]) via _generate_variants
     """
-
 ```
 
-**Composable Query Analysis** (`ComposableQueryAnalysisModule`):
-
-The composable module replaces the former rule-based `QueryRewriter` with a two-path DSPy module
-that generates query variants via LLM:
-
-- **Path A (GLiNER fast path):** GLiNER extracts high-confidence entities → heuristic relationship
-  inference → LLM reformulates query and generates variants
-- **Path B (LLM unified path):** Single LLM call does entity extraction, relationship extraction,
-  query reformulation, and variant generation together
-
-Path selection is automatic based on GLiNER entity confidence (threshold: `entity_confidence_threshold`,
-default 0.6). Both paths produce identical output: `entities`, `relationships`, `enhanced_query`,
-`query_variants`, `confidence`, and `path_used`.
-
-**Multi-Query Variant Generation:**
-
-The composable module always generates query variants. Each variant is searched in parallel and
-results are fused with RRF (see [Ensemble Composition](../architecture/ensemble-composition.md#multi-query-fusion)).
-
-```python
-# ComposableQueryAnalysisModule.forward() returns:
-# prediction.query_variants = [
-#   {"name": "entity_focused", "query": "humanoid robots autonomous soccer match"},
-#   {"name": "relationship_expanded", "query": "robots playing competitive soccer game"},
-#   {"name": "semantic_broadened", "query": "robotic athletes in football competition"},
-# ]
-```
-
-The `include_original` flag controls whether the original query is prepended as a variant.
-`rrf_k` (default 60) is passed through to the RRF fusion algorithm in `SearchAgent`.
+`QueryEnhancementOutput` fields: `original_query`, `enhanced_query`, `expansion_terms: List[str]`,
+`synonyms: List[str]`, `context_additions: List[str]`, `query_variants: List[str]`, `confidence: float`,
+`reasoning: str`. The orchestrator's `_normalize_query_variants` later converts the raw string variants into
+`{"name": ..., "query": ...}` dicts before handing them to `SearchInput.query_variants` for RRF multi-query
+fusion (see [Ensemble Composition](../architecture/ensemble-composition.md#multi-query-fusion)).
 
 ---
 
-### 6. XGBoost Meta-Models (xgboost_meta_models.py)
+### 4. ProfileSelectionAgent (`profile_selection_agent.py`)
+
+**Purpose**: A2A agent that uses DSPy LLM reasoning to pick the optimal backend search profile for a query, with
+a keyword/word-count heuristic fallback.
+
+**Key Features**:
+
+- `ProfileSelectionModule`: `dspy.ChainOfThought(ProfileSelectionSignature)` producing `selected_profile`,
+  `confidence`, `reasoning`, `query_intent`, `modality`, `complexity`
+- Default candidate profiles (`ProfileSelectionDeps.available_profiles`): `video_colpali_smol500_mv_frame`,
+  `video_colqwen_omni_mv_chunk_30s`, `video_videoprism_base_mv_chunk_30s`, `video_videoprism_large_mv_chunk_30s`
+- Overrides the LM's `modality` field with the modality encoded in the chosen profile name for consistency
+- Generates up to 3 alternative `ProfileCandidate` entries (`profile_name`, `score`, `reasoning`)
+- Applies per-tenant memory injection (`MemoryAwareMixin`) to the prompt while preserving the caller's original
+  query in the response
+
+**Key Method**:
+```python
+async def _process_impl(self, input: ProfileSelectionInput) -> ProfileSelectionOutput:
+    """Select the best backend search profile for a query, with alternatives."""
+```
+
+---
+
+### 5. ComposableQueryAnalysisModule and Routing DSPy Modules (`routing/dspy_relationship_router.py`)
+
+See [Composable Query Analysis](#composable-query-analysis-used-by-orchestratoragent) for the diagram. This
+module also defines:
+
+- **`DSPyBasicRoutingModule`**: fast routing for simple queries via keyword + structure heuristics
+  (`_analyze_query_characteristics`) — no LLM call
+- **`DSPyAdvancedRoutingModule`**: LLM-based routing over `AdvancedRoutingSignature` for more nuanced decisions
+
+`routing/dspy_routing_signatures.py` hosts the DSPy `Signature` classes these modules use, plus
+`create_routing_signature(complexity_level)` and `validate_signature_output()` helpers.
+
+---
+
+### 6. XGBoost Meta-Models (`routing/xgboost_meta_models.py`)
 
 **Purpose**: XGBoost-based meta-models for automatic training decisions without hardcoded thresholds
 
@@ -337,9 +425,8 @@ def should_train(self, context: ModelingContext) -> Tuple[bool, float]:
     """
     Predict if training will be beneficial
 
-    Input Features:
-    - real_sample_count
-    - synthetic_sample_count
+    Input Features (ModelingContext):
+    - modality, real_sample_count, synthetic_sample_count
     - success_rate, avg_confidence
     - days_since_last_training
     - current_performance_score
@@ -363,7 +450,8 @@ def select_strategy(self, context: ModelingContext) -> TrainingStrategy:
     """Select optimal training strategy based on context"""
 ```
 
-**FusionBenefitModel**: Predicts benefit of multi-modal fusion
+**FusionBenefitModel**: Predicts benefit of multi-modal fusion (implemented and trainable; **no current caller**
+outside its own tests — not wired into a live fusion decision)
 
 ```python
 def predict_benefit(self, fusion_context: Dict[str, float]) -> float:
@@ -382,58 +470,62 @@ def predict_benefit(self, fusion_context: Dict[str, float]) -> float:
     """
 ```
 
+`quality_monitor.py` (`libs/evaluation/cogniverse_evaluation/`) is the actual runtime consumer of
+`TrainingDecisionModel`.
+
 ---
 
+### 7. AnnotationAgent (`routing/annotation_agent.py`)
 
-**Purpose**: Maintains cross-modal context across queries to improve routing and search quality
+**Purpose**: Identifies routing spans that need human (or LLM-auto) annotation, based on confidence and outcome.
 
-**Key Features**:
-
-- Conversation history tracking
-- Modality preference learning
-- Topic evolution tracking
-- Temporal pattern recognition
-- Context-aware routing hints
-
-**Key Methods**:
-
+**Key Method**:
 ```python
-def update_context(
-    self,
-    query: str,
-    detected_modalities: List[str],
-    result: Optional[Any] = None,
-    result_count: int = 0,
-):
+async def identify_spans_needing_annotation(
+    self, lookback_hours: Optional[int] = None
+) -> List[AnnotationRequest]:
     """
-    Track user query and update context
-
-    Updates:
-    - Conversation history (deque with max size)
-    - Modality preferences (count per modality)
-    - Topic tracking (keyword extraction)
-    - Temporal patterns (hourly distribution)
-    """
-
-def get_contextual_hints(self, current_query: str) -> Dict[str, Any]:
-    """
-    Get context-aware routing hints
-
-    Returns:
-        {
-            "preferred_modality": str,
-            "recent_topics": List[str],
-            "session_stats": {...},
-            "temporal_context": {...}
-        }
+    Query cogniverse.routing spans from the telemetry provider, score each with
+    RoutingEvaluator, and return AnnotationRequest objects sorted by priority
+    (HIGH/MEDIUM/LOW), capped at max_annotations_per_run (default 50).
     """
 ```
 
+Constructor: `AnnotationAgent(tenant_id, confidence_threshold=0.6, failure_lookback_hours=24,
+max_annotations_per_run=50, automation_rules=None)` — an `AutomationRulesConfig` (from `routing/config.py`)
+can override the individual threshold kwargs.
+
+`routing/annotation_queue.py`'s `AnnotationQueue` tracks requests through `pending -> assigned -> completed`
+states; `routing/annotation_storage.py`'s `RoutingAnnotationStorage` persists completed annotations;
+`routing/orchestration_annotation_storage.py`'s `OrchestrationAnnotationStorage` does the same for
+orchestration-workflow-level annotations.
+
 ---
 
-### 13. LLMAutoAnnotator (llm_auto_annotator.py:46-294)
+### 8. OrchestrationEvaluator (`routing/orchestration_evaluator.py`)
 
-**Purpose**: Uses LLM to analyze routing spans and provide initial annotations for training data
+**Purpose**: Extracts orchestration workflow execution data from `cogniverse.orchestration` telemetry spans and
+feeds them to `WorkflowIntelligence` for template-matching and continuous learning.
+
+```python
+class OrchestrationEvaluator:
+    """
+    1. Queries cogniverse.orchestration spans from telemetry
+    2. Extracts WorkflowExecution records (pattern, agents, timing, success)
+    3. Computes quality metrics (parallel efficiency, agent performance)
+    4. Feeds WorkflowExecution records to WorkflowIntelligence
+    """
+
+    def __init__(self, workflow_intelligence: WorkflowIntelligence, tenant_id: str): ...
+```
+
+Invoked from `libs/runtime/cogniverse_runtime/optimization_cli.py` as part of the batch optimization job.
+
+---
+
+### 9. LLMAutoAnnotator (`routing/llm_auto_annotator.py`)
+
+**Purpose**: Uses an LLM to analyze routing spans and provide initial annotations for training data.
 
 **Annotation Labels**:
 
@@ -447,6 +539,12 @@ def get_contextual_hints(self, current_query: str) -> Dict[str, Any]:
 **Key Methods**:
 
 ```python
+def __init__(self, llm_config: LLMEndpointConfig):
+    """model/api_base/api_key come from the passed-in LLMEndpointConfig —
+    there are no ANNOTATION_MODEL/ANNOTATION_API_BASE env vars. The dashboard's
+    routing_evaluation tab lets an operator override model/api_base/api_key via
+    session state, falling back to the tenant's configured primary LLM."""
+
 def annotate(self, annotation_request: AnnotationRequest) -> AutoAnnotation:
     """
     Generate automatic annotation for a routing decision
@@ -469,22 +567,13 @@ def annotate(self, annotation_request: AnnotationRequest) -> AutoAnnotation:
     """
 ```
 
-**Model Configuration**:
-
-```python
-# Default model: claude-3-5-sonnet-20241022
-# Override via environment:
-#   ANNOTATION_MODEL=gemini-pro
-#   ANNOTATION_API_BASE=http://localhost:11434
-```
-
 ---
 
-### 14. ProfilePerformanceOptimizer (profile_performance_optimizer.py:51-390)
+### 10. ProfilePerformanceOptimizer (`routing/profile_performance_optimizer.py`)
 
 **Purpose**: Learns which backend profile works best for different query types using XGBoost
 
-**Query Features**:
+**Query Features** (`QueryFeatures`):
 
 - query_length, word_count
 - has_temporal_keywords (when, before, after, timeline, etc.)
@@ -495,10 +584,7 @@ def annotate(self, annotation_request: AnnotationRequest) -> AutoAnnotation:
 **Key Methods**:
 
 ```python
-def predict_best_profile(
-    self,
-    query_text: str,
-) -> Tuple[str, float]:
+def predict_best_profile(self, query_text: str) -> Tuple[str, float]:
     """
     Predict best profile for query
 
@@ -520,213 +606,151 @@ async def extract_training_data_from_phoenix(
     """
     Extract training data from telemetry provider evaluation spans
 
-    Args:
-        tenant_id: Tenant identifier
-        project_name: Project name for span query
-        start_time: Start time for span query
-        end_time: End time for span query
-        min_samples: Minimum samples required
-
     Returns:
         Tuple of (features_array, labels_array, profile_names)
     """
 ```
 
+Used by `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`.
+
+---
+
+### 11. Relationship Extraction Tools (`routing/relationship_extraction_tools.py`)
+
+**Purpose**: Non-LLM entity/relationship extraction used by the GLiNER fast path of
+`ComposableQueryAnalysisModule` and by `entity_extraction_agent`'s fast path.
+
+- **`GLiNERRelationshipExtractor`**: `extract_entities(query)` (GLiNER zero-shot NER),
+  `infer_relationships_from_entities(query, entities)` (heuristic relation inference)
+- **`SpaCyDependencyAnalyzer`**: `analyze_dependencies(text)`, `extract_semantic_relationships(text)`
+  (dependency-parse-based relationship extraction, enriches the GLiNER fast path)
+- **`RelationshipExtractorTool`**: combines both extractors, deduplicates relationships, and computes an
+  overall confidence score
+
+---
+
+### 12. Checkpoint/Resume (`orchestrator/checkpoint_storage.py`, `orchestrator/checkpoint_types.py`)
+
+**Purpose**: Durable execution state for `OrchestratorAgent` workflows so long-running multi-agent plans can be
+resumed after a crash or restart.
+
+- `checkpoint_types.py`: `CheckpointLevel`, `CheckpointStatus`, `TaskCheckpoint`, `WorkflowCheckpoint`,
+  `CheckpointConfig`
+- `checkpoint_storage.py`: `WorkflowCheckpointStorage` — persists/loads `WorkflowCheckpoint` records, consumed
+  by `OrchestratorAgent._save_checkpoint` / `resume_workflow`
+
+`orchestrator/sufficient_context_signature.py`'s `SufficientContextSignature` is the DSPy signature backing
+`OrchestratorAgent._run_sufficiency_gate` — the check that decides whether the iterative retrieval loop has
+gathered enough evidence to stop.
+
 ---
 
 ## Routing Strategies
 
-### Strategy Comparison
+There is no pluggable "strategy" class hierarchy (no `GLiNERStrategy`/`LLMStrategy`/`KeywordStrategy`/
+`LangExtractStrategy`, no `ensemble_vote`) in this codebase. The two real routing decisions are:
 
-| Strategy | Tier | Latency | Accuracy | Use Case |
-|----------|------|---------|----------|----------|
-| **GLiNER** | 1 | 50-100ms | ~85% | Clear queries with obvious entities |
-| **LLM** | 2 | 500-1000ms | ~92% | Medium complexity, ambiguous queries |
-| **Keyword** | 3 | <10ms | ~70% | Simple pattern matching |
-| **LangExtract** | 3 | 2-3s | ~95% | Complex queries, structured extraction |
-| **Hybrid** | - | Varies | ~88% | Combine multiple strategies |
-| **Ensemble** | - | Parallel | ~90% | Voting across strategies |
-
-### Strategy Selection Logic
-
-```python
-# Tiered mode (default)
-if routing_mode == "tiered":
-    # Try Tier 1 (GLiNER)
-    result = await gliner_strategy.route(query)
-    if result.confidence_score >= 0.7:
-        return result
-
-    # Fallback to Tier 2 (LLM)
-    result = await llm_strategy.route(query)
-    if result.confidence_score >= 0.6:
-        return result
-
-    # Fallback to Tier 3 (LangExtract)
-    result = await langextract_strategy.route(query)
-    return result  # Always succeeds
-
-# Ensemble mode
-elif routing_mode == "ensemble":
-    # Run multiple strategies in parallel
-    results = await asyncio.gather(
-        gliner_strategy.route(query),
-        llm_strategy.route(query),
-        keyword_strategy.route(query)
-    )
-
-    # Weighted voting
-    final_decision = ensemble_vote(results, weights={
-        "gliner": 1.5,
-        "llm": 2.0,
-        "keyword": 0.5
-    })
-
-    return final_decision
-```
+| Decision | Component | Mechanism | LLM call? |
+|---|---|---|---|
+| Simple vs. complex query | `GatewayAgent._is_complex` | Rule-based (confidence threshold, modality, generation type, keyword/clause heuristics) | No |
+| Simple-query target agent | `SIMPLE_ROUTE_MAP` | Static `(modality, generation_type) -> agent name` lookup | No |
+| Backend search profile | `ProfileSelectionAgent` | DSPy `ChainOfThought` with a keyword/word-count heuristic fallback | Yes (fallback: no) |
+| Backend search profile (learned) | `ProfilePerformanceOptimizer` | XGBoost model trained on Phoenix evaluation data (query features → best profile by NDCG) | No |
+| Query analysis path (orchestrator loop) | `ComposableQueryAnalysisModule` | GLiNER-confidence-gated Path A (GLiNER + LLM reformulation) vs. Path B (single unified LLM call) | Yes (both paths) |
 
 ---
 
 ## Optimization Systems
 
-### GRPO Optimization Lifecycle
+### Annotation-Driven Optimization Lifecycle
 
-```text
-1. EXPERIENCE COLLECTION
-   ├─ Query + entities + relationships
-   ├─ Agent selection + confidence
-   ├─ Search quality + processing time
-   └─ User satisfaction (optional)
+The sequence behind the diagram above, spelled out step by step:
 
-2. REWARD COMPUTATION
-   reward = Σ(weighted_outcomes) - time_penalty
+1. **Span collection** — telemetry spans `cogniverse.gateway`, `cogniverse.routing`, `cogniverse.orchestration`
+   (attributes: `gateway.*`, `routing.*`, orchestration-specific).
+2. **Span evaluation**
+   - `AnnotationAgent.identify_spans_needing_annotation` (`RoutingEvaluator` scoring)
+   - `OrchestrationEvaluator` (`WorkflowExecution` extraction + parallel-efficiency scoring)
+3. **Annotation**
+   - `AnnotationQueue`: pending → assigned → completed
+   - `LLMAutoAnnotator.annotate` (LLM auto-label) or human review (dashboard)
+   - `RoutingAnnotationStorage` / `OrchestrationAnnotationStorage` (persist)
+4. **Meta-model decisions (XGBoost)**
+   - `TrainingDecisionModel.should_train` — is training worth it?
+   - `TrainingStrategyModel.select_strategy` — pure_real / hybrid / synthetic / skip
+   - `ProfilePerformanceOptimizer` — learn profile choice from Phoenix NDCG data
+5. **Batch recompilation** (`optimization_cli.py`)
+   - `_create_teleprompter(trainset_size)`: `BootstrapFewShot`, scaled by training-set size
+     (< 50 examples → 4 bootstrapped / 8 labeled demos, 1 round; ≥ 50 examples → 8 bootstrapped / 16 labeled
+     demos, 2 rounds)
+   - `_compute_gateway_thresholds(spans_df)` — recalibrates `GatewayAgent` thresholds
+6. **Artifact persistence** — `ArtifactManager` stores the compiled DSPy module state (e.g.
+   `"simba_query_enhancement"`) and gateway threshold blobs (`"gateway_thresholds"`)
+7. **Artifact loading** (next agent startup, per tenant) — `QueryEnhancementAgent._load_artifact` loads compiled
+   few-shot demos; `GatewayAgent._load_artifact` loads recalibrated thresholds
 
-3. EXPERIENCE REPLAY
-   ├─ Store in LRU buffer (max 1000)
-   └─ Sample batch for training
+`ComposableQueryAnalysisModule`'s two paths are individually optimizable via DSPy optimizers named in its own
+docstring (SIMBA, MIPROv2, BootstrapFewShot, GEPA); the batch CLI above currently wires up `BootstrapFewShot`
+only, scaled by training-set size — there is no dataset-size-tiered auto-selection across all four optimizers.
 
-4. OPTIMIZATION TRIGGER
-   ├─ Every N experiences (default: 10)
-   └─ Or on performance degradation
+### Query Enhancement Fallback
 
-5. OPTIMIZER SELECTION
-   ├─ Bootstrap:  <20 samples
-   ├─ SIMBA:      20-50 samples
-   ├─ MIPROv2:    50-100 samples
-   └─ GEPA:       100+ samples
-
-6. POLICY COMPILATION
-   ├─ Train routing policy (DSPy module)
-   ├─ Update confidence calibrator
-   └─ Decay exploration rate
-
-7. INFERENCE WITH OPTIMIZATION
-   ├─ Exploration (ε-greedy): try random agent
-   └─ Exploitation: use optimized policy
-```
-
-### Confidence Calibration
-
-```python
-# Raw confidence from routing model
-raw_confidence = 0.75
-
-# Query complexity factors
-query_complexity = (
-    len(query.split()) / 20.0 +          # Word count
-    len(entities) / 10.0 +                 # Entity count
-    len(relationships) / 5.0               # Relationship count
-) / 3.0
-
-# Historical accuracy for similar queries
-historical_accuracy = get_historical_accuracy(query)
-
-# Calibrate using DSPy module
-calibrated_confidence = confidence_calibrator(
-    raw_confidence=raw_confidence,
-    query_complexity=query_complexity,
-    historical_accuracy=historical_accuracy
-)
-
-# Result: 0.68 (more realistic)
-```
-
-### SIMBA Query Enhancement
-
-```python
-# Pattern discovery from successful enhancements
-successful_patterns = [
-    {
-        "original": "robot playing soccer",
-        "enhanced": "robot playing soccer (robotics OR autonomous system OR sports technology)",
-        "improvement": 0.35  # 35% better search quality
-    },
-    {
-        "original": "AI algorithm",
-        "enhanced": "AI algorithm (machine learning OR neural network OR computational method)",
-        "improvement": 0.28
-    }
-]
-
-# Pattern application to new query
-new_query = "robot learning to play games"
-
-# Find similar patterns (cosine similarity > threshold)
-similar = find_similar_patterns(new_query, successful_patterns)
-
-# Apply learned enhancement
-if similar and avg_improvement(similar) > 0.2:
-    enhanced_query = apply_pattern(new_query, similar[0])
-else:
-    enhanced_query = composable_module.forward(new_query).enhanced_query
-```
+`QueryEnhancementModule.forward` (in `query_enhancement_agent.py`) treats three shapes as LLM failure and falls
+through to a heuristic expander: the LLM call raising, output fields coming back empty, or the LLM echoing the
+input query verbatim (which would otherwise poison the SIMBA training set with identity pairs — recorded as
+`enhanced_query == query`).
 
 ---
 
 ## Data Flow
 
-### Complete Routing Flow with Optimization
+### Routing Flow (Gateway → Orchestrator → Execution)
 
 ```mermaid
 flowchart TB
-    UserQuery["<span style='color:#000'>USER QUERY</span>"]
+    UserQuery["<span style='color:#000'>USER QUERY<br/>(via /agents REST or /a2a JSON-RPC)</span>"]
 
-    Enhancement["<span style='color:#000'>QUERY ENHANCEMENT PIPELINE<br/><br/>1. SIMBA pattern matching (fast shortcut)<br/>2. ComposableQueryAnalysisModule<br/>   Path A: GLiNER → LLM reformulation<br/>   Path B: LLM unified extraction<br/><br/>Output: enhanced_query, query_variants</span>"]
+    Dispatcher["<span style='color:#000'>AgentDispatcher.dispatch<br/>content input rails run here</span>"]
 
-    Cache["<span style='color:#000'>MODALITY CACHE CHECK<br/><br/>• Generate cache key<br/>• Check LRU cache<br/>• Verify TTL (3600s)</span>"]
+    Gateway["<span style='color:#000'>GatewayAgent<br/>GLiNER + keyword fallback (no LLM)<br/>classify modality, generation_type, complexity</span>"]
 
-    Tiered["<span style='color:#000'>TIERED ROUTING DECISION<br/><br/>Tier 1: GLiNER (50-100ms, conf > 0.7)<br/>Tier 2: LLM (500-1000ms, conf > 0.6)<br/>Tier 3: LangExtract (2-3s, always succeeds)</span>"]
+    Simple{"<span style='color:#000'>complexity == simple?</span>"}
 
-    GRPO["<span style='color:#000'>GRPO OPTIMIZATION<br/><br/>• Check optimization ready<br/>• ε-greedy exploration<br/>• Apply optimized policy<br/>• Calibrate confidence</span>"]
+    RouteMap["<span style='color:#000'>SIMPLE_ROUTE_MAP<br/>direct dispatch to execution agent</span>"]
 
-    Fusion["<span style='color:#000'>CROSS-MODAL FUSION CHECK<br/><br/>• Detect multiple modalities<br/>• Predict fusion benefit (XGBoost)<br/>• Decide: fusion or single</span>"]
+    Orchestrator["<span style='color:#000'>OrchestratorAgent<br/>DSPy planning (_create_plan) →<br/>A2A HTTP fan-out (_execute_plan)<br/>+ iterative retrieval loop<br/>(ComposableQueryAnalysisModule reformulation)</span>"]
 
-    Decision["<span style='color:#000'>ROUTING DECISION<br/><br/>recommended_agent<br/>search_modality<br/>confidence<br/>enhanced_query</span>"]
+    ExecAgent["<span style='color:#000'>Execution Agent<br/>search_agent / summarizer_agent /<br/>detailed_report_agent / image_search_agent / ...</span>"]
 
-    Execution["<span style='color:#000'>AGENT EXECUTION<br/><br/>• Route to selected agent<br/>• Execute with enhanced query<br/>• Collect results + metrics</span>"]
+    Spans["<span style='color:#000'>Telemetry Spans<br/>cogniverse.gateway, cogniverse.routing,<br/>cogniverse.orchestration</span>"]
 
-    Recording["<span style='color:#000'>EXPERIENCE RECORDING<br/><br/>• Record routing experience<br/>• Compute reward<br/>• Trigger optimization<br/>• Record SIMBA outcome</span>"]
+    Response["<span style='color:#000'>RESPONSE<br/>output rails run at the gateway front door</span>"]
 
-    UserQuery --> Enhancement
-    Enhancement --> Cache
-    Cache -->|cache miss| Tiered
-    Cache -->|cache hit| Decision
-    Tiered --> GRPO
-    GRPO --> Fusion
-    Fusion --> Decision
-    Decision --> Execution
-    Execution --> Recording
+    UserQuery --> Dispatcher
+    Dispatcher --> Gateway
+    Gateway --> Simple
+    Simple -->|Yes| RouteMap
+    Simple -->|No| Orchestrator
+    RouteMap --> ExecAgent
+    Orchestrator --> ExecAgent
+    ExecAgent --> Spans
+    Gateway --> Spans
+    ExecAgent --> Response
 
     style UserQuery fill:#90caf9,stroke:#1565c0,color:#000
-    style Enhancement fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Cache fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Tiered fill:#ffcc80,stroke:#ef6c00,color:#000
-    style GRPO fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Fusion fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Decision fill:#b0bec5,stroke:#546e7a,color:#000
-    style Execution fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Recording fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Dispatcher fill:#b0bec5,stroke:#546e7a,color:#000
+    style Gateway fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Simple fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RouteMap fill:#b0bec5,stroke:#546e7a,color:#000
+    style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ExecAgent fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Spans fill:#81d4fa,stroke:#0288d1,color:#000
+    style Response fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
+
+Offline, the spans emitted at the bottom of this diagram feed the
+[Annotation-Driven Optimization Loop](#annotation-driven-optimization-loop) shown above, on its own schedule
+(not per-request).
 
 ---
 
@@ -736,9 +760,7 @@ flowchart TB
 
 ```python
 from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
-from cogniverse_foundation.config.utils import create_default_config_manager
 
-config_manager = create_default_config_manager()
 deps = GatewayDeps()
 gateway = GatewayAgent(deps=deps)
 
@@ -747,15 +769,17 @@ query = "Show me videos of robots playing soccer"
 input_data = GatewayInput(query=query, tenant_id="your_org:production")
 
 result = await gateway._process_impl(input_data)
-print(f"Complexity: {result.complexity}")    # "simple" or "complex"
+print(f"Complexity: {result.complexity}")        # "simple" or "complex"
 print(f"Modality: {result.modality}")
+print(f"Generation type: {result.generation_type}")
 print(f"Routed to: {result.routed_to}")
 print(f"Confidence: {result.confidence}")
 
-# Simple query output:
+# Simple query output (video, raw_results -> search_agent per SIMPLE_ROUTE_MAP):
 # Complexity: simple
 # Modality: video
-# Routed to: video_agent
+# Generation type: raw_results
+# Routed to: search_agent
 # Confidence: 0.87
 ```
 
@@ -767,9 +791,7 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementDeps,
     QueryEnhancementInput,
 )
-from cogniverse_foundation.config.utils import create_default_config_manager
 
-config_manager = create_default_config_manager()
 deps = QueryEnhancementDeps()
 agent = QueryEnhancementAgent(deps=deps)
 
@@ -789,176 +811,134 @@ print(f"Confidence: {result.confidence}")
 # Original: AI robot learning to play games
 # Enhanced: AI robot learning to play games (machine learning OR reinforcement learning OR game AI)
 # Expansion: ["reinforcement learning", "game AI", "autonomous agent"]
-# Variants: ["AI robot game training", "robotic game playing agent"]
+# Variants: ["AI robot learning to play games (machine learning OR reinforcement learning OR game AI)", "AI robot learning to play games reinforcement learning game AI autonomous agent"]
 # Confidence: 0.82
+```
+
+### Example 3: Profile Selection
+
+```python
+from cogniverse_agents.profile_selection_agent import (
+    ProfileSelectionAgent,
+    ProfileSelectionDeps,
+    ProfileSelectionInput,
+)
+
+deps = ProfileSelectionDeps()
+agent = ProfileSelectionAgent(deps=deps)
+
+input_data = ProfileSelectionInput(
+    query="Find scenes with fast camera motion and text overlays",
+    tenant_id="production",
+)
+
+result = await agent._process_impl(input_data)
+
+print(f"Selected profile: {result.selected_profile}")
+print(f"Confidence: {result.confidence}")
+print(f"Alternatives: {[c.profile_name for c in result.alternatives]}")
+
+# Output:
+# Selected profile: video_colpali_smol500_mv_frame
+# Confidence: 0.79
+# Alternatives: ['video_colqwen_omni_mv_chunk_30s', 'video_videoprism_base_mv_chunk_30s']
 ```
 
 ---
 
 ## Production Considerations
 
-### Performance Optimization
+### Configuration Knobs
 
-**Latency Targets**:
-
-- Tier 1 (GLiNER): <100ms p95
-- Tier 2 (LLM): <1000ms p95
-- Tier 3 (LangExtract): <3000ms p95
-- Cache hit: <1ms
-- Overall routing: <150ms p95 (with cache)
-
-**Throughput**:
-
-- GLiNER: ~100 queries/sec (single GPU)
-- LLM: ~10 queries/sec (local Ollama)
-- Cache: ~10,000 queries/sec
-
-**Optimization Strategies**:
 ```python
-# 1. Enable caching
-config.enable_caching = True
-config.cache_ttl_seconds = 3600
+from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
-# 2. Use tiered routing (fast path first)
-config.routing_mode = "tiered"
-config.enable_fast_path = True
+config = RoutingConfigUnified(tenant_id="acme:production")
 
-# 3. Tune confidence thresholds
-config.fast_path_confidence_threshold = 0.75  # Higher = more fallbacks
+# Confidence thresholds (schema-level; GatewayAgent reads its own
+# GatewayDeps.fast_path_confidence_threshold, default 0.4, separately)
+config.fast_path_confidence_threshold = 0.75
 config.slow_path_confidence_threshold = 0.60
 
-# 4. Enable auto-optimization (improves over time)
+# Auto-optimization trigger (consumed by scripts/auto_optimization_trigger.py)
 config.enable_auto_optimization = True
+config.optimization_interval_seconds = 3600
+config.min_samples_for_optimization = 100
+
+# GLiNER device (consumed wherever GLiNER is loaded in-process)
+config.gliner_device = "cuda"
+
+# LLM output length cap (consumed by DSPy modules that read this field)
+config.llm_max_tokens = 100
 ```
 
-### Scalability
+`enable_fast_path` / `enable_slow_path` / `enable_fallback` / `enable_caching` / `cache_ttl_seconds` /
+`max_cache_size` are part of the persisted schema (editable via the dashboard's config-management tab and
+round-tripped by `to_dict`/`from_dict`) but are **not read by any routing dispatch or caching implementation**
+today — there is no per-modality LRU cache in this module. Do not rely on them to change runtime behavior.
 
-**Horizontal Scaling**:
+### Error Handling
+
+**Gateway path has no automatic fallback to the orchestrator on exception.** `AgentDispatcher._execute_gateway_task`
+calls `GatewayAgent._process_impl` directly, with no surrounding `try/except` that reroutes to
+`OrchestratorAgent` on failure — a `GatewayAgent` exception propagates to the dispatcher's own error handling.
+`GatewayAgent` itself has no circuit breaker; a GLiNER failure at the model layer is expected to fall through to
+the deterministic keyword classifier inside `_classify_modality`/`_classify_generation_type`, not to trigger a
+breaker-open state.
+
+**Graceful degradation that does exist**:
 ```python
-# Deploy multiple routing instances
-# Each instance:
-# - Independent GLiNER model
-# - Shared LLM endpoint (Ollama cluster)
-# - Shared cache (Redis)
-# - Shared GRPO storage (S3)
-
-# Load balancing:
-# - Round-robin for stateless routing
-# - Consistent hashing for cache locality
-```
-
-**Vertical Scaling**:
-```python
-# GLiNER optimization
-config.gliner_device = "cuda"  # Use GPU
-
-# LLM optimization
-config.llm_max_tokens = 100  # Limit output length
+# GatewayAgent classification:
+# - No modality signal at all (confidence < fast_path_confidence_threshold) -> complexity=="complex"
+# - "both" modality, detailed_report generation_type, or analysis/multi-step language -> complexity=="complex"
+# A "complex" classification routes to OrchestratorAgent rather than guessing a target agent.
 ```
 
 ### Monitoring
 
-**Key Metrics**:
-```python
-# Routing metrics
-- routing_latency_p50, p95, p99
-- routing_confidence_distribution
-- tier_usage_distribution (Tier 1/2/3 usage %)
-- fallback_rate (% queries falling back to Tier 2/3)
+**Real telemetry span attributes** (emitted by `GatewayAgent._emit_gateway_span` / `_emit_routing_span`):
 
-# Cache metrics
-- cache_hit_rate (per modality)
-- cache_eviction_rate
-- cache_size_utilization
-
-# Optimization metrics
-- grpo_reward_trend (moving average)
-- optimization_improvement_rate
-- confidence_accuracy (calibration quality)
-- simba_pattern_usage
-
-# Performance metrics
-- throughput_qps (queries per second)
-- error_rate
-- circuit_breaker_open_rate
-```
-
-**Example Monitoring Setup**:
 ```python
 import time
-from cogniverse_foundation.telemetry.manager import TelemetryManager
+
 from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 telemetry_config = TelemetryConfig()
 telemetry = TelemetryManager(config=telemetry_config)
 
+start_time = time.time()
+result = await gateway._process_impl(input_data)
+latency_ms = (time.time() - start_time) * 1000
+
 with telemetry.span(
-    name="routing_decision",
+    "cogniverse.routing",
     tenant_id="prod",
     attributes={
-        "query": query,
-        "routing_mode": "tiered",
-        "tier": "gliner"
-    }
+        "routing.query": input_data.query[:200],
+        "routing.chosen_agent": result.routed_to,
+        "routing.confidence": result.confidence,
+        "routing.complexity": result.complexity,
+        "routing.modality": result.modality,
+        "routing.generation_type": result.generation_type,
+    },
 ) as span:
-    start_time = time.time()
-    result = await gliner.route(query)
-    latency_ms = (time.time() - start_time) * 1000
-
-    span.set_attribute("primary_agent", result.primary_agent)
-    span.set_attribute("confidence_score", result.confidence_score)
-    span.set_attribute("search_modality", result.search_modality.value)
-    span.set_attribute("routing_method", result.routing_method)
+    pass  # span auto-closes; GatewayAgent emits this span itself
 ```
 
-### Error Handling
+`RoutingEvaluator` and `AnnotationAgent` filter on the `cogniverse.routing` span name and read `routing.*`
+attributes downstream (see [Annotation-Driven Optimization Loop](#annotation-driven-optimization-loop)).
 
-**Circuit Breaker Pattern**:
+### Multi-tenant Configuration
+
 ```python
-# GatewayAgent includes circuit breaker for GLiNER calls
-# If GLiNER fails (circuit open), query is classified as complex
-# and routed to OrchestratorAgent as a safe fallback
-
-# AgentDispatcher handles gateway failures:
-try:
-    gateway_result = await gateway._process_impl(input_data)
-    if gateway_result.complexity == "complex":
-        return await orchestrator._process_impl(orchestrator_input)
-    return await _execute_downstream_agent(gateway_result)
-except Exception as e:
-    logger.warning(f"Gateway failed: {e}")
-    # Fallback: route to OrchestratorAgent for safe handling
-    return await orchestrator._process_impl(orchestrator_input)
-```
-
-**Graceful Degradation**:
-```python
-# GatewayAgent classification provides automatic fallback:
-# - If GLiNER confidence < threshold → classify as complex → OrchestratorAgent
-# - If GLiNER raises exception → classify as complex → OrchestratorAgent
-# OrchestratorAgent always succeeds or raises RuntimeError (no silent fallbacks)
-```
-
-### Configuration Management
-
-**File-based Configuration**:
-```python
-# Load config from a dictionary (e.g., parsed from a JSON/YAML file)
-import json
-with open("configs/routing_config.json") as f:
-    data = json.load(f)
-config = RoutingConfigUnified.from_dict(data)  # data must include "tenant_id"
-```
-
-**Multi-tenant Configuration**:
-```python
-# Separate config per tenant — tenant_id is required for each
+# Separate RoutingConfigUnified per tenant — tenant_id is required for each
 tenant_configs = {
     "acme": RoutingConfigUnified(
         tenant_id="acme",
         routing_mode="tiered",
-        gliner_threshold=0.4,     # Lower threshold
-        cache_ttl_seconds=7200,   # Longer TTL
+        gliner_threshold=0.4,
+        cache_ttl_seconds=7200,
     ),
     "startup": RoutingConfigUnified(
         tenant_id="startup",
@@ -977,18 +957,18 @@ config = tenant_configs[tenant_id]
 ### Unit Tests
 Located in: `tests/routing/unit/`
 
-**Key Test Files**:
-
+- `test_annotation_queue.py` - `AnnotationQueue` state-transition tests
+- `test_learned_reranker.py` / `test_learned_reranker_integration.py` - learned reranker tests
+- `test_multi_modal_reranker.py` - multi-modal reranker tests
+- `test_relationship_router_confidence.py` - `ComposableQueryAnalysisModule` path-selection confidence tests
+- `test_routing_signatures_shape.py` - DSPy routing signature shape tests
 - `test_xgboost_meta_models.py` - XGBoost meta-model tests
-- `test_multi_modal_reranker.py` - Multi-modal reranker tests
 
 ### Integration Tests
 Located in: `tests/routing/integration/`
 
-**Key Test Files**:
-
-- `test_deep_research_integration.py` - Deep research flow integration
-- `test_feature_integration.py` - Feature-level routing integration
+- `test_deep_research_integration.py` - deep research flow integration
+- `test_feature_integration.py` - feature-level routing integration
 - `test_trace_connectivity.py` - A2A trace propagation
 
 ---
@@ -997,7 +977,7 @@ Located in: `tests/routing/integration/`
 
 For detailed information on related modules:
 
-- **Agents Module** (`agents.md`) - Multi-agent orchestration and specialized agents (libs/agents/cogniverse_agents/)
+- **Agents Module** (`agents.md`) - Multi-agent orchestration and the full 23-agent roster (libs/agents/cogniverse_agents/)
 
 - **Common Module** (`common.md`) - Shared configuration and utilities (libs/core/cogniverse_core/common/)
 
@@ -1008,18 +988,20 @@ For detailed information on related modules:
 ---
 
 **Study Tips**:
-1. Start with understanding tiered routing before advanced optimization
-2. Experiment with different routing modes (tiered, ensemble, hybrid)
-3. Review GRPO optimization metrics to understand learning progress
-4. Test query enhancement with real queries to see patterns
-5. Monitor cache hit rates to optimize TTL settings
-6. Use integration tests to understand end-to-end routing flow
+1. Start with the Gateway Decision Flow before the optimization loop
+2. `GatewayAgent` and `ComposableQueryAnalysisModule` are LLM-free-capable / LLM-optional respectively — trace
+   through both branches to see where an LLM call is and isn't made
+3. Review the annotation pipeline (`AnnotationAgent` → `LLMAutoAnnotator` → `optimization_cli.py`) to understand
+   how routing quality actually improves over time
+4. Test query enhancement with real queries to see the DSPy-vs-fallback behavior
+5. Use integration tests to understand end-to-end routing flow
 
 **Key Takeaways**:
 
-- Tiered routing provides the best balance of speed and accuracy
-- GRPO optimization improves routing decisions over time (requires 50+ experiences)
-- Query enhancement with SIMBA learns from successful patterns
-- Cross-modal fusion benefits ambiguous queries with multiple modalities
-- Per-modality caching significantly improves latency for repeated queries
-- Confidence calibration improves reliability of routing decisions
+- `GatewayAgent` never calls an LLM; complexity is decided by rule-based thresholds and keyword heuristics
+- `OrchestratorAgent`'s iterative retrieval loop — not `QueryEnhancementAgent` — owns `ComposableQueryAnalysisModule`
+- There is no in-process per-modality cache, GRPO loop, or confidence calibrator in this module today
+- Routing/orchestration quality improves via an offline annotation + XGBoost + DSPy-recompilation pipeline, not
+  online reinforcement learning
+- `FusionBenefitModel` and the `enable_fast_path`/`enable_slow_path`/`enable_fallback`/`enable_caching` config
+  flags exist in the schema but have no live consumer — verify before relying on them

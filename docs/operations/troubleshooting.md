@@ -10,6 +10,7 @@
 4. [Memory and Performance](#memory-and-performance)
 5. [Vespa Issues](#vespa-issues)
 6. [Agent Communication](#agent-communication)
+7. [Quick Reference](#quick-reference)
 
 ---
 
@@ -105,7 +106,7 @@ example = dspy.Example(
 
 - Validate training data before optimization (see docs/modules/optimization.md)
 
-- Use example templates from `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py:327-385`
+- Use example templates from `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py:328-386`
 
 - Run unit tests for training data loading
 
@@ -126,10 +127,10 @@ Large models (1B+ parameters) can cause threading issues or memory exhaustion in
 Use smaller, stable models for testing:
 
 ```python
-# ❌ Bad: heavy ColQwen model in unit tests
-model_name = "TomoroAI/tomoro-colqwen3-embed-4b"  # multi-GB, slow on CPU
+# ❌ Bad: heavier ColQwen variant in unit tests
+model_name = "vidore/colqwen-omni-v0.1"  # multi-GB, slow on CPU
 
-# ✅ Good: smaller ColPali model for fast feedback
+# ✅ Good: default ColPali model for fast feedback
 model_name = "TomoroAI/tomoro-colqwen3-embed-4b"  # ~2GB, stable on CPU
 ```
 
@@ -253,9 +254,9 @@ First-time model downloads from HuggingFace can be large (several GB).
 
 **Model Sizes:**
 
-- `TomoroAI/tomoro-colqwen3-embed-4b`: ~2GB
+- `TomoroAI/tomoro-colqwen3-embed-4b` (ColPali default): ~2GB
 
-- `TomoroAI/tomoro-colqwen3-embed-4b`: ~6GB
+- `vidore/colqwen-omni-v0.1` (ColQwen default): ~6GB
 
 - `google/videoprism-base`: ~3GB
 
@@ -282,7 +283,7 @@ Clear the HuggingFace cache:
 
 ```bash
 # Remove corrupted cache for the affected model
-rm -rf ~/.cache/huggingface/hub/models--vidore--colpali-v1.3-hf
+rm -rf ~/.cache/huggingface/hub/models--TomoroAI--tomoro-colqwen3-embed-4b
 
 # Re-run ingestion or tests to re-download
 JAX_PLATFORM_NAME=cpu uv run pytest
@@ -440,6 +441,39 @@ curl http://localhost:19071/application/v2/tenant/default/application/default
 
 ---
 
+### Backend Profile Not Found
+
+**Symptoms:**
+```text
+404 Not Found: Profile 'my_profile' not found for tenant 'acme_corp'
+```
+
+**Cause:**
+Backend profiles are stored per-tenant under the config service's `backend`
+service namespace (`ConfigManager.get_backend_profile` / `list_backend_profiles`
+/ `create_backend_profile` all default to `service="backend"`). A 404 usually
+means the profile was created for a different `tenant_id`, or it was never
+created for this tenant at all.
+
+**Solution:**
+```bash
+# List profiles that actually exist for the tenant
+curl "http://localhost:8000/admin/profiles?tenant_id=acme_corp"
+
+# Inspect one profile
+curl "http://localhost:8000/admin/profiles/my_profile?tenant_id=acme_corp"
+```
+
+**Prevention:**
+
+- Always pass the same `tenant_id` used at profile-creation time to every
+  subsequent `get`/`deploy`/`delete` call (runtime admin API and dashboard
+  both go through the same `service="backend"` config namespace)
+
+- List profiles for a tenant before assuming one is missing vs. misnamed
+
+---
+
 ## Agent Communication
 
 ### Agent Input Validation Errors
@@ -479,6 +513,51 @@ input = SearchInput(top_k=5)  # ValidationError: query is required
 - Check agent interface documentation for required fields
 
 - Add Pydantic validation in tests
+
+---
+
+### Agent Not Found (404)
+
+**Symptoms:**
+```text
+GET /agents/kg_traversal_agent -> 404 {"detail": "Agent 'kg_traversal_agent' not found"}
+```
+
+**Cause:**
+Agents self-register with the runtime by calling `POST /agents/register` on
+startup; `GET /agents/{agent_name}` 404s for any name that hasn't registered.
+Of the 23 agents defined in `configs/config.json` under `agents.*`, 8 (the
+knowledge-graph and federation agents — `citation_tracing_agent`,
+`contradiction_reconciliation_agent`, `multi_document_synthesis_agent`,
+`kg_traversal_agent`, `cross_tenant_comparison_agent`, `federated_query_agent`,
+`temporal_reasoning_agent`, `knowledge_summarization_agent`) ship with
+`enabled: false` by default, so their processes are not started and they
+never register.
+
+**Solution:**
+
+1. **List registered agents**:
+```bash
+curl http://localhost:8000/agents/
+```
+
+2. **Check the agent's `enabled` flag** in `configs/config.json` under
+   `agents.<agent_name>.enabled` — flip it to `true` and start that agent's
+   process if you need it.
+
+3. **Discover by capability** instead of by name if you're unsure which agent
+   provides it:
+```bash
+curl http://localhost:8000/agents/by-capability/<capability>
+```
+
+**Prevention:**
+
+- Don't assume every agent in `configs/config.json` is running — check
+  `enabled` before wiring a caller to it
+
+- Use `/agents/` or `/agents/by-capability/{capability}` for discovery instead
+  of hardcoding agent names
 
 ---
 

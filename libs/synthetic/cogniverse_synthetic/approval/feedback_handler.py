@@ -7,7 +7,7 @@ Handle rejection feedback and regenerate synthetic data with DSPy.
 import logging
 from typing import Optional
 
-from cogniverse_agents.approval.interfaces import (
+from cogniverse_core.approval.interfaces import (
     ApprovalStatus,
     FeedbackHandler,
     ReviewDecision,

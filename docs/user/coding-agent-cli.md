@@ -37,8 +37,9 @@ cogniverse code
 #### Example session
 
 ```
+$ export COGNIVERSE_TENANT_ID=acme
 $ cogniverse code
-Cogniverse Coding Agent (tenant: default, lang: python)
+Cogniverse Coding Agent (tenant: acme, lang: python)
 Type a coding task, or /help for commands. Ctrl+D to exit.
 
 >>> write a retry decorator with exponential backoff
@@ -115,20 +116,33 @@ Reads the current certs from `~/.config/openshell/gateways/<name>/` and updates 
 
 The CLI is a thin HTTP client. All agent logic runs inside the cogniverse runtime.
 
-```
-cogniverse code (REPL)
-     │
-     │ POST /a2a/  (message/stream)       ┌───────────────┐
-     │──────────────────────────────────> │  OpenShell    │
-     │   SSE: status, partial, final      │  Gateway      │
-     │ <──────────────────────────────────│               │
-     │                                    │  Sandbox pods │
-     │                                    └───────────────┘
-     ▼
-Cogniverse Runtime (k3d / prod k8s)
-  ├── AgentDispatcher.create_streaming_agent("coding")
-  ├── CodingAgent (DSPy planning, code generation, evaluation)
-  └── SandboxManager → OpenShell gRPC (mTLS)
+```mermaid
+flowchart LR
+    CLI["<span style='color:#000'><b>cogniverse code</b><br/>REPL</span>"]
+
+    subgraph RT["<span style='color:#000'><b>Cogniverse Runtime</b><br/>k3d / prod k8s</span>"]
+        DISP["<span style='color:#000'>AgentDispatcher<br/>create_streaming_agent(&quot;coding_agent&quot;, ...)</span>"]
+        AGENT["<span style='color:#000'>CodingAgent<br/>DSPy planning, code generation, evaluation</span>"]
+        SBM["<span style='color:#000'>SandboxManager</span>"]
+        DISP --> AGENT --> SBM
+    end
+
+    subgraph GW["<span style='color:#000'><b>OpenShell Gateway</b></span>"]
+        PODS["<span style='color:#000'>Sandbox pods</span>"]
+    end
+
+    CLI -->|"POST /a2a/ (message/stream)"| RT
+    RT -.->|"SSE: status, partial, final"| CLI
+    SBM -->|"gRPC (mTLS)"| GW
+    GW --> PODS
+
+    style CLI fill:#90caf9,stroke:#1565c0,color:#000
+    style RT fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DISP fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style AGENT fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style SBM fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style GW fill:#b0bec5,stroke:#546e7a,color:#000
+    style PODS fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 - **REPL loop** sends each turn as a JSON-RPC `message/stream` request to `/a2a/` with `conversation_history` so the agent sees prior plans and code.
@@ -150,16 +164,18 @@ cogniverse up
 What happens under the hood:
 
 1. The `openshell` CLI is downloaded to `~/.local/bin` if not already installed.
-2. `openshell gateway start` launches the `ghcr.io/nvidia/openshell/cluster:0.0.13` Docker container on the host. This image bundles a mini-k3s cluster that in turn runs the gateway as a pod inside itself. Port `19091` on the host is forwarded into the container.
+2. `openshell gateway start --port $OPENSHELL_GATEWAY_HOST_PORT` launches the `ghcr.io/nvidia/openshell/cluster:0.0.13` Docker container on the host. This image bundles a mini-k3s cluster that in turn runs the gateway as a pod inside itself. `OPENSHELL_GATEWAY_HOST_PORT` defaults to `28080` (openshell's own default of `8080` collides with k3d's serverlb container) — **export `OPENSHELL_GATEWAY_HOST_PORT=19091` before running `cogniverse up`**, since step 4 below always tells the runtime pod to reach the gateway at port `19091` regardless of what port the gateway actually started on.
 3. The gateway generates mTLS certs at `~/.config/openshell/gateways/<name>/mtls/`.
 4. `cogniverse_cli.sandbox.sync_gateway_certs_to_cluster()` reads those certs and creates k8s resources in the `cogniverse` namespace:
    - Secret `openshell-mtls` — contains `ca.crt`, `tls.crt`, `tls.key`
-   - ConfigMap `openshell-metadata` — the gateway's `metadata.json` with the endpoint rewritten to `https://host.docker.internal:19091` so the pod can reach the host
+   - ConfigMap `openshell-metadata` — the gateway's `metadata.json` with the endpoint rewritten to the fixed `https://host.docker.internal:19091` so the pod can reach the host
    - ConfigMap `openshell-active` — points to `cogniverse` as the active gateway name
 5. The runtime pod mounts all three at `/home/cogniverse/.config/openshell/gateways/cogniverse/`.
 6. When the coding agent needs to execute code, it calls `SandboxClient.from_active_cluster()` which reads the mounted metadata and certs, opens a gRPC connection to `host.docker.internal:19091` with mTLS, and creates a sandbox.
 
 Host mode is a single-machine setup — one host, one gateway, one developer. The sandboxes run inside the inner k3s cluster that the openshell image bundles.
+
+If the `openshell` CLI can't be installed or the gateway fails to start, `cogniverse up` doesn't abort — it logs a warning, sets `runtime.sandbox.enabled=false` for the Helm release, and continues bringing up the rest of the stack without the coding agent's execution sandbox.
 
 **Cert rotation:** OpenShell regenerates certs if the gateway is destroyed and restarted. Run `cogniverse sandbox sync` to copy the new certs into the cluster, then restart the runtime pod.
 
@@ -366,7 +382,7 @@ The runtime pod's env var `OPENSHELL_GATEWAY_ENDPOINT` is auto-set to `openshell
 
 ## Troubleshooting
 
-**`Cannot connect to runtime. Run 'cogniverse up' first.'`** — The REPL can't reach `http://localhost:28000`. Verify the runtime is healthy: `cogniverse status`.
+**`Cannot connect to runtime. Run 'cogniverse up' first.`** — The REPL can't reach `http://localhost:28000`. Verify the runtime is healthy: `cogniverse status`.
 
 **Coding agent returns 500 with a SandboxManager error** — The gateway isn't reachable from the runtime pod. Check `cogniverse sandbox status`. In host mode, ensure `openshell gateway info` reports the gateway is running. In in-cluster mode, check the openshell StatefulSet is ready: `kubectl get statefulset openshell -n cogniverse`.
 
