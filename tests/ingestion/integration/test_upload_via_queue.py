@@ -591,6 +591,33 @@ def _vespa_visit_count(
     )
 
 
+def _vespa_source_urls(http_port: int, base_schema_name: str, tenant_id: str) -> set:
+    """Return the distinct ``source_url`` field values on the fed documents.
+
+    The worker localizes the uploaded ``s3://`` object to a temp file before
+    processing; every indexed document must still record the canonical
+    ``s3://`` source_url (not the ``file://`` temp path) so answer-time keyframe
+    resolution can derive the object-store bucket from a hit's own source_url.
+    """
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    canonical_suffix = canonical_tenant_id(tenant_id).replace(":", "_")
+    schema_name = f"{base_schema_name}_{canonical_suffix}"
+    yql = f"select source_url from {schema_name} where true"
+    r = requests.get(
+        f"http://localhost:{http_port}/search/",
+        params={"yql": yql, "hits": 100},
+        timeout=15,
+    )
+    r.raise_for_status()
+    children = r.json().get("root", {}).get("children", []) or []
+    return {
+        (c.get("fields") or {}).get("source_url")
+        for c in children
+        if (c.get("fields") or {}).get("source_url")
+    }
+
+
 def _videoprism_image_built() -> bool:
     """The chunk-30s VideoPrism profile is now served by the
     ``deploy/videoprism`` sidecar (a remote inference pod). The runtime
@@ -681,8 +708,12 @@ def videoprism_sidecar():
         )
 
 
+# requires_docker, NOT requires_vespa: this class stands up its OWN Vespa (+
+# Redis + MinIO) container via the module fixtures. The requires_vespa gate
+# probes an EXTERNAL Vespa on :8080 and would skip whenever that isn't up —
+# i.e. exactly when the dev cluster is stopped to free RAM for this test.
 @pytest.mark.integration
-@pytest.mark.requires_vespa
+@pytest.mark.requires_docker
 @pytest.mark.slow
 class TestUploadRealStack:
     """``POST /ingestion/upload`` end-to-end with real Redis + MinIO +
@@ -751,6 +782,20 @@ class TestUploadRealStack:
         # (the worker counts them as it feeds, response carries the count
         # from the pipeline result summary).
         assert body.get("chunks_created", 0) > 0
+
+        # Every indexed document records the canonical s3:// source_url the
+        # upload wrote to MinIO — NOT the file:// temp path the worker localized
+        # to. Answer-time keyframe resolution derives the object-store bucket
+        # from a hit's own source_url, so a file:// value would make keyframes
+        # unfetchable at answer time.
+        indexed_source_urls = _vespa_source_urls(
+            real_stack["vespa_http_port"], PROFILE, TENANT_ID
+        )
+        assert indexed_source_urls == {body["source_url"]}, (
+            f"indexed source_url(s) {indexed_source_urls} should equal the "
+            f"upload's s3:// URL {body['source_url']!r}; a file:// value means "
+            "the worker recorded the localized temp path"
+        )
 
         # 4. Status stream — full event history, ordered.
         status_resp = await http_client.get(f"/ingestion/{ingest_id}/status")
