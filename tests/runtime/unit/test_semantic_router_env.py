@@ -11,7 +11,10 @@ malformed tier map raises rather than silently emptying).
 import pytest
 
 from cogniverse_foundation.config.unified_config import SemanticRouterConfig
-from cogniverse_runtime.main import _semantic_router_config_from_env
+from cogniverse_runtime.main import (
+    _mirror_minio_credentials_to_aws,
+    _semantic_router_config_from_env,
+)
 
 _SR_ENV = (
     "SEMANTIC_ROUTER_ENABLED",
@@ -82,3 +85,48 @@ class TestSemanticRouterConfigFromEnv:
 
         with pytest.raises(ValueError):
             _semantic_router_config_from_env()
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestMirrorMinioCredentialsToAws:
+    """The runtime entrypoint mirrors the MINIO_* secret onto the AWS_* names
+    fsspec reads, so answer-time keyframe resolution authenticates against MinIO.
+    Without this, agents localize s3:// keyframes and fsspec raises
+    NoCredentialsError."""
+
+    _NAMES = (
+        "MINIO_ACCESS_KEY",
+        "MINIO_SECRET_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    )
+
+    @pytest.fixture(autouse=True)
+    def _clear(self, monkeypatch):
+        for name in self._NAMES:
+            monkeypatch.delenv(name, raising=False)
+
+    def test_mirrors_minio_secret_onto_aws_names(self, monkeypatch):
+        monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-access")
+        monkeypatch.setenv("MINIO_SECRET_KEY", "minio-secret")
+        _mirror_minio_credentials_to_aws()
+        import os
+
+        assert os.environ["AWS_ACCESS_KEY_ID"] == "minio-access"
+        assert os.environ["AWS_SECRET_ACCESS_KEY"] == "minio-secret"
+
+    def test_does_not_overwrite_explicit_aws_creds(self, monkeypatch):
+        monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-access")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "explicit-aws")
+        _mirror_minio_credentials_to_aws()
+        import os
+
+        assert os.environ["AWS_ACCESS_KEY_ID"] == "explicit-aws"
+
+    def test_no_minio_creds_leaves_aws_unset(self, monkeypatch):
+        _mirror_minio_credentials_to_aws()
+        import os
+
+        assert "AWS_ACCESS_KEY_ID" not in os.environ
+        assert "AWS_SECRET_ACCESS_KEY" not in os.environ

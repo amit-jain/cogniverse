@@ -223,6 +223,21 @@ async def _wait_for_backend_ready(
     return False
 
 
+def _mirror_minio_credentials_to_aws() -> None:
+    """Mirror the ``MINIO_*`` secret onto the ``AWS_*`` names fsspec's s3 client
+    reads, so answer-time keyframe resolution (agents localize ``s3://``
+    keyframes via ``MediaLocator``) authenticates against MinIO. Done once at the
+    entrypoint so the agents stay env-agnostic and build their s3 MediaConfig
+    from ``SystemConfig.minio_endpoint``. ``setdefault`` never overwrites an
+    explicit ``AWS_*`` value already in the environment."""
+    access = os.environ.get("MINIO_ACCESS_KEY")
+    if access:
+        os.environ.setdefault("AWS_ACCESS_KEY_ID", access)
+    secret = os.environ.get("MINIO_SECRET_KEY")
+    if secret:
+        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", secret)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
@@ -535,6 +550,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("MINIO_ENDPOINT"):
         system_config.minio_endpoint = os.environ["MINIO_ENDPOINT"]
         updated = True
+    _mirror_minio_credentials_to_aws()
     # Semantic router: the chart turns routing on by default and points the
     # runtime at the in-cluster router Service. Absent env (local/dev), routing
     # stays disabled and agents call the backend directly.

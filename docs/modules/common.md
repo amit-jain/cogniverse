@@ -1056,6 +1056,18 @@ local_path = locator.localize("s3://corpus/v_abc.mp4")  # cached locally
 S3 credentials are picked up from the standard AWS environment variables
 (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) or IRSA when the pod is on EKS.
 
+When all you need is to point the `s3://` scheme at an endpoint (the common
+answer-time keyframe-resolution case), `MediaConfig.for_object_store(endpoint)`
+is the shortcut — it returns a config whose `s3` backend targets `endpoint`
+(region `us-east-1`), or the default `file://`-only config when the endpoint is
+empty. The in-cluster runtime resolves the endpoint from
+`SystemConfig.minio_endpoint` and relies on the `AWS_*` env above (mirrored from
+the `MINIO_*` secret at the process entrypoint):
+
+```python
+config = MediaConfig.for_object_store("http://cogniverse-minio:9000")
+```
+
 ### Adding a new backend
 
 fsspec supports `gs://` (via `gcsfs`) and `az://` (via `adlfs`) out of the

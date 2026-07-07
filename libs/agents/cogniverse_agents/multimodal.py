@@ -12,7 +12,10 @@ The keyframe's object key comes from the one shared contract in
 ``cogniverse_core.common.media.keyframes`` (the same function the ingestion
 write side uses). The bucket and tenant are read from the hit's own
 ``source_url`` (``s3://{bucket}/{tenant_id}/{uuid}.ext``), so a keyframe is
-always looked up in the same bucket its video was uploaded to.
+always looked up in the same bucket its video was uploaded to. ``source_url``,
+``video_id`` and ``segment_id`` are read from the hit's ``metadata`` (the
+canonical ``SearchResult.to_dict`` shape) or the top level when a pipeline has
+already flattened them.
 """
 
 from __future__ import annotations
@@ -42,15 +45,31 @@ def _bucket_and_tenant(source_url: str) -> Optional[tuple[str, str]]:
     return parts[0], parts[1]
 
 
+def _hit_field(hit: dict[str, Any], key: str) -> Any:
+    """Read a keyframe-locating field from a search hit.
+
+    ``SearchResult.to_dict`` nests video metadata (``source_url``, ``video_id``,
+    ``segment_id``) under ``metadata``; some agent pipelines flatten it to the
+    top level. Prefer a non-null top-level value, else read it from ``metadata``.
+    """
+    value = hit.get(key)
+    if value is not None:
+        return value
+    metadata = hit.get("metadata")
+    if isinstance(metadata, dict):
+        return metadata.get(key)
+    return None
+
+
 def hit_keyframe_uri(hit: dict[str, Any]) -> Optional[str]:
     """Derive the ``s3://`` keyframe URI for a search hit, or None if the hit
     lacks the fields needed to locate one."""
-    bt = _bucket_and_tenant(str(hit.get("source_url") or ""))
+    bt = _bucket_and_tenant(str(_hit_field(hit, "source_url") or ""))
     if bt is None:
         return None
     bucket, tenant_id = bt
-    video_id = hit.get("video_id")
-    segment_id = hit.get("segment_id")
+    video_id = _hit_field(hit, "video_id")
+    segment_id = _hit_field(hit, "segment_id")
     if not video_id or segment_id is None:
         return None
     try:
@@ -104,7 +123,7 @@ class KeyframeImageResolver:
         except OSError as e:
             logger.warning("keyframe fetch failed for %s: %r", uri, e)
             return None
-        img = dspy.Image.from_file(str(path))
+        img = dspy.Image(str(path))
         self._cache[uri] = img
         self._cache.move_to_end(uri)
         while len(self._cache) > self._cache_size:

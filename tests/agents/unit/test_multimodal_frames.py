@@ -49,7 +49,7 @@ def jpg_path(tmp_path):
 
 class FakeLocator:
     """Stands in for MediaLocator: records every localize() and returns a real
-    on-disk jpg so dspy.Image.from_file produces a genuine image."""
+    on-disk jpg so dspy.Image(path) produces a genuine image."""
 
     def __init__(self, jpg, missing=(), errors=None):
         self._jpg = jpg
@@ -67,11 +67,29 @@ class FakeLocator:
 
 
 def _video_hit(segment_id, video_id="vid123", bucket="media", tenant="acme:acme"):
+    """A hit in the canonical ``SearchResult.to_dict`` shape: the keyframe
+    fields live under ``metadata``, not the top level. This is what every agent
+    actually receives from ``SearchService.search``."""
+    return {
+        "document_id": f"{video_id}_{segment_id}",
+        "score": 0.9,
+        "highlights": {},
+        "metadata": {
+            "source_url": f"s3://{bucket}/{tenant}/somefile.mp4",
+            "video_id": video_id,
+            "segment_id": segment_id,
+            "video_title": "clip",
+        },
+    }
+
+
+def _flat_video_hit(segment_id, video_id="vid123", bucket="media", tenant="acme:acme"):
+    """A hit whose keyframe fields were flattened to the top level by an agent
+    pipeline — the resolver must derive the same URI from either shape."""
     return {
         "source_url": f"s3://{bucket}/{tenant}/somefile.mp4",
         "video_id": video_id,
         "segment_id": segment_id,
-        "title": "clip",
         "score": 0.9,
     }
 
@@ -82,24 +100,31 @@ class TestHitKeyframeUri:
         uri = hit_keyframe_uri(_video_hit(7))
         assert uri == "s3://media/acme:acme/keyframes/vid123/0007.jpg"
 
+    def test_derives_exact_uri_from_flattened_hit(self):
+        uri = hit_keyframe_uri(_flat_video_hit(7))
+        assert uri == "s3://media/acme:acme/keyframes/vid123/0007.jpg"
+
+    def test_nested_and_flat_derive_identical_uri(self):
+        assert hit_keyframe_uri(_video_hit(7)) == hit_keyframe_uri(_flat_video_hit(7))
+
     def test_non_s3_source_url_returns_none(self):
-        assert (
-            hit_keyframe_uri({**_video_hit(7), "source_url": "file:///x.mp4"}) is None
-        )
+        h = _video_hit(7)
+        h["metadata"]["source_url"] = "file:///x.mp4"
+        assert hit_keyframe_uri(h) is None
 
     def test_missing_source_url_returns_none(self):
         h = _video_hit(7)
-        del h["source_url"]
+        del h["metadata"]["source_url"]
         assert hit_keyframe_uri(h) is None
 
     def test_missing_video_id_returns_none(self):
         h = _video_hit(7)
-        del h["video_id"]
+        del h["metadata"]["video_id"]
         assert hit_keyframe_uri(h) is None
 
     def test_missing_segment_id_returns_none(self):
         h = _video_hit(7)
-        del h["segment_id"]
+        del h["metadata"]["segment_id"]
         assert hit_keyframe_uri(h) is None
 
     def test_string_segment_id_matches_int(self):
@@ -218,7 +243,7 @@ class TestReportModuleEmitsImageParts:
         lm = _CapturingLM()
         dspy.configure(lm=lm)
         module = ReportGenerationModule()
-        frames = [dspy.Image.from_file(jpg_path), dspy.Image.from_file(jpg_path)]
+        frames = [dspy.Image(jpg_path), dspy.Image(jpg_path)]
         module.forward(
             content="c", query="q", report_type="comprehensive", keyframes=frames
         )
@@ -331,7 +356,7 @@ class TestSummaryModuleEmitsImageParts:
             content="c",
             query="q",
             summary_type="brief",
-            keyframes=[dspy.Image.from_file(jpg_path), dspy.Image.from_file(jpg_path)],
+            keyframes=[dspy.Image(jpg_path), dspy.Image(jpg_path)],
         )
         assert _count_image_parts(lm.messages[-1]) == 2
 
@@ -406,7 +431,7 @@ class TestSummarizerRunForwardsFrames:
         self, summarizer_agent, jpg_path
     ):
         summarizer_agent.call_dspy = AsyncMock(return_value=Mock(summary="ok"))
-        frames = [dspy.Image.from_file(jpg_path)]
+        frames = [dspy.Image(jpg_path)]
         await summarizer_agent._run_summarization("c", "q", "brief", keyframes=frames)
         assert summarizer_agent.call_dspy.call_args.kwargs["keyframes"] == frames
 
@@ -421,7 +446,7 @@ class TestSynthesisModuleEmitsImageParts:
         dspy.ChainOfThought(SynthesisSignature)(
             query="q",
             evidence="e",
-            keyframes=[dspy.Image.from_file(jpg_path), dspy.Image.from_file(jpg_path)],
+            keyframes=[dspy.Image(jpg_path), dspy.Image(jpg_path)],
         )
         assert _count_image_parts(lm.messages[-1]) == 2
 
@@ -476,3 +501,51 @@ class TestDeepResearchSynthesizeGate:
     async def test_non_dict_results_forward_no_frames(self, deep_research_agent):
         evidence = [{"question": "q", "results": "a plain string, not hits"}]
         assert await self._run(deep_research_agent, evidence) == []
+
+
+@pytest.mark.unit
+class TestAnswerAgentResolverTargetsObjectStore:
+    """Each answer agent must build its keyframe resolver against the
+    SystemConfig object-store endpoint so s3:// keyframes are fetchable at answer
+    time; a bare MediaConfig only handles file:// and errors on every keyframe."""
+
+    @staticmethod
+    def _config_manager_with_minio(endpoint):
+        cm = Mock()
+        sys_cfg = Mock()
+        sys_cfg.minio_endpoint = endpoint
+        cm.get_system_config.return_value = sys_cfg
+        return cm
+
+    def test_deep_research_resolver_targets_object_store(self):
+        agent = DeepResearchAgent(
+            deps=DeepResearchDeps(tenant_id="acme:acme"),
+            config_manager=self._config_manager_with_minio("http://minio-x:9000"),
+        )
+        s3 = agent._keyframe_resolver._locator.config.s3
+        assert s3.endpoint_url == "http://minio-x:9000"
+
+    def test_summarizer_resolver_targets_object_store(self):
+        with patch("cogniverse_agents.summarizer_agent.VLMInterface"):
+            agent = SummarizerAgent(
+                deps=SummarizerDeps(),
+                config_manager=self._config_manager_with_minio("http://minio-x:9000"),
+            )
+        s3 = agent._keyframe_resolver._locator.config.s3
+        assert s3.endpoint_url == "http://minio-x:9000"
+
+    def test_detailed_report_resolver_targets_object_store(self):
+        with patch("cogniverse_agents.detailed_report_agent.VLMInterface"):
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(),
+                config_manager=self._config_manager_with_minio("http://minio-x:9000"),
+            )
+        s3 = agent._keyframe_resolver._locator.config.s3
+        assert s3.endpoint_url == "http://minio-x:9000"
+
+    def test_no_minio_endpoint_yields_file_only_resolver(self):
+        agent = DeepResearchAgent(
+            deps=DeepResearchDeps(tenant_id="acme:acme"),
+            config_manager=self._config_manager_with_minio(""),
+        )
+        assert agent._keyframe_resolver._locator.config.s3.endpoint_url is None

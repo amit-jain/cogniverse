@@ -289,9 +289,16 @@ class DetailedReportAgent(
         self.max_keyframes_to_llm = deps.max_keyframes_to_llm
 
         # Resolves top-K keyframes from search hits into dspy.Image inputs so
-        # the report LLM sees the frames, not just their titles.
+        # the report LLM sees the frames, not just their titles. The locator
+        # targets the object store so s3:// keyframes are fetchable at answer
+        # time (a bare MediaConfig only handles file://).
         self._keyframe_resolver = KeyframeImageResolver(
-            MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+            MediaLocator(
+                tenant_id=SYSTEM_TENANT_ID,
+                config=MediaConfig.for_object_store(
+                    getattr(self, "_minio_endpoint", None)
+                ),
+            )
         )
 
         logger.info("DetailedReportAgent initialized (tenant-agnostic)")
@@ -307,6 +314,9 @@ class DetailedReportAgent(
         system_config = get_config(
             tenant_id=SYSTEM_TENANT_ID, config_manager=self._config_manager
         )
+        # Object-store endpoint for answer-time keyframe resolution; credentials
+        # come from AWS_* env mirrored at the runtime entrypoint.
+        self._minio_endpoint = self._config_manager.get_system_config().minio_endpoint
         llm_config = system_config.get_llm_config()
         self._llm_config = llm_config.resolve("detailed_report_agent")
         logger.info(
@@ -395,6 +405,7 @@ class DetailedReportAgent(
                         "results_analyzed": len(request.search_results),
                         "report_type": request.report_type,
                         "visual_analysis_enabled": request.include_visual_analysis,
+                        "keyframes_attached": getattr(self, "_keyframes_attached", 0),
                         "technical_analysis_enabled": (
                             request.include_technical_details
                             and self.technical_analysis_enabled
@@ -731,6 +742,10 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                 request.search_results[: request.max_results_to_analyze],
                 max_images=self.max_keyframes_to_llm,
             )
+        # Observable count of frames actually attached to the LLM call — surfaced
+        # in the report metadata so callers (and e2e tests) can confirm the
+        # retrieved keyframes reached the answer model.
+        self._keyframes_attached = len(keyframe_images)
 
         try:
             dspy_result = await self.call_dspy(

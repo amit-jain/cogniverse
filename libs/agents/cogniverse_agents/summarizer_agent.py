@@ -273,9 +273,16 @@ class SummarizerAgent(
         self.max_keyframes_to_llm = deps.max_keyframes_to_llm
 
         # Resolves top-K keyframes from search hits into dspy.Image inputs so
-        # the summary LLM sees the frames, not just their titles.
+        # the summary LLM sees the frames, not just their titles. The locator
+        # targets the object store so s3:// keyframes are fetchable at answer
+        # time (a bare MediaConfig only handles file://).
         self._keyframe_resolver = KeyframeImageResolver(
-            MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+            MediaLocator(
+                tenant_id=SYSTEM_TENANT_ID,
+                config=MediaConfig.for_object_store(
+                    getattr(self, "_minio_endpoint", None)
+                ),
+            )
         )
 
         logger.info("SummarizerAgent initialized (tenant-agnostic)")
@@ -291,6 +298,9 @@ class SummarizerAgent(
         system_config = get_config(
             tenant_id=SYSTEM_TENANT_ID, config_manager=self._config_manager
         )
+        # Object-store endpoint for answer-time keyframe resolution; credentials
+        # come from AWS_* env mirrored at the runtime entrypoint.
+        self._minio_endpoint = self._config_manager.get_system_config().minio_endpoint
         llm_config = system_config.get_llm_config()
         self._llm_config = llm_config.resolve("summarizer_agent")
         logger.info(
