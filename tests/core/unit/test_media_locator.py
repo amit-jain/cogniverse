@@ -125,6 +125,25 @@ class TestUnsupportedScheme:
             locator.localize("ftp://example.com/v.mp4")
 
 
+class TestForObjectStore:
+    """MediaConfig.for_object_store points the s3 backend at MinIO so
+    answer-time keyframe resolution can localize s3:// keyframes; a bare
+    MediaConfig has no endpoint and fsspec fails with NoCredentialsError."""
+
+    def test_endpoint_sets_s3_backend(self):
+        cfg = MediaConfig.for_object_store("http://cogniverse-minio:9000")
+        assert cfg.s3.endpoint_url == "http://cogniverse-minio:9000"
+        assert cfg.s3.region == "us-east-1"
+
+    def test_empty_endpoint_is_file_only(self):
+        cfg = MediaConfig.for_object_store("")
+        assert cfg.s3.endpoint_url is None
+
+    def test_none_endpoint_is_file_only(self):
+        cfg = MediaConfig.for_object_store(None)
+        assert cfg.s3.endpoint_url is None
+
+
 class TestStat:
     def test_stat_local(self, locator, tmp_path):
         f = tmp_path / "v.mp4"

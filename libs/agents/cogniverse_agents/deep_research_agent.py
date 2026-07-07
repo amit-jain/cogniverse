@@ -165,9 +165,18 @@ class DeepResearchAgent(
         self.multimodal_generation_enabled = deps.multimodal_generation_enabled
         self.max_keyframes_to_llm = deps.max_keyframes_to_llm
         # Resolves top-K keyframes from the evidence hits into dspy.Image
-        # inputs so the synthesis LLM sees the frames, not just cited text.
+        # inputs so the synthesis LLM sees the frames, not just cited text. The
+        # locator targets the object store so s3:// keyframes are fetchable at
+        # answer time; the endpoint comes from SystemConfig (credentials from
+        # AWS_* env mirrored at the runtime entrypoint).
+        minio_endpoint = None
+        if config_manager is not None:
+            minio_endpoint = config_manager.get_system_config().minio_endpoint
         self._keyframe_resolver = KeyframeImageResolver(
-            MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+            MediaLocator(
+                tenant_id=SYSTEM_TENANT_ID,
+                config=MediaConfig.for_object_store(minio_endpoint),
+            )
         )
 
     async def _process_impl(self, input: DeepResearchInput) -> DeepResearchOutput:

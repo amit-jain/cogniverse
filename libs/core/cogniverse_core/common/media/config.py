@@ -56,3 +56,14 @@ class MediaConfig:
             s3=s3,
             http=http,
         )
+
+    @classmethod
+    def for_object_store(cls, endpoint_url: Optional[str]) -> "MediaConfig":
+        """A config whose ``s3://`` scheme targets an S3-compatible object store
+        (MinIO). Credentials are read by fsspec from ``AWS_*`` env, mirrored from
+        the ``MINIO_*`` secrets at the process entrypoint. An empty
+        ``endpoint_url`` returns the default ``file://``-only config, i.e. object
+        storage is not configured for this process."""
+        if not endpoint_url:
+            return cls()
+        return cls(s3=S3BackendConfig(endpoint_url=endpoint_url))
