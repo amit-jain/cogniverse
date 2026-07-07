@@ -820,7 +820,7 @@ class VideoIngestionPipeline:
         return self.event_queue.cancellation_token.is_cancelled
 
     async def process_video_async_with_strategies(
-        self, video_path: Path | str
+        self, video_path: Path | str, source_uri: str | None = None
     ) -> dict[str, Any]:
         """
         Process video using the strategy pattern - strategies orchestrate everything
@@ -829,12 +829,18 @@ class VideoIngestionPipeline:
         ``pvc://``, ``http(s)://``). URIs are resolved to a local path via the
         :class:`MediaLocator` once at this entry point; processors downstream
         continue to receive a ``Path``.
+
+        ``source_uri`` overrides the recorded ``source_url`` when the caller has
+        already localized the media itself (e.g. the ingestion worker downloads
+        an ``s3://`` object with its own object-store-configured locator, then
+        passes the local ``Path`` for processing plus the ``s3://`` URI here so
+        every indexed document records the canonical source, not the temp path).
         """
         if isinstance(video_path, str):
-            video_uri = self._canonical_uri(video_path)
+            video_uri = self._canonical_uri(source_uri or video_path)
             video_path = self.locator.localize(video_path)
         else:
-            video_uri = self._canonical_uri(video_path)
+            video_uri = self._canonical_uri(source_uri or video_path)
 
         video_id = video_path.stem
 
@@ -1004,11 +1010,15 @@ class VideoIngestionPipeline:
             "async_optimized": True,
         }
 
-    async def process_video_async(self, video_path: Path | str) -> dict[str, Any]:
+    async def process_video_async(
+        self, video_path: Path | str, source_uri: str | None = None
+    ) -> dict[str, Any]:
         """
         Process video using the strategy pattern
         """
-        return await self.process_video_async_with_strategies(video_path)
+        return await self.process_video_async_with_strategies(
+            video_path, source_uri=source_uri
+        )
 
     async def process_videos_concurrent(
         self,

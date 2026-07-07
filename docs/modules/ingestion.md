@@ -707,9 +707,16 @@ def __init__(
 
 **Key Methods**:
 
-#### `async process_video_async(video_path: Path) -> dict[str, Any]`
+#### `async process_video_async(video_path: Path | str, source_uri: str | None = None) -> dict[str, Any]`
 
-Process a single video through the entire pipeline.
+Process a single video through the entire pipeline. Pass a URI string
+(`file://`, `s3://`, `pvc://`, `http(s)://`) to have the pipeline localize it
+itself, or a local `Path`. When the caller has already localized the media
+(e.g. the ingestion worker downloads an `s3://` object with its own
+object-store-configured `MediaLocator`), pass the local `Path` plus
+`source_uri` so every indexed document records the canonical source_url (the
+`s3://` URL) rather than the temporary local path — answer-time keyframe
+resolution derives the object-store bucket from that recorded source_url.
 
 ```python
 result = await pipeline.process_video_async(Path("video.mp4"))

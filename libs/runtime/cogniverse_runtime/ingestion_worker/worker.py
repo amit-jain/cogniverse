@@ -84,7 +84,7 @@ def _media_config_from_env() -> "object":
 
     minio_endpoint = os.environ.get("MINIO_ENDPOINT")
     if not minio_endpoint:
-        return MediaConfig.from_dict({})
+        return MediaConfig()
 
     # fsspec's s3 client picks up AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
     # from the process env. Mirror our MINIO_* secrets onto those names
@@ -96,9 +96,7 @@ def _media_config_from_env() -> "object":
     if secret:
         os.environ.setdefault("AWS_SECRET_ACCESS_KEY", secret)
 
-    return MediaConfig.from_dict(
-        {"backends": {"s3": {"endpoint_url": minio_endpoint, "region": "us-east-1"}}}
-    )
+    return MediaConfig.for_object_store(minio_endpoint)
 
 
 _GRAPH_FACTORY_INSTALLED = False
@@ -324,7 +322,14 @@ async def _default_processor(job: IngestJob) -> dict:
         schema_loader=schema_loader,
         schema_name=job.profile,
     )
-    pipeline_envelope = await pipeline.process_video_async(Path(local_path))
+    # Process the already-localized file, but record job.source_url (s3://…) as
+    # the canonical source_url on every indexed document — answer-time keyframe
+    # resolution derives the object-store bucket from it. Passing source_uri
+    # keeps the worker's own object-store-configured localize (line above) as
+    # the single download, without depending on the pipeline's locator config.
+    pipeline_envelope = await pipeline.process_video_async(
+        Path(local_path), source_uri=job.source_url
+    )
 
     # process_video_async wraps the strategy outputs under
     # envelope["results"] (alongside top-level status/error/timing
