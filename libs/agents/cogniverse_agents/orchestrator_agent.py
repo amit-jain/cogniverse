@@ -227,6 +227,28 @@ def _merge_enrichment(
             agent_input["profiles"] = [selected]
 
 
+# Agents whose answer grounds on retrieved search hits — a completed search
+# step's results are threaded into their step context so they reuse those hits
+# (and the answer-time keyframes derived from them) instead of re-searching.
+_ANSWER_AGENTS_CONSUMING_SEARCH = {"detailed_report_agent", "summarizer_agent"}
+
+
+def _search_results_from_completed(agent_results: Dict[str, Any]) -> Optional[list]:
+    """Return the hit list of a completed search step, if any produced one.
+
+    Matches the SearchAgent's self-identifying result envelope
+    (``{"agent": "search_agent", "results": [...]}`` from
+    ``_execute_search_task``), so image/audio/document search results (which
+    carry no video keyframes) are not mistaken for it.
+    """
+    for result in agent_results.values():
+        if isinstance(result, dict) and result.get("agent") == "search_agent":
+            hits = result.get("results")
+            if isinstance(hits, list) and hits:
+                return hits
+    return None
+
+
 class OrchestratorInput(AgentInput):
     """Type-safe input for orchestration"""
 
@@ -1463,6 +1485,20 @@ class OrchestratorAgent(
                         continue
                     if dep_result:
                         _merge_enrichment(agent_input, dep_agent, dep_result)
+
+                # Ground a report/summary step in a completed search step's hits
+                # (via context, not a typed field) so the answer agent reuses
+                # them — same hits, same answer-time keyframes — instead of
+                # running a second search inside its own dispatch.
+                canonical = (
+                    agent_name
+                    if agent_name.endswith("_agent")
+                    else f"{agent_name}_agent"
+                )
+                if canonical in _ANSWER_AGENTS_CONSUMING_SEARCH:
+                    threaded = _search_results_from_completed(agent_results)
+                    if threaded:
+                        context["search_results"] = threaded
 
                 # Skips if caller set explicit ``rlm`` field, or if the agent
                 # is the orchestrator itself (no recursive promotion).

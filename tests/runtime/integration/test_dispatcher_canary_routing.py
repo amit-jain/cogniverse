@@ -323,7 +323,11 @@ class TestStreamingCanaryRealPhoenix:
                 return _gen()
 
         agent = _StreamAgent()
-        dispatcher_with_factory.create_streaming_agent = lambda *a, **k: (agent, None)
+
+        async def _make_streaming(*a, **k):
+            return (agent, None)
+
+        dispatcher_with_factory.create_streaming_agent = _make_streaming
 
         executor = CogniverseAgentExecutor(dispatcher=dispatcher_with_factory)
         await executor._execute_streaming(

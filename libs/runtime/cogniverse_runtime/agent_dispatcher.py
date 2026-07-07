@@ -35,6 +35,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
+    """Lift a ``SearchResult``/gateway-shaped hit's ``metadata`` to the top level
+    so the answer agents' text helpers see the retrieved content.
+
+    ``_format_public_result`` nests ``video_id``, ``video_title``,
+    ``audio_transcript`` etc. under ``metadata``, but the report/summary content
+    builders read ``title`` / ``description`` / ``video_id`` at the top level and
+    would otherwise render every source as "Unknown" with no transcript. Keeps
+    the nested ``metadata`` untouched (keyframe resolution reads it), aliases the
+    search field names to what the agents read, and never lets a top-level
+    identity/score field be shadowed by metadata.
+    """
+    metadata = hit.get("metadata")
+    if not isinstance(metadata, dict):
+        return hit
+    flat: Dict[str, Any] = {**metadata, **hit}
+    if not flat.get("title") and metadata.get("video_title"):
+        flat["title"] = metadata["video_title"]
+    text = metadata.get("segment_description") or metadata.get("audio_transcript")
+    if text:
+        flat.setdefault("description", text)
+        flat.setdefault("text_content", text)
+    return flat
+
+
 class AgentDispatcher:
     """Routes agent tasks to the correct in-process agent implementation.
 
@@ -563,7 +588,9 @@ class AgentDispatcher:
         elif capabilities & {"document_analysis", "pdf_processing"}:
             result = await self._execute_document_search_task(query, tenant_id, top_k)
         elif capabilities & {"detailed_report"}:
-            result = await self._execute_detailed_report_task(query, tenant_id)
+            result = await self._execute_detailed_report_task(
+                query, tenant_id, context=context
+            )
         elif capabilities & {"summarization", "text_generation"}:
             result = await self._execute_summarization_task(
                 query, tenant_id, context=context
@@ -759,13 +786,22 @@ class AgentDispatcher:
             return {"status": "success", "agent": agent_name, **result.model_dump()}
         return {"status": "success", "agent": agent_name, "result": str(result)}
 
-    def create_streaming_agent(
-        self, agent_name: str, query: str, tenant_id: str
+    async def create_streaming_agent(
+        self,
+        agent_name: str,
+        query: str,
+        tenant_id: str,
+        context: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """Create a streaming-capable agent and its typed input.
 
         Returns (agent, typed_input) for use with agent.process(typed_input, stream=True).
         All agents support streaming via emit_progress() and call_dspy().
+
+        For the answer agents (summary / detailed report) the typed input is
+        grounded in real search results — threaded through ``context`` by the
+        caller, else a fresh search — so streaming answers see the same hits
+        (and answer-time keyframes) as the non-streaming dispatch path.
         """
         agent_entry = self._registry.get_agent(agent_name)
         if not agent_entry:
@@ -786,6 +822,28 @@ class AgentDispatcher:
             typed_input = GatewayInput(query=query, tenant_id=tenant_id)
             return self._gateway_agent, typed_input
 
+        # detailed_report is checked before summarization/text_generation:
+        # config.json registers detailed_report_agent with a "text_generation"
+        # capability, so the reverse order (matched only by summarization) would
+        # serve a streamed detailed report with the SummarizerAgent. Mirrors the
+        # non-streaming dispatch() order.
+        if capabilities & {"detailed_report"}:
+            from cogniverse_agents.detailed_report_agent import (
+                DetailedReportAgent,
+                DetailedReportDeps,
+                DetailedReportInput,
+            )
+
+            deps = DetailedReportDeps(tenant_id=tenant_id)
+            agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
+            typed_input = DetailedReportInput(
+                query=query,
+                search_results=await self._resolve_answer_search_results(
+                    query, tenant_id, context, top_k=20
+                ),
+            )
+            return agent, typed_input
+
         if capabilities & {"summarization", "text_generation"}:
             from cogniverse_agents.summarizer_agent import (
                 SummarizerAgent,
@@ -796,20 +854,12 @@ class AgentDispatcher:
             deps = SummarizerDeps(tenant_id=tenant_id)
             agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
             typed_input = SummarizerInput(
-                query=query, search_results=[], summary_type="general"
+                query=query,
+                search_results=await self._resolve_answer_search_results(
+                    query, tenant_id, context, top_k=10
+                ),
+                summary_type="general",
             )
-            return agent, typed_input
-
-        if capabilities & {"detailed_report"}:
-            from cogniverse_agents.detailed_report_agent import (
-                DetailedReportAgent,
-                DetailedReportDeps,
-                DetailedReportInput,
-            )
-
-            deps = DetailedReportDeps(tenant_id=tenant_id)
-            agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
-            typed_input = DetailedReportInput(query=query, search_results=[])
             return agent, typed_input
 
         if capabilities & {"search", "video_search", "retrieval"}:
@@ -1025,7 +1075,10 @@ class AgentDispatcher:
                 logger.info(f"Query rewritten: '{query}' -> '{resolved_query}'")
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-        profile = config.get("default_profile", "video_colpali_smol500_mv_frame")
+        # ``active_video_profile`` is the tenant's configured default video
+        # profile (config.json). A per-request ``profiles`` override still wins
+        # inside the SearchAgent via SearchInput.profiles.
+        profile = config.get("active_video_profile", "video_colpali_smol500_mv_frame")
 
         search_agent = self._get_search_agent(profile)
         # Apply the dispatcher's per-request artefact overlay so the
@@ -1075,6 +1128,69 @@ class AgentDispatcher:
             response["rewritten_query"] = resolved_query
 
         return response
+
+    async def _resolve_answer_search_results(
+        self,
+        query: str,
+        tenant_id: str,
+        context: Optional[Dict[str, Any]],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
+        """Search results to ground an answer agent (detailed report / summary).
+
+        Grounding these agents in real hits is what makes the report reflect the
+        corpus (and lets keyframes reach the answer LLM). Uses results the caller
+        already threaded through ``context["search_results"]`` (the orchestrator
+        hands a completed search step's hits to a dependent report/summary step)
+        when present; otherwise runs the tenant's default video search.
+
+        This fallback search is best-effort: a report/summary request is not
+        inherently a video-search request (a directly-dispatched summary may be
+        a plain conversational ask), so an unreachable search backend degrades to
+        an ungrounded answer over ``[]`` — logged, not raised — rather than
+        hard-failing the whole request on unrelated video-search infra. A genuine
+        zero-match likewise returns ``[]`` (the agent reports "no results").
+        """
+        if context:
+            threaded = context.get("search_results")
+            if isinstance(threaded, list):
+                hits = [_flatten_search_hit(h) for h in threaded if isinstance(h, dict)]
+                if hits:
+                    return hits
+        enrichment = None
+        if context:
+            enrichment = {
+                k: context[k]
+                for k in (
+                    "enhanced_query",
+                    "entities",
+                    "relationships",
+                    "query_variants",
+                    "profiles",
+                )
+                if context.get(k)
+            }
+        try:
+            search = await self._execute_search_task(
+                query,
+                tenant_id,
+                top_k=top_k,
+                enrichment=enrichment or None,
+                context=context,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Answer-agent grounding search failed for tenant %s; proceeding "
+                "with an ungrounded answer: %r",
+                tenant_id,
+                exc,
+            )
+            return []
+        return [
+            _flatten_search_hit(h)
+            for h in search.get("results", [])
+            if isinstance(h, dict)
+        ]
 
     def _get_search_agent(self, profile: str):
         """Return a per-profile cached SearchAgent instance. SearchAgent is
@@ -1472,7 +1588,9 @@ class AgentDispatcher:
 
         request = SummaryRequest(
             query=query,
-            search_results=[],
+            search_results=await self._resolve_answer_search_results(
+                query, tenant_id, context, top_k=10
+            ),
             summary_type="general",
         )
         result = await agent.summarize(request)
@@ -1508,7 +1626,7 @@ class AgentDispatcher:
         }
 
     async def _execute_detailed_report_task(
-        self, query: str, tenant_id: str
+        self, query: str, tenant_id: str, context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         from cogniverse_agents.detailed_report_agent import (
             DetailedReportAgent,
@@ -1524,7 +1642,9 @@ class AgentDispatcher:
 
         request = ReportRequest(
             query=query,
-            search_results=[],
+            search_results=await self._resolve_answer_search_results(
+                query, tenant_id, context, top_k=20
+            ),
             report_type="comprehensive",
         )
         result = await agent.generate_report(request)
