@@ -529,7 +529,8 @@ class TestStreamingAgentConstruction:
             ),
         ],
     )
-    def test_create_streaming_agent_builds_each_capability(
+    @pytest.mark.asyncio
+    async def test_create_streaming_agent_builds_each_capability(
         self, dispatcher, monkeypatch, agent_name, capability, agent_type, input_type
     ):
         monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
@@ -543,7 +544,7 @@ class TestStreamingAgentConstruction:
         entry.capabilities = [capability]
         dispatcher._registry.get_agent.return_value = entry
 
-        agent, typed_input = dispatcher.create_streaming_agent(
+        agent, typed_input = await dispatcher.create_streaming_agent(
             agent_name, "find robots", "acme:prod"
         )
 

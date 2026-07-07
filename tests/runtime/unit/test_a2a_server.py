@@ -582,7 +582,7 @@ class TestTerminalEventFinalFlag:
                 {"type": "final", "data": {"summary": "done"}},
             ]
         )
-        mock_dispatcher.create_streaming_agent = MagicMock(return_value=(agent, None))
+        mock_dispatcher.create_streaming_agent = AsyncMock(return_value=(agent, None))
         executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
         queue = _CapturingQueue()
 
@@ -614,7 +614,7 @@ class TestTerminalEventFinalFlag:
 
         mem_calls: list = []
         graph_calls: list = []
-        mock_dispatcher.create_streaming_agent = MagicMock(side_effect=_fake_create)
+        mock_dispatcher.create_streaming_agent = AsyncMock(side_effect=_fake_create)
         mock_dispatcher._rewrite_query_with_history = _fake_rewrite
         mock_dispatcher._init_agent_memory = lambda a, n, t: mem_calls.append((a, n, t))
         mock_dispatcher._bind_graph_manager = lambda a, t: graph_calls.append((a, t))
@@ -665,7 +665,7 @@ class TestStreamingCanaryOverlay:
 
     async def test_streaming_resolves_and_applies_overlay(self, mock_dispatcher):
         agent = _MemoryStreamAgent([{"type": "final", "data": {"ok": True}}])
-        mock_dispatcher.create_streaming_agent = MagicMock(return_value=(agent, None))
+        mock_dispatcher.create_streaming_agent = AsyncMock(return_value=(agent, None))
         canary = {
             "served_from": "canary",
             "version": 4,
@@ -691,7 +691,7 @@ class TestStreamingCanaryOverlay:
         self, mock_dispatcher
     ):
         agent = _MemoryStreamAgent([{"type": "final", "data": {}}])
-        mock_dispatcher.create_streaming_agent = MagicMock(return_value=(agent, None))
+        mock_dispatcher.create_streaming_agent = AsyncMock(return_value=(agent, None))
         mock_dispatcher.resolve_artefact_for_request = AsyncMock(return_value=None)
         executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
         queue = _CapturingQueue()

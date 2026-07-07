@@ -16,6 +16,7 @@ from cogniverse_agents.orchestrator_agent import (
     OrchestratorDeps,
     OrchestratorInput,
     OrchestratorOutput,
+    _search_results_from_completed,
 )
 from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
@@ -118,6 +119,38 @@ def orchestrator_agent(mock_agent_registry):
             port=8013,
         )
         return agent
+
+
+@pytest.mark.unit
+class TestSearchResultsFromCompleted:
+    """The orchestrator threads only a real video-search step's hits to an
+    answer step — not image/audio search results, and not an empty set."""
+
+    def test_returns_search_agent_hits(self):
+        hits = [{"document_id": "v_0", "metadata": {"source_url": "s3://b/t/v.mp4"}}]
+        results = {
+            "query_enhancement_agent": {"enhanced_query": "x"},
+            "search_agent": {"agent": "search_agent", "results": hits},
+        }
+        assert _search_results_from_completed(results) == hits
+
+    def test_ignores_non_search_agent_results(self):
+        results = {
+            "image_search_agent": {
+                "agent": "image_search_agent",
+                "results": [{"a": 1}],
+            },
+            "summarizer_agent": {"agent": "summarizer_agent", "results": [{"b": 2}]},
+        }
+        assert _search_results_from_completed(results) is None
+
+    def test_empty_search_results_returns_none(self):
+        results = {"search_agent": {"agent": "search_agent", "results": []}}
+        assert _search_results_from_completed(results) is None
+
+    def test_no_search_step_returns_none(self):
+        results = {"query_enhancement_agent": {"enhanced_query": "x"}}
+        assert _search_results_from_completed(results) is None
 
 
 class TestOrchestratorInputValidation:
@@ -449,6 +482,73 @@ class TestOrchestratorAgent:
         assert "search_agent" in results
         assert results["query_enhancement_agent"]["status"] == "success"
         assert results["search_agent"]["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_execute_plan_threads_search_hits_to_answer_step(
+        self, orchestrator_agent
+    ):
+        """A completed search step's hits reach a dependent summary/report step
+        through its context, so the answer agent reuses them (and the keyframes
+        derived from them) instead of running a second search."""
+        s3_hit = {
+            "document_id": "v_0",
+            "score": 0.9,
+            "metadata": {
+                "source_url": "s3://cogniverse-ingest/test:unit/vid.mp4",
+                "video_id": "vid",
+                "segment_id": 0,
+            },
+        }
+        captured = {}
+
+        async def _post(url, json=None, **kwargs):
+            resp = Mock()
+            resp.raise_for_status = Mock()
+            if json.get("agent_name") == "search_agent":
+                resp.json = Mock(
+                    return_value={
+                        "status": "success",
+                        "agent": "search_agent",
+                        "results": [s3_hit],
+                    }
+                )
+            else:
+                captured["payload"] = json
+                resp.json = Mock(return_value={"status": "success"})
+            return resp
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=_post)
+
+        plan = OrchestrationPlan(
+            query="report on the clip",
+            steps=[
+                AgentStep(
+                    agent_name="search_agent",
+                    input_data={"query": "report on the clip"},
+                    depends_on=[],
+                    reasoning="Search",
+                ),
+                AgentStep(
+                    agent_name="summarizer_agent",
+                    input_data={"query": "report on the clip"},
+                    depends_on=[0],
+                    reasoning="Summarize the hits",
+                ),
+            ],
+            parallel_groups=[],
+            reasoning="Search then summarize",
+        )
+
+        with patch(
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=mock_client),
+        ):
+            await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
+
+        assert captured["payload"]["context"]["search_results"] == [s3_hit], (
+            "the summarizer step's context must carry the search step's hits"
+        )
 
     @pytest.mark.asyncio
     async def test_execute_plan_agent_not_found(self, orchestrator_agent):

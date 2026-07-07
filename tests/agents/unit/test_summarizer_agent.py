@@ -1050,11 +1050,16 @@ class TestA2AExecutorStreaming:
             schema_loader=Mock(),
         )
 
+        async def _no_search(*a, **k):
+            return {"results": []}
+
+        dispatcher._execute_search_task = _no_search
+
         with (
             patch("cogniverse_agents.summarizer_agent.VLMInterface"),
             patch.object(SummarizerAgent, "_initialize_vlm_client"),
         ):
-            agent, typed_input = dispatcher.create_streaming_agent(
+            agent, typed_input = await dispatcher.create_streaming_agent(
                 "summarizer_agent", "test query", "default"
             )
 
@@ -1078,7 +1083,9 @@ class TestA2AExecutorStreaming:
         )
 
         with pytest.raises(ValueError, match="streaming not configured"):
-            dispatcher.create_streaming_agent("annotation_agent", "query", "default")
+            await dispatcher.create_streaming_agent(
+                "annotation_agent", "query", "default"
+            )
 
     @pytest.mark.asyncio
     async def test_executor_streaming_emits_a2a_events(self):
@@ -1103,7 +1110,7 @@ class TestA2AExecutorStreaming:
 
         mock_agent.process = AsyncMock(return_value=fake_stream())
         mock_typed_input = Mock()
-        mock_dispatcher.create_streaming_agent = Mock(
+        mock_dispatcher.create_streaming_agent = AsyncMock(
             return_value=(mock_agent, mock_typed_input)
         )
         # Streaming resolves the canary/variant overlay before iterating; provide

@@ -199,8 +199,7 @@ class CogniverseAgentExecutor(AgentExecutor):
                     query, conversation_history
                 )
 
-            agent, typed_input = await asyncio.to_thread(
-                self._dispatcher.create_streaming_agent,
+            agent, typed_input = await self._dispatcher.create_streaming_agent(
                 agent_name,
                 query,
                 tenant_id,
