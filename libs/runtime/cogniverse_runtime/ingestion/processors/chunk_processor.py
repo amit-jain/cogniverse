@@ -77,6 +77,15 @@ class ChunkProcessor(BaseProcessor):
             chunks_dir = output_dir / "chunks" / video_id
             metadata_file = output_dir / "metadata" / f"{video_id}_chunks.json"
 
+        # Reuse previously extracted chunks when caching is enabled and a
+        # complete, valid set is already on disk. With cache_chunks=False every
+        # call re-extracts.
+        if self.cache_chunks:
+            cached = self._load_cached_chunks(metadata_file, chunks_dir, video_id)
+            if cached is not None:
+                self.logger.info(f"   ♻️  Reusing {len(cached['chunks'])} cached chunks")
+                return cached
+
         chunks_dir.mkdir(parents=True, exist_ok=True)
 
         # Get video duration
@@ -131,6 +140,35 @@ class ChunkProcessor(BaseProcessor):
             json.dump(metadata, f, indent=2)
 
         self.logger.info(f"   ✅ Extracted {len(chunks)} chunks")
+
+        return {
+            "chunks": chunks,
+            "metadata": metadata,
+            "chunks_dir": str(chunks_dir),
+            "video_id": video_id,
+        }
+
+    def _load_cached_chunks(
+        self, metadata_file: Path, chunks_dir: Path, video_id: str
+    ) -> dict[str, Any] | None:
+        """Return the cached chunk result if a complete valid set exists, else
+        None. A set is valid only when the metadata parses and every chunk file
+        it references is present and non-empty."""
+        if not metadata_file.exists():
+            return None
+        try:
+            with open(metadata_file) as f:
+                metadata = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+        chunks = metadata.get("chunks")
+        if not chunks:
+            return None
+        for chunk in chunks:
+            chunk_path = Path(chunk.get("path", ""))
+            if not (chunk_path.exists() and chunk_path.stat().st_size > 0):
+                return None
 
         return {
             "chunks": chunks,
