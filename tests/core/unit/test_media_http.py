@@ -86,3 +86,32 @@ class TestHttpFetch:
 
         assert result.name == "clip.mkv"
         assert result.suffix == ".mkv"
+
+
+class TestHttpTimeoutPropagation:
+    """media.backends.http.timeout_s must reach fsspec's HTTP client, else a
+    fetch from a slow host hangs regardless of the configured value."""
+
+    def _locator(self, tmp_path, timeout_s):
+        from cogniverse_core.common.media import HttpBackendConfig
+
+        cfg = MediaConfig(http=HttpBackendConfig(timeout_s=timeout_s))
+        return MediaLocator(tenant_id="acme", config=cfg, cache_root=tmp_path / "c")
+
+    def test_http_kwargs_carry_configured_timeout(self, tmp_path):
+        import aiohttp
+
+        loc = self._locator(tmp_path, 5)
+        kwargs = loc._fs_kwargs_for("http://host/clip.mp4")
+        timeout = kwargs["client_kwargs"]["timeout"]
+        assert isinstance(timeout, aiohttp.ClientTimeout)
+        assert timeout.total == 5
+
+    def test_https_scheme_also_gets_timeout(self, tmp_path):
+        loc = self._locator(tmp_path, 12)
+        kwargs = loc._fs_kwargs_for("https://host/clip.mp4")
+        assert kwargs["client_kwargs"]["timeout"].total == 12
+
+    def test_file_scheme_has_no_timeout_kwargs(self, tmp_path):
+        loc = self._locator(tmp_path, 5)
+        assert loc._fs_kwargs_for("file:///tmp/x.mp4") == {}
