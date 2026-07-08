@@ -918,8 +918,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "routing": routing_config,
         },
     )
-    configure_synthetic(generator_config=synthetic_gen_config)
-    logger.info("Synthetic data service configured")
+    # Wire the real search backend so /synthetic/generate samples the tenant's
+    # actual corpus. Without a backend the service falls back to a hardcoded
+    # mock profile/topic list and every tenant gets fabricated training data.
+    # Mirrors the optimization CLI's wiring (optimization_cli.py).
+    from cogniverse_foundation.config.unified_config import BackendConfig
+
+    synthetic_backend_section = config.get("backend", {})
+    if isinstance(synthetic_backend_section, dict):
+        synthetic_backend_section = {**synthetic_backend_section}
+        synthetic_backend_section.setdefault("tenant_id", SYSTEM_TENANT_ID)
+        synthetic_backend_config = BackendConfig.from_dict(synthetic_backend_section)
+    else:
+        synthetic_backend_config = synthetic_backend_section
+    synthetic_backend = BackendRegistry.get_instance().get_search_backend(
+        name=synthetic_backend_config.backend_type,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+    configure_synthetic(
+        backend=synthetic_backend,
+        backend_config=synthetic_backend_config,
+        generator_config=synthetic_gen_config,
+    )
+    logger.info(
+        "Synthetic data service configured with %s backend",
+        synthetic_backend_config.backend_type,
+    )
 
     # 10. Optimization runs via Argo CronWorkflows (not as background task).
     # See: charts/cogniverse/templates/optimization-workflows.yaml
