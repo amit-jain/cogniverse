@@ -94,16 +94,21 @@ spec:
           set -e
           echo "Deploying Vespa schemas for tenant {{workflow.parameters.tenant-id}}..."
 
-          # Deploy each profile schema
+          # Deploy each profile's schema. The schema FILE is named after the
+          # profile's schema_name (e.g. profile audio_clap_semantic ->
+          # schema audio_content), which is not always the profile name — so
+          # resolve schema_name from config before deploying, matching the
+          # admin /profiles/{name}/deploy path.
+          cd /app
           IFS=',' read -ra PROFILES <<< "{{workflow.parameters.profiles}}"
           for profile in "${PROFILES[@]}"; do
-            echo "Deploying schema: $profile"
+            schema_name=$(uv run python scripts/resolve_profile_schema.py "$profile")
+            echo "Deploying schema for profile $profile -> $schema_name"
 
-            cd /app
             uv run python scripts/deploy_json_schema.py \
-              "configs/schemas/${profile}.json"
+              "configs/schemas/${schema_name}_schema.json"
 
-            echo "Schema $profile deployed successfully"
+            echo "Schema $schema_name deployed successfully"
           done
 
           echo "All schemas deployed"
@@ -233,10 +238,13 @@ spec:
             exit 1
           fi
 
-          # Check schemas
+          # Check schemas. Resolve the profile's schema_name (may differ from
+          # the profile name) before building the tenant-scoped schema id.
+          cd /app
           IFS=',' read -ra PROFILES <<< "{{workflow.parameters.profiles}}"
           for profile in "${PROFILES[@]}"; do
-            SCHEMA_NAME="${profile}_{{workflow.parameters.tenant-id}}"
+            schema_base=$(uv run python scripts/resolve_profile_schema.py "$profile")
+            SCHEMA_NAME="${schema_base}_{{workflow.parameters.tenant-id}}"
 
             # Query schema
             RESPONSE=$(curl -s "http://cogniverse-vespa:8080/search/?yql=select+*+from+${SCHEMA_NAME}+where+true+limit+0")
