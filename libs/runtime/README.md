@@ -217,8 +217,9 @@ if __name__ == "__main__":
 - Body includes `query`, `profile`, `strategy`, `top_k`, `filters`, `tenant_id`, `stream`
 - `stream: true` returns a Server-Sent Events response instead of JSON
 
-**GET /search/strategies**
-- List available ranking strategies (semantic, bm25, hybrid, learned, multi_modal)
+**GET /search/strategies?tenant_id=...**
+- List the ranking strategies a profile accepts (per-profile, from its schema)
+- Optional `profile` defaults to the tenant's active profile; names map directly to the `strategy` field of `POST /search`
 
 **GET /search/profiles?tenant_id=...**
 - List backend profiles visible to a tenant (name, model, type)

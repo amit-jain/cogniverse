@@ -502,10 +502,13 @@ curl -X POST http://localhost:8000/search/ \
   }'
 ```
 
-**GET /search/strategies** - List available strategies
+**GET /search/strategies** - List the ranking strategies a profile accepts
 ```bash
-curl http://localhost:8000/search/strategies
+curl "http://localhost:8000/search/strategies?tenant_id=acme:acme"
 ```
+Strategies are per-profile (derived from the profile's schema), so `tenant_id`
+is required and an optional `profile` defaults to the tenant's active profile.
+The returned names can be passed straight to the `strategy` field of `POST /search`.
 
 **GET /search/profiles** - List available profiles
 ```bash

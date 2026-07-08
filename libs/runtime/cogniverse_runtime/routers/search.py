@@ -219,25 +219,62 @@ async def search(
             # Client errors raised above (e.g. 400 "no profile") must keep their
             # status — the broad handler below would otherwise mask them as 500.
             raise
+        except ValueError as e:
+            # Bad request input (unknown profile/strategy, missing schema) — a
+            # client error, not a server fault. 400, not 500.
+            logger.info(f"Search rejected invalid input: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             logger.error(f"Search error: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/strategies")
-async def list_strategies() -> Dict[str, Any]:
-    """List available search strategies."""
+async def list_strategies(
+    tenant_id: str = Query(..., description="Tenant identifier (required)"),
+    profile: Optional[str] = Query(
+        None, description="Profile name; defaults to the tenant's active profile"
+    ),
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
+) -> Dict[str, Any]:
+    """List the ranking strategies ``POST /search`` accepts for a profile.
+
+    Strategies are per-profile (derived from its schema), so this requires a
+    tenant and resolves the profile the same way ``POST /search`` does. The
+    returned names can be passed straight to the ``strategy`` field.
+    """
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    search_service = SearchService(
+        config=config,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+
+    resolved = profile or config.get("active_video_profile")
+    if not resolved:
+        profiles_dict = config.get("backend", {}).get("profiles", {}) or {}
+        if profiles_dict:
+            resolved = next(iter(profiles_dict))
+    if not resolved:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No profile specified and no active_video_profile configured "
+                "on the runtime."
+            ),
+        )
+
+    try:
+        strategies = search_service.get_available_strategies(resolved, tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
     return {
-        "strategies": [
-            {"name": "semantic", "description": "Pure semantic similarity search"},
-            {"name": "bm25", "description": "BM25 keyword-based search"},
-            {"name": "hybrid", "description": "Combines semantic and BM25"},
-            {"name": "learned", "description": "Learned reranking with ML model"},
-            {
-                "name": "multi_modal",
-                "description": "Multi-modal reranking (text, video, audio)",
-            },
-        ]
+        "tenant_id": tenant_id,
+        "profile": resolved,
+        "count": len(strategies),
+        "strategies": strategies,
     }
 
 

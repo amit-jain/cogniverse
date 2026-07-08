@@ -115,6 +115,40 @@ class SearchService:
             profile, model_name, config=self.config
         )
 
+    def get_available_strategies(self, profile: str, tenant_id: str) -> list[str]:
+        """Return the ranking-strategy names ``search`` accepts for a profile.
+
+        Sourced from the profile's schema definition — the same set the
+        backend validates against — so a client can discover a name here and
+        pass it straight to ``ranking_strategy`` without a 'strategy not found'
+        error. Raises ``ValueError`` for an unknown profile (via
+        ``_get_profile_config``) or a profile whose schema declares none.
+        """
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_vespa.ranking_strategy_extractor import (
+            extract_all_ranking_strategies,
+        )
+
+        profile_config = self._get_profile_config(profile, tenant_id)
+        schema_name = profile_config.get("schema_name")
+        if not schema_name:
+            raise ValueError(f"Profile '{profile}' missing 'schema_name' configuration")
+
+        if not isinstance(self.schema_loader, FilesystemSchemaLoader):
+            raise ValueError(
+                "Listing strategies requires a FilesystemSchemaLoader; got "
+                f"{type(self.schema_loader).__name__}"
+            )
+
+        all_strategies = extract_all_ranking_strategies(self.schema_loader.base_path)
+        schema_strategies = all_strategies.get(schema_name, {})
+        if not schema_strategies:
+            raise ValueError(
+                f"No ranking strategies found for profile '{profile}' "
+                f"(schema '{schema_name}')."
+            )
+        return sorted(schema_strategies.keys())
+
     def _get_backend(
         self,
         profile: str,
