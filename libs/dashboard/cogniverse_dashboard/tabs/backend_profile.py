@@ -11,19 +11,10 @@ from typing import Any, Dict
 import httpx
 import streamlit as st
 
+from cogniverse_dashboard.tabs.tenant_management import get_runtime_api_url
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-
-def get_runtime_api_url() -> str:
-    """Get the runtime API URL from session state or system config."""
-    if "runtime_api_url" in st.session_state:
-        return st.session_state.runtime_api_url
-
-    if "config_manager" in st.session_state:
-        system_config = st.session_state.config_manager.get_system_config()
-        return system_config.ingestion_api_url
-
-    return "http://localhost:8000"
+__all__ = ["get_runtime_api_url"]
 
 
 def deploy_schema_via_api(
