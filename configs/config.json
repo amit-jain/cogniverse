@@ -1,6 +1,6 @@
 {
   "comment": "Multi-Agent RAG System Configuration - Copy this file to config.json and modify the values as needed",
-  "default_tenant": "flywheel_org:production",
+  "default_tenant": "",
   "active_video_profile": "video_colpali_smol500_mv_frame",
   "agents": {
     "search_agent": {
@@ -352,7 +352,7 @@
   },
   "search_backend": "vespa",
   "byaldi_index_name": ".byaldi/my_video_index",
-  "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+  "vlm_endpoint_url": "",
   "auto_start_vlm_service": true,
   "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
   "embedding_model": "lightonai/DenseOn",
@@ -391,7 +391,7 @@
   },
   "remote_inference_api_key": null,
   "remote_inference_provider": null,
-  "videoprism_repo_path": "/Users/amjain/source/hobby/videoprism",
+  "videoprism_repo_path": "",
   "pipeline_cache": {
     "enabled": true,
     "backends": [
@@ -455,7 +455,6 @@
     "keyframe_extraction_method": "fps",
     "keyframe_fps": 1.0
   },
-  "device": "mps",
   "max_workers": 4,
   "timeout": 60.0,
   "log_level": "INFO",
@@ -673,7 +672,7 @@
           "description": {
             "class": "VLMDescriptionStrategy",
             "params": {
-              "vlm_endpoint": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+              "vlm_endpoint": "",
               "batch_size": 500,
               "timeout": 10800,
               "auto_start": true
