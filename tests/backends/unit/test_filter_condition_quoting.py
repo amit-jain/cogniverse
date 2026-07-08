@@ -13,6 +13,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from cogniverse_vespa.search_backend import VespaSearchBackend, _yql_scalar
@@ -93,6 +94,42 @@ def test_yql_scalar_helper_round_trips() -> None:
     assert _yql_scalar(5.0, "x") == "5.0"
     assert _yql_scalar(True, "x") == "true"
     assert _yql_scalar("hello", "x") == '"hello"'
+
+
+def test_yql_scalar_coerces_numpy_float(backend: VespaSearchBackend) -> None:
+    """np.float64 is a float subclass; repr would emit ``np.float64(0.5)``."""
+    assert _yql_scalar(np.float64(0.5), "score") == "0.5"
+
+
+def test_yql_scalar_coerces_numpy_int(backend: VespaSearchBackend) -> None:
+    """np.int64 is not an int subclass; without coercion it becomes ``"5"``."""
+    assert _yql_scalar(np.int64(5), "count") == "5"
+
+
+def test_numpy_int_equality_is_unquoted_number(backend: VespaSearchBackend) -> None:
+    assert backend._build_filter_conditions({"count": np.int64(5)}) == "count = 5"
+
+
+def test_numpy_float_equality_is_unquoted_number(backend: VespaSearchBackend) -> None:
+    assert backend._build_filter_conditions({"score": np.float64(0.5)}) == "score = 0.5"
+
+
+def test_numpy_bool_lowercase(backend: VespaSearchBackend) -> None:
+    assert (
+        backend._build_filter_conditions({"active": np.bool_(True)}) == "active = true"
+    )
+
+
+def test_numpy_range_bounds_unquoted(backend: VespaSearchBackend) -> None:
+    out = backend._build_filter_conditions(
+        {"ts": {"gte": np.int64(100), "lte": np.float64(200.0)}}
+    )
+    assert out == "ts >= 100 AND ts <= 200.0"
+
+
+def test_non_finite_numpy_float_raises(backend: VespaSearchBackend) -> None:
+    with pytest.raises(ValueError, match="Non-finite"):
+        backend._build_filter_conditions({"score": np.float64("nan")})
 
 
 @pytest.fixture

@@ -57,6 +57,18 @@ def _format_query_vector_param(arr: np.ndarray, schema_name: str):
     return arr.tolist()
 
 
+def _coerce_numpy_scalar(value: object) -> object:
+    """Convert a numpy scalar to its native Python equivalent.
+
+    ``np.float64`` is a ``float`` subclass, so ``repr`` on it emits
+    ``np.float64(0.5)`` — malformed YQL. ``np.int64``/``np.bool_`` are not
+    ``int``/``bool`` subclasses, so they miss the numeric branch entirely and
+    fall through to ``contains "5"``. ``.item()`` yields a plain Python scalar
+    that serializes correctly. Non-numpy values pass through unchanged.
+    """
+    return value.item() if isinstance(value, np.generic) else value
+
+
 def _yql_scalar(value: object, field: str) -> str:
     """Serialize a scalar filter value into a YQL-safe literal.
 
@@ -65,6 +77,7 @@ def _yql_scalar(value: object, field: str) -> str:
     Strings are quoted via ``yql_quote`` so an ISO timestamp like
     ``"2024-01-01"`` (a string that looks numeric) survives the parser.
     """
+    value = _coerce_numpy_scalar(value)
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, (int, float)):
@@ -919,6 +932,7 @@ class VespaSearchBackend(SearchBackend):
                 # None means "no filter on this field", not a match on the
                 # literal string "None".
                 continue
+            value = _coerce_numpy_scalar(value)
             if isinstance(value, dict):
                 # Range filter, e.g. {"gte": 100, "lte": 200} ->
                 # 'field >= 100 AND field <= 200'. Numeric range values must
