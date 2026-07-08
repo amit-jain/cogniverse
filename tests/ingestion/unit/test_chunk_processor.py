@@ -243,3 +243,75 @@ class TestChunkProcessorIntegration:
             # Verify OutputManager was used
             mock_get_om.assert_called_once()
             assert mock_om.get_processing_dir.call_count == 2  # chunks and metadata
+
+
+class TestChunkCaching:
+    """cache_chunks controls whether extract_chunks reuses on-disk chunks or
+    always re-extracts. The flag was previously stored and never consulted."""
+
+    def _make_processor(self, mock_logger, cache_chunks):
+        return ChunkProcessor(
+            logger=mock_logger,
+            chunk_duration=30.0,
+            chunk_overlap=0.0,
+            cache_chunks=cache_chunks,
+        )
+
+    def _run(self, processor, video_path, output_dir):
+        """Run extract_chunks with ffprobe/ffmpeg faked; count extraction
+        calls and materialize real chunk files so cache validation can see
+        them. Returns (result, extract_call_count)."""
+        calls = {"n": 0}
+
+        def fake_extract(video, chunk_path, start, dur):
+            calls["n"] += 1
+            chunk_path.parent.mkdir(parents=True, exist_ok=True)
+            chunk_path.write_bytes(b"CHUNK")
+            return True
+
+        with (
+            patch.object(processor, "_get_video_duration", return_value=60.0),
+            patch.object(processor, "_extract_chunk", side_effect=fake_extract),
+        ):
+            result = processor.extract_chunks(video_path, output_dir=output_dir)
+        return result, calls["n"]
+
+    def test_cache_enabled_reuses_chunks_on_second_call(
+        self, mock_logger, sample_video_path, tmp_path
+    ):
+        proc = self._make_processor(mock_logger, cache_chunks=True)
+        out = tmp_path / "out"
+
+        first, first_calls = self._run(proc, sample_video_path, out)
+        assert first_calls == 2  # 60s / 30s
+        assert len(first["chunks"]) == 2
+
+        second, second_calls = self._run(proc, sample_video_path, out)
+        assert second_calls == 0  # fully reused
+        assert second["chunks"] == first["chunks"]
+
+    def test_cache_disabled_reextracts_every_call(
+        self, mock_logger, sample_video_path, tmp_path
+    ):
+        proc = self._make_processor(mock_logger, cache_chunks=False)
+        out = tmp_path / "out"
+
+        _, first_calls = self._run(proc, sample_video_path, out)
+        _, second_calls = self._run(proc, sample_video_path, out)
+        assert first_calls == 2
+        assert second_calls == 2  # no reuse
+
+    def test_cache_invalidated_when_a_chunk_file_missing(
+        self, mock_logger, sample_video_path, tmp_path
+    ):
+        proc = self._make_processor(mock_logger, cache_chunks=True)
+        out = tmp_path / "out"
+
+        first, _ = self._run(proc, sample_video_path, out)
+        # Delete one chunk file — the cached set is now incomplete.
+        from pathlib import Path
+
+        Path(first["chunks"][0]["path"]).unlink()
+
+        _, recount = self._run(proc, sample_video_path, out)
+        assert recount == 2  # re-extracted because cache was invalid
