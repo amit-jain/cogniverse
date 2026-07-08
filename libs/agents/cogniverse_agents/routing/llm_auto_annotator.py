@@ -16,6 +16,7 @@ from typing import Optional
 
 from litellm import completion
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.routing.annotation_agent import AnnotationRequest
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -231,7 +232,7 @@ Be conservative - if unsure, mark requires_human_review as true."""
             return AutoAnnotation(
                 span_id=span_id,
                 label=label,
-                confidence=float(data.get("confidence", 0.5)),
+                confidence=parse_confidence(data.get("confidence"), default=0.5),
                 reasoning=data.get("reasoning", "No reasoning provided"),
                 suggested_correct_agent=data.get("suggested_correct_agent"),
                 requires_human_review=bool(data.get("requires_human_review", True)),
