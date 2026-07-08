@@ -334,3 +334,73 @@ class TestEncodingDelegatedToBackend:
                 ]
                 is mock_encoder
             )
+
+
+@pytest.mark.unit
+class TestGetAvailableStrategies:
+    """get_available_strategies must return the real per-profile strategy set
+    from the schema definitions — the same names POST /search validates
+    against — read through a real FilesystemSchemaLoader over configs/schemas.
+    """
+
+    @pytest.fixture
+    def real_service(self, mock_config_manager):
+        from pathlib import Path
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        config = {
+            "backend": {
+                "profiles": {
+                    "video_colpali_smol500_mv_frame": {
+                        "embedding_model": "vidore/colSmol-500M",
+                        "schema_name": "video_colpali_smol500_mv_frame",
+                    }
+                }
+            }
+        }
+        with patch(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            return_value=Mock(),
+        ):
+            return SearchService(
+                config=config,
+                config_manager=mock_config_manager,
+                schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            )
+
+    def test_returns_real_schema_strategies(self, real_service):
+        strategies = real_service.get_available_strategies(
+            "video_colpali_smol500_mv_frame", "acme:acme"
+        )
+        # The exact names POST /search accepts for this profile's schema.
+        assert "default" in strategies
+        assert "bm25_only" in strategies
+        assert "float_float" in strategies
+        assert "phased" in strategies
+        # And NOT the old hardcoded list the endpoint used to advertise.
+        assert "semantic" not in strategies
+        assert "hybrid" not in strategies
+        assert strategies == sorted(strategies)
+
+    def test_unknown_profile_raises_value_error(self, real_service):
+        with pytest.raises(ValueError, match="not found in backend.profiles"):
+            real_service.get_available_strategies("no_such_profile", "acme:acme")
+
+    def test_profile_without_schema_name_raises(self, mock_config_manager):
+        from pathlib import Path
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        config = {"backend": {"profiles": {"broken": {"embedding_model": "x"}}}}
+        with patch(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            return_value=Mock(),
+        ):
+            svc = SearchService(
+                config=config,
+                config_manager=mock_config_manager,
+                schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            )
+        with pytest.raises(ValueError, match="missing 'schema_name'"):
+            svc.get_available_strategies("broken", "acme:acme")

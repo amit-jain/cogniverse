@@ -343,13 +343,16 @@ class TestSearchAPI:
 
     def test_list_strategies(self):
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
-            resp = client.get("/search/strategies")
+            resp = client.get("/search/strategies", params={"tenant_id": TENANT_ID})
 
         assert resp.status_code == 200
         data = resp.json()
-        strategies = data.get("strategies", data) if isinstance(data, dict) else data
+        strategies = data["strategies"]
         assert isinstance(strategies, list)
         assert len(strategies) > 0
+        # Strategies must be the real per-profile set POST /search accepts,
+        # not the old hardcoded advertisement.
+        assert "default" in strategies
 
     def test_list_profiles(self):
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:

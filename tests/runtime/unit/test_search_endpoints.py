@@ -105,28 +105,68 @@ def search_client():
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestListStrategies:
-    def test_list_strategies(self, search_client):
-        """GET /search/strategies returns strategy list."""
+    def test_missing_tenant_rejected(self, search_client):
+        """Strategies are per-tenant/profile; no tenant_id is a 422, not a
+        static list."""
         resp = search_client.get("/search/strategies")
+        assert resp.status_code == 422
+
+    @patch("cogniverse_runtime.routers.search.SearchService")
+    def test_returns_service_strategies_for_resolved_profile(
+        self, mock_service_cls, search_client
+    ):
+        """The endpoint returns exactly what the service reports the profile
+        accepts — not a hardcoded list disconnected from POST /search."""
+        mock_instance = MagicMock()
+        mock_instance.get_available_strategies.return_value = [
+            "bm25_only",
+            "default",
+            "float_float",
+        ]
+        mock_service_cls.return_value = mock_instance
+
+        with patch(
+            "cogniverse_runtime.routers.search.get_config",
+            return_value={"active_video_profile": "video_colpali_smol500_mv_frame"},
+        ):
+            resp = search_client.get("/search/strategies?tenant_id=acme:acme")
+
         assert resp.status_code == 200
         data = resp.json()
-        assert "strategies" in data
-        assert len(data["strategies"]) == 5
+        assert data["tenant_id"] == "acme:acme"
+        assert data["profile"] == "video_colpali_smol500_mv_frame"
+        assert data["strategies"] == ["bm25_only", "default", "float_float"]
+        assert data["count"] == 3
+        mock_instance.get_available_strategies.assert_called_once_with(
+            "video_colpali_smol500_mv_frame", "acme:acme"
+        )
 
-    def test_list_strategies_format(self, search_client):
-        """Each strategy has name and description fields."""
-        resp = search_client.get("/search/strategies")
-        for strategy in resp.json()["strategies"]:
-            assert "name" in strategy
-            assert "description" in strategy
-            assert isinstance(strategy["name"], str)
-            assert isinstance(strategy["description"], str)
+    @patch("cogniverse_runtime.routers.search.SearchService")
+    def test_unknown_profile_returns_404(self, mock_service_cls, search_client):
+        """A ValueError from the service (unknown profile/no strategies) is a
+        404, not a 500."""
+        mock_instance = MagicMock()
+        mock_instance.get_available_strategies.side_effect = ValueError(
+            "Profile 'nope' not found in backend.profiles."
+        )
+        mock_service_cls.return_value = mock_instance
 
-    def test_list_strategies_names(self, search_client):
-        """Verify the exact strategy names returned."""
-        resp = search_client.get("/search/strategies")
-        names = {s["name"] for s in resp.json()["strategies"]}
-        assert names == {"semantic", "bm25", "hybrid", "learned", "multi_modal"}
+        with patch(
+            "cogniverse_runtime.routers.search.get_config",
+            return_value={"active_video_profile": "nope"},
+        ):
+            resp = search_client.get("/search/strategies?tenant_id=acme:acme")
+
+        assert resp.status_code == 404
+
+    def test_no_profile_configured_returns_400(self, search_client):
+        """No profile on the request and none configured is a 400."""
+        with patch(
+            "cogniverse_runtime.routers.search.get_config",
+            return_value={"active_video_profile": None, "backend": {}},
+        ):
+            resp = search_client.get("/search/strategies?tenant_id=acme:acme")
+        assert resp.status_code == 400
 
 
 # ── GET /search/profiles ────────────────────────────────────────────────
