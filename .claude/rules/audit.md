@@ -235,6 +235,53 @@ grep -rnP '"docker",\s*$' tests/ --include="*.py" -A4 | grep -B1 '"run"' | grep 
 # timeout/headers). Not greppable in one pass — for each self.<knob> = deps.<knob>
 # in an agent __init__, demand a read site that changes behavior.
 grep -rnP 'self\.(max_\w+|.*_enabled|inference_service) = ' libs/agents/ libs/runtime/ --include="*.py"
+
+# numpy scalar reaching a YQL/filter scalar serializer without .item() coercion
+# (11th audit: _yql_scalar/_build_filter_conditions — np.float64 IS a float
+# subclass so repr() emits `score = np.float64(0.5)`; np.int64 is NOT an int
+# subclass so it falls to the string branch -> `count contains "5"`; both are
+# Vespa 400). For each hit, confirm the value is coerced via .item() or gated by
+# np.integer/np.floating/np.bool_ BEFORE the isinstance(int,float) dispatch.
+grep -rnP 'isinstance\([^,]+, \(int, float\)\)' libs/vespa/ libs/agents/ --include="*.py"
+# then check whether a numpy scalar can reach it un-coerced
+
+# Unlabeled test docker spawn where a SIBLING spawn in the SAME file IS labeled
+# (11th audit: face-embed + Phoenix in tests/conftest.py escaped reap while the
+# Vespa spawn carried the owner-pid label — convention divergence the isolated
+# per-file regex misses).
+grep -rlP '"docker",\s*$|docker run' tests/ --include="*.py" | while read f; do \
+  grep -qP 'OWNER_LABEL|cogniverse-test-owner-pid' "$f" && \
+  grep -cP '"run"|docker run' "$f" | grep -qv '^1$' && echo "MIXED labeled/unlabeled: $f"; done
+
+# Telemetry/backend read `except Exception: ...; return []/None` where a SIBLING
+# in the same package was hardened to `raise` (11th: analytics.py get_spans
+# returned [] while checkpoint_storage was made to raise; config_store/
+# adapter_store flatten Vespa outage to None/[] indistinguishable from no-data).
+grep -rlP 'except Exception' libs/ --include="*.py" | while read f; do \
+  grep -qP 'get_spans_dataframe|\.spans\.|config_store|adapter' "$f" && \
+  grep -qP 'return \[\]|return None' "$f" && echo "$f"; done
+
+# pytest DESELECTION gated on an infra-readiness probe — invisible to the
+# "0 skipped" gate, unlike a skip (11th: the only in-cluster sandbox code-exec
+# e2e was deselected whenever _openshell_sandbox_ready() was false).
+grep -rnP 'pytest_deselected|skip_substrings\.append|items\.remove' tests/ --include="*.py" -B3 \
+  | grep -iE '_ready\(\)|_available\(\)|environ\.get|reachable'
+
+# Config field advertising a capability the module never implements — ttl/
+# expiry, compression, timeout, stats-toggle, serialization_format (11th:
+# media.cache.ttl_days, media.backends.http.timeout_s, cache.enable_compression,
+# chunk_processor.cache_chunks, quality_monitor NDCG/error/p95 ceilings all
+# reach a config attr with zero behavior-changing reader). For each hit, grep
+# the owning module for a read that changes behavior.
+grep -rnE '(ttl|expire|_timeout_s|compress|enable_stats|serialization_format|_ceiling)\w*\s*[:=]' libs/ --include="*.py" | head -40
+
+# FastAPI include_router mounting a mutating/admin/tenant router with NO
+# dependencies=[Depends(auth)] (11th: the runtime mounts every router — incl.
+# anonymous DELETE /admin/tenants and memory-wipe — behind only CORSMiddleware;
+# no auth dependency exists in the codebase at all).
+grep -rnP 'include_router\(' libs/ --include="*.py" | grep -viE 'dependencies\s*=' \
+  | grep -iE 'admin|tenant|delete|ingest|graph|events'
+# then confirm NO app-level auth middleware/dependency guards the app
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
