@@ -183,6 +183,17 @@ class MediaLocator:
             if s3.anon:
                 kwargs["anon"] = True
             return kwargs
+        if scheme in ("http", "https"):
+            # fsspec's HTTPFileSystem forwards client_kwargs to aiohttp's
+            # ClientSession; without a timeout a fetch from a slow host hangs
+            # indefinitely regardless of the configured http.timeout_s.
+            import aiohttp
+
+            return {
+                "client_kwargs": {
+                    "timeout": aiohttp.ClientTimeout(total=self.config.http.timeout_s)
+                }
+            }
         return {}
 
     def _stat_remote(self, uri: str) -> Optional[MediaStat]:
