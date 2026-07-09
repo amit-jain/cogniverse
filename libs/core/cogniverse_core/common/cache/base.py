@@ -109,6 +109,16 @@ class CacheManager:
 
         for backend_config in sorted_configs:
             try:
+                # Propagate manager-level serialization settings to any backend
+                # that does not override them, so a top-level enable_compression /
+                # serialization_format actually reaches the backends (the
+                # registry drops keys a backend's config dataclass lacks).
+                backend_config.setdefault(
+                    "enable_compression", self.config.enable_compression
+                )
+                backend_config.setdefault(
+                    "serialization_format", self.config.serialization_format
+                )
                 backend = CacheBackendRegistry.create(backend_config)
                 self.backends.append(backend)
                 logger.info(

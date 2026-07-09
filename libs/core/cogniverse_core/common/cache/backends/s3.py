@@ -11,6 +11,7 @@ the cache stays drop-in compatible with the async ``CacheBackend`` contract.
 """
 
 import asyncio
+import gzip
 import json
 import logging
 import pickle
@@ -46,6 +47,7 @@ class S3CacheBackendConfig:
     key_prefix: str = "pipeline/"
     region: str = "us-east-1"
     serialization_format: str = "pickle"  # or "json", "msgpack"
+    enable_compression: bool = True
     enabled: bool = True
     priority: int = 1
     enable_ttl: bool = True
@@ -62,6 +64,7 @@ class S3CacheBackend(CacheBackend):
         self.bucket = config.bucket
         self.key_prefix = config.key_prefix
         self.format = config.serialization_format
+        self.enable_compression = config.enable_compression
         self._client = None
         self._stats = {
             "hits": 0,
@@ -168,14 +171,20 @@ class S3CacheBackend(CacheBackend):
 
     def _serialize(self, data: Any) -> bytes:
         if self.format == "pickle":
-            return pickle.dumps(data)
-        if self.format == "json":
-            return json.dumps(data).encode("utf-8")
-        if self.format == "msgpack":
-            return msgpack.packb(data)
-        raise ValueError(f"Unknown serialization format: {self.format}")
+            raw = pickle.dumps(data)
+        elif self.format == "json":
+            raw = json.dumps(data).encode("utf-8")
+        elif self.format == "msgpack":
+            raw = msgpack.packb(data)
+        else:
+            raise ValueError(f"Unknown serialization format: {self.format}")
+        return gzip.compress(raw) if self.enable_compression else raw
 
     def _deserialize(self, data: bytes, fmt: str) -> Any:
+        # gzip magic (0x1f 0x8b): decompress transparently so entries written
+        # before compression was enabled still read back.
+        if data[:2] == b"\x1f\x8b":
+            data = gzip.decompress(data)
         if fmt == "pickle":
             return pickle.loads(data)
         if fmt == "json":
