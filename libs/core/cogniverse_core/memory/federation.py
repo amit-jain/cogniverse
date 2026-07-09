@@ -158,14 +158,14 @@ class FederationService:
         try:
             mm = self._mm_factory(tenant_id)
         except Exception as exc:
-            logger.debug("Federation: factory(%s) failed: %s", tenant_id, exc)
+            logger.warning("Federation: factory(%s) failed: %r", tenant_id, exc)
             return []
         if mm is None or not getattr(mm, "memory", None):
             return []
         try:
             return list(mm.get_all_memories(tenant_id=tenant_id, agent_name=agent_name))
         except Exception as exc:
-            logger.debug("Federation: get_all_memories(%s) failed: %s", tenant_id, exc)
+            logger.warning("Federation: get_all_memories(%s) failed: %r", tenant_id, exc)
             return []
 
     # --- promotion path ----------------------------------------------------
