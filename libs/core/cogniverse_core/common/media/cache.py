@@ -23,15 +23,25 @@ class MediaCache:
     Atomicity: writes go to ``<base_dir>/.staging/<uuid>`` and are promoted into
     place via ``os.replace``.
 
-    Eviction: LRU by ``atime`` when total bytes exceed ``max_bytes``.
+    Eviction: entries older than ``ttl_seconds`` (by ``atime``) are dropped
+    first, then LRU by ``atime`` while total bytes exceed ``max_bytes``.
     """
 
     STAGING_DIR_NAME = ".staging"
 
-    def __init__(self, base_dir: Path, max_bytes: int = 50 * 1024**3):
+    def __init__(
+        self,
+        base_dir: Path,
+        max_bytes: int = 50 * 1024**3,
+        ttl_seconds: Optional[float] = None,
+    ):
         self.base_dir = Path(base_dir)
         self.staging_dir = self.base_dir / self.STAGING_DIR_NAME
         self.max_bytes = int(max_bytes)
+        # None or <= 0 disables age eviction (size-only).
+        self.ttl_seconds = (
+            float(ttl_seconds) if ttl_seconds and ttl_seconds > 0 else None
+        )
         self._lock = threading.Lock()
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.staging_dir.mkdir(parents=True, exist_ok=True)
@@ -89,14 +99,31 @@ class MediaCache:
                 pass
         return total
 
+    def _unlink(self, p: Path) -> bool:
+        try:
+            p.unlink()
+        except OSError as exc:
+            logger.debug("eviction unlink failed for %s: %s", p, exc)
+            return False
+        try:
+            p.parent.rmdir()
+        except OSError:
+            pass
+        return True
+
     def _evict_if_needed(self) -> None:
         files: list[tuple[float, int, Path]] = []
         total = 0
+        cutoff = (time.time() - self.ttl_seconds) if self.ttl_seconds else None
         for p in self._iter_cached_files():
             try:
                 st = p.stat()
             except OSError:
                 continue
+            # Age eviction: drop entries not accessed within the TTL window.
+            if cutoff is not None and st.st_atime < cutoff:
+                if self._unlink(p):
+                    continue
             files.append((st.st_atime, st.st_size, p))
             total += st.st_size
 
@@ -107,13 +134,5 @@ class MediaCache:
         for _, size, p in files:
             if total <= self.max_bytes:
                 break
-            try:
-                p.unlink()
+            if self._unlink(p):
                 total -= size
-            except OSError as exc:
-                logger.debug("eviction unlink failed for %s: %s", p, exc)
-                continue
-            try:
-                p.parent.rmdir()
-            except OSError:
-                pass

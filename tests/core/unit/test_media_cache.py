@@ -147,3 +147,52 @@ class TestAtimeBump:
         cache.get(key, "v.mp4")
         new_atime = os.path.getatime(dest)
         assert new_atime > old_atime - 100
+
+
+class TestTtlEviction:
+    """ttl_days (wired as ttl_seconds) must drop entries not accessed within
+    the window; without it the cache only ever evicts by size."""
+
+    def test_stale_entry_evicted_on_next_put(self, tmp_path):
+        cache = MediaCache(tmp_path / "cache", max_bytes=10_000_000, ttl_seconds=100)
+
+        old_src = tmp_path / "old"
+        old_src.write_bytes(b"x" * 100)
+        old = cache.put(MediaCache.make_key("s3://b/old"), "old.mp4", old_src)
+        # Backdate access time well beyond the TTL window.
+        os.utime(old, (time.time() - 500, time.time() - 500))
+
+        fresh_src = tmp_path / "fresh"
+        fresh_src.write_bytes(b"x" * 100)
+        cache.put(MediaCache.make_key("s3://b/fresh"), "fresh.mp4", fresh_src)
+
+        assert cache.get(MediaCache.make_key("s3://b/old"), "old.mp4") is None
+        assert cache.get(MediaCache.make_key("s3://b/fresh"), "fresh.mp4") is not None
+
+    def test_recent_entry_survives_ttl(self, tmp_path):
+        cache = MediaCache(tmp_path / "cache", max_bytes=10_000_000, ttl_seconds=100)
+
+        src = tmp_path / "recent"
+        src.write_bytes(b"x" * 100)
+        cache.put(MediaCache.make_key("s3://b/recent"), "recent.mp4", src)
+
+        trigger = tmp_path / "trigger"
+        trigger.write_bytes(b"x" * 100)
+        cache.put(MediaCache.make_key("s3://b/trigger"), "trigger.mp4", trigger)
+
+        assert cache.get(MediaCache.make_key("s3://b/recent"), "recent.mp4") is not None
+
+    def test_ttl_none_disables_age_eviction(self, tmp_path):
+        cache = MediaCache(tmp_path / "cache", max_bytes=10_000_000, ttl_seconds=None)
+
+        old_src = tmp_path / "old"
+        old_src.write_bytes(b"x" * 100)
+        old = cache.put(MediaCache.make_key("s3://b/old"), "old.mp4", old_src)
+        os.utime(old, (time.time() - 10_000_000, time.time() - 10_000_000))
+
+        trigger = tmp_path / "trigger"
+        trigger.write_bytes(b"x" * 100)
+        cache.put(MediaCache.make_key("s3://b/trigger"), "trigger.mp4", trigger)
+
+        # No TTL => the ancient entry stays (only size eviction applies).
+        assert cache.get(MediaCache.make_key("s3://b/old"), "old.mp4") is not None

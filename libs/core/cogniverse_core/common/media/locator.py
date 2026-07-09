@@ -70,7 +70,12 @@ class MediaLocator:
 
         tenant_cache = get_tenant_storage_path(base, tenant_id) / "media"
         max_bytes = int(config.cache.max_bytes_gb) * 1024**3
-        self.cache = MediaCache(tenant_cache, max_bytes=max_bytes)
+        ttl_seconds = (
+            int(config.cache.ttl_days) * 86400 if config.cache.ttl_days else None
+        )
+        self.cache = MediaCache(
+            tenant_cache, max_bytes=max_bytes, ttl_seconds=ttl_seconds
+        )
 
     @staticmethod
     def _scheme(uri: str) -> str:
