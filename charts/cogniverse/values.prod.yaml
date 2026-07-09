@@ -39,3 +39,13 @@ ingress:
     - secretName: cogniverse-tls
       hosts:
         - cogniverse.example.com
+
+# Secrets that MUST NOT ship the repo's dev defaults in production. Left empty
+# so a prod install fails loud (helm `required`) until the operator supplies a
+# secure per-environment value (e.g. via --set or a sealed secret).
+minio:
+  rootPassword: ""
+
+openshell:
+  server:
+    sshHandshakeSecret: ""

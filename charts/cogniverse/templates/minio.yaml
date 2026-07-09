@@ -19,7 +19,7 @@ metadata:
 type: Opaque
 stringData:
   rootUser: {{ .Values.minio.rootUser | quote }}
-  rootPassword: {{ .Values.minio.rootPassword | quote }}
+  rootPassword: {{ required "minio.rootPassword must be set (override the dev default in values.prod.yaml)" .Values.minio.rootPassword | quote }}
 {{- if not $minioP.hostPath }}
 ---
 apiVersion: v1
