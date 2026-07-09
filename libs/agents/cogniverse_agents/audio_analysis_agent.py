@@ -390,15 +390,24 @@ class AudioAnalysisAgent(
             return []
 
     async def _search_acoustic(self, query: str, limit: int) -> List[AudioResult]:
-        """Search by acoustic similarity using CLAP embeddings"""
-
+        """Search by acoustic similarity from a TEXT query via CLAP."""
         # CLAP text features land in the same 512-dim space as the stored audio
         # acoustic_embedding, so a text query is directly comparable to it.
         logger.info("Generating query embedding for acoustic search...")
         query_embedding = self.embedding_generator.generate_acoustic_text_embedding(
             query
         )
+        return await self._search_by_acoustic_embedding(query_embedding, limit)
 
+    async def _search_by_acoustic_embedding(
+        self, query_embedding, limit: int
+    ) -> List[AudioResult]:
+        """Run an acoustic nearestNeighbor search from a 512-dim embedding.
+
+        Shared by text-query acoustic search and reference-audio similarity —
+        both compare a 512-dim CLAP vector against the stored
+        ``acoustic_embedding`` field.
+        """
         # acoustic_similarity ranks via closeness(field, acoustic_embedding),
         # which binds to a nearestNeighbor operator over the HNSW field; the
         # query tensor is the profile input query(acoustic_query).
@@ -544,9 +553,18 @@ class AudioAnalysisAgent(
                 transcription = await self.transcribe_audio(reference_audio_url)
                 results = await self._search_transcript(transcription.text, limit)
             else:
-                # Acoustic similarity search
-                logger.warning("⚠️  Acoustic similarity not yet fully implemented")
-                results = []
+                # Acoustic similarity: encode the reference audio's CLAP
+                # embedding and search the same acoustic_embedding space.
+                from pathlib import Path as _Path
+
+                audio_path = self._get_audio_path(reference_audio_url)
+                reference_embedding = await asyncio.to_thread(
+                    self.embedding_generator.generate_acoustic_embedding,
+                    _Path(audio_path),
+                )
+                results = await self._search_by_acoustic_embedding(
+                    reference_embedding, limit
+                )
 
             logger.info(f"✅ Found {len(results)} similar audio files")
             return results
