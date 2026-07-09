@@ -233,6 +233,48 @@ def test_search_still_rejects_missing_text_and_embeddings():
         )
 
 
+def test_search_raises_when_embeddings_needed_but_no_encoder():
+    """A strategy that declares it needs float/binary embeddings must fail
+    loudly when neither query_embeddings nor an encoder is available — the
+    old behavior warned and queried Vespa without the embedding tensor,
+    silently returning wrong (or 0) results. Uses the real ranking-strategy
+    definitions via FilesystemSchemaLoader; the raise fires before any Vespa
+    call, so no live backend is needed.
+    """
+    from pathlib import Path
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
+    ):
+        backend = VespaSearchBackend(
+            config={
+                "url": "http://localhost",
+                "port": 8080,
+                "profiles": {
+                    "vcolpali": {
+                        "type": "video",
+                        "schema_name": "video_colpali_smol500_mv_frame",
+                    }
+                },
+            },
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+        )
+
+    with pytest.raises(ValueError, match="needs query embeddings"):
+        backend.search(
+            query_dict={
+                "query": "ocean waves",
+                "type": "video",
+                "profile": "vcolpali",
+                "strategy": "float_float",
+                "tenant_id": "acme",
+            }
+        )
+
+
 def test_search_does_not_retry_value_errors():
     """``ValueError`` signals a permanent config problem (profile missing,
     type unknown, bad inputs). The retry wrapper used to re-fire these 3×

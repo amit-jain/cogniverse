@@ -159,6 +159,13 @@ class VespaBackend(Backend):
             logger.debug(f"Overriding port from {self._port} to {config_port}")
             self._port = config_port
 
+        # search() constructs the inner VespaSearchBackend from self.config,
+        # which reads url/port with a localhost default. Reflect the resolved
+        # authoritative values so a backend built from an empty config (the
+        # config-less get_search_backend startup call) can't dial localhost.
+        self.config["url"] = self._url
+        self.config["port"] = self._port
+
         # Mark as ingestion backend if schema_name is provided
         if "schema_name" in config:
             self._initialized_as_ingestion = True

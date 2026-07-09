@@ -390,6 +390,7 @@ class VespaSearchBackend(SearchBackend):
             schema_loader: SchemaLoader for dependency injection
         """
         self._schema_loader = schema_loader
+        self._config_manager = config_manager
 
         # Lock guards runtime mutation of self.profiles / self.default_profiles
         # via add_profile / remove_profile. Reads in get_search_results take the
@@ -620,6 +621,20 @@ class VespaSearchBackend(SearchBackend):
         """
         return self._search_breaker.call(self._search_retried, query_dict)
 
+    def _load_tenant_profiles(self, tenant_id):
+        """Return a tenant's (profiles, default_profiles) for per-request
+        resolution. Empty dicts when the tenant or config manager is absent."""
+        if not tenant_id or self._config_manager is None:
+            return {}, {}
+        from cogniverse_foundation.config.utils import get_config
+
+        cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+        backend_section = cfg.get("backend", {}) or {}
+        return (
+            dict(backend_section.get("profiles", {}) or {}),
+            dict(backend_section.get("default_profiles", {}) or {}),
+        )
+
     @retry_with_backoff(
         config=RetryConfig(
             max_attempts=3,
@@ -661,6 +676,10 @@ class VespaSearchBackend(SearchBackend):
         # Extract parameters from query_dict
         query_text = query_dict.get("query")
         query_embeddings = query_dict.get("query_embeddings")
+        # The backend is shared across profiles and created once (encoder-less
+        # at startup), so callers that delegate encoding pass the per-profile
+        # encoder per request rather than relying on a baked-in one.
+        request_encoder = query_dict.get("query_encoder") or self.query_encoder
         # Either text or pre-computed embeddings is sufficient. Mem0 in
         # particular hands us a 768-dim embedding with an empty query string
         # during its internal duplicate/context scans; forcing text here
@@ -685,6 +704,23 @@ class VespaSearchBackend(SearchBackend):
             profiles_snapshot = dict(self.profiles)
             default_profiles_snapshot = dict(self.default_profiles)
         requested_profile = query_dict.get("profile")
+
+        # The shared backend freezes whichever tenant's profiles created it, so
+        # a per-tenant profile (or a backend built config-less at startup) may
+        # be absent. Merge the query tenant's profiles per-request — locally,
+        # so tenants can't leak profiles into each other's snapshots.
+        if self._config_manager is not None and (
+            not profiles_snapshot
+            or (requested_profile and requested_profile not in profiles_snapshot)
+        ):
+            tenant_profiles, tenant_defaults = self._load_tenant_profiles(
+                query_dict.get("tenant_id")
+            )
+            profiles_snapshot = {**profiles_snapshot, **tenant_profiles}
+            default_profiles_snapshot = {
+                **default_profiles_snapshot,
+                **tenant_defaults,
+            }
 
         if requested_profile:
             # 1. Use explicitly requested profile
@@ -853,7 +889,7 @@ class VespaSearchBackend(SearchBackend):
 
             # Generate embeddings on-demand if needed and not provided
             if requires_embeddings and query_embeddings is None:
-                if self.query_encoder:
+                if request_encoder:
                     from cogniverse_foundation.telemetry.context import (
                         add_embedding_details_to_span,
                         encode_span,
@@ -864,7 +900,7 @@ class VespaSearchBackend(SearchBackend):
                         f"for strategy '{strategy_name}'"
                     )
                     encoder_type = (
-                        type(self.query_encoder)
+                        type(request_encoder)
                         .__name__.lower()
                         .replace("queryencoder", "")
                     )
@@ -874,7 +910,7 @@ class VespaSearchBackend(SearchBackend):
                         query_length=len(query_text),
                         query=query_text,
                     ) as encode_span_ctx:
-                        query_embeddings = self.query_encoder.encode(query_text)
+                        query_embeddings = request_encoder.encode(query_text)
                         add_embedding_details_to_span(encode_span_ctx, query_embeddings)
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(
@@ -884,8 +920,10 @@ class VespaSearchBackend(SearchBackend):
                             f"{query_embeddings.max():.4f}"
                         )
                 else:
-                    logger.warning(
-                        f"[{correlation_id}] Strategy '{strategy_name}' requires embeddings but no encoder available"
+                    raise ValueError(
+                        f"Strategy '{strategy_name}' needs query embeddings but "
+                        f"none were provided and no encoder is available. Pass "
+                        f"'query_embeddings' or a 'query_encoder' in query_dict."
                     )
 
             # Build query based on strategy
