@@ -14,6 +14,7 @@ from typing import Any, Dict, Generator, List, Optional
 import pandas as pd
 from phoenix.client import AsyncClient
 
+from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
 from cogniverse_foundation.telemetry.providers.base import (
     AnalyticsStore,
     AnnotationStore,
@@ -71,6 +72,22 @@ class PhoenixTraceStore(TraceStore):
         self.http_endpoint = http_endpoint
         self.tenant_id = tenant_id
         self.project_template = project_template
+        # Telemetry is integral (auto-optimization, eval) but not on the user
+        # request path, so its breaker uses a longer reset window — there is no
+        # urgency to retry Phoenix fast. Read call sites choose whether to
+        # degrade (dashboard) or surface (checkpoint) the CircuitOpenError.
+        from cogniverse_core.common.utils.circuit_breaker import (
+            BreakerConfig,
+            CircuitBreaker,
+        )
+
+        self._breaker = CircuitBreaker.get(
+            BreakerConfig(
+                name=f"phoenix:{http_endpoint}",
+                failure_threshold=4,
+                reset_timeout_s=60.0,
+            )
+        )
         logger.info(f"🔧 PhoenixTraceStore initialized with endpoint: {http_endpoint}")
 
     def _get_client(self) -> AsyncClient:
@@ -139,7 +156,8 @@ class PhoenixTraceStore(TraceStore):
                     predicate = f"name == '{_esc(name_filter)}'"
                 query = SpanQuery().where(predicate)
 
-            spans_df = await client.spans.get_spans_dataframe(
+            spans_df = await self._breaker.acall(
+                client.spans.get_spans_dataframe,
                 query=query,
                 project_identifier=project,
                 start_time=start_time,
@@ -153,6 +171,9 @@ class PhoenixTraceStore(TraceStore):
             logger.debug(f"Retrieved {len(spans_df)} spans from project {project}")
             return spans_df
 
+        except CircuitOpenError:
+            # Phoenix is known-bad; fail fast. Callers degrade or surface.
+            raise
         except Exception as e:
             logger.error(f"Failed to query spans from Phoenix: {e!r}")
             raise
