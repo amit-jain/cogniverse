@@ -219,6 +219,20 @@ def cleanup_background_threads():
 
 
 @pytest.fixture(autouse=True, scope="function")
+def _reset_circuit_breakers():
+    """Circuit breakers are process-wide singletons keyed by dependency name;
+    reset them between tests so an opened breaker in one test can't reject
+    calls in the next."""
+    try:
+        from cogniverse_core.common.utils.circuit_breaker import CircuitBreaker
+
+        CircuitBreaker.reset_registry()
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True, scope="function")
 def cleanup_dspy_state():
     """Clean up DSPy state between tests to prevent isolation issues"""
     yield
