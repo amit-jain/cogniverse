@@ -13,7 +13,7 @@ Design Principles:
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, runtime_checkable
 
 from cogniverse_core.events.types import TaskEvent
@@ -46,7 +46,7 @@ class CancellationToken:
     def cancel(self, reason: Optional[str] = None) -> None:
         """Signal cancellation"""
         self._cancelled = True
-        self._cancel_time = datetime.utcnow()
+        self._cancel_time = datetime.now(timezone.utc)
         self._reason = reason
 
 

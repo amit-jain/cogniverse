@@ -7,7 +7,7 @@ Supports custom states, transitions, and callbacks.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -112,7 +112,7 @@ class WorkflowStateMachine:
             StateHistory(
                 from_state=None,
                 to_state=initial_state,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 context_snapshot=self.context.copy(),
                 transition_reason="initialization",
             )
@@ -205,7 +205,7 @@ class WorkflowStateMachine:
             StateHistory(
                 from_state=old_state,
                 to_state=to_state,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 context_snapshot=self.context.copy(),
                 transition_reason=f"forced: {reason}",
             )
@@ -241,7 +241,7 @@ class WorkflowStateMachine:
             StateHistory(
                 from_state=old_state,
                 to_state=new_state,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 context_snapshot=self.context.copy(),
                 transition_reason=transition.description,
             )
@@ -272,7 +272,7 @@ class WorkflowStateMachine:
             return 0.0
 
         last_transition = self.history[-1]
-        duration = (datetime.utcnow() - last_transition.timestamp).total_seconds()
+        duration = (datetime.now(timezone.utc) - last_transition.timestamp).total_seconds()
         return duration
 
     def is_terminal(self) -> bool:

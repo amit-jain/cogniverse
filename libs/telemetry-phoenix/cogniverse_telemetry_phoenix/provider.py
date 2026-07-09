@@ -576,7 +576,7 @@ class PhoenixExperimentStore(ExperimentStore):
 
         # Generate run identifier
         run_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
 
         # Log the run (actual trace creation would happen via OpenTelemetry)
         logger.info(

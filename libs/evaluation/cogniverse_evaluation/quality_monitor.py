@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -414,7 +414,7 @@ class QualityMonitor:
         prior_baseline_ndcg = self._last_golden_baseline_ndcg
 
         result = GoldenEvalResult(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             tenant_id=self.tenant_id,
             mean_mrr=mean_mrr,
             mean_ndcg=mean_ndcg,
@@ -455,7 +455,7 @@ class QualityMonitor:
         span_evaluator = self._make_span_evaluator()
 
         result = LiveEvalResult(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             tenant_id=self.tenant_id,
         )
 
@@ -906,7 +906,7 @@ class QualityMonitor:
                 high_scoring[agent_type] = existing_high + result.high_scoring_examples
 
         return OptimizationTrigger(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             tenant_id=self.tenant_id,
             agents_to_optimize=agents_to_optimize,
             golden_eval=golden,

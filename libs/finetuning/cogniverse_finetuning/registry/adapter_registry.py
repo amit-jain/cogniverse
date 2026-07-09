@@ -7,7 +7,7 @@ Provides high-level API for adapter lifecycle management.
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from cogniverse_finetuning.registry.models import AdapterMetadata
@@ -137,8 +137,8 @@ class AdapterRegistry:
             metrics=metrics or {},
             training_config=training_config or {},
             experiment_run_id=experiment_run_id,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
         # Save to store

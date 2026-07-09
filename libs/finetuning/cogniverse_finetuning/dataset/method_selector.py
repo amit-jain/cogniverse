@@ -9,7 +9,7 @@ Integrates with existing infrastructure:
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal, Optional
 
 import pandas as pd
@@ -363,7 +363,7 @@ class TrainingMethodSelector:
             items.append(item)
 
         batch = ApprovalBatch(
-            batch_id=f"synthetic_{agent_type}_{datetime.utcnow().isoformat()}",
+            batch_id=f"synthetic_{agent_type}_{datetime.now(timezone.utc).isoformat()}",
             items=items,
             context={
                 "purpose": "fine_tuning_data_generation",

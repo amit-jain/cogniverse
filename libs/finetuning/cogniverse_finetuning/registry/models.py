@@ -6,7 +6,7 @@ Dataclasses for adapter metadata stored in Vespa.
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Literal, Optional
 
 
@@ -53,8 +53,8 @@ class AdapterMetadata:
     metrics: Dict[str, Any] = field(default_factory=dict)
     training_config: Dict[str, Any] = field(default_factory=dict)
     experiment_run_id: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_vespa_doc(self) -> Dict[str, Any]:
         """
@@ -111,13 +111,13 @@ class AdapterMetadata:
         if isinstance(created_at, str) and created_at:
             created_at = datetime.fromisoformat(created_at)
         else:
-            created_at = datetime.utcnow()
+            created_at = datetime.now(timezone.utc)
 
         updated_at = fields.get("updated_at", "")
         if isinstance(updated_at, str) and updated_at:
             updated_at = datetime.fromisoformat(updated_at)
         else:
-            updated_at = datetime.utcnow()
+            updated_at = datetime.now(timezone.utc)
 
         return cls(
             adapter_id=fields.get("adapter_id", ""),

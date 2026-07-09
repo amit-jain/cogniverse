@@ -7,7 +7,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import phoenix as px
@@ -150,7 +150,7 @@ class RetrievalMonitor:
         with self.buffer_lock:
             self.metrics_buffer.append(
                 {
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "profile": profile,
                     "strategy": strategy,
                     "query": event.get("query", ""),
@@ -277,14 +277,14 @@ class RetrievalMonitor:
             # Check if alert is already active
             if alert_key in self.active_alerts:
                 # Update existing alert
-                self.active_alerts[alert_key]["last_triggered"] = datetime.utcnow()
+                self.active_alerts[alert_key]["last_triggered"] = datetime.now(timezone.utc)
                 self.active_alerts[alert_key]["count"] += 1
             else:
                 # New alert
                 self.active_alerts[alert_key] = {
                     "alert": alert,
-                    "first_triggered": datetime.utcnow(),
-                    "last_triggered": datetime.utcnow(),
+                    "first_triggered": datetime.now(timezone.utc),
+                    "last_triggered": datetime.now(timezone.utc),
                     "count": 1,
                 }
 
