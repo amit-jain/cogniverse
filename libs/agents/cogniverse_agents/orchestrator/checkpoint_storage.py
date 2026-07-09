@@ -16,7 +16,7 @@ A2A Integration:
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from opentelemetry.trace import Status, StatusCode
@@ -484,7 +484,7 @@ class WorkflowCheckpointStorage:
                 score=1.0 if status == CheckpointStatus.COMPLETED else 0.0,
                 metadata={
                     "checkpoint_id": checkpoint_id,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "previous_status": "active",  # Could query actual previous
                     "new_status": status.value,
                 },

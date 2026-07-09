@@ -12,7 +12,7 @@ Supports both:
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
@@ -250,7 +250,7 @@ class TraceToInstructionConverter:
                 "agent_spans": len(agent_spans),
                 "total_annotations": len(annotations_df),
                 "approved_annotations": len(approved_annotations),
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             },
         )
 
@@ -590,7 +590,7 @@ class TraceToTrajectoryConverter:
                 metadata={
                     "project": project,
                     "agent_type": agent_type,
-                    "extracted_at": datetime.utcnow().isoformat(),
+                    "extracted_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
             trajectories.append(trajectory)
@@ -608,7 +608,7 @@ class TraceToTrajectoryConverter:
                 "min_turns_per_session": min_turns_per_session,
                 "total_sessions": len(trajectories),
                 "total_turns": total_turns,
-                "extracted_at": datetime.utcnow().isoformat(),
+                "extracted_at": datetime.now(timezone.utc).isoformat(),
             },
         )
 
@@ -661,7 +661,7 @@ class TraceToTrajectoryConverter:
                 try:
                     timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
                 except ValueError:
-                    timestamp = datetime.utcnow()
+                    timestamp = datetime.now(timezone.utc)
 
             return ConversationTurn(
                 turn_id=turn_idx,

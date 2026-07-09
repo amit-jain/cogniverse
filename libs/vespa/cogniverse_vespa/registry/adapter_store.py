@@ -5,7 +5,7 @@ Stores trained adapter metadata in Vespa for multi-tenant management.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from vespa.application import Vespa
@@ -331,7 +331,7 @@ class VespaAdapterStore(AdapterStore):
 
         # Update field
         fields[field_name] = field_value
-        fields["updated_at"] = datetime.utcnow().isoformat()
+        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         # Save back
         doc_id = f"{self.schema_name}::{adapter_id}"

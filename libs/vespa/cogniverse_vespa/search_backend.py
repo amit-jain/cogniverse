@@ -18,7 +18,7 @@ import uuid
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Deque, Dict, List, Optional
 
 import numpy as np
@@ -1259,7 +1259,7 @@ class VespaSearchBackend(SearchBackend):
         """Perform comprehensive health check"""
         health = {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "schema": self.schema_name,
             "components": {},
         }

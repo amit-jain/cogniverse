@@ -20,7 +20,7 @@ Design Principles:
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional, Protocol, Union, runtime_checkable
 
@@ -56,7 +56,7 @@ class BaseEvent(BaseModel):
     tenant_id: str = Field(
         ..., description="Tenant identifier for multi-tenant isolation"
     )
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event_type: EventType
 
     model_config = ConfigDict(use_enum_values=True)

@@ -252,6 +252,7 @@ def _retire_unconfirmed_strategy(
     """
     import json as _json
     from datetime import datetime as _dt
+    from datetime import timezone as _tz
 
     meta = memory.get("metadata") or {}
     if isinstance(meta, str):
@@ -275,7 +276,9 @@ def _retire_unconfirmed_strategy(
         cdt = _dt.fromisoformat(str(created_at).replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return False
-    age_days = (_dt.utcnow() - cdt.replace(tzinfo=None)).total_seconds() / 86400.0
+    age_days = (
+        _dt.now(_tz.utc).replace(tzinfo=None) - cdt.replace(tzinfo=None)
+    ).total_seconds() / 86400.0
     return age_days > _LEARNED_STRATEGY_RETIRE_AGE_DAYS
 
 

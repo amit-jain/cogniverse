@@ -8,7 +8,7 @@ Enables approval workflow tracing and analysis.
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pandas as pd
@@ -504,7 +504,7 @@ class ApprovalStorageImpl(ApprovalStorage):
             metadata = {
                 "item_id": item.item_id,
                 "confidence": item.confidence,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             if item.reviewed_at:
                 metadata["reviewed_at"] = item.reviewed_at.isoformat()
@@ -625,7 +625,7 @@ class ApprovalStorageImpl(ApprovalStorage):
             "timestamp": (
                 decision.timestamp.isoformat()
                 if decision.timestamp
-                else datetime.utcnow().isoformat()
+                else datetime.now(timezone.utc).isoformat()
             ),
             "feedback": decision.feedback or "",
             "corrections": json.dumps(decision.corrections),
@@ -745,7 +745,7 @@ class ApprovalStorageImpl(ApprovalStorage):
             # Prepare metadata
             metadata = {
                 "item_id": item_id,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             if reviewer:
                 metadata["reviewer"] = reviewer

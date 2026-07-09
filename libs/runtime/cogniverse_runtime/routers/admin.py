@@ -1,7 +1,7 @@
 """Admin endpoints - system administration and profile management."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -789,7 +789,7 @@ async def create_messaging_invite(
     import uuid
 
     token = uuid.uuid4().hex
-    expiry = (datetime.utcnow() + timedelta(hours=request.expires_in_hours)).isoformat()
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=request.expires_in_hours)).isoformat()
 
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 

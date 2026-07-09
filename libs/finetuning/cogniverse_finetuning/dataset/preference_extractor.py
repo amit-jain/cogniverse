@@ -7,7 +7,7 @@ for Direct Preference Optimization (DPO) training.
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
@@ -164,7 +164,7 @@ class PreferencePairExtractor:
                 "agent_spans": len(agent_spans),
                 "total_annotations": len(annotations_df),
                 "preference_pairs": len(pairs),
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             },
         )
 

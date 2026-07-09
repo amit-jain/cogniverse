@@ -14,7 +14,7 @@ metadata, enabling runtime retrieval by agents via MemoryAwareMixin.
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -38,7 +38,7 @@ class Strategy:
     source: str  # "pattern_extraction" | "llm_distillation"
     tenant_id: str
     trace_count: int
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     # confirmation_count starts at 1 (every strategy is its own first
     # confirmation). On dedup, _store_strategy bumps this on the existing
     # record by delete-and-readd. Retrieval downweights low-confirmation
@@ -46,7 +46,7 @@ class Strategy:
     # strategies with confirmation_count < 3 AND age > 30d.
     confirmation_count: int = 1
     last_confirmed_at: str = field(
-        default_factory=lambda: datetime.utcnow().isoformat()
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
 
     def to_memory_content(self) -> str:
@@ -661,7 +661,7 @@ class StrategyLearner:
         now = (
             _dt.fromisoformat(now_iso.replace("Z", "+00:00"))
             if now_iso
-            else _dt.utcnow()
+            else _dt.now(timezone.utc)
         )
 
         annotated: List[tuple] = []
