@@ -1,5 +1,18 @@
 {{- if .Values.redis.enabled }}
 {{- $fullName := include "cogniverse.fullname" . -}}
+{{- if .Values.redis.auth.enabled }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fullName }}-redis-auth
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+type: Opaque
+stringData:
+  redis-password: {{ required "redis.auth.password must be set when redis.auth.enabled=true" .Values.redis.auth.password | quote }}
+{{- end }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -55,6 +68,20 @@ spec:
           - "everysec"
           - "--dir"
           - "/data"
+          {{- if .Values.redis.auth.enabled }}
+          # k8s expands $(REDIS_PASSWORD) from the env below, so the secret
+          # value never appears in the rendered args.
+          - "--requirepass"
+          - "$(REDIS_PASSWORD)"
+          {{- end }}
+        {{- if .Values.redis.auth.enabled }}
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-redis-auth
+              key: redis-password
+        {{- end }}
         ports:
         - name: redis
           containerPort: 6379

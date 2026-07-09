@@ -52,8 +52,18 @@ spec:
         # helpers crash ("no locator available") and audio chunking dies.
         - name: NUMBA_CACHE_DIR
           value: /tmp/numba-cache
+        {{- if .Values.redis.auth.enabled }}
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-redis-auth
+              key: redis-password
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
+        {{- else }}
         - name: REDIS_URL
           value: "redis://{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
+        {{- end }}
         - name: INGEST_CONSUMER_GROUP
           value: {{ .Values.ingestor.consumerGroup | quote }}
         - name: INGEST_CONSUMER_ID

@@ -49,3 +49,8 @@ minio:
 openshell:
   server:
     sshHandshakeSecret: ""
+
+redis:
+  auth:
+    enabled: true
+    password: ""  # fail loud until the operator supplies a real value
