@@ -426,6 +426,27 @@ class VespaSearchBackend(SearchBackend):
             max_attempts=3, initial_delay=0.5, exceptions=(Exception,)
         )
 
+        # Breaker around the (retried) search path, keyed per endpoint so a
+        # down Vespa trips fast instead of every query burning its retries.
+        # Load-bearing: an open breaker propagates CircuitOpenError.
+        from cogniverse_core.common.utils.circuit_breaker import (
+            BreakerConfig,
+            CircuitBreaker,
+        )
+
+        self._search_breaker = CircuitBreaker.get(
+            BreakerConfig(
+                name=f"vespa_search:{full_url}",
+                failure_threshold=5,
+                reset_timeout_s=15.0,
+                counted_exceptions=(
+                    requests.RequestException,
+                    ConnectionError,
+                    TimeoutError,
+                ),
+            )
+        )
+
         if enable_metrics:
             self.metrics = SearchMetrics()
         else:
@@ -591,6 +612,14 @@ class VespaSearchBackend(SearchBackend):
     # the wasted latency (e.g. "No profiles found for type 'wiki'" from an
     # empty wiki cache would burn 3×~5s backoffs through the orchestrator
     # LLM chain).
+    def search(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
+        """Search, guarding the retried path with the per-endpoint breaker.
+
+        Vespa is load-bearing, so an open breaker propagates ``CircuitOpenError``
+        (the caller surfaces it) rather than degrading to empty results.
+        """
+        return self._search_breaker.call(self._search_retried, query_dict)
+
     @retry_with_backoff(
         config=RetryConfig(
             max_attempts=3,
@@ -602,7 +631,7 @@ class VespaSearchBackend(SearchBackend):
             ),
         )
     )
-    def search(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
+    def _search_retried(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
         """
         Search for documents using query dict format.
 
