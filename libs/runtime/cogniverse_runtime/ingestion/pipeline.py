@@ -848,8 +848,8 @@ class VideoIngestionPipeline:
         self.logger.info(f"Video path: {video_path}")
         self.logger.info(f"Source URI: {video_uri}")
 
-        print(f"\n🎬 Processing video (async): {video_path.name}")
-        print("=" * 60)
+        self.logger.info(f"\n🎬 Processing video (async): {video_path.name}")
+        self.logger.info("=" * 60)
 
         self.video_path = video_path
         self.video_uri = video_uri
@@ -919,7 +919,7 @@ class VideoIngestionPipeline:
                 )
 
             self.logger.info(f"Async video processing completed in {total_time:.2f}s")
-            print(f"\n✅ Video processing completed in {total_time:.1f}s")
+            self.logger.info(f"\n✅ Video processing completed in {total_time:.1f}s")
 
             # Emit video completion event
             if self.job_id:
@@ -943,7 +943,7 @@ class VideoIngestionPipeline:
             self.logger.error(
                 f"Video processing failed with pipeline error: {e}", exc_info=True
             )
-            print(f"\n❌ Video processing failed: {e}")
+            self.logger.error(f"Video processing failed: {e}")
             results["status"] = "failed"
             results["error"] = str(e)
             results["error_type"] = type(e).__name__
@@ -972,7 +972,7 @@ class VideoIngestionPipeline:
                 f"Video processing failed with unexpected error: {wrapped_error}",
                 exc_info=True,
             )
-            print(f"\n❌ Video processing failed: {wrapped_error}")
+            self.logger.error(f"Video processing failed: {wrapped_error}")
             results["status"] = "failed"
             results["error"] = str(wrapped_error)
             results["error_type"] = type(wrapped_error).__name__
@@ -1081,7 +1081,7 @@ class VideoIngestionPipeline:
                     self.logger.info(
                         f"[{index}/{total}] Starting concurrent processing: {display}"
                     )
-                    print(f"\n🎯 [{index}/{total}] Processing: {display}")
+                    self.logger.info(f"\n🎯 [{index}/{total}] Processing: {display}")
 
                     # Emit progress event before processing
                     await self._emit_event(
@@ -1102,14 +1102,14 @@ class VideoIngestionPipeline:
                         self.logger.info(
                             f"[{index}/{total}] Completed: {display} in {result['total_processing_time']:.1f}s"
                         )
-                        print(
+                        self.logger.info(
                             f"✅ [{index}/{total}] Completed: {display} ({result['total_processing_time']:.1f}s)"
                         )
                     else:
                         self.logger.error(
                             f"[{index}/{total}] Failed: {display} - {result.get('error')}"
                         )
-                        print(f"❌ [{index}/{total}] Failed: {display}")
+                        self.logger.error(f"[{index}/{total}] Failed: {display}")
 
                     return result
 
@@ -1149,7 +1149,7 @@ class VideoIngestionPipeline:
         self.logger.info(
             f"Starting concurrent processing of {len(video_files)} videos (max {max_concurrent} concurrent)"
         )
-        print(
+        self.logger.info(
             f"\n🚀 Processing {len(video_files)} videos concurrently (max {max_concurrent} at once)"
         )
 
@@ -1168,10 +1168,12 @@ class VideoIngestionPipeline:
         self.logger.info(
             f"Concurrent processing completed: {successful}/{len(video_files)} successful in {total_time:.1f}s"
         )
-        print(f"\n🏁 Concurrent processing completed in {total_time:.1f}s")
-        print(f"   ✅ Successful: {successful}/{len(video_files)}")
-        print(f"   ❌ Failed: {failed}/{len(video_files)}")
-        print(f"   ⚡ Average time: {total_time / len(video_files):.1f}s per video")
+        self.logger.info(f"\n🏁 Concurrent processing completed in {total_time:.1f}s")
+        self.logger.info(f"   ✅ Successful: {successful}/{len(video_files)}")
+        self.logger.info(f"   ❌ Failed: {failed}/{len(video_files)}")
+        self.logger.info(
+            f"   ⚡ Average time: {total_time / len(video_files):.1f}s per video"
+        )
 
         # Emit completion event
         if cancelled > 0:
@@ -1269,17 +1271,19 @@ class VideoIngestionPipeline:
 
         if not video_files:
             self.logger.error(f"No video files found in {source_label}")
-            print(f"❌ No video files found in {source_label}")
+            self.logger.warning(f"No video files found in {source_label}")
             return {"error": "No video files found"}
 
         self.logger.info(
             f"Starting concurrent batch processing: {len(video_files)} videos from {source_label}"
         )
 
-        print(f"🎬 Found {len(video_files)} videos to process")
-        print(f"📁 Output directory: {self.profile_output_dir}")
-        print(f"⚙️ Pipeline config: {self.config}")
-        print(f"🚀 Concurrent processing: max {max_concurrent} videos at once")
+        self.logger.info(f"🎬 Found {len(video_files)} videos to process")
+        self.logger.info(f"📁 Output directory: {self.profile_output_dir}")
+        self.logger.info(f"⚙️ Pipeline config: {self.config}")
+        self.logger.info(
+            f"🚀 Concurrent processing: max {max_concurrent} videos at once"
+        )
 
         # Convert PosixPath objects to strings for JSON serialization
         config_dict = self.config.__dict__.copy()
@@ -1345,16 +1349,18 @@ class VideoIngestionPipeline:
         )
         self.logger.info(f"Summary saved to: {summary_file}")
 
-        print("\n🎉 Pipeline completed!")
-        print(
+        self.logger.info("\n🎉 Pipeline completed!")
+        self.logger.info(
             f"✅ Processed: {len(results['processed_videos'])}/{len(video_files)} videos"
         )
-        print(f"❌ Failed: {len(results['failed_videos'])} videos")
-        print(f"⏱️ Total time: {results['total_processing_time'] / 60:.1f} minutes")
-        print(
+        self.logger.info(f"❌ Failed: {len(results['failed_videos'])} videos")
+        self.logger.info(
+            f"⏱️ Total time: {results['total_processing_time'] / 60:.1f} minutes"
+        )
+        self.logger.info(
             f"⚡ Throughput: {len(video_files) / results['total_processing_time'] * 60:.1f} videos/minute"
         )
-        print(f"📄 Summary saved: {summary_file}")
+        self.logger.info(f"📄 Summary saved: {summary_file}")
 
         # Cleanup all processors (including VLM service shutdown)
         self.processor_manager.cleanup()
