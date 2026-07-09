@@ -26,6 +26,8 @@ from typing import Any, Dict, Optional
 import yaml
 from opentelemetry import trace
 
+from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,6 +179,22 @@ class SandboxManager:
         # SandboxPoolConfig.from_environment() so operators can disable or
         # tune via env vars without code changes.
         self._pool: Optional[Any] = None
+
+        # Gateway circuit breaker: after a few failed dials it trips open and
+        # exec fails fast (CircuitOpenError) instead of every request eating the
+        # 120s wait_ready, so one dead gateway can't stall the worker pool.
+        from cogniverse_core.common.utils.circuit_breaker import (
+            BreakerConfig,
+            CircuitBreaker,
+        )
+
+        self._gateway_breaker = CircuitBreaker.get(
+            BreakerConfig(
+                name="openshell_gateway",
+                failure_threshold=3,
+                reset_timeout_s=30.0,
+            )
+        )
 
         # optional cert-rotation watcher. Operators wire one in via
         # ``attach_cert_rotator()`` so an external poller can call
@@ -395,7 +413,7 @@ class SandboxManager:
                 with tracer.start_as_current_span(
                     "sandbox.create_session", attributes=common_attrs
                 ):
-                    session = self._client.create_session()
+                    session = self._gateway_breaker.call(self._client.create_session)
                     parent_span.set_attribute(
                         "openshell.session_name",
                         getattr(getattr(session, "sandbox", None), "name", "")
@@ -406,7 +424,8 @@ class SandboxManager:
                     "sandbox.wait_ready",
                     attributes={**common_attrs, "openshell.wait_timeout_s": 120},
                 ):
-                    self._client.wait_ready(
+                    self._gateway_breaker.call(
+                        self._client.wait_ready,
                         session.sandbox.name,
                         timeout_seconds=120,
                     )
@@ -419,6 +438,14 @@ class SandboxManager:
                     parent_span,
                     tracer,
                 )
+            except CircuitOpenError:
+                # Gateway is known-bad; fail fast (the breaker already logged
+                # the trip) instead of dialing and eating the 120s wait.
+                logger.warning(
+                    "Sandbox gateway circuit open; failing fast for %s", agent_type
+                )
+                parent_span.set_attribute("openshell.circuit_open", True)
+                return None
             except Exception as e:
                 logger.warning(f"Sandbox exec failed for {agent_type}: {e}")
                 parent_span.set_attribute("openshell.error", type(e).__name__)
@@ -484,9 +511,13 @@ class SandboxManager:
         cfg = SandboxPoolConfig.from_environment()
         if not cfg.enabled:
             # Cache a disabled placeholder so we don't rebuild every call.
-            self._pool = SandboxSessionPool(self._client, config=cfg)
+            self._pool = SandboxSessionPool(
+                self._client, config=cfg, gateway_breaker=self._gateway_breaker
+            )
             return self._pool
-        self._pool = SandboxSessionPool(self._client, config=cfg)
+        self._pool = SandboxSessionPool(
+            self._client, config=cfg, gateway_breaker=self._gateway_breaker
+        )
         logger.info(
             "Sandbox session pool initialised (max_size=%d, idle_s=%.0f)",
             cfg.max_pool_size,
@@ -530,6 +561,12 @@ class SandboxManager:
 
             try:
                 return pool.with_session(agent_type, _run)
+            except CircuitOpenError:
+                logger.warning(
+                    "Sandbox gateway circuit open; failing fast for %s", agent_type
+                )
+                parent_span.set_attribute("openshell.circuit_open", True)
+                return None
             except Exception as e:
                 logger.warning(f"Pooled sandbox exec failed for {agent_type}: {e}")
                 parent_span.set_attribute("openshell.error", type(e).__name__)

@@ -85,10 +85,14 @@ class SandboxSessionPool:
         client: Any,
         config: Optional[SandboxPoolConfig] = None,
         wait_ready_timeout_s: int = 120,
+        gateway_breaker: Any = None,
     ) -> None:
         self._client = client
         self._config = config or SandboxPoolConfig.from_environment()
         self._wait_ready_timeout = wait_ready_timeout_s
+        # Shared circuit breaker for gateway dials; when open, session creation
+        # raises CircuitOpenError immediately instead of hanging on wait_ready.
+        self._gateway_breaker = gateway_breaker
         self._lock = threading.Lock()
         # agent_type -> _PoolEntry. One entry per agent at most; this keeps
         # the pool tiny and predictable. If finer-grained pooling is
@@ -272,7 +276,12 @@ class SandboxSessionPool:
             logger.debug("Pool destroy session failed (non-fatal): %s", exc)
 
     def _create_with_spans(self) -> Any:
-        """Create a session + wait for ready, emitting sandbox lifecycle spans."""
+        """Create a session + wait for ready, through the gateway breaker."""
+        if self._gateway_breaker is not None:
+            return self._gateway_breaker.call(self._do_create_session)
+        return self._do_create_session()
+
+    def _do_create_session(self) -> Any:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("sandbox.create_session"):
             session = self._client.create_session()
