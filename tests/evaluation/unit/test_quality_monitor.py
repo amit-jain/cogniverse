@@ -989,3 +989,89 @@ class TestSpanNameByAgent:
             f"AgentBase emitted {captured!r}, but SPAN_NAME_BY_AGENT expects "
             f"'SearchAgent.process'. Fix one or the other."
         )
+
+
+class TestNewThresholdCeilings:
+    """golden_ndcg_drop_pct, error_rate_ceiling and latency_p95_ceiling_ms were
+    configured but never evaluated; check_thresholds must now honor them."""
+
+    def _golden(self, mean_ndcg, baseline_ndcg):
+        return GoldenEvalResult(
+            timestamp=datetime.now(),
+            tenant_id="t",
+            mean_mrr=0.9,
+            mean_ndcg=mean_ndcg,
+            mean_precision_at_5=0.9,
+            query_count=10,
+            baseline_mrr=0.9,  # no MRR drop, so only nDCG can trigger
+            baseline_ndcg=baseline_ndcg,
+        )
+
+    def _live(self, error_rate=None, latency_p95_ms=None):
+        agent = AgentEvalResult(
+            agent=AgentType.SEARCH,
+            score=0.9,  # above floor
+            baseline_score=0.9,  # no degradation
+            degradation_pct=0.0,
+            sample_count=50,
+            error_rate=error_rate,
+            latency_p95_ms=latency_p95_ms,
+        )
+        return LiveEvalResult(
+            timestamp=datetime.now(),
+            tenant_id="t",
+            agent_results={AgentType.SEARCH: agent},
+        )
+
+    def test_ndcg_drop_triggers_optimize(self, monitor):
+        # 0.9 -> 0.7 is a 22% drop, past the 10% default.
+        verdicts = monitor.check_thresholds(self._golden(0.7, 0.9), None)
+        assert verdicts[AgentType.SEARCH] == Verdict.OPTIMIZE
+
+    def test_ndcg_stable_skips(self, monitor):
+        verdicts = monitor.check_thresholds(self._golden(0.88, 0.9), None)
+        assert verdicts[AgentType.SEARCH] == Verdict.SKIP
+
+    def test_error_rate_over_ceiling_triggers_optimize(self, monitor):
+        # 0.20 > 0.05 default ceiling.
+        verdicts = monitor.check_thresholds(None, self._live(error_rate=0.20))
+        assert verdicts[AgentType.SEARCH] == Verdict.OPTIMIZE
+
+    def test_error_rate_under_ceiling_skips(self, monitor):
+        verdicts = monitor.check_thresholds(None, self._live(error_rate=0.01))
+        assert verdicts[AgentType.SEARCH] == Verdict.SKIP
+
+    def test_latency_p95_over_ceiling_triggers_optimize(self, monitor):
+        # 5000ms > 1000ms default ceiling.
+        verdicts = monitor.check_thresholds(None, self._live(latency_p95_ms=5000.0))
+        assert verdicts[AgentType.SEARCH] == Verdict.OPTIMIZE
+
+    def test_latency_p95_under_ceiling_skips(self, monitor):
+        verdicts = monitor.check_thresholds(None, self._live(latency_p95_ms=200.0))
+        assert verdicts[AgentType.SEARCH] == Verdict.SKIP
+
+    def test_missing_operational_metrics_do_not_trigger(self, monitor):
+        # error_rate/latency None (spans carried no status/latency) => skip.
+        verdicts = monitor.check_thresholds(None, self._live())
+        assert verdicts[AgentType.SEARCH] == Verdict.SKIP
+
+
+class TestOperationalHealth:
+    def test_error_rate_and_p95_from_spans(self):
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "status_code": ["OK", "OK", "ERROR", "OK"],
+                "latency_ms": [100.0, 200.0, 300.0, 1000.0],
+            }
+        )
+        err, p95 = QualityMonitor._operational_health(df)
+        assert err == 0.25  # 1 of 4 errored
+        assert p95 == pytest.approx(1000.0, rel=0.01) or p95 > 700
+
+    def test_missing_columns_return_none(self):
+        import pandas as pd
+
+        err, p95 = QualityMonitor._operational_health(pd.DataFrame({"x": [1]}))
+        assert err is None and p95 is None
