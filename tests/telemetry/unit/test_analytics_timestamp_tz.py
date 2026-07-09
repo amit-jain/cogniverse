@@ -16,7 +16,16 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
+from cogniverse_core.common.utils.circuit_breaker import (
+    BreakerConfig,
+    CircuitBreaker,
+)
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
+
+
+def _disabled_breaker():
+    """A no-op breaker (threshold 0 never trips) for unit setups."""
+    return CircuitBreaker.get(BreakerConfig(name="test-phoenix", failure_threshold=0))
 
 
 def _build_spans_df(spans: list[dict]) -> pd.DataFrame:
@@ -44,6 +53,7 @@ def test_missing_start_time_defaults_to_aware_utc() -> None:
     analytics.client = MagicMock()
     analytics._cache = {}
     analytics.telemetry_url = "http://test"
+    analytics._breaker = _disabled_breaker()
     analytics.client.spans.get_spans_dataframe = MagicMock(return_value=df)
 
     # Patch the parent_id mask to keep the test resilient to pandas API quirks
@@ -96,6 +106,7 @@ def test_aware_and_default_timestamps_are_comparable() -> None:
     analytics.client = MagicMock()
     analytics._cache = {}
     analytics.telemetry_url = "http://test"
+    analytics._breaker = _disabled_breaker()
     analytics.client.spans.get_spans_dataframe = MagicMock(return_value=df)
 
     metrics = analytics.get_traces()
@@ -144,6 +155,7 @@ def test_profile_and_strategy_extracted_from_flattened_columns() -> None:
     analytics.client = MagicMock()
     analytics._cache = {}
     analytics.telemetry_url = "http://test"
+    analytics._breaker = _disabled_breaker()
     analytics.client.spans.get_spans_dataframe = MagicMock(return_value=df)
 
     metrics = analytics.get_traces()
@@ -175,6 +187,7 @@ def test_flattened_metadata_dotted_keys_resolved() -> None:
     analytics.client = MagicMock()
     analytics._cache = {}
     analytics.telemetry_url = "http://test"
+    analytics._breaker = _disabled_breaker()
     analytics.client.spans.get_spans_dataframe = MagicMock(return_value=df)
 
     metrics = analytics.get_traces()

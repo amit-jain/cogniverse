@@ -16,6 +16,8 @@ import plotly.graph_objects as go
 from phoenix.client import Client as _PhoenixSyncClient
 from plotly.subplots import make_subplots
 
+from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
+
 # Canonical TraceMetrics lives in the evaluation provider hierarchy —
 # Phoenix is one source, but the dataclass shape is provider-agnostic.
 # Re-exported below so dashboards that already import
@@ -33,6 +35,21 @@ class PhoenixAnalytics:
     def __init__(self, telemetry_url: str = "http://localhost:6006"):
         self.telemetry_url = telemetry_url
         self.client = _PhoenixSyncClient(base_url=telemetry_url)
+        # Same per-endpoint Phoenix breaker as the trace store: repeated
+        # dashboard read failures trip it so the tab degrades fast instead of
+        # blocking on a down Phoenix each refresh.
+        from cogniverse_core.common.utils.circuit_breaker import (
+            BreakerConfig,
+            CircuitBreaker,
+        )
+
+        self._breaker = CircuitBreaker.get(
+            BreakerConfig(
+                name=f"phoenix:{telemetry_url}",
+                failure_threshold=4,
+                reset_timeout_s=60.0,
+            )
+        )
 
     def get_traces(
         self,
@@ -77,7 +94,14 @@ class PhoenixAnalytics:
             }
             if project_name:
                 kwargs["project_identifier"] = project_name
-            spans_df = self.client.spans.get_spans_dataframe(**kwargs)
+            spans_df = self._breaker.call(
+                self.client.spans.get_spans_dataframe, **kwargs
+            )
+        except CircuitOpenError:
+            # Phoenix is down: degrade the dashboard (no traces) rather than
+            # error the tab; the breaker already logged the trip.
+            logger.warning("Phoenix circuit open — analytics degraded to no traces")
+            return []
         except Exception as e:
             logger.error(f"Failed to fetch spans: {e}")
             return []
