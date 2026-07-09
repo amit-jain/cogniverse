@@ -7,18 +7,23 @@ corpus so every score was wrong. It must fail loud instead.
 
 from __future__ import annotations
 
-import os
+from unittest.mock import MagicMock, patch
 
-# The encoder module resolves config at import time; give it a backend URL so
-# the import succeeds in a unit context.
-os.environ.setdefault("BACKEND_URL", "http://localhost:8080")
+import numpy as np
+import pytest
 
-import numpy as np  # noqa: E402
-import pytest  # noqa: E402
-
-from cogniverse_core.common.models.videoprism_text_encoder import (  # noqa: E402
-    VideoPrismTextEncoder,
-)
+# The encoder module resolves config (a network call) at import time. Patch the
+# config resolver before importing so this stays a hermetic unit test.
+with (
+    patch(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        return_value=MagicMock(),
+    ),
+    patch("cogniverse_foundation.config.utils.get_config", return_value={}),
+):
+    from cogniverse_core.common.models.videoprism_text_encoder import (
+        VideoPrismTextEncoder,
+    )
 
 
 def _encoder(embedding_dim: int) -> VideoPrismTextEncoder:
