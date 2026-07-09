@@ -277,7 +277,9 @@ class RetrievalMonitor:
             # Check if alert is already active
             if alert_key in self.active_alerts:
                 # Update existing alert
-                self.active_alerts[alert_key]["last_triggered"] = datetime.now(timezone.utc)
+                self.active_alerts[alert_key]["last_triggered"] = datetime.now(
+                    timezone.utc
+                )
                 self.active_alerts[alert_key]["count"] += 1
             else:
                 # New alert
