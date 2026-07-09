@@ -28,6 +28,76 @@ logging.basicConfig(
 )
 
 
+def _first_present(row, columns):
+    """Return the first non-null value among ``columns`` in a span row.
+
+    Phoenix get_spans returns a FLATTENED frame, so input/output/attributes
+    live under dotted columns (``attributes.input.value``), not bare ``input``.
+    """
+    for col in columns:
+        if col not in row:
+            continue
+        val = row[col]
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            continue
+        return val
+    return None
+
+
+def _span_query(row) -> str:
+    """Extract the query text from a span row across Phoenix column shapes."""
+    val = _first_present(
+        row, ("attributes.input.value", "input.value", "input", "attributes.query")
+    )
+    if val is None:
+        return ""
+    if isinstance(val, dict):
+        return val.get("query", "") or ""
+    if isinstance(val, str):
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, dict) and parsed.get("query"):
+                return parsed["query"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return val
+    return ""
+
+
+def _span_output(row) -> dict:
+    """Extract the output dict from a span row across Phoenix column shapes."""
+    val = _first_present(row, ("attributes.output.value", "output.value", "output"))
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str):
+        try:
+            parsed = json.loads(val)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+def _span_attributes(row) -> dict:
+    """Reconstruct the attributes dict from flattened ``attributes.*`` columns,
+    falling back to a genuine dict/JSON ``attributes`` column when present."""
+    attrs = row.get("attributes") if "attributes" in row else None
+    if isinstance(attrs, str):
+        try:
+            attrs = json.loads(attrs)
+        except (json.JSONDecodeError, TypeError):
+            attrs = None
+    if isinstance(attrs, dict) and attrs:
+        return attrs
+    return {
+        k[len("attributes.") :]: row[k]
+        for k in row.index
+        if isinstance(k, str)
+        and k.startswith("attributes.")
+        and not (isinstance(row[k], float) and pd.isna(row[k]))
+    }
+
+
 class GoldenDatasetGenerator:
     """
     Generates golden dataset from low-scoring traces
@@ -140,15 +210,8 @@ class GoldenDatasetGenerator:
 
         for _, row in traces_df.iterrows():
             try:
-                # Extract query from input
-                input_data = row.get("input", {})
-                if isinstance(input_data, str):
-                    try:
-                        input_data = json.loads(input_data)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-
-                query = input_data.get("query", "")
+                # Extract query from the (flattened) input columns
+                query = _span_query(row)
                 if not query:
                     continue
 
@@ -161,13 +224,8 @@ class GoldenDatasetGenerator:
                 if score is not None:
                     query_stats[query]["scores"].append(float(score))
 
-                # Extract results
-                output_data = row.get("output", {})
-                if isinstance(output_data, str):
-                    try:
-                        output_data = json.loads(output_data)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+                # Extract results from the (flattened) output columns
+                output_data = _span_output(row)
 
                 if isinstance(output_data, dict):
                     results = output_data.get("results", [])
@@ -187,13 +245,8 @@ class GoldenDatasetGenerator:
                 query_stats[query]["occurrences"] += 1
                 query_stats[query]["timestamps"].append(row.get("start_time"))
 
-                # Extract profile and strategy from attributes
-                attrs = row.get("attributes", {})
-                if isinstance(attrs, str):
-                    try:
-                        attrs = json.loads(attrs)
-                    except (json.JSONDecodeError, TypeError):
-                        attrs = {}
+                # Extract profile and strategy from the (flattened) attributes
+                attrs = _span_attributes(row)
 
                 if attrs.get("profile"):
                     query_stats[query]["profiles"].add(attrs["profile"])

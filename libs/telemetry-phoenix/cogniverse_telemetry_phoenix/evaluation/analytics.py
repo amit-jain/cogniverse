@@ -112,7 +112,12 @@ class PhoenixAnalytics:
                 else:
                     duration_ms = 0
 
-                # Extract attributes/metadata
+                # Extract attributes/metadata. Real Phoenix get_spans returns a
+                # FLATTENED frame — attributes are columns like
+                # ``attributes.profile`` / ``attributes.metadata.strategy``, not
+                # a single ``attributes`` dict — so reconstruct the dict from
+                # those columns. A genuine dict/JSON-string column (mock/test
+                # data) is still honored when present.
                 attributes = span.get("attributes", {})
                 if isinstance(attributes, str):
                     try:
@@ -121,6 +126,14 @@ class PhoenixAnalytics:
                         attributes = json.loads(attributes)
                     except Exception:
                         attributes = {}
+                if not isinstance(attributes, dict) or not attributes:
+                    attributes = {
+                        k[len("attributes.") :]: v
+                        for k, v in span.items()
+                        if isinstance(k, str)
+                        and k.startswith("attributes.")
+                        and pd.notna(v)
+                    }
 
                 # Get status
                 status_code = span.get("status_code", "OK")
