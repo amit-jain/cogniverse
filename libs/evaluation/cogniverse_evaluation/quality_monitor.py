@@ -63,6 +63,10 @@ class AgentEvalResult:
     low_scoring_examples: List[Dict[str, Any]] = field(default_factory=list)
     high_scoring_examples: List[Dict[str, Any]] = field(default_factory=list)
     metrics: Dict[str, float] = field(default_factory=dict)
+    # Operational health over the sampled window; None when the spans carry no
+    # latency/status (so the ceiling checks are skipped rather than firing on 0).
+    error_rate: Optional[float] = None
+    latency_p95_ms: Optional[float] = None
 
 
 @dataclass
@@ -81,6 +85,7 @@ class GoldenEvalResult:
     # Prior baseline MRR captured before this result is stored, so a drop is
     # measured current-vs-previous, not against the value this run just wrote.
     baseline_mrr: Optional[float] = None
+    baseline_ndcg: Optional[float] = None
 
 
 @dataclass
@@ -406,6 +411,7 @@ class QualityMonitor:
         # Read the prior baseline BEFORE storing this run, so the drop check
         # compares against the previous baseline, not the value stored below.
         prior_baseline = self._last_golden_baseline_mrr
+        prior_baseline_ndcg = self._last_golden_baseline_ndcg
 
         result = GoldenEvalResult(
             timestamp=datetime.utcnow(),
@@ -418,6 +424,7 @@ class QualityMonitor:
             low_scoring_queries=low_scoring,
             high_scoring_queries=high_scoring,
             baseline_mrr=prior_baseline,
+            baseline_ndcg=prior_baseline_ndcg,
         )
 
         await self._store_golden_eval_result(result)
@@ -572,6 +579,14 @@ class QualityMonitor:
         if baseline_score and baseline_score > 0:
             degradation = (baseline_score - mean_score) / baseline_score
 
+        error_rate, latency_p95 = self._operational_health(spans_df)
+
+        metrics = {"mean_score": mean_score, "sample_count": len(scores)}
+        if error_rate is not None:
+            metrics["error_rate"] = error_rate
+        if latency_p95 is not None:
+            metrics["latency_p95_ms"] = latency_p95
+
         return AgentEvalResult(
             agent=agent_type,
             score=mean_score,
@@ -580,8 +595,32 @@ class QualityMonitor:
             sample_count=len(scores),
             low_scoring_examples=low_scoring,
             high_scoring_examples=high_scoring,
-            metrics={"mean_score": mean_score, "sample_count": len(scores)},
+            metrics=metrics,
+            error_rate=error_rate,
+            latency_p95_ms=latency_p95,
         )
+
+    @staticmethod
+    def _operational_health(
+        spans_df: "pd.DataFrame",
+    ) -> tuple[Optional[float], Optional[float]]:
+        """Error rate and p95 latency (ms) over the sampled spans. Returns
+        ``(None, None)`` for the metric whose column is absent, so a missing
+        column skips the ceiling check rather than reading as zero."""
+        error_rate: Optional[float] = None
+        latency_p95: Optional[float] = None
+
+        if "status_code" in spans_df.columns and len(spans_df):
+            statuses = spans_df["status_code"].astype(str).str.upper()
+            ok = statuses.isin(["OK", "UNSET", "NONE", ""])
+            error_rate = float((~ok).sum()) / float(len(spans_df))
+
+        if "latency_ms" in spans_df.columns:
+            latencies = spans_df["latency_ms"].dropna()
+            if len(latencies):
+                latency_p95 = float(latencies.quantile(0.95))
+
+        return error_rate, latency_p95
 
     def _build_search_judge_prompt(
         self, query: str, results: List[Dict[str, Any]]
@@ -653,6 +692,16 @@ class QualityMonitor:
                         f"Golden MRR dropped {drop:.1%} "
                         f"({baseline_mrr:.3f} → {golden.mean_mrr:.3f})"
                     )
+
+            baseline_ndcg = golden.baseline_ndcg
+            if baseline_ndcg and baseline_ndcg > 0:
+                ndcg_drop = (baseline_ndcg - golden.mean_ndcg) / baseline_ndcg
+                if ndcg_drop >= self.thresholds.golden_ndcg_drop_pct:
+                    search_verdict = Verdict.OPTIMIZE
+                    logger.warning(
+                        f"Golden nDCG dropped {ndcg_drop:.1%} "
+                        f"({baseline_ndcg:.3f} → {golden.mean_ndcg:.3f})"
+                    )
             verdicts[AgentType.SEARCH] = search_verdict
 
         # Live traffic covers all agents
@@ -674,6 +723,26 @@ class QualityMonitor:
                     logger.warning(
                         f"{agent_type.value} degraded {agent_result.degradation_pct:.1%} "
                         f"from baseline"
+                    )
+                elif (
+                    agent_result.error_rate is not None
+                    and agent_result.error_rate > self.thresholds.error_rate_ceiling
+                ):
+                    verdict = Verdict.OPTIMIZE
+                    logger.warning(
+                        f"{agent_type.value} error rate {agent_result.error_rate:.1%} "
+                        f"> ceiling {self.thresholds.error_rate_ceiling:.1%}"
+                    )
+                elif (
+                    agent_result.latency_p95_ms is not None
+                    and agent_result.latency_p95_ms
+                    > self.thresholds.latency_p95_ceiling_ms
+                ):
+                    verdict = Verdict.OPTIMIZE
+                    logger.warning(
+                        f"{agent_type.value} p95 latency "
+                        f"{agent_result.latency_p95_ms:.0f}ms > ceiling "
+                        f"{self.thresholds.latency_p95_ceiling_ms:.0f}ms"
                     )
 
                 existing = verdicts.get(agent_type, Verdict.SKIP)
@@ -775,9 +844,9 @@ class QualityMonitor:
             logger.debug(f"Failed to build ModelingContext: {e}")
             return None
 
-    @property
-    def _last_golden_baseline_mrr(self) -> Optional[float]:
-        """Load the last golden baseline MRR from Phoenix dataset."""
+    def _read_baseline_metric(self, metric: str) -> Optional[float]:
+        """Load the last golden baseline value for ``metric`` (e.g. mean_mrr,
+        mean_ndcg) from the tenant's Phoenix baseline dataset."""
         try:
             from phoenix.client import Client as PhoenixSyncClient
 
@@ -789,20 +858,30 @@ class QualityMonitor:
                 return None
 
             # Phoenix may nest values under input/output dicts
-            if "mean_mrr" in df.columns:
-                return float(df["mean_mrr"].iloc[-1])
+            if metric in df.columns:
+                return float(df[metric].iloc[-1])
             elif "output" in df.columns:
                 last_row = df.iloc[-1]
                 output = last_row["output"]
-                if isinstance(output, dict) and "mean_mrr" in output:
-                    return float(output["mean_mrr"])
+                if isinstance(output, dict) and metric in output:
+                    return float(output[metric])
             # Try flattened Phoenix column names
             for col in df.columns:
-                if "mean_mrr" in str(col):
+                if metric in str(col):
                     return float(df[col].iloc[-1])
         except Exception as e:
-            logger.debug(f"Failed to read baseline: {e}")
+            logger.debug(f"Failed to read baseline {metric}: {e}")
         return None
+
+    @property
+    def _last_golden_baseline_mrr(self) -> Optional[float]:
+        """Load the last golden baseline MRR from Phoenix dataset."""
+        return self._read_baseline_metric("mean_mrr")
+
+    @property
+    def _last_golden_baseline_ndcg(self) -> Optional[float]:
+        """Load the last golden baseline nDCG from Phoenix dataset."""
+        return self._read_baseline_metric("mean_ndcg")
 
     def _build_trigger(
         self,

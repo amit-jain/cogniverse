@@ -202,6 +202,11 @@ class SpanEvaluator:
                     "operation_name": span.get("name", ""),
                     "attributes": attributes,
                     "outputs": outputs,
+                    # Preserve latency and status so downstream quality checks
+                    # can evaluate error-rate and p95-latency ceilings; without
+                    # these the reformatted frame drops them entirely.
+                    "latency_ms": self._span_latency_ms(span),
+                    "status_code": span.get("status_code", span.get("status", "OK")),
                 }
 
                 formatted_spans.append(formatted_span)
@@ -211,6 +216,25 @@ class SpanEvaluator:
         except Exception as e:
             logger.error(f"Error retrieving spans from Phoenix: {e}")
             return pd.DataFrame()
+
+    @staticmethod
+    def _span_latency_ms(span) -> Optional[float]:
+        """Latency in ms from the raw Phoenix span row: prefer an explicit
+        ``latency_ms`` column, else derive from start/end timestamps."""
+        raw = span.get("latency_ms")
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+        start = span.get("start_time")
+        end = span.get("end_time")
+        if start is not None and end is not None:
+            try:
+                return (end - start).total_seconds() * 1000.0
+            except (AttributeError, TypeError):
+                return None
+        return None
 
     def _create_mock_spans_df(self) -> pd.DataFrame:
         """Create mock spans data for testing"""
