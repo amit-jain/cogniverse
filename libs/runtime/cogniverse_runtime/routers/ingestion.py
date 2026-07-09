@@ -29,6 +29,31 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Cap an upload so a single request can't exhaust the pod's memory. Generous
+# enough for long videos; oversized uploads are rejected with 413 before the
+# whole body is buffered.
+MAX_UPLOAD_BYTES = 5 * 1024**3  # 5 GiB
+_UPLOAD_CHUNK = 8 * 1024 * 1024  # 8 MiB
+
+
+async def _read_capped(file: UploadFile, max_bytes: int) -> bytes:
+    """Read an upload into memory, aborting with 413 once it exceeds
+    ``max_bytes`` so an unbounded body cannot OOM the pod."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload exceeds the {max_bytes} byte limit.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
 
 class IngestionRequest(BaseModel):
     """Ingestion request model."""
@@ -245,7 +270,7 @@ async def upload_video(
         enqueue_ingestion,
     )
 
-    content = await file.read()
+    content = await _read_capped(file, MAX_UPLOAD_BYTES)
     try:
         source_url = minio_client.upload_bytes(
             content,

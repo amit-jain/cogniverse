@@ -11,7 +11,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Bound a single upsert so one request can't materialize millions of nodes/edges
+# and exhaust the pod's memory. Callers batch larger graphs across requests.
+MAX_UPSERT_ITEMS = 10_000
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +89,8 @@ class EdgeDoc(BaseModel):
 class UpsertRequest(BaseModel):
     tenant_id: str
     source_doc_id: str
-    nodes: List[NodeDoc] = []
-    edges: List[EdgeDoc] = []
+    nodes: List[NodeDoc] = Field(default_factory=list, max_length=MAX_UPSERT_ITEMS)
+    edges: List[EdgeDoc] = Field(default_factory=list, max_length=MAX_UPSERT_ITEMS)
 
 
 class UpsertResponse(BaseModel):
