@@ -585,7 +585,7 @@ spec:
         {{- end }}
     - name: upload-reports
       container:
-        image: minio/mc:latest
+        image: minio/mc:RELEASE.2024-10-29T16-01-48Z
         env:
         - name: MINIO_ENDPOINT
           value: {{ $reportsEndpoint | quote }}

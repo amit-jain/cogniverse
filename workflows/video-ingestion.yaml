@@ -216,7 +216,7 @@ spec:
   # Send completion notification
   - name: notify-completion
     container:
-      image: curlimages/curl:latest
+      image: curlimages/curl:8.11.1
       command: ["/bin/sh", "-c"]
       args:
         - |

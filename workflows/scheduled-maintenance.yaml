@@ -95,7 +95,7 @@ spec:
 
     - name: cleanup-old-backups
       container:
-        image: alpine:latest
+        image: alpine:3.20
         command: ["/bin/sh", "-c"]
         args:
           - |
@@ -118,7 +118,7 @@ spec:
 
     - name: notify-backup
       container:
-        image: curlimages/curl:latest
+        image: curlimages/curl:8.11.1
         command: ["/bin/sh", "-c"]
         args:
           - |
@@ -234,7 +234,7 @@ spec:
 
     - name: cleanup-old-logs
       container:
-        image: alpine:latest
+        image: alpine:3.20
         command: ["/bin/sh", "-c"]
         args:
           - |
@@ -254,7 +254,7 @@ spec:
 
     - name: cleanup-temp-files
       container:
-        image: alpine:latest
+        image: alpine:3.20
         command: ["/bin/sh", "-c"]
         args:
           - |
@@ -326,7 +326,7 @@ spec:
 
     - name: notify-cleanup
       container:
-        image: curlimages/curl:latest
+        image: curlimages/curl:8.11.1
         command: ["/bin/sh", "-c"]
         args:
           - |
@@ -457,7 +457,7 @@ spec:
 
     - name: send-reports
       container:
-        image: curlimages/curl:latest
+        image: curlimages/curl:8.11.1
         command: ["/bin/sh", "-c"]
         args:
           - |
