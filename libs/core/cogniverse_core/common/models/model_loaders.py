@@ -96,6 +96,34 @@ class RemoteInferenceClient:
         if self.api_key:
             self.session.headers["Authorization"] = f"Bearer {self.api_key}"
 
+        # Per-endpoint breaker: a down inference pod trips it so calls fail fast
+        # (CircuitOpenError) instead of burning their retry budget each time.
+        from cogniverse_core.common.utils.circuit_breaker import (
+            BreakerConfig,
+            CircuitBreaker,
+        )
+
+        self._breaker = CircuitBreaker.get(
+            BreakerConfig(
+                name=f"inference:{self.endpoint_url}",
+                failure_threshold=5,
+                reset_timeout_s=15.0,
+                counted_exceptions=(
+                    requests.RequestException,
+                    ConnectionError,
+                    TimeoutError,
+                ),
+            )
+        )
+
+    def process_images(self, images: list, **kwargs) -> Dict[str, Any]:
+        """Send images to the inference endpoint, guarded by the breaker.
+
+        The breaker wraps the retried call, so a down endpoint fails fast with
+        CircuitOpenError once tripped instead of retrying every request.
+        """
+        return self._breaker.call(self._process_images_retried, images, **kwargs)
+
     @retry_with_backoff(
         config=RetryConfig(
             max_attempts=3,
@@ -103,7 +131,7 @@ class RemoteInferenceClient:
             exceptions=(requests.RequestException, ConnectionError, TimeoutError),
         )
     )
-    def process_images(self, images: list, **kwargs) -> Dict[str, Any]:
+    def _process_images_retried(self, images: list, **kwargs) -> Dict[str, Any]:
         """
         Send images to remote inference endpoint with retry logic.
 
@@ -257,6 +285,10 @@ class RemoteInferenceClient:
         }
 
     def process_queries_vllm(self, queries: list, **kwargs) -> Dict[str, Any]:
+        """Encode text queries via vLLM, guarded by the endpoint breaker."""
+        return self._breaker.call(self._process_queries_vllm_impl, queries, **kwargs)
+
+    def _process_queries_vllm_impl(self, queries: list, **kwargs) -> Dict[str, Any]:
         """POST one text query at a time to vLLM's ``/pooling`` endpoint
         and return per-token multi-vector embeddings.
 
