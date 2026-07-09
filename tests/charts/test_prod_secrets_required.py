@@ -51,6 +51,10 @@ def test_prod_install_fails_loud_without_minio_password():
             str(CHART),
             "-f",
             str(PROD_VALUES),
+            # Prod also requires a redis password; give one so this isolates
+            # the minio required check.
+            "--set",
+            "redis.auth.password=x",
             "--show-only",
             "templates/minio.yaml",
         ],

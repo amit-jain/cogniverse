@@ -1523,14 +1523,10 @@ ingress:
 # Configuration
 # ===========================================
 config:
-  # Tenant configuration
-  tenants:
-    - id: "default"
-      name: "Default Tenant"
-    - id: "acme_corp"
-      name: "Acme Corporation"
-    - id: "globex_inc"
-      name: "Globex Inc"
+  # Tenant configuration. Empty by default so a fresh install does not
+  # auto-provision example tenants; operators add their own (or override in an
+  # environment values file, e.g. values.k3s.yaml for the local stack).
+  tenants: []
 
   # Model configuration
   models:
@@ -1686,6 +1682,12 @@ multiTenant:
 # AOF on so a pod restart doesn't lose in-flight queue entries.
 redis:
   enabled: true
+  # In-cluster auth. Off by default for the local/dev stack; enable in
+  # production (values.prod.yaml) with a secret password so any pod that reaches
+  # the Redis Service can't read or flush the queue and session state.
+  auth:
+    enabled: false
+    password: ""  # required when auth.enabled=true
   image:
     repository: redis
     tag: "7.4-alpine"

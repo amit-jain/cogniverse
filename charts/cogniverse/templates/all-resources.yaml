@@ -388,8 +388,18 @@ spec:
             {{- end -}}
             }
         {{- if .Values.redis.enabled }}
+        {{- if .Values.redis.auth.enabled }}
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-redis-auth
+              key: redis-password
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
+        {{- else }}
         - name: REDIS_URL
           value: "redis://{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
+        {{- end }}
         - name: INGEST_QUEUE_DEPTH_LIMIT
           value: {{ .Values.ingestor.queueDepthLimit | quote }}
         - name: INGEST_PER_TENANT_CONCURRENCY
