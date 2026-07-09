@@ -86,8 +86,8 @@ class ModalTrainingRunner:
         logger.info(f"Launching SFT training on Modal ({self.config.gpu})...")
         logger.info(f"Dataset: {len(dataset)} examples")
 
-        # 1. Get Modal function
-        modal_fn = self._create_sft_function()
+        # 1. Get Modal function, applying the caller's resource config
+        modal_fn = self._apply_options(self._create_sft_function())
 
         # 2. Call Modal directly with dataset (no upload needed!)
         logger.info("Calling Modal function...")
@@ -150,7 +150,7 @@ class ModalTrainingRunner:
         logger.info(f"Dataset: {len(dataset)} preference pairs")
 
         # 1. Get Modal function
-        modal_fn = self._create_dpo_function()
+        modal_fn = self._apply_options(self._create_dpo_function())
 
         # 2. Call Modal directly with dataset (no upload needed!)
         logger.info("Calling Modal function...")
@@ -213,7 +213,7 @@ class ModalTrainingRunner:
         logger.info(f"Dataset: {len(dataset)} triplets")
 
         # 1. Get Modal function
-        modal_fn = self._create_embedding_function()
+        modal_fn = self._apply_options(self._create_embedding_function())
 
         # 2. Call Modal directly with dataset (no upload needed!)
         logger.info("Calling Modal function...")
@@ -246,6 +246,26 @@ class ModalTrainingRunner:
             adapter_path=adapter_path,
             metrics=result["metrics"],
             logs_url=None,
+        )
+
+    def _gpu_spec(self) -> str:
+        """Modal GPU spec, encoding the count as ``TYPE:N`` when > 1."""
+        if self.config.gpu_count and self.config.gpu_count > 1:
+            return f"{self.config.gpu}:{self.config.gpu_count}"
+        return self.config.gpu
+
+    def _apply_options(self, modal_fn):
+        """Override the deployed function's resources with the caller's config.
+
+        The deployed functions declare fixed defaults (A10G / 4 CPU / 16 GB /
+        1 h); without ``with_options`` a request for an A100/H100 or more
+        memory silently ran on those defaults while the log claimed otherwise.
+        """
+        return modal_fn.with_options(
+            gpu=self._gpu_spec(),
+            cpu=self.config.cpu,
+            memory=self.config.memory,
+            timeout=self.config.timeout,
         )
 
     def _create_sft_function(self):
