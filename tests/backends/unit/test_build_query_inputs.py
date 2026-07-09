@@ -101,3 +101,35 @@ def test_generic_q_input_flattens_single_row_2d(
     assert len(bound) == 128
     assert not isinstance(bound[0], list)
     assert bound == vec[0].tolist()
+
+
+def test_strategy_timeout_forwarded_to_query(backend: VespaSearchBackend) -> None:
+    """A per-strategy timeout must reach Vespa so a hung query can't drain the
+    connection pool."""
+    rank_config = {"needs_text_query": True, "timeout": 2.0}
+    params = backend._build_query(
+        query_text="cats",
+        query_embeddings=None,
+        rank_config=rank_config,
+        ranking_profile="bm25_only",
+        schema_name="video_frame",
+        limit=10,
+        filters={},
+        correlation_id="t",
+    )
+    assert params["timeout"] == "2.0s"
+
+
+def test_no_timeout_key_when_strategy_omits_it(backend: VespaSearchBackend) -> None:
+    rank_config = {"needs_text_query": True}
+    params = backend._build_query(
+        query_text="cats",
+        query_embeddings=None,
+        rank_config=rank_config,
+        ranking_profile="bm25_only",
+        schema_name="video_frame",
+        limit=10,
+        filters={},
+        correlation_id="t",
+    )
+    assert "timeout" not in params

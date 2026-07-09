@@ -992,6 +992,14 @@ class VespaSearchBackend(SearchBackend):
             "ranking": ranking_profile,
         }
 
+        # Per-strategy request timeout (seconds). Without it a hung Vespa query
+        # runs unbounded and the connection pool (bounded) drains, stalling
+        # every concurrent search. Loaded from the strategy config but was
+        # never forwarded before.
+        strategy_timeout = rank_config.get("timeout")
+        if strategy_timeout:
+            query_params["timeout"] = f"{float(strategy_timeout)}s"
+
         # Build filter conditions
         filter_conditions = self._build_filter_conditions(filters)
         if filter_conditions:
