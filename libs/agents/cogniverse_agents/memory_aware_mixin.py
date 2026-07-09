@@ -350,7 +350,7 @@ class MemoryAwareMixin:
         try:
             trunk_mm = Mem0MemoryManager(trunk_tenant)
         except Exception as exc:
-            logger.debug("Federation: could not acquire org-trunk manager: %s", exc)
+            logger.warning("Federation: could not acquire org-trunk manager: %r", exc)
             return tenant_results
         if not getattr(trunk_mm, "memory", None):
             # Org trunk not initialised in this deployment — silently
@@ -365,7 +365,7 @@ class MemoryAwareMixin:
                 top_k=top_k,
             )
         except Exception as exc:
-            logger.debug("Federation: org-trunk search failed: %s", exc)
+            logger.warning("Federation: org-trunk search failed: %r", exc)
             return tenant_results
 
         # Tag origin so downstream consumers can

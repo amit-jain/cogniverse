@@ -360,7 +360,7 @@ class TemporalReasoningAgent(
         try:
             mm = self._mm_factory(tenant_id)
         except Exception as exc:
-            logger.debug("temporal: factory(%s) failed: %s", tenant_id, exc)
+            logger.warning("temporal: factory(%s) failed: %r", tenant_id, exc)
             return []
         if mm is None or not getattr(mm, "memory", None):
             return []
@@ -376,7 +376,7 @@ class TemporalReasoningAgent(
                 )
             )
         except Exception as exc:
-            logger.debug("temporal: get_all_memories failed: %s", exc)
+            logger.warning("temporal: get_all_memories failed: %r", exc)
             return []
         return [r for r in rows if _matches_subject(r, subject_key)]
 

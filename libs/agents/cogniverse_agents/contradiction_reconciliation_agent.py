@@ -240,8 +240,8 @@ class ContradictionReconciliationAgent(
         try:
             conflict = self.detect(input.subject_key, input.predicate)
         except Exception as exc:
-            logger.debug(
-                "contradiction: Vespa-KG complement skipped for (%s, %s): %s",
+            logger.warning(
+                "contradiction: Vespa-KG complement skipped for (%s, %s): %r",
                 input.subject_key,
                 input.predicate,
                 exc,
@@ -309,8 +309,8 @@ class ContradictionReconciliationAgent(
             try:
                 memory = self.memory_manager.memory.get(mid)
             except Exception as exc:
-                logger.debug(
-                    "ContradictionReconciliationAgent: get(%s) failed: %s",
+                logger.warning(
+                    "ContradictionReconciliationAgent: get(%s) failed: %r",
                     mid,
                     exc,
                 )

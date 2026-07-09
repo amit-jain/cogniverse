@@ -312,7 +312,7 @@ class ProvenanceWalker:
         try:
             mem_obj = self._mm.memory.get(memory_id)  # type: ignore[union-attr]
         except Exception as exc:
-            logger.debug("ProvenanceWalker: get(%s) failed: %s", memory_id, exc)
+            logger.warning("ProvenanceWalker: get(%s) failed: %r", memory_id, exc)
             return None
         if mem_obj is None:
             return None

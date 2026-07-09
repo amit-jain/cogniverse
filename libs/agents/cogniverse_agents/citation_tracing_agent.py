@@ -202,8 +202,8 @@ class CitationTracingAgent(
         try:
             traced = self.trace(input.claim_id)
         except Exception as exc:
-            logger.debug(
-                "citation: Vespa-KG complement skipped for claim %s: %s",
+            logger.warning(
+                "citation: Vespa-KG complement skipped for claim %s: %r",
                 input.claim_id,
                 exc,
             )
