@@ -127,6 +127,14 @@ class TestConfigTranscriptionRouting:
                 svc: f"http://cogniverse-{svc.replace('_', '-')}:8000"
                 for svc in inf.values()
             }
+            # The shipped config no longer bakes a vlm_endpoint (operators set
+            # it per environment); supply one so the profile's VLM description
+            # strategy builds instead of failing loud on the empty default.
+            for strat in profile.get("strategies", {}).values():
+                if isinstance(strat, dict) and "vlm_endpoint" in strat.get(
+                    "params", {}
+                ):
+                    strat["params"]["vlm_endpoint"] = "http://cogniverse-vlm:8000"
             processor = _build_audio_processor(profile, service_urls)
             assert processor.endpoint == VLLM_ASR_URL, (
                 f"profile {name!r} must build a REMOTE audio processor"

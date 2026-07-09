@@ -384,9 +384,11 @@ def test_phoenix_backup_uses_volume_mount_not_kubectl_exec():
         f"phoenix dump container must not be kubectl image (no exec needed); "
         f"got {dump['container']['image']}"
     )
-    # Must mount the source volume read-only.
+    # Mounts the source volume at /source. It is deliberately writable, not
+    # read-only: opening a WAL-mode SQLite database (as the phoenix dump does)
+    # needs write access to create/update the -wal and -shm sidecar files.
     mounts = {m["name"]: m for m in dump["container"]["volumeMounts"]}
-    assert mounts["source"]["readOnly"] is True
+    assert mounts["source"].get("readOnly", False) is not True
     assert mounts["source"]["mountPath"] == "/source"
 
 
