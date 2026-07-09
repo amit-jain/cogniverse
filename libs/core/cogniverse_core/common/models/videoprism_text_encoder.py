@@ -367,7 +367,8 @@ class VideoPrismTextEncoder:
         if actual_dim != self.embedding_dim:
             logger.warning(
                 f"[{self.correlation_id}] Model outputs {actual_dim}D embeddings, "
-                f"expected {self.embedding_dim}D. Will use projection layer."
+                f"expected {self.embedding_dim}D — this is a configuration error "
+                "and will be rejected rather than silently projected."
             )
 
     def _setup_cache(self, cache_size: int):
@@ -492,31 +493,23 @@ class VideoPrismTextEncoder:
             raise
 
     def _project_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
-        """
-        Project embeddings to target dimension
+        """Return the embeddings only if they already match the target dim.
 
-        In production, this would use a learned projection layer.
-        For now, we use a simple linear projection.
-
-        Args:
-            embeddings: Original embeddings
-
-        Returns:
-            Projected embeddings of target dimension
+        A query embedding whose dimension differs from the configured
+        ``embedding_dim`` cannot be silently zero-padded or truncated: the
+        result would no longer align with the corpus vectors and every score
+        would be wrong. Fail loud so the misconfiguration surfaces instead of
+        producing corrupted search results.
         """
         current_dim = embeddings.shape[0]
-
         if current_dim == self.embedding_dim:
             return embeddings
-
-        # Simple linear projection (would be learned in production)
-        if current_dim < self.embedding_dim:
-            # Pad with learned padding (zeros for now)
-            padding = np.zeros(self.embedding_dim - current_dim)
-            return np.concatenate([embeddings, padding])
-        else:
-            # Use PCA-like projection (simple truncation for now)
-            return embeddings[: self.embedding_dim]
+        raise ValueError(
+            f"VideoPrism text embedding dim {current_dim} does not match the "
+            f"configured embedding_dim {self.embedding_dim}. Padding/truncating "
+            "would misalign the query with the corpus — check the model and "
+            "profile configuration."
+        )
 
     def get_metrics(self) -> Dict[str, Any]:
         """Get performance metrics"""
