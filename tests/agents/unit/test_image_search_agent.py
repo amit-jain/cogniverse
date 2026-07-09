@@ -294,8 +294,12 @@ class TestImageSearchFilterEscaping:
         captured = {}
 
         class _Resp:
-            status_code = 500
+            status_code = 200
             text = ""
+
+            @staticmethod
+            def json():
+                return {"root": {"children": []}}
 
         def fake_post(url, json=None, timeout=None):
             captured["yql"] = json["yql"]
