@@ -157,6 +157,16 @@ class ConfigurableVisualJudge(Evaluator):
                 label="evaluation_failed",
                 explanation=f"Visual evaluation failed: {str(e)}",
             )
+        finally:
+            # extract_frames writes temp JPEGs with delete=False; unlink them
+            # once scored so large eval runs don't fill the temp dir.
+            from pathlib import Path as _Path
+
+            for fp in frame_paths:
+                try:
+                    _Path(fp).unlink()
+                except OSError:
+                    pass
 
     def _get_video_path(self, result: dict) -> str | None:
         """Resolve a result's video to a local path via the MediaLocator.

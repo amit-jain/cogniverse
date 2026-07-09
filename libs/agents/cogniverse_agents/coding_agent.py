@@ -251,6 +251,14 @@ class CodingAgent(
                 f"Feedback: {feedback}"
             )
 
+        # The workspace is only a staging area for the file write — the sandbox
+        # is the real execution environment — so remove it once the iteration
+        # loop is done, else every request leaves a temp dir behind and the
+        # pod's disk grows unbounded under load.
+        import shutil
+
+        shutil.rmtree(workspace_dir, ignore_errors=True)
+
         # 4. Synthesize summary
         self.emit_progress("summarize", "Generating summary...")
         summary = (
