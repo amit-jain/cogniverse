@@ -393,7 +393,6 @@ class DocumentAgent(
         - Handles complex layouts better
         - Visual question answering capability
         """
-        import requests
 
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
@@ -429,11 +428,10 @@ class DocumentAgent(
         # Execute search — offload the blocking HTTP call so it doesn't stall
         # the event loop (and every other coroutine on the worker) for the
         # whole Vespa round-trip.
+        from cogniverse_agents.search.vespa_query import vespa_search_post
+
         response = await asyncio.to_thread(
-            requests.post,
-            f"{self._vespa_endpoint}/search/",
-            json=params,
-            timeout=10,
+            vespa_search_post, self._vespa_endpoint, params, 10
         )
 
         if response.status_code != 200:
@@ -473,7 +471,6 @@ class DocumentAgent(
         - Exact text searches
         - Lower latency
         """
-        import requests
 
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
@@ -500,11 +497,10 @@ class DocumentAgent(
         }
 
         # Execute search — offload the blocking HTTP call off the event loop.
+        from cogniverse_agents.search.vespa_query import vespa_search_post
+
         response = await asyncio.to_thread(
-            requests.post,
-            f"{self._vespa_endpoint}/search/",
-            json=params,
-            timeout=10,
+            vespa_search_post, self._vespa_endpoint, params, 10
         )
 
         if response.status_code != 200:

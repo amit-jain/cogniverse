@@ -292,7 +292,6 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         Returns:
             List of ImageResult
         """
-        import requests
 
         # Build YQL query
         from cogniverse_vespa._yql import yql_quote
@@ -341,9 +340,13 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         if search_mode == "hybrid" and query_text:
             params["query"] = query_text
 
-        # Execute search off the event loop — requests.post is blocking.
+        # Execute search off the event loop — the POST is blocking. Retries
+        # transient failures and raises on a persistent outage rather than
+        # returning empty results.
+        from cogniverse_agents.search.vespa_query import vespa_search_post
+
         response = await asyncio.to_thread(
-            requests.post, f"{self._vespa_endpoint}/search/", json=params, timeout=10
+            vespa_search_post, self._vespa_endpoint, params, 10
         )
 
         if response.status_code != 200:

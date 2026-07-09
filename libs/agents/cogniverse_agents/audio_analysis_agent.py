@@ -339,7 +339,6 @@ class AudioAnalysisAgent(
 
     async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:
         """Search by transcript text using BM25"""
-        import requests
 
         # Build YQL query for transcript search
         yql = "select * from audio_content where userQuery()"
@@ -352,11 +351,10 @@ class AudioAnalysisAgent(
         }
 
         try:
+            from cogniverse_agents.search.vespa_query import vespa_search_post
+
             response = await asyncio.to_thread(
-                requests.post,
-                f"{self._vespa_endpoint}/search/",
-                json=params,
-                timeout=10,
+                vespa_search_post, self._vespa_endpoint, params, 10
             )
 
             if response.status_code != 200:
@@ -393,7 +391,6 @@ class AudioAnalysisAgent(
 
     async def _search_acoustic(self, query: str, limit: int) -> List[AudioResult]:
         """Search by acoustic similarity using CLAP embeddings"""
-        import requests
 
         # CLAP text features land in the same 512-dim space as the stored audio
         # acoustic_embedding, so a text query is directly comparable to it.
@@ -418,11 +415,10 @@ class AudioAnalysisAgent(
         }
 
         try:
+            from cogniverse_agents.search.vespa_query import vespa_search_post
+
             response = await asyncio.to_thread(
-                requests.post,
-                f"{self._vespa_endpoint}/search/",
-                json=params,
-                timeout=10,
+                vespa_search_post, self._vespa_endpoint, params, 10
             )
 
             if response.status_code != 200:
@@ -459,7 +455,6 @@ class AudioAnalysisAgent(
 
     async def _search_hybrid(self, query: str, limit: int) -> List[AudioResult]:
         """Search by hybrid (BM25 transcript + semantic embeddings)"""
-        import requests
 
         # CLAP text features for the acoustic half (same 512-dim space as the
         # stored acoustic_embedding); the transcript half uses the raw query text.
@@ -486,11 +481,10 @@ class AudioAnalysisAgent(
         }
 
         try:
+            from cogniverse_agents.search.vespa_query import vespa_search_post
+
             response = await asyncio.to_thread(
-                requests.post,
-                f"{self._vespa_endpoint}/search/",
-                json=params,
-                timeout=10,
+                vespa_search_post, self._vespa_endpoint, params, 10
             )
 
             if response.status_code != 200:
