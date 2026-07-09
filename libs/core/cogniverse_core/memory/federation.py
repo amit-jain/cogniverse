@@ -165,7 +165,9 @@ class FederationService:
         try:
             return list(mm.get_all_memories(tenant_id=tenant_id, agent_name=agent_name))
         except Exception as exc:
-            logger.warning("Federation: get_all_memories(%s) failed: %r", tenant_id, exc)
+            logger.warning(
+                "Federation: get_all_memories(%s) failed: %r", tenant_id, exc
+            )
             return []
 
     # --- promotion path ----------------------------------------------------

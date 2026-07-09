@@ -789,7 +789,9 @@ async def create_messaging_invite(
     import uuid
 
     token = uuid.uuid4().hex
-    expiry = (datetime.now(timezone.utc) + timedelta(hours=request.expires_in_hours)).isoformat()
+    expiry = (
+        datetime.now(timezone.utc) + timedelta(hours=request.expires_in_hours)
+    ).isoformat()
 
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 

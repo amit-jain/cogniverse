@@ -272,7 +272,9 @@ class WorkflowStateMachine:
             return 0.0
 
         last_transition = self.history[-1]
-        duration = (datetime.now(timezone.utc) - last_transition.timestamp).total_seconds()
+        duration = (
+            datetime.now(timezone.utc) - last_transition.timestamp
+        ).total_seconds()
         return duration
 
     def is_terminal(self) -> bool:

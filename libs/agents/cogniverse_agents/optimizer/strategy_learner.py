@@ -38,7 +38,9 @@ class Strategy:
     source: str  # "pattern_extraction" | "llm_distillation"
     tenant_id: str
     trace_count: int
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     # confirmation_count starts at 1 (every strategy is its own first
     # confirmation). On dedup, _store_strategy bumps this on the existing
     # record by delete-and-readd. Retrieval downweights low-confirmation
