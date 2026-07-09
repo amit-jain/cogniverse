@@ -365,8 +365,11 @@ class VespaConfigStore(ConfigStore):
             )
 
         except Exception as e:
-            logger.error(f"Failed to retrieve config from Vespa: {e}")
-            return None
+            # A genuinely-absent config already returned None above; reaching
+            # here means the backend read FAILED. Raise so callers don't
+            # silently fall back to default config during a Vespa outage.
+            logger.error(f"Failed to retrieve config from Vespa: {e!r}")
+            raise
 
     def get_config_history(
         self,

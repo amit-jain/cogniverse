@@ -149,8 +149,10 @@ class VespaAdapterStore(AdapterStore):
             return {"fields": response.hits[0]["fields"]}
 
         except Exception as e:
-            logger.error(f"Failed to retrieve adapter from Vespa: {e}")
-            return None
+            # Absent adapter already returned None above; a failure here is a
+            # backend error, not "no adapter" — raise so it isn't masked.
+            logger.error(f"Failed to retrieve adapter from Vespa: {e!r}")
+            raise
 
     def list_adapters(
         self,
@@ -230,8 +232,10 @@ class VespaAdapterStore(AdapterStore):
             return {"fields": response.hits[0]["fields"]}
 
         except Exception as e:
-            logger.error(f"Failed to get active adapter from Vespa: {e}")
-            return None
+            # No active adapter already returned None above; a failure here is
+            # a backend error — raise rather than masking it as "none active".
+            logger.error(f"Failed to get active adapter from Vespa: {e!r}")
+            raise
 
     def set_active(self, adapter_id: str, tenant_id: str, agent_type: str) -> None:
         """
