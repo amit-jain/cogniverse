@@ -353,17 +353,47 @@ class WorkflowCheckpointStorage:
 
         return None
 
+    def _coerce_status(self, value: str) -> CheckpointStatus:
+        try:
+            return CheckpointStatus(value)
+        except ValueError:
+            return CheckpointStatus.ACTIVE
+
     async def _get_checkpoint_current_status(
         self, span_id: str, default_status: str
     ) -> CheckpointStatus:
-        """Get current status of checkpoint, checking annotations for updates"""
+        """Current checkpoint status, honoring any status-update annotation.
+
+        Status transitions (e.g. an approval marking a checkpoint COMPLETED or
+        SUPERSEDED) are written as ``checkpoint_status_update`` span annotations
+        by ``update_checkpoint_status``. The latest such annotation wins; absent
+        one, fall back to the span's own status attribute.
+        """
+        import pandas as pd
+
         try:
-            # Query annotations for this span
-            # For now, just use the span attribute since annotations query is complex
-            # In a full implementation, would check for status_update annotations
-            return CheckpointStatus(default_status)
-        except ValueError:
-            return CheckpointStatus.ACTIVE
+            spans_df = pd.DataFrame({"context.span_id": [span_id]})
+            annotations = await self.provider.annotations.get_annotations(
+                spans_df=spans_df,
+                project=self.full_project_name,
+                annotation_names=["checkpoint_status_update"],
+            )
+        except Exception as exc:
+            # A Phoenix outage must not read as "no update" silently — log it
+            # and fall back to the span attribute.
+            logger.warning(
+                "checkpoint %s status-annotation read failed: %r", span_id, exc
+            )
+            return self._coerce_status(default_status)
+
+        if annotations is not None and not annotations.empty:
+            if "created_at" in annotations.columns:
+                annotations = annotations.sort_values("created_at")
+            label = annotations.iloc[-1].get("result.label")
+            if label:
+                return self._coerce_status(str(label))
+
+        return self._coerce_status(default_status)
 
     def _reconstruct_checkpoint_from_row(self, row) -> WorkflowCheckpoint:
         """Reconstruct WorkflowCheckpoint from DataFrame row"""
