@@ -155,7 +155,7 @@ spec:
     - name: dump
       {{- if eq $mode "kubectl-exec" }}
       container:
-        image: bitnami/kubectl:1.31.3
+        image: rancher/kubectl:v1.31.2
         command: [sh, -c]
         args:
         - |
@@ -216,7 +216,7 @@ spec:
       {{- end }}
     - name: upload
       container:
-        image: minio/mc:RELEASE.2024-10-29T16-01-48Z
+        image: minio/mc:RELEASE.2025-08-13T08-35-41Z
         env:
         - name: MINIO_ENDPOINT
           value: {{ $s3Endpoint | quote }}
