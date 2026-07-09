@@ -319,9 +319,12 @@ runtime:
   # on gfx1151 it recovers large GEMM losses from the default hipBLASLt
   # kernel heuristic. Tuning results persist in the model-cache volume.
   tunableOp: false
+  # Fallback only — imagesByBackend below is what actually renders. Kept in
+  # sync with the tag the `cogniverse images` CLI builds (dev) so the fallback
+  # points at a real locally-built image if it is ever used.
   image:
     repository: cogniverse/runtime-cuda
-    tag: "2.0.0"
+    tag: "dev"
     pullPolicy: IfNotPresent
   imagesByBackend:
     cpu:
@@ -497,9 +500,11 @@ dashboard:
   # cogniverse_evaluation, so the wheel choice still matters for image
   # size and ABI compatibility.
   backend: cuda
+  # Fallback only — imagesByBackend below is what actually renders. Kept in
+  # sync with the tag the `cogniverse images` CLI builds (dev).
   image:
     repository: cogniverse/dashboard-cuda
-    tag: "2.0.0"
+    tag: "dev"
     pullPolicy: IfNotPresent
   imagesByBackend:
     cpu:
