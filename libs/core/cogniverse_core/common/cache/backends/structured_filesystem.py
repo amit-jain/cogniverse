@@ -3,6 +3,7 @@ Structured filesystem cache backend that preserves human-readable paths
 """
 
 import asyncio
+import gzip
 import json
 import logging
 import pickle
@@ -26,6 +27,7 @@ class StructuredFilesystemConfig:
     backend_type: str = "structured_filesystem"
     base_path: str = "~/.cache/cogniverse/pipeline"
     serialization_format: str = "pickle"  # or "json", "msgpack"
+    enable_compression: bool = True
     enabled: bool = True
     priority: int = 0
     enable_ttl: bool = True  # Whether to enforce TTL
@@ -45,6 +47,7 @@ class StructuredFilesystemBackend(CacheBackend):
         self.config = config
         self.base_path = Path(config.base_path).expanduser()
         self.format = config.serialization_format
+        self.enable_compression = config.enable_compression
 
         # Statistics
         self._stats = {
@@ -207,18 +210,22 @@ class StructuredFilesystemBackend(CacheBackend):
         )
 
     def _serialize(self, data: Any) -> bytes:
-        """Serialize data based on format"""
+        """Serialize data based on format, optionally gzip-compressed."""
         if self.format == "pickle":
-            return pickle.dumps(data)
+            raw = pickle.dumps(data)
         elif self.format == "json":
-            return json.dumps(data).encode("utf-8")
+            raw = json.dumps(data).encode("utf-8")
         elif self.format == "msgpack":
-            return msgpack.packb(data)
+            raw = msgpack.packb(data)
         else:
             raise ValueError(f"Unknown serialization format: {self.format}")
+        return gzip.compress(raw) if self.enable_compression else raw
 
     def _deserialize(self, data: bytes) -> Any:
-        """Deserialize data based on format"""
+        """Deserialize data based on format. Entries written before compression
+        was enabled still read back (gzip magic 0x1f 0x8b is detected)."""
+        if data[:2] == b"\x1f\x8b":
+            data = gzip.decompress(data)
         if self.format == "pickle":
             return pickle.loads(data)
         elif self.format == "json":
