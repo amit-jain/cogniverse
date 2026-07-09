@@ -268,6 +268,7 @@ class SearchService:
                     "strategy": ranking_strategy or "default",
                     "top_k": top_k,
                     "filters": filters,
+                    "query_encoder": query_encoder,
                 }
                 results = search_backend.search(query_dict)
 

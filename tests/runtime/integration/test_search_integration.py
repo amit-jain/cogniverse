@@ -296,3 +296,65 @@ class TestSearchIntegration:
         assert events[1]["data"]["query"] == "ocean waves water"
         assert isinstance(events[1]["data"]["results"], list)
         assert len(events[1]["data"]["results"]) > 0
+
+    def test_configless_backend_creation_does_not_poison_search(
+        self,
+        search_client,
+        seeded_documents,
+        tomoro_search_url,
+        vespa_instance,
+        config_manager,
+        schema_loader,
+    ):
+        """Startup wires a shared search backend before any query (the
+        synthetic-data service, via a config-less get_search_backend). That
+        creation must not leave the cached backend dialing localhost:8080 or
+        without an encoder — otherwise every later search connection-errors or
+        returns 0 results. Reproduces the exact startup ordering by creating
+        the shared instance config-less, then querying through the router.
+        """
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+
+        # Evict any healthy instance an earlier test created so our config-less
+        # creation is first, exactly as main.py's synthetic_backend wiring runs
+        # before the first request.
+        BackendRegistry.clear_instances()
+        try:
+            BackendRegistry.get_instance().get_search_backend(
+                name="vespa",
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+
+            resp = search_client.post(
+                "/search",
+                json={
+                    "query": "sunset landscape scenery",
+                    "profile": "test_colpali",
+                    "strategy": "default",
+                    "top_k": 5,
+                    "tenant_id": "test:unit",
+                },
+            )
+
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["results_count"] > 0, (
+                "Config-less shared backend poisoned the search "
+                "(localhost dial / dropped encoder): 0 results"
+            )
+
+            shared = BackendRegistry.get_instance().get_search_backend(
+                name="vespa",
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+            inner = shared._vespa_search_backend
+            assert inner is not None
+            assert inner.backend_url == "http://localhost"
+            assert inner.backend_port == vespa_instance["http_port"]
+            # The shared instance holds no baked-in encoder — results above
+            # prove the per-request encoder threaded through query_dict was used.
+            assert inner.query_encoder is None
+        finally:
+            BackendRegistry.clear_instances()
