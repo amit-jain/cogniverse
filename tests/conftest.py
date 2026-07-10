@@ -625,17 +625,23 @@ def backend_config_env():
     Sets BACKEND_URL and BACKEND_PORT environment variables
     required by create_default_config_manager().
 
-    Uses TEST_BACKEND_URL and TEST_BACKEND_PORT if available,
-    otherwise defaults to localhost:8080.
+    Uses TEST_BACKEND_URL and TEST_BACKEND_PORT if available, otherwise
+    defaults BACKEND_PORT to a deliberate dead sentinel (see below).
 
     This fixture is autouse=True so it applies to all tests automatically.
     """
     original_url = os.environ.get("BACKEND_URL")
     original_port = os.environ.get("BACKEND_PORT")
 
-    # Set test values
+    # Dead sentinel: nothing listens here, and it is below the 40000-54544
+    # test-Vespa allocation range so no test container ever binds it. A test
+    # that resolves config without binding ``shared_vespa`` fails loudly here
+    # — identically local and CI — instead of silently masking against an
+    # ambient Vespa (a developer's k3d on :8080). Tests that need the real
+    # store depend on ``shared_vespa``, which overrides this fixture (see
+    # tests/backends/conftest.py).
     os.environ["BACKEND_URL"] = os.environ.get("TEST_BACKEND_URL", "http://localhost")
-    os.environ["BACKEND_PORT"] = os.environ.get("TEST_BACKEND_PORT", "8080")
+    os.environ["BACKEND_PORT"] = os.environ.get("TEST_BACKEND_PORT", "29071")
 
     yield
 
@@ -1478,6 +1484,43 @@ def shared_vespa():
 
     finally:
         subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+
+@pytest.fixture(scope="session")
+def seeded_config_vespa(shared_vespa):
+    """``shared_vespa`` with baseline system + telemetry config seeded, and
+    ``BACKEND_URL``/``BACKEND_PORT`` pointed at it.
+
+    Tests that read config depend on this so they read real, *present* config
+    from the store — never a phantom default (``get_system_config`` /
+    ``get_telemetry_config`` fall back to defaults on an absent key, which
+    silently hides a test that never provisioned its config) and never an
+    ambient Vespa. Pure-unit tests that don't read config skip it.
+    """
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    port = shared_vespa["http_port"]
+    cm = ConfigManager(
+        store=VespaConfigStore(backend_url="http://localhost", backend_port=port)
+    )
+    cm.set_system_config(
+        SystemConfig(backend_url="http://localhost", backend_port=port)
+    )
+    cm.set_telemetry_config(TelemetryConfig(), tenant_id=SYSTEM_TENANT_ID)
+
+    prev = (os.environ.get("BACKEND_URL"), os.environ.get("BACKEND_PORT"))
+    os.environ["BACKEND_URL"] = "http://localhost"
+    os.environ["BACKEND_PORT"] = str(port)
+    yield shared_vespa
+    for key, value in zip(("BACKEND_URL", "BACKEND_PORT"), prev):
+        if value is not None:
+            os.environ[key] = value
+        else:
+            os.environ.pop(key, None)
 
 
 @pytest.fixture(autouse=True)
