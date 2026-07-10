@@ -9,17 +9,23 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from cogniverse_core.memory._timestamps import epoch_to_iso_utc, to_epoch_seconds
 
 _S = 1_700_000_000  # 2023-11-14T22:13:20 UTC, in seconds
 _MS = 1_700_000_000_000  # same instant, in milliseconds
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_to_epoch_seconds_milliseconds_collapse_to_seconds():
     assert to_epoch_seconds(_MS) == _S
     assert to_epoch_seconds(_S) == _S
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_to_epoch_seconds_naive_iso_is_utc_not_local():
     expected = int(datetime(2023, 11, 15, 3, 43, 20, tzinfo=timezone.utc).timestamp())
     assert to_epoch_seconds("2023-11-15T03:43:20") == expected
@@ -32,6 +38,8 @@ def test_to_epoch_seconds_aware_iso_respects_offset():
     assert to_epoch_seconds("2023-11-15T03:43:20+05:30") == expected
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_to_epoch_seconds_rejects_missing_and_garbage():
     assert to_epoch_seconds(None) is None
     assert to_epoch_seconds("") is None
@@ -39,6 +47,8 @@ def test_to_epoch_seconds_rejects_missing_and_garbage():
     assert to_epoch_seconds("not-a-date") is None
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_epoch_to_iso_utc_handles_milliseconds_without_raising():
     # datetime.fromtimestamp(_MS) raises ValueError (year out of range) — the
     # old read path swallowed that and dropped the whole search result.

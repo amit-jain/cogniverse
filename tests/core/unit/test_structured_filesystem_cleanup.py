@@ -34,6 +34,8 @@ async def _seed_expired_entry(base_path: str, key: str):
     return cache_path
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_startup_cleanup_purges_expired_entry_on_first_op(tmp_path):
     base = str(tmp_path)
@@ -76,6 +78,8 @@ async def test_no_startup_cleanup_leaves_expired_file_until_accessed(tmp_path):
     assert backend._needs_cleanup is False
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_keyframe_image_round_trips_raw_for_any_frame_id(tmp_path):
     """A keyframe image must survive the cache as raw bytes regardless of frame_id.

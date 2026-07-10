@@ -15,6 +15,7 @@ import pytest
 
 
 @pytest.mark.unit
+@pytest.mark.ci_fast
 def test_core_registry_module_does_not_load_runtime():
     """Importing the core registry must NOT pull in cogniverse_runtime modules."""
     script = (

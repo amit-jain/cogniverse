@@ -55,6 +55,8 @@ def _build_system_config(
     return config
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 @patch("cogniverse_core.query.encoders.get_or_load_model")
 def test_factory_passes_embedding_dim_from_schema_config(mock_get_model):
     mock_get_model.return_value = (MagicMock(), None)
@@ -107,6 +109,8 @@ def test_factory_recognizes_lateon_model_name_without_model_loader(mock_get_mode
     assert encoder.get_embedding_dim() == 128
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 @patch("cogniverse_core.query.encoders.get_or_load_model")
 def test_factory_raises_when_schema_config_missing_embedding_dim(mock_get_model):
     mock_get_model.return_value = (MagicMock(), None)
@@ -134,12 +138,16 @@ def test_factory_raises_when_schema_config_missing_entirely(mock_get_model):
         QueryEncoderFactory.create_encoder(profile="broken_profile", config=config)
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_colbert_encoder_requires_embedding_dim_kwarg():
     """Direct callers must pass embedding_dim; no silent 128 default."""
     with pytest.raises(TypeError):
         ColBERTQueryEncoder("lightonai/LateOn")  # type: ignore[call-arg]
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 @patch("cogniverse_core.query.encoders.get_or_load_model")
 def test_factory_wires_remote_url_from_inference_service(mock_get_model):
     """Profile.inference_services.embedding -> system_config.inference_service_urls -> loader."""

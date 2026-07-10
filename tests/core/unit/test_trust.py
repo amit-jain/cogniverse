@@ -35,7 +35,9 @@ def _prov(kind: DerivationKind, refs=None) -> Provenance:
     )
 
 
+@pytest.mark.unit
 class TestComputeInitialTrust:
+    @pytest.mark.ci_fast
     def test_no_provenance_returns_schema_default(self):
         schema = KnowledgeSchema(kind="external_doc", default_trust=0.6)
         rec = compute_initial_trust(schema, provenance=None)
@@ -68,7 +70,9 @@ class TestComputeInitialTrust:
         assert rec.score == 1.0
 
 
+@pytest.mark.unit
 class TestEndorsement:
+    @pytest.mark.ci_fast
     def test_user_endorsement_adds_005(self):
         rec = TrustRecord(
             score=0.5, initial_score=0.5, decayed_at=_now_iso(), endorsements=0
@@ -85,6 +89,7 @@ class TestEndorsement:
         out = apply_endorsement(rec, "org_admin")
         assert out.score == pytest.approx(0.70, rel=1e-3)
 
+    @pytest.mark.ci_fast
     def test_unknown_role_rejected(self):
         rec = TrustRecord(
             score=0.5, initial_score=0.5, decayed_at=_now_iso(), endorsements=0
@@ -100,7 +105,9 @@ class TestEndorsement:
         assert out.score == 1.0
 
 
+@pytest.mark.unit
 class TestDecay:
+    @pytest.mark.ci_fast
     def test_decay_reduces_score_above_initial(self):
         # Endorsed score 0.8, initial baseline 0.5; after 10 days expect
         # 0.8 - 10*0.005 = 0.75.
@@ -168,6 +175,7 @@ class TestAttachExtract:
         assert extract_trust(memory) is None
 
 
+@pytest.mark.unit
 class TestRankWithTrust:
     def _seed(self, score, trust_score, confidence=1.0):
         prov = make_provenance(
@@ -193,6 +201,7 @@ class TestRankWithTrust:
             "metadata": meta,
         }
 
+    @pytest.mark.ci_fast
     def test_higher_trust_outranks_higher_relevance_when_close(self):
         # Two memories with similar relevance but one has much higher trust.
         low_trust_high_relevance = self._seed(score=0.65, trust_score=0.4)

@@ -18,6 +18,8 @@ class _StubResult:
     relevance_score = "high"
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_label_relevance_score_is_coerced(monkeypatch):
     vlm = object.__new__(VLMInterface)

@@ -70,6 +70,14 @@ jobs:
           --cov-report=term-missing \
           --cov-report=xml:coverage_core.xml
 
+    - name: Run core unit fast subset
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/core/unit -m "unit and ci_fast" \
+          -v --tb=short \
+          --cov=libs/core/cogniverse_core \
+          --cov-append \
+          --cov-report=xml:coverage_core.xml
+
     - name: Upload coverage XML
       if: always()
       uses: actions/upload-artifact@v4

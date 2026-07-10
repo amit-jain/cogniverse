@@ -12,6 +12,8 @@ import pytest
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_http_client_created_lazily_and_cached():
     reg = object.__new__(AgentRegistry)
     reg._http_client = None
@@ -22,6 +24,8 @@ def test_http_client_created_lazily_and_cached():
     assert reg.http_client is client  # cached, not rebuilt
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_close_without_use_creates_no_client():
     reg = object.__new__(AgentRegistry)

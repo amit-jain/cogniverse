@@ -20,6 +20,7 @@ _REMOTE_ONLY_SUBSTRINGS = (
 
 
 @pytest.mark.unit
+@pytest.mark.ci_fast
 class TestColBERTModelLoaderMissingPylate:
     """pylate is a [test]-only optional dependency. Production ColBERT is
     served via vLLM (RemoteColBERTLoader). A future local-colbert config
@@ -158,6 +159,8 @@ class TestColQwen3RemoteOnlyGuard:
             assert substr in msg
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestProcessImagesVllmConcurrent:
     """The vLLM pooling client posts one request per image concurrently; the
     returned embeddings must line up with the input image order regardless of
@@ -185,9 +188,14 @@ class TestProcessImagesVllmConcurrent:
             b64_to_index[base64.b64encode(buf.getvalue()).decode("utf-8")] = i
 
         threads = set()
+        # Block every request until all are in flight so the pool must use one
+        # worker per image; without this a fast fake lets one thread serve the
+        # whole batch and the fan-out count becomes racy.
+        barrier = threading.Barrier(len(images))
 
         def fake_post(url, json=None, timeout=None):
             threads.add(threading.current_thread().name)
+            barrier.wait(timeout=5)
             b64 = json["messages"][0]["content"][0]["image_url"]["url"].split(
                 "base64,", 1
             )[1]
@@ -234,6 +242,8 @@ class TestProcessImagesVllmConcurrent:
         assert arr.shape == (1, 4)
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestVideoPrismVespaFormat:
     """Multi-vector VideoPrism → Vespa conversion must emit the compact
     mixed-tensor blocks form (one dense row per patch), not a dict per

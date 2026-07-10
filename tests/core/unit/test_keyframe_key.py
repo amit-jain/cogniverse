@@ -13,6 +13,8 @@ import pytest
 from cogniverse_core.common.media import keyframe_object_key, keyframe_uri
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_object_key_exact_string():
     assert (
         keyframe_object_key("acme:acme", "vid123", 7)
@@ -20,6 +22,8 @@ def test_object_key_exact_string():
     )
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_uri_exact_string():
     assert (
         keyframe_uri("media", "acme:acme", "vid123", 7)
@@ -53,6 +57,8 @@ def test_missing_tenant_or_video_raises(tenant, video):
         keyframe_object_key(tenant, video, 1)
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_missing_bucket_raises():
     with pytest.raises(ValueError, match="bucket is required"):
         keyframe_uri("", "t", "v", 1)

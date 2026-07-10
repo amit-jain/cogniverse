@@ -99,6 +99,8 @@ def _backend(fake, fmt="pickle"):
     return backend
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 async def test_dict_round_trips_exact_value(fake):
     backend = _backend(fake)
     payload = {"segments": [{"text": "hi", "start": 0.0}]}
@@ -107,6 +109,8 @@ async def test_dict_round_trips_exact_value(fake):
     assert await backend.get("p:video:abc:transcript") == payload
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 async def test_image_bytes_round_trip_not_deserialized(fake):
     backend = _backend(fake)
     jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01"
@@ -130,6 +134,8 @@ async def test_put_uses_exact_prefixed_key_and_bucket(fake):
     assert fake.put_calls[0]["Bucket"] == "test-bucket"
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 async def test_expired_entry_is_a_miss(fake):
     backend = _backend(fake)
     await backend.set("p:video:abc:transcript", {"x": 1}, ttl=1)
@@ -173,6 +179,8 @@ async def test_stats_counters_match_op_sequence(fake):
     assert stats["deletes"] == 1
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_registry_creates_s3_via_config_class():
     backend = CacheBackendRegistry.create(
         {

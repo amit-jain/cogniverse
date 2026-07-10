@@ -51,6 +51,8 @@ def test_stays_closed_below_threshold():
     assert br.state is CircuitState.CLOSED
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_trips_open_at_threshold_then_fails_fast():
     clock = _Clock()
     br = CircuitBreaker(_cfg(clock, failure_threshold=3))
@@ -93,6 +95,8 @@ def test_open_transitions_to_half_open_after_reset():
     assert br.state is CircuitState.HALF_OPEN
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_half_open_success_closes():
     clock = _Clock()
     br = CircuitBreaker(_cfg(clock, failure_threshold=1, reset_timeout_s=30.0))
@@ -128,6 +132,8 @@ def test_half_open_admits_only_max_trials():
         br.call(lambda: "second trial rejected")
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_uncounted_exception_does_not_trip():
     clock = _Clock()
     br = CircuitBreaker(
