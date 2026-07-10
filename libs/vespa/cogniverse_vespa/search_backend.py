@@ -351,6 +351,17 @@ class ConnectionPool:
             self._available.clear()
 
 
+class _DenseQueryEncoder:
+    """Adapts a SemanticEmbedder to the ``.encode(text) -> ndarray`` shape the
+    search path calls for on-demand query encoding of dense profiles."""
+
+    def __init__(self, embedder):
+        self._embedder = embedder
+
+    def encode(self, query_text: str):
+        return self._embedder.encode(query_text, is_query=True)
+
+
 class VespaSearchBackend(SearchBackend):
     """Production-ready Vespa search backend"""
 
@@ -635,6 +646,39 @@ class VespaSearchBackend(SearchBackend):
             dict(backend_section.get("default_profiles", {}) or {}),
         )
 
+    def _resolve_encoder_for_profile(self, profile_name, profile_config, tenant_id):
+        """Build the query encoder a profile declares so callers that delegate
+        encoding to the backend need not thread one. Dense profiles resolve to
+        the shared SemanticEmbedder; multi-vector profiles to the video encoder
+        factory. Returns None when no encoder is resolvable."""
+        embedding_type = str(profile_config.get("embedding_type") or "").lower()
+        encoder_name = str(profile_config.get("encoder") or "").lower()
+        try:
+            if embedding_type == "dense" or encoder_name == "denseon":
+                from cogniverse_core.common.models.semantic_embedder import (
+                    get_semantic_embedder,
+                )
+
+                return _DenseQueryEncoder(get_semantic_embedder())
+
+            model_name = profile_config.get("embedding_model")
+            if not model_name or self._config_manager is None:
+                return None
+            from cogniverse_core.query.encoders import QueryEncoderFactory
+            from cogniverse_foundation.config.utils import get_config
+
+            cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+            return QueryEncoderFactory.create_encoder(
+                profile_name, model_name, config=cfg
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not resolve an encoder for profile '%s': %r",
+                profile_name,
+                exc,
+            )
+            return None
+
     @retry_with_backoff(
         config=RetryConfig(
             max_attempts=3,
@@ -889,6 +933,13 @@ class VespaSearchBackend(SearchBackend):
 
             # Generate embeddings on-demand if needed and not provided
             if requires_embeddings and query_embeddings is None:
+                # No caller-supplied encoder: build the one the profile
+                # declares so a search that needs embeddings never runs
+                # without them (dense -> SemanticEmbedder, video -> factory).
+                if request_encoder is None:
+                    request_encoder = self._resolve_encoder_for_profile(
+                        profile_name, profile_config, tenant_id
+                    )
                 if request_encoder:
                     from cogniverse_foundation.telemetry.context import (
                         add_embedding_details_to_span,
