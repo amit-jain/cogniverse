@@ -12,7 +12,7 @@ import logging
 
 import pytest
 
-from cogniverse_runtime.sandbox_manager import SandboxManager
+from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
 from tests.agents.integration.conftest import skip_if_no_lm
 
 logger = logging.getLogger(__name__)
@@ -313,7 +313,9 @@ def code_search_infra(vespa_with_schema):
         check=False,
     )
 
-    sandbox = SandboxManager(policy_dir="configs/agent_policies", enabled=True)
+    sandbox = SandboxManager(
+        policy_dir="configs/agent_policies", policy=SandboxPolicy.OPTIONAL
+    )
     if not sandbox.available:
         pytest.skip("SandboxManager could not connect to gateway")
 

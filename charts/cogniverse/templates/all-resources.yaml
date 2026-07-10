@@ -339,9 +339,15 @@ spec:
         - name: COGNIVERSE_SANDBOX_ENABLED
           value: "true"
         {{- if .Values.runtime.sandbox.inCluster.enabled }}
-        # In-cluster: explicit host:port (no scheme) — gRPC insecure channel.
+        # In-cluster: the runtime dials the in-cluster gateway Service over
+        # mTLS (SandboxManager builds the TLS config from the mounted certs).
         - name: OPENSHELL_GATEWAY_ENDPOINT
           value: "openshell.{{ .Release.Namespace }}.svc.cluster.local:8080"
+        {{- else if (.Values.runtime.sandbox.external).enabled }}
+        # External / managed gateway: point straight at the configured
+        # endpoint (mTLS via the mounted client certs).
+        - name: OPENSHELL_GATEWAY_ENDPOINT
+          value: {{ required "runtime.sandbox.external.endpoint is required when external.enabled=true" (.Values.runtime.sandbox.external).endpoint | quote }}
         {{- end }}
         # Host mode: DON'T set OPENSHELL_GATEWAY_ENDPOINT. SandboxManager
         # falls back to SandboxClient.from_active_cluster() which reads the
@@ -447,7 +453,7 @@ spec:
           mountPath: /dev/dri
         {{- end }}
         {{- if .Values.runtime.sandbox.enabled }}
-        {{- if .Values.runtime.sandbox.inCluster.enabled }}
+        {{- if or .Values.runtime.sandbox.inCluster.enabled (.Values.runtime.sandbox.external).enabled }}
         - name: openshell-client-tls
           mountPath: /home/cogniverse/.config/openshell/gateways/cogniverse/mtls/tls.crt
           subPath: tls.crt
@@ -617,7 +623,7 @@ spec:
           name: {{ $fullName }}-quality-monitor-data
       {{- end }}
       {{- if .Values.runtime.sandbox.enabled }}
-      {{- if .Values.runtime.sandbox.inCluster.enabled }}
+      {{- if or .Values.runtime.sandbox.inCluster.enabled (.Values.runtime.sandbox.external).enabled }}
       - name: openshell-client-tls
         secret:
           secretName: openshell-client-tls

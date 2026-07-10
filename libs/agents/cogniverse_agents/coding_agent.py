@@ -381,9 +381,11 @@ class CodingAgent(
                 "CodingDeps, or start the OpenShell gateway."
             )
 
-        run_cmd = test_command.strip()
-        if not run_cmd:
-            run_cmd = self._default_run_command(file_path, language)
+        # Always run the file we actually wrote (``file_path`` = solution.<ext>).
+        # The LLM's ``test_command`` frequently names a file from its plan
+        # (e.g. ``python hello_world.py``) that doesn't match the fixed
+        # solution file we write, so trusting it executes a nonexistent path.
+        run_cmd = self._default_run_command(file_path, language)
 
         # Write code inside the sandbox via exec, not on the host filesystem
         write_cmd = (

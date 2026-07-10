@@ -5,6 +5,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "openshell.fullname" . }}-sandbox
+  namespace: {{ .Values.server.sandboxNamespace }}
   labels:
     {{- include "openshell.labels" . | nindent 4 }}
 rules:

@@ -423,9 +423,19 @@ runtime:
     gatewayEndpoint: "host.docker.internal:19091"
     # Host path to the openshell config directory (host mode only, ignored in in-cluster).
     hostConfigPath: ""
-    # In-cluster mode settings
+    # In-cluster mode settings — deploy the OpenShell gateway + agent-sandbox
+    # operator inside this cluster; sandboxes run as pods. Portable, no host
+    # dependency. This is the production-default path.
     inCluster:
       enabled: false
+    # External / managed mode — point the runtime at a gateway you run
+    # elsewhere (a hosted OpenShell endpoint) instead of deploying one here.
+    # When enabled, nothing openshell is deployed in-cluster; the runtime
+    # connects to ``endpoint`` (mTLS via the mounted client certs). Mutually
+    # exclusive with inCluster.
+    external:
+      enabled: false
+      endpoint: ""   # e.g. "openshell.example.com:8080"
 
   # Quality monitor sidecar — continuous evaluation of all agents
   qualityMonitor:
@@ -473,9 +483,17 @@ runtime:
 # Only used when runtime.sandbox.inCluster.enabled=true. Keys in this
 # section are passed directly to the openshell subchart at charts/openshell.
 openshell:
+  # Service/StatefulSet name. Pinned to "openshell" so the runtime's
+  # OPENSHELL_GATEWAY_ENDPOINT (openshell.<ns>.svc) resolves without a
+  # release-name prefix.
+  fullnameOverride: openshell
+  # Image carrying the openshell-sandbox supervisor binary that the node
+  # installer DaemonSet copies onto each node's /opt/openshell/bin.
+  clusterImage: ghcr.io/nvidia/openshell/cluster:0.0.13
   image:
     repository: ghcr.io/nvidia/openshell/gateway
     tag: "0.0.13"
+    pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 8080

@@ -591,6 +591,10 @@ that same config.
 | `deep_research_agent` | 8009 | Yes | Multi-step decompose → parallel-search → evaluate → synthesize loop producing a cited report |
 | `coding_agent` | 8010 | Yes | Iterative search → plan → generate → execute → evaluate loop; executes DSPy-generated code inside an OpenShell sandbox |
 
+**See**: [Coding-Agent Sandbox](coding-sandbox.md) for how generated code is run
+safely — the in-cluster OpenShell gateway + agent-sandbox operator, deployment,
+configuration (`--sandbox in-cluster|external|off`), and a plain-language glossary.
+
 #### Knowledge-Graph & Reasoning Agents (7)
 
 | Agent | Port | Enabled | Description |
