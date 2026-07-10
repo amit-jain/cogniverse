@@ -11,11 +11,15 @@ the exact byte output for each character.
 
 from __future__ import annotations
 
+import pytest
+
 from cogniverse_core.memory.backend_vector_store import _yql_quote
 from cogniverse_core.memory.provenance_store import _escape
 
 
+@pytest.mark.unit
 class TestBackendVectorStoreYqlQuote:
+    @pytest.mark.ci_fast
     def test_plain_value_round_trips(self) -> None:
         assert _yql_quote("alice") == '"alice"'
 
@@ -29,6 +33,7 @@ class TestBackendVectorStoreYqlQuote:
         # including the wrapping quotes).
         assert _yql_quote("a\\b") == '"a\\\\b"'
 
+    @pytest.mark.ci_fast
     def test_trailing_backslash_does_not_escape_closing_quote(self) -> None:
         # 'tenantA\\' (input ending in one backslash) → "tenantA\\\\"
         # The output keeps both backslashes BEFORE the closing quote so
@@ -46,6 +51,7 @@ class TestBackendVectorStoreYqlQuote:
         assert _yql_quote("") == '""'
 
 
+@pytest.mark.unit
 class TestProvenanceStoreEscape:
     """``_escape`` returns the inner literal WITHOUT the wrapping quotes.
 
@@ -55,6 +61,7 @@ class TestProvenanceStoreEscape:
     backslashes corrupt the wrapped literal.
     """
 
+    @pytest.mark.ci_fast
     def test_plain_value_unchanged(self) -> None:
         assert _escape("alice") == "alice"
 
@@ -64,12 +71,14 @@ class TestProvenanceStoreEscape:
     def test_embedded_backslash_doubled(self) -> None:
         assert _escape("a\\b") == "a\\\\b"
 
+    @pytest.mark.ci_fast
     def test_trailing_backslash_doubled(self) -> None:
         # Pre-fix behaviour returned 'tenantA\' which, when wrapped in
         # `"..."` by the caller, produced `"tenantA\"` — the trailing
         # backslash escapes the close quote, corrupting the YQL.
         assert _escape("tenantA\\") == "tenantA\\\\"
 
+    @pytest.mark.ci_fast
     def test_wrapped_literal_is_well_formed_yql(self) -> None:
         # Simulate the caller pattern from ProvenanceStore.fetch:
         # `f'tenant_id contains "{_escape(tid)}"'` must produce balanced

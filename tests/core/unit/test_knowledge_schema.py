@@ -24,6 +24,8 @@ class FakeProvenance:
     derived_from: List[str]
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestKnowledgeSchemaConstruction:
     def test_defaults_are_conservative(self):
         s = KnowledgeSchema(kind="custom")
@@ -75,6 +77,8 @@ class TestKnowledgeSchemaConstruction:
         )
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestValidateWriteProvenance:
     def test_provenance_required_rejects_missing(self):
         s = KnowledgeSchema(kind="entity_fact", provenance_required=True)
@@ -172,6 +176,8 @@ class TestDefaultRegistryHasSessionScratch:
         assert s.provenance_required is False
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestKnowledgeRegistry:
     def test_register_and_get(self):
         reg = KnowledgeRegistry()

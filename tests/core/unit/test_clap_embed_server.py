@@ -88,12 +88,16 @@ def _wav_b64(duration_s: float = 0.5, sr: int = 16000) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_health(client):
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_embed_text_returns_exact_512_vector(client):
     resp = client.post("/embed/text", json={"text": "rain on a tin roof"})
     assert resp.status_code == 200
@@ -119,6 +123,8 @@ def test_embed_audio_decodes_resamples_and_returns_512(client, server_module):
     assert audio_arr.shape[0] == 24000
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_embed_audio_rejects_invalid_b64(client):
     resp = client.post("/embed/audio", json={"audio_b64": "not-base64!!"})
     assert resp.status_code == 400

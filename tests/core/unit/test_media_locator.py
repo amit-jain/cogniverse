@@ -23,6 +23,8 @@ def locator(cache_root):
     )
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestCanonicalUri:
     def test_passthrough_when_already_uri(self, locator):
         assert locator.to_canonical_uri("s3://bucket/key.mp4") == "s3://bucket/key.mp4"
@@ -63,6 +65,8 @@ class TestCanonicalUri:
         assert loc.to_canonical_uri("/abs/path/v.mp4") == "s3://corpus/v.mp4"
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestLocalizeFile:
     def test_file_scheme_returns_path(self, locator, tmp_path):
         f = tmp_path / "v.mp4"
@@ -119,6 +123,8 @@ class TestLocalizePvc:
             loc.localize("pvc://corpus/missing.mp4")
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestUnsupportedScheme:
     def test_unknown_scheme_raises(self, locator):
         with pytest.raises(ValueError, match="Unsupported URI scheme"):
@@ -201,6 +207,8 @@ class TestList:
         assert results[0].endswith("/b.mkv")
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestTenantIsolation:
     def test_separate_tenants_separate_cache_dirs(self, cache_root):
         loc_a = MediaLocator(

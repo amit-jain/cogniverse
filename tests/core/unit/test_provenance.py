@@ -37,7 +37,9 @@ class TestCitationRef:
         assert rebuilt == original
 
 
+@pytest.mark.unit
 class TestProvenanceConstruction:
+    @pytest.mark.ci_fast
     def test_confidence_in_unit_interval(self):
         with pytest.raises(ValueError):
             Provenance(
@@ -63,6 +65,7 @@ class TestProvenanceConstruction:
                 confidence=0.5,
             )
 
+    @pytest.mark.ci_fast
     def test_to_from_metadata_payload_round_trip(self):
         original = Provenance(
             written_by="agent:search_agent",
@@ -256,7 +259,9 @@ def _seed(
     }
 
 
+@pytest.mark.unit
 class TestProvenanceWalker:
+    @pytest.mark.ci_fast
     def test_walks_two_level_chain(self):
         memories = {
             "m_root": _seed(
@@ -291,6 +296,7 @@ class TestProvenanceWalker:
         assert ("url", "https://source/a") in ps_keys
         assert ("memory", "m_b") in ps_keys
 
+    @pytest.mark.ci_fast
     def test_handles_cycles_without_infinite_loop(self):
         memories = {
             "m1": _seed("m1", "a", [CitationRef.memory("m2")]),

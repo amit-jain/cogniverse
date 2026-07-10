@@ -20,12 +20,16 @@ async def _current_thread_id():
     return threading.get_ident()
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_runs_coroutine_with_no_running_loop():
     """From plain sync code (no loop) the coroutine runs and returns its value."""
     assert run_coro_blocking(_returns(42)) == 42
     assert run_coro_blocking(_returns("artifact-blob")) == "artifact-blob"
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_runs_coroutine_from_within_running_loop():
     """Called from inside a running loop, it must NOT raise 'loop already
     running' — it bridges onto a worker thread and still returns the value."""
@@ -51,6 +55,8 @@ def test_bridges_to_a_separate_thread_when_loop_running():
     assert worker_thread != caller_thread
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_propagates_coroutine_exception_no_loop():
     with pytest.raises(ValueError, match="boom from coroutine"):
         run_coro_blocking(_raises())

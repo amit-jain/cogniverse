@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
+import pytest
+
 from cogniverse_core.memory.contradiction import (
     CONFLICT_AGENT_NAME,
     CONFLICT_RECORD_KIND,
@@ -67,7 +69,9 @@ class TestContentSignature:
         assert _content_signature("X is Y") != _content_signature("X is Z")
 
 
+@pytest.mark.unit
 class TestContradictionDetector:
+    @pytest.mark.ci_fast
     def test_no_conflict_when_all_members_agree(self):
         memories = [
             _seed("m1", "Paris is the capital of France", subject_key="france:capital"),
@@ -76,6 +80,7 @@ class TestContradictionDetector:
         conflicts = ContradictionDetector().detect(memories)
         assert conflicts == []
 
+    @pytest.mark.ci_fast
     def test_conflict_when_two_members_disagree(self):
         memories = [
             _seed("m1", "Paris is the capital of France", subject_key="france:capital"),
@@ -129,7 +134,9 @@ class TestContradictionDetector:
         assert payload["conflicting_memory_ids"] == ["m1", "m2"]
 
 
+@pytest.mark.unit
 class TestReconcileLatestWins:
+    @pytest.mark.ci_fast
     def test_latest_wins_picks_most_recent(self):
         old_ts = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
         new_ts = datetime.now(timezone.utc).isoformat()
@@ -155,7 +162,9 @@ class TestReconcileLatestWins:
         assert out == [plain]
 
 
+@pytest.mark.unit
 class TestReconcileTrustRanked:
+    @pytest.mark.ci_fast
     def test_higher_trust_wins(self):
         memories = [
             _seed(

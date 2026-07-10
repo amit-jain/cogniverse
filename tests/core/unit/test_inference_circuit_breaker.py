@@ -32,6 +32,8 @@ def _client():
     return c
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_process_images_fast_fails_after_breaker_opens():
     client = _client()
     calls = {"n": 0}
@@ -52,6 +54,8 @@ def test_process_images_fast_fails_after_breaker_opens():
     assert calls["n"] == 2  # endpoint not dialed while open
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_success_keeps_breaker_closed():
     client = _client()
     client._process_images_retried = MagicMock(return_value={"embeddings": [1]})

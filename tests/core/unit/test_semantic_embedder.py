@@ -25,6 +25,8 @@ def _reset_cache():
     reset_semantic_embedder_cache()
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_remote_url_arg_selects_remote_backend():
     embedder = get_semantic_embedder(remote_url="http://fake.invalid:11434")
     assert isinstance(embedder, RemoteOpenAIEmbedder)
@@ -72,6 +74,8 @@ def _openai_embed_response(vectors: list[list[float]]):
     return mock_response
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_remote_encode_hits_v1_embeddings():
     embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000/", "lightonai/DenseOn")
 
@@ -122,6 +126,8 @@ def test_remote_encode_preserves_order_when_backend_reorders():
     )
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_remote_encode_empty_input_returns_empty_array():
     embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
     with patch.object(embedder._session, "post") as mock_post:
@@ -175,6 +181,8 @@ def test_remote_encode_accepts_sentence_transformer_compat_kwargs():
     np.testing.assert_allclose(vec, [0.6, 0.8], rtol=1e-5)
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_remote_encode_rejects_unknown_kwargs():
     """Unknown kwargs must raise TypeError naming the offending keys instead
     of being silently dropped (the local sibling forwards its kwargs to

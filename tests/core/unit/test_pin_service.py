@@ -98,6 +98,8 @@ class TestPinQuotasFromTenantConfig:
         assert q.org_admin == 10
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestPinAuthority:
     def test_user_cannot_pin_tenant_instruction(self, service, manager):
         # tenant_instruction requires tenant_admin floor.
@@ -162,6 +164,8 @@ class TestPinAuthority:
         assert rec.pinned_by is Pinnable.USER
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestQuotaEnforcement:
     def test_user_quota_blocks_after_n_pins(self, manager, registry):
         registry.register(

@@ -37,6 +37,8 @@ def registry():
 
 
 class TestTickOnce:
+    @pytest.mark.unit
+    @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_runs_cleanup_for_every_warm_manager(self, registry):
         managers = [
@@ -61,6 +63,8 @@ class TestTickOnce:
             assert len(m.calls) == 1
             assert m.calls[0][0] is registry
 
+    @pytest.mark.unit
+    @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_per_tenant_failure_does_not_abort_run(self, registry):
         managers = [
@@ -166,6 +170,8 @@ class TestSchedulerLifecycle:
         await scheduler.stop()
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestConstructorValidation:
     def test_rejects_non_positive_interval(self, registry):
         with pytest.raises(ValueError):

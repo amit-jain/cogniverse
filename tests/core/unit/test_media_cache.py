@@ -18,6 +18,8 @@ def _write(path, content: bytes = b"x"):
     return path
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestMakeKey:
     def test_deterministic(self):
         assert MediaCache.make_key("s3://b/k.mp4") == MediaCache.make_key(
@@ -35,6 +37,8 @@ class TestMakeKey:
         )
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestPutGet:
     def test_round_trip(self, cache, tmp_path):
         src = _write(tmp_path / "src", b"hello")

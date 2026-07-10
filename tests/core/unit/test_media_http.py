@@ -45,6 +45,8 @@ def locator(tmp_path):
     )
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestHttpFetch:
     def test_first_fetch_downloads_and_caches(self, locator, http_server):
         base, _ = http_server

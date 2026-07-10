@@ -80,6 +80,8 @@ class TestOrgTrunkId:
         assert org_trunk_tenant_id("acme:production") == "acme:_org_trunk"
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestFederatedRead:
     def test_tenant_overlay_wins_on_subject_key_collision(self):
         per_tenant = {
@@ -130,6 +132,8 @@ class TestFederatedRead:
         assert ids == {"m_t", "m_o"}
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestPromotionAuthority:
     def test_tenant_private_cannot_be_promoted(self):
         registry = KnowledgeRegistry()

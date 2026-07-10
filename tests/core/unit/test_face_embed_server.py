@@ -104,6 +104,8 @@ def sample_png_b64() -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestHealth:
     def test_health_returns_ok(self, client):
         resp = client.get("/health")
@@ -111,6 +113,8 @@ class TestHealth:
         assert resp.json() == {"status": "ok"}
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestEmbedResponseShape:
     def test_two_faces_returned_with_expected_shape(self, client, sample_png_b64):
         resp = client.post("/embed", json={"image_b64": sample_png_b64})
@@ -152,6 +156,8 @@ class TestEmbedResponseShape:
 
 
 class TestInputValidation:
+    @pytest.mark.unit
+    @pytest.mark.ci_fast
     def test_neither_field_supplied_returns_400(self, client):
         resp = client.post("/embed", json={})
         assert resp.status_code == 400
@@ -165,6 +171,8 @@ class TestInputValidation:
         assert resp.status_code == 400
         assert "Exactly one of" in resp.json()["detail"]
 
+    @pytest.mark.unit
+    @pytest.mark.ci_fast
     def test_garbage_b64_returns_400(self, client):
         resp = client.post("/embed", json={"image_b64": "@@@ not base64 @@@"})
         assert resp.status_code == 400

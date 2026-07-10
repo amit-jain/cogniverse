@@ -27,6 +27,8 @@ def _backend(base_path, enable_compression):
     return StructuredFilesystemBackend(cfg)
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_round_trip_with_compression(tmp_path):
     backend = _backend(tmp_path, True)
@@ -35,6 +37,8 @@ async def test_round_trip_with_compression(tmp_path):
     assert await backend.get("k1") == value
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_bytes_are_gzip_when_enabled(tmp_path):
     backend = _backend(tmp_path, True)
@@ -70,6 +74,8 @@ async def test_compression_reduces_size(tmp_path):
     assert len(on._serialize(value)) < len(off._serialize(value))
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_manager_propagates_compression_flag_to_backends(tmp_path):
     from cogniverse_core.common.cache.base import CacheConfig, CacheManager
 

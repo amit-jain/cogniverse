@@ -33,6 +33,8 @@ def _encoder(embedding_dim: int) -> VideoPrismTextEncoder:
     return enc
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_matching_dim_passes_through_unchanged():
     enc = _encoder(768)
     vec = np.ones(768, dtype=np.float32)
@@ -40,6 +42,8 @@ def test_matching_dim_passes_through_unchanged():
     assert out is vec
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
 def test_smaller_dim_raises_instead_of_padding():
     enc = _encoder(768)
     with pytest.raises(ValueError, match="does not match"):
