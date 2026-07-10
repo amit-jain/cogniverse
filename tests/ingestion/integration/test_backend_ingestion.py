@@ -314,6 +314,7 @@ class TestVespaBackendIngestion:
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
         config.max_frames_per_video = 2
+        config.generate_descriptions = False
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
@@ -569,6 +570,7 @@ class TestComprehensiveIngestion:
             config.video_dir = all_test_videos[0].parent
             config.search_backend = "vespa"
             config.max_frames_per_video = 1
+            config.generate_descriptions = False
 
             schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
             pipeline = VideoIngestionPipeline(
@@ -610,6 +612,7 @@ class TestComprehensiveIngestion:
         config.video_dir = all_test_videos[0].parent
         config.search_backend = "vespa"
         config.max_frames_per_video = 5
+        config.generate_descriptions = False
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
