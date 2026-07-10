@@ -26,6 +26,17 @@ from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
 logger = logging.getLogger(__name__)
 
+
+def _unwrap_exc(exc: BaseException) -> str:
+    """Flatten an ExceptionGroup (anyio/asyncio TaskGroup) to the real leaf
+    failures. ``str(group)`` is only 'unhandled errors in a TaskGroup (N
+    sub-exceptions)', which hides what actually broke."""
+    sub = getattr(exc, "exceptions", None)
+    if sub:
+        return "; ".join(_unwrap_exc(e) for e in sub)
+    return f"{type(exc).__name__}: {exc}"
+
+
 # All agents support streaming via emit_progress() and call_dspy()
 _STREAMING_CAPABILITIES = frozenset(
     {
@@ -257,9 +268,13 @@ class CogniverseAgentExecutor(AgentExecutor):
                 await event_queue.enqueue_event(a2a_event)
 
         except Exception as e:
-            logger.error(f"A2A streaming failed for agent '{agent_name}': {e}")
+            detail = _unwrap_exc(e)
+            logger.error(
+                f"A2A streaming failed for agent '{agent_name}': {detail}",
+                exc_info=True,
+            )
             error_text = json.dumps(
-                {"type": "error", "message": str(e), "agent": agent_name}
+                {"type": "error", "message": detail, "agent": agent_name}
             )
             error_event = TaskStatusUpdateEvent(
                 task_id=task_id,
