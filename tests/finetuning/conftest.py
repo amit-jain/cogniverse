@@ -35,3 +35,20 @@ def isolate_transformers_imports():
 
     # Also ensure no patches remain active
     patch.stopall()
+
+
+@pytest.fixture(autouse=True)
+def _default_telemetry_singleton():
+    """Seed the global telemetry singleton with a default in-memory manager so
+    these tests never trigger ``get_telemetry_manager()``'s
+    ``create_default_config_manager()`` → ``VespaConfigStore`` fallback (which
+    the project-wide dead-port default then fails). Reset after for isolation.
+    """
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    TelemetryManager.reset()
+    telemetry_manager_module._telemetry_manager = TelemetryManager(TelemetryConfig())
+    yield
+    TelemetryManager.reset()
