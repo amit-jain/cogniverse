@@ -41,26 +41,6 @@ hostStorage:
     enabled: true
 
 inference:
-  # ColPali uses the native FastAPI sidecar (deploy/colpali) — vLLM's
-  # ColPaliForRetrieval exposes /v1/score (scalar) but the runtime needs
-  # per-token multi-vector embeddings via /v1/embeddings.
-  vllm_colpali:
-    enabled: true
-    engine: colpali_native
-    image:
-      repository: cogniverse/colpali
-      tag: dev
-      pullPolicy: Never
-    extraArgs: []
-    kvCacheGiB: null
-    resources:
-      limits:
-        cpu: "4"
-        memory: "16Gi"
-      requests:
-        cpu: "4"
-        memory: "16Gi"
-
   # vLLM-served ASR ships enabled in base values.yaml (the default
   # video-ingestion profiles hard-require transcription), so the
   # deployment-lifecycle e2e already exercises the full chart wiring.
