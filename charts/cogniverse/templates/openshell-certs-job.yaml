@@ -31,7 +31,7 @@ spec:
       serviceAccountName: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
       containers:
       - name: cert-gen
-        image: alpine/openssl:3.4.1
+        image: alpine/openssl:3.5.0
         command:
         - /bin/sh
         - -c
@@ -60,11 +60,18 @@ spec:
           openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out client.crt -days 365 -sha256 -extfile client.ext
 
           NAMESPACE="{{ .Release.Namespace }}"
+          SANDBOX_NS="{{ ((.Values.openshell).server).sandboxNamespace | default "openshell" }}"
 
           apk add --no-cache curl
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           mv kubectl /usr/local/bin/
+
+          # The sandbox namespace hosts the reconciled sandbox pods; ensure it
+          # exists before we drop the client cert into it (this hook runs before
+          # the main install creates any namespace).
+          kubectl create namespace "$SANDBOX_NS" \
+            --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl create secret tls openshell-server-tls \
             --cert=server.crt --key=server.key -n "$NAMESPACE" \
@@ -74,9 +81,16 @@ spec:
             --from-file=ca.crt=ca.crt -n "$NAMESPACE" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          kubectl create secret tls openshell-client-tls \
-            --cert=client.crt --key=client.key -n "$NAMESPACE" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          # openshell-client-tls carries the CA too: the sandbox supervisor
+          # mounts this secret and reads ca.crt/tls.crt/tls.key from it to mTLS
+          # back to the gateway. Created in the runtime namespace (for the
+          # runtime) and the sandbox namespace (for the sandbox pods).
+          for NS in "$NAMESPACE" "$SANDBOX_NS"; do
+            kubectl create secret generic openshell-client-tls \
+              --from-file=tls.crt=client.crt --from-file=tls.key=client.key \
+              --from-file=ca.crt=ca.crt -n "$NS" \
+              --dry-run=client -o yaml | kubectl apply -f -
+          done
 
           kubectl create secret generic openshell-client-ca \
             --from-file=ca.crt=ca.crt -n "$NAMESPACE" \
@@ -94,7 +108,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
   annotations:
@@ -102,12 +116,17 @@ metadata:
     "helm.sh/hook-weight": "-10"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 rules:
+# Cluster-scoped: the job creates the sandbox namespace and writes the client
+# cert secret into it as well as the runtime namespace.
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "create", "patch"]
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["get", "list", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
   annotations:
@@ -119,7 +138,7 @@ subjects:
   name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
   namespace: {{ .Release.Namespace }}
 roleRef:
-  kind: Role
+  kind: ClusterRole
   name: {{ include "cogniverse.fullname" . }}-openshell-cert-gen
   apiGroup: rbac.authorization.k8s.io
 {{- end }}

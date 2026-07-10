@@ -1,0 +1,60 @@
+{{- if (.Values.runtime.sandbox.inCluster).enabled }}
+{{- /*
+In-cluster OpenShell sandboxes exec ``/opt/openshell/bin/openshell-sandbox``
+from a hostPath. That supervisor binary ships in OpenShell's own cluster image,
+not on a generic node, so this DaemonSet copies it onto every node's
+``/opt/openshell/bin`` once. The main container is a bare pause — the init
+container does the copy on each (re)schedule.
+*/}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "cogniverse.fullname" . }}-openshell-node-installer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: openshell-node-installer
+spec:
+  selector:
+    matchLabels:
+      app: openshell-node-installer
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app: openshell-node-installer
+    spec:
+      initContainers:
+        - name: install-supervisor
+          image: {{ .Values.openshell.clusterImage | default "ghcr.io/nvidia/openshell/cluster:0.0.13" }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              cp /opt/openshell/bin/openshell-sandbox /host-openshell-bin/openshell-sandbox
+              chmod 0755 /host-openshell-bin/openshell-sandbox
+              echo "installed openshell-sandbox supervisor onto node"
+          volumeMounts:
+            - name: host-openshell-bin
+              mountPath: /host-openshell-bin
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 1m
+              memory: 4Mi
+            limits:
+              cpu: 10m
+              memory: 16Mi
+      volumes:
+        - name: host-openshell-bin
+          hostPath:
+            path: /opt/openshell/bin
+            type: DirectoryOrCreate
+      tolerations:
+        - operator: Exists
+{{- end }}

@@ -127,12 +127,17 @@ def _probe_gateway_endpoint(endpoint: str, timeout: float = 2.0) -> None:
     import socket
     from urllib.parse import urlparse
 
-    parsed = urlparse(endpoint)
+    # A scheme-less ``host:port`` (the in-cluster gRPC endpoint) misparses:
+    # urlparse treats the dotted hostname as the URL scheme, so ``hostname``
+    # is None and the whole string (port included) is left as the host, which
+    # then fails DNS. Prepend ``//`` when there's no scheme so it parses as a
+    # netloc. ``https://host:port`` (host mode) already parses correctly.
+    parsed = urlparse(endpoint if "://" in endpoint else f"//{endpoint}")
     host = parsed.hostname or endpoint
     port = parsed.port
     if port is None:
-        # Default grpc-over-http(s) ports.
-        port = 443 if parsed.scheme == "https" else 80
+        # gRPC over TLS defaults; the in-cluster service port is 8080.
+        port = 443 if parsed.scheme == "https" else 8080
     with socket.create_connection((host, port), timeout=timeout):
         return
 
@@ -250,6 +255,25 @@ class SandboxManager:
 
         logger.info(f"Loaded {len(self._policies)} agent policies")
 
+    def _resolve_tls_config(self):
+        """Build the client mTLS config from certs mounted at
+        ``~/.config/openshell/gateways/<name>/mtls/{ca,tls}.{crt,key}``.
+        Returns ``None`` (insecure channel) when no complete cert set is
+        present, so a plaintext gateway still works."""
+        from pathlib import Path
+
+        from openshell import TlsConfig
+
+        base = Path.home() / ".config" / "openshell" / "gateways"
+        if not base.is_dir():
+            return None
+        for gw in sorted(base.iterdir()):
+            mtls = gw / "mtls"
+            ca, cert, key = mtls / "ca.crt", mtls / "tls.crt", mtls / "tls.key"
+            if ca.is_file() and cert.is_file() and key.is_file():
+                return TlsConfig(ca_path=ca, cert_path=cert, key_path=key)
+        return None
+
     def _connect(self) -> None:
         """Connect to the OpenShell gateway.
 
@@ -272,7 +296,13 @@ class SandboxManager:
                 # with a short TCP connect so policy=REQUIRED actually
                 # refuses to boot when the gateway is unreachable.
                 _probe_gateway_endpoint(override_endpoint)
-                self._client = SandboxClient(endpoint=override_endpoint)
+                # The gateway serves mTLS; build the client TLS config from the
+                # certs mounted into the pod so the endpoint path isn't a
+                # plaintext channel talking to a TLS server. None => insecure
+                # (backward compatible when no certs are mounted).
+                self._client = SandboxClient(
+                    endpoint=override_endpoint, tls=self._resolve_tls_config()
+                )
                 logger.info(f"Connected to OpenShell gateway at {override_endpoint}")
             else:
                 self._client = SandboxClient.from_active_cluster(cluster=self._cluster)

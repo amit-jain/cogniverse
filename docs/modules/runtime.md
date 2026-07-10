@@ -1391,6 +1391,13 @@ All factory methods require explicit dependency injection:
 
 `SandboxManager` wraps the OpenShell SDK to create and manage per-agent execution sandboxes. Each agent type runs inside an OpenShell sandbox pod with a YAML policy (under `configs/agent_policies/`) controlling network egress, filesystem access, and process constraints.
 
+> **Full architecture, deployment, and glossary:** see
+> [Coding-Agent Sandbox](../architecture/coding-sandbox.md) — the end-to-end
+> in-cluster flow (runtime → gateway → Sandbox CR → agent-sandbox operator →
+> pod), the chart pieces that deploy it, the `--sandbox in-cluster|external|off`
+> modes, and a plain-language glossary of every term (CRD, operator, mTLS,
+> DaemonSet, …).
+
 ### SandboxPolicy knob
 
 `SandboxPolicy` (enum in `sandbox_manager.py`) controls behaviour when the gateway is unreachable at boot:

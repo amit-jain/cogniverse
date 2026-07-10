@@ -177,8 +177,29 @@ def cli() -> None:
     default=False,
     help="Enable Telegram messaging gateway (requires TELEGRAM_BOT_TOKEN env var).",
 )
+@click.option(
+    "--sandbox",
+    type=click.Choice(["in-cluster", "external", "off"]),
+    default="in-cluster",
+    help=(
+        "Coding-agent sandbox mode. 'in-cluster' self-hosts the OpenShell "
+        "gateway + agent-sandbox operator (default, portable). 'external' "
+        "points at a managed gateway (set runtime.sandbox.external.endpoint). "
+        "'off' disables the coding agent."
+    ),
+)
+@click.option(
+    "--sandbox-endpoint",
+    default=None,
+    help="External OpenShell gateway endpoint (host:port) for --sandbox external.",
+)
 def up(
-    llm_mode: str, llm_url: str | None, image_source: str | None, messaging: bool
+    llm_mode: str,
+    llm_url: str | None,
+    image_source: str | None,
+    messaging: bool,
+    sandbox: str,
+    sandbox_endpoint: str | None,
 ) -> None:
     """Deploy the full Cogniverse stack."""
     # 1. Detect environment — a running k3d cluster counts as local, not prod
@@ -355,29 +376,34 @@ def up(
     install_argo_controller()
     console.print("[green]Argo Workflows installed[/green]")
 
-    # 7. Bring up the OpenShell sandbox BEFORE helm install — the runtime
-    # pod mounts openshell-mtls / openshell-{metadata,active} as volumes
-    # and won't start until they exist. Missing CLI / failed gateway is
-    # non-fatal: the chart sandbox toggle is flipped off and runtime
-    # comes up without the coding agent.
-    if use_k3d:
-        subprocess.run(
-            ["kubectl", "create", "namespace", NAMESPACE],
-            capture_output=True,
-            timeout=10,
-            check=False,
-        )
-        console.print("[cyan]Setting up coding agent sandbox (pre-helm)...[/cyan]")
-        from cogniverse_cli.sandbox import ensure_sandbox_ready
-
-        if ensure_sandbox_ready():
-            console.print("  [green]Sandbox[/green] ready")
-        else:
+    # 7. Wire the coding-agent sandbox. In-cluster (default) self-hosts the
+    # OpenShell gateway + agent-sandbox operator via the chart — no host
+    # dependency, reproducible on any cluster. External points at a managed
+    # gateway. Off disables the coding agent.
+    subprocess.run(
+        ["kubectl", "create", "namespace", NAMESPACE],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    if sandbox == "in-cluster":
+        set_values["runtime.sandbox.enabled"] = "true"
+        set_values["runtime.sandbox.inCluster.enabled"] = "true"
+        console.print("  [green]Coding sandbox[/green]: in-cluster (self-hosted)")
+    elif sandbox == "external":
+        endpoint = sandbox_endpoint or ""
+        if not endpoint:
             console.print(
-                "  [yellow]Sandbox[/yellow] unavailable — disabling in chart so "
-                "runtime can start"
+                "[red]--sandbox external requires --sandbox-endpoint host:port[/red]"
             )
-            set_values["runtime.sandbox.enabled"] = "false"
+            sys.exit(1)
+        set_values["runtime.sandbox.enabled"] = "true"
+        set_values["runtime.sandbox.external.enabled"] = "true"
+        set_values["runtime.sandbox.external.endpoint"] = endpoint
+        console.print(f"  [green]Coding sandbox[/green]: external gateway ({endpoint})")
+    else:
+        set_values["runtime.sandbox.enabled"] = "false"
+        console.print("  [yellow]Coding sandbox[/yellow]: disabled")
 
     # 8. Deploy the main Helm release. Backend mirrors host detection so
     # the chart picks the matching imagesByBackend entry instead of the
