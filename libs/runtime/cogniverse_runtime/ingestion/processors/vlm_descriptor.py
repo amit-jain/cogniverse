@@ -18,6 +18,11 @@ from typing import Any
 
 import requests
 
+_VLM_DESCRIBE_PROMPT = (
+    "Describe this video frame in detail: the objects, people, actions, "
+    "scene setting, and any visible text. Be concise and factual."
+)
+
 
 class VLMDescriptor:
     """Handles VLM description generation for keyframes"""
@@ -34,6 +39,12 @@ class VLMDescriptor:
         self.timeout = timeout  # 3 hours default
         self.auto_start = auto_start
         self._service_started = False
+        # An OpenAI-compatible ``/v1`` endpoint (e.g. the deployed vLLM vision
+        # model) speaks chat/completions with image_url parts; a Modal endpoint
+        # takes a base64 zip of frames. Detect which so one descriptor serves
+        # both a hosted Modal service and an in-cluster vLLM.
+        self._openai_mode = "/v1" in vlm_endpoint
+        self._openai_model: str | None = None
 
         # Setup logging
         self.logger = logging.getLogger("VLMDescriptor")
@@ -46,6 +57,9 @@ class VLMDescriptor:
 
     def _ensure_service_running(self):
         """Ensure the Modal VLM service is running"""
+        # An in-cluster vLLM ``/v1`` endpoint is always up; nothing to start.
+        if self._openai_mode:
+            return
         # Check if service is already running
         try:
             response = requests.get(self.vlm_endpoint, timeout=5)
@@ -178,7 +192,9 @@ class VLMDescriptor:
         }
 
     def _process_vlm_batch(self, keyframes: list[dict]) -> dict[str, str]:
-        """Process a batch of keyframes through Modal VLM service"""
+        """Process a batch of keyframes through the VLM service."""
+        if self._openai_mode:
+            return self._process_vlm_batch_openai(keyframes)
 
         # Create frame mapping for batch processing
         frame_mapping = {}
@@ -277,6 +293,67 @@ class VLMDescriptor:
                 finally:
                     # Cleanup temp file
                     os.unlink(temp_zip.name)
+
+    def _openai_base(self) -> str:
+        """The ``/v1`` root of the configured endpoint (accepts either a bare
+        ``.../v1`` or a full ``.../v1/chat/completions`` URL)."""
+        return self.vlm_endpoint.split("/v1")[0] + "/v1"
+
+    def _resolve_openai_model(self) -> str:
+        """Discover the served model id from the vLLM ``/v1/models`` list."""
+        if self._openai_model:
+            return self._openai_model
+        resp = requests.get(f"{self._openai_base()}/models", timeout=10)
+        resp.raise_for_status()
+        data = resp.json().get("data") or []
+        if not data:
+            raise RuntimeError(f"VLM endpoint {self._openai_base()} served no models")
+        self._openai_model = data[0]["id"]
+        return self._openai_model
+
+    def _process_vlm_batch_openai(self, keyframes: list[dict]) -> dict[str, str]:
+        """Describe each keyframe via an OpenAI-compatible vision chat model."""
+        model = self._resolve_openai_model()
+        chat_url = f"{self._openai_base()}/chat/completions"
+        descriptions: dict[str, str] = {}
+        for keyframe in keyframes:
+            frame_path = Path(keyframe["path"])
+            if not frame_path.exists():
+                continue
+            frame_ref = keyframe.get("frame_id")
+            if frame_ref is None:
+                frame_ref = keyframe.get("frame_number")
+            if frame_ref is None:
+                frame_ref = frame_path.stem
+            suffix = frame_path.suffix.lower().lstrip(".") or "jpeg"
+            mime = "jpeg" if suffix == "jpg" else suffix
+            with open(frame_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+            payload = {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": _VLM_DESCRIBE_PROMPT},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/{mime};base64,{b64}"},
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 256,
+                "temperature": 0.2,
+            }
+            resp = requests.post(chat_url, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+            descriptions[str(frame_ref)] = (content or "").strip()
+        self.logger.info(
+            f"VLM (vision chat) described {len(descriptions)}/{len(keyframes)} frames"
+        )
+        return descriptions
 
     def process_single_frame(self, frame_path: Path) -> str:
         """Process a single frame (fallback method)"""

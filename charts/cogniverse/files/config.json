@@ -583,10 +583,10 @@
           "description": {
             "class": "VLMDescriptionStrategy",
             "params": {
-              "vlm_endpoint": "",
+              "vlm_endpoint": "{{ include "cogniverse.llmStudentEndpoint" . }}",
               "batch_size": 500,
               "timeout": 10800,
-              "auto_start": true
+              "auto_start": false
             }
           },
           "embedding": {

@@ -71,6 +71,7 @@ class ProcessorManager:
         self,
         strategy_set,
         service_urls: dict[str, str],
+        generate_descriptions: bool = True,
     ):
         """Initialize processors dynamically from strategy set.
 
@@ -81,6 +82,10 @@ class ProcessorManager:
         processor is constructed; the processor never sees a service name.
         Pass ``{}`` when no remote services are deployed — strategies that
         request one will then raise at init.
+
+        When ``generate_descriptions`` is False the VLM processor is not
+        constructed — the description strategy is skipped at execution time,
+        so it needs neither the processor nor a ``vlm_endpoint``.
         """
         all_requirements = {}
 
@@ -97,6 +102,11 @@ class ProcessorManager:
                 self.logger.info(
                     f"🔧 {strategy_name} requires: {list(requirements.keys())}"
                 )
+
+        # Descriptions disabled → the VLM strategy is skipped at execution, so
+        # don't build its processor (nor require a vlm_endpoint it won't use).
+        if not generate_descriptions:
+            all_requirements.pop("vlm", None)
 
         self._resolve_service_urls(all_requirements, service_urls)
         self._init_from_requirements(all_requirements)

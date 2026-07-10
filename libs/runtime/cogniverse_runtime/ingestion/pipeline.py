@@ -265,7 +265,9 @@ class VideoIngestionPipeline:
                 self.config_manager.get_system_config().inference_service_urls
             )
         self.processor_manager.initialize_from_strategies(
-            self.strategy_set, service_urls=service_urls
+            self.strategy_set,
+            service_urls=service_urls,
+            generate_descriptions=self.config.generate_descriptions,
         )
         self._init_backend()
         self.logger.info("Using system event loop for async operations")

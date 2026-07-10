@@ -23,6 +23,28 @@ logger = logging.getLogger(__name__)
 # Parsed config.json shared across ConfigUtils instances, keyed (path, mtime).
 _JSON_CONFIG_CACHE: dict = {}
 
+# Profile keys that are cluster infrastructure (service endpoints), not tenant
+# data. These always resolve from the system config so a change in config.json
+# reaches every tenant instead of being pinned to whatever endpoint was seeded
+# into each tenant's stored profile at deploy time.
+_SYSTEM_AUTHORITATIVE_KEYS = frozenset({"vlm_endpoint"})
+
+
+def _merge_profile(system: dict, tenant: dict) -> dict:
+    """Deep-merge a tenant profile over the system base. Non-empty tenant
+    values win and nested dicts merge recursively, EXCEPT system-authoritative
+    infra keys, which always take the system value so config.json stays the
+    single source of truth for service endpoints."""
+    result = dict(system)
+    for key, value in tenant.items():
+        if key in _SYSTEM_AUTHORITATIVE_KEYS:
+            continue
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _merge_profile(result[key], value)
+        elif value or key not in result:
+            result[key] = value
+    return result
+
 
 class ConfigUtils:
     """
@@ -175,14 +197,13 @@ class ConfigUtils:
             # Merge tenant-specific overrides into system profiles (not replace)
             for profile_name, tenant_profile in tenant_backend_config.profiles.items():
                 if profile_name in merged_profiles:
-                    # Merge non-empty tenant fields into system base
-                    tenant_dict = {
-                        k: v
-                        for k, v in tenant_profile.to_dict().items()
-                        if v  # Skip empty/falsy values (defaults from from_dict)
-                    }
-                    merged = merged_profiles[profile_name].to_dict()
-                    merged.update(tenant_dict)
+                    # Deep-merge tenant overrides into the system base: non-empty
+                    # tenant values win, but infra endpoints stay system-owned so
+                    # a config.json change reaches every tenant.
+                    merged = _merge_profile(
+                        merged_profiles[profile_name].to_dict(),
+                        tenant_profile.to_dict(),
+                    )
                     merged_profiles[profile_name] = BackendProfileConfig.from_dict(
                         profile_name, merged
                     )
