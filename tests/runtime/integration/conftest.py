@@ -23,6 +23,7 @@ from starlette.testclient import TestClient as StarletteTestClient
 # Import vespa backend to trigger self-registration
 import cogniverse_vespa  # noqa: F401
 from cogniverse_core.common.agent_models import AgentEndpoint
+from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -102,6 +103,38 @@ def vespa_instance(shared_vespa):  # noqa: F811
         BackendRegistry._shared_schema_registry = None
     except Exception as cleanup_err:
         logger.warning(f"BackendRegistry cleanup failed: {cleanup_err}")
+
+
+@pytest.fixture(scope="module")
+def tomoro_search_url(config_manager, vllm_sidecar):
+    """Spawn the ColQwen3/Tomoro vLLM sidecar and register its URL under the
+    embedding service names the ColPali profiles reference. The SearchAgent
+    resolves its encoder from the SYSTEM_TENANT_ID config, whose
+    ``video_colpali_smol500_mv_frame`` profile (from config.json) names
+    ``vllm_colpali``; the ``test_colpali`` profile names ``tomoro_embedding``.
+    Register both to the one sidecar. ColQwen3 is remote-only, so the
+    SearchAgent's eager encoder build needs this URL or it falls back to an
+    unsupported local load and raises. Tests that dispatch the search agent
+    depend on this."""
+    url = vllm_sidecar.spawn(
+        model="TomoroAI/tomoro-colqwen3-embed-4b",
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--max-model-len",
+            "4096",
+        ],
+    )
+    sys_cfg = config_manager.get_system_config()
+    sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
+    sys_cfg.inference_service_urls["vllm_colpali"] = url
+    sys_cfg.inference_service_urls["tomoro_embedding"] = url
+    config_manager.set_system_config(sys_cfg)
+    QueryEncoderFactory._encoder_cache.clear()
+    yield url
+    QueryEncoderFactory._encoder_cache.clear()
 
 
 @pytest.fixture(scope="module")

@@ -633,7 +633,7 @@ class TestSearchAgentStreaming:
     """SearchAgent streaming with real Vespa + the configured LM."""
 
     def test_stream_phases_and_search_output(
-        self, vespa_instance, config_manager, schema_loader, dspy_lm
+        self, vespa_instance, config_manager, schema_loader, dspy_lm, tomoro_search_url
     ):
         from cogniverse_agents.search_agent import (
             SearchAgent,

@@ -291,7 +291,12 @@ class TestA2AMultiTurnHistoryAccumulation:
         )
 
     def test_multiturn_query_rewrite_end_to_end(
-        self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
+        self,
+        a2a_client,
+        dspy_lm,
+        vespa_instance,
+        dispatch_history_spy,
+        tomoro_search_url,
     ):
         """Turn 1: 'cat videos' -> Turn 2: 'show me longer ones' -> rewritten query."""
         context_id = f"test-rewrite-e2e-{uuid.uuid4()}"
