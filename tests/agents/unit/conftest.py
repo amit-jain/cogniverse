@@ -28,3 +28,20 @@ def _skip_rlm_deno_check_for_unit_tests():
             os.environ.pop("COGNIVERSE_RLM_SKIP_DENO_CHECK", None)
         else:
             os.environ["COGNIVERSE_RLM_SKIP_DENO_CHECK"] = previous
+
+
+@pytest.fixture(autouse=True)
+def _default_telemetry_singleton():
+    """Seed the global telemetry singleton with an in-memory default so no
+    agent construction path triggers ``get_telemetry_manager()``'s fallback to
+    ``create_default_config_manager()`` → ``VespaConfigStore``, which would
+    otherwise read the dead-port backend. Same seed-the-singleton pattern used
+    by ``tests/runtime/unit/conftest.py``."""
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    TelemetryManager.reset()
+    telemetry_manager_module._telemetry_manager = TelemetryManager(TelemetryConfig())
+    yield
+    TelemetryManager.reset()

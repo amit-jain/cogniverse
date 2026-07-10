@@ -85,11 +85,12 @@ class TestMem0MemoryManager:
         from pathlib import Path
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.utils import (
-            create_default_config_manager,
-        )
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
 
-        config_manager = create_default_config_manager()
+        store = InMemoryConfigStore()
+        store.initialize()
+        config_manager = ConfigManager(store=store)
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
         # Initialize
@@ -332,9 +333,13 @@ class TestInitializeIdempotent:
 
         from cogniverse_core.memory.manager import Mem0MemoryManager
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.utils import (
-            create_default_config_manager,
-        )
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        def _make_config_manager():
+            store = InMemoryConfigStore()
+            store.initialize()
+            return ConfigManager(store=store)
 
         mock_memory_class.from_config.return_value = MagicMock()
         mock_backend = MagicMock()
@@ -354,7 +359,7 @@ class TestInitializeIdempotent:
             llm_base_url="http://localhost:11434/v1",
             embedder_base_url="http://localhost:8000",
             base_schema_name="agent_memories",
-            config_manager=create_default_config_manager(),
+            config_manager=_make_config_manager(),
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
         )
 

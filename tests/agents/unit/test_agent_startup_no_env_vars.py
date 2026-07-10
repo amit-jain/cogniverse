@@ -37,6 +37,31 @@ from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 
 
+def _memory_config_manager(*, seed_inference: bool = False):
+    """Build a ConfigManager backed by an in-memory store so construction
+    never reaches Vespa. When ``seed_inference`` is set, the system config
+    carries the ``inference_service_urls`` the default search profile
+    references so its query encoder builds a remote client offline instead
+    of attempting a remote-only local model load."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    manager = ConfigManager(store=store)
+    if seed_inference:
+        manager.set_system_config(
+            SystemConfig(
+                inference_service_urls={
+                    "vllm_colpali": "http://localhost:8000",
+                    "vllm_asr": "http://localhost:8001",
+                }
+            )
+        )
+    return manager
+
+
 @pytest.mark.unit
 class TestAgentConstructionNoEnvVars:
     """Every A2A agent constructs with explicit deps — zero env var reads."""
@@ -98,6 +123,7 @@ class TestAgentConstructionNoEnvVars:
         agent = SearchAgent(
             deps=deps,
             schema_loader=mock_schema_loader,
+            config_manager=_memory_config_manager(seed_inference=True),
             port=8002,
         )
 
@@ -106,9 +132,7 @@ class TestAgentConstructionNoEnvVars:
 
     def test_summarizer_no_env_vars(self):
         """SummarizerAgent constructs without env vars."""
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
-        config_manager = create_default_config_manager()
+        config_manager = _memory_config_manager()
         deps = SummarizerDeps()
         agent = SummarizerAgent(deps=deps, config_manager=config_manager, port=8003)
 
@@ -117,9 +141,7 @@ class TestAgentConstructionNoEnvVars:
 
     def test_detailed_report_no_env_vars(self):
         """DetailedReportAgent constructs without env vars."""
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
-        config_manager = create_default_config_manager()
+        config_manager = _memory_config_manager()
         deps = DetailedReportDeps()
         agent = DetailedReportAgent(deps=deps, config_manager=config_manager, port=8004)
 
