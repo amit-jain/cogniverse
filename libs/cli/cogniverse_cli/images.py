@@ -108,15 +108,31 @@ def has_workspace_source(project_root: Path) -> bool:
 
 
 def read_app_version(project_root: Path) -> str:
-    """Chart appVersion — the single source of truth for first-party image
-    versions. Dev images are tagged ``<appVersion>-dev``."""
+    """Chart ``appVersion`` — the static release line (what the base
+    ``values.yaml`` tags release images with)."""
     chart = project_root / "charts" / "cogniverse" / "Chart.yaml"
     data = yaml.safe_load(chart.read_text())
     return str(data["appVersion"])
 
 
+def dev_version(project_root: Path) -> str:
+    """Git-derived version (setuptools-scm) — the identical value hatch-vcs
+    stamps on the Python wheels, so a local dev image and a local ``uv build``
+    carry the same commit-unique version. Requires a real git checkout, which
+    ``cogniverse up`` always has."""
+    from setuptools_scm import get_version
+
+    return get_version(root=str(project_root))
+
+
+def _docker_tag(version: str) -> str:
+    # Docker tags can't contain '+'; the git version already marks a dev build
+    # (e.g. 0.1.dev2137-g<sha>), so there is no separate -dev suffix.
+    return version.replace("+", "-")
+
+
 def _dev_tag(repo: str, version: str) -> str:
-    return f"{repo}:{version}-dev"
+    return f"{repo}:{_docker_tag(version)}"
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
@@ -154,8 +170,11 @@ def build_images(
     project_root: Path,
     torch_backend: str | None = None,
     values_files: list[Path] | None = None,
+    version: str | None = None,
 ) -> list[str]:
-    """Build all cogniverse-owned Docker images, tagged ``<appVersion>-dev``.
+    """Build all cogniverse-owned Docker images, tagged with the git-derived
+    version (``dev_version``), so every local build is commit-unique. Pass
+    ``version`` to override (tests, no git checkout).
 
     Builds the runtime + dashboard variants matching ``torch_backend``
     (auto-detected when None) plus the backend-agnostic GLiNER sidecar. The
@@ -165,7 +184,7 @@ def build_images(
     fast while flipping a sidecar on "just works". ColPali, Whisper, and the
     LateOn/DenseOn text embedders are served by vLLM and pulled directly by k3d.
     """
-    version = read_app_version(project_root)
+    version = version or dev_version(project_root)
     backend = torch_backend or detect_torch_backend()
 
     # Runtime + dashboard install the workspace, which triggers hatch-vcs; the
@@ -211,6 +230,28 @@ def build_images(
         )
         built.append(tag)
     return built
+
+
+def dev_image_set_values(
+    project_root: Path,
+    torch_backend: str | None = None,
+    values_files: list[Path] | None = None,
+    version: str | None = None,
+) -> dict[str, str]:
+    """Chart ``--set`` overrides pointing every first-party image at the
+    git-derived dev tag ``build_images`` produces, so ``cogniverse up`` deploys
+    exactly what it built. ``values.k3s.yaml`` carries a static ``<line>-dev``
+    placeholder that these override with the commit-unique tag."""
+    backend = torch_backend or detect_torch_backend()
+    tag = _docker_tag(version or dev_version(project_root))
+    overrides = {
+        f"runtime.imagesByBackend.{backend}.tag": tag,
+        f"dashboard.imagesByBackend.{backend}.tag": tag,
+        "inference.gliner.image.tag": tag,
+    }
+    for svc in enabled_sidecars(project_root, values_files):
+        overrides[f"inference.{svc}.image.tag"] = tag
+    return overrides
 
 
 def import_images(cluster_name: str, tags: list[str]) -> None:

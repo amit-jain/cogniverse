@@ -9,6 +9,9 @@ dependencies = [
     "httpx==0.28.1",
     "httpx-sse==0.4.3",
     "pyyaml==6.0.3",
+    # Derive the git version for local dev image tags (same tool hatch-vcs uses),
+    # so a `cogniverse up` image is stamped with the exact commit it was built from.
+    "setuptools-scm>=8",
 ]
 
 [project.scripts]

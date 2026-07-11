@@ -333,18 +333,21 @@ which builds and publishes everything at `0.2.0`:
 
 ### Image tags: release vs. dev
 
-First-party images use one scheme, keyed off `appVersion`:
-
 - **Release** (`release-images.yml` on a `v*` tag) → `docker.io/cogniverse/<name>:<version>`
   plus an immutable `:<git-sha>`, `pullPolicy: IfNotPresent` (a clean cluster pulls).
-- **Local dev** (`cogniverse up` → `build_images`) → `cogniverse/<name>:<version>-dev`,
-  `pullPolicy: Never` (built + imported into k3d, never pulled). Base `values.yaml`
-  carries the release tag; `values.k3s.yaml` overrides it to `-dev`.
+- **Local dev** (`cogniverse up` → `build_images`) → `cogniverse/<name>:<git-version>`,
+  where `<git-version>` is the setuptools-scm version with `+`→`-` (e.g.
+  `0.1.dev2137-g9ba33d3f`) — **commit-unique**, so two local builds are never
+  confused with each other or with a release. `pullPolicy: Never` (built + imported
+  into k3d). `values.k3s.yaml` carries a static `<line>-dev` placeholder that
+  `cogniverse up` overrides at deploy via `--set` (`dev_image_set_values`) with the
+  exact tag it just built.
 
 `.dockerignore` excludes `.git`, so the runtime/dashboard images (which install the
 workspace and thus trigger hatch-vcs) receive the version through the
 `SETUPTOOLS_SCM_PRETEND_VERSION` build-arg that `build_images` / `release-images.yml`
-set from the host, where git is available.
+set from the host, where git is available — so the packages *inside* a dev image
+carry the same git version as its tag.
 
 ---
 

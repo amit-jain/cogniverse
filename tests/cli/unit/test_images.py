@@ -9,11 +9,17 @@ from unittest.mock import patch
 import yaml
 from cogniverse_cli.images import (
     build_images,
+    dev_image_set_values,
     enabled_sidecars,
     has_workspace_source,
     import_images,
     read_app_version,
 )
+
+# A setuptools-scm-style git version and its docker-tag sanitization (+ -> -).
+# Passed explicitly so the tests don't need a real git checkout.
+DEV_VERSION = "0.1.dev5+gabc1234"
+DEV_TAG = "0.1.dev5-gabc1234"
 
 
 def _make_project_root(
@@ -24,8 +30,8 @@ def _make_project_root(
     clap_embed: bool = False,
     face_embed: bool = False,
 ) -> Path:
-    """A project root with just the chart files build_images reads: Chart.yaml
-    (appVersion → tag) and values.yaml (inference.<svc>.enabled → build set)."""
+    """A project root with just the chart files images.py reads: Chart.yaml
+    (appVersion) and values.yaml (inference.<svc>.enabled → build set)."""
     chart_dir = tmp_path / "charts" / "cogniverse"
     chart_dir.mkdir(parents=True)
     (chart_dir / "Chart.yaml").write_text(
@@ -63,7 +69,7 @@ class TestHasWorkspaceSource:
 
 
 class TestReadAppVersion:
-    """The chart appVersion is the single source of truth for image tags."""
+    """Chart appVersion is the static release line (release image tags)."""
 
     def test_reads_app_version_from_chart(self, tmp_path: Path) -> None:
         root = _make_project_root(tmp_path, app_version="3.1.4")
@@ -79,17 +85,17 @@ class TestBuildImages:
     ) -> None:
         """The default build (no sidecars enabled) is exactly three images:
         backend-specific runtime + dashboard plus the backend-agnostic GLiNER
-        sidecar, all tagged ``<appVersion>-dev``. ColPali/Whisper/LateOn/DenseOn
-        are served by vLLM and pulled by k3d, so no local build is needed."""
+        sidecar, all tagged with the commit-unique git version (``+`` sanitized
+        to ``-``). ColPali/Whisper/LateOn/DenseOn are served by vLLM."""
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
-        tags = build_images(root, torch_backend="cpu")
+        tags = build_images(root, torch_backend="cpu", version=DEV_VERSION)
 
         assert tags == [
-            "cogniverse/runtime-cpu:0.1.0-dev",
-            "cogniverse/dashboard-cpu:0.1.0-dev",
-            "cogniverse/gliner:0.1.0-dev",
+            f"cogniverse/runtime-cpu:{DEV_TAG}",
+            f"cogniverse/dashboard-cpu:{DEV_TAG}",
+            f"cogniverse/gliner:{DEV_TAG}",
         ]
         assert mock_run.call_count == 3  # type: ignore[attr-defined]
         for call in mock_run.call_args_list:  # type: ignore[attr-defined]
@@ -98,29 +104,28 @@ class TestBuildImages:
             assert cmd[1] == "build"
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_build_images_runtime_passes_torch_backend_arg(
+    def test_build_images_runtime_passes_torch_backend_and_version(
         self, mock_run: object, tmp_path: Path
     ) -> None:
         """Runtime + dashboard builds get the matching --build-arg
-        TORCH_BACKEND=<name> so the Dockerfile picks the right wheel, the tag
-        carries the backend + the versioned -dev suffix, and the version is fed
-        to hatch-vcs inside the git-less docker context via
-        SETUPTOOLS_SCM_PRETEND_VERSION."""
+        TORCH_BACKEND=<name>, a tag carrying the git version, and the FULL git
+        version fed to hatch-vcs inside the git-less docker context via
+        SETUPTOOLS_SCM_PRETEND_VERSION (the tag sanitizes ``+``, the build-arg
+        keeps it)."""
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
-        build_images(root, torch_backend="rocm")
+        build_images(root, torch_backend="rocm", version=DEV_VERSION)
 
         runtime_cmd = mock_run.call_args_list[0][0][0]  # type: ignore[attr-defined]
         dashboard_cmd = mock_run.call_args_list[1][0][0]  # type: ignore[attr-defined]
         gliner_cmd = mock_run.call_args_list[2][0][0]  # type: ignore[attr-defined]
-        assert "--build-arg" in runtime_cmd
         assert "TORCH_BACKEND=rocm" in runtime_cmd
-        assert "cogniverse/runtime-rocm:0.1.0-dev" in runtime_cmd
-        assert "SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0" in runtime_cmd
+        assert f"cogniverse/runtime-rocm:{DEV_TAG}" in runtime_cmd
+        assert f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSION}" in runtime_cmd
         assert "TORCH_BACKEND=rocm" in dashboard_cmd
-        assert "cogniverse/dashboard-rocm:0.1.0-dev" in dashboard_cmd
-        assert "SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0" in dashboard_cmd
+        assert f"cogniverse/dashboard-rocm:{DEV_TAG}" in dashboard_cmd
+        assert f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSION}" in dashboard_cmd
         # GLiNER + sidecars don't install the workspace, so no scm arg.
         assert not any("SETUPTOOLS_SCM_PRETEND_VERSION" in a for a in gliner_cmd)
 
@@ -135,18 +140,18 @@ class TestBuildImages:
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
-        built = build_images(root, torch_backend="cpu")
+        built = build_images(root, torch_backend="cpu", version=DEV_VERSION)
 
         assert built == [
-            "cogniverse/runtime-cpu:0.1.0-dev",
-            "cogniverse/dashboard-cpu:0.1.0-dev",
-            "cogniverse/gliner:0.1.0-dev",
+            f"cogniverse/runtime-cpu:{DEV_TAG}",
+            f"cogniverse/dashboard-cpu:{DEV_TAG}",
+            f"cogniverse/gliner:{DEV_TAG}",
         ]
         all_cmds = [
             call[0][0]
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
         ]
-        gliner_cmd = next(c for c in all_cmds if "cogniverse/gliner:0.1.0-dev" in c)
+        gliner_cmd = next(c for c in all_cmds if f"cogniverse/gliner:{DEV_TAG}" in c)
         assert "deploy/gliner/Dockerfile" in gliner_cmd
         assert "deploy/gliner" in gliner_cmd
         assert not any(a.startswith("TORCH_BACKEND=") for a in gliner_cmd)
@@ -163,7 +168,7 @@ class TestBuildImages:
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
-        built = build_images(root, torch_backend="cpu")
+        built = build_images(root, torch_backend="cpu", version=DEV_VERSION)
 
         joined = " ".join(" ".join(c[0][0]) for c in mock_run.call_args_list)  # type: ignore[attr-defined]
         assert "cogniverse/face-embed" not in joined
@@ -186,22 +191,51 @@ class TestBuildImages:
             yaml.safe_dump({"inference": {"face_embed": {"enabled": True}}})
         )
 
-        built = build_images(root, torch_backend="cpu", values_files=[overlay])
+        built = build_images(
+            root, torch_backend="cpu", values_files=[overlay], version=DEV_VERSION
+        )
 
         assert built == [
-            "cogniverse/runtime-cpu:0.1.0-dev",
-            "cogniverse/dashboard-cpu:0.1.0-dev",
-            "cogniverse/gliner:0.1.0-dev",
-            "cogniverse/face-embed:0.1.0-dev",
+            f"cogniverse/runtime-cpu:{DEV_TAG}",
+            f"cogniverse/dashboard-cpu:{DEV_TAG}",
+            f"cogniverse/gliner:{DEV_TAG}",
+            f"cogniverse/face-embed:{DEV_TAG}",
         ]
         face_cmd = next(
             call[0][0]
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
-            if "cogniverse/face-embed:0.1.0-dev" in call[0][0]
+            if f"cogniverse/face-embed:{DEV_TAG}" in call[0][0]
         )
         assert "deploy/face_embed/Dockerfile" in face_cmd
         assert face_cmd[-1] == "."  # repo-root context
         assert not any(a.startswith("TORCH_BACKEND=") for a in face_cmd)
+
+
+class TestDevImageSetValues:
+    """The chart --set overrides that point first-party images at the built tag."""
+
+    def test_maps_core_images_to_the_git_tag(self, tmp_path: Path) -> None:
+        root = _make_project_root(tmp_path)
+        overrides = dev_image_set_values(root, torch_backend="cpu", version=DEV_VERSION)
+        assert overrides == {
+            "runtime.imagesByBackend.cpu.tag": DEV_TAG,
+            "dashboard.imagesByBackend.cpu.tag": DEV_TAG,
+            "inference.gliner.image.tag": DEV_TAG,
+        }
+
+    def test_backend_scopes_runtime_and_dashboard(self, tmp_path: Path) -> None:
+        root = _make_project_root(tmp_path)
+        overrides = dev_image_set_values(
+            root, torch_backend="rocm", version=DEV_VERSION
+        )
+        assert "runtime.imagesByBackend.rocm.tag" in overrides
+        assert "runtime.imagesByBackend.cpu.tag" not in overrides
+
+    def test_includes_enabled_sidecars_only(self, tmp_path: Path) -> None:
+        root = _make_project_root(tmp_path, face_embed=True)
+        overrides = dev_image_set_values(root, torch_backend="cpu", version=DEV_VERSION)
+        assert overrides["inference.face_embed.image.tag"] == DEV_TAG
+        assert "inference.clap_embed.image.tag" not in overrides
 
 
 class TestEnabledSidecars:
