@@ -27,7 +27,7 @@ The Instrumentation module provides production-grade observability through:
 - Phoenix analytics with Plotly visualizations
 - **Session Tracking**: Multi-turn conversation tracking with `session_span()` method
 - **Phoenix Sessions View**: Grouped trace visualization for conversation trajectories
-- **Provider Abstraction**: `TelemetryProvider` and its store interfaces (`TraceStore`, `AnnotationStore`, `DatasetStore`, `ExperimentStore`, `AnalyticsStore`) define a backend-agnostic contract; `PhoenixProvider` is the shipped implementation, auto-discovered via the `cogniverse.telemetry.providers` entry-point group
+- **Provider Abstraction**: `TelemetryProvider` and its three store interfaces (`TraceStore`, `AnnotationStore`, `DatasetStore`) define a backend-agnostic contract; `PhoenixProvider` is the shipped implementation, auto-discovered via the `cogniverse.telemetry.providers` entry-point group
 - **Real-Time Monitoring**: `RetrievalMonitor` sliding-window latency/error/MRR tracking with configurable alert thresholds, used by the quality-monitor cycle
 
 ---
@@ -332,12 +332,10 @@ with search_span(tenant_id="tenant-123", query="find basketball videos", top_k=1
 Backend-agnostic contract for querying telemetry data. Core has zero knowledge of Phoenix/LangSmith specifics — provider packages implement these interfaces.
 
 #### Key Classes
-- **`TelemetryProvider`** (ABC) — exposes `.traces`, `.annotations`, `.datasets`, `.experiments`, `.analytics` store properties plus `initialize(config)`, `configure_span_export(...)`, and `session_context(session_id)`
+- **`TelemetryProvider`** (ABC) — exposes exactly three store properties, `.traces`, `.annotations`, `.datasets`, plus `initialize(config)`, `configure_span_export(...)`, and `session_context(session_id)`
 - **`TraceStore`** (ABC) — `get_spans(project, start_time=None, end_time=None, filters=None, limit=1000)`, `get_span_by_id(span_id, project)`
 - **`AnnotationStore`** (ABC) — `add_annotation(...)`, `get_annotations(...)`, `log_evaluations(eval_name, evaluations_df, project)`
 - **`DatasetStore`** (ABC) — `create_dataset(...)`, `get_dataset(name)`, `append_to_dataset(...)`
-- **`ExperimentStore`** (ABC) — `create_experiment(...)`, `log_run(...)`
-- **`AnalyticsStore`** (ABC) — `get_metrics(project, metric_names, start_time=None, end_time=None)`
 - **`TelemetryRegistry`** — `EntryPointRegistry` subclass; providers register via the `cogniverse.telemetry.providers` entry-point group and are cached per `(tenant_id, project)` so distinct projects for one tenant don't share endpoints
 
 #### Usage
@@ -365,7 +363,7 @@ The shipped `TelemetryProvider` implementation, registered under the `phoenix` e
 #### Key Classes
 - `PhoenixProvider(name="phoenix")` — `initialize(config)` requires `tenant_id`, `http_endpoint`, `grpc_endpoint`; `configure_span_export(...)` builds a `TracerProvider` via `phoenix.otel.register()`, swapping in a `BatchSpanProcessor` sized from `BatchExportConfig` when `use_batch_export=True`
 - `PhoenixTraceStore.get_spans(...)` — pushes `filters={"name": ...}` down to a server-side `SpanQuery` predicate (single name or list) instead of pulling the whole project window and filtering client-side; always passes `timeout=120` (the client method's own default is 5s)
-- `PhoenixAnnotationStore`, `PhoenixDatasetStore`, `PhoenixExperimentStore`, `PhoenixAnalyticsStore` — remaining store implementations
+- `PhoenixAnnotationStore`, `PhoenixDatasetStore` — remaining store implementations
 - AsyncClient instances are memoized per `(running event loop, endpoint)` in a `WeakKeyDictionary`, since a client's connection pool binds to the loop that created it (Streamlit runs a fresh loop per interaction)
 
 ### 6. PhoenixAnalytics
@@ -892,7 +890,7 @@ def test_real_phoenix_multi_tenant_isolation(self, phoenix_container):
 - `libs/foundation/cogniverse_foundation/telemetry/config.py` - `TelemetryConfig`, `TelemetryLevel`, `BatchExportConfig`, span-name constants
 - `libs/foundation/cogniverse_foundation/telemetry/context.py` - `search_span`, `encode_span`, `backend_search_span`, span-enrichment helpers
 - `libs/foundation/cogniverse_foundation/telemetry/registry.py` - `TelemetryRegistry`, `get_telemetry_registry()`
-- `libs/foundation/cogniverse_foundation/telemetry/providers/base.py` - `TelemetryProvider` and store ABCs (`TraceStore`, `AnnotationStore`, `DatasetStore`, `ExperimentStore`, `AnalyticsStore`)
+- `libs/foundation/cogniverse_foundation/telemetry/providers/base.py` - `TelemetryProvider` and store ABCs (`TraceStore`, `AnnotationStore`, `DatasetStore`)
 - `libs/foundation/cogniverse_foundation/telemetry/providers/__init__.py` - Public re-exports of the provider ABCs
 
 ### Implementation Layer - Phoenix Integration

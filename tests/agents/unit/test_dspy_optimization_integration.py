@@ -32,9 +32,6 @@ def _make_mock_telemetry_provider():
     provider.datasets = MagicMock()
     provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
     provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
-    provider.experiments = MagicMock()
-    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
-    provider.experiments.log_run = AsyncMock(return_value="run-test")
     return provider
 
 
@@ -298,8 +295,7 @@ class TestDSPyOptimizerIntegration:
         # Mock telemetry provider: save_optimized_prompts goes through
         # ArtifactManager which calls datasets.create_dataset for prompts
         # and metrics blobs (one dataset.create_dataset per artifact type
-        # per module).  The old experiments.create_experiment path was
-        # removed when ArtifactManager replaced direct provider calls.
+        # per module).
         mock_provider = Mock()
         mock_provider.datasets = Mock()
         mock_provider.datasets.create_dataset = AsyncMock(return_value="ds-123")
@@ -309,9 +305,6 @@ class TestDSPyOptimizerIntegration:
         # save_experiment now routes through append_to_dataset (creates the
         # dataset on first call when get raises KeyError).
         mock_provider.datasets.append_to_dataset = AsyncMock(return_value="ds-exp-123")
-        mock_provider.experiments = Mock()
-        mock_provider.experiments.create_experiment = AsyncMock(return_value="exp-123")
-        mock_provider.experiments.log_run = AsyncMock(return_value="run-123")
 
         # Save prompts via telemetry
         await pipeline.save_optimized_prompts(

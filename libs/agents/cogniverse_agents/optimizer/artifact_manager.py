@@ -168,7 +168,7 @@ def _optional_int(v: Any) -> Optional[int]:
 class ArtifactManager:
     """Manage DSPy optimization artifacts through telemetry stores.
 
-    Uses DatasetStore for prompts and demonstrations, ExperimentStore for metrics.
+    Uses DatasetStore for prompts, demonstrations, and experiment-metric rows.
     Dataset naming: ``dspy-{kind}-{tenant_id}-{agent_type}`` where *kind* is
     ``prompts`` or ``demos``.
     """

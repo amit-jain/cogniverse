@@ -59,21 +59,12 @@ class FakeDatasetStore:
         raise KeyError(f"No dataset {name}")
 
 
-class FakeExperimentStore:
-    async def create_experiment(self, name, metadata=None):
-        return name
-
-    async def log_run(self, experiment_id, inputs, outputs, metadata=None):
-        return "run-1"
-
-
 class FakeTelemetryProvider:
     """Minimal TelemetryProvider stand-in with trace + dataset stores."""
 
     def __init__(self, spans_df: pd.DataFrame | None = None):
         self._trace_store = FakeTraceStore(spans_df)
         self._dataset_store = FakeDatasetStore()
-        self._experiment_store = FakeExperimentStore()
 
     @property
     def traces(self):
@@ -82,10 +73,6 @@ class FakeTelemetryProvider:
     @property
     def datasets(self):
         return self._dataset_store
-
-    @property
-    def experiments(self):
-        return self._experiment_store
 
 
 class FakeTelemetryManager:

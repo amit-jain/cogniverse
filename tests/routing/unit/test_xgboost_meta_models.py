@@ -33,9 +33,6 @@ def _make_mock_telemetry_provider():
     provider.datasets = MagicMock()
     provider.datasets.create_dataset = AsyncMock(return_value="ds-test")
     provider.datasets.get_dataset = AsyncMock(return_value=None)
-    provider.experiments = MagicMock()
-    provider.experiments.create_experiment = AsyncMock(return_value="exp-test")
-    provider.experiments.log_run = AsyncMock(return_value="run-test")
     return provider
 
 
