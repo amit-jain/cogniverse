@@ -33,6 +33,10 @@ COPY libs/dashboard ./libs/dashboard
 # all happen before the layer commits, so the default cu128 torch wheel
 # bytes never land in the image.
 ARG TORCH_BACKEND
+# hatch-vcs derives versions from git, but .dockerignore excludes .git, so the
+# host passes the git-derived version in (build_images / release-images.yml).
+ARG SETUPTOOLS_SCM_PRETEND_VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 RUN if [ -z "$TORCH_BACKEND" ]; then \
         echo "ERROR: TORCH_BACKEND build-arg is required (cpu|cuda|rocm)." >&2; \
         exit 1; \

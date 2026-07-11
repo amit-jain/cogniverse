@@ -168,19 +168,26 @@ def build_images(
     version = read_app_version(project_root)
     backend = torch_backend or detect_torch_backend()
 
-    backend_arg = ["--build-arg", f"TORCH_BACKEND={backend}"]
+    # Runtime + dashboard install the workspace, which triggers hatch-vcs; the
+    # docker context excludes .git, so pass the derived version in explicitly.
+    workspace_arg = [
+        "--build-arg",
+        f"TORCH_BACKEND={backend}",
+        "--build-arg",
+        f"SETUPTOOLS_SCM_PRETEND_VERSION={version}",
+    ]
     builds = [
         (
             _dev_tag(RUNTIME_REPOS_BY_BACKEND[backend], version),
             "libs/runtime/Dockerfile",
             ".",
-            backend_arg,
+            workspace_arg,
         ),
         (
             _dev_tag(DASHBOARD_REPOS_BY_BACKEND[backend], version),
             "libs/dashboard/Dockerfile",
             ".",
-            backend_arg,
+            workspace_arg,
         ),
         # GLiNER takes no TORCH_BACKEND arg and builds from its own context.
         (

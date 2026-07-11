@@ -29,6 +29,10 @@ COPY libs/agents ./libs/agents
 COPY libs/telemetry-phoenix ./libs/telemetry-phoenix
 COPY libs/runtime ./libs/runtime
 
+# hatch-vcs derives versions from git, but .dockerignore excludes .git, so the
+# host passes the git-derived version in (build_images / release-images.yml).
+ARG SETUPTOOLS_SCM_PRETEND_VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 RUN uv sync --package cogniverse-runtime --extra all --no-dev --frozen && \
     uv pip install pylate --no-deps && \
     uv pip install datasets && \

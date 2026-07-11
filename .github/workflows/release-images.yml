@@ -100,7 +100,12 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
-          build-args: ${{ matrix.backend != '' && format('TORCH_BACKEND={0}', matrix.backend) || '' }}
+          # SETUPTOOLS_SCM_PRETEND_VERSION feeds hatch-vcs inside the runtime /
+          # dashboard builds (docker context has no .git); the sidecar builds
+          # ignore both args.
+          build-args: |
+            TORCH_BACKEND=${{ matrix.backend }}
+            SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.version.outputs.version }}
           tags: |
             cogniverse/${{ matrix.repo }}:${{ steps.version.outputs.version }}
             cogniverse/${{ matrix.repo }}:${{ github.sha }}
