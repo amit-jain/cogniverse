@@ -102,8 +102,10 @@ class TestBuildImages:
         self, mock_run: object, tmp_path: Path
     ) -> None:
         """Runtime + dashboard builds get the matching --build-arg
-        TORCH_BACKEND=<name> so the Dockerfile picks the right wheel, and the
-        tag carries the backend + the versioned -dev suffix."""
+        TORCH_BACKEND=<name> so the Dockerfile picks the right wheel, the tag
+        carries the backend + the versioned -dev suffix, and the version is fed
+        to hatch-vcs inside the git-less docker context via
+        SETUPTOOLS_SCM_PRETEND_VERSION."""
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
@@ -111,11 +113,16 @@ class TestBuildImages:
 
         runtime_cmd = mock_run.call_args_list[0][0][0]  # type: ignore[attr-defined]
         dashboard_cmd = mock_run.call_args_list[1][0][0]  # type: ignore[attr-defined]
+        gliner_cmd = mock_run.call_args_list[2][0][0]  # type: ignore[attr-defined]
         assert "--build-arg" in runtime_cmd
         assert "TORCH_BACKEND=rocm" in runtime_cmd
         assert "cogniverse/runtime-rocm:0.1.0-dev" in runtime_cmd
+        assert "SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0" in runtime_cmd
         assert "TORCH_BACKEND=rocm" in dashboard_cmd
         assert "cogniverse/dashboard-rocm:0.1.0-dev" in dashboard_cmd
+        assert "SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0" in dashboard_cmd
+        # GLiNER + sidecars don't install the workspace, so no scm arg.
+        assert not any("SETUPTOOLS_SCM_PRETEND_VERSION" in a for a in gliner_cmd)
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_builds_gliner_not_pylate(
