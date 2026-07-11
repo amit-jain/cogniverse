@@ -47,6 +47,19 @@ jobs:
       - name: helm dependency build
         run: helm dependency build charts/cogniverse
 
+      # The pytest chart suite renders the chart itself (helm + pyyaml only,
+      # no workspace sync) and asserts on the manifests — image tag scheme,
+      # config-profile drift, no floating :latest, semantic-router wiring, etc.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run chart render tests
+        run: |
+          pip install --quiet pytest pyyaml
+          python -m pytest tests/charts -q --tb=short
+
       # Render the full chart (k3s values profile — same manifests the
       # deployment-lifecycle flow would apply) and validate each manifest
       # against the published Kubernetes schemas. Catches missing fields,
