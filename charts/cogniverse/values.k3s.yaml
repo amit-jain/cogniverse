@@ -41,6 +41,25 @@ hostStorage:
     enabled: true
 
 inference:
+  # k3d uses the locally-built <version>-dev first-party sidecar images
+  # (built + imported by `cogniverse up`); base values.yaml carries the
+  # release tag for a registry pull.
+  gliner:
+    image:
+      tag: "2.0.0-dev"
+      pullPolicy: Never
+  videoprism_jax:
+    image:
+      tag: "2.0.0-dev"
+      pullPolicy: Never
+  clap_embed:
+    image:
+      tag: "2.0.0-dev"
+      pullPolicy: Never
+  face_embed:
+    image:
+      tag: "2.0.0-dev"
+      pullPolicy: Never
   # vLLM-served ASR ships enabled in base values.yaml (the default
   # video-ingestion profiles hard-require transcription), so the
   # deployment-lifecycle e2e already exercises the full chart wiring.
@@ -115,15 +134,15 @@ runtime:
   imagesByBackend:
     cpu:
       repository: cogniverse/runtime-cpu
-      tag: "dev"
+      tag: "2.0.0-dev"
       pullPolicy: Never
     cuda:
       repository: cogniverse/runtime-cuda
-      tag: "dev"
+      tag: "2.0.0-dev"
       pullPolicy: Never
     rocm:
       repository: cogniverse/runtime-rocm
-      tag: "dev"
+      tag: "2.0.0-dev"
       pullPolicy: Never
   service:
     type: NodePort
@@ -178,15 +197,15 @@ dashboard:
   imagesByBackend:
     cpu:
       repository: cogniverse/dashboard-cpu
-      tag: "dev"
+      tag: "2.0.0-dev"
       pullPolicy: Never
     cuda:
       repository: cogniverse/dashboard-cuda
-      tag: "dev"
+      tag: "2.0.0-dev"
       pullPolicy: Never
     rocm:
       repository: cogniverse/dashboard-rocm
-      tag: "dev"
+      tag: "2.0.0-dev"
       pullPolicy: Never
   service:
     type: NodePort

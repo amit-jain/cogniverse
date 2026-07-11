@@ -284,9 +284,24 @@ def up(
                 timeout=30,
                 check=False,
             )
+    # Compose the deploy values (device overrides on the k3s/prod base) up
+    # front so the image build can gate optional sidecars on
+    # inference.<svc>.enabled.
+    chart_path = get_chart_path()
+    base_values_file = get_values_file(prod=not use_k3d)
+    values_files: list[Path] = [base_values_file]
+    if use_k3d:
+        host_backend = detect_torch_backend()
+        device_values = get_device_values_file(host_backend)
+        if device_values is not None:
+            values_files.append(device_values)
+            console.print(
+                f"[cyan]Composing device overrides:[/cyan] {device_values.name}"
+            )
+
     if project_root and has_workspace_source(project_root):
         console.print("[cyan]Building container images...[/cyan]")
-        tags = build_images(project_root)
+        tags = build_images(project_root, values_files=values_files)
         if use_k3d:
             console.print("[cyan]Importing images into k3d...[/cyan]")
             import_images(CLUSTER_NAME, tags)
@@ -336,20 +351,9 @@ def up(
         set_values["messaging.enabled"] = "true"
         console.print("[cyan]Messaging gateway enabled (Telegram).[/cyan]")
 
-    # 5a. Compose device-specific overrides (values.rocm.yaml /
-    # values.cuda.yaml) on top of values.k3s.yaml when present.
+    # 5a. Device overrides were composed above (before the image build); keep
+    # the llm-external flag for the third-party pre-pull below.
     llm_is_external = set_values.get("llm.external.enabled") == "true"
-    chart_path = get_chart_path()
-    base_values_file = get_values_file(prod=not use_k3d)
-    values_files: list[Path] = [base_values_file]
-    if use_k3d:
-        host_backend = detect_torch_backend()
-        device_values = get_device_values_file(host_backend)
-        if device_values is not None:
-            values_files.append(device_values)
-            console.print(
-                f"[cyan]Composing device overrides:[/cyan] {device_values.name}"
-            )
 
     # 5b. Pre-pull third-party images from every values file so GB-scale
     # GPU images don't blow the helm-install timeout at pod start.

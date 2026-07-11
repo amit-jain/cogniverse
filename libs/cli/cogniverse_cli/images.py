@@ -9,23 +9,39 @@ from pathlib import Path
 
 import yaml
 
-# Runtime + dashboard ship one image per torch backend. Each variant
-# bakes in the matching torch wheel — cogniverse/runtime-cpu carries
-# torch+cpu, -cuda carries torch+cu128, -rocm carries torch+rocm6.4.
-RUNTIME_TAGS_BY_BACKEND = {
-    "cpu": "cogniverse/runtime-cpu:dev",
-    "cuda": "cogniverse/runtime-cuda:dev",
-    "rocm": "cogniverse/runtime-rocm:dev",
+# First-party image repositories keyed by torch backend. Runtime + dashboard
+# ship one image per backend; each bakes in the matching torch wheel —
+# runtime-cpu carries torch+cpu, -cuda torch+cu128, -rocm torch+rocm6.4. Tags
+# derive from the chart appVersion: dev builds are ``<appVersion>-dev``.
+RUNTIME_REPOS_BY_BACKEND = {
+    "cpu": "cogniverse/runtime-cpu",
+    "cuda": "cogniverse/runtime-cuda",
+    "rocm": "cogniverse/runtime-rocm",
 }
-DASHBOARD_TAGS_BY_BACKEND = {
-    "cpu": "cogniverse/dashboard-cpu:dev",
-    "cuda": "cogniverse/dashboard-cuda:dev",
-    "rocm": "cogniverse/dashboard-rocm:dev",
+DASHBOARD_REPOS_BY_BACKEND = {
+    "cpu": "cogniverse/dashboard-cpu",
+    "cuda": "cogniverse/dashboard-cuda",
+    "rocm": "cogniverse/dashboard-rocm",
 }
 # GLiNER sidecar — backend-agnostic CPU-only NER server (deploy/gliner). Its
 # chart image uses pullPolicy: Never, so k3d must have it built+imported or
 # the pod ErrImageNeverPulls on a fresh deploy. One image, all backends.
-GLINER_TAG = "cogniverse/gliner:dev"
+GLINER_REPO = "cogniverse/gliner"
+# Optional embedder sidecars — each backs a real opt-in feature (VideoPrism
+# embeddings, acoustic search, face re-ID). Built only when their
+# inference.<svc>.enabled resolves true in the deploy values, so a default
+# build stays fast but flipping one on "just works". clap/face COPY from libs/
+# and deploy/, so their build context is the repo root; videoprism is
+# self-contained in its own directory. Keyed by inference service name.
+SIDECAR_BUILDS = {
+    "videoprism_jax": (
+        "cogniverse/videoprism",
+        "deploy/videoprism/Dockerfile",
+        "deploy/videoprism",
+    ),
+    "clap_embed": ("cogniverse/clap-embed", "deploy/clap_embed/Dockerfile", "."),
+    "face_embed": ("cogniverse/face-embed", "deploy/face_embed/Dockerfile", "."),
+}
 # colpali, whisper, and the LateOn/DenseOn text embedders are no longer
 # built by us — vLLM serves them all:
 # TomoroAI/tomoro-colqwen3-embed-4b via inference.vllm_colpali (vllm/vllm-openai-cpu)
@@ -91,31 +107,95 @@ def has_workspace_source(project_root: Path) -> bool:
     return (project_root / "libs" / "runtime").is_dir()
 
 
+def read_app_version(project_root: Path) -> str:
+    """Chart appVersion — the single source of truth for first-party image
+    versions. Dev images are tagged ``<appVersion>-dev``."""
+    chart = project_root / "charts" / "cogniverse" / "Chart.yaml"
+    data = yaml.safe_load(chart.read_text())
+    return str(data["appVersion"])
+
+
+def _dev_tag(repo: str, version: str) -> str:
+    return f"{repo}:{version}-dev"
+
+
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def enabled_sidecars(project_root: Path, values_files: list[Path] | None) -> list[str]:
+    """Sidecar services whose ``inference.<svc>.enabled`` resolves true after
+    merging the chart defaults with the deploy overlays helm will apply, in
+    ``SIDECAR_BUILDS`` order."""
+    merged: dict = (
+        yaml.safe_load(
+            (project_root / "charts" / "cogniverse" / "values.yaml").read_text()
+        )
+        or {}
+    )
+    for values_file in values_files or []:
+        overlay = yaml.safe_load(Path(values_file).read_text()) or {}
+        _deep_merge(merged, overlay)
+    inference = merged.get("inference") or {}
+    return [
+        svc
+        for svc in SIDECAR_BUILDS
+        if isinstance(inference.get(svc), dict)
+        and inference[svc].get("enabled") is True
+    ]
+
+
 def build_images(
     project_root: Path,
     torch_backend: str | None = None,
+    values_files: list[Path] | None = None,
 ) -> list[str]:
-    """Build all cogniverse-owned Docker images.
+    """Build all cogniverse-owned Docker images, tagged ``<appVersion>-dev``.
 
     Builds the runtime + dashboard variants matching ``torch_backend``
-    (auto-detected via ``detect_torch_backend()`` when None) plus the
-    backend-agnostic GLiNER sidecar. ColPali, Whisper, and the
-    LateOn/DenseOn text embedders are served via vLLM
-    (vllm/vllm-openai-cpu) and pulled directly by k3d.
+    (auto-detected when None) plus the backend-agnostic GLiNER sidecar. The
+    optional embedder sidecars (videoprism / clap-embed / face-embed) build only
+    when their ``inference.<svc>.enabled`` resolves true across ``values_files``
+    (the same overlays ``cogniverse up`` hands helm), so a default build stays
+    fast while flipping a sidecar on "just works". ColPali, Whisper, and the
+    LateOn/DenseOn text embedders are served by vLLM and pulled directly by k3d.
     """
+    version = read_app_version(project_root)
     backend = torch_backend or detect_torch_backend()
-    runtime_tag = RUNTIME_TAGS_BY_BACKEND[backend]
-    dashboard_tag = DASHBOARD_TAGS_BY_BACKEND[backend]
 
     backend_arg = ["--build-arg", f"TORCH_BACKEND={backend}"]
-    workspace_builds = [
-        (runtime_tag, "libs/runtime/Dockerfile", ".", backend_arg),
-        (dashboard_tag, "libs/dashboard/Dockerfile", ".", backend_arg),
+    builds = [
+        (
+            _dev_tag(RUNTIME_REPOS_BY_BACKEND[backend], version),
+            "libs/runtime/Dockerfile",
+            ".",
+            backend_arg,
+        ),
+        (
+            _dev_tag(DASHBOARD_REPOS_BY_BACKEND[backend], version),
+            "libs/dashboard/Dockerfile",
+            ".",
+            backend_arg,
+        ),
         # GLiNER takes no TORCH_BACKEND arg and builds from its own context.
-        (GLINER_TAG, "deploy/gliner/Dockerfile", "deploy/gliner", []),
+        (
+            _dev_tag(GLINER_REPO, version),
+            "deploy/gliner/Dockerfile",
+            "deploy/gliner",
+            [],
+        ),
     ]
+    for svc in enabled_sidecars(project_root, values_files):
+        repo, dockerfile, context = SIDECAR_BUILDS[svc]
+        builds.append((_dev_tag(repo, version), dockerfile, context, []))
+
     built: list[str] = []
-    for tag, dockerfile, context, extra_args in workspace_builds:
+    for tag, dockerfile, context, extra_args in builds:
         subprocess.run(
             ["docker", "build", "-f", dockerfile, *extra_args, "-t", tag, context],
             cwd=str(project_root),
