@@ -2,8 +2,8 @@ apiVersion: v2
 name: cogniverse
 description: Multi-Agent RAG System for Multi-Modal Content Analysis
 type: application
-version: 2.0.0
-appVersion: "2.0.0"
+version: 0.1.0
+appVersion: "0.1.0"
 
 keywords:
   - ai

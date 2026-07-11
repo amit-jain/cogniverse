@@ -19,7 +19,7 @@ from cogniverse_cli.images import (
 def _make_project_root(
     tmp_path: Path,
     *,
-    app_version: str = "2.0.0",
+    app_version: str = "0.1.0",
     videoprism: bool = False,
     clap_embed: bool = False,
     face_embed: bool = False,
@@ -87,9 +87,9 @@ class TestBuildImages:
         tags = build_images(root, torch_backend="cpu")
 
         assert tags == [
-            "cogniverse/runtime-cpu:2.0.0-dev",
-            "cogniverse/dashboard-cpu:2.0.0-dev",
-            "cogniverse/gliner:2.0.0-dev",
+            "cogniverse/runtime-cpu:0.1.0-dev",
+            "cogniverse/dashboard-cpu:0.1.0-dev",
+            "cogniverse/gliner:0.1.0-dev",
         ]
         assert mock_run.call_count == 3  # type: ignore[attr-defined]
         for call in mock_run.call_args_list:  # type: ignore[attr-defined]
@@ -113,9 +113,9 @@ class TestBuildImages:
         dashboard_cmd = mock_run.call_args_list[1][0][0]  # type: ignore[attr-defined]
         assert "--build-arg" in runtime_cmd
         assert "TORCH_BACKEND=rocm" in runtime_cmd
-        assert "cogniverse/runtime-rocm:2.0.0-dev" in runtime_cmd
+        assert "cogniverse/runtime-rocm:0.1.0-dev" in runtime_cmd
         assert "TORCH_BACKEND=rocm" in dashboard_cmd
-        assert "cogniverse/dashboard-rocm:2.0.0-dev" in dashboard_cmd
+        assert "cogniverse/dashboard-rocm:0.1.0-dev" in dashboard_cmd
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_builds_gliner_not_pylate(
@@ -131,15 +131,15 @@ class TestBuildImages:
         built = build_images(root, torch_backend="cpu")
 
         assert built == [
-            "cogniverse/runtime-cpu:2.0.0-dev",
-            "cogniverse/dashboard-cpu:2.0.0-dev",
-            "cogniverse/gliner:2.0.0-dev",
+            "cogniverse/runtime-cpu:0.1.0-dev",
+            "cogniverse/dashboard-cpu:0.1.0-dev",
+            "cogniverse/gliner:0.1.0-dev",
         ]
         all_cmds = [
             call[0][0]
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
         ]
-        gliner_cmd = next(c for c in all_cmds if "cogniverse/gliner:2.0.0-dev" in c)
+        gliner_cmd = next(c for c in all_cmds if "cogniverse/gliner:0.1.0-dev" in c)
         assert "deploy/gliner/Dockerfile" in gliner_cmd
         assert "deploy/gliner" in gliner_cmd
         assert not any(a.startswith("TORCH_BACKEND=") for a in gliner_cmd)
@@ -182,15 +182,15 @@ class TestBuildImages:
         built = build_images(root, torch_backend="cpu", values_files=[overlay])
 
         assert built == [
-            "cogniverse/runtime-cpu:2.0.0-dev",
-            "cogniverse/dashboard-cpu:2.0.0-dev",
-            "cogniverse/gliner:2.0.0-dev",
-            "cogniverse/face-embed:2.0.0-dev",
+            "cogniverse/runtime-cpu:0.1.0-dev",
+            "cogniverse/dashboard-cpu:0.1.0-dev",
+            "cogniverse/gliner:0.1.0-dev",
+            "cogniverse/face-embed:0.1.0-dev",
         ]
         face_cmd = next(
             call[0][0]
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
-            if "cogniverse/face-embed:2.0.0-dev" in call[0][0]
+            if "cogniverse/face-embed:0.1.0-dev" in call[0][0]
         )
         assert "deploy/face_embed/Dockerfile" in face_cmd
         assert face_cmd[-1] == "."  # repo-root context

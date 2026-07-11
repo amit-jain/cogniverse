@@ -46,19 +46,19 @@ inference:
   # release tag for a registry pull.
   gliner:
     image:
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
   videoprism_jax:
     image:
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
   clap_embed:
     image:
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
   face_embed:
     image:
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
   # vLLM-served ASR ships enabled in base values.yaml (the default
   # video-ingestion profiles hard-require transcription), so the
@@ -134,15 +134,15 @@ runtime:
   imagesByBackend:
     cpu:
       repository: cogniverse/runtime-cpu
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
     cuda:
       repository: cogniverse/runtime-cuda
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
     rocm:
       repository: cogniverse/runtime-rocm
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
   service:
     type: NodePort
@@ -197,15 +197,15 @@ dashboard:
   imagesByBackend:
     cpu:
       repository: cogniverse/dashboard-cpu
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
     cuda:
       repository: cogniverse/dashboard-cuda
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
     rocm:
       repository: cogniverse/dashboard-rocm
-      tag: "2.0.0-dev"
+      tag: "0.1.0-dev"
       pullPolicy: Never
   service:
     type: NodePort
