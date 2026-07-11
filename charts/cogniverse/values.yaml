@@ -324,20 +324,20 @@ runtime:
   # points at a real locally-built image if it is ever used.
   image:
     repository: cogniverse/runtime-cuda
-    tag: "dev"
+    tag: "2.0.0"
     pullPolicy: IfNotPresent
   imagesByBackend:
     cpu:
       repository: cogniverse/runtime-cpu
-      tag: dev
+      tag: "2.0.0"
       pullPolicy: IfNotPresent
     cuda:
       repository: cogniverse/runtime-cuda
-      tag: dev
+      tag: "2.0.0"
       pullPolicy: IfNotPresent
     rocm:
       repository: cogniverse/runtime-rocm
-      tag: dev
+      tag: "2.0.0"
       pullPolicy: IfNotPresent
 
   replicaCount: 2
@@ -522,20 +522,20 @@ dashboard:
   # sync with the tag the `cogniverse images` CLI builds (dev).
   image:
     repository: cogniverse/dashboard-cuda
-    tag: "dev"
+    tag: "2.0.0"
     pullPolicy: IfNotPresent
   imagesByBackend:
     cpu:
       repository: cogniverse/dashboard-cpu
-      tag: dev
+      tag: "2.0.0"
       pullPolicy: IfNotPresent
     cuda:
       repository: cogniverse/dashboard-cuda
-      tag: dev
+      tag: "2.0.0"
       pullPolicy: IfNotPresent
     rocm:
       repository: cogniverse/dashboard-rocm
-      tag: dev
+      tag: "2.0.0"
       pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -1079,8 +1079,8 @@ inference:
       nodePort: 29007
     image:
       repository: cogniverse/gliner
-      tag: dev
-      pullPolicy: Never
+      tag: "2.0.0"
+      pullPolicy: IfNotPresent
     imagesByDevice: {}
     extraArgs: []
     hfTokenSecret: ""              # gliner_mediumv2.1 is ungated
@@ -1124,7 +1124,7 @@ inference:
     device: cpu                    # cpu | cuda | rocm
     image:
       repository: cogniverse/videoprism
-      tag: "dev"
+      tag: "2.0.0"
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     gpuCount: 1
@@ -1421,7 +1421,7 @@ inference:
     replicaCount: 1
     image:
       repository: cogniverse/clap-embed
-      tag: "0.1.0"
+      tag: "2.0.0"
       pullPolicy: IfNotPresent
     service:
       type: NodePort
@@ -1460,7 +1460,7 @@ inference:
     replicaCount: 1
     image:
       repository: cogniverse/face-embed
-      tag: "0.1.0"
+      tag: "2.0.0"
       pullPolicy: IfNotPresent
     service:
       type: NodePort

@@ -226,13 +226,13 @@ custom sidecar.
 |---|---|
 | Chart key | `inference.videoprism_jax` |
 | Model | `videoprism_public_v1_base_hf` |
-| Image | **`cogniverse/videoprism:dev` (CUSTOM, built from `deploy/videoprism/`)** |
+| Image | **`cogniverse/videoprism:2.0.0-dev` (CUSTOM, built from `deploy/videoprism/`)** |
 | Engine | `videoprism_jax` |
 | Default state | disabled |
 
 Custom JAX sidecar — no upstream vLLM equivalent. Used by the
 `video_videoprism_*` family of profiles. Build with
-`docker build -t cogniverse/videoprism:dev deploy/videoprism/`; see
+`docker build -t cogniverse/videoprism:2.0.0-dev deploy/videoprism/`; see
 [`deploy/videoprism/README.md`](../../deploy/videoprism/README.md) for the
 endpoint, supported models, and the video-only scope.
 
@@ -391,7 +391,7 @@ the whole ingest.
 | `colbert_pylate` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
 | `code_colbert_pylate` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
 | `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
-| `videoprism_jax` | `cogniverse/videoprism:dev` | **Yes** (`deploy/videoprism/`) |
+| `videoprism_jax` | `cogniverse/videoprism:2.0.0-dev` | **Yes** (`deploy/videoprism/`) |
 | `clap_embed` | `cogniverse/clap-embed` | **Yes** (`deploy/clap_embed/`) |
 | `gliner` | `cogniverse/gliner` | **Yes** (`deploy/gliner/`) |
 | `face_embed` | `cogniverse/face-embed` | **Yes** (`deploy/face_embed/`) |
