@@ -312,6 +312,10 @@ Docker image tags derive from, and `make release` keeps it in step with the tag.
 
 ### Cutting a release
 
+> **First release only:** the publish steps need registry/PyPI credentials that
+> are **not** configured yet — set them once (see
+> [Required GitHub Secrets](#required-github-secrets)) before pushing a tag.
+
 One command bumps the chart and creates the tag:
 
 ```bash
@@ -633,11 +637,25 @@ Note: `GitHub Release` only depends on the `PyPI` publish job (release tags skip
 
 ### Required GitHub Secrets
 
-```text
-Settings → Secrets → Actions:
+Set these under **Settings → Secrets and variables → Actions** *before* cutting a
+release. The repo currently has **none** configured, so a `v*` tag would fail at
+the credential steps (Docker login, chart push, PyPI upload) until they exist.
 
-PYPI_TOKEN           Production PyPI API token
-TEST_PYPI_TOKEN      TestPyPI API token
+| Secret | Used by | For |
+|---|---|---|
+| `DOCKERHUB_USERNAME` | `release-images.yml`, `mirror-third-party.yml` | Docker Hub account name |
+| `DOCKERHUB_TOKEN` | same | Docker Hub **access token** (not the password) — image + OCI chart push |
+| `PYPI_TOKEN` | `publish-packages.yml` | production PyPI wheel upload |
+| `TEST_PYPI_TOKEN` | `publish-packages.yml` | TestPyPI upload (`-rc` / `-beta` / `-alpha` tags) |
+
+`GITHUB_TOKEN` is injected automatically, and keyless cosign signing uses the
+workflow's OIDC identity — so no signing-key secret is needed.
+
+```bash
+gh secret set DOCKERHUB_USERNAME --body "<dockerhub-user>"
+gh secret set DOCKERHUB_TOKEN    --body "<dockerhub-access-token>"
+gh secret set PYPI_TOKEN         --body "<pypi-token>"
+gh secret set TEST_PYPI_TOKEN    --body "<testpypi-token>"
 ```
 
 ---
