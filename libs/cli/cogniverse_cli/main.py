@@ -40,6 +40,8 @@ from cogniverse_cli.health import check_service_health, wait_for_url
 from cogniverse_cli.images import (
     build_images,
     detect_torch_backend,
+    dev_image_set_values,
+    dev_version,
     has_workspace_source,
     import_images,
     pull_and_import_third_party,
@@ -299,15 +301,25 @@ def up(
                 f"[cyan]Composing device overrides:[/cyan] {device_values.name}"
             )
 
+    dev_image_overrides: dict[str, str] = {}
     if project_root and has_workspace_source(project_root):
         console.print("[cyan]Building container images...[/cyan]")
-        tags = build_images(project_root, values_files=values_files)
+        # Derive the git version once so the built image tag and the deployed
+        # --set override are guaranteed identical.
+        image_version = dev_version(project_root)
+        tags = build_images(
+            project_root, values_files=values_files, version=image_version
+        )
         if use_k3d:
             console.print("[cyan]Importing images into k3d...[/cyan]")
             import_images(CLUSTER_NAME, tags)
+        dev_image_overrides = dev_image_set_values(
+            project_root, values_files=values_files, version=image_version
+        )
 
-    # 6. Detect LLM mode and build Helm set_values overrides
-    set_values: dict[str, str] = {}
+    # 6. Detect LLM mode and build Helm set_values overrides. The dev-image
+    # overrides point the chart at the git-tagged images just built + imported.
+    set_values: dict[str, str] = dict(dev_image_overrides)
     if llm_mode == "auto":
         if host_llm_detected or _probe_host_llm():
             console.print("[cyan]Using host LLM endpoint (external mode).[/cyan]")
