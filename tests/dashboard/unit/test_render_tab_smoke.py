@@ -114,7 +114,11 @@ def test_render_tab_runs_without_uncaught_exception(
     bug — the user would see a Streamlit error banner instead of a tab.
     """
     script_path = _build_app_script(tmp_path, module, fn_name, session_state)
-    at = AppTest.from_file(script_path, default_timeout=20)
+    # The embedding_atlas tab lazy-imports umap + sklearn + embedding_atlas at
+    # render time, which alone can exceed 20s on a cold/slow CI runner; a
+    # generous ceiling keeps the fast tabs quick (a clean render returns
+    # immediately) while giving the heavy one room.
+    at = AppTest.from_file(script_path, default_timeout=60)
     at.run()
     # AppTest collects exceptions in .exception. An empty list means every
     # widget rendered cleanly.
