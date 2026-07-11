@@ -200,43 +200,18 @@ async def load_ab_compare_data(
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)
 
-    # Phoenix's default get_spans_dataframe returns rows with span
-    # metadata only — no flattened ``attributes.*`` columns. To get the
-    # ``openinference.*`` attributes the harness emits, we run a
-    # SpanQuery that explicitly selects them.
+    # Query through the generic TraceStore interface so any telemetry
+    # backend — not just Phoenix — can serve the tile. get_spans pushes
+    # the name filter down as a server-side predicate and returns the
+    # span attributes flattened; aggregate_ab_compare already tolerates
+    # whichever attribute-column shape the backend emits.
     try:
-        from phoenix.client.types.spans import SpanQuery
-
-        client = provider.traces._get_client()  # type: ignore[attr-defined]
-        select_fields = [
-            "name",
-            "context.span_id",
-            "trace_id",
-            "start_time",
-            "attributes.openinference.ab_id",
-            "attributes.openinference.ab_query",
-            "attributes.openinference.ab_context_chars",
-            "attributes.openinference.ab_latency_delta_ms",
-            "attributes.openinference.ab_tokens_delta",
-            "attributes.openinference.ab_judge_delta",
-            "attributes.openinference.ab_with_rlm_was_fallback",
-            "attributes.openinference.ab_with_rlm_latency_ms",
-            "attributes.openinference.ab_without_rlm_latency_ms",
-            "attributes.openinference.ab_with_rlm_tokens",
-            "attributes.openinference.ab_without_rlm_tokens",
-            "attributes.openinference.ab_with_rlm_judge",
-            "attributes.openinference.ab_without_rlm_judge",
-            "attributes.openinference.queries_dataset",
-            "attributes.openinference.tenant_id",
-        ]
-        query = SpanQuery().select(*select_fields).where(f"name == '{SPAN_NAME}'")
-        spans_df = await client.spans.get_spans_dataframe(
-            query=query,
-            project_identifier=project_name,
+        spans_df = await provider.traces.get_spans(
+            project=project_name,
             start_time=start_time,
             end_time=end_time,
+            filters={"name": SPAN_NAME},
             limit=10000,
-            timeout=120,
         )
     except Exception as exc:
         logger.warning(
