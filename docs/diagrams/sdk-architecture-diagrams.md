@@ -399,8 +399,6 @@ flowchart TB
         PhoenixTraceStore["<span style='color:#000'>PhoenixTraceStore</span>"]
         PhoenixAnnotationStore["<span style='color:#000'>PhoenixAnnotationStore</span>"]
         PhoenixDatasetStore["<span style='color:#000'>PhoenixDatasetStore</span>"]
-        PhoenixExperimentStore["<span style='color:#000'>PhoenixExperimentStore</span>"]
-        PhoenixAnalyticsStore["<span style='color:#000'>PhoenixAnalyticsStore</span>"]
     end
 
     subgraph PhoenixEvalSubg["<span style='color:#000'>Evaluation (evaluation/)</span>"]
@@ -414,8 +412,6 @@ flowchart TB
     PhoenixProviderCls --> PhoenixTraceStore
     PhoenixProviderCls --> PhoenixAnnotationStore
     PhoenixProviderCls --> PhoenixDatasetStore
-    PhoenixProviderCls --> PhoenixExperimentStore
-    PhoenixProviderCls --> PhoenixAnalyticsStore
     PhoenixPkg --> PhoenixEvaluationProvider
     PhoenixPkg --> PhoenixEvaluatorFramework
     PhoenixPkg --> PhoenixAnalytics
@@ -426,8 +422,6 @@ flowchart TB
     style PhoenixTraceStore fill:#ba68c8,stroke:#7b1fa2,color:#000
     style PhoenixAnnotationStore fill:#ba68c8,stroke:#7b1fa2,color:#000
     style PhoenixDatasetStore fill:#ba68c8,stroke:#7b1fa2,color:#000
-    style PhoenixExperimentStore fill:#ba68c8,stroke:#7b1fa2,color:#000
-    style PhoenixAnalyticsStore fill:#ba68c8,stroke:#7b1fa2,color:#000
     style PhoenixEvaluationProvider fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PhoenixEvaluatorFramework fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PhoenixAnalytics fill:#ce93d8,stroke:#7b1fa2,color:#000

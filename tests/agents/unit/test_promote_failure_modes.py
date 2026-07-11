@@ -20,7 +20,6 @@ Contract:
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-from unittest.mock import AsyncMock
 
 import pandas as pd
 import pytest
@@ -77,7 +76,6 @@ class FaultInjectingStore:
 class FakeProvider:
     def __init__(self, store: FaultInjectingStore):
         self.datasets = store
-        self.experiments = AsyncMock()
 
 
 def _ds_prompts(agent: str) -> str:

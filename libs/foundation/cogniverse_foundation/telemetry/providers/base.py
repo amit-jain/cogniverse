@@ -211,85 +211,6 @@ class DatasetStore(ABC):
         pass
 
 
-class ExperimentStore(ABC):
-    """
-    Manage experiments and evaluation runs.
-
-    Experiments track evaluation results over time.
-    """
-
-    @abstractmethod
-    async def create_experiment(
-        self, name: str, metadata: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """
-        Create new experiment.
-
-        Args:
-            name: Experiment name
-            metadata: Optional metadata
-
-        Returns:
-            Experiment identifier
-        """
-        pass
-
-    @abstractmethod
-    async def log_run(
-        self,
-        experiment_id: str,
-        inputs: Dict[str, Any],
-        outputs: Dict[str, Any],
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """
-        Log experiment run.
-
-        Args:
-            experiment_id: Experiment identifier
-            inputs: Run inputs
-            outputs: Run outputs/results
-            metadata: Optional metadata
-
-        Returns:
-            Run identifier
-        """
-        pass
-
-
-class AnalyticsStore(ABC):
-    """
-    Query analytics and aggregated metrics.
-
-    Provides time-series metrics, aggregations, monitoring data.
-    """
-
-    @abstractmethod
-    async def get_metrics(
-        self,
-        project: str,
-        metric_names: List[str],
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-    ) -> pd.DataFrame:
-        """
-        Get time-series metrics.
-
-        Args:
-            project: Project/namespace identifier
-            metric_names: List of metric names to retrieve
-            start_time: Optional start time
-            end_time: Optional end time
-
-        Returns:
-            DataFrame with columns:
-            - timestamp: Metric timestamp
-            - metric_name: Metric name
-            - value: Metric value
-        """
-        pass
-
-
 class TelemetryProvider(ABC):
     """
     Base telemetry provider interface.
@@ -309,8 +230,6 @@ class TelemetryProvider(ABC):
         self._trace_store: Optional[TraceStore] = None
         self._annotation_store: Optional[AnnotationStore] = None
         self._dataset_store: Optional[DatasetStore] = None
-        self._experiment_store: Optional[ExperimentStore] = None
-        self._analytics_store: Optional[AnalyticsStore] = None
 
     @abstractmethod
     def initialize(self, config: Dict[str, Any]) -> None:
@@ -392,20 +311,6 @@ class TelemetryProvider(ABC):
         if self._dataset_store is None:
             raise RuntimeError(f"{self.name} provider not initialized")
         return self._dataset_store
-
-    @property
-    def experiments(self) -> ExperimentStore:
-        """Get experiment store (manage experiments/runs)"""
-        if self._experiment_store is None:
-            raise RuntimeError(f"{self.name} provider not initialized")
-        return self._experiment_store
-
-    @property
-    def analytics(self) -> AnalyticsStore:
-        """Get analytics store (query metrics/aggregations)"""
-        if self._analytics_store is None:
-            raise RuntimeError(f"{self.name} provider not initialized")
-        return self._analytics_store
 
     @abstractmethod
     @contextmanager

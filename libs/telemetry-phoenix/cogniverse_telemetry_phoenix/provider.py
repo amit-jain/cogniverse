@@ -16,10 +16,8 @@ from phoenix.client import AsyncClient
 
 from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
 from cogniverse_foundation.telemetry.providers.base import (
-    AnalyticsStore,
     AnnotationStore,
     DatasetStore,
-    ExperimentStore,
     TelemetryProvider,
     TraceStore,
 )
@@ -525,142 +523,6 @@ class PhoenixDatasetStore(DatasetStore):
             raise
 
 
-class PhoenixExperimentStore(ExperimentStore):
-    """Phoenix implementation of ExperimentStore.
-
-    Phoenix experiments are high-level orchestration using phoenix.experiments.run_experiment().
-    This store provides low-level primitives for experiment tracking.
-    For full experiment orchestration (tasks, evaluators, datasets), use phoenix.experiments directly.
-    """
-
-    def __init__(self, http_endpoint: str, tenant_id: str):
-        """
-        Initialize Phoenix experiment store.
-
-        Args:
-            http_endpoint: Phoenix HTTP API endpoint
-            tenant_id: Tenant identifier
-        """
-        self.http_endpoint = http_endpoint
-        self.tenant_id = tenant_id
-        self._experiment_metadata: Dict[str, Dict[str, Any]] = {}
-
-    async def create_experiment(
-        self, name: str, metadata: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """
-        Create new experiment.
-
-        Phoenix uses projects for experiments. The project will be auto-created
-        when first trace is sent with that project name.
-
-        Args:
-            name: Experiment name (will be used as Phoenix project name)
-            metadata: Optional experiment metadata
-
-        Returns:
-            Experiment identifier (project name)
-        """
-        # Store metadata for reference
-        self._experiment_metadata[name] = metadata or {}
-
-        logger.info(
-            f"Created experiment '{name}' (Phoenix will auto-create project on first trace)"
-        )
-        return name
-
-    async def log_run(
-        self,
-        experiment_id: str,
-        inputs: Dict[str, Any],
-        outputs: Dict[str, Any],
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """
-        Log experiment run.
-
-        In Phoenix, experiment runs are traces within an experiment's project.
-        This method provides a simple interface, but for full tracing functionality,
-        use TraceStore or OpenTelemetry instrumentation directly.
-
-        Args:
-            experiment_id: Experiment identifier (Phoenix project name)
-            inputs: Run inputs
-            outputs: Run outputs/results
-            metadata: Optional run metadata
-
-        Returns:
-            Run identifier (trace ID)
-        """
-        import uuid
-        from datetime import datetime
-
-        # Generate run identifier
-        run_id = str(uuid.uuid4())
-        timestamp = datetime.now(timezone.utc).isoformat()
-
-        # Log the run (actual trace creation would happen via OpenTelemetry)
-        logger.info(
-            f"Logged run {run_id} for experiment '{experiment_id}' "
-            f"at {timestamp} (inputs: {list(inputs.keys())}, "
-            f"outputs: {list(outputs.keys())})"
-        )
-
-        logger.debug(
-            "Note: For full tracing, use TraceStore or instrument code with OpenTelemetry"
-        )
-
-        return run_id
-
-
-class PhoenixAnalyticsStore(AnalyticsStore):
-    """Phoenix implementation of AnalyticsStore."""
-
-    def __init__(self, http_endpoint: str, tenant_id: str):
-        """
-        Initialize Phoenix analytics store.
-
-        Args:
-            http_endpoint: Phoenix HTTP API endpoint
-            tenant_id: Tenant identifier
-        """
-        self.http_endpoint = http_endpoint
-        self.tenant_id = tenant_id
-
-    async def get_metrics(
-        self,
-        project: str,
-        metric_names: List[str],
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-    ) -> pd.DataFrame:
-        """
-        Get time-series metrics.
-
-        Note: Phoenix metrics are computed from spans.
-        This is a placeholder - actual implementation would aggregate spans.
-
-        Args:
-            project: Project identifier
-            metric_names: List of metric names to retrieve
-            start_time: Optional start time
-            end_time: Optional end time
-
-        Returns:
-            DataFrame with columns:
-            - timestamp: Metric timestamp
-            - metric_name: Metric name
-            - value: Metric value
-        """
-        logger.warning(
-            "Phoenix analytics store get_metrics is not fully implemented. "
-            "Metrics should be computed from spans via TraceStore."
-        )
-
-        # Return empty DataFrame with expected schema
-        return pd.DataFrame(columns=["timestamp", "metric_name", "value"])
-
-
 class PhoenixProvider(TelemetryProvider):
     """
     Phoenix telemetry provider.
@@ -725,12 +587,6 @@ class PhoenixProvider(TelemetryProvider):
             http_endpoint=http_endpoint, tenant_id=tenant_id
         )
         self._dataset_store = PhoenixDatasetStore(
-            http_endpoint=http_endpoint, tenant_id=tenant_id
-        )
-        self._experiment_store = PhoenixExperimentStore(
-            http_endpoint=http_endpoint, tenant_id=tenant_id
-        )
-        self._analytics_store = PhoenixAnalyticsStore(
             http_endpoint=http_endpoint, tenant_id=tenant_id
         )
 

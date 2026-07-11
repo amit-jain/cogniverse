@@ -316,31 +316,23 @@ flowchart TB
         TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• get_span_by_id()</span>"]
         AnnotationStore["<span style='color:#000'>AnnotationStore<br/><br/>• add_annotation()<br/>• get_annotations()<br/>• log_evaluations()</span>"]
         DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()</span>"]
-        ExperimentStore["<span style='color:#000'>ExperimentStore<br/><br/>• create_experiment()<br/>• log_run()</span>"]
-        AnalyticsStore["<span style='color:#000'>AnalyticsStore<br/><br/>• get_metrics()</span>"]
     end
 
     TelemetryProvider --> TraceStore
     TelemetryProvider --> AnnotationStore
     TelemetryProvider --> DatasetStore
-    TelemetryProvider --> ExperimentStore
-    TelemetryProvider --> AnalyticsStore
 
     subgraph Implementation["<span style='color:#000'>Plugin Layer - Phoenix Implementation</span>"]
         PhoenixProvider["<span style='color:#000'>PhoenixProvider</span>"]
         PhoenixTraceStore["<span style='color:#000'>PhoenixTraceStore</span>"]
         PhoenixAnnotationStore["<span style='color:#000'>PhoenixAnnotationStore</span>"]
         PhoenixDatasetStore["<span style='color:#000'>PhoenixDatasetStore</span>"]
-        PhoenixExperimentStore["<span style='color:#000'>PhoenixExperimentStore</span>"]
-        PhoenixAnalyticsStore["<span style='color:#000'>PhoenixAnalyticsStore</span>"]
     end
 
     PhoenixProvider -.->|implements| TelemetryProvider
     PhoenixTraceStore -.->|implements| TraceStore
     PhoenixAnnotationStore -.->|implements| AnnotationStore
     PhoenixDatasetStore -.->|implements| DatasetStore
-    PhoenixExperimentStore -.->|implements| ExperimentStore
-    PhoenixAnalyticsStore -.->|implements| AnalyticsStore
 
     style Abstraction fill:#a5d6a7,stroke:#388e3c,color:#000
     style Implementation fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -348,14 +340,10 @@ flowchart TB
     style TraceStore fill:#a5d6a7,stroke:#388e3c,color:#000
     style AnnotationStore fill:#a5d6a7,stroke:#388e3c,color:#000
     style DatasetStore fill:#a5d6a7,stroke:#388e3c,color:#000
-    style ExperimentStore fill:#a5d6a7,stroke:#388e3c,color:#000
-    style AnalyticsStore fill:#a5d6a7,stroke:#388e3c,color:#000
     style PhoenixProvider fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PhoenixTraceStore fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PhoenixAnnotationStore fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PhoenixDatasetStore fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style PhoenixExperimentStore fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style PhoenixAnalyticsStore fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ### TraceStore Interface
@@ -464,53 +452,7 @@ class DatasetStore(ABC):
         pass
 ```
 
-### ExperimentStore Interface
-
-Manage experiments and evaluation runs.
-
-```python
-class ExperimentStore(ABC):
-    @abstractmethod
-    async def create_experiment(
-        self, name: str, metadata: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """Create new experiment."""
-        pass
-
-    @abstractmethod
-    async def log_run(
-        self,
-        experiment_id: str,
-        inputs: Dict[str, Any],
-        outputs: Dict[str, Any],
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """Log experiment run with inputs/outputs."""
-        pass
-```
-
-### AnalyticsStore Interface
-
-Query aggregated metrics and analytics.
-
-```python
-class AnalyticsStore(ABC):
-    @abstractmethod
-    async def get_metrics(
-        self,
-        project: str,
-        metric_names: List[str],
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-    ) -> pd.DataFrame:
-        """
-        Returns DataFrame with columns:
-        - timestamp: Metric timestamp
-        - metric_name: Metric name
-        - value: Metric value
-        """
-        pass
-```
+The telemetry provider exposes only these three stores. Experiment tracking lives on the separate `EvaluationProvider` stack (`PhoenixEvaluationProvider.create_experiment`), and metric aggregation via `PhoenixAnalytics` — not on the telemetry provider.
 
 ### TelemetryProvider Base Class
 
@@ -523,8 +465,6 @@ class TelemetryProvider(ABC):
         self._trace_store: Optional[TraceStore] = None
         self._annotation_store: Optional[AnnotationStore] = None
         self._dataset_store: Optional[DatasetStore] = None
-        self._experiment_store: Optional[ExperimentStore] = None
-        self._analytics_store: Optional[AnalyticsStore] = None
 
     @abstractmethod
     def initialize(self, config: Dict[str, Any]) -> None:
@@ -577,20 +517,6 @@ class TelemetryProvider(ABC):
         if self._dataset_store is None:
             raise RuntimeError(f"{self.name} provider not initialized")
         return self._dataset_store
-
-    @property
-    def experiments(self) -> ExperimentStore:
-        """Get experiment store (manage experiments/runs). Raises RuntimeError if not initialized."""
-        if self._experiment_store is None:
-            raise RuntimeError(f"{self.name} provider not initialized")
-        return self._experiment_store
-
-    @property
-    def analytics(self) -> AnalyticsStore:
-        """Get analytics store (query metrics/aggregations). Raises RuntimeError if not initialized."""
-        if self._analytics_store is None:
-            raise RuntimeError(f"{self.name} provider not initialized")
-        return self._analytics_store
 
     @abstractmethod
     @contextmanager
@@ -646,13 +572,6 @@ dataset_id = await provider.datasets.create_dataset(
     name="golden_queries_v1",
     data=approved_queries_df,
     metadata={"version": "1.0"}
-)
-
-# Log experiment run
-run_id = await provider.experiments.log_run(
-    experiment_id="routing_eval_001",
-    inputs={"query": "find videos"},
-    outputs={"agent": "video_search", "confidence": 0.95}
 )
 ```
 

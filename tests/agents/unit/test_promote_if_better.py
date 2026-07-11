@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock
 
 import pandas as pd
 import pytest
@@ -46,7 +45,6 @@ class FakeDatasetStore:
 class FakeProvider:
     def __init__(self):
         self.datasets = FakeDatasetStore()
-        self.experiments = AsyncMock()
 
 
 @pytest.fixture

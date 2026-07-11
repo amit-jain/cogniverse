@@ -976,7 +976,7 @@ flowchart TB
 - `dspy-ai`: `LenientJSONAdapter` subclasses `dspy.adapters.json_adapter.JSONAdapter`; `create_dspy_lm` builds `dspy.LM`
 - `opentelemetry-api/sdk`: Telemetry infrastructure
 - `pydantic`: Configuration validation
-- `pandas`: DataFrame return type for the `TraceStore`/`AnnotationStore`/`DatasetStore`/`AnalyticsStore` interfaces
+- `pandas`: DataFrame return type for the `TraceStore`/`AnnotationStore`/`DatasetStore` interfaces
 
 **Not a declared dependency, but imported at runtime:**
 

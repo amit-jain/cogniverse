@@ -6,10 +6,8 @@ Core has zero knowledge of provider-specific implementation details.
 """
 
 from .base import (
-    AnalyticsStore,
     AnnotationStore,
     DatasetStore,
-    ExperimentStore,
     TelemetryProvider,
     TraceStore,
 )
@@ -19,6 +17,4 @@ __all__ = [
     "TraceStore",
     "AnnotationStore",
     "DatasetStore",
-    "ExperimentStore",
-    "AnalyticsStore",
 ]
