@@ -320,7 +320,7 @@ The dance to recover a stateful component from a MinIO/S3 backup:
      securityContext: {runAsUser: 0}
      containers:
      - name: restore
-       image: cogniverse/runtime-rocm:2.0.0-dev
+       image: cogniverse/runtime-rocm:0.1.0-dev
        env:
        - {name: MINIO_ENDPOINT, value: "http://cogniverse-minio:9000"}
        - {name: MINIO_BUCKET, value: "cogniverse-backups"}

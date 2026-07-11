@@ -98,11 +98,15 @@ class TestFirstPartyTagScheme:
                 f"{image} pullPolicy {policy!r} != Never (k3d uses local builds)"
             )
 
-    def test_no_floating_dev_or_legacy_first_party_tags(self) -> None:
+    def test_no_bare_floating_dev_tag(self) -> None:
+        """The old bare ``:dev`` floating tag must never return — every
+        first-party image carries the versioned release/dev tag (asserted
+        above). ``<version>-dev`` ends in ``-dev``, not ``:dev``, so only a
+        bare ``image:dev`` trips this."""
         for values in (None, "values.k3s.yaml"):
             images = _first_party_images(_render(values=values))
-            stray = [i for i, _ in images if i.endswith((":dev", ":0.1.0"))]
-            assert not stray, f"stray legacy first-party tags ({values}): {stray}"
+            stray = [i for i, _ in images if i.endswith(":dev")]
+            assert not stray, f"bare floating :dev tag ({values}): {stray}"
 
     def test_face_embed_enable_path_matches_built_image(self) -> None:
         """Flipping the face_embed sidecar on renders the tag ``build_images``

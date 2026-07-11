@@ -707,13 +707,13 @@ build-arg (`cpu`, `cuda`, or `rocm`) and fails the build if it is omitted:
 docker build \
   --build-arg TORCH_BACKEND=cpu \
   -f libs/dashboard/Dockerfile \
-  -t cogniverse/dashboard-cpu:2.0.0-dev \
+  -t cogniverse/dashboard-cpu:0.1.0-dev \
   .
 
 docker run -p 8501:8501 \
   -e BACKEND_URL=http://vespa \
   -e BACKEND_PORT=8080 \
-  cogniverse/dashboard-cpu:2.0.0-dev
+  cogniverse/dashboard-cpu:0.1.0-dev
 ```
 
 Key points from the actual Dockerfile:
@@ -746,7 +746,7 @@ workload deployments (ingestor, runtime, optimization workflows):
 ```bash
 helm upgrade --install cogniverse ./charts/cogniverse \
   --set dashboard.backend=cpu \
-  --set dashboard.image.tag=2.0.0-dev
+  --set dashboard.image.tag=0.1.0-dev
 ```
 
 ---
