@@ -49,7 +49,7 @@ Cogniverse consists of **13 independent packages** organized in a **layered arch
 
 ```mermaid
 flowchart LR
-    A["<span style='color:#000'><b>Version Bump</b><br/>version_bump.py</span>"]
+    A["<span style='color:#000'><b>Tag</b><br/>make release VERSION=x.y.z</span>"]
     B["<span style='color:#000'><b>Build</b><br/>build 5 packages<br/>in dependency order</span>"]
     C["<span style='color:#000'><b>Test</b><br/>pytest by layer<br/>test dependencies</span>"]
     D["<span style='color:#000'><b>Publish</b><br/>publish 5 packages<br/>in dependency order</span>"]
@@ -66,7 +66,7 @@ flowchart LR
 
 **Publishing Scripts Handle 5 Packages**
 
-The automated scripts (`build_packages.sh`, `version_bump.py`, `publish_packages.sh`) handle these packages in dependency order:
+Pushing a `v*` tag drives CI, which builds + publishes these packages in dependency order (`build_packages.sh` / `publish_packages.sh`); hatch-vcs stamps each from the tag:
 
 1. **cogniverse-core** - Built first (has workspace dependencies on foundation, sdk, evaluation)
 2. **cogniverse-agents**, **cogniverse-vespa** - Built in parallel (depend on core)
@@ -123,7 +123,7 @@ libs/
 # libs/foundation/pyproject.toml
 [project]
 name = "cogniverse-foundation"
-version = "0.1.0"
+dynamic = ["version"]              # derived from git tags by hatch-vcs
 description = "Cogniverse Foundation - Cross-cutting concerns and shared infrastructure"
 requires-python = ">=3.12"
 dependencies = [
@@ -140,8 +140,14 @@ dependencies = [
 cogniverse-sdk = { workspace = true }
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+root = "../.."                     # package is at libs/<pkg>; git root is two up
 ```
 
 **Key File: `pyproject.toml` (Implementation Layer Example)**
@@ -150,7 +156,7 @@ build-backend = "hatchling.build"
 # libs/agents/pyproject.toml
 [project]
 name = "cogniverse-agents"
-version = "0.1.0"
+dynamic = ["version"]              # hatch-vcs, as above
 description = "Agent implementations, routing logic, and search enhancement for Cogniverse"
 requires-python = ">=3.12"
 dependencies = [
@@ -284,60 +290,61 @@ PATCH: Bug fixes
 PRERELEASE: alpha, beta, rc
 ```
 
-### Version Bump Script
+### The git tag is the single source of truth
 
-**Script:** `scripts/version_bump.py`
+There is **no hardcoded version** in any `pyproject.toml`. Every package declares
+`dynamic = ["version"]` and derives its version from git tags via `hatch-vcs`
+(the hatchling front-end to setuptools-scm):
 
-#### Basic Usage
+- **At a tag** `v0.2.0` → the wheel is exactly `0.2.0`.
+- **Between tags** → a PEP 440 dev version such as `0.2.1.dev5+g<sha>` ("5 commits
+  past `v0.2.0`"). That honestly marks an unreleased build; it is not a defect.
 
-```bash
-# Patch bump (0.1.0 → 0.1.1)
-./scripts/version_bump.py patch
-
-# Minor bump (0.1.0 → 0.2.0)
-./scripts/version_bump.py minor
-
-# Major bump (0.2.0 → 1.0.0)
-./scripts/version_bump.py major
-
-# Prerelease (0.1.0 → 0.1.1-alpha.0)
-./scripts/version_bump.py prerelease --prerelease-suffix alpha
-```
-
-#### Advanced Options
+What a build resolves to right now (the wheel filename carries the version):
 
 ```bash
-# Dry run (preview changes)
-./scripts/version_bump.py patch --dry-run
-
-# Bump specific package only
-./scripts/version_bump.py patch --package core
-
-# With git commit and tag
-./scripts/version_bump.py minor --commit --tag
-
-# Force (ignore git status)
-./scripts/version_bump.py patch --force
+uv build --package cogniverse-core --out-dir /tmp/v && ls /tmp/v
 ```
 
-#### Workflow Example
+The chart carries a **static** `appVersion` in `charts/cogniverse/Chart.yaml`
+(Helm needs a concrete version at install time). It is the *release line* the
+Docker image tags derive from, and `make release` keeps it in step with the tag.
+
+### Cutting a release
+
+One command bumps the chart and creates the tag:
 
 ```bash
-# 1. Preview version bump
-./scripts/version_bump.py minor --dry-run
-
-# 2. Apply version bump with commit and tag
-./scripts/version_bump.py minor --commit --tag
-
-# Output:
-# [INFO] Current version: 0.1.0
-# [INFO] New version: 0.2.0
-# [SUCCESS] Updated core: 0.1.0 → 0.2.0
-# [SUCCESS] Updated agents: 0.1.0 → 0.2.0
-# ...
-# [SUCCESS] Committed version bump: 0.2.0
-# [SUCCESS] Created git tag: v0.2.0
+make release VERSION=0.2.0
 ```
+
+It sets `Chart.yaml` `version`/`appVersion` + the chart image tags to `0.2.0`,
+commits, and creates the annotated `v0.2.0` tag. **Pushing that tag** triggers CI,
+which builds and publishes everything at `0.2.0`:
+
+| Artifact | Versioned by | Published by |
+|---|---|---|
+| Python wheels (13 packages) | `hatch-vcs`, from the tag | `publish-packages.yml` → PyPI |
+| Docker images (runtime/dashboard ×3, gliner, 3 sidecars) | the tag (`github.ref_name`) | `release-images.yml` → docker.io/cogniverse |
+| Helm chart | `Chart.yaml` `appVersion`/`version` | chart repo (manual) |
+
+> The old `scripts/version_bump.py` (rewriting a hardcoded `version` in every
+> file) is superseded — the version lives in git, not in the files.
+
+### Image tags: release vs. dev
+
+First-party images use one scheme, keyed off `appVersion`:
+
+- **Release** (`release-images.yml` on a `v*` tag) → `docker.io/cogniverse/<name>:<version>`
+  plus an immutable `:<git-sha>`, `pullPolicy: IfNotPresent` (a clean cluster pulls).
+- **Local dev** (`cogniverse up` → `build_images`) → `cogniverse/<name>:<version>-dev`,
+  `pullPolicy: Never` (built + imported into k3d, never pulled). Base `values.yaml`
+  carries the release tag; `values.k3s.yaml` overrides it to `-dev`.
+
+`.dockerignore` excludes `.git`, so the runtime/dashboard images (which install the
+workspace and thus trigger hatch-vcs) receive the version through the
+`SETUPTOOLS_SCM_PRETEND_VERSION` build-arg that `build_images` / `release-images.yml`
+set from the host, where git is available.
 
 ---
 
@@ -640,13 +647,9 @@ File already exists
 
 **Solution:**
 ```bash
-# PyPI doesn't allow overwriting versions
-# You must bump the version
-./scripts/version_bump.py patch --commit --tag
-
-# Then rebuild and republish
-./scripts/build_packages.sh --clean
-./scripts/publish_packages.sh
+# PyPI doesn't allow overwriting a version — cut the next one.
+make release VERSION=0.1.1
+git push origin main --follow-tags   # CI rebuilds + republishes at 0.1.1
 ```
 
 #### Missing Dependencies in Build
@@ -707,33 +710,27 @@ cat libs/foundation/cogniverse_foundation/__init__.py
 
 ### Version Management
 
-1. **Use semantic versioning strictly**
+1. **Pick the version per semantic versioning** — the number goes in the tag,
+   not in any file:
    ```bash
-   # Breaking changes
-   ./scripts/version_bump.py major
-
-   # New features
-   ./scripts/version_bump.py minor
-
-   # Bug fixes
-   ./scripts/version_bump.py patch
+   make release VERSION=1.0.0    # breaking changes
+   make release VERSION=0.2.0    # new features
+   make release VERSION=0.1.1    # bug fixes
    ```
 
-2. **Always test prereleases**
+2. **Test prereleases first** — a `-rc`/`-beta`/`-alpha` tag publishes to
+   TestPyPI (not PyPI), per `publish-packages.yml`:
    ```bash
-   # Create prerelease
-   ./scripts/version_bump.py prerelease --prerelease-suffix alpha
-
-   # Publish to TestPyPI
-   ./scripts/publish_packages.sh --test
-
-   # Test thoroughly before production
+   make release VERSION=0.2.0-rc.1
+   git push origin main --follow-tags
+   # exercise it from TestPyPI, then cut the final:
+   make release VERSION=0.2.0
    ```
 
-3. **Use git tags for releases**
+3. **The tag is the release** — pushing it drives both the PyPI and Docker
+   publishes; there is nothing else to run:
    ```bash
-   ./scripts/version_bump.py minor --commit --tag
-   git push origin --tags
+   git push origin main --follow-tags
    ```
 
 ### Building
@@ -839,38 +836,27 @@ cat libs/foundation/cogniverse_foundation/__init__.py
 ### Standard Release Process
 
 ```bash
-# 1. Update code and tests
-git add .
-git commit -m "Add new routing feature"
+# 1. Land your changes on main with CI green
+git switch main && git pull
 
-# 2. Bump version
-./scripts/version_bump.py minor --dry-run    # Preview
-./scripts/version_bump.py minor --commit --tag
+# 2. Cut the release — bumps Chart.yaml + chart image tags, commits, tags v0.2.0
+make release VERSION=0.2.0
+git show --stat v0.2.0            # review the release commit + tag before pushing
 
-# 3. Build packages
-./scripts/build_packages.sh --clean --verbose
+# 3. Push main + the tag. The tag drives CI, which:
+#    - stamps every Python wheel 0.2.0 (hatch-vcs) and publishes to PyPI
+#      (publish-packages.yml — a -rc/-beta/-alpha tag goes to TestPyPI instead)
+#    - builds + pushes docker.io/cogniverse/*:0.2.0 (+ :<git-sha>)
+#      (release-images.yml)
+git push origin main --follow-tags
 
-# 4. Test packages
-JAX_PLATFORM_NAME=cpu uv run pytest
-
-# 5. Publish to TestPyPI
-TEST_PYPI_TOKEN="your-token" ./scripts/publish_packages.sh --test
-
-# 6. Test installation from TestPyPI
-pip install --index-url https://test.pypi.org/simple/ cogniverse-core
-
-# 7. Publish to production PyPI
-PYPI_TOKEN="your-token" ./scripts/publish_packages.sh
-
-# 8. Push tags to trigger CI/CD
-git push origin --tags
-
-# 9. Verify on PyPI
+# 4. Verify
 open https://pypi.org/project/cogniverse-core/
-
-# 10. Create GitHub release notes
-# (Automated by CI/CD workflow)
+docker pull cogniverse/runtime-cpu:0.2.0
 ```
+
+No manual `build_packages.sh` / `publish_packages.sh` run is needed for a normal
+release — pushing the tag does it. Those scripts remain for local/offline builds.
 
 ---
 
