@@ -1,0 +1,67 @@
+name: Mirror Third-Party Images
+
+# Air-gapped support only: copy the third-party images the chart deploys
+# (vespa, phoenix, ollama, redis, minio, vllm, envoy, semantic-router, …) into a
+# registry an offline cluster can reach. Enumerated from an actual `helm
+# template` render so it matches what the chart pulls; first-party
+# cogniverse/* images are excluded (they're published by release.yml).
+#
+# Not part of the release flow — run manually, targeting your registry. The
+# target must already be `docker login`-able via DOCKERHUB_USERNAME /
+# DOCKERHUB_TOKEN (or adapt the login step).
+on:
+  workflow_dispatch:
+    inputs:
+      target_registry:
+        description: "Registry prefix to mirror into (e.g. registry.internal/cogniverse)"
+        required: true
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: Log in to the source/target registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Enumerate + mirror third-party images
+        env:
+          TARGET: ${{ inputs.target_registry }}
+        run: |
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm dependency build charts/cogniverse
+          helm template cogniverse charts/cogniverse \
+            -f charts/cogniverse/values.k3s.yaml \
+            --set argo-workflows.crds.install=false \
+            --set runtime.qualityMonitor.tenantId=mirror \
+            | grep -oE 'image: "[^"]+"' \
+            | sed -E 's/image: "([^"]+)"/\1/' \
+            | grep -v '^cogniverse/' \
+            | sort -u > third_party.txt
+          echo "Mirroring $(wc -l < third_party.txt) third-party images to ${TARGET}:"
+          cat third_party.txt
+          while read -r img; do
+            [ -z "$img" ] && continue
+            docker pull "$img"
+            # Re-home under the target registry, keeping the repo's last path
+            # segment. Digest-pinned refs (envoy@sha256, semantic-router@sha256)
+            # get a ':mirrored' tag since a digest can't be re-pushed as a name.
+            base="${img##*/}"
+            if [[ "$base" == *"@sha256:"* ]]; then
+              dest="${TARGET}/${base%@*}:mirrored"
+            else
+              dest="${TARGET}/${base}"
+            fi
+            docker tag "$img" "$dest"
+            docker push "$dest"
+            echo "  $img -> $dest"
+          done < third_party.txt
