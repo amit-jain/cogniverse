@@ -12,6 +12,7 @@ The runtime receives one ``INFERENCE_SERVICE_URLS`` JSON env var containing
 {service_key: url} for every enabled service. Profiles pick a service by key.
 """
 
+import copy
 import json
 import shutil
 import subprocess
@@ -310,15 +311,36 @@ def _rendered_chart_config() -> dict:
     return json.loads(cm["data"]["config.json"])
 
 
+def _normalize_profiles(profiles: dict) -> dict:
+    """Strip the deploy-specific VLM description fields before comparing. The
+    chart's config.json is ``tpl``-rendered: ``vlm_endpoint`` is injected as the
+    in-cluster vLLM URL and ``auto_start`` is false (the cluster runs the VLM as
+    its own pod), while local uses an empty endpoint + ``auto_start`` true
+    (auto-start the local sidecar). Those two fields differ by design; every
+    other field (models, inference_services, all other strategies) stays strict,
+    so real profile/model drift is still caught."""
+    normalized = copy.deepcopy(profiles)
+    for profile in normalized.values():
+        params = (profile.get("strategies", {}).get("description", {}) or {}).get(
+            "params", {}
+        )
+        params.pop("vlm_endpoint", None)
+        params.pop("auto_start", None)
+    return normalized
+
+
 def test_chart_config_profiles_match_local_config():
     """The chart-bundled config.json (what the deployed runtime reads) must
     carry the SAME backend.profiles as configs/config.json (what local/tests
-    use). Drift here ships a stale model to the cluster and crashes the
-    runtime's validate_inference_services on startup — the colpali-v1.3 vs
-    Tomoro mismatch this test guards against."""
+    use), modulo deploy-specific VLM endpoint injection. Drift here ships a
+    stale model to the cluster and crashes the runtime's
+    validate_inference_services on startup — the colpali-v1.3 vs Tomoro
+    mismatch this test guards against."""
     local = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
     chart = _rendered_chart_config()
-    assert chart["backend"]["profiles"] == local["backend"]["profiles"]
+    assert _normalize_profiles(chart["backend"]["profiles"]) == _normalize_profiles(
+        local["backend"]["profiles"]
+    )
 
 
 def test_chart_visual_profiles_serve_tomoro():
