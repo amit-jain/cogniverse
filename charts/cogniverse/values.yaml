@@ -1754,7 +1754,11 @@ semanticRouter:
   envoy:
     image:
       repository: envoyproxy/envoy
+      # Pinned by digest: `v1.31-latest` moves on every v1.31 patch. This is the
+      # multi-arch index digest that tag resolved to at pin time. Clear `digest`
+      # to fall back to `tag`.
       tag: "v1.31-latest"
+      digest: "sha256:caa5b411be1633b90023592a34a7e010c933d6e60206c758f631485e53006865"
       pullPolicy: IfNotPresent
     adminPort: 19000
     service:

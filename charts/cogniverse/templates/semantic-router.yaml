@@ -165,7 +165,7 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       containers:
       - name: envoy
-        image: "{{ .Values.semanticRouter.envoy.image.repository }}:{{ .Values.semanticRouter.envoy.image.tag }}"
+        image: "{{ .Values.semanticRouter.envoy.image.repository }}{{ if .Values.semanticRouter.envoy.image.digest }}@{{ .Values.semanticRouter.envoy.image.digest }}{{ else }}:{{ .Values.semanticRouter.envoy.image.tag }}{{ end }}"
         imagePullPolicy: {{ .Values.semanticRouter.envoy.image.pullPolicy }}
         args:
         - "-c"
