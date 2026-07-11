@@ -1,6 +1,6 @@
 [project]
 name = "cogniverse-dashboard"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Standalone dashboard with Phoenix analytics and evaluation UI for Cogniverse"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -50,8 +50,16 @@ cogniverse-vespa = { workspace = true }
 cogniverse-telemetry-phoenix = { workspace = true }
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0"
+
+[tool.hatch.version.raw-options]
+# Package lives at libs/<pkg>; the git repo (tag source) is two levels up.
+root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["cogniverse_dashboard"]

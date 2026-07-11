@@ -252,11 +252,12 @@ ci-test-all: ci-test-ingestion ci-test-routing ci-test-evaluation
 # =============================================================================
 # RELEASE
 # =============================================================================
-# Cut a release: bump the chart appVersion (the single source of truth for
-# first-party image tags), the base release tags and the k3s dev tags together,
-# then commit + tag. Pushing the tag triggers release-images.yml (builds +
-# pushes docker.io/cogniverse/*:<version>) and publish-packages.yml.
-#   make release VERSION=2.1.0
+# Cut a release: create the v<version> git tag — the single source of truth.
+# hatch-vcs derives every Python wheel version from it, and release-images.yml
+# tags the Docker images from it. Helm needs static metadata, so this also syncs
+# the chart appVersion + image tags to match. Pushing the tag triggers
+# release-images.yml (docker.io/cogniverse/*:<version>) and publish-packages.yml.
+#   make release VERSION=0.2.0
 release:
 	@test -n "$(VERSION)" || { echo 'usage: make release VERSION=x.y.z'; exit 1; }
 	@current=$$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' charts/cogniverse/Chart.yaml); \

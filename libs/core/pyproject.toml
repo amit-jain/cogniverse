@@ -1,6 +1,6 @@
 [project]
 name = "cogniverse-core"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Core interfaces, registries, and base classes for Cogniverse multi-agent AI platform"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -52,8 +52,16 @@ cogniverse-foundation = { workspace = true }
 cogniverse-evaluation = { workspace = true }
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0"
+
+[tool.hatch.version.raw-options]
+# The package lives at libs/core; the git repo (tag source) is two levels up.
+root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["cogniverse_core"]

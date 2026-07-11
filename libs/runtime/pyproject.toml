@@ -1,6 +1,6 @@
 [project]
 name = "cogniverse-runtime"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Unified runtime server for Cogniverse with dynamic backend loading"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -95,8 +95,16 @@ cogniverse-vespa = { workspace = true }
 cogniverse-agents = { workspace = true }
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0"
+
+[tool.hatch.version.raw-options]
+# Package lives at libs/<pkg>; the git repo (tag source) is two levels up.
+root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["cogniverse_runtime"]

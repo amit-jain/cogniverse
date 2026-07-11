@@ -1,6 +1,6 @@
 [project]
 name = "cogniverse-finetuning"
-version = "0.1.0"
+dynamic = ["version"]
 description = "LLM fine-tuning infrastructure with LoRA/PEFT and DPO for Cogniverse agents"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -53,8 +53,16 @@ cogniverse-synthetic = { workspace = true }
 cogniverse-foundation = { workspace = true }
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0"
+
+[tool.hatch.version.raw-options]
+# Package lives at libs/<pkg>; the git repo (tag source) is two levels up.
+root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["cogniverse_finetuning"]
