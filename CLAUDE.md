@@ -117,7 +117,7 @@ D  edge-input fuzz        (1, N) tensors, naive datetimes, embedded quotes
 E  silent-context drop    self._<config> attrs set in __init__, never read
 ```
 
-Single-pass protocol: Phase 0 inventory → Phases 1–6 in parallel (one per class + execute-the-happy-path) → Phase 7 review gate → Phase 8 fix via the pre-commit protocol. Every CRIT/HIGH finding ships either a fix with a real-boundary regression test, or a written-plan TODO doc with inline pointer-TODOs at the affected sites (see `docs/development/pipeline-cache-multi-pod-todo.md` for the model). Extend the Class C hunt list with any new footgun the cycle surfaces.
+Single-pass protocol: Phase 0 inventory → Phases 1–6 in parallel (one per class + execute-the-happy-path) → Phase 7 review gate → Phase 8 fix via the pre-commit protocol. Every CRIT/HIGH finding ships either a fix with a real-boundary regression test, or a written-plan TODO doc with inline pointer-TODOs at the affected sites. Extend the Class C hunt list with any new footgun the cycle surfaces.
 
 Hard rule: any production-code deletion requires explicit user approval. "Named live replacement" is input to a proposal, not permission to act. See [[feedback-never-delete-on-grep-alone]].
 
