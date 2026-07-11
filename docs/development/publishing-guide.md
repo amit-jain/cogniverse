@@ -326,7 +326,13 @@ which builds and publishes everything at `0.2.0`:
 |---|---|---|
 | Python wheels (13 packages) | `hatch-vcs`, from the tag | `publish-packages.yml` → PyPI |
 | Docker images (runtime/dashboard ×3, gliner, 3 sidecars) | the tag (`github.ref_name`) | `release-images.yml` → docker.io/cogniverse |
-| Helm chart | `Chart.yaml` `appVersion`/`version` | chart repo (manual) |
+| Helm chart | `Chart.yaml` `appVersion`/`version` | `release-images.yml` (`publish-chart` job) → OCI `oci://registry-1.docker.io/cogniverse` |
+
+Each release image also gets an **SBOM + build provenance** attached and is
+**signed** (keyless cosign / Sigstore) in the same job, so consumers can scan
+and verify it. For **air-gapped** clusters, `mirror-third-party.yml`
+(`workflow_dispatch`) copies the third-party images (vespa/phoenix/ollama/redis/
+minio/vllm/envoy/…) — enumerated from a chart render — into a registry you name.
 
 > The old `scripts/version_bump.py` (rewriting a hardcoded `version` in every
 > file) is superseded — the version lives in git, not in the files.
