@@ -6,7 +6,7 @@
         format-ingestion format-routing format-evaluation format-agents format-all \
         typecheck-ingestion typecheck-routing typecheck-evaluation typecheck-agents typecheck-all \
         check-ingestion check-routing check-evaluation check-agents check-all \
-        clean-coverage clean-all
+        clean-coverage clean-all release
 
 # Default target
 help:
@@ -248,3 +248,24 @@ ci-test-evaluation:
 	uv run python -m pytest src/evaluation/tests -m unit --quiet
 
 ci-test-all: ci-test-ingestion ci-test-routing ci-test-evaluation
+
+# =============================================================================
+# RELEASE
+# =============================================================================
+# Cut a release: bump the chart appVersion (the single source of truth for
+# first-party image tags), the base release tags and the k3s dev tags together,
+# then commit + tag. Pushing the tag triggers release-images.yml (builds +
+# pushes docker.io/cogniverse/*:<version>) and publish-packages.yml.
+#   make release VERSION=2.1.0
+release:
+	@test -n "$(VERSION)" || { echo 'usage: make release VERSION=x.y.z'; exit 1; }
+	@current=$$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' charts/cogniverse/Chart.yaml); \
+	echo "Releasing $$current -> $(VERSION)"; \
+	sed -i 's/^version:.*/version: $(VERSION)/' charts/cogniverse/Chart.yaml; \
+	sed -i 's/^appVersion:.*/appVersion: "$(VERSION)"/' charts/cogniverse/Chart.yaml; \
+	sed -i "s/tag: \"$$current\"/tag: \"$(VERSION)\"/g" charts/cogniverse/values.yaml; \
+	sed -i "s/tag: \"$$current-dev\"/tag: \"$(VERSION)-dev\"/g" charts/cogniverse/values.k3s.yaml; \
+	git add charts/cogniverse/Chart.yaml charts/cogniverse/values.yaml charts/cogniverse/values.k3s.yaml; \
+	git commit -m "Release $(VERSION)"; \
+	git tag -a v$(VERSION) -m "Release $(VERSION)"; \
+	echo "Tagged v$(VERSION). Review, then: git push origin main --follow-tags"
