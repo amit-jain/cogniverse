@@ -1,6 +1,6 @@
 [project]
 name = "cogniverse-cli"
-version = "0.1.0"
+dynamic = ["version"]
 description = "CLI for deploying and managing Cogniverse"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,8 +15,16 @@ dependencies = [
 cogniverse = "cogniverse_cli.main:cli"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0"
+
+[tool.hatch.version.raw-options]
+# Package lives at libs/<pkg>; the git repo (tag source) is two levels up.
+root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["cogniverse_cli"]

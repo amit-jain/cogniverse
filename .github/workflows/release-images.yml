@@ -70,11 +70,19 @@ jobs:
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
           df -h
 
-      - name: Resolve version from chart appVersion
+      - name: Resolve version from the git tag
         id: version
         run: |
-          version=$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' charts/cogniverse/Chart.yaml)
-          test -n "$version" || { echo "could not read appVersion from Chart.yaml"; exit 1; }
+          # The git tag is the single source of truth (same tag hatch-vcs uses
+          # for the Python wheels). On a v* tag, strip the leading v; on a manual
+          # workflow_dispatch run (no tag) fall back to the chart appVersion.
+          ref="${GITHUB_REF_NAME}"
+          if [[ "$ref" == v* ]]; then
+            version="${ref#v}"
+          else
+            version=$(sed -n 's/^appVersion: *"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' charts/cogniverse/Chart.yaml)
+          fi
+          test -n "$version" || { echo "could not resolve version"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub

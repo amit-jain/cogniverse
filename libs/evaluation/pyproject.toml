@@ -1,6 +1,6 @@
 [project]
 name = "cogniverse-evaluation"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Cogniverse Evaluation - Provider-agnostic evaluation framework"
 requires-python = ">=3.12"
 dependencies = [
@@ -18,8 +18,16 @@ cogniverse-foundation = { workspace = true }
 cogniverse-sdk = { workspace = true }
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0"
+
+[tool.hatch.version.raw-options]
+# Package lives at libs/<pkg>; the git repo (tag source) is two levels up.
+root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["cogniverse_evaluation"]

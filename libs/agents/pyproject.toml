@@ -1,6 +1,6 @@
 [project]
 name = "cogniverse-agents"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Agent implementations, routing logic, and search enhancement for Cogniverse"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -48,8 +48,16 @@ cogniverse-core = { workspace = true }
 cogniverse-synthetic = { workspace = true }
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0"
+
+[tool.hatch.version.raw-options]
+# Package lives at libs/<pkg>; the git repo (tag source) is two levels up.
+root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["cogniverse_agents"]
