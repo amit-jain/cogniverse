@@ -12,6 +12,7 @@ Features:
 
 import logging
 import math
+import re
 import threading
 import time
 import uuid
@@ -67,6 +68,25 @@ def _coerce_numpy_scalar(value: object) -> object:
     that serializes correctly. Non-numpy values pass through unchanged.
     """
     return value.item() if isinstance(value, np.generic) else value
+
+
+_SAFE_FILTER_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+def _validate_filter_field_name(field_name: object) -> str:
+    """Reject filter keys that aren't plain Vespa field identifiers.
+
+    Filter values are escaped via yql_quote/_yql_scalar, but the field NAME is
+    interpolated raw into the YQL where-clause. A caller-supplied key carrying
+    YQL syntax (spaces, parens, quotes, operators) breaks out of the
+    AND-grouped filter and injects arbitrary predicates.
+    """
+    if not isinstance(field_name, str) or not _SAFE_FILTER_FIELD.match(field_name):
+        raise ValueError(
+            f"Invalid filter field name {field_name!r}: filter keys must be "
+            "Vespa field identifiers ([A-Za-z_][A-Za-z0-9_]*)"
+        )
+    return field_name
 
 
 def _yql_scalar(value: object, field: str) -> str:
@@ -1050,6 +1070,7 @@ class VespaSearchBackend(SearchBackend):
                 # None means "no filter on this field", not a match on the
                 # literal string "None".
                 continue
+            _validate_filter_field_name(field_name)
             value = _coerce_numpy_scalar(value)
             if isinstance(value, dict):
                 # Range filter, e.g. {"gte": 100, "lte": 200} ->

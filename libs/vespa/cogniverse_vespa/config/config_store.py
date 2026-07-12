@@ -124,12 +124,15 @@ class VespaConfigStore(ConfigStore):
 
         try:
             response = self.vespa_app.query(yql=yql)
-            if response.hits and len(response.hits) > 0:
-                return response.hits[0]["fields"]["version"]
-            return 0
         except Exception as e:
-            logger.warning(f"Could not query latest version: {e}")
-            return 0
+            # A backend read failure must not be flattened to 0 — set_config
+            # would treat a live config as brand-new (v1) and overwrite its
+            # real v1 row. Raise so the write aborts.
+            logger.error(f"Failed to query latest config version: {e!r}")
+            raise
+        if response.hits and len(response.hits) > 0:
+            return response.hits[0]["fields"]["version"]
+        return 0
 
     def set_config(
         self,
@@ -337,11 +340,13 @@ class VespaConfigStore(ConfigStore):
                 f"order by version desc limit 1"
             )
         else:
-            # Get specific version
-            doc_id = f"{self.schema_name}::{config_id}::{version}"
+            # Get specific version. Query the indexed config_id + version
+            # fields — Vespa has no queryable ``documentid`` field, so a
+            # ``where documentid = ...`` clause fails with a 400.
             yql = (
                 f"select * from {self.schema_name} "
-                f"where documentid = {yql_quote(doc_id)}"
+                f"where config_id contains {yql_quote(config_id)} "
+                f"and version = {int(version)}"
             )
 
         try:
@@ -394,10 +399,14 @@ class VespaConfigStore(ConfigStore):
         """
         config_id = self._create_document_id(tenant_id, scope, service, config_key)
 
+        # Vespa rejects a YQL ``limit`` above its default max-hits (400); config
+        # history is pruned to a small keep-window, so this ceiling never
+        # truncates real data but keeps the query valid.
+        query_limit = min(int(limit), 400)
         yql = (
             f"select * from {self.schema_name} "
             f"where config_id contains {yql_quote(config_id)} "
-            f"order by version desc limit {limit}"
+            f"order by version desc limit {query_limit}"
         )
 
         try:
