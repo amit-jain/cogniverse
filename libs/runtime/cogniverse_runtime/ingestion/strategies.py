@@ -119,8 +119,10 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
                 "No single-vector processor available in processor_manager"
             )
 
-        processed_data = single_vector_processor.process_video(
-            video_path=video_path, transcript_data=transcript_data
+        processed_data = await asyncio.to_thread(
+            single_vector_processor.process_video,
+            video_path=video_path,
+            transcript_data=transcript_data,
         )
 
         processed_data_serializable = processed_data.copy()
