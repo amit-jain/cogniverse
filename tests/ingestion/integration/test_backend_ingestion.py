@@ -370,6 +370,91 @@ class TestVespaBackendIngestion:
         assert "embeddings" in result.get("results", {})
 
     @pytest.mark.local_only
+    @pytest.mark.requires_videoprism
+    @requires_videoprism_jax
+    @skip_heavy_models_in_ci
+    @skip_if_low_memory
+    @pytest.mark.asyncio
+    async def test_concurrent_ingestion_keeps_per_video_source_url(
+        self, vespa_backend, vespa_test_videos, tmp_path
+    ):
+        """Two videos ingested CONCURRENTLY through ONE pipeline must land in
+        Vespa each carrying its OWN source_url — never cross-assigned.
+
+        Real VideoPrism embeddings, real Vespa feed, real concurrency. The
+        pipeline shares one instance across the concurrent videos; when the
+        per-video identity lived on that shared instance a downstream await let
+        one video overwrite another's video_path/source_url, so a video's
+        documents were fed under the sibling's source_url. This drives the real
+        concurrent path and reads the persisted documents back out of Vespa.
+        """
+        import requests
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_runtime.ingestion.pipeline import (
+            PipelineConfig,
+            VideoIngestionPipeline,
+        )
+
+        assert len(vespa_test_videos) >= 2, "need two distinct test videos"
+        v0, v1 = vespa_test_videos[0], vespa_test_videos[1]
+
+        config_manager = create_default_config_manager()
+        config = PipelineConfig.from_config(
+            tenant_id="test:unit", config_manager=config_manager
+        )
+        config.video_dir = v0.parent
+        config.search_backend = "vespa"
+        config.max_frames_per_video = 1
+
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test_tenant",
+            config=config,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+            schema_name="video_videoprism_base_mv_chunk_30s",
+        )
+
+        await pipeline.process_videos_concurrent([v0, v1], max_concurrent=2)
+
+        # Read the persisted (video_id, source_url) pairs back out of Vespa.
+        time.sleep(2)
+        http_port = vespa_backend.http_port
+        resp = requests.get(
+            f"http://localhost:{http_port}/search/",
+            params={
+                "yql": "select video_id, source_url from sources * where true",
+                "hits": 400,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        children = resp.json().get("root", {}).get("children", []) or []
+
+        stems = {v0.stem, v1.stem}
+        by_video: dict[str, set] = {}
+        for child in children:
+            fields = child.get("fields") or {}
+            vid = fields.get("video_id")
+            if vid in stems:
+                by_video.setdefault(vid, set()).add(fields.get("source_url"))
+
+        # Both videos fed documents.
+        assert set(by_video) == stems, f"missing a video in Vespa: {by_video}"
+
+        # Each video's documents carry exactly ONE source_url, and it is that
+        # video's own — not the sibling's. Cross-assignment (the bug) shows up
+        # here as a video_id mapped to the wrong or to multiple source_urls.
+        assert len(by_video[v0.stem]) == 1, by_video
+        assert len(by_video[v1.stem]) == 1, by_video
+        src0 = next(iter(by_video[v0.stem]))
+        src1 = next(iter(by_video[v1.stem]))
+        assert src0 != src1, f"both videos share a source_url: {src0!r}"
+        assert src0.endswith(v0.name), f"{v0.stem} carries wrong source_url {src0!r}"
+        assert src1.endswith(v1.name), f"{v1.stem} carries wrong source_url {src1!r}"
+
+    @pytest.mark.local_only
     @pytest.mark.requires_colqwen
     @skip_heavy_models_in_ci
     @requires_vllm_colpali
