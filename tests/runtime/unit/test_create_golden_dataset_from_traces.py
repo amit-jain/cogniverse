@@ -142,7 +142,7 @@ class TestFetchWindow:
             return pd.DataFrame([_trace_row("q", 0.5, ["v1"])])
 
         g.provider.traces.get_spans = fake_get_spans
-        g.provider.evaluations.get_evaluations = AsyncMock(return_value=pd.DataFrame())
+        g.provider.annotations.get_annotations = AsyncMock(return_value=pd.DataFrame())
 
         await g.fetch_traces_with_evaluations()
 
