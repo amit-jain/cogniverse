@@ -1,147 +1,49 @@
-"""Integration test: AudioAnalysisAgent surfaces source_url via search.
+"""Real-Vespa execution coverage for AudioAnalysisAgent search paths.
 
-Spins up Vespa via :class:`VespaTestManager`, deploys the ``audio_content``
-schema, feeds audio documents carrying a known ``source_url``, then runs
-``AudioAnalysisAgent._search_transcript`` and asserts every
-``AudioResult.audio_url`` matches the canonical URI that was written.
+Deploys the tenant-scoped ``audio_content_<tenant>`` schema into the shared
+Vespa, feeds audio docs carrying known ``source_url`` and acoustic embeddings,
+then drives ``_search_transcript`` / ``_search_acoustic`` / ``_search_hybrid``
+against the real backend.
 
-NOTE: This test still uses an isolated VespaTestManager-spawned container
-because ``AudioAnalysisAgent._search_transcript`` queries the bare
-``audio_content`` schema name, not a tenant-scoped variant. Migrating to
-``shared_vespa`` would require the agent to be tenant-aware first.
-
-The agent is constructed via ``__new__`` so the heavy A2A + Whisper init
-path is skipped — only the search code path under test is exercised.
-
-Skips when Docker is unavailable.
+Pins that the agent queries the same tenant-scoped schema the ingestion
+pipeline feeds into: ``schema_full_name("audio_content", tenant)``. A bare
+``audio_content`` query — what the agent issued before this was tenant-aware —
+hits an undeployed doc type, so Vespa 400s and every search silently returns
+``[]``; ``test_schema_name_matches_agent_query_target`` locks that down.
 """
 
 from __future__ import annotations
 
-import os
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import requests
 
-from tests.system.vespa_test_manager import VespaTestManager
-from tests.utils.docker_utils import generate_unique_ports
-from tests.utils.markers import is_docker_available
+from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent
+from cogniverse_core.common.media import MediaConfig, MediaLocator
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
 
-AUDIO_SCHEMA = "audio_content"
-SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
+pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 
+TENANT = "audio_rt"
+BASE_SCHEMA = "audio_content"
 
-def pytest_collection_modifyitems(items):
-    docker_ok = is_docker_available()
-    for item in items:
-        if "requires_docker" in item.keywords and not docker_ok:
-            item.add_marker(
-                pytest.mark.skip(reason="Docker not available in this environment")
-            )
+# A 512-d acoustic query vector aligned with the "match" doc, orthogonal to
+# the "other" doc.
+_MATCH_VEC = [1.0] + [0.0] * 511
+_OTHER_VEC = [0.0] * 511 + [1.0]
 
 
 @pytest.fixture(scope="module")
-def audio_vespa():
-    """Start Vespa with metadata + audio_content schemas deployed."""
-    http_port, config_port = generate_unique_ports(f"audio_e2e_{__name__}")
-    manager = VespaTestManager(
-        app_name="test-audio-agent",
-        http_port=http_port,
-        config_port=config_port,
+def audio_schema(shared_vespa):
+    full = deploy_tenant_schema(
+        shared_vespa, tenant_id=TENANT, base_schema_name=BASE_SCHEMA
     )
+    http_port = shared_vespa["http_port"]
 
-    saved_url = os.environ.get("BACKEND_URL")
-    saved_port = os.environ.get("BACKEND_PORT")
-    try:
-        if not manager.setup_application_directory():
-            pytest.skip("Failed to setup Vespa application directory")
-        if not manager.deploy_test_application():
-            pytest.skip("Failed to deploy Vespa test application")
-
-        os.environ["BACKEND_URL"] = "http://localhost"
-        os.environ["BACKEND_PORT"] = str(manager.http_port)
-
-        # Add the audio_content schema alongside the metadata schemas the
-        # manager already deployed.
-        from vespa.package import ApplicationPackage
-
-        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-        from cogniverse_vespa.metadata_schemas import (
-            create_adapter_registry_schema,
-            create_config_metadata_schema,
-            create_organization_metadata_schema,
-            create_tenant_metadata_schema,
-        )
-        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-        parser = JsonSchemaParser()
-        audio_schema = parser.load_schema_from_json_file(
-            str(SCHEMAS_DIR / f"{AUDIO_SCHEMA}_schema.json")
-        )
-
-        schema_manager = VespaSchemaManager(
-            backend_endpoint="http://localhost",
-            backend_port=manager.config_port,
-        )
-        schema_manager._deploy_package(
-            ApplicationPackage(
-                name="cogniverse",
-                schema=[
-                    create_organization_metadata_schema(),
-                    create_tenant_metadata_schema(),
-                    create_config_metadata_schema(),
-                    create_adapter_registry_schema(),
-                    audio_schema,
-                ],
-            ),
-            allow_schema_removal=True,
-        )
-
-        # Wait for the audio schema to be queryable.
-        deadline = time.time() + 60
-        while time.time() < deadline:
-            try:
-                r = requests.get(
-                    f"http://localhost:{manager.http_port}/search/",
-                    params={
-                        "yql": f"select * from {AUDIO_SCHEMA} where true limit 0",
-                        "hits": 0,
-                    },
-                    timeout=5,
-                )
-                if r.status_code == 200 and "errors" not in r.json().get("root", {}):
-                    break
-            except requests.RequestException:
-                pass
-            time.sleep(2)
-        else:
-            raise RuntimeError(f"{AUDIO_SCHEMA} did not become queryable")
-
-        yield {
-            "http_port": manager.http_port,
-            "backend_url": f"http://localhost:{manager.http_port}",
-        }
-    finally:
-        if saved_url is not None:
-            os.environ["BACKEND_URL"] = saved_url
-        else:
-            os.environ.pop("BACKEND_URL", None)
-        if saved_port is not None:
-            os.environ["BACKEND_PORT"] = saved_port
-        else:
-            os.environ.pop("BACKEND_PORT", None)
-        manager.cleanup()
-
-
-@pytest.fixture
-def seeded_audio_docs(audio_vespa):
-    """Feed three audio docs with known source_urls via the raw HTTP API."""
-    http_port = audio_vespa["http_port"]
-    docs = [
+    transcript_docs = [
         {
             "audio_id": f"audio_e2e_{i}",
             "audio_title": f"clip {i}",
@@ -150,24 +52,54 @@ def seeded_audio_docs(audio_vespa):
         }
         for i in range(3)
     ]
-    fed_ids: list[str] = []
-    for i, doc in enumerate(docs):
+    acoustic_docs = {
+        "audio_match": {
+            "audio_id": "audio_match",
+            "audio_title": "matching clip",
+            "source_url": "s3://corpus/audio/match.mp3",
+            "audio_transcript": "a person describing the matching clip in detail",
+            "acoustic_embedding": {"values": _MATCH_VEC},
+        },
+        "audio_other": {
+            "audio_id": "audio_other",
+            "audio_title": "other noise",
+            "source_url": "s3://corpus/audio/other.mp3",
+            "audio_transcript": "completely unrelated background sounds here",
+            "acoustic_embedding": {"values": _OTHER_VEC},
+        },
+    }
+
+    fed: list[str] = []
+    for i, doc in enumerate(transcript_docs):
         doc_id = f"audio_e2e_doc_{i}"
-        resp = requests.post(
-            f"http://localhost:{http_port}/document/v1/audio/{AUDIO_SCHEMA}/docid/{doc_id}",
+        r = requests.post(
+            f"http://localhost:{http_port}/document/v1/audio/{full}/docid/{doc_id}",
             json={"fields": doc},
-            timeout=10,
+            timeout=15,
         )
-        assert resp.status_code in (200, 201), resp.text[:300]
-        fed_ids.append(doc_id)
+        assert r.status_code in (200, 201), r.text[:300]
+        fed.append(doc_id)
+    for doc_id, fields in acoustic_docs.items():
+        r = requests.post(
+            f"http://localhost:{http_port}/document/v1/audio/{full}/docid/{doc_id}",
+            json={"fields": fields},
+            timeout=15,
+        )
+        assert r.status_code in (200, 201), r.text[:300]
+        fed.append(doc_id)
 
     time.sleep(2)
-    yield docs
+    yield {
+        "full": full,
+        "http_port": http_port,
+        "transcript_docs": transcript_docs,
+        "acoustic_docs": acoustic_docs,
+    }
 
-    for doc_id in fed_ids:
+    for doc_id in fed:
         try:
             requests.delete(
-                f"http://localhost:{http_port}/document/v1/audio/{AUDIO_SCHEMA}/docid/{doc_id}",
+                f"http://localhost:{http_port}/document/v1/audio/{full}/docid/{doc_id}",
                 timeout=5,
             )
         except requests.RequestException:
@@ -175,22 +107,29 @@ def seeded_audio_docs(audio_vespa):
 
 
 @pytest.fixture
-def audio_agent(audio_vespa, tmp_path):
+def audio_agent(audio_schema, tmp_path):
     """Bare AudioAnalysisAgent with just the attributes the search path reads."""
-    from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent
-    from cogniverse_core.common.media import MediaConfig, MediaLocator
-
     agent = AudioAnalysisAgent.__new__(AudioAnalysisAgent)
-    agent._vespa_endpoint = audio_vespa["backend_url"]
+    agent._tenant_id = TENANT
+    agent._vespa_endpoint = f"http://localhost:{audio_schema['http_port']}"
     agent._whisper_model_size = "base"
     agent._audio_transcriber = None
     agent._embedding_generator = None
     agent._locator = MediaLocator(
-        tenant_id="test",
+        tenant_id=TENANT,
         config=MediaConfig(),
         cache_root=tmp_path / "audio-cache",
     )
     return agent
+
+
+def test_schema_name_matches_agent_query_target(audio_schema):
+    # The agent builds audio_content_<canonical_tenant>; the deployed schema
+    # must carry the same name or every audio query 404s and returns [].
+    assert audio_schema["full"] == schema_full_name(BASE_SCHEMA, TENANT)
+    agent = AudioAnalysisAgent.__new__(AudioAnalysisAgent)
+    agent._tenant_id = TENANT
+    assert agent._schema_name == audio_schema["full"]
 
 
 @pytest.mark.requires_docker
@@ -198,7 +137,7 @@ def audio_agent(audio_vespa, tmp_path):
 class TestAudioAgentSourceUrl:
     @pytest.mark.asyncio
     async def test_search_transcript_carries_source_url_into_audio_url(
-        self, audio_agent, seeded_audio_docs
+        self, audio_agent, audio_schema
     ):
         results = await audio_agent._search_transcript("clip", limit=10)
 
@@ -206,7 +145,7 @@ class TestAudioAgentSourceUrl:
 
         # Every returned audio_url must be one of the canonical URIs we wrote.
         result_urls = {r.audio_url for r in results}
-        expected_urls = {d["source_url"] for d in seeded_audio_docs}
+        expected_urls = {d["source_url"] for d in audio_schema["transcript_docs"]}
         assert result_urls.intersection(expected_urls), (
             f"audio_url did not carry source_url through; "
             f"got={result_urls!r} expected one of {expected_urls!r}"
@@ -229,59 +168,12 @@ class TestAudioAgentSourceUrl:
         assert local == str(clip)
 
 
-# A query vector aligned with the "match" doc and orthogonal to the "other".
-_MATCH_VEC = [1.0] + [0.0] * 511
-_OTHER_VEC = [0.0] * 511 + [1.0]
-
-
-@pytest.fixture
-def seeded_acoustic_docs(audio_vespa):
-    """Feed two audio docs carrying known 512-d acoustic embeddings."""
-    http_port = audio_vespa["http_port"]
-    docs = {
-        "audio_match": {
-            "audio_id": "audio_match",
-            "audio_title": "matching clip",
-            "source_url": "s3://corpus/audio/match.mp3",
-            "audio_transcript": "a person describing the matching clip in detail",
-            "acoustic_embedding": {"values": _MATCH_VEC},
-        },
-        "audio_other": {
-            "audio_id": "audio_other",
-            "audio_title": "other noise",
-            "source_url": "s3://corpus/audio/other.mp3",
-            "audio_transcript": "completely unrelated background sounds here",
-            "acoustic_embedding": {"values": _OTHER_VEC},
-        },
-    }
-    fed: list[str] = []
-    for doc_id, fields in docs.items():
-        r = requests.post(
-            f"http://localhost:{http_port}/document/v1/audio/{AUDIO_SCHEMA}/docid/{doc_id}",
-            json={"fields": fields},
-            timeout=15,
-        )
-        assert r.status_code in (200, 201), r.text[:300]
-        fed.append(doc_id)
-
-    time.sleep(2)
-    yield docs
-
-    for doc_id in fed:
-        try:
-            requests.delete(
-                f"http://localhost:{http_port}/document/v1/audio/{AUDIO_SCHEMA}/docid/{doc_id}",
-                timeout=5,
-            )
-        except requests.RequestException:
-            pass
-
-
 @pytest.mark.requires_docker
 @pytest.mark.integration
 class TestAudioAcousticHybridSearch:
     """_search_acoustic / _search_hybrid must bind their query vector to the
-    real acoustic_similarity / hybrid_acoustic_bm25 rank profiles."""
+    real acoustic_similarity / hybrid_acoustic_bm25 rank profiles against the
+    tenant-scoped schema."""
 
     @staticmethod
     def _stub_embedding(agent, vec):
@@ -293,9 +185,7 @@ class TestAudioAcousticHybridSearch:
         )
 
     @pytest.mark.asyncio
-    async def test_search_acoustic_retrieves_nearest_by_embedding(
-        self, audio_agent, seeded_acoustic_docs
-    ):
+    async def test_search_acoustic_retrieves_nearest_by_embedding(self, audio_agent):
         self._stub_embedding(audio_agent, _MATCH_VEC)
 
         results = await audio_agent._search_acoustic("any spoken query", limit=5)
@@ -305,9 +195,7 @@ class TestAudioAcousticHybridSearch:
         assert results[0].relevance_score > 0
 
     @pytest.mark.asyncio
-    async def test_search_hybrid_retrieves_with_acoustic_and_text(
-        self, audio_agent, seeded_acoustic_docs
-    ):
+    async def test_search_hybrid_retrieves_with_acoustic_and_text(self, audio_agent):
         self._stub_embedding(audio_agent, _MATCH_VEC)
 
         results = await audio_agent._search_hybrid("matching clip", limit=5)
