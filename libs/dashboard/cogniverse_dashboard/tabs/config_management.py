@@ -493,6 +493,7 @@ def render_routing_config_ui(manager, tenant_id: str):
 
         if submitted:
             updated_config = RoutingConfigUnified(
+                tenant_id=tenant_id,
                 routing_mode=routing_mode,
                 enable_fast_path=enable_fast_path,
                 enable_auto_optimization=enable_optimization,

@@ -490,3 +490,22 @@ def test_detailed_report_lifespan_starts_and_agent_card_lists_skills(
         assert [s["name"] for s in skills] == ["process"]
         assert "input_schema" in skills[0] and "output_schema" in skills[0]
     monkeypatch.setattr(dr_module, "detailed_report_agent", None)
+
+
+def test_search_lifespan_builds_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Entering the app lifespan builds the real SearchAgent. Pre-fix the
+    lifespan imported cogniverse_core.schemas.schema_loader (nonexistent) and
+    crashed with ModuleNotFoundError before the agent was ever built."""
+    import cogniverse_foundation.config.utils as config_utils
+
+    monkeypatch.setenv("BACKEND_URL", "http://localhost")
+    monkeypatch.setenv("BACKEND_PORT", "8080")
+    monkeypatch.setattr(
+        config_utils, "create_default_config_manager", lambda *a, **k: MagicMock()
+    )
+    monkeypatch.setattr(sa_module, "search_agent", None)
+
+    with TestClient(sa_module.app):
+        assert sa_module.search_agent is not None
+
+    monkeypatch.setattr(sa_module, "search_agent", None)
