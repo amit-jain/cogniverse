@@ -93,3 +93,34 @@ def test_routing_config_save_persists_with_tenant(tmp_path: Path) -> None:
     assert not at.exception, [str(e) for e in at.exception]
     saved = at.session_state["_mgr"].get_routing_config("acme:prod")
     assert saved is not None and saved.tenant_id == "acme:prod"
+
+
+def _system_config_outage_app(tmp_path: Path) -> AppTest:
+    script = textwrap.dedent(
+        """
+        import streamlit as st
+        import cogniverse_dashboard.tabs.config_management as cm
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        class Boom(InMemoryConfigStore):
+            def get_config(self, *a, **k):
+                raise ConnectionError("vespa down")
+
+        cm.render_system_config_ui(ConfigManager(store=Boom()), "acme:prod")
+        """
+    ).strip()
+    path = tmp_path / "app_system_config_outage.py"
+    path.write_text(script)
+    return AppTest.from_file(str(path), default_timeout=30)
+
+
+def test_system_config_outage_disables_editing(tmp_path: Path) -> None:
+    at = _system_config_outage_app(tmp_path)
+    at.run()
+
+    # A backend outage must not render the editable Save form (which would let
+    # the operator overwrite the live deployment config with prefilled defaults).
+    assert not any("Save System Configuration" in b.label for b in at.button)
+    assert any("unavailable" in e.value.lower() for e in at.error)
+    assert not any("No system config found" in w.value for w in at.warning)

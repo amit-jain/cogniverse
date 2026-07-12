@@ -38,6 +38,7 @@ import httpx
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
+from cogniverse_dashboard.utils.traces import filter_traces_df
 from cogniverse_evaluation.analysis.root_cause_analysis import (
     RootCauseAnalyzer,
 )
@@ -1251,22 +1252,7 @@ with tabs[5]:
         search_type = st.selectbox("Search in", ["All", "Trace ID", "Operation"])
 
     # Filter traces based on search
-    if trace_search:
-        if search_type == "Trace ID":
-            filtered_df = traces_df[
-                traces_df["trace_id"].str.contains(trace_search, case=False)
-            ]
-        elif search_type == "Operation":
-            filtered_df = traces_df[
-                traces_df["operation"].str.contains(trace_search, case=False)
-            ]
-        else:
-            filtered_df = traces_df[
-                traces_df["trace_id"].str.contains(trace_search, case=False)
-                | traces_df["operation"].str.contains(trace_search, case=False)
-            ]
-    else:
-        filtered_df = traces_df
+    filtered_df = filter_traces_df(traces_df, search_type, trace_search)
 
     # Sort options
     col1, col2 = st.columns([2, 1])
