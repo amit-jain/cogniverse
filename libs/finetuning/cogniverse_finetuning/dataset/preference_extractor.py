@@ -183,7 +183,7 @@ class PreferencePairExtractor:
         """
         # Agent span naming convention
         agent_keywords = {
-            "routing": ["routing", "route"],
+            "routing": ["routing", "route", "gateway"],
             "profile_selection": ["profile", "selection"],
             "entity_extraction": ["entity", "extraction"],
         }
