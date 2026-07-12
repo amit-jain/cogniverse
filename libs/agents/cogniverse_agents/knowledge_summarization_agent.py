@@ -21,6 +21,7 @@ The agent:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -325,9 +326,12 @@ class KnowledgeSummarizationAgent(
             input, self.deps, "KnowledgeSummarizationAgent"
         )
 
-        kg_video_summaries = self._kg_video_summaries(input.subject_keys)
+        kg_video_summaries = await asyncio.to_thread(
+            self._kg_video_summaries, input.subject_keys
+        )
 
-        rows = self._fetch_filtered(
+        rows = await asyncio.to_thread(
+            self._fetch_filtered,
             tenant_id,
             input.agent_name_filter or "_promoted",
             input.subject_keys,
@@ -362,7 +366,9 @@ class KnowledgeSummarizationAgent(
             )
             used_rlm = True
         else:
-            summary_text = self._summarise_without_rlm(input.title, block)
+            summary_text = await asyncio.to_thread(
+                self._summarise_without_rlm, input.title, block
+            )
 
         citation_refs = [
             CitationRef.memory(str(r.get("id") or ""), label=None)

@@ -3,6 +3,7 @@ Detailed Report Agent with full A2A support, VLM integration, and thinking phase
 Generates comprehensive detailed reports with visual and technical analysis.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -973,7 +974,8 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             self.emit_progress("rlm_synthesis", "Synthesizing answer with RLM...")
             logger.info(f"RLM enabled for query: {input.query[:50]}...")
             try:
-                rlm_result = self.process_with_rlm(
+                rlm_result = await asyncio.to_thread(
+                    self.process_with_rlm,
                     query=input.query,
                     context=results_context,
                     rlm_options=input.rlm,

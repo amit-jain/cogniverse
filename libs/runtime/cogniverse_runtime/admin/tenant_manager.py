@@ -495,8 +495,10 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         deployed_schemas = []
         for base_schema in base_schemas:
             try:
-                backend.schema_registry.deploy_schema(
-                    tenant_id=tenant_full_id, base_schema_name=base_schema
+                await asyncio.to_thread(
+                    backend.schema_registry.deploy_schema,
+                    tenant_id=tenant_full_id,
+                    base_schema_name=base_schema,
                 )
                 deployed_schemas.append(base_schema)
             except Exception as e:
