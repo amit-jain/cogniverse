@@ -97,3 +97,46 @@ def test_reaps_exited_containers_even_with_live_owner():
         assert not _exists(name), "exited container must be removed regardless of owner"
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+
+
+def test_phoenix_container_carries_owner_label(phoenix_container):
+    """The phoenix_container docker-run must carry the owner-pid label so a
+    SIGKILLed session's Phoenix container is reaped instead of orphaned."""
+    import os
+
+    name = phoenix_container["container_name"]
+    label = subprocess.run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            '{{ index .Config.Labels "' + OWNER_LABEL + '" }}',
+            name,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout.strip()
+    assert label == str(os.getpid())
+
+    cid = subprocess.run(
+        ["docker", "inspect", "--format", "{{.Id}}", name],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout.strip()
+    listed = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            f"label={OWNER_LABEL}={os.getpid()}",
+            "-q",
+            "--no-trunc",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout
+    assert cid in listed, "container not discoverable by the reaper label filter"
