@@ -487,11 +487,12 @@ curl -X POST http://localhost:28000/a2a \
   -d '{
     "jsonrpc": "2.0",
     "id": "1",
-    "method": "tasks/send",
+    "method": "message/send",
     "params": {
       "message": {
         "role": "user",
-        "parts": [{"type": "text", "text": "Find videos of a dog playing fetch"}]
+        "messageId": "demo-1",
+        "parts": [{"kind": "text", "text": "Find videos of a dog playing fetch"}]
       },
       "metadata": {"tenant_id": "acme:production"}
     }
@@ -609,7 +610,7 @@ Key endpoint groups (Runtime on host port 28000, container port 8000):
 | **Tenant extensibility** | `/admin/tenant` | `PUT /admin/tenant/{id}/instructions`; `POST /admin/tenant/{id}/memories`; `POST /admin/tenant/{id}/optimize` |
 | **Debug** | `/admin/debug` | `POST /admin/debug/memsnap`; `POST /admin/debug/memreset` |
 | **Agents** | `/agents` | `POST /agents/register`; `POST /agents/{name}/process`; `GET /agents/` — list agents |
-| **A2A** | `/a2a` | `POST /a2a` — JSON-RPC 2.0 (`method: tasks/send` or `tasks/sendSubscribe` for SSE streaming) |
+| **A2A** | `/a2a` | `POST /a2a` — JSON-RPC 2.0 (`method: message/send` or `method: message/stream` for SSE streaming) |
 | **Events** | `/events` | `GET /events/workflows/{id}` — workflow status; `POST /events/workflows/{id}/cancel` |
 | **Wiki** | `/wiki` | See [Wiki Knowledge Base](#12-wiki-knowledge-base) |
 | **Graph** | `/graph` | See [Knowledge Graph CLI](#13-knowledge-graph-cli) |
@@ -990,11 +991,12 @@ curl -X POST http://localhost:28000/a2a \
   -d '{
     "jsonrpc": "2.0",
     "id": "1",
-    "method": "tasks/send",
+    "method": "message/send",
     "params": {
       "message": {
         "role": "user",
-        "parts": [{"type": "text", "text": "Find videos of a dog playing fetch"}]
+        "messageId": "demo-1",
+        "parts": [{"kind": "text", "text": "Find videos of a dog playing fetch"}]
       },
       "metadata": {"tenant_id": "acme:production"}
     }
@@ -1009,11 +1011,12 @@ curl -X POST http://localhost:28000/a2a \
   -d '{
     "jsonrpc": "2.0",
     "id": "2",
-    "method": "tasks/sendSubscribe",
+    "method": "message/stream",
     "params": {
       "message": {
         "role": "user",
-        "parts": [{"type": "text", "text": "Summarize the cooking tutorial video"}]
+        "messageId": "demo-2",
+        "parts": [{"kind": "text", "text": "Summarize the cooking tutorial video"}]
       },
       "metadata": {"tenant_id": "acme:production"}
     }
