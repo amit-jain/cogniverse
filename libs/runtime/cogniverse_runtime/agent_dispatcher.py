@@ -741,7 +741,7 @@ class AgentDispatcher:
         agent.telemetry_manager = get_telemetry_manager()
         agent._artifact_tenant_id = tenant_id
         if hasattr(agent, "_load_artifact"):
-            agent._load_artifact()
+            await asyncio.to_thread(agent._load_artifact)
         # ``set_dispatched_artefact`` lives on MemoryAwareMixin; non-mixin
         # agents silently no-op (overlay dropped, falling back to defaults).
         self._apply_artefact_overlay(agent, context)
@@ -1330,7 +1330,7 @@ class AgentDispatcher:
 
             self._gateway_agent.telemetry_manager = get_telemetry_manager()
             self._gateway_agent._artifact_tenant_id = tenant_id
-            self._gateway_agent._load_artifact()
+            await asyncio.to_thread(self._gateway_agent._load_artifact)
 
         input_data = GatewayInput(query=query, tenant_id=tenant_id)
         result = await self._gateway_agent._process_impl(input_data)
@@ -1447,7 +1447,7 @@ class AgentDispatcher:
             )
             agent.telemetry_manager = tm
             agent._artifact_tenant_id = tenant_id
-            agent._load_artifact()
+            await asyncio.to_thread(agent._load_artifact)
             # Apply per-request artefact overlay so OrchestratorAgent's
             # planner DSPy module honors the canary/variant decision.
             self._apply_artefact_overlay(agent, context)
