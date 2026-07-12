@@ -89,3 +89,30 @@ async def test_register_then_lookup_resolves_tenant_real_mem0(
         top_k=5,
     )
     assert any(user_id in (h.get("memory", "")) for h in sys_hits)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_get_tenant_id_exact_match_rejects_substring_user(
+    shared_memory_vespa, shared_denseon
+):
+    """An unregistered user whose id is a substring of a registered user (and
+    shares a prefix, so it is the top semantic hit) must NOT inherit the
+    registered user's tenant — the lookup matches metadata by equality."""
+    mm = _build_manager(
+        shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
+    )
+    mapper = UserTenantMapper(mm)
+
+    unique = uuid.uuid4().hex[:10]
+    registered_id = f"{unique}12345"
+    substring_id = f"{unique}123"  # a proper prefix of registered_id
+
+    assert mapper.register_user("telegram", registered_id, "acme:production") is True
+
+    # The registered user still resolves exactly.
+    assert mapper.get_tenant_id("telegram", registered_id) == "acme:production"
+    # The unregistered substring/prefix user is denied (the security guard).
+    assert mapper.get_tenant_id("telegram", substring_id) is None
+    # Platform is matched by equality too.
+    assert mapper.get_tenant_id("slack", registered_id) is None

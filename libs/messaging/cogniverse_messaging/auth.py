@@ -156,24 +156,29 @@ class UserTenantMapper:
             return False
 
     def get_tenant_id(self, platform: str, external_user_id: str) -> Optional[str]:
-        """Look up tenant_id for an external user."""
+        """Look up tenant_id for an external user by exact metadata match.
+
+        Enumerates the stored mappings and matches ``platform`` +
+        ``external_user_id`` by equality on their metadata. The old
+        semantic-search + substring match could return another user's tenant
+        (a nearest-neighbour or substring false positive) and silently missed
+        users past the ``top_k`` window.
+        """
         try:
-            results = self.memory_manager.search_memory(
-                query=f"User {external_user_id} on {platform} tenant mapping",
+            memories = self.memory_manager.get_all_memories(
                 tenant_id=SYSTEM_TENANT_ID,
                 agent_name=GATEWAY_AGENT_NAME,
-                top_k=5,
             )
-
-            for result in results:
-                memory_text = result.get("memory", "")
-                if str(external_user_id) in memory_text and platform in memory_text:
-                    # Extract tenant_id from the memory text
-                    if "mapped to tenant" in memory_text:
-                        parts = memory_text.split("mapped to tenant ")
-                        if len(parts) > 1:
-                            return parts[1].strip()
         except Exception as e:
             logger.error(f"Failed to look up user mapping: {e}")
+            return None
 
+        for mem in memories:
+            meta = mem.get("metadata") or {}
+            if (
+                meta.get("type") == "user_mapping"
+                and meta.get("platform") == platform
+                and str(meta.get("external_user_id")) == str(external_user_id)
+            ):
+                return meta.get("tenant_id")
         return None
