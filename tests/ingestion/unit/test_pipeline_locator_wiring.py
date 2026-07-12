@@ -169,15 +169,17 @@ class TestPrepareBaseResultsIncludesSourceUrl:
 
     def test_video_uri_overrides_local_temp_path(self, stub_pipeline, tmp_path):
         """The worker localizes an ``s3://`` object to a temp file and passes
-        ``source_uri`` to the pipeline, which sets ``self.video_uri`` to the
-        canonical ``s3://`` URL. ``_prepare_base_results`` must record THAT — a
-        ``file://`` temp path would make answer-time keyframes unfetchable."""
+        ``source_uri`` to the pipeline; the per-video canonical ``s3://`` URL is
+        threaded into ``_prepare_base_results`` as ``video_uri``. It must record
+        THAT — a ``file://`` temp path would make answer-time keyframes
+        unfetchable."""
         clip = tmp_path / "6ae66494.mp4"
         clip.write_bytes(b"data")
         stub_pipeline.config = PipelineConfig(video_dir=tmp_path)
-        stub_pipeline.video_uri = "s3://cogniverse-ingest/acme:acme/6ae66494.mp4"
 
-        result = stub_pipeline._prepare_base_results(clip)
+        result = stub_pipeline._prepare_base_results(
+            clip, "s3://cogniverse-ingest/acme:acme/6ae66494.mp4"
+        )
 
         assert result["source_url"] == "s3://cogniverse-ingest/acme:acme/6ae66494.mp4"
         assert result["video_id"] == "6ae66494"

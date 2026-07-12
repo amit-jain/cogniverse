@@ -45,12 +45,18 @@ class TestSourceUrlInDocuments:
         assert doc.metadata["source_url"] == "s3://corpus/v1.mp4"
 
     def test_pipeline_base_video_data_includes_source_url(self):
+        # source_url travels in the per-video results dict (stamped by the
+        # per-video context), not off a shared pipeline instance attribute.
         pipeline = object.__new__(VideoIngestionPipeline)
-        pipeline.video_uri = "s3://corpus/v1.mp4"
         pipeline.profile_output_dir = Path("/tmp/out")
 
         video_data = pipeline._extract_base_video_data(
-            {"video_id": "v1", "video_path": "/data/v1.mp4", "duration": 5.0}
+            {
+                "video_id": "v1",
+                "video_path": "/data/v1.mp4",
+                "duration": 5.0,
+                "source_url": "s3://corpus/v1.mp4",
+            }
         )
         assert video_data["source_url"] == "s3://corpus/v1.mp4"
 

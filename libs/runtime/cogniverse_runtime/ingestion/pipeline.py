@@ -150,6 +150,39 @@ class PipelineConfig:
         )
 
 
+class _VideoProcessingContext:
+    """Per-video view over the pipeline handed to strategies as their
+    ``pipeline_context``.
+
+    Carries this video's identity (``video_path``/``video_uri``) while
+    delegating shared services (processor manager, embedding generation,
+    config, schema name) to the owning pipeline. Keeping identity here
+    instead of on the pipeline is what lets ``process_videos_concurrent``
+    run videos in parallel without one task clobbering another's
+    ``video_path`` between awaits.
+    """
+
+    def __init__(
+        self, pipeline: "VideoIngestionPipeline", video_path: Path, video_uri: str
+    ):
+        self.video_path = video_path
+        self.video_uri = video_uri
+        self._pipeline = pipeline
+
+    def __getattr__(self, name: str) -> Any:
+        pipeline = self.__dict__.get("_pipeline")
+        if pipeline is None:
+            raise AttributeError(name)
+        return getattr(pipeline, name)
+
+    async def generate_embeddings(self, results: dict[str, Any]) -> dict[str, Any]:
+        # Stamp this video's canonical source onto the results the pipeline
+        # builds documents from, so the emitted source_url can't be read off
+        # a sibling video's identity mid-flight.
+        results["source_url"] = self.video_uri
+        return await self._pipeline.generate_embeddings(results)
+
+
 class VideoIngestionPipeline:
     """
     Unified video processing pipeline with async optimizations.
@@ -657,7 +690,7 @@ class VideoIngestionPipeline:
             "video_path": video_path,
             # Canonical source URI so every emitted document carries source_url
             # (visual evaluators / frame extractors resolve bytes from it).
-            "source_url": getattr(self, "video_uri", None)
+            "source_url": results.get("source_url")
             or (self._canonical_uri(video_path) if video_path else ""),
             "duration": results.get("duration", 0),
             "output_dir": str(self.profile_output_dir),
@@ -853,11 +886,10 @@ class VideoIngestionPipeline:
         self.logger.info(f"\n🎬 Processing video (async): {video_path.name}")
         self.logger.info("=" * 60)
 
-        self.video_path = video_path
-        self.video_uri = video_uri
+        pipeline_context = _VideoProcessingContext(self, video_path, video_uri)
 
         # Prepare base results
-        results = self._prepare_base_results(video_path)
+        results = self._prepare_base_results(video_path, video_uri)
 
         # Emit video processing start event
         if self.job_id:
@@ -902,7 +934,7 @@ class VideoIngestionPipeline:
                 processing_results = await self.strategy_set.process(
                     video_path=video_path,
                     processor_manager=self.processor_manager,
-                    pipeline_context=self,
+                    pipeline_context=pipeline_context,
                 )
 
                 # Add processing results to our results structure
@@ -995,7 +1027,9 @@ class VideoIngestionPipeline:
 
             return results
 
-    def _prepare_base_results(self, video_path: Path) -> dict[str, Any]:
+    def _prepare_base_results(
+        self, video_path: Path, video_uri: str | None = None
+    ) -> dict[str, Any]:
         """Prepare base results structure"""
         config_dict = self.config.__dict__.copy()
         config_dict["video_dir"] = str(config_dict["video_dir"])
@@ -1004,7 +1038,7 @@ class VideoIngestionPipeline:
         return {
             "video_id": video_path.stem,
             "video_path": str(video_path),
-            "source_url": getattr(self, "video_uri", self._canonical_uri(video_path)),
+            "source_url": video_uri or self._canonical_uri(video_path),
             "duration": self._get_video_duration(video_path),
             "pipeline_config": config_dict,
             "results": {},
