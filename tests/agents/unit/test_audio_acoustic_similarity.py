@@ -19,6 +19,7 @@ from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent
 
 def _agent():
     agent = object.__new__(AudioAnalysisAgent)
+    agent._tenant_id = "acme:acme"
     agent._vespa_endpoint = "http://vespa:8080"
     # embedding_generator is a lazy property; seed its backing attr.
     gen = MagicMock()
@@ -79,6 +80,9 @@ async def test_search_by_acoustic_embedding_binds_query_tensor():
     assert captured["ranking.profile"] == "acoustic_similarity"
     assert "nearestNeighbor(acoustic_embedding, acoustic_query)" in captured["yql"]
     assert len(captured["input.query(acoustic_query)"]) == 512
+    # The query must target the tenant-scoped schema ingestion feeds into,
+    # not the bare base name (which is never deployed).
+    assert "from audio_content_acme_acme where" in captured["yql"]
 
 
 @pytest.mark.asyncio

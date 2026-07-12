@@ -177,6 +177,7 @@ class AudioAnalysisAgent(
         # Initialize A2A base
         super().__init__(deps=deps, config=config, dspy_module=AudioSearchModule())
 
+        self._tenant_id = deps.tenant_id
         self._vespa_endpoint = deps.vespa_endpoint
         self._whisper_model_size = deps.whisper_model_size
         self._whisper_endpoint = deps.whisper_endpoint
@@ -194,6 +195,14 @@ class AudioAnalysisAgent(
             f"Initialized AudioAnalysisAgent for tenant: {deps.tenant_id}, "
             f"whisper: {deps.whisper_model_size}"
         )
+
+    @property
+    def _schema_name(self) -> str:
+        """Tenant-scoped Vespa schema the audio ingestion pipeline feeds into."""
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
+        return f"audio_content_{safe_tenant}"
 
     @property
     def audio_transcriber(self):
@@ -341,7 +350,7 @@ class AudioAnalysisAgent(
         """Search by transcript text using BM25"""
 
         # Build YQL query for transcript search
-        yql = "select * from audio_content where userQuery()"
+        yql = f"select * from {self._schema_name} where userQuery()"
 
         params = {
             "yql": yql,
@@ -412,7 +421,7 @@ class AudioAnalysisAgent(
         # which binds to a nearestNeighbor operator over the HNSW field; the
         # query tensor is the profile input query(acoustic_query).
         yql = (
-            "select * from audio_content where "
+            f"select * from {self._schema_name} where "
             f"{{targetHits:{limit}}}nearestNeighbor(acoustic_embedding, acoustic_query)"
         )
 
@@ -476,7 +485,7 @@ class AudioAnalysisAgent(
         # acoustic half needs the nearestNeighbor operator, OR-ed with the text
         # match so either signal can surface a document.
         yql = (
-            "select * from audio_content where "
+            f"select * from {self._schema_name} where "
             f"({{targetHits:{limit}}}nearestNeighbor(acoustic_embedding, acoustic_query)) "
             "or userQuery()"
         )
