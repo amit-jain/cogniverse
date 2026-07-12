@@ -8,7 +8,9 @@ Reuses common evaluation patterns from cogniverse_evaluation.span_evaluator.
 
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+import pandas as pd
 
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, AutoAnnotation
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -17,6 +19,35 @@ if TYPE_CHECKING:
     from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _meta_get(ann_row: "pd.Series", key: str, default: Any = None) -> Any:
+    """Read an annotation metadata field. Phoenix returns metadata either as a
+    nested dict in a ``metadata`` column or flattened to ``metadata.<key>``
+    columns (see preference_extractor); handle both."""
+    meta = ann_row.get("metadata")
+    if isinstance(meta, dict) and key in meta:
+        return meta.get(key, default)
+    col = f"metadata.{key}"
+    if col in ann_row.index:
+        val = ann_row[col]
+        if val is not None and not (isinstance(val, float) and pd.isna(val)):
+            return val
+    return default
+
+
+def _routing_get(span_row: "pd.Series", field: str, default: Any = None) -> Any:
+    """Read a routing.* span attribute. Phoenix nests dotted attributes into an
+    ``attributes.routing`` dict column; fall back to a flat column if present."""
+    routing = span_row.get("attributes.routing")
+    if isinstance(routing, dict) and field in routing:
+        return routing.get(field, default)
+    col = f"attributes.routing.{field}"
+    if col in span_row.index:
+        val = span_row[col]
+        if val is not None and not (isinstance(val, float) and pd.isna(val)):
+            return val
+    return default
 
 
 class RoutingAnnotationStorage:
@@ -232,45 +263,48 @@ class RoutingAnnotationStorage:
             logger.info("📭 No spans found in time range")
             return []
 
-        # Filter for spans with annotations
-        # Check if annotation.label attribute exists
-        annotated_spans = []
+        # Annotations live in Phoenix's separate annotation store, not on the
+        # span attributes — fetch them and join to spans by span_id. The old
+        # read of ``attributes.annotation.label`` was never populated, so the
+        # feedback loop and dashboard always saw zero annotations.
+        annotations_df = await self.provider.annotations.get_annotations(
+            spans_df=spans_df,
+            project=self.project_name,
+            annotation_names=["routing_annotation"],
+        )
+        if annotations_df is None or annotations_df.empty:
+            logger.info("📭 No routing annotations found in time range")
+            return []
 
+        # annotations_df is indexed by span_id (no span_id column).
+        annotations_by_span = {sid: row for sid, row in annotations_df.iterrows()}
+
+        annotated_spans = []
         for _, span_row in spans_df.iterrows():
-            # Look for annotation.label in flattened attributes
-            annotation_label = span_row.get("attributes.annotation.label")
-            if not annotation_label:
+            span_id = span_row.get("context.span_id")
+            ann_row = annotations_by_span.get(span_id)
+            if ann_row is None:
                 continue
 
-            # Filter by human_reviewed if requested
-            if only_human_reviewed:
-                human_reviewed = span_row.get(
-                    "attributes.annotation.human_reviewed", False
-                )
-                if not human_reviewed:
-                    continue
+            human_reviewed = bool(_meta_get(ann_row, "human_reviewed", False))
+            if only_human_reviewed and not human_reviewed:
+                continue
 
-            # Extract all annotation data
-            annotation_data = {
-                "span_id": span_row.get("context.span_id"),
-                "query": span_row.get("attributes.routing.query"),
-                "chosen_agent": span_row.get("attributes.routing.chosen_agent"),
-                "routing_confidence": span_row.get("attributes.routing.confidence"),
-                "annotation_label": annotation_label,
-                "annotation_confidence": span_row.get(
-                    "attributes.annotation.confidence", 1.0
-                ),
-                "annotation_reasoning": span_row.get(
-                    "attributes.annotation.reasoning", ""
-                ),
-                "annotation_timestamp": span_row.get("attributes.annotation.timestamp"),
-                "suggested_agent": span_row.get(
-                    "attributes.annotation.suggested_agent"
-                ),
-                "context": span_row.get("attributes.routing.context", {}),
-            }
-
-            annotated_spans.append(annotation_data)
+            annotated_spans.append(
+                {
+                    "span_id": span_id,
+                    "query": _routing_get(span_row, "query"),
+                    "chosen_agent": _routing_get(span_row, "chosen_agent"),
+                    "routing_confidence": _routing_get(span_row, "confidence"),
+                    "annotation_label": ann_row.get("result.label"),
+                    "annotation_confidence": ann_row.get("result.score", 1.0),
+                    "annotation_reasoning": _meta_get(ann_row, "reasoning", ""),
+                    "annotation_timestamp": _meta_get(ann_row, "timestamp"),
+                    "suggested_agent": _meta_get(ann_row, "suggested_agent"),
+                    "human_reviewed": human_reviewed,
+                    "context": _routing_get(span_row, "context", {}),
+                }
+            )
 
         logger.info(f"✅ Found {len(annotated_spans)} annotated spans")
         return annotated_spans
