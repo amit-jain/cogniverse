@@ -48,6 +48,9 @@ class MessagingGateway:
         runtime_url: str,
         mode: str = "polling",
         webhook_url: str = "",
+        webhook_listen: str = "0.0.0.0",
+        webhook_port: int = 8443,
+        webhook_path: str = "",
         memory_manager=None,
         config_manager=None,
     ):
@@ -55,6 +58,9 @@ class MessagingGateway:
         self.runtime_url = runtime_url
         self.mode = mode
         self.webhook_url = webhook_url
+        self.webhook_listen = webhook_listen
+        self.webhook_port = webhook_port
+        self.webhook_path = webhook_path
         self.runtime_client = RuntimeClient(runtime_url)
 
         self._memory_manager = memory_manager
@@ -485,7 +491,16 @@ class MessagingGateway:
         logger.info(f"Starting Telegram bot in webhook mode at {self.webhook_url}")
         await app.initialize()
         await app.start()
-        await app.bot.set_webhook(url=self.webhook_url)
+        # start_webhook BOTH registers the webhook with Telegram AND binds the
+        # HTTP server that receives updates. set_webhook alone registered the
+        # URL but served nothing, so webhook mode received zero messages.
+        await app.updater.start_webhook(
+            listen=self.webhook_listen,
+            port=self.webhook_port,
+            url_path=self.webhook_path,
+            webhook_url=self.webhook_url,
+            drop_pending_updates=True,
+        )
 
         try:
             while True:
@@ -493,6 +508,7 @@ class MessagingGateway:
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
+            await app.updater.stop()
             await app.bot.delete_webhook()
             await app.stop()
             await app.shutdown()
@@ -521,6 +537,9 @@ def main():
     runtime_url = os.environ.get("RUNTIME_URL", "http://localhost:28000")
     mode = os.environ.get("GATEWAY_MODE", "polling")
     webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL", "")
+    webhook_listen = os.environ.get("GATEWAY_WEBHOOK_LISTEN", "0.0.0.0")
+    webhook_port = int(os.environ.get("GATEWAY_WEBHOOK_PORT", "8443"))
+    webhook_path = os.environ.get("GATEWAY_WEBHOOK_PATH", "")
 
     if mode == "webhook" and not webhook_url:
         logger.error("TELEGRAM_WEBHOOK_URL required for webhook mode")
@@ -531,6 +550,9 @@ def main():
         runtime_url=runtime_url,
         mode=mode,
         webhook_url=webhook_url,
+        webhook_listen=webhook_listen,
+        webhook_port=webhook_port,
+        webhook_path=webhook_path,
     )
 
     asyncio.run(gateway.run())
