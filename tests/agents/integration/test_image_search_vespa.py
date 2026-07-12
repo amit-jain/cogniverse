@@ -24,8 +24,10 @@ pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 
 TENANT = "img_rt"
 # A query token that aligns with the sunset doc and opposes the cat doc.
-_MATCH = [0.5] * 128
-_OPPOSED = [-0.5] * 128
+# The schema's visual embedding subspace is v[320], so the fed blocks and the
+# query(qt) tensor must be 320-dim or the document/v1 feed 400s.
+_MATCH = [0.5] * 320
+_OPPOSED = [-0.5] * 320
 
 
 @pytest.fixture(scope="module")
@@ -108,3 +110,39 @@ async def test_search_vespa_retrieves_and_ranks_matching_image(agent):
     sunset = next(r for r in results if r.image_id == "img_sunset")
     assert sunset.image_url == "s3://corpus/images/sunset.jpg"
     assert sunset.title == "Sunset over mountains"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_scores_bm25_match(agent):
+    # Hybrid must inject userQuery() so the bm25 second phase sees the query
+    # terms; without it every hit's bm25 score is 0.
+    query_embedding = np.array([_MATCH], dtype=np.float32)
+
+    results = await agent._search_vespa(
+        query_embedding=query_embedding,
+        query_text="sunset mountains",
+        search_mode="hybrid",
+        limit=5,
+        filters=None,
+    )
+
+    assert results, "hybrid image query returned no results"
+    assert results[0].image_id == "img_sunset"
+    assert results[0].relevance_score > 0
+    assert results[0].relevance_score != 0.0
+
+
+@pytest.mark.asyncio
+async def test_search_images_propagates_vespa_outage():
+    # A Vespa outage must surface (500), not be swallowed into an empty 200.
+    from types import SimpleNamespace
+
+    a = ImageSearchAgent.__new__(ImageSearchAgent)
+    a._tenant_id = TENANT
+    a._vespa_endpoint = "http://127.0.0.1:1"  # closed port -> ConnectionError
+    a._query_encoder = SimpleNamespace(
+        encode=lambda q: np.zeros((1, 320), dtype=np.float32)
+    )
+
+    with pytest.raises(requests.RequestException):
+        await a.search_images("cat", search_mode="semantic", limit=5)
