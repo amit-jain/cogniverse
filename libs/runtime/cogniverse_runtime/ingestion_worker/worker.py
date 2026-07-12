@@ -518,6 +518,11 @@ def _summarise(pipeline_result: dict) -> dict:
                 if isinstance(v, dict)
             )
         out["chunks"] = chunks
+    # Carry the worker's per-segment KG counts to the terminal event so the
+    # wait=true route surfaces the real graph size instead of re-extracting.
+    for k in ("graph_nodes", "graph_edges"):
+        if k in pipeline_result:
+            out[k] = pipeline_result.get(k, 0)
     return out
 
 
