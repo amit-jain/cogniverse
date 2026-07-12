@@ -329,3 +329,70 @@ class TestPerKeyModelLoadLocks:
         loader_thread.join(timeout=5)
         assert results["b"] == ("model_b", "proc_b")
         assert ml._model_cache["model-b"] == ("model_b", "proc_b")
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestQueryEncodeTimeout:
+    """The per-query text-encode POST must fail fast on a dead endpoint —
+    a 1800s timeout on the search hot path hangs every query for 30 min."""
+
+    def test_query_encode_uses_bounded_timeout(self):
+        import socket
+        import threading
+        import time
+
+        import requests
+
+        from cogniverse_core.common.models.model_loaders import RemoteInferenceClient
+        from cogniverse_core.common.utils.circuit_breaker import CircuitBreaker
+
+        # A real TCP endpoint that accepts the connection but never replies.
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        held = []
+
+        def accept_and_hang():
+            try:
+                conn, _ = server.accept()
+                held.append(conn)  # hold the connection open, send nothing
+            except OSError:
+                pass
+
+        threading.Thread(target=accept_and_hang, daemon=True).start()
+
+        CircuitBreaker.reset_registry()
+        client = RemoteInferenceClient(endpoint_url=f"http://127.0.0.1:{port}")
+        client.query_encode_timeout_s = 1.0  # inject a tiny budget
+
+        captured = {}
+
+        def worker():
+            start = time.monotonic()
+            try:
+                client.process_queries_vllm(["cats"], model_name="m")
+            except BaseException as exc:  # noqa: BLE001
+                captured["exc"] = exc
+            finally:
+                captured["elapsed"] = time.monotonic() - start
+
+        w = threading.Thread(target=worker, daemon=True)
+        w.start()
+        w.join(timeout=5.0)
+
+        try:
+            assert not w.is_alive(), (
+                "query encode did not return within 5s — the timeout is not "
+                "bounded (still the 1800s literal)"
+            )
+            assert isinstance(captured.get("exc"), requests.exceptions.Timeout)
+            assert captured["elapsed"] < 3.0
+        finally:
+            server.close()
+            for c in held:
+                try:
+                    c.close()
+                except OSError:
+                    pass

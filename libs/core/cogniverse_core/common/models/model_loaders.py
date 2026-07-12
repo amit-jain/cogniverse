@@ -92,6 +92,10 @@ class RemoteInferenceClient:
         self.api_key = api_key
         self.logger = logger or logging.getLogger(self.__class__.__name__)
         self.session = requests.Session()
+        # Bounds the per-query text-encode POST on the search hot path. Image
+        # ingestion keeps its own 1800s budget; a single text forward pass is
+        # tens of ms, so 30s is a generous ceiling that fails fast under outage.
+        self.query_encode_timeout_s: float = 30.0
 
         if self.api_key:
             self.session.headers["Authorization"] = f"Bearer {self.api_key}"
@@ -310,7 +314,7 @@ class RemoteInferenceClient:
             response = self.session.post(
                 f"{self.endpoint_url}/pooling",
                 json=payload,
-                timeout=1800,
+                timeout=self.query_encode_timeout_s,
             )
             response.raise_for_status()
             result = response.json()

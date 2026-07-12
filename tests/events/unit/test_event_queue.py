@@ -207,6 +207,33 @@ class TestInMemoryEventQueue:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
+    async def test_subscriber_does_not_hold_lock_across_yield(self, queue):
+        """A suspended subscriber must not hold the condition lock — otherwise
+        one stalled consumer blocks every enqueue()."""
+        await queue.enqueue(
+            create_progress_event(
+                task_id="test_task", tenant_id="test_tenant", current=0, total=2
+            )
+        )
+        gen = queue.subscribe(from_offset=0)
+        first = await gen.__anext__()
+        assert first.current == 0
+        # The generator is suspended having delivered event 0. It must not be
+        # parked inside the condition lock.
+        assert queue._condition.locked() is False
+        # Enqueuing while the subscriber is suspended must not block.
+        second = create_progress_event(
+            task_id="test_task", tenant_id="test_tenant", current=1, total=2
+        )
+        await asyncio.wait_for(queue.enqueue(second), timeout=2.0)
+        assert queue._condition.locked() is False
+        # Delivery still works: the subscriber catches up to the second event.
+        received = await gen.__anext__()
+        assert received.current == 1
+        await gen.aclose()
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
     async def test_replay_from_offset(self, queue):
         """Test replay from specific offset"""
         # Enqueue 5 events
