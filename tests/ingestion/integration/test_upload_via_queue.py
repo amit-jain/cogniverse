@@ -1024,3 +1024,43 @@ class TestUploadGraphCounts:
         # re-extracted on a payload with no 'results' and always got 0).
         assert body["graph_nodes"] == 7
         assert body["graph_edges"] == 3
+
+
+@pytest.mark.integration
+class TestMinioOffload:
+    """The sync MinIO put_object must run off the event loop so a large
+    transfer doesn't freeze the runtime."""
+
+    @pytest.mark.asyncio
+    async def test_upload_bytes_runs_off_the_event_loop(
+        self, real_stack, http_client, monkeypatch
+    ):
+        import threading
+
+        import cogniverse_runtime.ingestion_worker.minio_client as mc
+
+        _orig = mc.upload_bytes
+        recorded = {}
+
+        def _wrapped(*a, **k):
+            recorded["thread"] = threading.get_ident()
+            return _orig(*a, **k)  # still hits real MinIO — boundary preserved
+
+        monkeypatch.setattr(mc, "upload_bytes", _wrapped)
+
+        loop_thread = threading.get_ident()
+        content = b"minio-offload-" + os.urandom(12)
+        files = {
+            "file": (f"m_{os.urandom(4).hex()}.mp4", io.BytesIO(content), "video/mp4")
+        }
+        data = {"profile": PROFILE, "backend": "vespa", "tenant_id": TENANT_ID}
+        resp = await http_client.post(
+            "/ingestion/upload",
+            params={"wait": "false", "force": "true"},
+            files=files,
+            data=data,
+        )
+        assert resp.status_code in (200, 202), f"{resp.status_code}: {resp.text[:300]}"
+        assert recorded.get("thread") is not None
+        # to_thread offload => real MinIO put ran on a worker thread, not the loop.
+        assert recorded["thread"] != loop_thread
