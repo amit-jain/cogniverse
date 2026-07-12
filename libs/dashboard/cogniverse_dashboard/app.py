@@ -38,7 +38,7 @@ import httpx
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
-from cogniverse_dashboard.utils.traces import filter_traces_df
+from cogniverse_dashboard.utils.traces import fetch_tenant_traces, filter_traces_df
 from cogniverse_evaluation.analysis.root_cause_analysis import (
     RootCauseAnalyzer,
 )
@@ -705,12 +705,13 @@ with main_tabs[0]:
     # re-executes the whole script) don't re-pull up to 10k spans. The
     # quantized end time above keeps the key stable between reruns.
     @st.cache_data(ttl=30, show_spinner="Fetching traces...")
-    def _fetch_traces(_analytics, start_iso: str, end_iso: str, op_filter):
-        return _analytics.get_traces(
-            start_time=datetime.fromisoformat(start_iso),
-            end_time=datetime.fromisoformat(end_iso),
-            operation_filter=op_filter,
-            limit=10000,
+    def _fetch_traces(_analytics, start_iso: str, end_iso: str, op_filter, tenant_id):
+        return fetch_tenant_traces(
+            _analytics,
+            tenant_id,
+            datetime.fromisoformat(start_iso),
+            datetime.fromisoformat(end_iso),
+            op_filter,
         )
 
     traces = _fetch_traces(
@@ -718,6 +719,7 @@ with main_tabs[0]:
         start_datetime.isoformat(),
         end_datetime.isoformat(),
         operation_filter if operation_filter else None,
+        st.session_state["current_tenant"],
     )
 
     if not traces:
