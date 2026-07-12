@@ -1259,8 +1259,6 @@ def _render_profile_selection_tab():
 
     # Query for profile performance data
     try:
-        from datetime import timedelta
-
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         # Get telemetry provider (reuse gate-validated tenant_id from above)
@@ -1272,10 +1270,13 @@ def _render_profile_selection_tab():
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(days=lookback_days)
 
-        # Get search spans using provider abstraction
+        # Get search spans using provider abstraction. project is required —
+        # without it get_spans() raises and the whole tab errors out.
         async def fetch_spans():
             return await provider.traces.get_spans(
-                start_time=start_time, end_time=end_time
+                project=f"cogniverse-{tenant_id}",
+                start_time=start_time,
+                end_time=end_time,
             )
 
         spans_df = run_async_in_streamlit(fetch_spans())
@@ -1609,8 +1610,6 @@ def _render_metrics_dashboard_tab():
 
     # Query Phoenix for optimization metrics
     try:
-        from datetime import timedelta
-
         from cogniverse_evaluation.evaluators.routing_evaluator import (
             RoutingEvaluator,
         )
