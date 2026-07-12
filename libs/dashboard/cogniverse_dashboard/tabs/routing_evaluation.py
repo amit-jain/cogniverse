@@ -41,6 +41,16 @@ logger = logging.getLogger(__name__)
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 
 
+def _span_success(span_row) -> bool:
+    """A routing span counts as a failure only when Phoenix marks it ERROR.
+
+    Phoenix reports status_code as OK / UNSET / ERROR (there is no ``status``
+    column); healthy routing spans that never call set_status come back UNSET,
+    so anything that is not ERROR is treated as success.
+    """
+    return str(span_row.get("status_code", "OK")).upper() != "ERROR"
+
+
 def render_routing_evaluation_tab():
     """Render the routing evaluation tab with metrics and visualizations"""
     st.subheader("🎯 Routing Evaluation Dashboard")
@@ -253,7 +263,7 @@ def _render_confidence_analysis(routing_spans):
                     if confidence is not None:
                         confidences.append(float(confidence))
                         # Determine success from span status
-                        success = span_row.get("status") == "OK"
+                        success = _span_success(span_row)
                         successes.append(success)
             except Exception:
                 continue
@@ -351,7 +361,7 @@ def _render_temporal_analysis(routing_spans):
                     chosen_agent = routing_attrs.get("chosen_agent")
                     confidence = routing_attrs.get("confidence")
                     timestamp = span_row.get("start_time")
-                    success = span_row.get("status") == "OK"
+                    success = _span_success(span_row)
 
                     if chosen_agent and confidence is not None and timestamp:
                         temporal_data.append(
