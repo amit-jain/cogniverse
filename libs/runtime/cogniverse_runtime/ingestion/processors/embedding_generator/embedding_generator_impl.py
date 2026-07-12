@@ -7,6 +7,7 @@ all video processing profiles through a single generic method.
 """
 
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,14 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         self.processor = None
         self.videoprism_loader = None
         self.colbert_model = None
+
+        # Per-thread cv2 capture cache: concurrent video threads share this
+        # instance, so a global capture attribute was released mid-read by a
+        # peer thread opening a different file. Thread-local storage gives each
+        # worker its own handle. The lock guards the lazy model load so two
+        # threads don't load weights concurrently.
+        self._tls = threading.local()
+        self._model_load_lock = threading.Lock()
 
         # Load model if needed
         if self._should_load_model():
@@ -877,7 +886,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             segment = segments[i]
             if "frame_path" in segment:
                 if not self.model:
-                    self._load_model()
+                    with self._model_load_lock:
+                        if not self.model:
+                            self._load_model()
                 if isinstance(self.processor, RemoteInferenceClient):
                     batch = []
                     while (
@@ -917,7 +928,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
     def _generate_frame_embeddings(self, frame_path: Path) -> np.ndarray | None:
         """Generate embeddings for a single frame."""
         if not self.model:
-            self._load_model()
+            with self._model_load_lock:
+                if not self.model:
+                    self._load_model()
 
         try:
             if not self.model or not self.processor:
@@ -1116,22 +1129,22 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         table setup N times per ingest. Released by ``generate_embeddings``."""
         import cv2
 
-        cached = getattr(self, "_segment_capture", None)
+        cached = getattr(self._tls, "segment_capture", None)
         if cached is not None and cached[0] == str(video_path) and cached[1].isOpened():
             return cached[1]
         self._release_video_capture()
         cap = cv2.VideoCapture(str(video_path))
-        self._segment_capture = (str(video_path), cap)
+        self._tls.segment_capture = (str(video_path), cap)
         return cap
 
     def _release_video_capture(self) -> None:
-        cached = getattr(self, "_segment_capture", None)
+        cached = getattr(self._tls, "segment_capture", None)
         if cached is not None:
             try:
                 cached[1].release()
             except Exception:
                 pass
-        self._segment_capture = None
+        self._tls.segment_capture = None
 
     def _generate_time_segment_embeddings(
         self, video_path: Path, start_time: float, end_time: float

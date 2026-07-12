@@ -1868,3 +1868,67 @@ class TestRemoteFrameBatching:
         for _, _, emb in results:
             assert isinstance(emb, np.ndarray)
             assert emb.shape == (4, 16)
+
+
+def _write_short_mp4(path, n_frames: int = 30, size: int = 64) -> None:
+    import cv2
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(path), fourcc, 30.0, (size, size))
+    try:
+        for _ in range(n_frames):
+            writer.write(np.zeros((size, size, 3), dtype=np.uint8))
+    finally:
+        writer.release()
+
+
+@pytest.mark.unit
+class TestThreadLocalCapture:
+    """The cv2 capture cache must be per-thread so a concurrent video thread
+    opening a different file cannot release another thread's live handle."""
+
+    def test_capture_survives_peer_thread_opening_other_video(self, tmp_path):
+        import threading
+
+        p1 = tmp_path / "v1.mp4"
+        p2 = tmp_path / "v2.mp4"
+        _write_short_mp4(p1)
+        _write_short_mp4(p2)
+
+        gen = EmbeddingGeneratorImpl(
+            {
+                "schema_name": "s",
+                "embedding_model": "m",
+                "model_loader": "colqwen",  # lazy: no model load at init
+            },
+            Mock(),
+        )
+
+        holder = {}
+        a_opened = threading.Event()
+        b_done = threading.Event()
+
+        def thread_a():
+            holder["cap_a"] = gen._get_video_capture(p1)
+            a_opened.set()
+            assert b_done.wait(timeout=5)
+            holder["cap_a2"] = gen._get_video_capture(p1)
+
+        t = threading.Thread(target=thread_a)
+        t.start()
+        assert a_opened.wait(timeout=5)
+
+        # Main thread opens a DIFFERENT video. On the old shared-attribute code
+        # this released thread A's capture; with thread-local storage it does not.
+        gen._get_video_capture(p2)
+        b_done.set()
+        t.join(timeout=5)
+
+        cap_a = holder["cap_a"]
+        try:
+            assert cap_a.isOpened() is True
+            # A's cached handle is intact and re-returned (still its own thread's).
+            assert holder["cap_a2"] is cap_a
+        finally:
+            cap_a.release()
+            gen._release_video_capture()

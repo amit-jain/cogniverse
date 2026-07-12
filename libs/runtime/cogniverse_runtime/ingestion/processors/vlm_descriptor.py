@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -311,45 +312,69 @@ class VLMDescriptor:
         self._openai_model = data[0]["id"]
         return self._openai_model
 
+    def _describe_one_openai(
+        self, keyframe: dict, model: str, chat_url: str
+    ) -> tuple[str, str] | None:
+        """Describe one keyframe; return (frame_ref, description) or None when
+        the frame file is missing."""
+        frame_path = Path(keyframe["path"])
+        if not frame_path.exists():
+            return None
+        frame_ref = keyframe.get("frame_id")
+        if frame_ref is None:
+            frame_ref = keyframe.get("frame_number")
+        if frame_ref is None:
+            frame_ref = frame_path.stem
+        suffix = frame_path.suffix.lower().lstrip(".") or "jpeg"
+        mime = "jpeg" if suffix == "jpg" else suffix
+        with open(frame_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": _VLM_DESCRIBE_PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/{mime};base64,{b64}"},
+                        },
+                    ],
+                }
+            ],
+            "max_tokens": 256,
+            "temperature": 0.2,
+        }
+        resp = requests.post(chat_url, json=payload, timeout=self.timeout)
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        return str(frame_ref), (content or "").strip()
+
     def _process_vlm_batch_openai(self, keyframes: list[dict]) -> dict[str, str]:
-        """Describe each keyframe via an OpenAI-compatible vision chat model."""
+        """Describe each keyframe via an OpenAI-compatible vision chat model.
+
+        Frames are described concurrently (up to 8 in flight) so vLLM's
+        continuous batching is fed; a strictly-sequential loop starved it.
+        """
         model = self._resolve_openai_model()
         chat_url = f"{self._openai_base()}/chat/completions"
         descriptions: dict[str, str] = {}
-        for keyframe in keyframes:
-            frame_path = Path(keyframe["path"])
-            if not frame_path.exists():
-                continue
-            frame_ref = keyframe.get("frame_id")
-            if frame_ref is None:
-                frame_ref = keyframe.get("frame_number")
-            if frame_ref is None:
-                frame_ref = frame_path.stem
-            suffix = frame_path.suffix.lower().lstrip(".") or "jpeg"
-            mime = "jpeg" if suffix == "jpg" else suffix
-            with open(frame_path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode("utf-8")
-            payload = {
-                "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": _VLM_DESCRIBE_PROMPT},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/{mime};base64,{b64}"},
-                            },
-                        ],
-                    }
-                ],
-                "max_tokens": 256,
-                "temperature": 0.2,
-            }
-            resp = requests.post(chat_url, json=payload, timeout=self.timeout)
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            descriptions[str(frame_ref)] = (content or "").strip()
+        if len(keyframes) <= 1:
+            results = [
+                self._describe_one_openai(kf, model, chat_url) for kf in keyframes
+            ]
+        else:
+            with ThreadPoolExecutor(max_workers=min(8, len(keyframes))) as pool:
+                results = list(
+                    pool.map(
+                        lambda kf: self._describe_one_openai(kf, model, chat_url),
+                        keyframes,
+                    )
+                )
+        for r in results:
+            if r is not None:
+                descriptions[r[0]] = r[1]
         self.logger.info(
             f"VLM (vision chat) described {len(descriptions)}/{len(keyframes)} frames"
         )

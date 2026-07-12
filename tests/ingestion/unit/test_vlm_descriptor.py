@@ -5,6 +5,11 @@ Unit tests for VLMDescriptor.
 Tests VLM description generation functionality with proper mocking.
 """
 
+import base64
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
@@ -1011,3 +1016,94 @@ class TestVLMEndpointContract:
 
         assert isinstance(result, str)
         assert "503" in result
+
+
+class _VLMServer(ThreadingHTTPServer):
+    """Real vLLM /v1 stand-in that records peak in-flight concurrency."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.lock = threading.Lock()
+        self.current = 0
+        self.max_concurrency = 0
+        self.chat_request_count = 0
+        self.models_request_count = 0
+
+
+class _VLMHandler(BaseHTTPRequestHandler):
+    def log_message(self, *a):  # silence access logs
+        pass
+
+    def _json(self, obj):
+        data = json.dumps(obj).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.endswith("/models"):
+            with self.server.lock:
+                self.server.models_request_count += 1
+            self._json({"data": [{"id": "test-vlm"}]})
+        else:
+            self.send_error(404)
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        payload = json.loads(self.rfile.read(length))
+        with self.server.lock:
+            self.server.chat_request_count += 1
+            self.server.current += 1
+            self.server.max_concurrency = max(
+                self.server.max_concurrency, self.server.current
+            )
+        try:
+            parts = payload["messages"][0]["content"]
+            url = next(p["image_url"]["url"] for p in parts if p["type"] == "image_url")
+            text = base64.b64decode(url.split("base64,", 1)[1]).decode("utf-8")
+            time.sleep(0.3)  # keep every request in flight long enough to overlap
+            self._json({"choices": [{"message": {"content": f"desc for {text}"}}]})
+        finally:
+            with self.server.lock:
+                self.server.current -= 1
+
+
+@pytest.mark.unit
+class TestVLMOpenAIConcurrency:
+    """The OpenAI /v1 description path must fan frames out concurrently so
+    vLLM continuous batching is fed, not one blocking POST at a time."""
+
+    def test_frames_described_concurrently(self, tmp_path):
+        server = _VLMServer(("127.0.0.1", 0), _VLMHandler)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            keyframes = []
+            for i in range(8):
+                p = tmp_path / f"f{i}.jpg"
+                p.write_bytes(f"f{i}".encode())  # file content == its frame ref
+                keyframes.append({"frame_id": f"f{i}", "path": str(p)})
+
+            descriptor = VLMDescriptor(
+                vlm_endpoint=f"http://127.0.0.1:{port}/v1",
+                batch_size=500,
+                timeout=30,
+                auto_start=False,
+            )
+            start = time.monotonic()
+            result = descriptor._process_vlm_batch_openai(keyframes)
+            elapsed = time.monotonic() - start
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        # All 8 POSTs in flight simultaneously under the 8-worker pool.
+        assert server.max_concurrency == 8
+        assert set(result.keys()) == {f"f{i}" for i in range(8)}
+        assert result["f3"] == "desc for f3"
+        assert server.chat_request_count == 8
+        assert server.models_request_count >= 1
+        # 8 x 0.3s serial would be ~2.4s; concurrent is ~0.3s.
+        assert elapsed < 1.0
