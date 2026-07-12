@@ -260,11 +260,20 @@ class BackendVectorStore(VectorStoreBase):
             result = self.backend.ingest_documents(
                 documents, schema_name=base_schema_name
             )
-            logger.debug(f"Ingestion result: {result}")
-            return ids
         except Exception as e:
             logger.error(f"Failed to insert documents: {e}")
             raise
+        logger.debug(f"Ingestion result: {result}")
+        success_count = result.get("success_count", 0)
+        if success_count < len(documents):
+            # The backend returns per-document feed failures without raising;
+            # reporting a dropped write as a stored memory is data loss.
+            raise RuntimeError(
+                f"Mem0 insert into {base_schema_name} persisted only "
+                f"{success_count}/{len(documents)} memories; "
+                f"failed_documents={result.get('failed_documents', [])}"
+            )
+        return ids
 
     def search(
         self,
@@ -525,9 +534,7 @@ class BackendVectorStore(VectorStoreBase):
             for result in results:
                 created_at = result.get("created_at")
                 if isinstance(created_at, (int, float)):
-                    from datetime import datetime
-
-                    created_at = datetime.fromtimestamp(created_at).isoformat()
+                    created_at = epoch_to_iso_utc(created_at)
 
                 mem0_results.append(
                     BackendSearchResult(
