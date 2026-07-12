@@ -331,17 +331,21 @@ class MessagingGateway:
                 + "."
             )
         elif subcmd == "clear":
-            agent_name = parsed.query.strip() or None
+            category = parsed.query.strip() or None
             result = await self.runtime_client.clear_memories(
-                tenant_id=tenant_id, agent_name=agent_name
+                tenant_id=tenant_id, category=category
             )
             if result.get("status") == "error":
                 await update.message.reply_text(
                     f"Clear failed: {result.get('message', '')}"
                 )
+            elif category:
+                deleted = result.get("deleted", 0)
+                await update.message.reply_text(
+                    f"Cleared {deleted} '{category}' memories."
+                )
             else:
-                suffix = f" for agent {agent_name}" if agent_name else ""
-                await update.message.reply_text(f"Cleared memories{suffix}.")
+                await update.message.reply_text("Cleared all user memories.")
         else:
             await update.message.reply_text(
                 "Unknown /memories subcommand. Try: list, clear."

@@ -208,13 +208,18 @@ class RuntimeClient:
         return self._json_or_error(resp)
 
     async def clear_memories(
-        self, tenant_id: str, agent_name: Optional[str] = None
+        self, tenant_id: str, category: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Clear per-tenant memories (DELETE /admin/tenant/{tenant}/memories)."""
+        """Clear per-tenant memories (DELETE /admin/tenant/{tenant}/memories).
+
+        ``category`` scopes the delete to one category; omitting it clears ALL
+        user memories. The route only understands ``category`` — a dropped
+        ``agent_name`` param silently fell through to the clear-everything path.
+        """
         client = await self._get_client()
         params: Dict[str, Any] = {}
-        if agent_name:
-            params["agent_name"] = agent_name
+        if category:
+            params["category"] = category
         resp = await client.delete(f"/admin/tenant/{tenant_id}/memories", params=params)
         return self._json_or_error(resp)
 

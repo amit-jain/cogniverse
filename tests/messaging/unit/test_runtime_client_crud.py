@@ -192,17 +192,17 @@ class TestMemoriesCRUD:
         assert call[1]["params"]["agent_name"] == "search_agent"
 
     @pytest.mark.asyncio
-    async def test_clear_memories_with_agent_filter(self, client_with_mock_http):
+    async def test_clear_memories_with_category_filter(self, client_with_mock_http):
         rc, http = client_with_mock_http
         http.delete = AsyncMock(
             return_value=_make_response(json_body={"status": "cleared"})
         )
 
-        await rc.clear_memories(tenant_id="acme", agent_name="search_agent")
+        await rc.clear_memories(tenant_id="acme", category="alpha")
 
         call = http.delete.call_args
         assert call[0][0] == "/admin/tenant/acme/memories"
-        assert call[1]["params"]["agent_name"] == "search_agent"
+        assert call[1]["params"]["category"] == "alpha"
 
 
 @pytest.mark.unit

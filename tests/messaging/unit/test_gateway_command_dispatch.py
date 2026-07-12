@@ -214,7 +214,7 @@ class TestMemoriesDispatch:
         await g._handle_memories_command(mock_update, parsed, "acme")
 
         client.clear_memories.assert_awaited_once_with(
-            tenant_id="acme", agent_name="strategies"
+            tenant_id="acme", category="strategies"
         )
 
 

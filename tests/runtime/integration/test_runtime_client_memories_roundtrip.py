@@ -106,3 +106,58 @@ class TestRuntimeClientMemoriesRoundTrip:
             assert mem_id not in ids_after, f"{mem_id} still present after clear"
         finally:
             mm.delete_memory(mem_id, tenant_id=TENANT_ID, agent_name=USER_MEMORY_AGENT)
+
+    @pytest.mark.asyncio
+    async def test_clear_by_category_preserves_other_categories(self, memories_client):
+        """Clearing one category must not wipe the whole namespace. The client
+        used to send ``agent_name`` (which the route drops), so any argument
+        fell through to the clear-everything path."""
+        rc, mm = memories_client
+        await rc.clear_memories(tenant_id=TENANT_ID)
+
+        mem_id = mm.add_memory(
+            content="User prefers concise answers.",
+            tenant_id=TENANT_ID,
+            agent_name=USER_MEMORY_AGENT,
+            metadata={"category": "alpha"},
+            infer=False,
+        )
+        assert mem_id, "seed add_memory returned no id"
+
+        try:
+            listed = await _retry(
+                lambda: rc.list_memories(tenant_id=TENANT_ID),
+                lambda r: (
+                    r.get("status") != "error"
+                    and any(m["id"] == mem_id for m in r.get("memories", []))
+                ),
+            )
+            assert any(m["id"] == mem_id for m in listed.get("memories", [])), listed
+
+            # Clear a DIFFERENT category: the 'alpha' memory must survive.
+            cleared = await rc.clear_memories(tenant_id=TENANT_ID, category="beta")
+            assert cleared.get("status") == "cleared", cleared
+            assert cleared.get("deleted") == 0, cleared
+
+            still = await rc.list_memories(tenant_id=TENANT_ID)
+            assert any(m["id"] == mem_id for m in still.get("memories", [])), (
+                "clearing category 'beta' wrongly deleted the 'alpha' memory"
+            )
+
+            # Clearing with no category removes it.
+            await rc.clear_memories(tenant_id=TENANT_ID)
+            gone = await _retry(
+                lambda: rc.list_memories(tenant_id=TENANT_ID),
+                lambda r: (
+                    r.get("status") != "error"
+                    and all(m["id"] != mem_id for m in r.get("memories", []))
+                ),
+            )
+            assert all(m["id"] != mem_id for m in gone.get("memories", []))
+        finally:
+            try:
+                mm.delete_memory(
+                    mem_id, tenant_id=TENANT_ID, agent_name=USER_MEMORY_AGENT
+                )
+            except Exception:
+                pass
