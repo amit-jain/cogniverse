@@ -96,6 +96,7 @@ class InMemoryEventQueue(BaseEventQueue):
 
         try:
             while not self._closed:
+                pending: List[TaskEvent] = []
                 async with self._condition:
                     # A subscriber that fell behind the retained window resumes
                     # at the oldest retained event rather than reading a shifted
@@ -104,34 +105,40 @@ class InMemoryEventQueue(BaseEventQueue):
                     if current_offset < self._dropped_count:
                         current_offset = self._dropped_count
                     while current_offset - self._dropped_count < len(self._events):
-                        event = self._events[current_offset - self._dropped_count]
-                        current_offset += 1
-                        yield event
-
-                    # If closed, stop
-                    if self._closed:
-                        break
-
-                    # Wait for new events or close
-                    try:
-                        await asyncio.wait_for(
-                            self._condition.wait(),
-                            timeout=1.0,  # Check for close periodically
+                        pending.append(
+                            self._events[current_offset - self._dropped_count]
                         )
-                    except asyncio.TimeoutError:
-                        # Just loop back to check conditions
-                        pass
+                        current_offset += 1
+
+                    # Nothing to deliver and still open: wait for a new event or
+                    # close. Never yield while holding the lock, or a stalled
+                    # subscriber would block every enqueue(). wait() releases the
+                    # lock while suspended, so waiting under it is safe.
+                    if not pending and not self._closed:
+                        try:
+                            await asyncio.wait_for(
+                                self._condition.wait(),
+                                timeout=1.0,  # Check for close periodically
+                            )
+                        except asyncio.TimeoutError:
+                            pass
+
+                # Yield outside the lock so a slow consumer cannot stall producers.
+                for event in pending:
+                    yield event
 
             # Drain any events buffered before close() was called.
             # Without this, events enqueued just before close() are lost
             # because the outer `while not self._closed` exits immediately.
+            pending = []
             async with self._condition:
                 if current_offset < self._dropped_count:
                     current_offset = self._dropped_count
                 while current_offset - self._dropped_count < len(self._events):
-                    event = self._events[current_offset - self._dropped_count]
+                    pending.append(self._events[current_offset - self._dropped_count])
                     current_offset += 1
-                    yield event
+            for event in pending:
+                yield event
 
         finally:
             self._subscriber_count -= 1
