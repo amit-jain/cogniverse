@@ -6,6 +6,7 @@ Ensures all schemas are tracked and can be redeployed together.
 """
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -60,6 +61,13 @@ class SchemaRegistry:
         # Check if schema already deployed
         exists = registry.schema_exists("test_tenant", "video_colpali_smol500_mv_frame")
     """
+
+    # Serializes deploy→register across every registry instance in the
+    # process. Vespa activation (deploy_schemas) makes a schema live seconds
+    # before it is recorded in the ConfigStore (register_schema); a concurrent
+    # deploy that observed the live-but-unregistered schema in that gap would
+    # treat it as an orphan. Holding this lock across both steps closes the gap.
+    _deploy_lock = threading.RLock()
 
     def __init__(
         self, config_manager, backend, schema_loader, strict_mode: bool = True
@@ -450,44 +458,48 @@ class SchemaRegistry:
             }
         )
 
-        # Deploy to backend first (atomic operation)
-        try:
-            success = self._backend.deploy_schemas(all_schemas)
-            if not success:
+        # Deploy to Vespa and record in the ConfigStore as one atomic step:
+        # a concurrent deploy must not observe this schema live-but-unregistered
+        # (see _deploy_lock).
+        with SchemaRegistry._deploy_lock:
+            # Deploy to backend first (atomic operation)
+            try:
+                success = self._backend.deploy_schemas(all_schemas)
+                if not success:
+                    raise BackendDeploymentError(
+                        f"Backend failed to deploy schema '{tenant_schema_name}'"
+                    )
+            except Exception as e:
+                # Backend deployment failed - no rollback needed (nothing changed)
+                logger.error(f"Backend deployment failed: {e}")
                 raise BackendDeploymentError(
-                    f"Backend failed to deploy schema '{tenant_schema_name}'"
+                    f"Backend deployment failed for schema '{tenant_schema_name}': {e}"
                 )
-        except Exception as e:
-            # Backend deployment failed - no rollback needed (nothing changed)
-            logger.error(f"Backend deployment failed: {e}")
-            raise BackendDeploymentError(
-                f"Backend deployment failed for schema '{tenant_schema_name}': {e}"
-            )
 
-        # Then register in ConfigStore (critical section)
-        try:
-            logger.info(f"Registering schema {tenant_schema_name} in database")
-            self.register_schema(
-                tenant_id=tenant_id,
-                base_schema_name=base_schema_name,
-                full_schema_name=tenant_schema_name,
-                schema_definition=json.dumps(base_schema_json),
-                config=config,
-            )
-        except Exception as e:
-            # ConfigStore registration failed AFTER backend succeeded
-            # ROLLBACK: Re-deploy previous schemas to remove new one
-            logger.error(
-                f"ConfigStore registration failed: {e}. "
-                f"Rolling back backend deployment..."
-            )
-            self._rollback_deployment(previous_schemas, tenant_schema_name)
+            # Then register in ConfigStore (critical section)
+            try:
+                logger.info(f"Registering schema {tenant_schema_name} in database")
+                self.register_schema(
+                    tenant_id=tenant_id,
+                    base_schema_name=base_schema_name,
+                    full_schema_name=tenant_schema_name,
+                    schema_definition=json.dumps(base_schema_json),
+                    config=config,
+                )
+            except Exception as e:
+                # ConfigStore registration failed AFTER backend succeeded
+                # ROLLBACK: Re-deploy previous schemas to remove new one
+                logger.error(
+                    f"ConfigStore registration failed: {e}. "
+                    f"Rolling back backend deployment..."
+                )
+                self._rollback_deployment(previous_schemas, tenant_schema_name)
 
-            # Raise with clear error type
-            raise RegistryStorageError(
-                f"Failed to register schema '{tenant_schema_name}' in ConfigStore: {e}. "
-                f"Backend deployment has been rolled back."
-            )
+                # Raise with clear error type
+                raise RegistryStorageError(
+                    f"Failed to register schema '{tenant_schema_name}' in ConfigStore: {e}. "
+                    f"Backend deployment has been rolled back."
+                )
 
         logger.info(
             f"Successfully deployed and registered schema '{tenant_schema_name}' "
