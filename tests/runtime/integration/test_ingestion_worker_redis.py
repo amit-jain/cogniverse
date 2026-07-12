@@ -230,10 +230,36 @@ class TestQueue:
                 redis, f"i_{i}", f"s3://b/{i}", "video", "acme", f"sha_{i}"
             )
         assert await queue.queue_depth(redis) == 3
-        # XLEN tracks the stream length, not the unconsumed count, so
-        # consumed-but-unacked entries stay counted. After XACK they
-        # remain in the stream until trimmed by the producer (we don't
-        # auto-trim — operator runs XTRIM out of band on retention).
+        # XLEN counts every stream entry, including consumed-but-unacked ones;
+        # only ack() (XACK + XDEL) removes an entry. These 3 were never claimed
+        # or acked, so all 3 remain counted.
+
+    @pytest.mark.asyncio
+    async def test_ack_drains_stream_and_clears_backpressure(self, redis):
+        """Fully processing N jobs must drain the stream to 0 and leave the
+        cluster backpressure axis below its limit. The old ack() only XACKed,
+        so completed jobs lingered in XLEN and every submit past
+        queue_depth_limit lifetime jobs 429ed forever."""
+        from cogniverse_runtime.ingestion_worker import backpressure
+
+        await queue.ensure_consumer_group(redis, "g1")
+        n = 5
+        for i in range(n):
+            await queue.submit(
+                redis, f"i_{i}", f"s3://b/{i}", "video", "acme", f"sha_{i}"
+            )
+            jobs = await queue.claim(redis, "g1", "consumer_a", block_ms=500)
+            assert len(jobs) == 1
+            assert await queue.ack(redis, "g1", jobs[0].message_id) == 1
+
+        pending = await redis.xpending(queue.QUEUE_STREAM, "g1")
+        assert pending["pending"] == 0  # proves the acks really happened
+        assert await queue.queue_depth(redis) == 0
+
+        rejection = await backpressure.check(
+            redis, "acme", queue_depth_limit=n, per_tenant_concurrency=100
+        )
+        assert rejection is None
 
 
 class TestActiveCounter:

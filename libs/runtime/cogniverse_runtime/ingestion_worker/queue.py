@@ -5,7 +5,8 @@ Producer-consumer split:
   claim()  — ingestor worker XREADGROUP with BLOCK, exclusive ownership
              until ack() or until the pending entry is reclaimed by
              another consumer (handled outside this module).
-  ack()    — worker on terminal state, XACKs the message id.
+  ack()    — worker on terminal state, XACKs then XDELs the message id
+             so completed jobs leave the stream (XLEN = live backlog).
 """
 
 from __future__ import annotations
@@ -117,9 +118,20 @@ async def claim(
 
 
 async def ack(redis: aioredis.Redis, group: str, message_id: str) -> int:
-    """XACK the message. Returns 1 if the message was pending, 0
-    otherwise (already acked or never delivered to this group)."""
-    return await redis.xack(QUEUE_STREAM, group, message_id)
+    """XACK then XDEL the message so a terminal job leaves the stream.
+
+    XACK alone only clears the PEL; the entry lingers in the stream and
+    XLEN (queue_depth, the cluster backpressure axis) keeps counting
+    completed jobs, so after queue_depth_limit lifetime submissions every
+    new submit 429s and Redis memory grows unbounded. XDEL removes the
+    entry, bounding both XLEN and memory to the live (unacked) backlog.
+
+    Returns 1 if the message was pending, 0 otherwise (already acked or
+    never delivered to this group).
+    """
+    acked = await redis.xack(QUEUE_STREAM, group, message_id)
+    await redis.xdel(QUEUE_STREAM, message_id)
+    return acked
 
 
 async def queue_depth(redis: aioredis.Redis) -> int:
