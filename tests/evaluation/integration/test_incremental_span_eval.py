@@ -220,3 +220,87 @@ async def test_get_recent_spans_keeps_non_search_agent_outputs(
         hours=1, operation_name=span_name, require_search_shape=True
     )
     assert dropped.empty
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_get_recent_spans_survives_name_crowding(search_evaluator_provider):
+    """A single target search span must not be crowded out of the limit slice
+    by higher-volume sibling spans. The old client-side name filter ran AFTER
+    the limit, so 15 newer noise spans pushed the target out of a limit=10
+    slice and live quality eval scored 0 samples for it.
+    """
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    tenant_id = f"crowd-eval-{uuid.uuid4().hex[:8]}"
+    project_name = f"cogniverse-{tenant_id}"
+    query = "find the crowded sunset clip"
+    manager = get_telemetry_manager()
+
+    # Target emitted FIRST (oldest) so the 15 newer noise spans fill the
+    # newest-10 slice and push the target out of it.
+    with manager.span(
+        name="search_service.search",
+        tenant_id=tenant_id,
+        attributes={
+            "input.value": query,
+            "output.value": json.dumps([{"video_id": "v_target", "score": 0.9}]),
+        },
+    ) as span:
+        assert span is not None
+    manager.force_flush(timeout_millis=10000)
+    await asyncio.sleep(0.2)
+
+    for i in range(15):
+        with manager.span(
+            name="search_child.embed",
+            tenant_id=tenant_id,
+            attributes={"input.value": f"noise {i}", "output.value": json.dumps([])},
+        ) as s:
+            assert s is not None
+    manager.force_flush(timeout_millis=10000)
+
+    provider = search_evaluator_provider
+    evaluator = SpanEvaluator(
+        tenant_id=tenant_id, provider=provider, project_name=project_name
+    )
+
+    # Precondition: once 15 noise spans are indexed, a limit=10 UNFILTERED slice
+    # excludes the (oldest) target — exactly what crowded it out before.
+    crowded = False
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(hours=1)
+        raw10 = await provider.telemetry.traces.get_spans(
+            project=project_name, start_time=start, end_time=end, limit=10
+        )
+        raw_all = await provider.telemetry.traces.get_spans(
+            project=project_name, start_time=start, end_time=end, limit=1000
+        )
+        if (
+            raw_all is not None
+            and not raw_all.empty
+            and "name" in raw_all.columns
+            and int((raw_all["name"] == "search_child.embed").sum()) >= 15
+            and int((raw_all["name"] == "search_service.search").sum()) >= 1
+        ):
+            names10 = (
+                set(raw10["name"])
+                if raw10 is not None and not raw10.empty and "name" in raw10.columns
+                else set()
+            )
+            if "search_service.search" not in names10:
+                crowded = True
+                break
+        await asyncio.sleep(2.0)
+    assert crowded, "precondition unmet: target not crowded out of the limit=10 slice"
+
+    # Server-side name predicate returns the target regardless of noise volume.
+    kept = await evaluator.get_recent_spans(
+        hours=1, operation_name="search_service.search", limit=10
+    )
+    assert len(kept) == 1
+    row = kept.iloc[0]
+    assert row["operation_name"] == "search_service.search"
+    assert row["attributes"]["query"] == query

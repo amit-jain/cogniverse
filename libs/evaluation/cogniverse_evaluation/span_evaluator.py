@@ -144,11 +144,14 @@ class SpanEvaluator:
             end_time = datetime.now(timezone.utc)
             start_time = end_time - timedelta(hours=hours)
 
-            # Get spans dataframe from telemetry provider
+            # Get spans dataframe from telemetry provider. Filter by name
+            # server-side so an agent's spans aren't crowded out of the limit
+            # slice by higher-volume sibling spans (which scored 0 samples).
             spans_df = await self.provider.telemetry.traces.get_spans(
                 project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
+                filters={"name": operation_name} if operation_name else None,
                 limit=limit,
             )
 
@@ -384,6 +387,7 @@ class SpanEvaluator:
                 project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
+                filters={"name": operation_name} if operation_name else None,
                 limit=limit,
             )
         except Exception as e:
