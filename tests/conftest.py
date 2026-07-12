@@ -65,6 +65,8 @@ def face_embed_container():
             "-d",
             "--name",
             name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
             "-p",
             f"{port}:8080",
             "-v",
@@ -461,6 +463,8 @@ def phoenix_container():
                 "-d",
                 "--name",
                 container_name,
+                "--label",
+                f"cogniverse-test-owner-pid={os.getpid()}",
                 "-p",
                 f"{http_port}:6006",  # HTTP port
                 "-p",
