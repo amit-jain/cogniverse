@@ -368,7 +368,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agents.set_sandbox_manager(sandbox_manager)
     logger.info("AgentRegistry and dependencies wired to agents router")
 
-    # 5b. Mount A2A protocol server (JSON-RPC 2.0)
+    # 6. Use config loader to dynamically load backends and agents
+    config_loader = get_config_loader()
+    config_loader.load_backends()
+    config_loader.load_agents(agent_registry=agent_registry)
+
+    logger.info(
+        f"Loaded {len(backend_registry.list_backends())} backends, "
+        f"{len(agent_registry.list_agents())} agents"
+    )
+
+    # 5b. Mount A2A protocol server (JSON-RPC 2.0). Built AFTER load_agents so
+    # the card advertises the real agents (search_agent, ...) instead of the
+    # 'default' fallback the empty registry produced when this ran first.
     from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
     from a2a.server.request_handlers import DefaultRequestHandler
     from a2a.server.tasks import InMemoryTaskStore
@@ -419,16 +431,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.mount("/a2a", a2a_server.build())
     logger.info(f"A2A server mounted at /a2a with {len(skills)} skills")
-
-    # 6. Use config loader to dynamically load backends and agents
-    config_loader = get_config_loader()
-    config_loader.load_backends()
-    config_loader.load_agents(agent_registry=agent_registry)
-
-    logger.info(
-        f"Loaded {len(backend_registry.list_backends())} backends, "
-        f"{len(agent_registry.list_agents())} agents"
-    )
 
     # 7. Create system backend and deploy metadata schemas
     from cogniverse_foundation.config.bootstrap import BootstrapConfig
