@@ -130,6 +130,10 @@ class TrainingMethodSelector:
             rejected_count = 0
             preference_pairs = 0
         else:
+            # Phoenix returns the annotations frame indexed by span_id
+            # (no span_id column); restore it as a column for the dedup below.
+            if "span_id" not in annotations_df.columns:
+                annotations_df = annotations_df.reset_index()
             # Count approved
             approved_mask = (annotations_df["result.label"] == "approved") | (
                 annotations_df["result.score"] >= 0.5

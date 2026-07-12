@@ -322,8 +322,13 @@ class TraceToInstructionConverter:
         """
         examples = []
 
-        # Get span IDs with approved annotations
-        approved_span_ids = set(annotations_df["span_id"].unique())
+        # Get span IDs with approved annotations. On the real Phoenix frame
+        # span_id is the index (no column); on the legacy/mocked frame it is a
+        # column. The index values equal the spans' context.span_id.
+        if "span_id" in annotations_df.columns:
+            approved_span_ids = set(annotations_df["span_id"].dropna().unique())
+        else:
+            approved_span_ids = {s for s in annotations_df.index.tolist() if s}
 
         # Create example for each approved span
         for _, span_row in spans_df.iterrows():
@@ -408,6 +413,18 @@ class TraceToInstructionConverter:
             if key in attributes and attributes[key]:
                 return str(attributes[key])
 
+        # Phoenix groups namespaced attributes into a nested dict column:
+        # input.query -> attributes.input == {"query": ...}. Read those too.
+        for ns_col, subkeys in (
+            ("attributes.input", ("query", "text", "request", "value")),
+            ("attributes.query", ("value",)),
+        ):
+            ns = attributes.get(ns_col)
+            if isinstance(ns, dict):
+                for sub in subkeys:
+                    if ns.get(sub):
+                        return str(ns[sub])
+
         return ""
 
     def _extract_output(self, attributes: Dict[str, Any], agent_type: str) -> str:
@@ -430,6 +447,23 @@ class TraceToInstructionConverter:
 
                     return json.dumps(value)
                 return str(value)
+
+        # Phoenix groups namespaced attributes into a nested dict column:
+        # output.response -> attributes.output == {"response": ...}.
+        for ns_col, subkeys in (
+            ("attributes.output", ("response", "result", "decision", "value")),
+            ("attributes.response", ("value",)),
+        ):
+            ns = attributes.get(ns_col)
+            if isinstance(ns, dict):
+                for sub in subkeys:
+                    if ns.get(sub):
+                        val = ns[sub]
+                        if isinstance(val, (dict, list)):
+                            import json
+
+                            return json.dumps(val)
+                        return str(val)
 
         return ""
 
