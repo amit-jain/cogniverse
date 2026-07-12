@@ -72,23 +72,17 @@ class PhoenixAnalytics:
         Returns:
             List of TraceMetrics objects
         """
-        # Build filter
-        filter_dict = {}
-        if start_time:
-            filter_dict["timestamp"] = {"$gte": start_time.isoformat()}
-        if end_time:
-            if "timestamp" not in filter_dict:
-                filter_dict["timestamp"] = {}
-            filter_dict["timestamp"]["$lte"] = end_time.isoformat()
-        if operation_filter:
-            filter_dict["name"] = operation_filter
-
         # Fetch spans using the new Phoenix API
         try:
             kwargs = {
                 "start_time": start_time,
                 "end_time": end_time,
                 "limit": limit,
+                # Only root spans surface as traces; filtering them server-side
+                # means ``limit`` bounds traces, not raw spans — otherwise a
+                # small limit returns only the newest (child) spans and the
+                # oldest root of each trace is dropped.
+                "root_spans_only": True,
                 # The method default is 5s; big windows need far more.
                 "timeout": 120,
             }

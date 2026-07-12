@@ -419,28 +419,32 @@ class PhoenixDatasetStore(DatasetStore):
 
             from phoenix.client import Client
 
-            sync_client = Client(base_url=self.http_endpoint)
-            try:
-                dataset = sync_client.datasets.create_dataset(
-                    name=name,
-                    dataframe=data,
-                    input_keys=input_keys if input_keys else (),
-                    output_keys=output_keys if output_keys else (),
-                    metadata_keys=metadata_keys if metadata_keys else (),
-                    dataset_description=description if description else None,
-                )
-            except Exception as create_err:
-                if "already exists" in str(create_err):
-                    # Dataset exists — append a new version
-                    dataset = sync_client.datasets.add_examples_to_dataset(
-                        dataset=name,
+            def _create() -> Any:
+                sync_client = Client(base_url=self.http_endpoint)
+                try:
+                    return sync_client.datasets.create_dataset(
+                        name=name,
                         dataframe=data,
                         input_keys=input_keys if input_keys else (),
                         output_keys=output_keys if output_keys else (),
                         metadata_keys=metadata_keys if metadata_keys else (),
+                        dataset_description=description if description else None,
                     )
-                else:
+                except Exception as create_err:
+                    if "already exists" in str(create_err):
+                        # Dataset exists — append a new version
+                        return sync_client.datasets.add_examples_to_dataset(
+                            dataset=name,
+                            dataframe=data,
+                            input_keys=input_keys if input_keys else (),
+                            output_keys=output_keys if output_keys else (),
+                            metadata_keys=metadata_keys if metadata_keys else (),
+                        )
                     raise
+
+            # Sync Phoenix HTTP off the event loop so a large upload doesn't
+            # stall the whole runtime (mirrors log_evaluations).
+            dataset = await asyncio.to_thread(_create)
 
             logger.info(
                 f"Created dataset '{name}' with {len(data)} records "
@@ -465,9 +469,11 @@ class PhoenixDatasetStore(DatasetStore):
         try:
             from phoenix.client import Client
 
-            sync_client = Client(base_url=self.http_endpoint)
-            dataset = sync_client.datasets.get_dataset(dataset=name)
-            df = dataset.to_dataframe()
+            def _get() -> pd.DataFrame:
+                sync_client = Client(base_url=self.http_endpoint)
+                return sync_client.datasets.get_dataset(dataset=name).to_dataframe()
+
+            df = await asyncio.to_thread(_get)
 
             logger.debug(f"Retrieved dataset '{name}' with {len(df)} records")
             return df
@@ -507,14 +513,17 @@ class PhoenixDatasetStore(DatasetStore):
         try:
             from phoenix.client import Client
 
-            sync_client = Client(base_url=self.http_endpoint)
-            sync_client.datasets.add_examples_to_dataset(
-                dataset=name,
-                dataframe=data,
-                input_keys=input_keys if input_keys else (),
-                output_keys=output_keys if output_keys else (),
-                metadata_keys=metadata_keys if metadata_keys else (),
-            )
+            def _append() -> None:
+                sync_client = Client(base_url=self.http_endpoint)
+                sync_client.datasets.add_examples_to_dataset(
+                    dataset=name,
+                    dataframe=data,
+                    input_keys=input_keys if input_keys else (),
+                    output_keys=output_keys if output_keys else (),
+                    metadata_keys=metadata_keys if metadata_keys else (),
+                )
+
+            await asyncio.to_thread(_append)
             logger.info(f"Appended {len(data)} records to dataset '{name}'")
         except Exception as e:
             if "not found" in str(e).lower() or "does not exist" in str(e).lower():
