@@ -127,9 +127,12 @@ def render_system_config_ui(manager, tenant_id: str):
 
     try:
         system_config = manager.get_system_config()
-    except Exception:
-        st.warning("No system config found. Create a new one below.")
-        system_config = SystemConfig()
+    except Exception as e:
+        st.error(
+            f"Configuration backend unavailable — cannot load system config: {e}. "
+            "Editing is disabled to avoid overwriting the live deployment config."
+        )
+        return
 
     with st.form("system_config_form"):
         st.markdown("### Agent Service URLs")
@@ -433,11 +436,12 @@ def render_routing_config_ui(manager, tenant_id: str):
 
     try:
         routing_config = manager.get_routing_config(tenant_id)
-    except Exception:
-        st.warning(
-            f"No routing config found for tenant '{tenant_id}'. Create a new one below."
+    except Exception as e:
+        st.error(
+            f"Configuration backend unavailable — cannot load routing config for "
+            f"'{tenant_id}': {e}. Editing is disabled."
         )
-        routing_config = RoutingConfigUnified(tenant_id=tenant_id)
+        return
 
     with st.form("routing_config_form"):
         st.markdown("### Routing Strategy")
@@ -519,11 +523,12 @@ def render_telemetry_config_ui(manager, tenant_id: str):
 
     try:
         telemetry_config = manager.get_telemetry_config(tenant_id)
-    except Exception:
-        st.warning(
-            f"No telemetry config found for tenant '{tenant_id}'. Create a new one below."
+    except Exception as e:
+        st.error(
+            f"Configuration backend unavailable — cannot load telemetry config for "
+            f"'{tenant_id}': {e}. Editing is disabled."
         )
-        telemetry_config = TelemetryConfig()
+        return
 
     with st.form("telemetry_config_form"):
         st.markdown("### OTLP Configuration")
