@@ -73,6 +73,82 @@ class TestVespaConfigStoreListAllConfigs:
                 config_key="rw_marker",
             )
 
+    def test_set_config_raises_on_version_query_failure_preserving_v1(
+        self, vespa_config_store
+    ):
+        """A Vespa query-API outage during set_config must NOT be flattened to
+        version 0 — that treats a live config as brand-new and rewrites its v1
+        row. Seed v1..v3, break the query API, assert the write raises and every
+        version is intact."""
+        store = vespa_config_store
+        tenant, service, key = "cs_verr_a", "verr_probe", "k1"
+
+        # Guarantee exact version counting even if a prior run aborted.
+        try:
+            store.delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service=service,
+                config_key=key,
+            )
+        except Exception:
+            pass
+
+        for i in (1, 2, 3):
+            store.set_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service=service,
+                config_key=key,
+                config_value={"seed": i},
+            )
+        try:
+            assert store.get_config(
+                tenant, ConfigScope.BACKEND, service, key, version=1
+            ).config_value == {"seed": 1}
+            assert (
+                store.get_config(tenant, ConfigScope.BACKEND, service, key).version == 3
+            )
+
+            # Inject a query-API outage during the write; the feed path and all
+            # verification reads stay on the real Vespa.
+            real_query = store.vespa_app.query
+
+            def boom(*args, **kwargs):
+                raise ConnectionError("simulated Vespa query outage")
+
+            store.vespa_app.query = boom
+            try:
+                with pytest.raises(ConnectionError):
+                    store.set_config(
+                        tenant_id=tenant,
+                        scope=ConfigScope.BACKEND,
+                        service=service,
+                        config_key=key,
+                        config_value={"clobber": True},
+                    )
+            finally:
+                store.vespa_app.query = real_query
+
+            # v1 untouched, latest unchanged, no spurious/rewritten row.
+            assert store.get_config(
+                tenant, ConfigScope.BACKEND, service, key, version=1
+            ).config_value == {"seed": 1}
+            latest = store.get_config(tenant, ConfigScope.BACKEND, service, key)
+            assert latest.version == 3
+            assert latest.config_value == {"seed": 3}
+            assert (
+                len(store.get_config_history(tenant, ConfigScope.BACKEND, service, key))
+                == 3
+            )
+        finally:
+            store.delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service=service,
+                config_key=key,
+            )
+
     def test_scope_filter_excludes_other_scopes(self, vespa_config_store):
         """``scope=`` arg is enforced server-side via the selection clause."""
         store = vespa_config_store

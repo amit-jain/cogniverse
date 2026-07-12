@@ -180,3 +180,33 @@ def test_export_embeddings_no_filters_selects_true(
         export_backend.export_embeddings(schema="video_frame", include_embeddings=False)
 
     assert calls[0]["params"]["selection"] == "true"
+
+
+@pytest.mark.parametrize(
+    "bad_key",
+    [
+        'foo contains "x") or true or (1',
+        "a b",
+        'a"b',
+        "a)b",
+        "1field",
+        "",
+    ],
+)
+def test_injection_filter_key_rejected(
+    backend: VespaSearchBackend, bad_key: str
+) -> None:
+    # Filter values are escaped, but the key is interpolated raw into the
+    # YQL where-clause; a key carrying YQL syntax must be rejected, not run.
+    with pytest.raises(ValueError, match="Invalid filter field name"):
+        backend._build_filter_conditions({bad_key: "y"})
+
+
+def test_legitimate_filter_keys_unchanged(backend: VespaSearchBackend) -> None:
+    assert backend._build_filter_conditions({"user_id": "alice"}) == (
+        'user_id contains "alice"'
+    )
+    # Dotted struct-field access stays valid.
+    assert backend._build_filter_conditions({"metadata.tag": "x"}) == (
+        'metadata.tag contains "x"'
+    )
