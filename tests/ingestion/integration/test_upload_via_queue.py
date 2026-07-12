@@ -960,3 +960,67 @@ class TestUploadRealStack:
         assert resp.status_code == 503
         body = resp.json()
         assert "MINIO_ENDPOINT" in body["detail"]["message"]
+
+
+async def _graph_stub_processor(job) -> dict:
+    """Injectable processor standing in for the real pipeline: it returns an
+    envelope with graph counts already stamped, exactly as the worker's
+    per-segment KG extraction does. Exercises worker._summarise -> terminal
+    event -> route wait=true response without needing the LLM/graph backend."""
+    return {
+        "video_id": "vgraph",
+        "documents_fed": 1,
+        "results": {"transcript": {"segments": [{"id": 0}]}},
+        "graph_nodes": 7,
+        "graph_edges": 3,
+    }
+
+
+@pytest_asyncio.fixture
+async def graph_stub_worker(real_stack):
+    from cogniverse_runtime.ingestion_worker.redis_client import get_redis
+    from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
+
+    stop = asyncio.Event()
+    config = WorkerConfig()
+    config.claim_block_ms = 200
+    redis = await get_redis(os.environ["REDIS_URL"])
+    task = asyncio.create_task(
+        _claim_loop(redis, config, stop, processor=_graph_stub_processor)
+    )
+    yield task
+    stop.set()
+    try:
+        await asyncio.wait_for(task, timeout=5)
+    except asyncio.TimeoutError:
+        task.cancel()
+
+
+@pytest.mark.integration
+class TestUploadGraphCounts:
+    """wait=true must surface the worker's real per-segment KG counts, not the
+    dead route re-extraction that always reported 0."""
+
+    @pytest.mark.asyncio
+    async def test_wait_true_surfaces_worker_graph_counts(
+        self, real_stack, graph_stub_worker, http_client
+    ):
+        content = b"graphcounts-" + os.urandom(12)  # unique -> distinct sha
+        files = {
+            "file": (f"g_{os.urandom(4).hex()}.mp4", io.BytesIO(content), "video/mp4")
+        }
+        data = {"profile": PROFILE, "backend": "vespa", "tenant_id": TENANT_ID}
+        resp = await http_client.post(
+            "/ingestion/upload",
+            params={"wait": "true", "wait_timeout": 60, "force": "true"},
+            files=files,
+            data=data,
+        )
+        assert resp.status_code == 200, f"{resp.status_code}: {resp.text[:500]}"
+        body = resp.json()
+        assert body["state"] == "complete", body
+        assert body["status"] == "success"
+        # The worker stamped these; the route surfaces them verbatim (old route
+        # re-extracted on a payload with no 'results' and always got 0).
+        assert body["graph_nodes"] == 7
+        assert body["graph_edges"] == 3
