@@ -6,6 +6,7 @@ and multi-turn conversation history plumbing via contextId.
 """
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -765,3 +766,73 @@ class TestGatewayContentRails:
             input_chain.check({"query": "summarize quantum computing research"})
         except RailBlockedError as exc:  # pragma: no cover
             pytest.fail(f"clean query wrongly blocked by {exc.rail_name}")
+
+
+class TestLiveDemoGuideA2AContract:
+    """The live-demo-guide curl payloads must satisfy the a2a-sdk request
+    models the runtime actually mounts. The old 'tasks/send' /
+    'tasks/sendSubscribe' methods (and 'type' parts without messageId) are
+    rejected by a2a-sdk 0.3.x."""
+
+    _DOC = Path(__file__).resolve().parents[3] / "docs" / "setup" / "live-demo-guide.md"
+
+    @staticmethod
+    def _extract_jsonrpc_payloads(doc_text: str) -> list[dict]:
+        import re
+
+        payloads = []
+        for block in re.findall(r"```bash\n(.*?)```", doc_text, re.DOTALL):
+            if "-d '" not in block:
+                continue
+            body = block.split("-d '", 1)[1].rsplit("'", 1)[0]
+            try:
+                obj = json.loads(body)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and "method" in obj:
+                payloads.append(obj)
+        return payloads
+
+    def test_curl_payloads_validate_against_a2a_models(self):
+        from a2a.types import (
+            CancelTaskRequest,
+            GetTaskRequest,
+            SendMessageRequest,
+            SendStreamingMessageRequest,
+        )
+
+        model_by_method = {
+            "message/send": SendMessageRequest,
+            "message/stream": SendStreamingMessageRequest,
+        }
+        supported = {
+            m.model_fields["method"].default
+            for m in (
+                SendMessageRequest,
+                SendStreamingMessageRequest,
+                GetTaskRequest,
+                CancelTaskRequest,
+            )
+        }
+
+        payloads = self._extract_jsonrpc_payloads(self._DOC.read_text())
+        methods = sorted(p["method"] for p in payloads)
+        assert methods == ["message/send", "message/send", "message/stream"]
+
+        for payload in payloads:
+            method = payload["method"]
+            assert method in supported, method
+            req = model_by_method[method].model_validate(payload)
+            assert req.method == method
+            assert isinstance(req.params.message.message_id, str)
+            assert req.params.message.message_id
+
+    def test_endpoint_table_row_uses_new_methods(self):
+        text = self._DOC.read_text()
+        row = next(
+            ln for ln in text.splitlines() if "| **A2A** |" in ln and "/a2a" in ln
+        )
+        assert "tasks/send" not in row
+        assert "tasks/sendSubscribe" not in row
+        assert "message/send" in row
+        assert "message/stream" in row

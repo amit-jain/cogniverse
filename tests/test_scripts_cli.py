@@ -618,3 +618,51 @@ class TestStartPhoenix:
 
         assert calls, "never reached the `docker run` launch (rm raised first?)"
         assert calls[0][0] == "docker" and "run" in calls[0]
+
+
+class TestSetupEvaluationScriptContract:
+    """setup_evaluation.sh's Step 6 command must satisfy the real argparse
+    contract of run_experiments_with_visualization.py and name a profile that
+    actually has a schema file — no argparse/filesystem mocking."""
+
+    def _shell_tokens(self):
+        import shlex
+
+        text = (_SCRIPTS / "setup_evaluation.sh").read_text()
+        line = next(
+            ln
+            for ln in text.splitlines()
+            if "run_experiments_with_visualization.py" in ln
+        )
+        after = line.split("run_experiments_with_visualization.py", 1)[1]
+        return shlex.split(after)
+
+    def _recognized_flags(self):
+        import re
+
+        out = subprocess.run(
+            [
+                sys.executable,
+                str(_SCRIPTS / "run_experiments_with_visualization.py"),
+                "--help",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return set(re.findall(r"--[a-z][a-z-]+", out.stdout))
+
+    def test_setup_script_matches_real_cli_contract(self):
+        tokens = self._shell_tokens()
+        shell_flags = {t for t in tokens if t.startswith("--")}
+        recognized = self._recognized_flags()
+
+        assert "--max-queries" not in shell_flags
+        assert shell_flags <= recognized, shell_flags - recognized
+        assert "--tenant-id" in shell_flags
+        assert "--strategies" in shell_flags
+        assert tokens[tokens.index("--strategies") + 1] == "binary_binary"
+
+        profile = tokens[tokens.index("--profiles") + 1]
+        assert profile == "video_colpali_smol500_mv_frame"
+        schema = _SCRIPTS.parent / "configs" / "schemas" / f"{profile}_schema.json"
+        assert schema.exists(), schema
