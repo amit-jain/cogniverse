@@ -100,6 +100,8 @@ _THIS_MODULES_TENANTS = frozenset(
         "bulk_noop",
         "del_orphan",
         "del_round_trip",
+        "deploy_orphan_a",
+        "deploy_orphan_b",
         "guard_empty",
         "guard_protected",
         "idempotent_test",
@@ -275,6 +277,63 @@ class TestSchemaRegistryDeployment:
             backend.schema_registry.deploy_schema(
                 "test_tenant_nonexistent", "nonexistent_schema_xyz"
             )
+
+    def test_deploy_refuses_to_drop_peer_orphan(self, get_backend):
+        """Deploying a new tenant's schema must not silently drop a peer
+        tenant's Vespa-only orphan and destroy its documents.
+
+        A peer schema that is live in Vespa but missing from the registry
+        (a peer mid-registration, or an interrupted cleanup) was force-removed
+        by the new tenant's deploy via ``allow_schema_removal=True`` — silent
+        cross-tenant data loss. The deploy must refuse instead; the peer's
+        schema and documents survive.
+        """
+        from cogniverse_core.registries.exceptions import BackendDeploymentError
+
+        backend = get_backend("deploy_orphan_a")
+        peer = "deploy_orphan_b"
+        b_full = "video_colpali_smol500_mv_frame_deploy_orphan_b_deploy_orphan_b"
+
+        # Peer B: deploy, then tombstone only the registry entry — leaving B
+        # live in Vespa but unregistered (the orphan state).
+        backend.schema_registry.deploy_schema(peer, "video_colpali_smol500_mv_frame")
+        peer_info = backend.schema_registry.get_tenant_schemas(peer)[0]
+        backend.schema_registry.unregister_schema(
+            peer, "video_colpali_smol500_mv_frame"
+        )
+
+        try:
+            assert b_full in backend.schema_manager.list_deployed_document_types(), (
+                "setup failure — peer orphan not live in Vespa"
+            )
+
+            # Deploying tenant A must refuse rather than force-drop the orphan.
+            with pytest.raises(BackendDeploymentError):
+                backend.schema_registry.deploy_schema(
+                    "deploy_orphan_a", "video_colpali_smol500_mv_frame"
+                )
+
+            # The peer orphan's schema — and therefore every document it holds
+            # — survives the refused deploy. Dropping the doc type is what
+            # destroys the data.
+            assert b_full in backend.schema_manager.list_deployed_document_types(), (
+                f"peer orphan {b_full!r} dropped by tenant A's deploy — "
+                f"cross-tenant data loss"
+            )
+        finally:
+            try:
+                backend.schema_registry.register_schema(
+                    tenant_id=peer,
+                    base_schema_name=peer_info.base_schema_name,
+                    full_schema_name=peer_info.full_schema_name,
+                    schema_definition=peer_info.schema_definition,
+                    config=peer_info.config,
+                )
+                backend.schema_manager.delete_tenant_schemas_bulk(
+                    ["deploy_orphan_a", peer]
+                )
+            except Exception as cleanup_exc:
+                logger.warning(f"deploy-orphan cleanup failed: {cleanup_exc}")
 
 
 @pytest.mark.integration

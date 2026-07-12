@@ -946,21 +946,19 @@ class VespaBackend(Backend):
                         unresolved.append(full_name)
 
                 if unresolved:
-                    # Unresolved survivors are Vespa schemas with no
-                    # registry entry. We can't carry them forward
-                    # (no definition to reconstruct from) and we can't
-                    # leave them (the next deploy would refuse for the
-                    # same reason). Force-drop them via
-                    # allow_schema_removal=True so the current intended
-                    # deploy can complete, instead of cluster-wide
-                    # deadlocking on a single stale orphan.
-                    logger.warning(
-                        "deploy: absorbing %d unresolved orphan schemas "
-                        "(no registry entry — cannot reconstruct): %s",
-                        len(unresolved),
-                        sorted(unresolved),
+                    # Live-in-Vespa but unregistered and not reconstructable.
+                    # Deploying a package without them tells Vespa to remove the
+                    # document types and destroy every document they hold — and
+                    # when the orphan is a peer tenant's schema mid-registration
+                    # that is silent cross-tenant data loss. Refuse: a transient
+                    # orphan clears on retry once the peer registers; a
+                    # persistent one is a registry inconsistency to resolve.
+                    raise RuntimeError(
+                        f"Refusing to deploy: {len(unresolved)} schema(s) live in "
+                        f"Vespa have no registry entry and cannot be reconstructed "
+                        f"({sorted(unresolved)}); proceeding would remove them and "
+                        f"destroy their documents."
                     )
-                    allow_schema_removal = True
 
             # Get application name from system config
             system_config = self._config_manager_instance.get_system_config()
