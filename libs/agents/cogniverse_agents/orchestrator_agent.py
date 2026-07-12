@@ -1009,9 +1009,10 @@ class OrchestratorAgent(
         # Lazy memory initialization for this tenant
         self._ensure_memory_for_tenant(tenant_id)
 
-        # Get relevant context from memory (cross-session)
+        # Get relevant context from memory (cross-session). Mem0 search is a
+        # synchronous LLM/vector round trip — run it off the event loop.
         self.emit_progress("memory_context", "Retrieving memory context...")
-        memory_context = self.get_relevant_context(query)
+        memory_context = await asyncio.to_thread(self.get_relevant_context, query)
         if memory_context:
             logger.info(f"Retrieved memory context for query: {query[:50]}...")
 
@@ -1108,7 +1109,8 @@ class OrchestratorAgent(
             }
             final_output["iterative_loop"] = iterative_loop
             execution_summary = self._generate_summary(plan, agent_results)
-            self.remember_success(query, execution_summary)
+            # remember_success runs Mem0's LLM fact-extraction add — offload it.
+            await asyncio.to_thread(self.remember_success, query, execution_summary)
 
             execution_time = time.monotonic() - start_time
 
