@@ -202,7 +202,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
         except Exception as e:
             logger.error(f"❌ Image search failed: {e}")
-            return []
+            raise
 
     async def find_similar_images(
         self,
@@ -238,7 +238,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
         except Exception as e:
             logger.error(f"❌ Similar image search failed: {e}")
-            return []
+            raise
 
     def _encode_image(self, image: Image.Image) -> np.ndarray:
         """
@@ -314,7 +314,10 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
         safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
         schema = f"image_colpali_mv_{safe_tenant}"
-        yql = f"select * from {schema} where {where_clause}"
+        if search_mode == "hybrid" and query_text:
+            yql = f"select * from {schema} where ({where_clause}) or userQuery()"
+        else:
+            yql = f"select * from {schema} where {where_clause}"
 
         rank_profile = (
             "float_float" if search_mode == "semantic" else "hybrid_float_bm25"
