@@ -574,3 +574,47 @@ class TestGenerateTabbedHtmlReport:
     )
     def test_format_metric_badge_thresholds(self, mod, mrr, expected):
         assert mod.format_metric_badge(mrr) == expected
+
+
+@pytest.mark.requires_docker
+class TestStartPhoenix:
+    def test_start_docker_does_not_raise_on_container_cleanup(
+        self, tmp_path, monkeypatch
+    ):
+        """_start_docker's `docker rm -f` must not raise — capture_output and
+        stderr=DEVNULL together are a ValueError. Only the downstream launch is
+        stubbed; the real `docker rm` call is exercised."""
+        mod = _load("start_phoenix")
+
+        calls = []
+        real_popen = mod.subprocess.Popen
+
+        class _FakeProc:
+            def __init__(self, cmd):
+                calls.append(cmd)
+
+            def wait(self, *a, **k):
+                return 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def _fake_popen(cmd, *a, **k):
+            # Fake only the `docker run` launch; the real `docker rm` (via
+            # subprocess.run, which uses Popen internally) stays real.
+            if list(cmd[:2]) == ["docker", "run"]:
+                return _FakeProc(cmd)
+            return real_popen(cmd, *a, **k)
+
+        monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
+
+        server = mod.PhoenixServer(data_dir=str(tmp_path), port=46006, use_docker=True)
+        # The real `docker rm -f phoenix-server` (line 90) runs here; the bug
+        # made it raise ValueError before ever reaching the launch step.
+        server._start_docker(background=False)
+
+        assert calls, "never reached the `docker run` launch (rm raised first?)"
+        assert calls[0][0] == "docker" and "run" in calls[0]

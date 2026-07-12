@@ -13,6 +13,7 @@ dependencies = [
     "cogniverse-sdk",
     "cogniverse-core",
     "cogniverse-synthetic",
+    "cogniverse-vespa",
 
     # Google Agent Development Kit for composing agent
     "google-adk==1.14.1",
@@ -46,6 +47,7 @@ torch-local = [
 cogniverse-sdk = { workspace = true }
 cogniverse-core = { workspace = true }
 cogniverse-synthetic = { workspace = true }
+cogniverse-vespa = { workspace = true }
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

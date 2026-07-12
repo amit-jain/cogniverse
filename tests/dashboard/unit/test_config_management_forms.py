@@ -61,3 +61,35 @@ def test_system_config_submit_calls_save_with_edit_kwargs(tmp_path: Path) -> Non
     # The form threads its fields through to save_system_config_edits.
     for key in ("video_agent_url", "search_backend", "llm_model", "environment"):
         assert key in edits
+
+
+def _routing_config_app(tmp_path: Path) -> AppTest:
+    script = textwrap.dedent(
+        """
+        import streamlit as st
+        import cogniverse_dashboard.tabs.config_management as cm
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        mgr = st.session_state.setdefault(
+            "_mgr", ConfigManager(store=InMemoryConfigStore())
+        )
+        cm.render_routing_config_ui(mgr, "acme:prod")
+        """
+    ).strip()
+    path = tmp_path / "app_routing_config.py"
+    path.write_text(script)
+    return AppTest.from_file(str(path), default_timeout=30)
+
+
+def test_routing_config_save_persists_with_tenant(tmp_path: Path) -> None:
+    at = _routing_config_app(tmp_path)
+    at.run()
+    at.button[0].click().run()
+
+    # Pre-fix: RoutingConfigUnified(...) is built without tenant_id (before the
+    # save try/except), so __post_init__ raises ValueError as an uncaught
+    # script exception.
+    assert not at.exception, [str(e) for e in at.exception]
+    saved = at.session_state["_mgr"].get_routing_config("acme:prod")
+    assert saved is not None and saved.tenant_id == "acme:prod"

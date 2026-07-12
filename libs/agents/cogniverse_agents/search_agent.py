@@ -2007,9 +2007,9 @@ async def lifespan(application):
             backend_port=bootstrap.backend_port,
         )
 
-        from cogniverse_core.schemas.schema_loader import SchemaLoader
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
-        schema_loader = SchemaLoader()
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
         search_agent = SearchAgent(deps=deps, schema_loader=schema_loader)
         logger.info("Generic search agent initialized (tenant-agnostic)")
