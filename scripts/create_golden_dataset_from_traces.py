@@ -161,20 +161,43 @@ class GoldenDatasetGenerator:
 
             logger.info(f"Retrieved {len(spans_df)} spans")
 
-            # Get evaluations
+            # Evaluation scores are stored as span annotations (the provider
+            # has no ``evaluations`` attribute — the old call AttributeError'd
+            # and was swallowed, so every run mined an empty dataset).
             try:
-                evaluations_df = await self.provider.evaluations.get_evaluations()
+                annotations_df = await self.provider.annotations.get_annotations(
+                    spans_df, project=phoenix_project
+                )
 
-                if evaluations_df is not None and not evaluations_df.empty:
-                    # Merge spans with evaluations
-                    merged_df = pd.merge(
-                        spans_df,
-                        evaluations_df,
-                        left_index=True,
-                        right_on="context.span_id",
-                        how="left",
+                if (
+                    annotations_df is not None
+                    and not annotations_df.empty
+                    and "result.score" in annotations_df.columns
+                ):
+                    # annotations_df is indexed by span_id; collapse multiple
+                    # annotations per span into one score column.
+                    scores = (
+                        annotations_df["result.score"]
+                        .groupby(level=0)
+                        .mean()
+                        .rename("score")
                     )
-                    logger.info(f"Found {len(evaluations_df)} evaluations")
+                    # spans_df may carry context.span_id as the index, a column,
+                    # or both (Phoenix returns both) — merge on whichever is
+                    # present, avoiding pandas' "both an index level and a
+                    # column label" ambiguity that a plain left_on triggers.
+                    if spans_df.index.name == "context.span_id":
+                        merged_df = spans_df.merge(
+                            scores, left_index=True, right_index=True, how="left"
+                        )
+                    else:
+                        merged_df = spans_df.merge(
+                            scores,
+                            left_on="context.span_id",
+                            right_index=True,
+                            how="left",
+                        )
+                    logger.info(f"Found {len(annotations_df)} annotations")
                     return merged_df
                 else:
                     logger.warning("No evaluations found")
