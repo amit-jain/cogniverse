@@ -272,7 +272,10 @@ async def upload_video(
 
     content = await _read_capped(file, MAX_UPLOAD_BYTES)
     try:
-        source_url = minio_client.upload_bytes(
+        # Sync boto3 put_object (up to 5 GiB) — run off the event loop so the
+        # whole MinIO transfer doesn't freeze the runtime.
+        source_url = await asyncio.to_thread(
+            minio_client.upload_bytes,
             content,
             tenant_id=upload_tenant_id,
             filename=file.filename,
