@@ -1028,6 +1028,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 )
 
                 if isinstance(self.processor, RemoteInferenceClient):
+                    n_frames = len(frames)
                     result = self.processor.process_images(
                         frames, model_name=self.model_name
                     )
@@ -1038,13 +1039,14 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                             "Remote inference returned empty chunk embeddings"
                         )
                         return None
-                    # Remote returns shape [N_frames, T, D]; collapse to a
-                    # chunk-level vector by mean-pooling over the frame dim,
-                    # matching the local path (which does
-                    # ``embeddings_np.mean(axis=0)``).
+                    # Remote returns shape [N_frames, T, D]; mean-pool over the
+                    # frame dim ONLY when there is more than one frame. For a
+                    # single frame the array is already (T, D) — mean-pooling it
+                    # would collapse the token dim to (D,), which the multi-vector
+                    # chunk schema rejects.
                     chunk_arr = (
                         embeddings_arr.mean(axis=0)
-                        if embeddings_arr.ndim >= 2
+                        if n_frames > 1 and embeddings_arr.ndim >= 2
                         else embeddings_arr
                     )
                     if chunk_arr.ndim == 2 and chunk_arr.shape[0] > 1:

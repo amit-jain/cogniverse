@@ -100,3 +100,40 @@ def test_remote_colpali_query_encoding_returns_multivector_embeddings(
         f"Tomoro serves 320-dim embeddings; got dim {embeddings.shape[1]}"
     )
     assert embeddings.shape[0] > 0, "must have at least one query token"
+
+
+def test_single_frame_chunk_preserves_multivector(remote_colpali_client, tmp_path):
+    """A single-frame remote chunk must keep its (T, D) multivector, not
+    mean-pool over the token dim to (D,) which the mv chunk schema rejects."""
+    import cv2
+
+    from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator_impl import (  # noqa: E501
+        EmbeddingGeneratorImpl,
+    )
+
+    mp4 = tmp_path / "single.mp4"
+    writer = cv2.VideoWriter(str(mp4), cv2.VideoWriter_fourcc(*"mp4v"), 1.0, (224, 224))
+    try:
+        writer.write(np.zeros((224, 224, 3), dtype=np.uint8))
+    finally:
+        writer.release()
+
+    gen = EmbeddingGeneratorImpl(
+        {
+            "model_loader": "colqwen",
+            "embedding_model": COLPALI_MODEL,
+            "schema_name": "video_colqwen",
+            "fps": 1.0,
+        },
+        logging.getLogger("test"),
+    )
+    gen.model = remote_colpali_client
+    gen.processor = remote_colpali_client
+
+    result = gen._generate_chunk_embeddings(mp4)
+
+    assert result is not None
+    assert result.ndim == 2, f"single-frame chunk collapsed to {result.shape}"
+    assert result.shape[1] == 320
+    assert result.shape[0] > 1
+    assert result.dtype == np.float32
