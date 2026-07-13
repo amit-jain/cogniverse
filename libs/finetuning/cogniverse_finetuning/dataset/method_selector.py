@@ -10,7 +10,7 @@ Integrates with existing infrastructure:
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 import pandas as pd
 
@@ -79,6 +79,7 @@ class TrainingMethodSelector:
         agent_type: Literal["routing", "profile_selection", "entity_extraction"],
         min_sft_examples: int = 50,
         min_dpo_pairs: int = 20,
+        approved_synthetic: Optional[List[Dict[str, Any]]] = None,
     ) -> DataAnalysis:
         """
         Analyze available training data.
@@ -89,6 +90,9 @@ class TrainingMethodSelector:
             agent_type: Type of agent to analyze
             min_sft_examples: Minimum examples needed for SFT
             min_dpo_pairs: Minimum pairs needed for DPO
+            approved_synthetic: Approved synthetic examples already available for
+                this agent (e.g. from a prior run's approval). They count toward
+                the SFT threshold so a resumed run can move off "insufficient".
 
         Returns:
             DataAnalysis with recommendation
@@ -100,16 +104,25 @@ class TrainingMethodSelector:
         # 1. Query spans from provider (using public properties)
         spans_df = await provider.traces.get_spans(project=project)
 
+        synthetic_count = len(approved_synthetic or [])
+
         if spans_df.empty:
             logger.warning(f"No spans found in project {project}")
+            # No real data, but approved synthetic may still clear the threshold.
+            method, conf = self._recommend_method(
+                approved_count=synthetic_count,
+                preference_pairs=0,
+                min_sft_examples=min_sft_examples,
+                min_dpo_pairs=min_dpo_pairs,
+            )
             return DataAnalysis(
                 total_spans=0,
-                approved_count=0,
+                approved_count=synthetic_count,
                 rejected_count=0,
                 preference_pairs=0,
-                needs_synthetic=True,
-                recommended_method="insufficient",
-                confidence=1.0,
+                needs_synthetic=method == "insufficient",
+                recommended_method=method,
+                confidence=conf,
             )
 
         # Filter for agent-specific spans
@@ -154,8 +167,12 @@ class TrainingMethodSelector:
             span_ids_with_both = approved_span_ids & rejected_span_ids
             preference_pairs = len(span_ids_with_both)
 
+        # Approved synthetic examples count toward the SFT threshold too.
+        approved_count += synthetic_count
+
         logger.info(
-            f"Data counts: approved={approved_count}, rejected={rejected_count}, "
+            f"Data counts: approved={approved_count} "
+            f"(+{synthetic_count} synthetic), rejected={rejected_count}, "
             f"preference_pairs={preference_pairs}"
         )
 
@@ -196,6 +213,7 @@ class TrainingMethodSelector:
         min_sft_examples: int = 50,
         min_dpo_pairs: int = 20,
         generate_synthetic: bool = True,
+        approved_synthetic: Optional[List[Dict[str, Any]]] = None,
     ) -> tuple[DataAnalysis, Optional[any]]:
         """
         Analyze data and optionally generate synthetic if needed.
@@ -207,6 +225,9 @@ class TrainingMethodSelector:
             min_sft_examples: Min examples for SFT
             min_dpo_pairs: Min pairs for DPO
             generate_synthetic: Whether to generate synthetic if needed
+            approved_synthetic: Approved synthetic examples from a prior run's
+                approval; counted toward the SFT threshold so this run can move
+                off "insufficient" without generating more.
 
         Returns:
             (DataAnalysis, ApprovedBatch or None)
@@ -214,9 +235,14 @@ class TrainingMethodSelector:
         Raises:
             ValueError: If synthetic needed but services not configured
         """
-        # 1. Analyze existing data
+        # 1. Analyze existing data (approved synthetic from a prior run counts).
         analysis = await self.analyze_data(
-            provider, project, agent_type, min_sft_examples, min_dpo_pairs
+            provider,
+            project,
+            agent_type,
+            min_sft_examples,
+            min_dpo_pairs,
+            approved_synthetic=approved_synthetic,
         )
 
         # 2. Generate synthetic if needed
