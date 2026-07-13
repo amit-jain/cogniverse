@@ -210,6 +210,24 @@ class DatasetStore(ABC):
         """
         pass
 
+    async def delete_dataset(self, name: str) -> bool:
+        """
+        Delete a dataset by name.
+
+        Used for last-write-wins blob storage: delete before create so the
+        dataset holds exactly one row instead of appending a full copy per
+        save. Not all backends support deletion.
+
+        Args:
+            name: Dataset name
+
+        Returns:
+            True if a dataset was deleted, False if none existed.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support delete_dataset"
+        )
+
 
 class TelemetryProvider(ABC):
     """
