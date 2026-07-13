@@ -107,6 +107,22 @@ class TripletExtractor:
 
         logger.info(f"Found {len(annotations_df)} annotations")
 
+        # Phoenix returns the annotations frame indexed by span_id, with the
+        # annotation name in an 'annotation_name' column. Normalize to the
+        # (span_id column, name column) shape the extraction below reads —
+        # otherwise every span lookup raised KeyError('span_id') and the
+        # extractor yielded zero triplets.
+        if annotations_df is not None and not annotations_df.empty:
+            if (
+                annotations_df.index.name == "span_id"
+                and "span_id" not in annotations_df.columns
+            ):
+                annotations_df = annotations_df.reset_index()
+            if "annotation_name" in annotations_df.columns:
+                annotations_df = annotations_df.rename(
+                    columns={"annotation_name": "name"}
+                )
+
         # 3. Extract triplets
         triplets = []
         for _, span in search_spans.iterrows():
@@ -273,6 +289,20 @@ class TripletExtractor:
             logger.warning(f"Failed to extract triplets from span: {e}")
             return []
 
+    @staticmethod
+    def _annotation_result_id(annotation: pd.Series) -> Optional[str]:
+        """The clicked result id rides on the annotation metadata (Phoenix's
+        ``result`` only carries label/score, never a result_id). Read the
+        flattened ``metadata.result_id`` column or the nested ``metadata`` dict.
+        """
+        val = annotation.get("metadata.result_id")
+        if val is not None and not (isinstance(val, float) and pd.isna(val)):
+            return str(val)
+        meta = annotation.get("metadata")
+        if isinstance(meta, dict) and meta.get("result_id"):
+            return str(meta["result_id"])
+        return None
+
     def _get_clicked_results(self, annotations: pd.DataFrame) -> Set[str]:
         """Extract clicked/relevant result IDs from annotations."""
         clicked = set()
@@ -283,7 +313,7 @@ class TripletExtractor:
 
             if ann_name == "result_click":
                 # Direct click annotation
-                result_id = annotation.get("result.result_id")
+                result_id = self._annotation_result_id(annotation)
                 if result_id:
                     clicked.add(result_id)
 
@@ -291,7 +321,7 @@ class TripletExtractor:
                 # Relevance score annotation
                 score = annotation.get("result.score", 0.0)
                 if score >= 0.7:  # High relevance threshold
-                    result_id = annotation.get("result.result_id")
+                    result_id = self._annotation_result_id(annotation)
                     if result_id:
                         clicked.add(result_id)
 
