@@ -9,6 +9,7 @@ Measures improvement on held-out test set:
 - Latency overhead
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -16,7 +17,7 @@ import random
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Literal
+from typing import Dict, List, Literal, Optional, Set
 
 import torch
 from peft import PeftModel
@@ -26,6 +27,19 @@ from cogniverse_foundation.confidence import parse_confidence
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
+
+
+def example_identity(instruction: str, input: str, output: str) -> str:
+    """Stable content hash identifying a training / eval example.
+
+    The evaluator excludes the examples the adapter was trained on by
+    matching this identity, so a test example is never one the model has
+    already seen. Both the trainer (via the orchestrator) and the
+    evaluator derive it from the same instruction/input/output triple, so
+    the exclusion is exact regardless of ordering or sampling.
+    """
+    payload = f"{instruction}\x00{input}\x00{output}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _two_proportion_p_value(p1: float, n1: int, p2: float, n2: int) -> float:
@@ -118,6 +132,7 @@ class AdapterEvaluator:
         adapter_path: str,
         project: str,
         test_size: int = 50,
+        exclude_identities: Optional[Set[str]] = None,
     ) -> ComparisonResult:
         """
         Evaluate adapter vs base model.
@@ -127,18 +142,26 @@ class AdapterEvaluator:
             adapter_path: Path to trained adapter
             project: Project name for test set
             test_size: Number of test examples
+            exclude_identities: ``example_identity`` hashes of the examples the
+                adapter was trained on. Any test example matching one is
+                dropped, so metrics are measured on genuinely held-out data
+                instead of the training set. Omitting this reports numbers
+                inflated by memorisation.
 
         Returns:
             ComparisonResult with metrics and improvements
         """
         logger.info(f"Evaluating adapter: {adapter_path}")
 
-        # 1. Create test set from telemetry (held-out data)
-        test_set = await self._create_test_set(project, test_size)
+        # 1. Create test set from telemetry, excluding trained examples.
+        test_set = await self._create_test_set(project, test_size, exclude_identities)
         logger.info(f"Created test set: {len(test_set)} examples")
 
         if len(test_set) == 0:
-            raise ValueError("No test examples available. Cannot evaluate adapter.")
+            raise ValueError(
+                "No held-out test examples available (every candidate was in "
+                "the training set). Cannot evaluate adapter."
+            )
 
         # 2. Load base model
         logger.info(f"Loading base model: {base_model}")
@@ -165,18 +188,29 @@ class AdapterEvaluator:
 
         return comparison
 
-    async def _create_test_set(self, project: str, test_size: int) -> List[Dict]:
+    async def _create_test_set(
+        self,
+        project: str,
+        test_size: int,
+        exclude_identities: Optional[Set[str]] = None,
+    ) -> List[Dict]:
         """
-        Create test set from telemetry data.
+        Create a held-out test set from telemetry data.
 
-        Uses recent data NOT used in training (time-based split).
+        Candidates are pulled from the recent window, then any example whose
+        ``example_identity`` is in ``exclude_identities`` (the set the adapter
+        was trained on) is dropped. The exclusion — not the time window — is
+        what guarantees the test set is disjoint from training; the window
+        only bounds how far back to look. Returns ``[]`` when nothing survives
+        the exclusion, so the caller reports "no held-out data" rather than
+        metrics inflated by evaluating on the training set.
         """
         from cogniverse_finetuning.dataset.trace_converter import (
             TraceToInstructionConverter,
         )
 
-        # Time-based split: test set uses last 7 days of data,
-        # assuming training used older data before this window
+        exclude = exclude_identities or set()
+
         now = datetime.now(tz=timezone.utc)
         test_start_time = now - timedelta(days=7)
 
@@ -190,13 +224,16 @@ class AdapterEvaluator:
             end_time=now,
         )
 
-        if not dataset.examples:
+        held_out = [
+            ex
+            for ex in dataset.examples
+            if example_identity(ex.instruction, ex.input, ex.output) not in exclude
+        ]
+        if not held_out:
             return []
 
         # Take random sample
-        examples = random.sample(
-            dataset.examples, min(test_size, len(dataset.examples))
-        )
+        examples = random.sample(held_out, min(test_size, len(held_out)))
 
         # Format as test examples
         test_set = []

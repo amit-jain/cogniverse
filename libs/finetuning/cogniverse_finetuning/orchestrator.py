@@ -29,7 +29,10 @@ from cogniverse_finetuning.dataset.trace_converter import (
     TraceToInstructionConverter,
     TraceToTrajectoryConverter,
 )
-from cogniverse_finetuning.evaluation.adapter_evaluator import AdapterEvaluator
+from cogniverse_finetuning.evaluation.adapter_evaluator import (
+    AdapterEvaluator,
+    example_identity,
+)
 from cogniverse_finetuning.training.backend import (
     LocalTrainingBackend,
     RemoteTrainingBackend,
@@ -800,6 +803,10 @@ class FinetuningOrchestrator:
                         adapter_path=result.adapter_path,
                         project=config.project,
                         test_size=config.test_set_size,
+                        exclude_identities={
+                            example_identity(ex.instruction, ex.input, ex.output)
+                            for ex in examples
+                        },
                     )
 
                     # Log to Phoenix
