@@ -279,6 +279,18 @@ Triplet(
 
 ---
 
+#### Synthetic reader (`synthetic_reader.py`)
+
+**Purpose**: Fold APPROVED synthetic examples into the training set. Converts a
+generator's schema dicts into the same `InstructionExample` / Alpaca-text SFT
+records the trace extractors produce (shared `instruction_template`), so
+synthetic and real data are interchangeable.
+
+**API**: `format_synthetic_sft(examples, agent_type) -> List[{"text", "metadata"}]`
+and `synthetic_examples_to_instruction(examples, agent_type)`.
+
+---
+
 #### Trajectory Extraction (`trace_converter.py`)
 
 **Purpose**: Extract multi-turn conversation trajectories from Phoenix sessions for fine-tuning.
