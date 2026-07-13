@@ -13,6 +13,11 @@ dependencies = [
     "cogniverse-sdk",
     "cogniverse-core",
     "cogniverse-synthetic",
+    # Required, not optional: main.py mounts the search and ingestion
+    # routers unconditionally and both import cogniverse_agents at module
+    # load (search.service.SearchService, graph.graph_schema.Mention), so a
+    # base install without agents cannot even import the app to start.
+    "cogniverse-agents",
 
     # FastAPI and server
     "fastapi==0.135.3",
