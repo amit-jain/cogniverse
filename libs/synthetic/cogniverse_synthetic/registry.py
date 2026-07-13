@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from cogniverse_synthetic.schemas import (
     ProfileSelectionExampleSchema,
+    QueryEnhancementExampleSchema,
     RoutingExperienceSchema,
     WorkflowExecutionSchema,
 )
@@ -48,6 +49,16 @@ class OptimizerConfig:
 # Optimizer Registry
 # Maps optimizer names to their configurations
 OPTIMIZER_REGISTRY: Dict[str, OptimizerConfig] = {
+    "query_enhancement": OptimizerConfig(
+        name="query_enhancement",
+        description="Query enhancement. Learns to broaden a user query with expansion terms and synonyms drawn from related content.",
+        schema_class=QueryEnhancementExampleSchema,
+        generator_class_name="QueryEnhancementGenerator",
+        backend_query_strategy="diverse",
+        agent_mapping_required=False,
+        default_sample_size=200,
+        default_generation_count=100,
+    ),
     "routing": OptimizerConfig(
         name="routing",
         description="Advanced routing with entity extraction. Learns to route queries based on extracted entities, relationships, and semantic understanding.",

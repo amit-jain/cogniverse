@@ -11,7 +11,7 @@ The Synthetic module provides **training data generation** for DSPy optimizers:
 
 - **DSPy-Driven Generation**: Uses DSPy signatures and modules for LLM-driven query generation
 - **Backend-Agnostic Sampling**: Works with any backend implementing the Backend interface
-- **Optimizer Support**: Generates data for all five registered optimizers — `profile`, `routing`, `workflow`, `unified`, and `cross_modal`
+- **Optimizer Support**: Generates data for all six registered optimizers — `query_enhancement`, `profile`, `routing`, `workflow`, `unified`, and `cross_modal`
 - **REST API**: FastAPI router for HTTP endpoints
 - **HITL Approval**: Confidence scoring and rejection-feedback regeneration for human-in-the-loop review
 
@@ -56,7 +56,7 @@ Everything below is importable directly from `cogniverse_synthetic` (see `__init
 | `configure_service(backend, backend_config, generator_config, llm_client)` | Replaces the router's module-level service singleton |
 | `OPTIMIZER_REGISTRY`, `OptimizerConfig` | Optimizer-to-generator/schema mapping (`registry.py`) |
 | `SyntheticDataRequest`, `SyntheticDataResponse` | API request/response schemas |
-| `ProfileSelectionExampleSchema`, `RoutingExperienceSchema`, `WorkflowExecutionSchema` | Per-optimizer training-example schemas |
+| `QueryEnhancementExampleSchema`, `ProfileSelectionExampleSchema`, `RoutingExperienceSchema`, `WorkflowExecutionSchema` | Per-optimizer training-example schemas |
 
 `SyntheticDataService` also exposes `get_optimizer_info(optimizer_name)` and
 `list_all_optimizers()`, which back the `/synthetic/optimizers` endpoints.
@@ -65,18 +65,37 @@ Everything below is importable directly from `cogniverse_synthetic` (see `__init
 
 ## Generators
 
-Three generator classes back all five registered optimizers (see `OPTIMIZER_REGISTRY` in
+Four generator classes back all six registered optimizers (see `OPTIMIZER_REGISTRY` in
 `registry.py`). `unified` reuses `WorkflowGenerator` and `cross_modal` reuses
 `ProfileGenerator` — `SyntheticDataService._get_generator()` maps them explicitly.
 See source at `libs/synthetic/cogniverse_synthetic/generators/`.
 
 | Optimizer | Generator | Schema |
 |-----------|-----------|--------|
+| `query_enhancement` | `QueryEnhancementGenerator` | `QueryEnhancementExampleSchema` |
 | `profile` | `ProfileGenerator` | `ProfileSelectionExampleSchema` |
 | `cross_modal` | `ProfileGenerator` | `ProfileSelectionExampleSchema` |
 | `routing` | `RoutingGenerator` | `RoutingExperienceSchema` |
 | `workflow` | `WorkflowGenerator` | `WorkflowExecutionSchema` |
 | `unified` | `WorkflowGenerator` | `WorkflowExecutionSchema` |
+
+### QueryEnhancementGenerator
+
+Pattern-based (no LM). Builds a base query from a sampled-content topic and an
+enhanced query that appends expansion terms drawn from the same content, so the
+`query_enhancement` optimizer (`run_simba_optimization`) learns to broaden
+queries. The consumer merges each approved demo as a `(query -> enhanced_query)`
+`dspy.Example`.
+
+```python
+from cogniverse_synthetic.generators.query_enhancement import (
+    QueryEnhancementGenerator,
+)
+
+generator = QueryEnhancementGenerator()
+examples = await generator.generate(sampled_content=documents, target_count=100)
+# Returns List[QueryEnhancementExampleSchema]; enhanced_query != query
+```
 
 ### ProfileGenerator
 

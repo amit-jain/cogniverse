@@ -65,6 +65,46 @@ class ProfileSelectionExampleSchema(BaseModel):
     )
 
 
+class QueryEnhancementExampleSchema(BaseModel):
+    """Training example for QueryEnhancementAgent optimization.
+
+    Feeds ``run_simba_optimization`` in
+    ``libs/runtime/cogniverse_runtime/optimization_cli.py``, which builds a
+    ``dspy.Example`` from these fields (query is the DSPy input, the rest are
+    the enhancement the SIMBA/BootstrapFewShot trainer learns to produce).
+    """
+
+    query: str = Field(..., description="Original user query (DSPy input)")
+    enhanced_query: str = Field(
+        ..., description="Query rewritten with expansion terms (must differ from query)"
+    )
+    expansion_terms: List[str] = Field(
+        default_factory=list, description="Terms added to broaden the query"
+    )
+    synonyms: List[str] = Field(
+        default_factory=list, description="Synonyms for salient query terms"
+    )
+    context: str = Field("", description="Domain/context the query sits in")
+    confidence: float = Field(
+        ..., ge=0.0, le=1.0, description="Confidence in the enhancement (0-1)"
+    )
+    reasoning: str = Field(..., description="Why the query was enhanced this way")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "query": "transformer architecture",
+                "enhanced_query": "transformer architecture attention mechanism self-attention",
+                "expansion_terms": ["attention mechanism", "self-attention"],
+                "synonyms": ["neural network model"],
+                "context": "machine learning",
+                "confidence": 0.85,
+                "reasoning": "Added attention-related terms for a transformer query",
+            }
+        }
+    )
+
+
 class RoutingExperienceSchema(BaseModel):
     """Training example representing a routing decision with entity
     extraction and quality metrics."""

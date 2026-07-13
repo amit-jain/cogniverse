@@ -950,7 +950,7 @@ async def run_simba_optimization(
     import json as _json
 
     synthetic_demos = await _load_approved_synthetic_data(
-        telemetry_provider, tenant_id, "simba"
+        telemetry_provider, tenant_id, "query_enhancement"
     )
     production_count = len(trainset)
     for demo in synthetic_demos:
@@ -1660,7 +1660,7 @@ async def run_synthetic_generation(
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
     if optimizer_types is None:
-        optimizer_types = ["simba", "profile", "workflow"]
+        optimizer_types = ["query_enhancement", "profile", "workflow"]
 
     logger.info(
         "Starting synthetic generation for tenant=%s types=%s count=%d",
@@ -2600,7 +2600,7 @@ def main():
             )
         )
     elif args.mode == "synthetic":
-        optimizer_types = ["simba", "profile", "workflow"]
+        optimizer_types = ["query_enhancement", "profile", "workflow"]
         if args.agents:
             optimizer_types = [a.strip() for a in args.agents.split(",")]
         result = asyncio.run(
