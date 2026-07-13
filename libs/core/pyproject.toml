@@ -13,7 +13,6 @@ dependencies = [
     # SDK - Core interfaces
     "cogniverse-sdk",
     "cogniverse-foundation",
-    "cogniverse-evaluation",
     # Core DSPy and LLM
     "dspy-ai==3.1.3",
     "litellm==1.83.4",
@@ -49,7 +48,6 @@ dev = [
 [tool.uv.sources]
 cogniverse-sdk = { workspace = true }
 cogniverse-foundation = { workspace = true }
-cogniverse-evaluation = { workspace = true }
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
