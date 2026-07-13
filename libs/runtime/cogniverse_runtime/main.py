@@ -383,10 +383,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 'default' fallback the empty registry produced when this ran first.
     from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
     from a2a.server.request_handlers import DefaultRequestHandler
-    from a2a.server.tasks import InMemoryTaskStore
     from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
-    from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+    from cogniverse_runtime.a2a_executor import (
+        BoundedInMemoryTaskStore,
+        CogniverseAgentExecutor,
+    )
 
     dispatcher = agents.get_dispatcher()
     executor = CogniverseAgentExecutor(dispatcher=dispatcher)
@@ -423,7 +425,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     a2a_handler = DefaultRequestHandler(
         agent_executor=executor,
-        task_store=InMemoryTaskStore(),
+        task_store=BoundedInMemoryTaskStore(
+            max_tasks=int(os.environ.get("A2A_MAX_TASKS", "10000"))
+        ),
     )
     a2a_server = A2AStarletteApplication(
         agent_card=agent_card,

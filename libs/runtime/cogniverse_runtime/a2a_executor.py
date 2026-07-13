@@ -14,17 +14,60 @@ it through the dispatcher so agents can reason over prior turns.
 
 import json
 import logging
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.context import ServerCallContext
 from a2a.server.events import EventQueue
-from a2a.types import Message, TaskState, TaskStatus, TaskStatusUpdateEvent
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import Message, Task, TaskState, TaskStatus, TaskStatusUpdateEvent
 from a2a.utils import get_message_text, new_agent_text_message
 
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
 logger = logging.getLogger(__name__)
+
+
+class BoundedInMemoryTaskStore(InMemoryTaskStore):
+    """``InMemoryTaskStore`` capped at ``max_tasks`` entries (LRU eviction).
+
+    The stock a2a-sdk store keeps every task in a dict forever. A
+    long-lived A2A server accumulates one ``Task`` per request and grows
+    without bound until the pod OOMs. This caps the store and drops the
+    least-recently-used task once the cap is exceeded. Task history is a
+    multi-turn-replay convenience, not durable state, so evicting the
+    coldest tasks only costs history on conversations idle past the cap.
+    """
+
+    def __init__(self, max_tasks: int = 10000) -> None:
+        super().__init__()
+        if max_tasks < 1:
+            raise ValueError(f"max_tasks must be >= 1, got {max_tasks}")
+        self._max_tasks = max_tasks
+        self.tasks: OrderedDict[str, Task] = OrderedDict()
+
+    async def save(self, task: Task, context: ServerCallContext | None = None) -> None:
+        async with self.lock:
+            self.tasks[task.id] = task
+            self.tasks.move_to_end(task.id)
+            while len(self.tasks) > self._max_tasks:
+                evicted_id, _ = self.tasks.popitem(last=False)
+                logger.debug(
+                    "Evicted LRU A2A task %s (store cap=%d)",
+                    evicted_id,
+                    self._max_tasks,
+                )
+
+    async def get(
+        self, task_id: str, context: ServerCallContext | None = None
+    ) -> Task | None:
+        async with self.lock:
+            task = self.tasks.get(task_id)
+            if task is not None:
+                self.tasks.move_to_end(task_id)
+            return task
 
 
 def _unwrap_exc(exc: BaseException) -> str:
