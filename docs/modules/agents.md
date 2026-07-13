@@ -479,16 +479,22 @@ GatewayAgent uses 7 focused labels (experimentally tuned — 7 labels yield aver
 
 #### Telemetry
 
-Emits a `cogniverse.gateway` span for every classified query with attributes:
+Emits a `cogniverse.gateway` span for every classified query through the
+canonical span contract (`record_span_io`): `input.value` is the query,
+`operation` is `gateway`, and `output.value` is a JSON object:
 
 ```
-gateway.query            — first 200 chars of query
-gateway.complexity       — "simple" | "complex"
-gateway.modality         — detected modality
-gateway.generation_type  — detected generation type
-gateway.routed_to        — target agent name
-gateway.confidence       — float 0.0–1.0
+complexity       — "simple" | "complex"
+modality         — detected modality
+generation_type  — detected generation type
+routed_to        — target agent name
+confidence       — float 0.0–1.0
 ```
+
+It also emits a `cogniverse.routing` span whose `output.value` carries the
+routing decision (`chosen_agent`, `recommended_agent`, `confidence`,
+`reasoning`, `complexity`, `modality`, `generation_type`), read by
+`RoutingEvaluator`.
 
 #### Configuration
 

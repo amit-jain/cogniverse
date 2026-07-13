@@ -99,9 +99,20 @@ class RoutingEvaluator:
         confidence = None
         latency_ms = 0.0
 
+        # Canonical span contract: the routing decision is on output.value.
+        from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+        output = read_span_io(span_data)["output"]
+        if isinstance(output, dict):
+            chosen_agent = output.get("chosen_agent") or output.get("recommended_agent")
+            confidence = output.get("confidence")
+            latency_ms = output.get("processing_time", 0.0)
+
         # Try Phoenix flattened format first (attributes.routing.*)
-        if "attributes.routing" in span_data and isinstance(
-            span_data["attributes.routing"], dict
+        if (
+            (not chosen_agent or confidence is None)
+            and "attributes.routing" in span_data
+            and isinstance(span_data["attributes.routing"], dict)
         ):
             routing_attrs = span_data["attributes.routing"]
             chosen_agent = routing_attrs.get("chosen_agent") or routing_attrs.get(
@@ -168,9 +179,15 @@ class RoutingEvaluator:
         if status_code == "ERROR":
             return RoutingOutcome.FAILURE, "routing_error"
 
-        # Look for downstream agent execution indicators in attributes
+        # Look for downstream agent execution indicators. The routing decision
+        # is on the canonical output.value; fall back to the legacy attribute.
+        from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+        output = read_span_io(span_data)["output"]
         attributes = span_data.get("attributes", {})
-        chosen_agent = attributes.get("routing.chosen_agent")
+        chosen_agent = (
+            output.get("chosen_agent") if isinstance(output, dict) else None
+        ) or attributes.get("routing.chosen_agent")
 
         # Check if there are any error indicators
         if "error" in span_data.get("events", []):

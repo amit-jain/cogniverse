@@ -22,8 +22,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.telemetry.span_contract import read_span_io
 from cogniverse_runtime.optimization_cli import (
     _entity_extraction_pairs,
+    _profile_selection_pairs,
     _query_enhancement_pairs,
 )
 
@@ -129,3 +131,128 @@ async def test_entity_extraction_span_yields_training_pair(real_telemetry):
     assert isinstance(entities, list) and len(entities) >= 1
     assert entities[0]["text"] == "machine learning"
     assert entities[0]["type"] == "CONCEPT"
+
+
+@pytest.mark.asyncio
+async def test_profile_selection_span_yields_training_pair(real_telemetry):
+    from cogniverse_agents.profile_selection_agent import (
+        ProfileSelectionAgent,
+        ProfileSelectionDeps,
+        ProfileSelectionInput,
+    )
+
+    tenant_id = "ps-opt-real"
+    agent = ProfileSelectionAgent(deps=ProfileSelectionDeps(), port=19111)
+    agent.set_telemetry_manager(real_telemetry)
+
+    mock_result = MagicMock()
+    mock_result.selected_profile = "video_colpali_smol500_mv_frame"
+    mock_result.confidence = "0.8"
+    mock_result.reasoning = "Video query matched colpali profile"
+    mock_result.query_intent = "video_search"
+    mock_result.modality = "video"
+    mock_result.complexity = "simple"
+
+    with patch.object(agent, "call_dspy", return_value=mock_result):
+        await agent.process(
+            ProfileSelectionInput(query="show me cooking videos", tenant_id=tenant_id)
+        )
+
+    spans = await _fetch_named_spans(
+        real_telemetry, tenant_id, "cogniverse.profile_selection"
+    )
+    assert spans is not None, "cogniverse.profile_selection span not indexed"
+
+    pairs = _profile_selection_pairs(spans)
+    assert len(pairs) == 1
+    assert pairs[0]["query"] == "show me cooking videos"
+    assert pairs[0]["selected_profile"] == "video_colpali_smol500_mv_frame"
+    assert pairs[0]["modality"] == "video"
+    assert pairs[0]["confidence"] == 0.8
+
+
+@pytest.mark.asyncio
+async def test_orchestration_span_carries_canonical_workflow(real_telemetry):
+    from cogniverse_agents.orchestrator_agent import (
+        AgentStep,
+        OrchestrationPlan,
+        OrchestratorAgent,
+        OrchestratorDeps,
+        OrchestratorInput,
+    )
+    from cogniverse_core.common.agent_models import AgentEndpoint
+    from cogniverse_core.registries.agent_registry import AgentRegistry
+    from cogniverse_foundation.config.unified_config import SystemConfig
+
+    tenant_id = "orch-opt-real"
+
+    with patch.object(AgentRegistry, "__init__", lambda self, **kw: None):
+        registry = AgentRegistry.__new__(AgentRegistry)
+    registry.agents = {}
+    registry.capabilities = {}
+    registry.tenant_id = tenant_id
+    registry.config_manager = MagicMock()
+    registry.config = {}
+    registry._http_client = MagicMock()
+    registry.register_agent(
+        AgentEndpoint(
+            name="search_agent",
+            url="http://localhost:8002",
+            capabilities=["search"],
+            process_endpoint="/tasks/send",
+        )
+    )
+
+    mock_cm = MagicMock()
+    mock_cm.get_system_config.return_value = SystemConfig(
+        backend_url="http://localhost",
+        backend_port=8080,
+        iter_retrieval_max_iter=3,
+        iter_retrieval_token_budget=10000,
+        iter_retrieval_wall_clock_ms=10000,
+    )
+    mock_cm.get_config.return_value = {}
+
+    agent = OrchestratorAgent(
+        deps=OrchestratorDeps(),
+        registry=registry,
+        config_manager=mock_cm,
+        port=19113,
+    )
+    agent.set_telemetry_manager(real_telemetry)
+
+    plan = OrchestrationPlan(
+        query="find machine learning videos",
+        steps=[
+            AgentStep(
+                agent_name="search_agent",
+                input_data={"query": "find machine learning videos"},
+                depends_on=[],
+                reasoning="Search for ML videos",
+            ),
+        ],
+        parallel_groups=[],
+        reasoning="Single search step",
+        unavailable_agents=[],
+    )
+    results = {"search_agent": {"status": "success", "results": []}}
+
+    with (
+        patch.object(agent, "_create_plan", return_value=plan),
+        patch.object(agent, "_execute_plan", return_value=results),
+    ):
+        await agent.process(
+            OrchestratorInput(query="find machine learning videos", tenant_id=tenant_id)
+        )
+
+    spans = await _fetch_named_spans(
+        real_telemetry, tenant_id, "cogniverse.orchestration"
+    )
+    assert spans is not None, "cogniverse.orchestration span not indexed"
+
+    span_io = read_span_io(spans.iloc[0])
+    assert span_io["input"] == "find machine learning videos"
+    output = span_io["output"]
+    assert isinstance(output, dict)
+    assert output["workflow_id"]
+    assert output["agent_sequence"] == ["search_agent"]

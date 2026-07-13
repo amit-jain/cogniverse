@@ -317,8 +317,9 @@ class TestProfileSelectionAgent:
     async def test_span_emitted_with_tenant_id(self, profile_agent):
         """Span is emitted with cogniverse.profile_selection name when tenant_id is set."""
         mock_telemetry = Mock()
+        mock_span = Mock()
         mock_cm = Mock()
-        mock_cm.__enter__ = Mock(return_value=None)
+        mock_cm.__enter__ = Mock(return_value=mock_span)
         mock_cm.__exit__ = Mock(return_value=False)
         mock_telemetry.span = Mock(return_value=mock_cm)
         profile_agent.telemetry_manager = mock_telemetry
@@ -341,14 +342,20 @@ class TestProfileSelectionAgent:
             )
         )
 
+        import json
+
         mock_telemetry.span.assert_called_once()
         call_kwargs = mock_telemetry.span.call_args
         assert call_kwargs[0][0] == "cogniverse.profile_selection"
-        attrs = call_kwargs[1]["attributes"]
-        assert attrs["profile_selection.selected_profile"] == "video_colpali_base"
-        assert attrs["profile_selection.modality"] == "video"
-        assert attrs["profile_selection.complexity"] == "simple"
-        assert attrs["profile_selection.intent"] == "video_search"
+        span_obj = mock_telemetry.span.return_value.__enter__.return_value
+        recorded = {c.args[0]: c.args[1] for c in span_obj.set_attribute.call_args_list}
+        assert recorded["operation"] == "profile_selection"
+        assert recorded["input.value"] == "Show me cat videos"
+        out = json.loads(recorded["output.value"])
+        assert out["selected_profile"] == "video_colpali_base"
+        assert out["modality"] == "video"
+        assert out["complexity"] == "simple"
+        assert out["intent"] == "video_search"
 
     @pytest.mark.asyncio
     async def test_missing_tenant_id_raises(self, profile_agent):

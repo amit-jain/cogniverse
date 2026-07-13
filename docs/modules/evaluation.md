@@ -308,7 +308,7 @@ sequenceDiagram
     Note over Evaluator: Step 2: Evaluate Each Routing Decision
     loop For each span
         Evaluator->>Evaluator: Extract span attributes
-        Note over Evaluator: chosen_agent (routing.chosen_agent)<br/>confidence (routing.confidence)<br/>latency_ms (routing.processing_time)
+        Note over Evaluator: read_span_io(row)["output"] dict:<br/>chosen_agent, confidence, processing_time
 
         Evaluator->>Evaluator: _classify_routing_outcome(span_data)
         activate Evaluator
@@ -891,10 +891,12 @@ evaluator = RoutingEvaluator(provider=provider)
 
 span_data = {
     "name": "cogniverse.routing",
-    "attributes.routing": {
+    # RoutingEvaluator reads the decision from output.value via read_span_io:
+    # read_span_io(span_data)["output"] -> {"chosen_agent": ..., "confidence": ...}
+    "attributes.output.value": json.dumps({
         "chosen_agent": "video_search_agent",
         "confidence": 0.92
-    },
+    }),
     "status_code": "OK"
 }
 

@@ -18,6 +18,11 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+from cogniverse_foundation.telemetry.span_contract import (
+    OP_GATEWAY,
+    OP_ROUTING,
+    record_span_io,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -466,16 +471,19 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             with self.telemetry_manager.span(
                 "cogniverse.gateway",
                 tenant_id=tenant_id,
-                attributes={
-                    "gateway.query": query[:200],
-                    "gateway.complexity": complexity,
-                    "gateway.modality": modality,
-                    "gateway.generation_type": generation_type,
-                    "gateway.routed_to": routed_to,
-                    "gateway.confidence": confidence,
-                },
-            ):
-                pass  # span auto-closes
+            ) as span:
+                record_span_io(
+                    span,
+                    input_value=query,
+                    output={
+                        "complexity": complexity,
+                        "modality": modality,
+                        "generation_type": generation_type,
+                        "routed_to": routed_to,
+                        "confidence": confidence,
+                    },
+                    operation=OP_GATEWAY,
+                )
         except Exception as e:
             logger.debug("Failed to emit gateway span: %s", e)
 
@@ -504,18 +512,21 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             with self.telemetry_manager.span(
                 "cogniverse.routing",
                 tenant_id=tenant_id,
-                attributes={
-                    "routing.query": query[:200],
-                    "routing.chosen_agent": routed_to,
-                    "routing.recommended_agent": routed_to,
-                    "routing.confidence": confidence,
-                    "routing.reasoning": reasoning[:200],
-                    "routing.complexity": complexity,
-                    "routing.modality": modality,
-                    "routing.generation_type": generation_type,
-                },
-            ):
-                pass  # span auto-closes
+            ) as span:
+                record_span_io(
+                    span,
+                    input_value=query,
+                    output={
+                        "chosen_agent": routed_to,
+                        "recommended_agent": routed_to,
+                        "confidence": confidence,
+                        "reasoning": reasoning,
+                        "complexity": complexity,
+                        "modality": modality,
+                        "generation_type": generation_type,
+                    },
+                    operation=OP_ROUTING,
+                )
         except Exception as e:
             logger.debug("Failed to emit routing span: %s", e)
 

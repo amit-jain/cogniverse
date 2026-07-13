@@ -26,15 +26,16 @@ logger = logging.getLogger(__name__)
 
 
 def _modality_from_row(row: pd.Series) -> str | None:
-    """Pull the modality value from a Phoenix span row.
+    """Pull the modality from a profile_selection span row.
 
-    Phoenix flattens span attributes into prefixed columns
-    (``attributes.profile_selection`` is a dict). Returns the
-    ``modality`` field or None when the attribute is missing.
+    The profile decision is recorded on the canonical ``output.value`` slot;
+    returns its ``modality`` field or None when absent.
     """
-    cell = row.get("attributes.profile_selection")
-    if isinstance(cell, dict):
-        value = cell.get("modality")
+    from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+    output = read_span_io(row)["output"]
+    if isinstance(output, dict):
+        value = output.get("modality")
         if value:
             return str(value)
     return None

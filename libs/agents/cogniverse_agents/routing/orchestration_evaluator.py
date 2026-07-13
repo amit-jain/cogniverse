@@ -180,40 +180,42 @@ class OrchestrationEvaluator:
         - parallel_efficiency, confidence_score
         """
         try:
-            orch_attrs = span_row.get("attributes.orchestration", {}) or {}
-            routing_attrs = span_row.get("attributes.routing", {}) or {}
+            from cogniverse_foundation.telemetry.span_contract import read_span_io
 
-            workflow_id = orch_attrs.get("workflow_id")
-            query = orch_attrs.get("query")
+            span_io = read_span_io(span_row)
+            output = span_io["output"] if isinstance(span_io["output"], dict) else {}
+
+            workflow_id = output.get("workflow_id")
+            query = span_io["input"]
 
             if not workflow_id or not query:
                 logger.warning("Span missing workflow_id or query, skipping")
                 return None
 
-            orchestration_pattern = orch_attrs.get("pattern")
-            agents_str = orch_attrs.get(
-                "agent_sequence", orch_attrs.get("agents_used", "")
+            orchestration_pattern = output.get("pattern")
+            agent_sequence = output.get("agent_sequence") or output.get(
+                "agents_used", []
             )
-            agent_sequence = agents_str.split(",") if agents_str else []
+            if isinstance(agent_sequence, str):
+                agent_sequence = agent_sequence.split(",") if agent_sequence else []
 
-            execution_order_str = orch_attrs.get("execution_order", "")
-            execution_order = (
-                execution_order_str.split(",") if execution_order_str else []
-            )
+            execution_order = output.get("execution_order", [])
+            if isinstance(execution_order, str):
+                execution_order = execution_order.split(",") if execution_order else []
 
-            execution_time = float(orch_attrs.get("execution_time", 0.0))
+            execution_time = float(output.get("execution_time", 0.0))
 
             status_code = span_row.get("status_code", "UNSET")
             success = status_code != "ERROR"
             error_details = span_row.get("status_message") if not success else None
 
-            task_count = int(orch_attrs.get("tasks_completed", 0))
+            task_count = int(output.get("tasks_completed", 0))
 
             parallel_efficiency = self._compute_parallel_efficiency(
-                orchestration_pattern, orch_attrs, execution_time
+                orchestration_pattern, output, execution_time
             )
 
-            confidence_score = float(routing_attrs.get("confidence", 0.0))
+            confidence_score = float(output.get("confidence", 0.0) or 0.0)
 
             # Classify query type for pattern learning
             query_type = self._classify_query_type(query, orchestration_pattern)

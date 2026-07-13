@@ -17,6 +17,10 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+from cogniverse_foundation.telemetry.span_contract import (
+    OP_PROFILE_SELECTION,
+    record_span_io,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -383,16 +387,19 @@ class ProfileSelectionAgent(
             with self.telemetry_manager.span(
                 "cogniverse.profile_selection",
                 tenant_id=validated_tenant,
-                attributes={
-                    "profile_selection.query": query[:200],
-                    "profile_selection.selected_profile": selected_profile,
-                    "profile_selection.modality": modality,
-                    "profile_selection.complexity": complexity,
-                    "profile_selection.intent": intent,
-                    "profile_selection.confidence": confidence,
-                },
-            ):
-                pass
+            ) as span:
+                record_span_io(
+                    span,
+                    input_value=query,
+                    output={
+                        "selected_profile": selected_profile,
+                        "modality": modality,
+                        "complexity": complexity,
+                        "intent": intent,
+                        "confidence": confidence,
+                    },
+                    operation=OP_PROFILE_SELECTION,
+                )
         except Exception as e:
             logger.debug("Failed to emit profile_selection span: %s", e)
 

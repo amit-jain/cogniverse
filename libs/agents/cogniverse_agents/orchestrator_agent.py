@@ -41,6 +41,10 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+from cogniverse_foundation.telemetry.span_contract import (
+    OP_ORCHESTRATION,
+    record_span_io,
+)
 
 # Per-session inbound messaging — looked up lazily so the orchestrator
 # can run without the runtime layer wired (e.g. agent-only unit tests
@@ -2732,18 +2736,21 @@ class OrchestratorAgent(
             with self.telemetry_manager.span(
                 name="cogniverse.orchestration",
                 tenant_id=tenant_id,
-                attributes={
-                    "orchestration.workflow_id": str(workflow_id),
-                    "orchestration.query": query[:200],
-                    "orchestration.agent_sequence": ",".join(agent_sequence)
-                    if agent_sequence
-                    else "",
-                    "orchestration.execution_time": float(execution_time),
-                    "orchestration.success": bool(success),
-                    "orchestration.tasks_completed": int(tasks_completed),
-                },
-            ):
-                pass
+            ) as span:
+                record_span_io(
+                    span,
+                    input_value=query,
+                    output={
+                        "workflow_id": str(workflow_id),
+                        "agent_sequence": list(agent_sequence)
+                        if agent_sequence
+                        else [],
+                        "execution_time": float(execution_time),
+                        "success": bool(success),
+                        "tasks_completed": int(tasks_completed),
+                    },
+                    operation=OP_ORCHESTRATION,
+                )
         except Exception as e:
             logger.debug("Failed to emit orchestration span: %s", e)
 

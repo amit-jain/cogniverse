@@ -629,25 +629,27 @@ today.
 
 ## What Gets Stored in Telemetry
 
-`GatewayAgent._emit_routing_span` writes these attributes onto every `cogniverse.routing`
-span (`libs/agents/cogniverse_agents/gateway_agent.py`):
+`GatewayAgent._emit_routing_span` writes the query to `input.value` and the decision as a
+JSON object in `output.value` on every `cogniverse.routing` span, via `record_span_io`
+(`libs/agents/cogniverse_agents/gateway_agent.py`). Consumers read the decision back with
+`read_span_io(row)["output"]` (a dict):
 
-| Span Attribute | Type | Purpose |
+| Attribute / `output.value` key | Type | Purpose |
 |---|---|---|
-| `routing.query` | string | Original user query (truncated to 200 chars) |
-| `routing.chosen_agent` | string | Which agent was selected |
-| `routing.recommended_agent` | string | DSPy-recommended agent (same as chosen_agent for GatewayAgent) |
-| `routing.confidence` | float | Routing confidence score |
-| `routing.reasoning` | string | Routing decision rationale (truncated to 200 chars) |
-| `routing.complexity` | string | Query complexity classification |
-| `routing.modality` | string | Content modality (video, text, etc.) |
-| `routing.generation_type` | string | Generation type (search, qa, synthesis, etc.) |
+| `input.value` | string | Original user query (truncated to 200 chars) |
+| `output.value.chosen_agent` | string | Which agent was selected |
+| `output.value.recommended_agent` | string | DSPy-recommended agent (same as chosen_agent for GatewayAgent) |
+| `output.value.confidence` | float | Routing confidence score |
+| `output.value.reasoning` | string | Routing decision rationale (truncated to 200 chars) |
+| `output.value.complexity` | string | Query complexity classification |
+| `output.value.modality` | string | Content modality (video, text, etc.) |
+| `output.value.generation_type` | string | Generation type (search, qa, synthesis, etc.) |
 
-`RoutingEvaluator` and `AnnotationAgent` additionally read `routing.processing_time` and
-`routing.context` defensively (`.get(..., default)`) for forward compatibility, but no
-current writer populates them — outcome (`SUCCESS`/`FAILURE`/`AMBIGUOUS`) is *derived* by
-`RoutingEvaluator._classify_routing_outcome` from downstream agent spans, not stored as a
-`routing.*` attribute at write time.
+`RoutingEvaluator` and `AnnotationAgent` additionally read `processing_time` and `context`
+from the same `output.value` dict defensively (`.get(..., default)`) for forward
+compatibility, but no current writer populates them — outcome (`SUCCESS`/`FAILURE`/`AMBIGUOUS`)
+is *derived* by `RoutingEvaluator._classify_routing_outcome` from downstream agent spans, not
+stored in `output.value` at write time.
 
 `RoutingAnnotationStorage` writes these onto the same span (`libs/agents/cogniverse_agents/routing/annotation_storage.py`):
 
