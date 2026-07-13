@@ -45,6 +45,69 @@ async def _wait_for_indexed_spans(
     return last
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_real_producers_emit_search_shape_evaluator_keeps(
+    search_evaluator_provider,
+):
+    """The real search producers must emit output.value in the shape
+    SpanEvaluator keeps under require_search_shape.
+
+    A ``search_service.search`` span built by the actual producers
+    (``search_span`` + ``add_search_results_to_span``) — not hand-set
+    attributes — must survive ``get_recent_spans(require_search_shape=True)``
+    with its result rows. The span carried results only as a span EVENT before
+    the contract, so every search span was dropped and search-quality eval saw
+    zero samples.
+    """
+    from types import SimpleNamespace
+
+    from cogniverse_foundation.telemetry.context import (
+        add_search_results_to_span,
+        search_span,
+    )
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    tenant_id = f"searchshape-{uuid.uuid4().hex[:8]}"
+    project_name = f"cogniverse-{tenant_id}"
+    query = "kite surfing on a windy beach"
+    manager = get_telemetry_manager()
+
+    results = [
+        SimpleNamespace(
+            document=SimpleNamespace(
+                id="vid_pos", metadata={"source_id": "vid_pos"}, content_type=None
+            ),
+            score=0.93,
+        ),
+        SimpleNamespace(
+            document=SimpleNamespace(
+                id="vid_neg", metadata={"source_id": "vid_neg"}, content_type=None
+            ),
+            score=0.40,
+        ),
+    ]
+    with search_span(tenant_id=tenant_id, query=query, top_k=5) as span:
+        add_search_results_to_span(span, results)
+    manager.force_flush(timeout_millis=10000)
+
+    provider = search_evaluator_provider
+    evaluator = SpanEvaluator(
+        tenant_id=tenant_id, provider=provider, project_name=project_name
+    )
+    assert await _wait_for_indexed_spans(provider, project_name, expected=1) == 1
+
+    kept = await evaluator.get_recent_spans(
+        hours=1, operation_name="search_service.search", require_search_shape=True
+    )
+    assert len(kept) == 1
+    row = kept.iloc[0]
+    assert row["attributes"]["query"] == query
+    kept_results = row["outputs"]["results"]
+    assert {r["document_id"] for r in kept_results} == {"vid_pos", "vid_neg"}
+    assert {r["source_id"] for r in kept_results} == {"vid_pos", "vid_neg"}
+
+
 async def _wait_for_annotated(
     evaluator: SpanEvaluator,
     evaluator_name: str,

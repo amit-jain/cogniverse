@@ -21,6 +21,7 @@ import pandas as pd
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.span_contract import read_span_io
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -45,37 +46,20 @@ def _first_present(row, columns):
 
 
 def _span_query(row) -> str:
-    """Extract the query text from a span row across Phoenix column shapes."""
-    val = _first_present(
-        row, ("attributes.input.value", "input.value", "input", "attributes.query")
-    )
-    if val is None:
-        return ""
-    if isinstance(val, dict):
-        return val.get("query", "") or ""
-    if isinstance(val, str):
-        try:
-            parsed = json.loads(val)
-            if isinstance(parsed, dict) and parsed.get("query"):
-                return parsed["query"]
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return val
-    return ""
+    """The query text — the canonical ``input`` slot read via the span contract."""
+    return read_span_io(row)["input"] or ""
 
 
 def _span_output(row) -> dict:
-    """Extract the output dict from a span row across Phoenix column shapes."""
-    val = _first_present(row, ("attributes.output.value", "output.value", "output"))
-    if isinstance(val, dict):
-        return val
-    if isinstance(val, str):
-        try:
-            parsed = json.loads(val)
-            return parsed if isinstance(parsed, dict) else {}
-        except (json.JSONDecodeError, TypeError):
-            return {}
-    return {}
+    """The output as a ``{"results": [...]}`` dict.
+
+    Search spans record ``output.value`` as a bare list of result rows via the
+    span contract; wrap it so the caller reads ``.get("results")`` uniformly.
+    """
+    out = read_span_io(row)["output"]
+    if isinstance(out, list):
+        return {"results": out}
+    return out if isinstance(out, dict) else {}
 
 
 def _span_attributes(row) -> dict:

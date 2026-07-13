@@ -5,16 +5,16 @@ Extracts (anchor, positive, negative) triplets from search logs
 for contrastive learning with hard negative mining.
 """
 
-import json
 import logging
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Dict, List, Literal, Optional, Set
 
 import numpy as np
 import pandas as pd
 
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.span_contract import read_span_io
 
 logger = logging.getLogger(__name__)
 
@@ -142,43 +142,6 @@ class TripletExtractor:
 
         return triplets
 
-    @staticmethod
-    def _row_attributes(row: pd.Series) -> Dict[str, Any]:
-        """Reconstruct an attributes dict from Phoenix's flattened columns.
-
-        Phoenix's get_spans dataframe has NO bare ``attributes`` column — span
-        attributes live in dotted ``attributes.<...>`` columns (some leaf
-        values, some nested dicts, e.g. ``attributes.routing``). Strip the
-        prefix and drop NaNs so callers can read keys like ``input.value`` /
-        ``output.value`` / ``input.modality`` uniformly. Nested-dict columns are
-        also expanded to ``<col>.<k>`` keys for the same uniform access.
-        """
-        attrs: Dict[str, Any] = {}
-        prefix = "attributes."
-        for col, val in row.items():
-            if not isinstance(col, str) or not col.startswith(prefix):
-                continue
-            try:
-                if pd.isna(val):
-                    continue
-            except (TypeError, ValueError):
-                pass  # dicts / lists / arrays are not NaN
-            key = col[len(prefix) :]
-            if isinstance(val, dict):
-                for k, v in val.items():
-                    attrs[f"{key}.{k}"] = v
-            attrs[key] = val
-        return attrs
-
-    @staticmethod
-    def _first(attrs: Dict[str, Any], *keys: str, default: Any = None) -> Any:
-        """Return the first present, non-empty attribute among ``keys``."""
-        for k in keys:
-            v = attrs.get(k)
-            if v is not None and v != "":
-                return v
-        return default
-
     def _filter_search_spans(
         self, spans_df: pd.DataFrame, modality: str
     ) -> pd.DataFrame:
@@ -188,27 +151,14 @@ class TripletExtractor:
         # Search spans have name containing "search"
         search_mask = spans_df["name"].str.lower().str.contains("search", na=False)
 
-        # Modality filter — reconstruct attributes from the flattened columns
-        # (there is no bare ``attributes`` column on a real Phoenix dataframe).
-        modality_mask = spans_df.apply(
-            lambda row: self._check_modality(self._row_attributes(row), modality),
-            axis=1,
-        )
+        # Modality filter — read the canonical modality slot every producer writes.
+        def _modality_matches(row) -> bool:
+            m = read_span_io(row)["modality"]
+            return isinstance(m, str) and modality.lower() in m.lower()
+
+        modality_mask = spans_df.apply(_modality_matches, axis=1)
 
         return spans_df[search_mask & modality_mask].copy()
-
-    def _check_modality(self, attributes: Dict, target_modality: str) -> bool:
-        """Check if span attributes match target modality."""
-        # Check common modality fields
-        modality_fields = ["input.modality", "modality", "search_type"]
-
-        for field in modality_fields:
-            if field in attributes:
-                value = attributes[field]
-                if isinstance(value, str) and target_modality.lower() in value.lower():
-                    return True
-
-        return False
 
     def _extract_from_span(
         self,
@@ -219,26 +169,14 @@ class TripletExtractor:
     ) -> List[Triplet]:
         """Extract triplets from a single search span."""
         try:
-            # Reconstruct attributes from the flattened Phoenix columns.
-            attributes = self._row_attributes(span)
-
-            # Query (anchor) — search spans log it under input.query or the
-            # OpenInference input.value convention.
-            query = self._first(
-                attributes, "input.query", "input.value", "query", default=""
-            )
+            # Read the canonical anchor (query) and candidates (results) that
+            # every search producer writes via record_span_io.
+            span_io = read_span_io(span)
+            query = span_io["input"]
             if not query:
                 return []
 
-            # Search results — output.results or the output.value convention.
-            results_str = self._first(
-                attributes, "output.results", "output.value", "results", default="[]"
-            )
-            if isinstance(results_str, str):
-                results = json.loads(results_str)
-            else:
-                results = results_str
-
+            results = span_io["output"] or []
             if not results:
                 return []
 

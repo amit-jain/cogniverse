@@ -16,7 +16,6 @@ Enhanced with:
 """
 
 import asyncio
-import json
 import logging
 import tempfile
 from contextlib import asynccontextmanager
@@ -76,30 +75,22 @@ def _stamp_search_io_on_span(query: str, results: list, modality: str) -> None:
     try:
         from opentelemetry import trace as _otel_trace
 
+        from cogniverse_foundation.telemetry.span_contract import (
+            OP_SEARCH,
+            record_span_io,
+            search_result_row,
+        )
+
         span = _otel_trace.get_current_span()
         if not (span and span.get_span_context().is_valid):
             return
-        span.set_attribute("input.value", query)
-        span.set_attribute("modality", modality)
-        payload = []
-        for r in results:
-            d = r if isinstance(r, dict) else getattr(r, "to_dict", dict)()
-            payload.append(
-                {
-                    "video_id": d.get("video_id") or d.get("source_id") or d.get("id"),
-                    "document_id": d.get("document_id")
-                    or d.get("documentid")
-                    or d.get("id"),
-                    "score": float(d.get("score") or 0.0),
-                    "content": d.get("content")
-                    or d.get("text_content")
-                    or d.get("description")
-                    or d.get("text")
-                    or d.get("title")
-                    or "",
-                }
-            )
-        span.set_attribute("output.value", json.dumps(payload))
+        record_span_io(
+            span,
+            input_value=query,
+            output=[search_result_row(r) for r in results],
+            operation=OP_SEARCH,
+            modality=modality,
+        )
     except Exception:
         pass
 

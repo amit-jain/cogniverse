@@ -34,11 +34,11 @@ def _generator(min_occurrences=1):
 
 
 def _flattened_row(query, videos, profile, strategy, score):
+    # Canonical span contract: input.value is the clean query, output.value is a
+    # bare list of result rows.
     return {
-        "attributes.input.value": json.dumps({"query": query}),
-        "attributes.output.value": json.dumps(
-            {"results": [{"video_id": v} for v in videos]}
-        ),
+        "attributes.input.value": query,
+        "attributes.output.value": json.dumps([{"video_id": v} for v in videos]),
         "attributes.profile": profile,
         "attributes.ranking_strategy": strategy,
         "score": score,
@@ -73,11 +73,12 @@ def test_bare_input_column_still_skips_only_when_truly_absent():
     assert _generator().analyze_query_performance(df) == {}
 
 
-def test_span_query_handles_plain_string_and_dict_and_dotted():
+def test_span_query_reads_clean_input_value_and_nested_input():
+    # Canonical: input.value is the clean query text.
     assert (
         _span_query(pd.Series({"attributes.input.value": "raw query"})) == "raw query"
     )
-    assert _span_query(pd.Series({"attributes.input.value": '{"query": "q1"}'})) == "q1"
+    # A nested input dict still resolves via the input.query fallback.
     assert _span_query(pd.Series({"input": {"query": "q2"}})) == "q2"
     assert _span_query(pd.Series({"other": 1})) == ""
 

@@ -35,6 +35,7 @@ def search_span(
         # OpenInference primary input: the clean query text (top_k/strategy
         # are separate attributes above).
         "input.value": query,
+        "operation": "search",
     }
 
     with manager.span(
@@ -108,9 +109,8 @@ def backend_search_span(
         "top_k": top_k,
         "schema": schema_name,
         "has_embeddings": has_embeddings,
-        "input.value": json.dumps(
-            {"query": query_text, "top_k": top_k, "strategy": ranking_strategy}
-        ),
+        "input.value": query_text,
+        "operation": "search",
     }
 
     with manager.span(
@@ -131,8 +131,18 @@ def backend_search_span(
 
 
 def add_search_results_to_span(span, results):
-    """Add search results to span exactly matching old instrumentation format."""
+    """Record the search result set on the span.
+
+    Writes the canonical ``output.value`` (a JSON list of superset result rows,
+    the shape every search consumer reads) plus ``num_results`` / ``top_score``
+    scalars and a top-3 event for human debugging.
+    """
+    from .span_contract import search_result_row
+
     span.set_attribute("num_results", len(results))
+    span.set_attribute(
+        "output.value", json.dumps([search_result_row(r) for r in results])
+    )
 
     if results:
         span.set_attribute(
