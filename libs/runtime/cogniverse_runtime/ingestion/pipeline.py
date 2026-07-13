@@ -1058,6 +1058,25 @@ class VideoIngestionPipeline:
                 )
 
             return results
+        finally:
+            self._cleanup_local_keyframes(video_id)
+
+    def _cleanup_local_keyframes(self, video_id: str) -> None:
+        """Remove this pod's extracted keyframe JPEGs after the run.
+
+        Keyframes are uploaded to the object store and cached as encoded
+        JPEG bytes during ``strategy_set.process``; answer-time serving
+        fetches from the object store and cache hits rehydrate from the
+        stored bytes, so nothing downstream reads the local files once
+        processing returns. Left in place they accumulate one directory
+        per ingest and eventually fill the pod disk.
+        """
+        import shutil
+
+        kf_dir = self.profile_output_dir / "keyframes" / video_id
+        if kf_dir.exists():
+            shutil.rmtree(kf_dir, ignore_errors=True)
+            self.logger.debug("Removed local keyframe dir %s", kf_dir)
 
     def _prepare_base_results(
         self, video_path: Path, video_uri: str | None = None

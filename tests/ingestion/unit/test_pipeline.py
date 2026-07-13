@@ -561,3 +561,84 @@ class TestPipelineStep:
         assert PipelineStep.TRANSCRIBE_AUDIO.value == "transcribe_audio"
         assert PipelineStep.GENERATE_DESCRIPTIONS.value == "generate_descriptions"
         assert PipelineStep.GENERATE_EMBEDDINGS.value == "generate_embeddings"
+
+
+@pytest.mark.unit
+class TestLocalKeyframeCleanup:
+    """The extracted keyframe JPEGs are uploaded to the object store and
+    cached as bytes during processing; the local copies must be removed
+    when the run ends so they don't accumulate one directory per ingest
+    and fill the pod disk."""
+
+    def _pipeline(self, output_dir: Path) -> VideoIngestionPipeline:
+        pipeline = VideoIngestionPipeline.__new__(VideoIngestionPipeline)
+        pipeline.logger = Mock()
+        pipeline.schema_name = "test_schema"
+        pipeline.tenant_id = "acme"
+        pipeline.job_id = None
+        pipeline.cache = None
+        pipeline.profile_output_dir = output_dir
+        pipeline.strategy_set = Mock()
+        pipeline.processor_manager = Mock()
+        return pipeline
+
+    def _seed_keyframes(self, output_dir: Path, video_id: str) -> Path:
+        kf_dir = output_dir / "keyframes" / video_id
+        kf_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(3):
+            (kf_dir / f"{video_id}_keyframe_{i:04d}.jpg").write_bytes(b"\xff\xd8jpeg")
+        return kf_dir
+
+    @pytest.mark.asyncio
+    async def test_local_keyframes_removed_after_successful_run(self, tmp_path):
+        pipeline = self._pipeline(tmp_path)
+        video_path = Path("/videos/vid.mp4")
+        kf_dir = self._seed_keyframes(tmp_path, "vid")
+
+        async def _process(**kwargs):
+            # Local JPEGs still present while the stages consume them.
+            assert kf_dir.exists()
+            return {"keyframes": {"keyframes": []}}
+
+        pipeline.strategy_set.process = AsyncMock(side_effect=_process)
+
+        with (
+            patch.object(pipeline, "_prepare_base_results") as prep,
+            patch.object(
+                pipeline, "_canonical_uri", return_value="file:///videos/vid.mp4"
+            ),
+            patch.object(pipeline, "_is_cancelled", return_value=False),
+            patch.object(
+                pipeline, "_embedding_run_status", return_value=("completed", None, [])
+            ),
+            patch("cogniverse_foundation.telemetry.manager.get_telemetry_manager"),
+        ):
+            prep.return_value = {"video_id": "vid", "results": {}, "started_at": 0.0}
+            result = await pipeline.process_video_async_with_strategies(video_path)
+
+        assert result["status"] == "completed"
+        assert not kf_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_local_keyframes_removed_even_when_processing_fails(self, tmp_path):
+        pipeline = self._pipeline(tmp_path)
+        video_path = Path("/videos/vid.mp4")
+        kf_dir = self._seed_keyframes(tmp_path, "vid")
+
+        pipeline.strategy_set.process = AsyncMock(
+            side_effect=RuntimeError("embedding backend down")
+        )
+
+        with (
+            patch.object(pipeline, "_prepare_base_results") as prep,
+            patch.object(
+                pipeline, "_canonical_uri", return_value="file:///videos/vid.mp4"
+            ),
+            patch.object(pipeline, "_is_cancelled", return_value=False),
+            patch("cogniverse_foundation.telemetry.manager.get_telemetry_manager"),
+        ):
+            prep.return_value = {"video_id": "vid", "results": {}, "started_at": 0.0}
+            result = await pipeline.process_video_async_with_strategies(video_path)
+
+        assert result["status"] == "failed"
+        assert not kf_dir.exists()
