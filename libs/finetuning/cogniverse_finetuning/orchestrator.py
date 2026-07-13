@@ -21,6 +21,10 @@ from cogniverse_finetuning.dataset.embedding_extractor import TripletExtractor
 from cogniverse_finetuning.dataset.formatters import InstructionFormatter
 from cogniverse_finetuning.dataset.method_selector import TrainingMethodSelector
 from cogniverse_finetuning.dataset.preference_extractor import PreferencePairExtractor
+from cogniverse_finetuning.dataset.synthetic_reader import (
+    format_synthetic_sft,
+    load_approved_synthetic_examples,
+)
 from cogniverse_finetuning.dataset.trace_converter import (
     TraceToInstructionConverter,
     TraceToTrajectoryConverter,
@@ -534,6 +538,20 @@ class FinetuningOrchestrator:
         else:
             raise ValueError(f"Unknown backend: {config.backend}")
 
+    async def _load_approved_synthetic(
+        self, config: OrchestrationConfig
+    ) -> List[Dict[str, Any]]:
+        """Approved synthetic examples for this agent from the
+        ``approved_synthetic_data`` dataset (empty on the first run)."""
+        try:
+            df = await self.provider.datasets.get_dataset(
+                name="approved_synthetic_data"
+            )
+        except Exception as e:
+            logger.info(f"No approved synthetic dataset yet: {e}")
+            return []
+        return load_approved_synthetic_examples(df, config.agent_type)
+
     async def run(self, config: OrchestrationConfig) -> OrchestrationResult:
         """
         Run end-to-end fine-tuning pipeline.
@@ -586,6 +604,10 @@ class FinetuningOrchestrator:
             approval_agent=self.approval_agent,
         )
 
+        # Approved synthetic from a prior run: counts toward the threshold and
+        # folds into the SFT set below, so a resumed run trains on it.
+        approved_synthetic = await self._load_approved_synthetic(config)
+
         analysis, approved_batch = await selector.analyze_and_prepare(
             provider=self.provider,
             project=config.project,
@@ -594,6 +616,7 @@ class FinetuningOrchestrator:
             min_sft_examples=config.min_sft_examples,
             min_dpo_pairs=config.min_dpo_pairs,
             generate_synthetic=config.generate_synthetic,
+            approved_synthetic=approved_synthetic,
         )
 
         logger.info(
@@ -703,15 +726,30 @@ class FinetuningOrchestrator:
             return orchestration_result
 
         elif analysis.recommended_method == "sft":
-            # SFT: Extract instruction examples
+            # SFT: Extract instruction examples. When approved synthetic covers
+            # the threshold, tolerate zero real annotations (they get folded in).
             converter = TraceToInstructionConverter(self.provider)
-            dataset_obj = await converter.convert(config.project, config.agent_type)
+            dataset_obj = await converter.convert(
+                config.project,
+                config.agent_type,
+                min_annotations=0 if approved_synthetic else 20,
+            )
             examples = dataset_obj.examples
 
             logger.info(f"Extracted {len(examples)} examples for SFT")
 
             # Format for training (Alpaca format with "text" field for TRL)
             formatted_dataset = InstructionFormatter.format_alpaca_text(examples)
+
+            # Fold in approved synthetic examples as identically-shaped SFT records.
+            synthetic_records = format_synthetic_sft(
+                approved_synthetic, config.agent_type
+            )
+            formatted_dataset = formatted_dataset + synthetic_records
+            logger.info(
+                f"Folded {len(synthetic_records)} approved synthetic examples "
+                f"into the SFT set"
+            )
 
             # Validate dataset
             validate_sft_dataset(formatted_dataset)
@@ -742,7 +780,7 @@ class FinetuningOrchestrator:
                 metrics=result.metrics,
                 base_model=config.base_model,
                 lora_config={"use_lora": config.use_lora},
-                used_synthetic=analysis.needs_synthetic,
+                used_synthetic=bool(synthetic_records),
                 synthetic_approval_count=(
                     approved_batch.approved_count if approved_batch else None
                 ),
