@@ -317,3 +317,118 @@ class TestSignificanceTest:
         assert improved.p_value < 0.05
         assert improved.improvement_significant is True
         assert improved.accuracy_improvement == pytest.approx(0.30)
+
+
+class TestHeldOutTestSet:
+    """The test set must exclude every example the adapter was trained on;
+    otherwise accuracy is measured on memorised data and inflated."""
+
+    @staticmethod
+    def _dataset(triples):
+        from cogniverse_finetuning.dataset.trace_converter import (
+            InstructionDataset,
+            InstructionExample,
+        )
+
+        return InstructionDataset(
+            examples=[
+                InstructionExample(instruction=i, input=inp, output=o, metadata={})
+                for (i, inp, o) in triples
+            ],
+            metadata={},
+        )
+
+    def _evaluator_with(self, monkeypatch, dataset):
+        import cogniverse_finetuning.dataset.trace_converter as tc
+
+        class _FakeConverter:
+            def __init__(self, provider):
+                pass
+
+            async def convert(self, **kwargs):
+                return dataset
+
+        monkeypatch.setattr(tc, "TraceToInstructionConverter", _FakeConverter)
+        ev = object.__new__(AdapterEvaluator)
+        ev.provider = object()
+        ev.agent_type = "routing"
+        return ev
+
+    def test_identity_is_deterministic_and_content_sensitive(self):
+        from cogniverse_finetuning.evaluation.adapter_evaluator import example_identity
+
+        a = example_identity("route", "q1", "search_agent")
+        assert a == example_identity("route", "q1", "search_agent")
+        assert a != example_identity("route", "q1", "summary_agent")
+        assert a != example_identity("route", "q2", "search_agent")
+
+    @pytest.mark.asyncio
+    async def test_trained_examples_are_excluded(self, monkeypatch):
+        from cogniverse_finetuning.evaluation.adapter_evaluator import example_identity
+
+        dataset = self._dataset(
+            [
+                ("route", "trained one", "search_agent"),
+                ("route", "trained two", "summary_agent"),
+                ("route", "held out", "detailed_report_agent"),
+            ]
+        )
+        ev = self._evaluator_with(monkeypatch, dataset)
+        exclude = {
+            example_identity("route", "trained one", "search_agent"),
+            example_identity("route", "trained two", "summary_agent"),
+        }
+
+        test_set = await ev._create_test_set(
+            "proj", test_size=50, exclude_identities=exclude
+        )
+
+        assert len(test_set) == 1
+        assert test_set[0]["expected_output"] == "detailed_report_agent"
+        assert test_set[0]["input"] == "route\n\nheld out"
+
+    @pytest.mark.asyncio
+    async def test_all_trained_yields_empty_test_set(self, monkeypatch):
+        from cogniverse_finetuning.evaluation.adapter_evaluator import example_identity
+
+        triples = [
+            ("route", "a", "search_agent"),
+            ("route", "b", "summary_agent"),
+        ]
+        dataset = self._dataset(triples)
+        ev = self._evaluator_with(monkeypatch, dataset)
+        exclude = {example_identity(i, inp, o) for (i, inp, o) in triples}
+
+        test_set = await ev._create_test_set(
+            "proj", test_size=50, exclude_identities=exclude
+        )
+
+        assert test_set == []
+
+    @pytest.mark.asyncio
+    async def test_no_exclusion_keeps_all(self, monkeypatch):
+        dataset = self._dataset(
+            [("route", "a", "x"), ("route", "b", "y"), ("route", "c", "z")]
+        )
+        ev = self._evaluator_with(monkeypatch, dataset)
+
+        test_set = await ev._create_test_set("proj", test_size=50)
+
+        assert len(test_set) == 3
+
+    @pytest.mark.asyncio
+    async def test_evaluate_raises_when_all_examples_were_trained(self, monkeypatch):
+        dataset = self._dataset([("route", "a", "x")])
+        ev = self._evaluator_with(monkeypatch, dataset)
+        from cogniverse_finetuning.evaluation.adapter_evaluator import example_identity
+
+        exclude = {example_identity("route", "a", "x")}
+
+        with pytest.raises(ValueError, match="No held-out test examples"):
+            await ev.evaluate(
+                base_model="m",
+                adapter_path="/p",
+                project="proj",
+                test_size=10,
+                exclude_identities=exclude,
+            )

@@ -1723,7 +1723,7 @@ existing tabs in `libs/dashboard/cogniverse_dashboard/tabs/` (e.g. `evaluation.p
 
 ### Overview
 
-After training completes, adapters are automatically evaluated against the base model on a held-out test set. This provides objective metrics on adapter quality and improvement over baseline.
+After training completes, adapters are automatically evaluated against the base model on a held-out test set. The set is held out by excluding every example the adapter was trained on (matched by a content hash of instruction/input/output), so metrics are never measured on memorized data. When no candidate survives the exclusion — e.g. the run trained on all available annotations — evaluation raises and is skipped rather than reporting inflated numbers. This provides objective metrics on adapter quality and improvement over baseline.
 
 ### Evaluation Metrics
 
