@@ -316,6 +316,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     bootstrap = BootstrapConfig.from_environment()
 
     vespa_base = f"{bootstrap.backend_url}:{bootstrap.backend_port}"
+    # Expose the resolved backend base so the health/readiness probes can ping
+    # it for real connectivity instead of only checking class registration.
+    app.state.backend_base_url = vespa_base
     logger.info(f"Waiting for backend feed readiness at {vespa_base}...")
 
     if await _wait_for_backend_ready(vespa_base):

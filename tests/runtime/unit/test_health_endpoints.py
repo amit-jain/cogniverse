@@ -1,10 +1,16 @@
 """
 Unit tests for health router endpoints.
 
-All external dependencies (BackendRegistry, AgentRegistry, ConfigManager)
+The registry dependencies (BackendRegistry, AgentRegistry, ConfigManager)
 are patched at the module boundary so each endpoint is tested in isolation.
+Backend reachability is NOT mocked: the fixture points the probes at a real
+local stub HTTP server that answers ``/ApplicationStatus`` 200, so the
+ready/healthy assertions reflect a genuinely reachable backend.
 """
 
+import http.server
+import threading
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +18,30 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cogniverse_runtime.routers import health
+
+
+class _OKHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):  # noqa: N802
+        if self.path == "/ApplicationStatus":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@contextmanager
+def _stub_backend():
+    srv = http.server.HTTPServer(("127.0.0.1", 0), _OKHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{srv.server_address[1]}"
+    finally:
+        srv.shutdown()
 
 
 @pytest.fixture(autouse=True)
@@ -25,12 +55,14 @@ def _clear_health_cache():
 
 @pytest.fixture
 def health_client():
-    """TestClient with health router mounted."""
+    """TestClient with health router mounted and a reachable stub backend."""
     test_app = FastAPI()
     test_app.include_router(health.router)
 
-    with TestClient(test_app) as client:
-        yield client
+    with _stub_backend() as base_url:
+        test_app.state.backend_base_url = base_url
+        with TestClient(test_app) as client:
+            yield client
 
 
 # ── GET /health/live ─────────────────────────────────────────────────────
