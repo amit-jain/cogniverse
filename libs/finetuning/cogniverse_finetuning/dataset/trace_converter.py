@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Literal, Optional
 import pandas as pd
 
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.span_contract import PREFERENCE_CHOSEN_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -297,9 +298,9 @@ class TraceToInstructionConverter:
         if annotations_df.empty:
             return annotations_df
 
-        # Approved annotations have label="approved" or score >= 0.5
+        # Approved annotations have label="approved" or a high enough score.
         mask = (annotations_df["result.label"] == "approved") | (
-            annotations_df["result.score"] >= 0.5
+            annotations_df["result.score"] >= PREFERENCE_CHOSEN_THRESHOLD
         )
         return annotations_df[mask].copy()
 

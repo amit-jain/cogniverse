@@ -14,7 +14,13 @@ import numpy as np
 import pandas as pd
 
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
-from cogniverse_foundation.telemetry.span_contract import read_span_io
+from cogniverse_foundation.telemetry.span_contract import (
+    RELEVANCE_POSITIVE_THRESHOLD,
+    RESULT_CLICK,
+    RESULT_ID_META_KEY,
+    RESULT_RELEVANCE,
+    read_span_io,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +108,7 @@ class TripletExtractor:
         annotations_df = await self.provider._annotation_store.get_annotations(
             spans_df=search_spans,
             project=project,
-            annotation_names=["result_click", "result_relevance"],
+            annotation_names=[RESULT_CLICK, RESULT_RELEVANCE],
         )
 
         logger.info(f"Found {len(annotations_df)} annotations")
@@ -233,12 +239,12 @@ class TripletExtractor:
         ``result`` only carries label/score, never a result_id). Read the
         flattened ``metadata.result_id`` column or the nested ``metadata`` dict.
         """
-        val = annotation.get("metadata.result_id")
+        val = annotation.get(f"metadata.{RESULT_ID_META_KEY}")
         if val is not None and not (isinstance(val, float) and pd.isna(val)):
             return str(val)
         meta = annotation.get("metadata")
-        if isinstance(meta, dict) and meta.get("result_id"):
-            return str(meta["result_id"])
+        if isinstance(meta, dict) and meta.get(RESULT_ID_META_KEY):
+            return str(meta[RESULT_ID_META_KEY])
         return None
 
     def _get_clicked_results(self, annotations: pd.DataFrame) -> Set[str]:
@@ -249,16 +255,16 @@ class TripletExtractor:
             # Check annotation type
             ann_name = annotation.get("name", "")
 
-            if ann_name == "result_click":
+            if ann_name == RESULT_CLICK:
                 # Direct click annotation
                 result_id = self._annotation_result_id(annotation)
                 if result_id:
                     clicked.add(result_id)
 
-            elif ann_name == "result_relevance":
+            elif ann_name == RESULT_RELEVANCE:
                 # Relevance score annotation
                 score = annotation.get("result.score", 0.0)
-                if score >= 0.7:  # High relevance threshold
+                if score >= RELEVANCE_POSITIVE_THRESHOLD:
                     result_id = self._annotation_result_id(annotation)
                     if result_id:
                         clicked.add(result_id)

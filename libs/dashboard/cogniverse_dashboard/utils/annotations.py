@@ -8,8 +8,14 @@ from __future__ import annotations
 
 from typing import Any
 
-# Relevance radio label -> score. result_relevance >= 0.7 counts as a positive
-# in TripletExtractor._get_clicked_results.
+from cogniverse_foundation.telemetry.span_contract import (
+    RESULT_ID_META_KEY,
+    RESULT_RELEVANCE,
+)
+
+# Relevance radio label -> score. Only "Highly Relevant" (1.0) clears
+# RELEVANCE_POSITIVE_THRESHOLD, so it is what TripletExtractor counts as a
+# positive.
 RELEVANCE_SCORES = {
     "Highly Relevant": 1.0,
     "Somewhat Relevant": 0.5,
@@ -40,10 +46,10 @@ async def persist_result_relevance(
     score = RELEVANCE_SCORES[relevance_label]
     await provider.annotations.add_annotation(
         span_id=span_id,
-        name="result_relevance",
+        name=RESULT_RELEVANCE,
         label=relevance_label,
         score=score,
-        metadata={"result_id": str(result_id)},
+        metadata={RESULT_ID_META_KEY: str(result_id)},
         project=project,
     )
     return score
