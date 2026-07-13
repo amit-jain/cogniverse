@@ -1151,29 +1151,35 @@ class TestOrchestratorIntelligence:
         assert result is False
 
     def test_orchestration_span_emitted(self, orchestrator_agent):
-        """The cogniverse.orchestration span carries the exact attributes
-        (query truncated to 200 chars, agent_sequence comma-joined)."""
+        """The cogniverse.orchestration span records the workflow on the
+        canonical input/output slots."""
+        import json
 
-        class _NullCtx:
+        class _RecordingSpan:
+            def __init__(self):
+                self.attrs = {}
+
+            def set_attribute(self, key, value):
+                self.attrs[key] = value
+
+        class _Ctx:
+            def __init__(self, span):
+                self._span = span
+
             def __enter__(self):
-                return self
+                return self._span
 
             def __exit__(self, *exc):
                 return False
 
         class _RecordingTelemetry:
             def __init__(self):
-                self.spans = []
+                self.calls = []
+                self.span_obj = _RecordingSpan()
 
-            def span(self, *, name, tenant_id, attributes):
-                self.spans.append(
-                    {
-                        "name": name,
-                        "tenant_id": tenant_id,
-                        "attributes": dict(attributes),
-                    }
-                )
-                return _NullCtx()
+            def span(self, *, name, tenant_id):
+                self.calls.append({"name": name, "tenant_id": tenant_id})
+                return _Ctx(self.span_obj)
 
         recorder = _RecordingTelemetry()
         orchestrator_agent.telemetry_manager = recorder
@@ -1188,18 +1194,18 @@ class TestOrchestratorIntelligence:
             tasks_completed=2,
         )
 
-        assert len(recorder.spans) == 1
-        span = recorder.spans[0]
-        assert span["name"] == "cogniverse.orchestration"
-        assert span["tenant_id"] == "acme:prod"
-        assert span["attributes"] == {
-            "orchestration.workflow_id": "wf_test",
-            "orchestration.query": "q" * 200,  # truncated to 200 chars
-            "orchestration.agent_sequence": "search_agent,summarizer_agent",
-            "orchestration.execution_time": 1.5,
-            "orchestration.success": True,
-            "orchestration.tasks_completed": 2,
-        }
+        assert len(recorder.calls) == 1
+        assert recorder.calls[0]["name"] == "cogniverse.orchestration"
+        assert recorder.calls[0]["tenant_id"] == "acme:prod"
+        attrs = recorder.span_obj.attrs
+        assert attrs["operation"] == "orchestration"
+        assert attrs["input.value"] == "q" * 300
+        out = json.loads(attrs["output.value"])
+        assert out["workflow_id"] == "wf_test"
+        assert out["agent_sequence"] == ["search_agent", "summarizer_agent"]
+        assert out["execution_time"] == 1.5
+        assert out["success"] is True
+        assert out["tasks_completed"] == 2
 
     def test_orchestration_span_noop_without_telemetry(self, orchestrator_agent):
         """No telemetry_manager -> silent no-op (back-compat, must not raise)."""

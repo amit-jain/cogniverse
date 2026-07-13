@@ -874,16 +874,22 @@ with manager.span("search", tenant_id="acme-corp") as span:
     results = search(query)
     span.set_attribute("num_results", len(results))
 
-# Span with custom attributes
+# Span with canonical input/output contract
 with manager.span(
     "cogniverse.routing",
     tenant_id="acme-corp",
     attributes={
         "openinference.project.name": "cogniverse-acme-corp-routing",
-        "routing.chosen_agent": "video_search"
     }
 ) as span:
     decision = route_query(query)
+    # output.value = json.dumps({"chosen_agent": "video_search", ...})
+    record_span_io(
+        span,
+        input_value=query,
+        output={"chosen_agent": "video_search", "confidence": decision.confidence},
+        operation="routing",
+    )
 ```
 
 ---

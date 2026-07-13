@@ -261,6 +261,29 @@ def _make_spans_df(span_name: str, rows: list[dict]) -> pd.DataFrame:
     return df
 
 
+def _gateway_row(complexity: str, confidence: float, status_code: str) -> dict:
+    """A canonical cogniverse.gateway span row (decision on output.value).
+
+    Only the calibration MATH needs controlled complexity/status inputs (a real
+    gateway won't emit ERROR spans on demand); the real producer->reader
+    contract is covered by the real-Phoenix gateway test.
+    """
+    return {
+        "attributes.output.value": json.dumps(
+            {
+                "complexity": complexity,
+                "confidence": confidence,
+                "modality": "video",
+                "generation_type": "raw_results",
+                "routed_to": "search_agent"
+                if complexity == "simple"
+                else "orchestrator_agent",
+            }
+        ),
+        "status_code": status_code,
+    }
+
+
 class TestSpansWithNoExamples:
     """Spans exist but contain no usable training data (missing attributes)."""
 
@@ -297,12 +320,16 @@ class TestSpansWithNoExamples:
             "cogniverse.profile_selection",
             [
                 {
-                    "attributes.profile_selection.query": "find videos",
-                    "attributes.profile_selection.selected_profile": "video_colpali_smol500_mv_frame",
-                    "attributes.profile_selection.modality": "video",
-                    "attributes.profile_selection.complexity": "simple",
-                    "attributes.profile_selection.intent": "video_search",
-                    "attributes.profile_selection.confidence": 0.2,
+                    "attributes.input.value": "find videos",
+                    "attributes.output.value": json.dumps(
+                        {
+                            "selected_profile": "video_colpali_smol500_mv_frame",
+                            "modality": "video",
+                            "complexity": "simple",
+                            "intent": "video_search",
+                            "confidence": 0.2,
+                        }
+                    ),
                 },
             ],
         )
@@ -332,35 +359,13 @@ class TestGatewayThresholdAnalysis:
     @pytest.mark.asyncio
     async def test_high_simple_error_rate_raises_threshold(self):
         """When simple-routed queries fail often, threshold should increase."""
-        rows = []
-        # 5 simple queries, 3 with ERROR status
-        for i in range(5):
-            rows.append(
-                {
-                    "attributes.gateway": {
-                        "complexity": "simple",
-                        "confidence": 0.8,
-                        "modality": "video",
-                        "generation_type": "raw_results",
-                        "routed_to": "search_agent",
-                    },
-                    "status_code": "ERROR" if i < 3 else "OK",
-                }
-            )
+        rows = [
+            # 5 simple queries, 3 with ERROR status
+            _gateway_row("simple", 0.8, "ERROR" if i < 3 else "OK")
+            for i in range(5)
+        ]
         # 2 complex queries, both OK
-        for _ in range(2):
-            rows.append(
-                {
-                    "attributes.gateway": {
-                        "complexity": "complex",
-                        "confidence": 0.4,
-                        "modality": "video",
-                        "generation_type": "raw_results",
-                        "routed_to": "orchestrator_agent",
-                    },
-                    "status_code": "OK",
-                }
-            )
+        rows += [_gateway_row("complex", 0.4, "OK") for _ in range(2)]
 
         spans_df = _make_spans_df("cogniverse.gateway", rows)
         provider = FakeTelemetryProvider(spans_df)
@@ -385,20 +390,7 @@ class TestGatewayThresholdAnalysis:
     @pytest.mark.asyncio
     async def test_all_ok_keeps_threshold_stable(self):
         """When error rates are low, threshold stays near default."""
-        rows = []
-        for _ in range(10):
-            rows.append(
-                {
-                    "attributes.gateway": {
-                        "complexity": "simple",
-                        "confidence": 0.75,
-                        "modality": "video",
-                        "generation_type": "raw_results",
-                        "routed_to": "search_agent",
-                    },
-                    "status_code": "OK",
-                }
-            )
+        rows = [_gateway_row("simple", 0.75, "OK") for _ in range(10)]
 
         spans_df = _make_spans_df("cogniverse.gateway", rows)
         provider = FakeTelemetryProvider(spans_df)
@@ -432,24 +424,24 @@ class TestWorkflowOptimization:
     async def test_workflow_with_orchestration_spans(self):
         """Workflow mode processes orchestration spans through the evaluator.
 
-        OrchestrationEvaluator._extract_workflow_execution expects nested dicts
-        at ``attributes.orchestration`` and ``attributes.routing`` — that's how
-        Phoenix returns span rows when the OTel attributes use a dotted prefix.
+        OrchestrationEvaluator._extract_workflow_execution reads the workflow
+        off the canonical input.value (query) and output.value (the decision).
         """
         rows = [
             {
                 "name": "cogniverse.orchestration",
                 "context.span_id": f"span-{i}",
-                "attributes.orchestration": {
-                    "workflow_id": f"wf-{i}",
-                    "query": f"test query {i}",
-                    "pattern": "sequential",
-                    "agents_used": "search_agent,summarizer_agent",
-                    "execution_time": "2.5",
-                    "tasks_completed": "2",
-                    "execution_order": "search_agent,summarizer_agent",
-                },
-                "attributes.routing": {"confidence": "0.8"},
+                "attributes.input.value": f"test query {i}",
+                "attributes.output.value": json.dumps(
+                    {
+                        "workflow_id": f"wf-{i}",
+                        "pattern": "sequential",
+                        "agent_sequence": ["search_agent", "summarizer_agent"],
+                        "execution_time": 2.5,
+                        "tasks_completed": 2,
+                        "confidence": 0.8,
+                    }
+                ),
                 "status_code": "OK",
                 "status_message": None,
             }
@@ -652,18 +644,21 @@ class TestCreateTeleprompter:
 
 
 def _gateway_spans(rows: list[dict]) -> pd.DataFrame:
-    """Build a ``cogniverse.gateway`` spans DataFrame with ``attributes.gateway``
-    populated from ``rows``. Each row is ``{"complexity": ..., "confidence":
-    ..., "status_code": ...}``; ``status_code`` defaults to ``OK`` if absent.
-    The DataFrame shape matches what Phoenix's ``get_spans`` returns."""
+    """Build a ``cogniverse.gateway`` spans DataFrame with the canonical
+    ``output.value`` decision populated from ``rows``. Each row is
+    ``{"complexity": ..., "confidence": ..., "status_code": ...}``;
+    ``status_code`` defaults to ``OK`` if absent. The DataFrame shape matches
+    what Phoenix's ``get_spans`` returns."""
     records = []
     for r in rows:
         records.append(
             {
-                "attributes.gateway": {
-                    "complexity": r.get("complexity"),
-                    "confidence": r.get("confidence"),
-                },
+                "attributes.output.value": json.dumps(
+                    {
+                        "complexity": r.get("complexity"),
+                        "confidence": r.get("confidence"),
+                    }
+                ),
                 "status_code": r.get("status_code", "OK"),
             }
         )
@@ -839,23 +834,23 @@ class TestComputeGatewayThresholdsAlgorithm:
         assert a["complex_error_rate"] == 0.0
 
     def test_malformed_attributes_dict_treated_as_missing(self):
-        """Defensive: an ``attributes.gateway`` value that's not a dict (e.g.
-        a stray string from a malformed write) must not crash the compute."""
+        """Defensive: an ``output.value`` that parses to a non-dict (e.g. a
+        stray string from a malformed write) must not crash the compute."""
         from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
 
         df = pd.DataFrame(
             [
                 {
                     "name": "cogniverse.gateway",
-                    "attributes.gateway": "not-a-dict",
+                    "attributes.output.value": json.dumps("not-a-dict"),
                     "status_code": "OK",
                 }
             ]
         )
         result = _compute_gateway_thresholds(df)
-        # No complexity/confidence extractable → no confidence data.
+        # No decision dict extractable → treated as missing, no crash.
         assert result["status"] == "no_data"
-        assert result["reason"] == "no_confidence_data"
+        assert result["reason"] == "no_gateway_attributes"
 
 
 class TestSyntheticGeneration:

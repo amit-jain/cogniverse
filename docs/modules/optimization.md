@@ -169,7 +169,7 @@ flowchart TB
 flowchart TB
     Phoenix["<span style='color:#000'>Phoenix Spans<br/>cogniverse.gateway routing telemetry</span>"]
 
-    Phoenix --> Compute["<span style='color:#000'>_compute_gateway_thresholds(spans_df)<br/>• Read attributes.gateway.complexity / .confidence<br/>• Rule-based ± adjustment from error rate + mean confidence<br/>• p25-percentile-derived gliner_threshold<br/>• GATEWAY_DEFAULT_THRESHOLD = 0.4</span>"]
+    Phoenix --> Compute["<span style='color:#000'>_compute_gateway_thresholds(spans_df)<br/>• Read output.value.complexity / .confidence (via read_span_io)<br/>• Rule-based ± adjustment from error rate + mean confidence<br/>• p25-percentile-derived gliner_threshold<br/>• GATEWAY_DEFAULT_THRESHOLD = 0.4</span>"]
 
     Compute --> Thresholds["<span style='color:#000'>Optimized Thresholds<br/>fast_path_confidence_threshold, gliner_threshold<br/>saved via ArtifactManager.save_blob('config', 'gateway_thresholds')</span>"]
 
@@ -1086,11 +1086,13 @@ Optimization artifacts are persisted to the telemetry store via `ArtifactManager
 def test_compute_gateway_thresholds():
     """Test threshold derivation from Phoenix spans"""
     from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds, GATEWAY_DEFAULT_THRESHOLD
+    import json
     import pandas as pd
 
     spans_df = pd.DataFrame({
-        "attributes.gateway": [
-            {"complexity": "simple", "confidence": c} for c in [0.3, 0.5, 0.6, 0.7, 0.8, 0.9]
+        "attributes.output.value": [
+            json.dumps({"complexity": "simple", "confidence": c})
+            for c in [0.3, 0.5, 0.6, 0.7, 0.8, 0.9]
         ],
     })
 

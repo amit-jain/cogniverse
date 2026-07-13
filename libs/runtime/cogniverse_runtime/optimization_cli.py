@@ -76,6 +76,35 @@ def _entity_extraction_pairs(spans_df) -> List[Dict[str, Any]]:
     return pairs
 
 
+def _profile_selection_pairs(spans_df) -> List[Dict[str, Any]]:
+    """(query -> selected_profile) training pairs from profile_selection spans.
+
+    Reads the canonical span slots: input.value holds the query, output.value
+    holds ``{"selected_profile", "modality", "complexity", "intent",
+    "confidence"}``. Only high-confidence (>= 0.5) selections are kept.
+    """
+    pairs: List[Dict[str, Any]] = []
+    for _, row in spans_df.iterrows():
+        span_io = read_span_io(row)
+        query = span_io["input"] or ""
+        output = span_io["output"] if isinstance(span_io["output"], dict) else {}
+        selected = output.get("selected_profile", "")
+        confidence = float(output.get("confidence", 0.0) or 0.0)
+        if not query or not selected or confidence < 0.5:
+            continue
+        pairs.append(
+            {
+                "query": query,
+                "selected_profile": selected,
+                "modality": output.get("modality", "video"),
+                "complexity": output.get("complexity", "simple"),
+                "intent": output.get("intent", ""),
+                "confidence": confidence,
+            }
+        )
+    return pairs
+
+
 async def run_triggered_optimization(
     tenant_id: str,
     agents: list[str],
@@ -1155,23 +1184,23 @@ def _compute_gateway_thresholds(spans_df) -> dict:
     if spans_df.empty:
         return {"status": "no_data", "spans_found": 0}
 
-    # Phoenix stores custom span attributes as a dict in ``attributes.gateway``
-    # column (not as separate flattened columns). Extract fields from it.
-    gw_attrs = spans_df.get("attributes.gateway")
-    if gw_attrs is None:
+    # The gateway decision is on the canonical output.value slot.
+    df = spans_df.copy()
+
+    def _gateway_output(row) -> Dict[str, Any]:
+        out = read_span_io(row)["output"]
+        return out if isinstance(out, dict) else {}
+
+    gw_outputs = df.apply(_gateway_output, axis=1)
+    if gw_outputs.map(bool).sum() == 0:
         return {
             "status": "no_data",
             "spans_found": len(spans_df),
             "reason": "no_gateway_attributes",
         }
 
-    df = spans_df.copy()
-    df["_complexity"] = gw_attrs.apply(
-        lambda d: d.get("complexity", "") if isinstance(d, dict) else ""
-    )
-    df["_confidence"] = gw_attrs.apply(
-        lambda d: d.get("confidence", None) if isinstance(d, dict) else None
-    )
+    df["_complexity"] = gw_outputs.apply(lambda d: d.get("complexity", ""))
+    df["_confidence"] = gw_outputs.apply(lambda d: d.get("confidence", None))
 
     simple_spans = df[df["_complexity"] == "simple"]
     complex_spans = df[df["_complexity"] == "complex"]
@@ -1405,40 +1434,22 @@ async def run_profile_optimization(
 
     logger.info("Found %d profile_selection spans", len(spans_df))
 
-    # Build DSPy training examples from span attributes
+    # Build DSPy training examples from the canonical span slots.
     import dspy
 
-    trainset = []
-    for _, row in spans_df.iterrows():
-        # Phoenix stores custom attributes as dict in "attributes.profile_selection"
-        ps_attrs = row.get("attributes.profile_selection", {})
-        if not isinstance(ps_attrs, dict):
-            ps_attrs = {}
-        query = ps_attrs.get("query", "")
-        selected = ps_attrs.get("selected_profile", "")
-        modality = ps_attrs.get("modality", "video")
-        complexity = ps_attrs.get("complexity", "simple")
-        intent = ps_attrs.get("intent", "")
-        confidence = float(ps_attrs.get("confidence", 0.0))
-
-        if not query or not selected:
-            continue
-
-        # Only learn from high-confidence selections
-        if confidence < 0.5:
-            continue
-
-        example = dspy.Example(
-            query=query,
+    trainset = [
+        dspy.Example(
+            query=pair["query"],
             available_profiles="video_colpali_smol500_mv_frame,video_colqwen_omni_mv_chunk_30s,video_videoprism_base_mv_chunk_30s,video_videoprism_large_mv_chunk_30s",
-            selected_profile=selected,
-            confidence=str(confidence),
-            reasoning=f"Selected {selected} for {modality}/{complexity} query",
-            query_intent=intent,
-            modality=modality,
-            complexity=complexity,
+            selected_profile=pair["selected_profile"],
+            confidence=str(pair["confidence"]),
+            reasoning=f"Selected {pair['selected_profile']} for {pair['modality']}/{pair['complexity']} query",
+            query_intent=pair["intent"],
+            modality=pair["modality"],
+            complexity=pair["complexity"],
         ).with_inputs("query", "available_profiles")
-        trainset.append(example)
+        for pair in _profile_selection_pairs(spans_df)
+    ]
 
     if not trainset:
         logger.info("No valid training examples extracted from spans")

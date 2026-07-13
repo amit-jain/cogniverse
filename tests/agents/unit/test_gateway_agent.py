@@ -506,15 +506,31 @@ class TestProcessImpl:
 
 class TestTelemetrySpan:
     @pytest.mark.asyncio
+    @staticmethod
+    def _per_span_manager():
+        """A telemetry manager whose span() returns a distinct span per call,
+        keyed by name, so each span's set_attribute calls can be inspected."""
+        spans = {}
+
+        def _span_cm(name, **kwargs):
+            cm = MagicMock()
+            span = spans.setdefault(name, MagicMock())
+            cm.__enter__ = Mock(return_value=span)
+            cm.__exit__ = Mock(return_value=False)
+            return cm
+
+        mock_tm = MagicMock()
+        mock_tm.span.side_effect = _span_cm
+        return mock_tm, spans
+
     async def test_span_emitted(self, gateway_agent, mock_gliner_model):
         """telemetry_manager set -> gateway AND routing spans emitted."""
+        import json
+
         mock_gliner_model.predict_entities.return_value = [
             {"text": "video", "label": "video_content", "score": 0.92},
         ]
-        mock_tm = MagicMock()
-        mock_span = MagicMock()
-        mock_tm.span.return_value.__enter__ = Mock(return_value=mock_span)
-        mock_tm.span.return_value.__exit__ = Mock(return_value=False)
+        mock_tm, spans = self._per_span_manager()
         gateway_agent.telemetry_manager = mock_tm
 
         await gateway_agent._process_impl(
@@ -534,27 +550,27 @@ class TestTelemetrySpan:
         )
         # require_tenant_id canonicalizes "acme" → "acme:acme"
         assert gateway_call.kwargs["tenant_id"] == "acme:acme"
-        gw_attrs = gateway_call.kwargs["attributes"]
-        assert gw_attrs["gateway.query"] == "cooking videos"
-        assert gw_attrs["gateway.complexity"] == "simple"
-        assert gw_attrs["gateway.modality"] == "video"
-        assert gw_attrs["gateway.routed_to"] == "search_agent"
+        recorded = {
+            c.args[0]: c.args[1]
+            for c in spans["cogniverse.gateway"].set_attribute.call_args_list
+        }
+        assert recorded["operation"] == "gateway"
+        assert recorded["input.value"] == "cooking videos"
+        gw_out = json.loads(recorded["output.value"])
+        assert gw_out["complexity"] == "simple"
+        assert gw_out["modality"] == "video"
+        assert gw_out["routed_to"] == "search_agent"
 
     @pytest.mark.asyncio
     async def test_routing_span_shape(self, gateway_agent, mock_gliner_model):
-        """Gateway's cogniverse.routing span uses the RoutingAgent key shape.
+        """Gateway's cogniverse.routing span records the routing decision on
+        output.value, read by RoutingEvaluator / AnnotationAgent."""
+        import json
 
-        AnnotationAgent / RoutingEvaluator read `routing.chosen_agent`,
-        `routing.confidence`, `routing.query`, `routing.reasoning` — Phoenix
-        nests dot-prefixed keys into `attributes.routing = {...}`. This test
-        guards that shape so those consumers keep working.
-        """
         mock_gliner_model.predict_entities.return_value = [
             {"text": "video", "label": "video_content", "score": 0.92},
         ]
-        mock_tm = MagicMock()
-        mock_tm.span.return_value.__enter__ = Mock(return_value=MagicMock())
-        mock_tm.span.return_value.__exit__ = Mock(return_value=False)
+        mock_tm, spans = self._per_span_manager()
         gateway_agent.telemetry_manager = mock_tm
 
         await gateway_agent._process_impl(
@@ -566,14 +582,19 @@ class TestTelemetrySpan:
         )
         # require_tenant_id canonicalizes "acme" → "acme:acme"
         assert routing_call.kwargs["tenant_id"] == "acme:acme"
-        attrs = routing_call.kwargs["attributes"]
-        assert attrs["routing.query"] == "cooking videos"
-        assert attrs["routing.chosen_agent"] == "search_agent"
-        assert attrs["routing.recommended_agent"] == "search_agent"
-        assert isinstance(attrs["routing.confidence"], float)
-        assert attrs["routing.complexity"] == "simple"
-        assert attrs["routing.modality"] == "video"
-        assert attrs["routing.reasoning"]
+        recorded = {
+            c.args[0]: c.args[1]
+            for c in spans["cogniverse.routing"].set_attribute.call_args_list
+        }
+        assert recorded["operation"] == "routing"
+        assert recorded["input.value"] == "cooking videos"
+        out = json.loads(recorded["output.value"])
+        assert out["chosen_agent"] == "search_agent"
+        assert out["recommended_agent"] == "search_agent"
+        assert isinstance(out["confidence"], float)
+        assert out["complexity"] == "simple"
+        assert out["modality"] == "video"
+        assert out["reasoning"]
 
     @pytest.mark.asyncio
     async def test_no_telemetry_manager(self, gateway_agent, mock_gliner_model):

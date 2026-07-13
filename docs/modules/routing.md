@@ -914,20 +914,28 @@ latency_ms = (time.time() - start_time) * 1000
 with telemetry.span(
     "cogniverse.routing",
     tenant_id="prod",
-    attributes={
-        "routing.query": input_data.query[:200],
-        "routing.chosen_agent": result.routed_to,
-        "routing.confidence": result.confidence,
-        "routing.complexity": result.complexity,
-        "routing.modality": result.modality,
-        "routing.generation_type": result.generation_type,
-    },
 ) as span:
-    pass  # span auto-closes; GatewayAgent emits this span itself
+    record_span_io(
+        span,
+        input_value=input_data.query,
+        output={
+            "chosen_agent": result.routed_to,
+            "recommended_agent": result.routed_to,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+            "complexity": result.complexity,
+            "modality": result.modality,
+            "generation_type": result.generation_type,
+        },
+        operation="routing",
+        modality=result.modality,
+    )
+    # span auto-closes; GatewayAgent emits this span itself
 ```
 
-`RoutingEvaluator` and `AnnotationAgent` filter on the `cogniverse.routing` span name and read `routing.*`
-attributes downstream (see [Annotation-Driven Optimization Loop](#annotation-driven-optimization-loop)).
+`RoutingEvaluator` and `AnnotationAgent` filter on the `cogniverse.routing` span name and read the
+decision from `read_span_io(row)["output"]` (a dict) downstream (see
+[Annotation-Driven Optimization Loop](#annotation-driven-optimization-loop)).
 
 ### Multi-tenant Configuration
 
