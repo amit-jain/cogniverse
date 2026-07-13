@@ -131,6 +131,50 @@ class TestIngestionUploadRequiresTenant:
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
+class TestStartIngestionBodyContract:
+    """The dashboard's ``process_video`` action must post the body shape the
+    route accepts. It previously sent ``profiles: [<name>]`` (a list) while
+    ``IngestionRequest`` requires ``profile`` (a singular string), so every
+    dashboard ingestion 422'd before reaching any real work."""
+
+    def test_dashboard_body_shape_passes_validation(
+        self, ingestion_client_missing_tenant
+    ):
+        """The singular ``profile`` body the dashboard now sends must reach
+        the tenant check (404 here), not fail model validation (422)."""
+        client = ingestion_client_missing_tenant
+        resp = client.post(
+            "/ingestion/start",
+            json={
+                "video_dir": "/tmp/nonexistent",
+                "profile": "video_colpali_smol500_mv_frame",
+                "tenant_id": "unregistered_xyz",
+            },
+        )
+        assert resp.status_code != 422, (
+            f"dashboard body must satisfy IngestionRequest; got 422: {resp.text}"
+        )
+        assert resp.status_code == 404
+
+    def test_legacy_plural_profiles_body_is_rejected(
+        self, ingestion_client_missing_tenant
+    ):
+        """The old ``profiles: [...]`` body (no singular ``profile``) is a
+        422 — the regression this fix removes."""
+        client = ingestion_client_missing_tenant
+        resp = client.post(
+            "/ingestion/start",
+            json={
+                "video_dir": "/tmp/nonexistent",
+                "profiles": ["video_colpali_smol500_mv_frame"],
+                "tenant_id": "unregistered_xyz",
+            },
+        )
+        assert resp.status_code == 422
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestGraphUpsertRequiresTenant:
     def test_upsert_with_unregistered_tenant_returns_404(
         self, graph_client_missing_tenant

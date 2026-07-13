@@ -564,9 +564,9 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
                     f"{RUNTIME_URL}/ingestion/start",
                     json={
                         "video_dir": task_data.get("video_path", ""),
-                        "profiles": [
-                            task_data.get("profile", "video_colpali_smol500_mv_frame")
-                        ],
+                        "profile": task_data.get(
+                            "profile", "video_colpali_smol500_mv_frame"
+                        ),
                         "tenant_id": _tenant,
                     },
                 )
@@ -2758,8 +2758,10 @@ with main_tabs[10]:
                                     )
                                     # Persist to Phoenix before reporting success.
                                     try:
-                                        _provider = get_telemetry_manager().get_provider(
-                                            tenant_id=_tenant
+                                        _provider = (
+                                            get_telemetry_manager().get_provider(
+                                                tenant_id=_tenant
+                                            )
                                         )
                                         run_async_in_streamlit(
                                             persist_result_relevance(
