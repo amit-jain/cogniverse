@@ -221,3 +221,48 @@ class TestFactoryNotConfigured:
             )
             assert resp.status_code == 503
             assert "factory not configured" in resp.json()["detail"].lower()
+
+
+class TestWikiFactoryCanonicalizesTenant:
+    """The runtime's per-tenant wiki factory must canonicalize the tenant id
+    before deploying / caching. Otherwise a simple-form tenant ("acme")
+    deploys ``wiki_pages_acme`` while the canonical form the rest of the
+    stack uses expects ``wiki_pages_acme_acme`` — writes and reads split
+    across two schemas. Exercises the real factory builder from main.py,
+    not a copy."""
+
+    def test_simple_and_canonical_forms_share_one_manager(self, monkeypatch):
+        import cogniverse_agents.wiki.wiki_manager as wm
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+        from cogniverse_runtime.main import build_wiki_manager_factory
+
+        class _FakeWiki:
+            def __init__(self, **kw):
+                self.kw = kw
+
+        monkeypatch.setattr(wm, "WikiManager", _FakeWiki)
+
+        deployed: list[str] = []
+
+        class _Reg:
+            def deploy_schema(self, tenant_id, base_schema_name):
+                deployed.append(tenant_id)
+
+        class _Backend:
+            schema_registry = _Reg()
+
+            def get_tenant_schema_name(self, tenant_id, base):
+                return f"{base}_{tenant_id.replace(':', '_')}"
+
+        factory = build_wiki_manager_factory(_Backend(), MagicMock(), MagicMock())
+
+        m_simple = factory("acme")
+        m_canonical = factory("acme:acme")
+
+        # Both forms canonicalize to the same tenant -> one cached manager,
+        # one deploy, bound to the canonical schema name.
+        canon = canonical_tenant_id("acme")
+        assert m_simple is m_canonical
+        assert deployed == [canon]
+        assert m_simple.kw["tenant_id"] == canon
+        assert m_simple.kw["schema_name"] == f"wiki_pages_{canon.replace(':', '_')}"
