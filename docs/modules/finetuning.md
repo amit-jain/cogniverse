@@ -136,6 +136,13 @@ cogniverse-finetuning/
   a recoverable terminal state (approve the pending items, then re-run to train),
   distinct from a `ValueError` for a genuine lack of any data.
 
+**Resume-after-approval**: on each `run()`, the orchestrator loads approved
+synthetic examples from the `approved_synthetic_data` dataset (written when the
+dashboard approves an item), counts them toward the SFT threshold, and folds
+them — as identical SFT records via the synthetic reader — into the training
+set. So a re-run after approval trains on the approved synthetic data;
+`used_synthetic` reflects whether any was folded in.
+
 **Responsibilities**:
 1. Coordinate dataset extraction
 2. Auto-select training method

@@ -210,15 +210,24 @@ def _render_review_item(item, idx: int):
 def _persist_decision(decision: ReviewDecision, item) -> None:
     """Persist a review decision via the approval storage (sync wrapper).
 
-    ``record_decision`` is async and writes the decision as an
-    ``approval_decision`` telemetry span; run it to completion before the
-    caller mutates session state so a persistence failure surfaces instead
-    of silently dropping the decision.
+    Writes the decision span AND, on approval, appends the item to the
+    ``approved_synthetic_data`` training dataset so the finetuning orchestrator
+    picks it up on its next run. ``record_decision`` alone only wrote the
+    decision span, so approved items never reached training.
     """
     storage = st.session_state.get("approval_storage")
     if storage is None:
         raise RuntimeError("approval storage not initialized")
-    asyncio.run(storage.record_decision(decision, item))
+
+    async def _persist() -> None:
+        await storage.record_decision(decision, item)
+        if decision.approved:
+            item.status = ApprovalStatus.APPROVED
+            await storage.append_to_training_dataset(
+                "approved_synthetic_data", [item]
+            )
+
+    asyncio.run(_persist())
 
 
 def _handle_approval(item, idx: int):

@@ -234,9 +234,10 @@ class TestOrchestrationFlows:
             # Verify selector was called
             mock_selector.analyze_and_prepare.assert_called_once()
 
-            # Verify converter was called
+            # Verify converter was called (no approved synthetic here, so the
+            # default annotation floor applies).
             mock_converter.convert.assert_called_once_with(
-                "cogniverse-tenant1", "routing"
+                "cogniverse-tenant1", "routing", min_annotations=20
             )
 
             # Verify formatter was called

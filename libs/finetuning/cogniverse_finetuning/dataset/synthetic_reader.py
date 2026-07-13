@@ -110,6 +110,7 @@ def format_synthetic_sft(
     examples: List[Dict[str, Any]], agent_type: str
 ) -> List[Dict[str, Any]]:
     """Approved synthetic examples -> Alpaca-text SFT records (``{"text": ...}``)."""
-    return InstructionFormatter.format_alpaca_text(
-        synthetic_examples_to_instruction(examples, agent_type)
-    )
+    instruction_examples = synthetic_examples_to_instruction(examples, agent_type)
+    if not instruction_examples:
+        return []
+    return InstructionFormatter.format_alpaca_text(instruction_examples)
