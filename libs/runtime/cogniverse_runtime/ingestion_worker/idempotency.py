@@ -52,10 +52,25 @@ async def get_existing_ingest_id(redis: aioredis.Redis, sha: str) -> Optional[st
     return done
 
 
-async def mark_inflight(redis: aioredis.Redis, sha: str, ingest_id: str) -> None:
-    """Record that ``ingest_id`` is in flight for ``sha``. No TTL —
-    the worker clears this on terminal state."""
-    await redis.set(f"{INFLIGHT_KEY_PREFIX}{sha}", ingest_id)
+async def mark_inflight(
+    redis: aioredis.Redis, sha: str, ingest_id: str, ttl_seconds: int
+) -> None:
+    """Record that ``ingest_id`` is in flight for ``sha``.
+
+    The worker clears this on terminal state (the normal path). The TTL
+    is a crash-recovery bound: if the worker is SIGKILLed / OOM-evicted
+    between claiming the job and ``clear_inflight``, the key would
+    otherwise persist forever and every future re-submission of the same
+    ``(source_url, profile, tenant_id)`` would return the dead job's id
+    and never re-enqueue. The TTL must exceed the longest realistic job
+    duration so it never expires a live run; ``ttl_seconds=0`` disables
+    it (persist forever — restores the old poisoning behaviour, for
+    tests only).
+    """
+    if ttl_seconds > 0:
+        await redis.set(f"{INFLIGHT_KEY_PREFIX}{sha}", ingest_id, ex=ttl_seconds)
+    else:
+        await redis.set(f"{INFLIGHT_KEY_PREFIX}{sha}", ingest_id)
 
 
 async def clear_inflight(redis: aioredis.Redis, sha: str) -> None:
