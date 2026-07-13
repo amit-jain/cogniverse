@@ -14,6 +14,7 @@ the real server.
 
 from __future__ import annotations
 
+import asyncio
 import platform
 import socket
 import subprocess
@@ -132,11 +133,26 @@ class TestIdempotency:
         answer for re-submitters polling status."""
         sha = idempotency.compute_sha("s3://b/k", "video", "acme")
         await idempotency.mark_done(redis, sha, "old_done_id", ttl_seconds=60)
-        await idempotency.mark_inflight(redis, sha, "new_inflight_id")
+        await idempotency.mark_inflight(redis, sha, "new_inflight_id", ttl_seconds=60)
         assert await idempotency.get_existing_ingest_id(redis, sha) == "new_inflight_id"
 
         await idempotency.clear_inflight(redis, sha)
         assert await idempotency.get_existing_ingest_id(redis, sha) == "old_done_id"
+
+    @pytest.mark.asyncio
+    async def test_inflight_ttl_self_heals_after_crash(self, redis):
+        """A worker that dies between mark_inflight and clear_inflight must
+        not poison the sha forever. With a TTL, the stale inflight key
+        expires and a re-submitter gets None (re-enqueue), instead of the
+        dead job's id."""
+        sha = idempotency.compute_sha("s3://crash/k", "video", "acme")
+        await idempotency.mark_inflight(redis, sha, "dead_id", ttl_seconds=1)
+        assert await idempotency.get_existing_ingest_id(redis, sha) == "dead_id"
+        # The worker never reaches clear_inflight (simulated crash). The TTL
+        # must reap the key on its own.
+        assert await redis.ttl(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") > 0
+        await asyncio.sleep(1.5)
+        assert await idempotency.get_existing_ingest_id(redis, sha) is None
 
 
 class TestQueue:

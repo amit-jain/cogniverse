@@ -61,6 +61,16 @@ def _backpressure_limits() -> tuple[int, int]:
     )
 
 
+def _inflight_ttl_seconds() -> int:
+    """Crash-recovery TTL for the in-flight idempotency key (default 6h).
+
+    The worker clears the key on terminal state; this bound only fires
+    when a worker dies mid-job. It must exceed the longest realistic
+    ingestion so a live run is never expired out from under a re-submit.
+    """
+    return int(os.environ.get("INGEST_INFLIGHT_TTL_SECONDS", "21600"))
+
+
 async def _wait_for_terminal(
     redis: aioredis.Redis, ingest_id: str, deadline_seconds: float
 ) -> Optional[dict]:
@@ -126,7 +136,9 @@ async def enqueue_ingestion(
     await queue.ensure_consumer_group(
         redis, os.environ.get("INGEST_CONSUMER_GROUP", "ingestors")
     )
-    await idempotency.mark_inflight(redis, sha, ingest_id)
+    await idempotency.mark_inflight(
+        redis, sha, ingest_id, ttl_seconds=_inflight_ttl_seconds()
+    )
     await queue.publish_status(
         redis,
         ingest_id,
