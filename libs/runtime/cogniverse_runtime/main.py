@@ -238,6 +238,55 @@ def _mirror_minio_credentials_to_aws() -> None:
         os.environ.setdefault("AWS_SECRET_ACCESS_KEY", secret)
 
 
+def build_wiki_manager_factory(wiki_backend, config, config_manager):
+    """Build the per-tenant ``WikiManager`` factory the runtime installs.
+
+    Each tenant gets a dedicated ``wiki_pages_<tenant>`` schema. The first
+    access for a new tenant deploys the schema (non-fatal on error — the
+    first feed then surfaces the real error); subsequent accesses reuse the
+    cached manager.
+
+    The factory canonicalizes ``tenant_id`` so the schema name matches what
+    ``POST /admin/tenants`` stored it under. Without this, a simple-form
+    tenant_id ("acme") deploys ``wiki_pages_acme`` while the rest of the
+    stack expects ``wiki_pages_acme_acme`` — writes and reads split across
+    two schemas and the simple-form one becomes an orphan the canonical-form
+    DELETE cannot reap. Extracted to module scope so this behaviour is
+    unit-testable against a fake backend without booting the app (and so the
+    test exercises the real factory rather than a drifting copy).
+    """
+    from cogniverse_agents.wiki.wiki_manager import WikiManager
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    managers: dict = {}
+
+    def _wiki_manager_factory(tenant_id: str) -> "WikiManager":
+        tenant_id = canonical_tenant_id(tenant_id)
+        if tenant_id in managers:
+            return managers[tenant_id]
+
+        try:
+            wiki_backend.schema_registry.deploy_schema(
+                tenant_id=tenant_id, base_schema_name="wiki_pages"
+            )
+        except Exception as schema_err:
+            logger.warning(
+                f"Wiki schema deploy for tenant {tenant_id} skipped: {schema_err}"
+            )
+
+        mgr = WikiManager(
+            backend=wiki_backend,
+            tenant_id=tenant_id,
+            schema_name=wiki_backend.get_tenant_schema_name(tenant_id, "wiki_pages"),
+            llm_endpoint_config=config.get_llm_config().primary,
+            config_manager=config_manager,
+        )
+        managers[tenant_id] = mgr
+        return mgr
+
+    return _wiki_manager_factory
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
@@ -632,7 +681,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # below deploys that schema lazily on first access per tenant; no
     # startup pre-deploy is needed.
     try:
-        from cogniverse_agents.wiki.wiki_manager import WikiManager
         from cogniverse_runtime.routers import wiki as wiki_router
 
         # The backend handle itself is cluster-wide: one Vespa client used
@@ -683,49 +731,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as exc:
             logger.debug("Wiki profile register skipped: %s", exc)
 
-        _wiki_managers: dict = {}
-
-        def _wiki_manager_factory(tenant_id: str) -> WikiManager:
-            """Return a WikiManager for the given tenant, building it on demand.
-
-            Each tenant gets a dedicated wiki_pages_<tenant> schema. The first
-            access for a new tenant deploys the schema; subsequent accesses
-            reuse the cached manager. Errors during schema deploy are non-fatal
-            — the manager still constructs and writes will surface the error
-            naturally on first feed attempt.
-            """
-            if tenant_id in _wiki_managers:
-                return _wiki_managers[tenant_id]
-
-            try:
-                wiki_backend.schema_registry.deploy_schema(
-                    tenant_id=tenant_id, base_schema_name="wiki_pages"
-                )
-            except Exception as schema_err:
-                logger.warning(
-                    f"Wiki schema deploy for tenant {tenant_id} skipped: {schema_err}"
-                )
-
-            # Colons are reserved in Vespa's /document/v1 URL segments
-            # (id:namespace:doctype::docid format). A tenant_id like
-            # "flywheel_org:production" produced schema_name
-            # "wiki_pages_flywheel_org:production" and every feed call
-            # returned 400 "Illegal key-value pair 'production'".
-            # schema_registry.deploy_schema sanitizes internally the same
-            # way, so both sides line up on the underscore form.
-            mgr = WikiManager(
-                backend=wiki_backend,
-                tenant_id=tenant_id,
-                schema_name=wiki_backend.get_tenant_schema_name(
-                    tenant_id, "wiki_pages"
-                ),
-                llm_endpoint_config=config.get_llm_config().primary,
-                config_manager=config_manager,
-            )
-            _wiki_managers[tenant_id] = mgr
-            return mgr
-
-        wiki_router.set_wiki_manager_factory(_wiki_manager_factory)
+        wiki_router.set_wiki_manager_factory(
+            build_wiki_manager_factory(wiki_backend, config, config_manager)
+        )
         logger.info("WikiManager factory initialized (per-tenant)")
     except Exception as e:
         logger.warning(f"WikiManager init failed (non-fatal): {e}")
