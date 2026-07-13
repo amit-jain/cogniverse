@@ -17,6 +17,10 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+from cogniverse_foundation.telemetry.span_contract import (
+    OP_QUERY_ENHANCEMENT,
+    record_span_io,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -424,14 +428,17 @@ class QueryEnhancementAgent(
             with self.telemetry_manager.span(
                 "cogniverse.query_enhancement",
                 tenant_id=tenant_id,
-                attributes={
-                    "query_enhancement.original_query": original_query[:200],
-                    "query_enhancement.enhanced_query": enhanced_query[:200],
-                    "query_enhancement.variant_count": variant_count,
-                    "query_enhancement.confidence": confidence,
-                },
-            ):
-                pass
+            ) as span:
+                record_span_io(
+                    span,
+                    input_value=original_query,
+                    output={
+                        "enhanced_query": enhanced_query,
+                        "variant_count": variant_count,
+                        "confidence": confidence,
+                    },
+                    operation=OP_QUERY_ENHANCEMENT,
+                )
         except Exception as e:
             logger.debug("Failed to emit query_enhancement span: %s", e)
 

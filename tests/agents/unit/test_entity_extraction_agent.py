@@ -519,16 +519,22 @@ class TestTelemetrySpanEmission:
             EntityExtractionInput(query="Obama in Chicago", tenant_id="acme")
         )
 
+        import json
+
         agent.telemetry_manager.span.assert_called_once()
         call_kwargs = agent.telemetry_manager.span.call_args
         assert call_kwargs[0][0] == "cogniverse.entity_extraction"
         # require_tenant_id canonicalizes "acme" → "acme:acme"
         assert call_kwargs[1]["tenant_id"] == "acme:acme"
-        attrs = call_kwargs[1]["attributes"]
-        assert attrs["entity_extraction.entity_count"] == 2
-        assert attrs["entity_extraction.relationship_count"] == 0
-        assert attrs["entity_extraction.path_used"] == "dspy"
-        assert "Obama" in attrs["entity_extraction.entities"]
+        span_obj = agent.telemetry_manager.span.return_value.__enter__.return_value
+        recorded = {c.args[0]: c.args[1] for c in span_obj.set_attribute.call_args_list}
+        assert recorded["operation"] == "entity_extraction"
+        assert recorded["input.value"] == "Obama in Chicago"
+        output = json.loads(recorded["output.value"])
+        assert output["entity_count"] == 2
+        assert output["relationship_count"] == 0
+        assert output["path_used"] == "dspy"
+        assert any(e["text"] == "Obama" for e in output["entities"])
 
     @pytest.mark.asyncio
     async def test_no_telemetry_manager(self):
@@ -563,8 +569,8 @@ class TestTelemetrySpanEmission:
             await agent._process_impl(EntityExtractionInput(query="hello"))
 
     @pytest.mark.asyncio
-    async def test_span_query_truncated(self, agent_with_telemetry):
-        """Long queries are truncated to 200 chars in span attributes."""
+    async def test_span_records_full_query(self, agent_with_telemetry):
+        """The full query is recorded on input.value (no truncation)."""
         agent = agent_with_telemetry
         agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(entities="", entity_types="")
@@ -575,9 +581,9 @@ class TestTelemetrySpanEmission:
             EntityExtractionInput(query=long_query, tenant_id=TEST_TENANT_ID)
         )
 
-        call_kwargs = agent.telemetry_manager.span.call_args
-        attrs = call_kwargs[1]["attributes"]
-        assert len(attrs["entity_extraction.query"]) <= 200
+        span_obj = agent.telemetry_manager.span.return_value.__enter__.return_value
+        recorded = {c.args[0]: c.args[1] for c in span_obj.set_attribute.call_args_list}
+        assert recorded["input.value"] == long_query
 
 
 class TestRelationshipModel:

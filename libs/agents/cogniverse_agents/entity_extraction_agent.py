@@ -9,7 +9,6 @@ Tiered extraction:
 - Fallback: DSPy ChainOfThought (requires LLM)
 """
 
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +21,10 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+from cogniverse_foundation.telemetry.span_contract import (
+    OP_ENTITY_EXTRACTION,
+    record_span_io,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -412,22 +415,22 @@ class EntityExtractionAgent(
             return
 
         try:
-            entities_json = json.dumps([e.model_dump() for e in entities], default=str)[
-                :1000
-            ]
-
             with self.telemetry_manager.span(
                 "cogniverse.entity_extraction",
                 tenant_id=tenant_id,
-                attributes={
-                    "entity_extraction.query": query[:200],
-                    "entity_extraction.entity_count": len(entities),
-                    "entity_extraction.relationship_count": len(relationships),
-                    "entity_extraction.entities": entities_json,
-                    "entity_extraction.path_used": path_used,
-                },
-            ):
-                pass
+            ) as span:
+                record_span_io(
+                    span,
+                    input_value=query,
+                    output={
+                        "entities": [e.model_dump() for e in entities],
+                        "relationships": [r.model_dump() for r in relationships],
+                        "entity_count": len(entities),
+                        "relationship_count": len(relationships),
+                        "path_used": path_used,
+                    },
+                    operation=OP_ENTITY_EXTRACTION,
+                )
         except Exception as e:
             logger.debug("Failed to emit entity_extraction span: %s", e)
 

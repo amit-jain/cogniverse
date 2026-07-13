@@ -1548,7 +1548,9 @@ class TestEnhancedQueryEnhancementAgent:
     # ------------------------------------------------------------------
 
     def test_emit_span_calls_telemetry_manager(self, qe_agent):
-        """Span is emitted with correct name and attributes."""
+        """Span records the canonical input/output/operation slots."""
+        import json
+
         mock_tm = MagicMock()
         mock_span = MagicMock()
         mock_tm.span.return_value.__enter__ = Mock(return_value=mock_span)
@@ -1567,11 +1569,15 @@ class TestEnhancedQueryEnhancementAgent:
         call_kwargs = mock_tm.span.call_args
         assert call_kwargs[0][0] == "cogniverse.query_enhancement"
         assert call_kwargs[1]["tenant_id"] == "acme"
-        attrs = call_kwargs[1]["attributes"]
-        assert attrs["query_enhancement.original_query"] == "robots"
-        assert attrs["query_enhancement.enhanced_query"] == "robots enhanced"
-        assert attrs["query_enhancement.variant_count"] == 2
-        assert attrs["query_enhancement.confidence"] == 0.85
+        recorded = {
+            c.args[0]: c.args[1] for c in mock_span.set_attribute.call_args_list
+        }
+        assert recorded["input.value"] == "robots"
+        assert recorded["operation"] == "query_enhancement"
+        output = json.loads(recorded["output.value"])
+        assert output["enhanced_query"] == "robots enhanced"
+        assert output["variant_count"] == 2
+        assert output["confidence"] == 0.85
 
     def test_emit_span_noop_without_telemetry_manager(self, qe_agent):
         """No error when telemetry_manager is absent."""
