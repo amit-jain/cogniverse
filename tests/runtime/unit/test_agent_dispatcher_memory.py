@@ -250,4 +250,4 @@ class TestGatewayAgentCaching:
         await mock_dispatcher._execute_gateway_task("second", {}, "acme:prod")
 
         assert count["n"] == 1
-        assert mock_dispatcher._gateway_agent is not None
+        assert mock_dispatcher._gateway_agents["acme:prod"] is not None
