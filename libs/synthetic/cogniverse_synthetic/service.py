@@ -18,6 +18,7 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_sdk.interfaces.backend import Backend
 from cogniverse_synthetic.backend_querier import BackendQuerier
 from cogniverse_synthetic.generators import (
+    EntityExtractionGenerator,
     ProfileGenerator,
     QueryEnhancementGenerator,
     RoutingGenerator,
@@ -154,6 +155,8 @@ class SyntheticDataService:
             )
         elif optimizer_name == "query_enhancement":
             generator = QueryEnhancementGenerator()
+        elif optimizer_name == "entity_extraction":
+            generator = EntityExtractionGenerator()
         elif optimizer_name == "workflow":
             generator = WorkflowGenerator()
         elif optimizer_name == "profile":

@@ -12,6 +12,7 @@ from typing import Dict, Type
 from pydantic import BaseModel
 
 from cogniverse_synthetic.schemas import (
+    EntityExtractionExampleSchema,
     ProfileSelectionExampleSchema,
     QueryEnhancementExampleSchema,
     RoutingExperienceSchema,
@@ -49,6 +50,16 @@ class OptimizerConfig:
 # Optimizer Registry
 # Maps optimizer names to their configurations
 OPTIMIZER_REGISTRY: Dict[str, OptimizerConfig] = {
+    "entity_extraction": OptimizerConfig(
+        name="entity_extraction",
+        description="Entity extraction. Learns to extract typed entities (and relationships) from query text.",
+        schema_class=EntityExtractionExampleSchema,
+        generator_class_name="EntityExtractionGenerator",
+        backend_query_strategy="entity_rich",
+        agent_mapping_required=False,
+        default_sample_size=200,
+        default_generation_count=100,
+    ),
     "query_enhancement": OptimizerConfig(
         name="query_enhancement",
         description="Query enhancement. Learns to broaden a user query with expansion terms and synonyms drawn from related content.",

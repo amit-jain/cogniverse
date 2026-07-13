@@ -11,7 +11,7 @@ The Synthetic module provides **training data generation** for DSPy optimizers:
 
 - **DSPy-Driven Generation**: Uses DSPy signatures and modules for LLM-driven query generation
 - **Backend-Agnostic Sampling**: Works with any backend implementing the Backend interface
-- **Optimizer Support**: Generates data for all six registered optimizers — `query_enhancement`, `profile`, `routing`, `workflow`, `unified`, and `cross_modal`
+- **Optimizer Support**: Generates data for all seven registered optimizers — `query_enhancement`, `entity_extraction`, `profile`, `routing`, `workflow`, `unified`, and `cross_modal`
 - **REST API**: FastAPI router for HTTP endpoints
 - **HITL Approval**: Confidence scoring and rejection-feedback regeneration for human-in-the-loop review
 
@@ -56,7 +56,7 @@ Everything below is importable directly from `cogniverse_synthetic` (see `__init
 | `configure_service(backend, backend_config, generator_config, llm_client)` | Replaces the router's module-level service singleton |
 | `OPTIMIZER_REGISTRY`, `OptimizerConfig` | Optimizer-to-generator/schema mapping (`registry.py`) |
 | `SyntheticDataRequest`, `SyntheticDataResponse` | API request/response schemas |
-| `QueryEnhancementExampleSchema`, `ProfileSelectionExampleSchema`, `RoutingExperienceSchema`, `WorkflowExecutionSchema` | Per-optimizer training-example schemas |
+| `QueryEnhancementExampleSchema`, `EntityExtractionExampleSchema`, `ProfileSelectionExampleSchema`, `RoutingExperienceSchema`, `WorkflowExecutionSchema` | Per-optimizer training-example schemas |
 
 `SyntheticDataService` also exposes `get_optimizer_info(optimizer_name)` and
 `list_all_optimizers()`, which back the `/synthetic/optimizers` endpoints.
@@ -65,7 +65,7 @@ Everything below is importable directly from `cogniverse_synthetic` (see `__init
 
 ## Generators
 
-Four generator classes back all six registered optimizers (see `OPTIMIZER_REGISTRY` in
+Five generator classes back all seven registered optimizers (see `OPTIMIZER_REGISTRY` in
 `registry.py`). `unified` reuses `WorkflowGenerator` and `cross_modal` reuses
 `ProfileGenerator` — `SyntheticDataService._get_generator()` maps them explicitly.
 See source at `libs/synthetic/cogniverse_synthetic/generators/`.
@@ -73,11 +73,30 @@ See source at `libs/synthetic/cogniverse_synthetic/generators/`.
 | Optimizer | Generator | Schema |
 |-----------|-----------|--------|
 | `query_enhancement` | `QueryEnhancementGenerator` | `QueryEnhancementExampleSchema` |
+| `entity_extraction` | `EntityExtractionGenerator` | `EntityExtractionExampleSchema` |
 | `profile` | `ProfileGenerator` | `ProfileSelectionExampleSchema` |
 | `cross_modal` | `ProfileGenerator` | `ProfileSelectionExampleSchema` |
 | `routing` | `RoutingGenerator` | `RoutingExperienceSchema` |
 | `workflow` | `WorkflowGenerator` | `WorkflowExecutionSchema` |
 | `unified` | `WorkflowGenerator` | `WorkflowExecutionSchema` |
+
+### EntityExtractionGenerator
+
+Pattern-based (no LM). Extracts typed entities from sampled-content text with a
+capitalization heuristic (`text` + `type` per entity, plus optional
+`relationships`), so the `entity_extraction` optimizer learns to extract
+entities. The entity shape matches what the finetuning evaluator
+(`adapter_evaluator._check_entity_prediction`) scores.
+
+```python
+from cogniverse_synthetic.generators.entity_extraction import (
+    EntityExtractionGenerator,
+)
+
+generator = EntityExtractionGenerator()
+examples = await generator.generate(sampled_content=documents, target_count=100)
+# Returns List[EntityExtractionExampleSchema]; each entity has text + type
+```
 
 ### QueryEnhancementGenerator
 
