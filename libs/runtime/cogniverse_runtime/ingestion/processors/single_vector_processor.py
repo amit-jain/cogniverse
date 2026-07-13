@@ -15,7 +15,6 @@ The same processor can be used for:
 - single__video_anymodel_anystrategy (any future approach)
 """
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -231,10 +230,15 @@ class SingleVectorVideoProcessor(BaseProcessor):
         video_info: dict[str, Any],
         transcript_data: dict[str, Any] | None = None,
     ) -> VideoSegment:
-        """Process a single video segment"""
-        # Extract frames
-        frames, timestamps = self._extract_frames(
-            video_path, start_time, end_time, video_info["fps"], segment_id
+        """Process one segment: boundary math + transcript alignment only.
+
+        Frames are NOT decoded here. The embedding stage re-decodes each time
+        range on demand, so retaining decoded frames per segment wasted memory
+        (tens of GB on a long video) for data that ``to_dict`` immediately
+        discarded. We carry only the planned sample timestamps and count.
+        """
+        timestamps = self._planned_frame_timestamps(
+            start_time, end_time, video_info["fps"]
         )
 
         # Align transcripts
@@ -254,146 +258,42 @@ class SingleVectorVideoProcessor(BaseProcessor):
             segment_id=segment_id,
             start_time=start_time,
             end_time=end_time,
-            frames=frames,
+            frames=[],
             frame_timestamps=timestamps,
             transcript_segments=transcript_segments,
             transcript_text=transcript_text,
             metadata={
                 "duration": end_time - start_time,
-                "frame_count": len(frames),
+                "frame_count": len(timestamps),
                 "has_transcript": bool(transcript_text),
             },
         )
 
-    def _extract_frames(
-        self,
-        video_path: Path,
-        start_time: float,
-        end_time: float,
-        video_fps: float,
-        segment_id: int,
-    ) -> tuple[list[np.ndarray], list[float]]:
-        """Extract frames from video segment with caching"""
-        # Check cache first if available
-        if self.cache:
-            # Handle asyncio.run() in nested event loop
-            try:
-                asyncio.get_running_loop()
-                # We're already in an event loop, use ThreadPoolExecutor
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    cached_result = executor.submit(
-                        asyncio.run,
-                        self.cache.get_segment_frames(
-                            str(video_path),
-                            segment_id,
-                            start_time,
-                            end_time,
-                            self.sampling_fps,
-                            self.max_frames_per_segment,
-                            load_images=True,
-                        ),
-                    ).result()
-            except RuntimeError:
-                # No event loop, safe to use asyncio.run
-                cached_result = asyncio.run(
-                    self.cache.get_segment_frames(
-                        str(video_path),
-                        segment_id,
-                        start_time,
-                        end_time,
-                        self.sampling_fps,
-                        self.max_frames_per_segment,
-                        load_images=True,
-                    )
-                )
-
-            if cached_result:
-                if isinstance(cached_result, tuple):
-                    metadata, frames = cached_result
-                    self.logger.info(f"Using cached frames for segment {segment_id}")
-                    return frames, metadata.get("timestamps", [])
-
-        # No cache or cache miss - extract frames
-        cap = cv2.VideoCapture(str(video_path))
-
-        # Calculate frame extraction pattern
+    def _planned_frame_timestamps(
+        self, start_time: float, end_time: float, video_fps: float
+    ) -> list[float]:
+        """Sample timestamps this segment WOULD produce, from the boundaries
+        alone — no decode. Mirrors the old frame-index math so ``frame_count``
+        stays the planned sample count; the embedding stage decodes these
+        ranges itself."""
+        if video_fps <= 0:
+            return []
         segment_duration = end_time - start_time
         desired_frames = int(segment_duration * self.sampling_fps)
         frames_to_extract = min(desired_frames, self.max_frames_per_segment)
-
         if frames_to_extract <= 0:
-            cap.release()
-            return [], []
-
-        # Calculate which frames to extract
+            return []
         start_frame = int(start_time * video_fps)
         end_frame = int(end_time * video_fps)
         total_frames = end_frame - start_frame
-
         if total_frames <= frames_to_extract:
-            # Extract all frames
             frame_indices = list(range(start_frame, end_frame))
         else:
-            # Sample evenly
             step = total_frames / frames_to_extract
             frame_indices = [
                 int(start_frame + i * step) for i in range(frames_to_extract)
             ]
-
-        # Extract frames
-        frames = []
-        timestamps = []
-
-        for frame_idx in frame_indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            if ret:
-                frames.append(frame)
-                timestamps.append(frame_idx / video_fps)
-
-        cap.release()
-
-        # Cache the frames if cache is available
-        if self.cache and frames:
-            # Handle asyncio.run() in nested event loop
-            try:
-                asyncio.get_running_loop()
-                # We're already in an event loop, use ThreadPoolExecutor
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    executor.submit(
-                        asyncio.run,
-                        self.cache.set_segment_frames(
-                            str(video_path),
-                            segment_id,
-                            start_time,
-                            end_time,
-                            frames,
-                            timestamps,
-                            self.sampling_fps,
-                            self.max_frames_per_segment,
-                        ),
-                    ).result()
-            except RuntimeError:
-                # No event loop, safe to use asyncio.run
-                asyncio.run(
-                    self.cache.set_segment_frames(
-                        str(video_path),
-                        segment_id,
-                        start_time,
-                        end_time,
-                        frames,
-                        timestamps,
-                        self.sampling_fps,
-                        self.max_frames_per_segment,
-                    )
-                )
-            self.logger.info(f"Cached frames for segment {segment_id}")
-
-        return frames, timestamps
+        return [idx / video_fps for idx in frame_indices]
 
     def _align_transcript_segments(
         self, segments: list[dict[str, Any]], start_time: float, end_time: float
