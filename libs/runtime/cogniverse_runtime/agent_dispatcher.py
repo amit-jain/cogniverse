@@ -103,6 +103,37 @@ class AgentDispatcher:
             return None
         return (sys_cfg.inference_service_urls or {}).get("gliner")
 
+    async def _get_or_build_gateway_agent(self, tenant_id: str):
+        """Return the GatewayAgent for ``tenant_id``, building it once per tenant.
+
+        The gateway's routing thresholds (fast_path_confidence_threshold,
+        gliner_threshold) are loaded per tenant from the artifact store into
+        ``deps``, so the instance is tenant-specific. A single shared instance
+        would bake in whichever tenant constructed it first and serve every
+        other tenant that tenant's thresholds. Both the dispatch and the
+        streaming path resolve their gateway through here so streaming also
+        loads the tenant artifact (and telemetry) instead of running on
+        defaults.
+        """
+        from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        cache = getattr(self, "_gateway_agents", None)
+        if cache is None:
+            cache = {}
+            self._gateway_agents = cache
+        agent = cache.get(tenant_id)
+        if agent is not None:
+            return agent
+
+        deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
+        agent = GatewayAgent(deps=deps)
+        agent.telemetry_manager = get_telemetry_manager()
+        agent._artifact_tenant_id = tenant_id
+        await asyncio.to_thread(agent._load_artifact)
+        cache[tenant_id] = agent
+        return agent
+
     def _bind_graph_manager(self, agent: Any, tenant_id: str) -> None:
         """Bind the tenant's Vespa knowledge-graph manager to a graph-aware
         agent (one exposing ``set_graph_manager``) so its graph methods can
@@ -810,17 +841,11 @@ class AgentDispatcher:
         capabilities = set(agent_entry.capabilities)
 
         if capabilities & {"gateway"}:
-            from cogniverse_agents.gateway_agent import (
-                GatewayAgent,
-                GatewayDeps,
-                GatewayInput,
-            )
+            from cogniverse_agents.gateway_agent import GatewayInput
 
-            if not hasattr(self, "_gateway_agent") or self._gateway_agent is None:
-                deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
-                self._gateway_agent = GatewayAgent(deps=deps)
+            gateway_agent = await self._get_or_build_gateway_agent(tenant_id)
             typed_input = GatewayInput(query=query, tenant_id=tenant_id)
-            return self._gateway_agent, typed_input
+            return gateway_agent, typed_input
 
         # detailed_report is checked before summarization/text_generation:
         # config.json registers detailed_report_agent with a "text_generation"
@@ -1316,24 +1341,12 @@ class AgentDispatcher:
                     "message": f"Request blocked by {exc.rail_name}",
                 }
 
-        from cogniverse_agents.gateway_agent import (
-            GatewayAgent,
-            GatewayDeps,
-            GatewayInput,
-        )
+        from cogniverse_agents.gateway_agent import GatewayInput
 
-        if not hasattr(self, "_gateway_agent") or self._gateway_agent is None:
-            deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
-            self._gateway_agent = GatewayAgent(deps=deps)
-            # Inject global TelemetryManager for span emission
-            from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-            self._gateway_agent.telemetry_manager = get_telemetry_manager()
-            self._gateway_agent._artifact_tenant_id = tenant_id
-            await asyncio.to_thread(self._gateway_agent._load_artifact)
+        gateway_agent = await self._get_or_build_gateway_agent(tenant_id)
 
         input_data = GatewayInput(query=query, tenant_id=tenant_id)
-        result = await self._gateway_agent._process_impl(input_data)
+        result = await gateway_agent._process_impl(input_data)
 
         if result.complexity == "complex":
             final = await self._execute_orchestration_task(

@@ -961,8 +961,8 @@ class TestDispatcherArtifactWiring:
         assert result["status"] == "success", f"Gateway dispatch failed: {result}"
 
         # Verify the dispatcher actually applied the artifact threshold.
-        # The cached _gateway_agent should have our optimized values.
-        gw_agent = dispatcher._gateway_agent
+        # The cached per-tenant gateway agent should have our optimized values.
+        gw_agent = dispatcher._gateway_agents[tenant_id]
         assert gw_agent.deps.fast_path_confidence_threshold == 0.72, (
             f"Dispatcher should have loaded threshold 0.72 from artifact, "
             f"got {gw_agent.deps.fast_path_confidence_threshold}"
