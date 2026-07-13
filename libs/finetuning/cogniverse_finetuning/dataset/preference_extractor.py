@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional
 import pandas as pd
 
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.span_contract import PREFERENCE_CHOSEN_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -232,10 +233,10 @@ class PreferencePairExtractor:
         for span_id, annotation_group in grouped_annotations:
             # Check if we have both approved and rejected for this span
             approved_mask = (annotation_group["result.label"] == "approved") | (
-                annotation_group["result.score"] >= 0.5
+                annotation_group["result.score"] >= PREFERENCE_CHOSEN_THRESHOLD
             )
             rejected_mask = (annotation_group["result.label"] == "rejected") | (
-                annotation_group["result.score"] < 0.5
+                annotation_group["result.score"] < PREFERENCE_CHOSEN_THRESHOLD
             )
 
             approved = annotation_group[approved_mask]
