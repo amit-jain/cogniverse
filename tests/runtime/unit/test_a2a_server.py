@@ -836,3 +836,56 @@ class TestLiveDemoGuideA2AContract:
         assert "tasks/sendSubscribe" not in row
         assert "message/send" in row
         assert "message/stream" in row
+
+
+class TestBoundedInMemoryTaskStore:
+    """The A2A task store must not grow without bound — a long-lived server
+    receives one Task per request and the stock InMemoryTaskStore keeps them
+    all forever."""
+
+    @staticmethod
+    def _task(task_id: str):
+        from a2a.types import Task, TaskState, TaskStatus
+
+        return Task(
+            id=task_id,
+            context_id=f"ctx-{task_id}",
+            status=TaskStatus(state=TaskState.working),
+        )
+
+    def test_rejects_nonpositive_cap(self):
+        from cogniverse_runtime.a2a_executor import BoundedInMemoryTaskStore
+
+        with pytest.raises(ValueError, match="max_tasks must be >= 1"):
+            BoundedInMemoryTaskStore(max_tasks=0)
+
+    @pytest.mark.asyncio
+    async def test_evicts_oldest_once_capped(self):
+        from cogniverse_runtime.a2a_executor import BoundedInMemoryTaskStore
+
+        store = BoundedInMemoryTaskStore(max_tasks=3)
+        for i in range(5):
+            await store.save(self._task(f"t{i}"))
+
+        assert len(store.tasks) == 3
+        assert await store.get("t0") is None
+        assert await store.get("t1") is None
+        for i in (2, 3, 4):
+            got = await store.get(f"t{i}")
+            assert got is not None and got.id == f"t{i}"
+
+    @pytest.mark.asyncio
+    async def test_get_refreshes_lru_so_hot_task_survives(self):
+        from cogniverse_runtime.a2a_executor import BoundedInMemoryTaskStore
+
+        store = BoundedInMemoryTaskStore(max_tasks=2)
+        await store.save(self._task("a"))
+        await store.save(self._task("b"))
+        # Touch 'a' so it becomes most-recently-used; inserting 'c' must then
+        # evict 'b' (the coldest), not 'a'.
+        assert (await store.get("a")).id == "a"
+        await store.save(self._task("c"))
+
+        assert await store.get("b") is None
+        assert (await store.get("a")).id == "a"
+        assert (await store.get("c")).id == "c"
