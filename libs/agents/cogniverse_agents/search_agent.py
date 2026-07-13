@@ -997,9 +997,14 @@ class SearchAgent(
         # Fuse results using RRF
         fused_results = self._fuse_results_rrf(profile_results, k=rrf_k, top_k=top_k)
 
-        # Store successful ensemble search in memory
+        # Store successful ensemble search in memory. remember_success runs
+        # Mem0's LLM fact-extraction add (a blocking chat-completion round
+        # trip); _search_ensemble is async, so offload it off the event loop
+        # like orchestrator_agent does — otherwise every concurrent request,
+        # including /health/live, stalls for the duration of the LLM call.
         if self.is_memory_enabled() and fused_results:
-            self.remember_success(
+            await asyncio.to_thread(
+                self.remember_success,
                 query=query,
                 result={
                     "result_count": len(fused_results),
