@@ -453,6 +453,11 @@ class ArtifactManager:
         """
         df = pd.DataFrame([{"content": content}])
         dataset_name = self._blob_dataset_name(kind, key)
+        # Blobs are last-write-wins. Delete any existing dataset so the store
+        # holds exactly one row — create_dataset on an existing name appends a
+        # new version, growing the dataset (and load's full-history download)
+        # unboundedly across saves.
+        await self._provider.datasets.delete_dataset(dataset_name)
         dataset_id = await self._provider.datasets.create_dataset(
             name=dataset_name,
             data=df,

@@ -315,7 +315,7 @@ flowchart TB
         TelemetryProvider["<span style='color:#000'>TelemetryProvider<br/><br/>• initialize(config)<br/>• configure_span_export()<br/>• session_context()</span>"]
         TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• get_span_by_id()</span>"]
         AnnotationStore["<span style='color:#000'>AnnotationStore<br/><br/>• add_annotation()<br/>• get_annotations()<br/>• log_evaluations()</span>"]
-        DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()</span>"]
+        DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()<br/>• delete_dataset()</span>"]
     end
 
     TelemetryProvider --> TraceStore
@@ -450,6 +450,14 @@ class DatasetStore(ABC):
         does not exist.
         """
         pass
+
+    async def delete_dataset(self, name: str) -> bool:
+        """Delete a dataset by name (last-write-wins blob storage deletes
+        before create). Returns True if one was deleted, False if none
+        existed. Not ``@abstractmethod`` — backends that can't delete raise
+        NotImplementedError from the default.
+        """
+        raise NotImplementedError
 ```
 
 The telemetry provider exposes only these three stores. Experiment tracking lives on the separate `EvaluationProvider` stack (`PhoenixEvaluationProvider.create_experiment`), and metric aggregation via `PhoenixAnalytics` — not on the telemetry provider.

@@ -456,6 +456,32 @@ class PhoenixDatasetStore(DatasetStore):
             logger.error(f"Failed to create dataset '{name}': {e}")
             raise
 
+    async def delete_dataset(self, name: str) -> bool:
+        """Delete a dataset by name via the Phoenix REST API.
+
+        The phoenix-client has no delete wrapper, so resolve the name to its
+        global id and issue ``DELETE /v1/datasets/{id}`` (204 on success, 404
+        if it vanished). Returns False when no dataset by that name exists.
+        """
+        import httpx
+        from phoenix.client import Client
+
+        def _delete() -> bool:
+            client = Client(base_url=self.http_endpoint)
+            try:
+                dataset = client.datasets.get_dataset(dataset=name, timeout=30)
+            except Exception:
+                return False  # nothing to delete
+            resp = httpx.delete(
+                f"{self.http_endpoint.rstrip('/')}/v1/datasets/{dataset.id}",
+                timeout=30,
+            )
+            if resp.status_code not in (204, 404):
+                resp.raise_for_status()
+            return resp.status_code == 204
+
+        return await asyncio.to_thread(_delete)
+
     async def get_dataset(self, name: str) -> pd.DataFrame:
         """
         Load dataset by name.
