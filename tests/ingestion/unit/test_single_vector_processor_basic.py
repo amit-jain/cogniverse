@@ -330,3 +330,44 @@ class TestVideoSegment:
         assert segment_dict["metadata"]["key"] == "value"
         # Frames should not be included in dict representation
         assert "frames" not in segment_dict
+
+
+@pytest.mark.unit
+@pytest.mark.ci_safe
+class TestSegmentationDoesNotDecodeFrames:
+    """Segmentation must not decode + retain raw frames (tens of GB on a long
+    video); the embedding stage re-decodes each time range on demand."""
+
+    def test_process_video_keeps_no_decoded_frames(self, tmp_path):
+        import logging
+
+        import cv2
+
+        mp4 = tmp_path / "clip.mp4"
+        writer = cv2.VideoWriter(
+            str(mp4), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (64, 64)
+        )
+        try:
+            for _ in range(30):  # 3s @ 10fps
+                writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
+        finally:
+            writer.release()
+
+        proc = SingleVectorVideoProcessor(
+            logging.getLogger("test"),
+            strategy="chunks",
+            segment_duration=1.0,
+            segment_overlap=0.0,
+            sampling_fps=2.0,
+        )
+        segments = proc.process_video(video_path=mp4)["segments"]
+
+        assert segments, "expected at least one segment"
+        # No decoded frames retained anywhere.
+        assert all(len(seg.frames) == 0 for seg in segments)
+        # But the planned sample count is still recorded (boundary math).
+        assert any(seg.metadata["frame_count"] > 0 for seg in segments)
+        for seg in segments:
+            assert len(seg.frame_timestamps) == seg.metadata["frame_count"]
+            for ts in seg.frame_timestamps:
+                assert seg.start_time - 0.2 <= ts <= seg.end_time + 0.2
