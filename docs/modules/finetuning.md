@@ -131,6 +131,10 @@ cogniverse-finetuning/
 - `FinetuningOrchestrator`: Main entry point
 - `OrchestrationConfig`: Configuration dataclass
 - `OrchestrationResult`: Training result
+- `SyntheticApprovalPending`: Raised by `run()` when real data was insufficient
+  and synthetic data was generated but is still awaiting human approval. This is
+  a recoverable terminal state (approve the pending items, then re-run to train),
+  distinct from a `ValueError` for a genuine lack of any data.
 
 **Responsibilities**:
 1. Coordinate dataset extraction

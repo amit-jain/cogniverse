@@ -200,6 +200,35 @@ class OrchestrationResult:
     adapter_uri: Optional[str] = None  # Storage URI where adapter was uploaded
 
 
+class SyntheticApprovalPending(Exception):
+    """Raised when synthetic data was generated to cover insufficient real data
+    but is still awaiting human approval, so training cannot proceed yet.
+
+    This is a terminal-but-recoverable state, not a failure: approve the pending
+    items (dashboard) and re-run the orchestrator, which picks up the approved
+    synthetic data. Distinguished from a plain ValueError so callers can surface
+    "pending approval" instead of "failed".
+    """
+
+    def __init__(
+        self,
+        *,
+        batch_id: str,
+        approved_count: int,
+        pending_count: int,
+        agent_type: str,
+    ):
+        self.batch_id = batch_id
+        self.approved_count = approved_count
+        self.pending_count = pending_count
+        self.agent_type = agent_type
+        super().__init__(
+            f"{approved_count + pending_count} synthetic {agent_type} examples "
+            f"generated ({approved_count} approved, {pending_count} pending human "
+            f"review, batch {batch_id}). Approve the pending items and re-run to train."
+        )
+
+
 class FinetuningOrchestrator:
     """
     End-to-end fine-tuning orchestration.
@@ -770,8 +799,18 @@ class FinetuningOrchestrator:
             return orchestration_result
 
         else:
+            # Synthetic was generated but is awaiting approval — a recoverable
+            # pending state, not a failure. Only a genuine lack of any data
+            # (no synthetic generated) is a hard error.
+            if approved_batch is not None:
+                raise SyntheticApprovalPending(
+                    batch_id=approved_batch.batch_id,
+                    approved_count=approved_batch.approved_count,
+                    pending_count=len(approved_batch.pending_review),
+                    agent_type=config.agent_type,
+                )
             raise ValueError(
-                f"Insufficient data and synthetic generation failed. "
+                f"Insufficient data and no synthetic data was generated. "
                 f"Analysis: {analysis}"
             )
 
