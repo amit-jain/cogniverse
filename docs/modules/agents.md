@@ -1076,8 +1076,12 @@ Main processing method (required by AgentBase). Uses tiered fast/slow path:
 1. **Fast path** (GLiNER + SpaCy available): `_extract_fast_path(query)` -- GLiNER extracts typed entities, SpaCy extracts relationships when 2+ entities found.
 2. **DSPy fallback** (GLiNER/SpaCy unavailable): `_extract_dspy_path(query)` -- Uses DSPy ChainOfThought, parses pipe-delimited output. No relationships in fallback.
 
-After extraction, emits a `cogniverse.entity_extraction` telemetry span with attributes:
-`entity_extraction.query`, `entity_extraction.entity_count`, `entity_extraction.relationship_count`, `entity_extraction.entities`, `entity_extraction.path_used`.
+After extraction, emits a `cogniverse.entity_extraction` telemetry span through
+the canonical span contract (`record_span_io`): `input.value` is the query,
+`output.value` is a JSON object `{entities, relationships, entity_count,
+relationship_count, path_used}`, and `operation` is `entity_extraction`. The
+entity-extraction optimizer reads the (query -> entities) training pair back via
+`read_span_io`.
 
 **`_parse_entities(entities_str: str, query: str) -> List[Entity]`**
 

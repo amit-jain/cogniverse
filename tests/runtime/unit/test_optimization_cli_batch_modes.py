@@ -6,6 +6,7 @@ Tests:
 3. Each function produces expected artifact types when given mock span data
 """
 
+import json
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
@@ -46,14 +47,20 @@ class FakeTraceStore:
 
 
 class FakeDatasetStore:
-    """Records calls to create_dataset and get_dataset."""
+    """Records calls to create_dataset, delete_dataset, and get_dataset."""
 
     def __init__(self):
         self.created: List[Dict[str, Any]] = []
+        self.deleted: List[str] = []
 
     async def create_dataset(self, name, data, metadata=None):
         self.created.append({"name": name, "data": data, "metadata": metadata})
         return f"dataset-{len(self.created)}"
+
+    async def delete_dataset(self, name) -> bool:
+        # Blobs are last-write-wins: the artifact store deletes before create.
+        self.deleted.append(name)
+        return True
 
     async def get_dataset(self, name):
         raise KeyError(f"No dataset {name}")
@@ -259,12 +266,13 @@ class TestSpansWithNoExamples:
 
     @pytest.mark.asyncio
     async def test_simba_spans_missing_attributes(self):
+        # Canonical span whose enhancement is empty -> no usable training pair.
         spans_df = _make_spans_df(
             "cogniverse.query_enhancement",
             [
                 {
-                    "attributes.query_enhancement.original_query": "",
-                    "attributes.query_enhancement.enhanced_query": "",
+                    "attributes.input.value": "robots",
+                    "attributes.output.value": json.dumps({"enhanced_query": ""}),
                 }
             ],
         )
@@ -488,16 +496,14 @@ class TestEntityExtractionOptimization:
 
     @pytest.mark.asyncio
     async def test_entity_extraction_spans_no_entities(self):
-        """Spans with entity_count == 0 produce no training examples."""
+        """Spans with no entities produce no training examples."""
+        # Canonical span whose entity list is empty -> no usable training pair.
         spans_df = _make_spans_df(
             "cogniverse.entity_extraction",
             [
                 {
-                    "attributes.entity_extraction": {
-                        "query": "find something",
-                        "entity_count": 0,
-                        "entities": "[]",
-                    }
+                    "attributes.input.value": "find something",
+                    "attributes.output.value": json.dumps({"entities": []}),
                 }
             ],
         )

@@ -26,7 +26,54 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from cogniverse_foundation.telemetry.span_contract import read_span_io
+
 logger = logging.getLogger(__name__)
+
+
+def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
+    """(original_query -> enhanced_query) training pairs from query_enhancement spans.
+
+    Reads the canonical span slots: input.value holds the original query, and
+    output.value holds ``{"enhanced_query", "confidence", ...}``. Identity pairs
+    (enhanced == original) are dropped so SIMBA never trains on no-ops.
+    """
+    pairs: List[Dict[str, Any]] = []
+    for _, row in spans_df.iterrows():
+        span_io = read_span_io(row)
+        original = span_io["input"] or ""
+        output = span_io["output"] if isinstance(span_io["output"], dict) else {}
+        enhanced = output.get("enhanced_query", "")
+        if not original or not enhanced:
+            continue
+        if enhanced.strip() == original.strip():
+            continue
+        pairs.append(
+            {
+                "query": original,
+                "enhanced_query": enhanced,
+                "confidence": float(output.get("confidence", 0.0) or 0.0),
+            }
+        )
+    return pairs
+
+
+def _entity_extraction_pairs(spans_df) -> List[Dict[str, Any]]:
+    """(query -> entities) training pairs from entity_extraction spans.
+
+    Reads the canonical span slots: input.value holds the query, output.value
+    holds ``{"entities": [...], ...}``.
+    """
+    pairs: List[Dict[str, Any]] = []
+    for _, row in spans_df.iterrows():
+        span_io = read_span_io(row)
+        query = span_io["input"] or ""
+        output = span_io["output"] if isinstance(span_io["output"], dict) else {}
+        entities = output.get("entities", [])
+        if not query or not entities:
+            continue
+        pairs.append({"query": query, "entities": entities})
+    return pairs
 
 
 async def run_triggered_optimization(
@@ -848,38 +895,21 @@ async def run_simba_optimization(
 
     logger.info("Found %d query_enhancement spans", len(spans_df))
 
-    # Build DSPy training examples from span attributes
+    # Build DSPy training examples from the canonical span slots.
     import dspy
 
-    trainset = []
-    for _, row in spans_df.iterrows():
-        # Phoenix stores custom attributes as dict in "attributes.query_enhancement"
-        qe_attrs = row.get("attributes.query_enhancement", {})
-        if not isinstance(qe_attrs, dict):
-            qe_attrs = {}
-        original = qe_attrs.get("original_query", "")
-        enhanced = qe_attrs.get("enhanced_query", "")
-        confidence = float(qe_attrs.get("confidence", 0.0))
-
-        if not original or not enhanced:
-            continue
-        if enhanced.strip() == original.strip():
-            # Belt-and-suspenders: QueryEnhancementAgent now guarantees
-            # enhanced != query, so new spans won't hit this branch. Older
-            # spans (from before that fix) can still be in the lookback
-            # window; skip them so SIMBA doesn't train on identity pairs.
-            continue
-
-        example = dspy.Example(
-            query=original,
-            enhanced_query=enhanced,
+    trainset = [
+        dspy.Example(
+            query=pair["query"],
+            enhanced_query=pair["enhanced_query"],
             expansion_terms="",
             synonyms="",
             context="",
-            confidence=str(confidence),
+            confidence=str(pair["confidence"]),
             reasoning="From production span",
         ).with_inputs("query")
-        trainset.append(example)
+        for pair in _query_enhancement_pairs(spans_df)
+    ]
 
     if not trainset:
         logger.info("No valid training examples extracted from spans")
@@ -1523,27 +1553,14 @@ async def run_entity_extraction_optimization(
 
     import dspy
 
-    trainset = []
-    for _, row in spans_df.iterrows():
-        ee_attrs = row.get("attributes.entity_extraction", {})
-        if not isinstance(ee_attrs, dict):
-            ee_attrs = {}
-        query = ee_attrs.get("query", "")
-        entity_count = int(ee_attrs.get("entity_count", 0))
-        entities_json = ee_attrs.get("entities", "[]")
-
-        if not query or entity_count == 0:
-            continue
-
-        if not isinstance(entities_json, str):
-            entities_json = _json.dumps(entities_json)
-
-        example = dspy.Example(
-            query=query,
-            entities=entities_json,
+    trainset = [
+        dspy.Example(
+            query=pair["query"],
+            entities=_json.dumps(pair["entities"]),
             entity_types="",
         ).with_inputs("query")
-        trainset.append(example)
+        for pair in _entity_extraction_pairs(spans_df)
+    ]
 
     if not trainset:
         logger.info("No valid training examples extracted from entity_extraction spans")
