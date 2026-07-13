@@ -330,7 +330,7 @@ class TrainingMethodSelector:
         optimizer_map = {
             "routing": "routing",
             "profile_selection": "routing",  # Reuse routing optimizer
-            "entity_extraction": "modality",  # Extract from modality data
+            "entity_extraction": "entity_extraction",
         }
         optimizer_name = optimizer_map.get(agent_type, "routing")
 
@@ -339,7 +339,6 @@ class TrainingMethodSelector:
             optimizer=optimizer_name,
             count=num_needed,
             tenant_id=tenant_id,
-            modality="VIDEO" if optimizer_name == "modality" else None,
         )
 
         logger.info(

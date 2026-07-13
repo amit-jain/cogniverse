@@ -105,6 +105,44 @@ class QueryEnhancementExampleSchema(BaseModel):
     )
 
 
+class EntityExtractionExampleSchema(BaseModel):
+    """Training example for EntityExtractionAgent optimization.
+
+    Feeds ``run_entity_extraction_optimization`` in
+    ``libs/runtime/cogniverse_runtime/optimization_cli.py``, which builds a
+    ``dspy.Example`` from ``query`` (DSPy input) + ``entities`` + ``entity_types``.
+    The finetuning evaluator (``adapter_evaluator._check_entity_prediction``)
+    scores each ``entities`` item on its ``text`` and ``type``.
+    """
+
+    query: str = Field(..., description="Text to extract entities from (DSPy input)")
+    entities: List[Dict[str, str]] = Field(
+        ..., description="Extracted entities, each with 'text' and 'type'"
+    )
+    entity_types: str = Field("", description="Comma-separated distinct entity types")
+    relationships: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Optional relationships, each {source, target, type}",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "query": "PyTorch was created by Meta AI in Menlo Park",
+                "entities": [
+                    {"text": "PyTorch", "type": "PRODUCT"},
+                    {"text": "Meta AI", "type": "ORG"},
+                    {"text": "Menlo Park", "type": "PLACE"},
+                ],
+                "entity_types": "PRODUCT,ORG,PLACE",
+                "relationships": [
+                    {"source": "Meta AI", "target": "PyTorch", "type": "created"}
+                ],
+            }
+        }
+    )
+
+
 class RoutingExperienceSchema(BaseModel):
     """Training example representing a routing decision with entity
     extraction and quality metrics."""
