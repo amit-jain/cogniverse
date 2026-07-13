@@ -804,6 +804,31 @@ class VideoIngestionPipeline:
 
         return video_data
 
+    @staticmethod
+    def _embedding_run_status(
+        processing_results: dict[str, Any],
+    ) -> tuple[str, str | None, list[str]]:
+        """Derive (status, error, errors) from the embedding stage result.
+
+        A run that BUILT documents but fed NONE to the backend is a silent
+        data-loss failure — the caller must not report it as ``completed``.
+        Partial errors on an otherwise-successful feed are surfaced but stay
+        ``completed``. No embedding stage (embeddings disabled) is a success.
+        """
+        embed = processing_results.get("embeddings")
+        if not isinstance(embed, dict):
+            return "completed", None, []
+        errors = list(embed.get("errors") or [])
+        total = embed.get("total_documents", 0) or 0
+        fed = embed.get("documents_fed", 0) or 0
+        if total > 0 and fed == 0:
+            return (
+                "failed",
+                f"embedding stage fed 0 of {total} documents to the backend",
+                errors,
+            )
+        return "completed", None, errors
+
     def _convert_embedding_result(self, result: Any) -> dict[str, Any]:
         """Convert EmbeddingResult to dict format expected by pipeline"""
         return {
@@ -942,7 +967,14 @@ class VideoIngestionPipeline:
 
                 # Calculate total time
                 total_time = time.time() - results["started_at"]
-                results["status"] = "completed"
+                status, error, embed_errors = self._embedding_run_status(
+                    processing_results
+                )
+                results["status"] = status
+                if error:
+                    results["error"] = error
+                if embed_errors:
+                    results["errors"] = embed_errors
                 results["total_processing_time"] = total_time
 
                 pipeline_span.set_attribute(
