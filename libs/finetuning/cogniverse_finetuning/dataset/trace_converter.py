@@ -23,6 +23,22 @@ from cogniverse_foundation.telemetry.span_contract import PREFERENCE_CHOSEN_THRE
 logger = logging.getLogger(__name__)
 
 
+# SFT instruction templates, shared by trace-derived and synthetic examples so
+# both train against the same instruction for a given agent.
+INSTRUCTION_TEMPLATES = {
+    "routing": "Route the following query to the appropriate modality agent.",
+    "profile_selection": "Select the optimal backend profile(s) for the following query.",
+    "entity_extraction": "Extract entities and relationships from the following text.",
+}
+
+
+def instruction_template(agent_type: str) -> str:
+    """Instruction string for an agent's SFT examples."""
+    return INSTRUCTION_TEMPLATES.get(
+        agent_type, f"Process the following {agent_type} request."
+    )
+
+
 @dataclass
 class InstructionExample:
     """Single instruction-response example for fine-tuning."""
@@ -470,13 +486,7 @@ class TraceToInstructionConverter:
 
     def _get_instruction_template(self, agent_type: str) -> str:
         """Get instruction template for agent type."""
-        templates = {
-            "routing": "Route the following query to the appropriate modality agent.",
-            "profile_selection": "Select the optimal backend profile(s) for the following query.",
-            "entity_extraction": "Extract entities and relationships from the following text.",
-        }
-
-        return templates.get(agent_type, f"Process the following {agent_type} request.")
+        return instruction_template(agent_type)
 
 
 class TraceToTrajectoryConverter:
