@@ -5,8 +5,8 @@ signature variants, or canary promote/retire without writing custom
 Python.
 
 This test mounts the real `admin` router on a FastAPI TestClient and
-hits each endpoint. The canary endpoints round-trip through real
-Phoenix (docker-managed); the pin-quota and variant endpoints use the
+hits each endpoint. The canary and pin-quota endpoints round-trip
+through real Phoenix (docker-managed); the variant endpoints use the
 in-memory override store (no persistence layer for those keys yet).
 """
 
@@ -43,21 +43,23 @@ def phoenix_env(phoenix_container, monkeypatch):
 
 
 class TestPinQuotaEndpoints:
-    def test_get_returns_defaults_when_unset(self, client: TestClient):
-        resp = client.get("/admin/tenants/acme/pin_quotas")
+    def test_get_returns_defaults_when_unset(self, client: TestClient, phoenix_env):
+        tenant = f"pinq_{uuid.uuid4().hex[:8]}"
+        resp = client.get(f"/admin/tenants/{tenant}/pin_quotas")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["tenant_id"] == "acme"
+        assert body["tenant_id"] == tenant
         # Defaults from PinQuotas dataclass.
         assert body["quotas"]["user"] >= 0
         assert body["quotas"]["tenant_admin"] >= 0
 
-    def test_put_updates_one_field_keeps_others(self, client: TestClient):
+    def test_put_updates_one_field_keeps_others(self, client: TestClient, phoenix_env):
+        tenant = f"pinq_{uuid.uuid4().hex[:8]}"
         # Set a baseline.
-        baseline = client.get("/admin/tenants/acme/pin_quotas").json()["quotas"]
+        baseline = client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["quotas"]
         # Update only the user quota.
         resp = client.put(
-            "/admin/tenants/acme/pin_quotas",
+            f"/admin/tenants/{tenant}/pin_quotas",
             json={"user": 99},
         )
         assert resp.status_code == 200
@@ -66,12 +68,32 @@ class TestPinQuotaEndpoints:
         # Other fields preserved.
         assert updated["tenant_admin"] == baseline["tenant_admin"]
         # GET reflects the put.
-        again = client.get("/admin/tenants/acme/pin_quotas").json()["quotas"]
+        again = client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["quotas"]
         assert again["user"] == 99
 
+    def test_put_survives_process_restart(self, client: TestClient, phoenix_env):
+        """A PUT must persist durably, not just in the process cache. Clearing
+        the cache simulates a runtime restart; the value must reload from the
+        store on the next GET."""
+        tenant = f"pinq_{uuid.uuid4().hex[:8]}"
+        put = client.put(
+            f"/admin/tenants/{tenant}/pin_quotas",
+            json={"user": 7, "tenant_admin": 3},
+        )
+        assert put.status_code == 200
+
+        # Simulate a fresh process: drop the write-through cache so the next
+        # read must hit the durable store.
+        admin._reset_admin_overrides_for_tests()
+
+        reloaded = client.get(f"/admin/tenants/{tenant}/pin_quotas").json()["quotas"]
+        assert reloaded["user"] == 7
+        assert reloaded["tenant_admin"] == 3
+
     def test_negative_quota_rejected(self, client: TestClient):
+        # Validation happens before any store access, so no Phoenix needed.
         resp = client.put(
-            "/admin/tenants/acme/pin_quotas",
+            f"/admin/tenants/pinq_{uuid.uuid4().hex[:8]}/pin_quotas",
             json={"user": -1},
         )
         assert resp.status_code == 400

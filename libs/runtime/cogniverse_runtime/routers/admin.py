@@ -1,5 +1,6 @@
 """Admin endpoints - system administration and profile management."""
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -1000,15 +1001,48 @@ def _default_pin_quotas() -> Dict[str, int]:
     }
 
 
+# Pin quotas persist as a per-tenant blob so a PUT survives a runtime
+# restart and is visible to every replica — the same store the canary /
+# gateway-threshold artefacts use. The process dict is a write-through cache
+# in front of it, keyed by canonical tenant id.
 _pin_quota_overrides: Dict[str, Dict[str, int]] = {}
 _signature_variant_overrides: Dict[str, Dict[str, str]] = {}
+
+_PIN_QUOTA_BLOB_KIND = "config"
+_PIN_QUOTA_BLOB_KEY = "pin_quotas"
+
+
+async def _load_pin_quotas(tenant_id: str) -> Dict[str, int]:
+    """Return a tenant's persisted pin quotas, or the defaults if unset.
+
+    Reads the write-through cache first, then the durable blob. A store
+    outage propagates (the blob read raises) rather than masquerading as
+    "unset" — an admin must not silently see defaults when the real values
+    are merely unreachable.
+    """
+    key = canonical_tenant_id(tenant_id)
+    cached = _pin_quota_overrides.get(key)
+    if cached is not None:
+        return dict(cached)
+
+    am = _build_artifact_manager(key)
+    raw = await am.load_blob(_PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY)
+    if not raw:
+        return _default_pin_quotas()
+    try:
+        quotas = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Corrupt pin_quotas blob for tenant=%s; using defaults", key)
+        return _default_pin_quotas()
+    _pin_quota_overrides[key] = quotas
+    return dict(quotas)
 
 
 @router.get("/tenants/{tenant_id}/pin_quotas", response_model=PinQuotasResponse)
 async def get_pin_quotas(tenant_id: str) -> PinQuotasResponse:
     """return effective pin quotas for a tenant."""
-    blob = _pin_quota_overrides.get(tenant_id) or _default_pin_quotas()
-    return PinQuotasResponse(tenant_id=tenant_id, quotas=blob)
+    quotas = await _load_pin_quotas(tenant_id)
+    return PinQuotasResponse(tenant_id=tenant_id, quotas=quotas)
 
 
 @router.put("/tenants/{tenant_id}/pin_quotas", response_model=PinQuotasResponse)
@@ -1018,21 +1052,28 @@ async def set_pin_quotas(
     """set per-role pin quotas for a tenant.
 
     Only non-None fields are updated. Negative values (other than
-    org_admin's unlimited sentinel of -1) are rejected.
+    org_admin's unlimited sentinel of -1) are rejected. The result is
+    persisted durably so it survives a restart.
     """
-    current = dict(_pin_quota_overrides.get(tenant_id) or _default_pin_quotas())
+    # Validate before touching the store so a bad request never depends on it.
+    if body.user is not None and body.user < 0:
+        raise HTTPException(400, "user quota must be >= 0")
+    if body.tenant_admin is not None and body.tenant_admin < 0:
+        raise HTTPException(400, "tenant_admin quota must be >= 0")
+
+    current = await _load_pin_quotas(tenant_id)
     if body.user is not None:
-        if body.user < 0:
-            raise HTTPException(400, "user quota must be >= 0")
         current["user"] = body.user
     if body.tenant_admin is not None:
-        if body.tenant_admin < 0:
-            raise HTTPException(400, "tenant_admin quota must be >= 0")
         current["tenant_admin"] = body.tenant_admin
     if body.org_admin is not None:
         current["org_admin"] = body.org_admin
-    _pin_quota_overrides[tenant_id] = current
-    logger.info("Updated pin quotas for tenant=%s: %s", tenant_id, current)
+
+    key = canonical_tenant_id(tenant_id)
+    am = _build_artifact_manager(key)
+    await am.save_blob(_PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY, json.dumps(current))
+    _pin_quota_overrides[key] = current
+    logger.info("Updated + persisted pin quotas for tenant=%s: %s", key, current)
     return PinQuotasResponse(tenant_id=tenant_id, quotas=current)
 
 

@@ -719,7 +719,7 @@ Org admin can unpin anything; tenant admin can unpin tenant_admin+user pins; use
 **GET /admin/tenants/{tenant_id}/pin_quotas** — Read effective per-role pin quotas.
 Response: `{tenant_id, quotas: {"user": int, "tenant_admin": int, "org_admin": int}}` (`-1` for org_admin means unlimited).
 
-**PUT /admin/tenants/{tenant_id}/pin_quotas** — Set per-role pin quotas. Body: `{user?, tenant_admin?, org_admin?}` (only non-null fields update). Negative values rejected (400) except `org_admin=-1` (unlimited sentinel). Overrides persist in a process-local dict.
+**PUT /admin/tenants/{tenant_id}/pin_quotas** — Set per-role pin quotas. Body: `{user?, tenant_admin?, org_admin?}` (only non-null fields update). Negative values rejected (400) except `org_admin=-1` (unlimited sentinel). Overrides persist durably as a per-tenant `config/pin_quotas` blob in the artifact store (the same store canary state uses), so they survive a restart and are shared across replicas; a process-local dict caches reads in front of it.
 
 **POST /admin/tenants/{tenant_id}/memories/{memory_id}/endorse** — Bump a memory's trust score.
 Body: `EndorseRequest { endorser_role: "user"|"tenant_admin"|"org_admin", actor_id: str }`. Deltas: user `+0.05`, tenant_admin `+0.10`, org_admin `+0.20` (from `cogniverse_core.memory.trust._ENDORSEMENT_DELTA`).
