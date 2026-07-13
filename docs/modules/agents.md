@@ -4052,6 +4052,10 @@ class SearchOutput(AgentOutput):
     results: List[Dict[str, Any]]
     total_results: int
 
+    # Id of the SearchAgent.process span this result set was recorded on, so a
+    # client can attach result_relevance annotations for embedding-triplet mining.
+    span_id: Optional[str]
+
     # RLM fields (populated when RLM enabled)
     rlm_synthesis: Optional[str]           # Synthesized answer
     rlm_telemetry: Optional[Dict[str, Any]] # Telemetry metrics

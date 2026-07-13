@@ -2620,6 +2620,10 @@ with main_tabs[10]:
                         "profile": selected_profile,
                         "results": search_results,
                         "timestamp": _captured_at,
+                        # The search span's id — the Save Annotation button
+                        # (which reruns outside this branch) reads it from here
+                        # to attach a result_relevance annotation to the span.
+                        "span_id": final_data.get("span_id"),
                     }
 
                     # Add to conversation history for multi-turn tracking
@@ -2739,37 +2743,65 @@ with main_tabs[10]:
                                     "💾 Save Annotation",
                                     key=f"save_{strategy}_{i}",
                                 ):
-                                    st.success(f"✅ Rated: {relevance}")
-
-                                    # Store annotation in session state
-                                    if "search_annotations" not in st.session_state:
-                                        st.session_state.search_annotations = []
-
-                                    annotation = {
-                                        "query": search_query,
-                                        "strategy": strategy,
-                                        "result_id": i,
-                                        "video_id": video_id,
-                                        "relevance": relevance,
-                                        "timestamp": datetime.now().isoformat(),
-                                    }
-                                    # Update or add annotation
-                                    existing = next(
-                                        (
-                                            a
-                                            for a in st.session_state.search_annotations
-                                            if a["query"] == search_query
-                                            and a["strategy"] == strategy
-                                            and a["result_id"] == i
-                                        ),
-                                        None,
+                                    from cogniverse_dashboard.utils.annotations import (
+                                        persist_result_relevance,
                                     )
-                                    if existing:
-                                        existing.update(annotation)
-                                    else:
-                                        st.session_state.search_annotations.append(
-                                            annotation
+                                    from cogniverse_foundation.telemetry.manager import (
+                                        get_telemetry_manager,
+                                    )
+
+                                    _tenant = st.session_state["current_tenant"]
+                                    _span_id = (
+                                        st.session_state.current_search_results.get(
+                                            "span_id"
                                         )
+                                    )
+                                    # Persist to Phoenix before reporting success.
+                                    try:
+                                        _provider = get_telemetry_manager().get_provider(
+                                            tenant_id=_tenant
+                                        )
+                                        run_async_in_streamlit(
+                                            persist_result_relevance(
+                                                _provider,
+                                                f"cogniverse-{_tenant}",
+                                                _span_id,
+                                                video_id,
+                                                relevance,
+                                            )
+                                        )
+                                    except Exception as exc:
+                                        st.error(f"❌ Failed to save annotation: {exc}")
+                                    else:
+                                        st.success(f"✅ Rated: {relevance}")
+                                        # Mirror into session state for the
+                                        # Export Annotations feature.
+                                        if "search_annotations" not in st.session_state:
+                                            st.session_state.search_annotations = []
+                                        annotation = {
+                                            "query": search_query,
+                                            "strategy": strategy,
+                                            "result_id": i,
+                                            "video_id": video_id,
+                                            "relevance": relevance,
+                                            "timestamp": datetime.now().isoformat(),
+                                        }
+                                        existing = next(
+                                            (
+                                                a
+                                                for a in st.session_state.search_annotations
+                                                if a["query"] == search_query
+                                                and a["strategy"] == strategy
+                                                and a["result_id"] == i
+                                            ),
+                                            None,
+                                        )
+                                        if existing:
+                                            existing.update(annotation)
+                                        else:
+                                            st.session_state.search_annotations.append(
+                                                annotation
+                                            )
 
     # Show annotation count
     if (

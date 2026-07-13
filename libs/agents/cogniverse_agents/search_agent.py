@@ -16,6 +16,7 @@ Enhanced with:
 """
 
 import asyncio
+import json
 import logging
 import tempfile
 from contextlib import asynccontextmanager
@@ -39,6 +40,68 @@ from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import get_backend_registry
 
 logger = logging.getLogger(__name__)
+
+
+def _current_span_id() -> Optional[str]:
+    """16-hex id of the active telemetry span, or None when none is active
+    (telemetry disabled → invalid/NoOp span). Stamped onto SearchOutput so a
+    client can attach result_click / result_relevance annotations to this exact
+    search span for embedding-triplet mining. Must be read on the coroutine's
+    own thread — a worker thread spawned by ``to_thread`` does not carry the
+    span contextvar.
+    """
+    try:
+        from opentelemetry import trace as _otel_trace
+
+        ctx = _otel_trace.get_current_span().get_span_context()
+        if ctx and ctx.is_valid:
+            return f"{ctx.span_id:016x}"
+    except Exception:
+        pass
+    return None
+
+
+def _stamp_search_io_on_span(query: str, results: list, modality: str) -> None:
+    """Record the query, modality, and full result set (with content) on the
+    active ``SearchAgent.process`` span as ``input.value`` / ``modality`` /
+    ``output.value``.
+
+    This is the span whose id is on ``SearchOutput.span_id`` and that clients
+    annotate with relevance, so the embedding triplet miner reads the anchor
+    (query), the modality filter, the candidates (results), and the relevance
+    annotation from one span. Modality rides on a plain ``modality`` attribute,
+    not ``input.modality`` — Phoenix folds the OpenInference ``input.*`` object
+    into the ``input.value`` scalar and drops sibling ``input.*`` sub-keys.
+    """
+    try:
+        from opentelemetry import trace as _otel_trace
+
+        span = _otel_trace.get_current_span()
+        if not (span and span.get_span_context().is_valid):
+            return
+        span.set_attribute("input.value", query)
+        span.set_attribute("modality", modality)
+        payload = []
+        for r in results:
+            d = r if isinstance(r, dict) else getattr(r, "to_dict", dict)()
+            payload.append(
+                {
+                    "video_id": d.get("video_id") or d.get("source_id") or d.get("id"),
+                    "document_id": d.get("document_id")
+                    or d.get("documentid")
+                    or d.get("id"),
+                    "score": float(d.get("score") or 0.0),
+                    "content": d.get("content")
+                    or d.get("text_content")
+                    or d.get("description")
+                    or d.get("text")
+                    or d.get("title")
+                    or "",
+                }
+            )
+        span.set_attribute("output.value", json.dumps(payload))
+    except Exception:
+        pass
 
 
 class EncoderCapabilityError(Exception):
@@ -222,6 +285,12 @@ class SearchOutput(AgentOutput):
     )
     rlm_telemetry: Optional[Dict[str, Any]] = Field(
         None, description="RLM telemetry metrics for A/B testing"
+    )
+    # The search span's id (16-hex), so a client can attach relevance/click
+    # annotations to this exact search for triplet mining. None when no span
+    # is active (telemetry disabled).
+    span_id: Optional[str] = Field(
+        None, description="Telemetry span id (16-hex) for this search"
     )
 
 
@@ -1812,6 +1881,12 @@ class SearchAgent(
 
         self.set_tenant_for_context(tenant_id)
 
+        # Capture the active search span's id here in the coroutine body — NOT
+        # inside the to_thread search calls, which don't carry the span
+        # contextvar. Surfaced on SearchOutput so a client can annotate this
+        # exact search (result_click / result_relevance) for triplet mining.
+        search_span_id = _current_span_id()
+
         search_mode = "single_profile"
         # Respect an explicit single-profile override from `profiles`; fall
         # back to the tenant's active_profile when no profiles are provided.
@@ -1967,6 +2042,7 @@ class SearchAgent(
                     "rlm_error": str(e),
                 }
 
+        _stamp_search_io_on_span(query, results, modality)
         return SearchOutput(
             query=query,
             enhanced_query=enhanced_query,
@@ -1979,6 +2055,7 @@ class SearchAgent(
             total_results=len(results),
             rlm_synthesis=rlm_synthesis,
             rlm_telemetry=rlm_telemetry,
+            span_id=search_span_id,
         )
 
     # Skill descriptors come from A2AAgent.get_agent_skills() (-> _get_skills()).

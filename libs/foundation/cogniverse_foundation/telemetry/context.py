@@ -32,9 +32,9 @@ def search_span(
         "strategy": ranking_strategy,
         "top_k": top_k,
         "profile": profile,
-        "input.value": json.dumps(
-            {"query": query, "top_k": top_k, "strategy": ranking_strategy}
-        ),
+        # OpenInference primary input: the clean query text (top_k/strategy
+        # are separate attributes above).
+        "input.value": query,
     }
 
     with manager.span(

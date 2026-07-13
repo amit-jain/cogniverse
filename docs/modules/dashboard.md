@@ -78,7 +78,9 @@ libs/dashboard/cogniverse_dashboard/
     tenant_management.py
   utils/
     __init__.py
+    annotations.py                # Persist search-result relevance annotations to telemetry
     async_utils.py
+    traces.py
 ```
 
 ---
