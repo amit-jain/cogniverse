@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import pandas as pd
 
+from cogniverse_foundation.telemetry.span_contract import read_span_io
+
 from .evaluators.golden_dataset import (
     GoldenDatasetEvaluator,
     create_low_scoring_golden_dataset,
@@ -174,28 +176,20 @@ class SpanEvaluator:
             # Convert to expected format
             formatted_spans = []
             for _, span in spans_df.iterrows():
-                # Extract attributes dict
-                attributes = {}
-
-                # Look for query in various places
-                query = None
-                if "attributes.input.value" in span:
-                    query = span["attributes.input.value"]
-                elif "input.value" in span:
-                    query = span["input.value"]
-                elif "attributes.query" in span:
-                    query = span["attributes.query"]
-
-                if query:
-                    attributes["query"] = query
+                # Read the canonical input/output slots every producer writes.
+                span_io = read_span_io(span)
+                query = span_io["input"] or span.get("attributes.query")
 
                 # Skip spans with no query input — every agent judge prompt
                 # needs the query, and a search span without one is unusable.
                 if not query:
                     continue
 
-                output_value = span.get("attributes.output.value", "")
-                outputs = self._extract_span_outputs(output_value, require_search_shape)
+                attributes = {"query": query}
+
+                outputs = self._extract_span_outputs(
+                    span_io["output"], require_search_shape
+                )
                 if outputs is None:
                     continue
 

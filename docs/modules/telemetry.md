@@ -31,6 +31,7 @@ libs/foundation/cogniverse_foundation/telemetry/
 ├── manager.py               # TelemetryManager singleton
 ├── config.py                # TelemetryConfig and BatchExportConfig
 ├── context.py               # Span context helpers
+├── span_contract.py         # Canonical span I/O contract (record_span_io / read_span_io)
 ├── registry.py              # Provider registry for auto-discovery
 └── providers/               # Provider interfaces
     ├── __init__.py
@@ -45,6 +46,15 @@ libs/foundation/cogniverse_foundation/telemetry/
 - `TelemetryConfig`: Configuration for telemetry systems with BatchExportConfig
 - `TelemetryManager`: Singleton manager for multi-tenant tracer providers
 - Context helpers for common operations (search, encode, backend)
+- `span_contract`: the one span I/O shape every operation uses.
+  `record_span_io(span, input_value=, output=, operation=, modality=)` writes the
+  input on `input.value`, the output as JSON on `output.value`, and the type on
+  `operation`; `read_span_io(row)` reads `{input, output, operation, modality}` back
+  from a Phoenix span row. Search (list output) and domain spans like
+  `query_enhancement` (dict output) share the same writer and reader, so eval,
+  dataset-building, experiments, and optimization read every operation uniformly.
+  Also holds the annotation constants (`RESULT_RELEVANCE`, `RESULT_ID_META_KEY`,
+  `RELEVANCE_POSITIVE_THRESHOLD`, `PREFERENCE_CHOSEN_THRESHOLD`).
 
 ### 2. Dashboard Layer: Profile Routing Metrics (cogniverse-dashboard)
 ```text
