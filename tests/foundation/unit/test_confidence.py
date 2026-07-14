@@ -44,3 +44,25 @@ def test_agents_reexport_is_same_function():
     from cogniverse_agents._confidence import parse_confidence as agents_pc
 
     assert agents_pc is parse_confidence
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["nan", "NaN", "+nan", "-nan", float("nan")],
+    ids=["nan_str", "NaN_str", "plus_nan", "minus_nan", "nan_float"],
+)
+def test_nan_inputs_fall_back_to_default(raw):
+    """NaN survives the [0,1] clamp (nan<0 and nan>1 are both False) and
+    would propagate into eval scores and routing comparisons — it must map
+    to the default like any other unparseable input."""
+    assert parse_confidence(raw, default=0.42) == pytest.approx(0.42)
+    assert parse_confidence(raw) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("inf", 1.0), ("-inf", 0.0), (float("inf"), 1.0), (float("-inf"), 0.0)],
+    ids=["inf_str", "minus_inf_str", "inf_float", "minus_inf_float"],
+)
+def test_inf_inputs_clamp_to_bounds(raw, expected):
+    assert parse_confidence(raw) == pytest.approx(expected)

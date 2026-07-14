@@ -754,8 +754,17 @@ class Mem0MemoryManager:
                 agent_id=CONFLICT_AGENT_NAME,
                 filters={"subject_key": subject_key},
             )
-        except Exception:
-            existing_blob = {}
+        except Exception as exc:
+            # Can't know the subject's current conflict state — persisting
+            # blind would duplicate the sentinel every time the same
+            # conflict re-surfaces. Skip persistence for this write.
+            logger.warning(
+                "conflict-state read failed for subject_key=%s: %r — "
+                "skipping contradiction persistence for this write",
+                subject_key,
+                exc,
+            )
+            return
         existing_rows = (
             existing_blob.get("results", [])
             if isinstance(existing_blob, dict)

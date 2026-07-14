@@ -107,14 +107,19 @@ class LenientJSONAdapter(JSONAdapter):
 
 
 def _default_for(annotation: Any) -> Any:
-    """Return a safe empty value matching the output field's annotation."""
+    """Return a safe empty value matching the output field's annotation.
+
+    Handles both parameterized (``list[str]``) and bare (``list``)
+    annotations — bare collections have no ``__origin__``, and a str
+    default fails the parent parser's validation.
+    """
     origin = getattr(annotation, "__origin__", None)
-    if origin in (list, tuple, set):
+    if origin in (list, tuple, set) or annotation in (list, tuple, set):
         return []
-    if origin is dict:
+    if origin is dict or annotation is dict:
         return {}
-    if annotation in (int, float):
-        return 0
     if annotation is bool:
         return False
+    if annotation in (int, float):
+        return 0
     return ""
