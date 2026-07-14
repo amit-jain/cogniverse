@@ -158,3 +158,69 @@ def test_capacity_holds_under_burst_of_unique_tenants():
     assert len(evicted) == 92
     # Final entries should be the 8 most-recently-written
     assert set(cache.keys()) == {f"tenant-{i}" for i in range(92, 100)}
+
+
+def test_set_displacing_same_key_fires_on_evict():
+    """Overwriting a key must release the displaced value — cached backend
+    instances hold connection pools, and a silent overwrite leaks them."""
+    evicted: list[tuple[str, object]] = []
+    cache: TenantLRUCache[object] = TenantLRUCache(
+        capacity=4, on_evict=lambda k, v: evicted.append((k, v))
+    )
+    first, second = object(), object()
+
+    cache.set("k", first)
+    cache.set("k", second)
+
+    assert cache.get("k") is second
+    assert evicted == [("k", first)]
+
+
+def test_set_same_value_does_not_fire_on_evict():
+    evicted: list[str] = []
+    cache: TenantLRUCache[object] = TenantLRUCache(
+        capacity=4, on_evict=lambda k, v: evicted.append(k)
+    )
+    value = object()
+
+    cache.set("k", value)
+    cache.set("k", value)
+
+    assert evicted == []
+
+
+def test_set_if_absent_inserts_and_returns_value():
+    cache: TenantLRUCache[object] = TenantLRUCache(capacity=4)
+    value = object()
+
+    assert cache.set_if_absent("k", value) is value
+    assert cache.get("k") is value
+
+
+def test_set_if_absent_returns_existing_winner_and_fires_no_evict():
+    """Two concurrent builders resolve to ONE cached instance: the loser gets
+    the winner back and stays responsible for releasing its own duplicate —
+    the cache must not evict either object."""
+    evicted: list[str] = []
+    cache: TenantLRUCache[object] = TenantLRUCache(
+        capacity=4, on_evict=lambda k, v: evicted.append(k)
+    )
+    winner, loser = object(), object()
+
+    assert cache.set_if_absent("k", winner) is winner
+    assert cache.set_if_absent("k", loser) is winner
+    assert cache.get("k") is winner
+    assert evicted == []
+
+
+def test_set_if_absent_evicts_over_capacity():
+    evicted: list[str] = []
+    cache: TenantLRUCache[int] = TenantLRUCache(
+        capacity=1, on_evict=lambda k, v: evicted.append(k)
+    )
+
+    cache.set_if_absent("a", 1)
+    cache.set_if_absent("b", 2)
+
+    assert evicted == ["a"]
+    assert "b" in cache and "a" not in cache

@@ -13,9 +13,12 @@ Siblings ``get_metadata_document`` (returns ``None``) and
 ``delete_metadata_document`` (returns ``False``) both check
 ``status_code``; ``query_metadata_documents`` was the odd one out.
 
-The fix raises ``RuntimeError`` on non-2xx inside the method's existing
-try/except, so the outer log line now includes the HTTP status and the
-response body — actionable signal for operators.
+A non-2xx raises ``RuntimeError`` carrying the HTTP status and response
+body, and a transport failure propagates as-is — matching the raise-on-
+backend-failure contract the config/adapter stores enforce
+(test_store_read_outage_raises.py). Callers that deliberately degrade
+(ProvenanceStore.fetch, BackendVectorStore.list) catch and log; everyone
+else fails loudly instead of misreading an outage as "no rows".
 
 These tests mock pyvespa's response object directly (the CONTRACT side
 of the boundary, not the SUT side).
@@ -63,49 +66,54 @@ class _FakeVespaClient:
         return SimpleNamespace(status_code=self._status_code, json=self._body)
 
 
-def test_non_200_raises_logged_runtime_error_and_returns_empty(
+def test_non_200_raises_runtime_error_with_status(
     backend: VespaBackend,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A Vespa 400 must be logged at error level with the response body,
-    not silently masked as 'zero results'."""
+    """A Vespa 400 must raise (with the status in the message) — never be
+    masked as 'zero results' that a caller reads as a valid empty state."""
     error_body = {
         "root": {"errors": [{"code": 4, "summary": "BadRequest", "message": "x"}]}
     }
     fake = _FakeVespaClient(status_code=400, body=error_body)
     with caplog.at_level(logging.ERROR, logger="cogniverse_vespa.backend"):
         with patch("cogniverse_vespa.backend.make_vespa_app", return_value=fake):
-            result = backend.query_metadata_documents(
-                schema="organization_metadata",
-                yql="select * from organization_metadata where true",
-            )
-    # Caller-facing return preserved (list) — the outer except still
-    # swallows to [] so existing callers don't break — but the log now
-    # carries actionable detail.
-    assert result == []
-    assert any("HTTP 400" in rec.message for rec in caplog.records), (
-        f"Expected an error log mentioning 'HTTP 400'; got: "
-        f"{[r.message for r in caplog.records]}"
-    )
+            with pytest.raises(RuntimeError, match="HTTP 400"):
+                backend.query_metadata_documents(
+                    schema="organization_metadata",
+                    yql="select * from organization_metadata where true",
+                )
     assert any("organization_metadata" in rec.message for rec in caplog.records), (
         "Expected the schema name in the error log"
     )
 
 
-def test_non_200_log_includes_response_body(
+def test_non_200_raise_includes_response_body(
     backend: VespaBackend,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Operators need the response body to diagnose 4xx (bad YQL etc.)."""
     error_body = {"root": {"errors": [{"summary": "Parse error at position 17"}]}}
     fake = _FakeVespaClient(status_code=400, body=error_body)
-    with caplog.at_level(logging.ERROR, logger="cogniverse_vespa.backend"):
-        with patch("cogniverse_vespa.backend.make_vespa_app", return_value=fake):
+    with patch("cogniverse_vespa.backend.make_vespa_app", return_value=fake):
+        with pytest.raises(RuntimeError, match="Parse error at position 17"):
             backend.query_metadata_documents(schema="tenant_metadata", yql="bad yql")
-    assert any("Parse error at position 17" in rec.message for rec in caplog.records), (
-        f"Expected the Vespa error body in the log; got: "
-        f"{[r.message for r in caplog.records]}"
-    )
+
+
+def test_transport_failure_propagates(backend: VespaBackend) -> None:
+    """A dead Vespa must surface as the original transport error, not []."""
+
+    class _DeadVespaClient:
+        def query(self, **kwargs):
+            raise ConnectionError("vespa unreachable")
+
+    with patch(
+        "cogniverse_vespa.backend.make_vespa_app", return_value=_DeadVespaClient()
+    ):
+        with pytest.raises(ConnectionError, match="vespa unreachable"):
+            backend.query_metadata_documents(
+                schema="organization_metadata",
+                yql="select * from organization_metadata where true",
+            )
 
 
 def test_200_with_results_returns_fields(backend: VespaBackend) -> None:

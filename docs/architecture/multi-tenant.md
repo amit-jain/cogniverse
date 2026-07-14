@@ -269,6 +269,11 @@ Tested by `TestSchemaRegistryDeletion::test_delete_tenant_does_not_drop_peer_ten
   for the operator workflow.
 - A peer process's `register_schema` becomes visible to your next
   `_get_all_schemas` call without a sleep.
+- A backend-read failure during a schema refresh (`_get_all_schemas` →
+  `_load_schemas_from_storage`) does not silently empty the registry.
+  `VespaConfigStore.list_all_configs` raises on backend failure instead
+  of returning an empty list, so the refresh falls back to the existing
+  in-memory cache instead of replacing it with zero schemas.
 
 ### What you cannot rely on
 

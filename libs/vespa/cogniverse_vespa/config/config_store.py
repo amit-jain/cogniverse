@@ -431,8 +431,10 @@ class VespaConfigStore(ConfigStore):
             return entries
 
         except Exception as e:
-            logger.error(f"Failed to retrieve config history from Vespa: {e}")
-            return []
+            # A backend read FAILURE must not read as "no history" — raise,
+            # matching get_config's contract.
+            logger.error(f"Failed to retrieve config history from Vespa: {e!r}")
+            raise
 
     def list_configs(
         self,
@@ -501,8 +503,10 @@ class VespaConfigStore(ConfigStore):
             return list(latest_configs.values())
 
         except Exception as e:
-            logger.error(f"Failed to list configs from Vespa: {e}")
-            return []
+            # A backend read FAILURE must not read as "no configs" — raise,
+            # matching get_config's contract.
+            logger.error(f"Failed to list configs from Vespa: {e!r}")
+            raise
 
     def list_all_configs(
         self,
@@ -594,8 +598,11 @@ class VespaConfigStore(ConfigStore):
             return list(latest_configs.values())
 
         except Exception as e:
-            logger.error(f"Failed to list all configs from Vespa: {e}")
-            return []
+            # An outage read as "no configs at all" makes the schema registry
+            # load zero schemas and wipe its cache — raise so its designed
+            # keep-existing-cache fallback fires instead.
+            logger.error(f"Failed to list all configs from Vespa: {e!r}")
+            raise
 
     def delete_config(
         self,

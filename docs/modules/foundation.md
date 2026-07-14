@@ -732,8 +732,9 @@ client = cache.get_or_set("acme", lambda: MyClient(tenant_id="acme"))
 |--------|-------------|
 | `__init__(capacity, on_evict=None)` | `capacity` must be `>= 1`; `on_evict(key, value)` is called (best-effort) on eviction or `clear()` |
 | `get(key)` | Return cached value or `None`, marking it most-recently-used |
-| `set(key, value)` | Insert/replace, evicting the least-recently-used entry if over capacity |
-| `get_or_set(key, factory)` | Return cached value, or build + cache one atomically |
+| `set(key, value)` | Insert/replace, evicting the least-recently-used entry if over capacity; a replaced value (different object, same key) also gets `on_evict` so held resources are released |
+| `get_or_set(key, factory)` | Return cached value, or build + cache one atomically (lock held through the factory) |
+| `set_if_absent(key, value)` | Insert unless the key is cached; return the winner. For expensive instances built outside the lock: concurrent builders converge on one shared instance, and the loser stays the caller's to release (no `on_evict`) |
 | `pop(key, default=None)` | Remove and return a value without triggering `on_evict` |
 | `clear()` | Evict every entry (triggers `on_evict` for each) |
 | `keys()` / `values()` | Snapshot of current keys / values (LRU order) |

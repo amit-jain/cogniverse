@@ -1456,8 +1456,11 @@ class VespaBackend(Backend):
             logger.debug(f"Query returned {len(documents)} documents from {schema}")
             return documents
         except Exception as e:
-            logger.error(f"Failed to query metadata documents from {schema}: {e}")
-            return []
+            # A rejected query or outage must not read as "no rows" — raise,
+            # matching the config/adapter store contract. Callers that
+            # deliberately degrade (provenance fetch, memory list) catch this.
+            logger.error(f"Failed to query metadata documents from {schema}: {e!r}")
+            raise
 
     def delete_metadata_document(self, schema: str, doc_id: str) -> bool:
         """
