@@ -13,8 +13,6 @@ Key improvements:
 """
 
 import logging
-
-# Import VideoPrism at module level
 import sys
 import threading
 import time
@@ -28,24 +26,46 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-
-# Add VideoPrism to path once at module level
-config_manager = create_default_config_manager()
-config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
-videoprism_path = config.get("videoprism_repo_path")
-if videoprism_path and str(videoprism_path) not in sys.path:
-    sys.path.insert(0, str(videoprism_path))
-
-try:
-    from videoprism import models as vp
-
-    VIDEOPRISM_AVAILABLE = True
-except ImportError:
-    VIDEOPRISM_AVAILABLE = False
-    vp = None
 
 logger = logging.getLogger(__name__)
+
+# Populated lazily by _ensure_videoprism() so importing this module never
+# triggers config I/O (which requires BACKEND_URL at the entrypoint).
+vp = None
+_VIDEOPRISM_LOAD_ATTEMPTED = False
+
+
+def _ensure_videoprism() -> bool:
+    """Resolve videoprism_repo_path from config, put it on sys.path, and import
+    the package. Deferred out of module import; runs once, then caches.
+
+    Returns True if the ``videoprism`` package is importable.
+    """
+    global vp, _VIDEOPRISM_LOAD_ATTEMPTED
+    if _VIDEOPRISM_LOAD_ATTEMPTED:
+        return vp is not None
+    _VIDEOPRISM_LOAD_ATTEMPTED = True
+    try:
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
+
+        config_manager = create_default_config_manager()
+        config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+        videoprism_path = config.get("videoprism_repo_path")
+        if videoprism_path and str(videoprism_path) not in sys.path:
+            sys.path.insert(0, str(videoprism_path))
+    except Exception as exc:
+        logger.warning("Could not resolve videoprism_repo_path from config: %s", exc)
+    try:
+        from videoprism import models as _vp
+
+        vp = _vp
+        return True
+    except ImportError:
+        vp = None
+        return False
 
 
 class CircuitState(Enum):
@@ -234,7 +254,7 @@ class VideoPrismTextEncoder:
             enable_metrics: Whether to collect performance metrics
             correlation_id: Request correlation ID for logging
         """
-        if not VIDEOPRISM_AVAILABLE:
+        if not _ensure_videoprism():
             raise ImportError("VideoPrism not available. Please check installation.")
 
         self.model_name = model_name
