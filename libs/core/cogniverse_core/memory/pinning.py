@@ -341,7 +341,12 @@ class PinService:
 
             try:
                 meta = json.loads(meta)
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "Skipping pin row %s with unparseable metadata: %s",
+                    row.get("id"),
+                    exc,
+                )
                 return None
         if meta.get("kind") != PIN_RECORD_KIND:
             return None
