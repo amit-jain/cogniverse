@@ -77,7 +77,9 @@ def test_non_200_raises_runtime_error_with_status(
     }
     fake = _FakeVespaClient(status_code=400, body=error_body)
     with caplog.at_level(logging.ERROR, logger="cogniverse_vespa.backend"):
-        with patch("cogniverse_vespa.backend.make_vespa_app", return_value=fake):
+        with patch(
+            "cogniverse_vespa.backend.make_persistent_vespa_ops", return_value=fake
+        ):
             with pytest.raises(RuntimeError, match="HTTP 400"):
                 backend.query_metadata_documents(
                     schema="organization_metadata",
@@ -94,7 +96,7 @@ def test_non_200_raise_includes_response_body(
     """Operators need the response body to diagnose 4xx (bad YQL etc.)."""
     error_body = {"root": {"errors": [{"summary": "Parse error at position 17"}]}}
     fake = _FakeVespaClient(status_code=400, body=error_body)
-    with patch("cogniverse_vespa.backend.make_vespa_app", return_value=fake):
+    with patch("cogniverse_vespa.backend.make_persistent_vespa_ops", return_value=fake):
         with pytest.raises(RuntimeError, match="Parse error at position 17"):
             backend.query_metadata_documents(schema="tenant_metadata", yql="bad yql")
 
@@ -107,7 +109,8 @@ def test_transport_failure_propagates(backend: VespaBackend) -> None:
             raise ConnectionError("vespa unreachable")
 
     with patch(
-        "cogniverse_vespa.backend.make_vespa_app", return_value=_DeadVespaClient()
+        "cogniverse_vespa.backend.make_persistent_vespa_ops",
+        return_value=_DeadVespaClient(),
     ):
         with pytest.raises(ConnectionError, match="vespa unreachable"):
             backend.query_metadata_documents(
@@ -127,7 +130,7 @@ def test_200_with_results_returns_fields(backend: VespaBackend) -> None:
         }
     }
     fake = _FakeVespaClient(status_code=200, body=body)
-    with patch("cogniverse_vespa.backend.make_vespa_app", return_value=fake):
+    with patch("cogniverse_vespa.backend.make_persistent_vespa_ops", return_value=fake):
         result = backend.query_metadata_documents(
             schema="organization_metadata",
             yql="select * from organization_metadata where true",
@@ -147,7 +150,9 @@ def test_200_with_empty_children_returns_empty_list(
     body = {"root": {"children": []}}
     fake = _FakeVespaClient(status_code=200, body=body)
     with caplog.at_level(logging.ERROR, logger="cogniverse_vespa.backend"):
-        with patch("cogniverse_vespa.backend.make_vespa_app", return_value=fake):
+        with patch(
+            "cogniverse_vespa.backend.make_persistent_vespa_ops", return_value=fake
+        ):
             result = backend.query_metadata_documents(
                 schema="organization_metadata",
                 yql="select * from organization_metadata where true",

@@ -99,7 +99,9 @@ class TestVespaPartialUpdate:
 
         client = MagicMock()
         client.delete_data = MagicMock(return_value=MagicMock(status_code=500))
-        monkeypatch.setattr(vespa_backend_mod, "make_vespa_app", lambda **_kw: client)
+        monkeypatch.setattr(
+            vespa_backend_mod, "make_persistent_vespa_ops", lambda **_kw: client
+        )
 
         ok = backend.delete_metadata_document(schema="s", doc_id="d1")
 

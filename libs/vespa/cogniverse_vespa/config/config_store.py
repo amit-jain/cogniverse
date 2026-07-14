@@ -15,7 +15,7 @@ from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
     ConfigStore,
 )
-from cogniverse_vespa._vespa_factory import make_vespa_app
+from cogniverse_vespa._vespa_factory import make_persistent_vespa_ops
 from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,12 @@ class VespaConfigStore(ConfigStore):
         if vespa_app is not None:
             self.vespa_app = vespa_app
         else:
-            self.vespa_app = make_vespa_app(url=backend_url, port=backend_port)
+            # Persistent session: config reads/writes are frequent and the
+            # store lives for the process — per-op VespaSync handshakes
+            # dominated cache-miss latency.
+            self.vespa_app = make_persistent_vespa_ops(
+                url=backend_url, port=backend_port
+            )
 
         self.schema_name = schema_name
         self.keep_versions = max(1, keep_versions)
@@ -80,6 +85,12 @@ class VespaConfigStore(ConfigStore):
             f"VespaConfigStore initialized with schema: {schema_name} "
             f"at {backend_url}:{backend_port} (keep_versions={self.keep_versions})"
         )
+
+    def close(self) -> None:
+        """Release the persistent HTTP session (no-op for injected apps)."""
+        close = getattr(self.vespa_app, "close", None)
+        if callable(close):
+            close()
 
     def initialize(self) -> None:
         """

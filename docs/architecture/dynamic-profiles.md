@@ -212,7 +212,10 @@ class VespaConfigStore(ConfigStore):
         if vespa_app is not None:
             self.vespa_app = vespa_app
         else:
-            self.vespa_app = make_vespa_app(url=backend_url, port=backend_port)
+            # Persistent session: config reads/writes are frequent and the
+            # store lives for the process — see _vespa_factory.py in the
+            # Backends Module doc for why this isn't plain make_vespa_app.
+            self.vespa_app = make_persistent_vespa_ops(url=backend_url, port=backend_port)
         self.schema_name = schema_name
         self.keep_versions = max(1, keep_versions)
 

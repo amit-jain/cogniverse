@@ -72,7 +72,7 @@ from cogniverse_foundation.config.utils import get_config  # Lazy import
 ```text
 libs/vespa/cogniverse_vespa/
 ├── __init__.py
-├── _vespa_factory.py               # Internal: Vespa app factory (make_vespa_app)
+├── _vespa_factory.py               # Internal: Vespa app factory (make_vespa_app, PersistentVespaOps, make_persistent_vespa_ops)
 ├── _yql.py                         # Internal: YQL escaping utilities (yql_quote)
 ├── backend.py                      # Backend abstraction
 ├── config/
@@ -1981,21 +1981,61 @@ schema_manager._deploy_package(app_package)
 
 Smaller modules in `libs/vespa/cogniverse_vespa/` that back the classes above.
 
-### make_vespa_app (`_vespa_factory.py`)
+### Vespa app factory (`_vespa_factory.py`)
 
 Single source of truth for constructing pyvespa `Vespa` clients — every other
 module in the package (search backend, config store, adapter store, schema
-manager) builds its `Vespa` instance through this function instead of calling
-`Vespa(url=...)` directly.
+manager) builds its `Vespa` instance through this module instead of calling
+`Vespa(url=...)` directly. It exposes two construction paths that share the
+same underlying `Vespa(url=...)` construction:
+
+- **`make_vespa_app(*, url, port=None) -> Vespa`** — a plain pyvespa client.
+  Each data-plane call (`query()`, `feed_data_point()`, `get_data()`,
+  `delete_data()`) opens its own `VespaSync(self, pool_maxsize=1)` under the
+  hood — a fresh connection pool and TCP(+TLS) handshake per call. This is
+  fine for callers that are themselves already pooling connections or that
+  call rarely: the search backend's per-connection `VespaConnection`
+  (`search_backend.py`, see [Connection Pool
+  Management](#connection-pool-management)) and the ingestion client
+  `VespaPyClient` (`ingestion_client.py`) both still construct their `Vespa`
+  instance this way — unchanged.
+- **`make_persistent_vespa_ops(*, url, port=None, connections=4) -> PersistentVespaOps`**
+  — calls `make_vespa_app` and wraps the result in a `PersistentVespaOps` that
+  opens ONE `syncio(connections=connections)` session at construction time
+  (`_open_http_client()` called immediately) and routes `query()`,
+  `feed_data_point()`, `get_data()`, and `delete_data()` through that single
+  session instead of paying a handshake per call. `.url` proxies the wrapped
+  app's URL (needed for Document v1 visit-URL construction); any other
+  attribute access (`get_application_status`, deploy helpers, …) falls
+  through to the wrapped `Vespa` app via `__getattr__`. `close()` releases
+  the session.
+
+  Callers that issue many operations over the process lifetime construct
+  their `vespa_app` this way whenever one isn't injected:
+  - `VespaConfigStore` (`config/config_store.py`) — frequent config
+    reads/writes for the life of the store.
+  - `VespaAdapterStore` (`registry/adapter_store.py`) — `set_active` alone
+    issues several sequential reads/writes.
+  - `VespaBackend`'s cached metadata client (`backend.py`,
+    `_metadata_vespa_app()`) — metadata CRUD runs on every ingest/deploy.
+    The cache key is `(url, port)`; when it changes, the old
+    `PersistentVespaOps` is `close()`d before a new one is built.
+    `VespaBackend.close()` also releases it.
 
 ```python
-from cogniverse_vespa._vespa_factory import make_vespa_app
+from cogniverse_vespa._vespa_factory import make_persistent_vespa_ops, make_vespa_app
 
-# url + port combined into "host:port" before handing to pyvespa
+# Plain client: url + port combined into "host:port" before handing to pyvespa
 app = make_vespa_app(url="http://localhost", port=8080)
 
 # url already fully-formed (e.g. a connection-pool entry)
 app = make_vespa_app(url="http://localhost:8080")
+
+# Persistent client: same construction, plus one long-lived sync session
+# reused across query()/feed_data_point()/get_data()/delete_data()
+ops = make_persistent_vespa_ops(url="http://localhost", port=8080, connections=4)
+ops.query(yql="select * from sources * where true limit 1")
+ops.close()  # releases the session
 ```
 
 ### yql_quote (`_yql.py`)

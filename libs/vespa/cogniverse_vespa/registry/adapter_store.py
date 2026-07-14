@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from vespa.application import Vespa
 
 from cogniverse_sdk.interfaces.adapter_store import AdapterStore
-from cogniverse_vespa._vespa_factory import make_vespa_app
+from cogniverse_vespa._vespa_factory import make_persistent_vespa_ops
 from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
@@ -67,13 +67,23 @@ class VespaAdapterStore(AdapterStore):
         if vespa_app is not None:
             self.vespa_app = vespa_app
         else:
-            self.vespa_app = make_vespa_app(url=backend_url, port=backend_port)
+            # Persistent session: set_active alone issues several sequential
+            # reads/writes — per-op VespaSync handshakes multiplied them.
+            self.vespa_app = make_persistent_vespa_ops(
+                url=backend_url, port=backend_port
+            )
 
         self.schema_name = schema_name
         logger.info(
             f"VespaAdapterStore initialized with schema: {schema_name} "
             f"at {backend_url}:{backend_port}"
         )
+
+    def close(self) -> None:
+        """Release the persistent HTTP session (no-op for injected apps)."""
+        close = getattr(self.vespa_app, "close", None)
+        if callable(close):
+            close()
 
     def initialize(self) -> None:
         """
