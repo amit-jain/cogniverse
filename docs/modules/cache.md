@@ -630,9 +630,10 @@ cleared = await cache_manager.clear()
 ---
 
 #### `async get_stats() -> Dict[str, Any]`
-Get aggregated statistics from all tiers.
+Get aggregated statistics from all tiers. Returns `{"enabled": False}` when
+`CacheConfig.enable_stats` is `False` (counters are not tracked in that mode).
 
-**Returns:**
+**Returns** (when `enable_stats` is `True`, the default):
 ```python
 {
     "manager": {
@@ -648,8 +649,12 @@ Get aggregated statistics from all tiers.
         "StructuredFilesystemBackend": {
             "hits": 1500,
             "misses": 500,
+            "sets": 1000,
+            "deletes": 50,
+            "evictions": 12,
             "size_bytes": 2048000,
-            "total_files": 200
+            "total_files": 200,
+            "metadata_files": 200
         }
     }
 }
