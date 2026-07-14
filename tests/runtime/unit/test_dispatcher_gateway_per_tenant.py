@@ -44,8 +44,15 @@ def dispatcher(monkeypatch):
     monkeypatch.setattr(gw.GatewayAgent, "__init__", _init)
     monkeypatch.setattr(gw.GatewayAgent, "_load_artifact", _load, raising=False)
 
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
     d = object.__new__(AgentDispatcher)
     d._resolve_gliner_url = lambda *a, **k: None
+    # Default routing config (its GLiNER defaults match GatewayDeps, so seeding
+    # leaves these tenants' behavior unchanged); a test may override this.
+    d._config_manager = SimpleNamespace(
+        get_routing_config=lambda tid: RoutingConfigUnified(tenant_id=tid)
+    )
     return d, sentinel_tm
 
 
@@ -61,6 +68,26 @@ async def test_each_tenant_gets_its_own_gateway_with_its_own_thresholds(dispatch
     assert globex._artifact_tenant_id == "globex:globex"
     assert acme.deps.fast_path_confidence_threshold == 0.11
     assert globex.deps.fast_path_confidence_threshold == 0.87
+
+
+@pytest.mark.asyncio
+async def test_gateway_seeds_gliner_config_from_routing_config(dispatcher):
+    """The tenant's dashboard-editable RoutingConfigUnified GLiNER model and
+    threshold reach the live GatewayDeps (they were ignored before — the gateway
+    only ever saw its own defaults plus the optimization artifact)."""
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
+    d, _ = dispatcher
+    d._config_manager = SimpleNamespace(
+        get_routing_config=lambda tid: RoutingConfigUnified(
+            tenant_id=tid, gliner_model="acme/custom-gliner", gliner_threshold=0.55
+        )
+    )
+
+    agent = await d._get_or_build_gateway_agent("acme:acme")
+
+    assert agent.deps.gliner_model_name == "acme/custom-gliner"
+    assert agent.deps.gliner_threshold == 0.55
 
 
 @pytest.mark.asyncio

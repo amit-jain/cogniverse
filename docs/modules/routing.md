@@ -216,7 +216,11 @@ class RoutingConfigUnified:
     slow_path_confidence_threshold: float = 0.6
     max_routing_time_ms: int = 1000
 
-    # GLiNER configuration
+    # GLiNER configuration. gliner_model and gliner_threshold ARE seeded into
+    # GatewayDeps by the dispatcher (_get_or_build_gateway_agent) as base values,
+    # so the tenant's dashboard model/threshold reach the live gateway; the
+    # optimization artifact loaded afterward still overrides gliner_threshold.
+    # gliner_device and gliner_labels are not yet consumed by the GLiNER loader.
     gliner_model: str = "urchade/gliner_large-v2.1"
     gliner_threshold: float = 0.3
     gliner_device: str = "cpu"

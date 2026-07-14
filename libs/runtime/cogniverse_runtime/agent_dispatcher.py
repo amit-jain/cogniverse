@@ -127,6 +127,12 @@ class AgentDispatcher:
             return agent
 
         deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
+        # Seed GLiNER config from the tenant's routing config (dashboard-editable
+        # base values); the optimization artifact loaded below overrides the
+        # fields it tunes, so tuned tenants keep their compiled thresholds.
+        routing_cfg = self._config_manager.get_routing_config(tenant_id)
+        deps.gliner_model_name = routing_cfg.gliner_model
+        deps.gliner_threshold = routing_cfg.gliner_threshold
         agent = GatewayAgent(deps=deps)
         agent.telemetry_manager = get_telemetry_manager()
         agent._artifact_tenant_id = tenant_id
