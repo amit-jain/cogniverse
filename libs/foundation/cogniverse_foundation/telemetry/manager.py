@@ -724,7 +724,7 @@ def get_telemetry_manager(config_manager=None) -> TelemetryManager:
         config_manager: Optional ConfigManager to load config from.
             If None on first call, creates one via create_default_config_manager().
     """
-    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 
     global _telemetry_manager
     if _telemetry_manager is None:

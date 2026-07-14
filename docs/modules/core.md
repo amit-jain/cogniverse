@@ -90,8 +90,8 @@ cogniverse_core/
 │   ├── models/                  # Model loaders (see Model Loaders section)
 │   ├── media/                   # Media access abstraction (see Media Access section)
 │   ├── utils/                   # Utility functions (see Utility Modules section)
-│   ├── tenant_utils.py          # Tenant utilities
-│   ├── dspy_module_registry.py  # DSPy module management
+│   ├── tenant_utils.py          # Re-exports foundation tenant helpers; hosts assert_tenant_exists
+│   ├── dspy_module_registry.py  # Re-exports foundation DSPyModuleRegistry / DSPyOptimizerRegistry
 │   ├── dynamic_dspy_mixin.py    # Dynamic DSPy mixin
 │   ├── health_mixin.py          # Health check mixin
 │   ├── agent_models.py          # AgentEndpoint and shared agent models

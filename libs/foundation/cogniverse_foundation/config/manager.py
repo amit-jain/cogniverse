@@ -10,7 +10,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, require_tenant_id
+from cogniverse_foundation.common.tenant_utils import (
+    SYSTEM_TENANT_ID,
+    require_tenant_id,
+)
 from cogniverse_foundation.config.agent_config import AgentConfig
 from cogniverse_foundation.config.unified_config import (
     AgentConfigUnified,

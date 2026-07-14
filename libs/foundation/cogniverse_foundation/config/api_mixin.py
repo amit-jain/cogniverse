@@ -90,7 +90,7 @@ class ConfigAPIMixin:
             config_manager: ConfigManager instance for persistence
             tenant_id: Tenant identifier for config persistence (required)
         """
-        from cogniverse_core.common.tenant_utils import require_tenant_id
+        from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         self._config_tenant_id = require_tenant_id(
             tenant_id, source="setup_config_endpoints"
@@ -290,7 +290,9 @@ class ConfigAPIMixin:
         @app.get("/config/modules/available")
         async def list_available_modules():
             """List all available DSPy module types"""
-            from cogniverse_core.common.dspy_module_registry import DSPyModuleRegistry
+            from cogniverse_foundation.common.dspy_module_registry import (
+                DSPyModuleRegistry,
+            )
 
             return {
                 "status": "success",
@@ -300,7 +302,7 @@ class ConfigAPIMixin:
         @app.get("/config/optimizers/available")
         async def list_available_optimizers():
             """List all available DSPy optimizer types"""
-            from cogniverse_core.common.dspy_module_registry import (
+            from cogniverse_foundation.common.dspy_module_registry import (
                 DSPyOptimizerRegistry,
             )
 
