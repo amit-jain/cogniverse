@@ -95,6 +95,31 @@ async def test_gateway_seeds_gliner_config_from_routing_config(dispatcher):
 
 
 @pytest.mark.asyncio
+async def test_fast_path_threshold_seeded_from_config_without_artifact(
+    dispatcher,
+    monkeypatch,
+):
+    """With no optimization artifact, the tenant's configured fast-path
+    threshold reaches the gateway (the artifact would override it if present)."""
+    import cogniverse_agents.gateway_agent as gw
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
+    d, _ = dispatcher
+    monkeypatch.setattr(
+        gw.GatewayAgent, "_load_artifact", lambda self: None, raising=False
+    )
+    d._config_manager = SimpleNamespace(
+        get_routing_config=lambda tid: RoutingConfigUnified(
+            tenant_id=tid, fast_path_confidence_threshold=0.65
+        )
+    )
+
+    agent = await d._get_or_build_gateway_agent("noartifact:noartifact")
+
+    assert agent.deps.fast_path_confidence_threshold == 0.65
+
+
+@pytest.mark.asyncio
 async def test_same_tenant_reuses_the_cached_instance(dispatcher):
     d, _ = dispatcher
 
