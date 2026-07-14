@@ -32,7 +32,12 @@ class MetricWindow:
     """Sliding window for metric aggregation"""
 
     window_size: int = 100
-    values: deque = field(default_factory=lambda: deque(maxlen=100))
+    values: deque = field(default_factory=deque)
+
+    def __post_init__(self):
+        # default_factory has no access to sibling fields, so size the deque here.
+        if self.values.maxlen != self.window_size:
+            self.values = deque(self.values, maxlen=self.window_size)
 
     def add(self, value: float):
         """Add value to window"""
