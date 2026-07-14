@@ -231,19 +231,12 @@ class VideoPrismQueryEncoder(QueryEncoder):
             hasattr(self.videoprism_loader, "text_tokenizer"),
         )
 
-        # Get text encoding components from the loader
+        # Text encoding delegates to the loader (encode()); warn early if the
+        # loader lacks text-encoder support.
         if hasattr(self.videoprism_loader, "text_tokenizer"):
-            self.text_tokenizer = self.videoprism_loader.text_tokenizer
-            self.forward_fn = (
-                self.videoprism_loader.text_forward_fn
-                if hasattr(self.videoprism_loader, "text_forward_fn")
-                else None
-            )
             logger.debug(f"Loaded VideoPrism query encoder: {model_name}")
         else:
             logger.warning("VideoPrism loader doesn't have text encoder support")
-            self.text_tokenizer = None
-            self.forward_fn = None
 
     def encode(self, query: str) -> np.ndarray:
         """Encode text query to embeddings matching VideoPrism format"""
