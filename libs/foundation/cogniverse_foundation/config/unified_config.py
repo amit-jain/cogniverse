@@ -428,48 +428,25 @@ class RoutingConfigUnified:
 
     tenant_id: Optional[str] = None
 
-    # Routing mode. Only "tiered" is implemented end-to-end (fast +
-    # slow + fallback path with enable_* flags below). Other values
-    # are accepted by the schema for forward-compat but produce no
-    # behavior change at dispatch time — do not document them as
-    # supported.
+    # Routing mode. Only "tiered" is implemented; other values are accepted by
+    # the schema for forward-compat but produce no dispatch-time behavior change.
     routing_mode: str = "tiered"
 
-    # Tier configuration
+    # Surfaced in the dashboard config form but not yet read by dispatch logic.
     enable_fast_path: bool = True
-    enable_slow_path: bool = True
-    enable_fallback: bool = True
     # Default matches GatewayDeps.fast_path_confidence_threshold so seeding an
     # untouched tenant's config into the gateway is a no-op.
     fast_path_confidence_threshold: float = 0.4
-    slow_path_confidence_threshold: float = 0.6
-    max_routing_time_ms: int = 1000
 
-    # GLiNER configuration (Fast Path)
+    # GLiNER configuration — seeded into GatewayDeps by the dispatcher.
     gliner_model: str = "urchade/gliner_large-v2.1"
     gliner_threshold: float = 0.3
     gliner_device: str = "cpu"
-    gliner_labels: List[str] = field(default_factory=list)
 
-    # LLM configuration (Slow Path)
-    llm_provider: str = "local"
-    llm_endpoint: str = "http://localhost:11434"
-    llm_temperature: float = 0.1
-    llm_max_tokens: int = 150
-    use_chain_of_thought: bool = True
-
-    # Optimization settings
+    # Optimization settings — consumed by scripts/auto_optimization_trigger.py
     enable_auto_optimization: bool = True
     optimization_interval_seconds: int = 3600
     min_samples_for_optimization: int = 100
-    dspy_enabled: bool = True
-    dspy_max_bootstrapped_demos: int = 10
-    dspy_max_labeled_demos: int = 50
-
-    # Caching
-    enable_caching: bool = True
-    cache_ttl_seconds: int = 300
-    max_cache_size: int = 1000
 
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -485,29 +462,13 @@ class RoutingConfigUnified:
             "tenant_id": self.tenant_id,
             "routing_mode": self.routing_mode,
             "enable_fast_path": self.enable_fast_path,
-            "enable_slow_path": self.enable_slow_path,
-            "enable_fallback": self.enable_fallback,
             "fast_path_confidence_threshold": self.fast_path_confidence_threshold,
-            "slow_path_confidence_threshold": self.slow_path_confidence_threshold,
-            "max_routing_time_ms": self.max_routing_time_ms,
             "gliner_model": self.gliner_model,
             "gliner_threshold": self.gliner_threshold,
             "gliner_device": self.gliner_device,
-            "gliner_labels": self.gliner_labels,
-            "llm_provider": self.llm_provider,
-            "llm_endpoint": self.llm_endpoint,
-            "llm_temperature": self.llm_temperature,
-            "llm_max_tokens": self.llm_max_tokens,
-            "use_chain_of_thought": self.use_chain_of_thought,
             "enable_auto_optimization": self.enable_auto_optimization,
             "optimization_interval_seconds": self.optimization_interval_seconds,
             "min_samples_for_optimization": self.min_samples_for_optimization,
-            "dspy_enabled": self.dspy_enabled,
-            "dspy_max_bootstrapped_demos": self.dspy_max_bootstrapped_demos,
-            "dspy_max_labeled_demos": self.dspy_max_labeled_demos,
-            "enable_caching": self.enable_caching,
-            "cache_ttl_seconds": self.cache_ttl_seconds,
-            "max_cache_size": self.max_cache_size,
             "metadata": self.metadata,
         }
 
@@ -523,35 +484,17 @@ class RoutingConfigUnified:
             tenant_id=tenant_id,
             routing_mode=data.get("routing_mode", "tiered"),
             enable_fast_path=data.get("enable_fast_path", True),
-            enable_slow_path=data.get("enable_slow_path", True),
-            enable_fallback=data.get("enable_fallback", True),
             fast_path_confidence_threshold=data.get(
                 "fast_path_confidence_threshold", 0.4
             ),
-            slow_path_confidence_threshold=data.get(
-                "slow_path_confidence_threshold", 0.6
-            ),
-            max_routing_time_ms=data.get("max_routing_time_ms", 1000),
             gliner_model=data.get("gliner_model", "urchade/gliner_large-v2.1"),
             gliner_threshold=data.get("gliner_threshold", 0.3),
             gliner_device=data.get("gliner_device", "cpu"),
-            gliner_labels=data.get("gliner_labels", []),
-            llm_provider=data.get("llm_provider", "local"),
-            llm_endpoint=data.get("llm_endpoint", "http://localhost:11434"),
-            llm_temperature=data.get("llm_temperature", 0.1),
-            llm_max_tokens=data.get("llm_max_tokens", 150),
-            use_chain_of_thought=data.get("use_chain_of_thought", True),
             enable_auto_optimization=data.get("enable_auto_optimization", True),
             optimization_interval_seconds=data.get(
                 "optimization_interval_seconds", 3600
             ),
             min_samples_for_optimization=data.get("min_samples_for_optimization", 100),
-            dspy_enabled=data.get("dspy_enabled", True),
-            dspy_max_bootstrapped_demos=data.get("dspy_max_bootstrapped_demos", 10),
-            dspy_max_labeled_demos=data.get("dspy_max_labeled_demos", 50),
-            enable_caching=data.get("enable_caching", True),
-            cache_ttl_seconds=data.get("cache_ttl_seconds", 300),
-            max_cache_size=data.get("max_cache_size", 1000),
             metadata=data.get("metadata", {}),
         )
 
