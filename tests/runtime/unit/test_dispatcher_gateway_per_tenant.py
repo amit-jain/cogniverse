@@ -84,6 +84,7 @@ async def test_gateway_seeds_gliner_config_from_routing_config(dispatcher):
             gliner_model="acme/custom-gliner",
             gliner_threshold=0.55,
             gliner_device="cuda",
+            enable_fast_path=False,
         )
     )
 
@@ -92,6 +93,7 @@ async def test_gateway_seeds_gliner_config_from_routing_config(dispatcher):
     assert agent.deps.gliner_model_name == "acme/custom-gliner"
     assert agent.deps.gliner_threshold == 0.55
     assert agent.deps.gliner_device == "cuda"
+    assert agent.deps.enable_fast_path is False
 
 
 @pytest.mark.asyncio

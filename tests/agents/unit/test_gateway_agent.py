@@ -245,6 +245,24 @@ class TestComplexityDecision:
             is True
         )
 
+    def test_disabling_fast_path_forces_complex(self, gateway_agent):
+        """enable_fast_path=False routes every query through orchestration, even
+        a high-confidence simple one that would otherwise take the fast path."""
+        entities = [_make_entity("vid", "video_content", 0.9)]
+        assert (
+            gateway_agent._is_complex(
+                "find videos", "video", "raw_results", entities, 0.9
+            )
+            is False
+        )
+        gateway_agent.deps.enable_fast_path = False
+        assert (
+            gateway_agent._is_complex(
+                "find videos", "video", "raw_results", entities, 0.9
+            )
+            is True
+        )
+
     def test_both_modality_is_complex(self, gateway_agent):
         entities = [_make_entity("vid", "video_content", 0.9)]
         assert (
