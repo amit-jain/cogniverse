@@ -64,6 +64,17 @@ def _format_query_vector_param(arr: np.ndarray, schema_name: str):
     """
     if _is_single_vector_schema(schema_name):
         if arr.ndim == 2:
+            if arr.shape[0] == 0:
+                raise ValueError(
+                    f"Single-vector schema '{schema_name}' received an empty "
+                    "query embedding (no vectors)."
+                )
+            if arr.shape[0] > 1:
+                raise ValueError(
+                    f"Single-vector schema '{schema_name}' received "
+                    f"{arr.shape[0]} query vectors but binds exactly one. "
+                    "Refusing to silently drop rows."
+                )
             arr = arr[0]
         return arr.tolist()
     if arr.ndim == 2:

@@ -14,6 +14,8 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import numpy as np
+
 # 2100-01-01 UTC in seconds; a value larger than this is almost certainly ms.
 _MAX_S_EPOCH = 4_102_444_800
 
@@ -34,6 +36,13 @@ def to_epoch_seconds(value: Any) -> Optional[int]:
     """
     if value is None or value == "" or isinstance(value, bool):
         return None
+    # numpy scalars (np.int64/int32/float32) are not int/float subclasses, so
+    # coerce them to a Python scalar before the isinstance gate — otherwise a
+    # numpy created_at fell through to None and the write path substituted now().
+    if isinstance(value, np.generic):
+        value = value.item()
+        if isinstance(value, bool):
+            return None
     if isinstance(value, (int, float)):
         return _numeric_epoch_seconds(float(value))
     if isinstance(value, str):

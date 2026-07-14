@@ -106,3 +106,25 @@ def test_to_epoch_seconds_returns_none_for_non_finite():
     assert to_epoch_seconds(float("inf")) is None
     assert to_epoch_seconds(float("-inf")) is None
     assert to_epoch_seconds(float("nan")) is None
+
+
+def test_to_epoch_seconds_accepts_numpy_scalar_epochs():
+    """mem0/vector backends can hand back created_at as a numpy scalar.
+    np.int64/np.int32/np.float32 are NOT int/float subclasses, so the plain
+    isinstance gate dropped them to None — and the write path then replaced
+    the real timestamp with now(). They must normalize like Python numerics."""
+    import numpy as np
+
+    assert to_epoch_seconds(np.int64(_S)) == _S
+    assert to_epoch_seconds(np.int32(_S)) == _S
+    assert to_epoch_seconds(np.float64(_S)) == _S
+    assert to_epoch_seconds(np.float32(_S)) == pytest.approx(_S, abs=1000)
+    # Milliseconds as a numpy scalar collapse the same way.
+    assert to_epoch_seconds(np.int64(_MS)) == _S
+
+
+def test_to_epoch_seconds_numpy_nan_is_none():
+    import numpy as np
+
+    assert to_epoch_seconds(np.float64("nan")) is None
+    assert to_epoch_seconds(np.float32("inf")) is None
