@@ -229,7 +229,7 @@ class EntryPointRegistry(Generic[T]):
         ``tenant_id`` is required when ``_tenant_scoped`` is True.
         """
         if cls._tenant_scoped:
-            from cogniverse_core.common.tenant_utils import require_tenant_id
+            from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
             source = f"get_{cls._label}".replace(" ", "_")
             tenant_id = require_tenant_id(tenant_id, source=source)

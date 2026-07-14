@@ -865,7 +865,7 @@ config_manager.set_agent_config(
 ### Tenant-Specific Profile Overrides
 
 ```python
-from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 
 # Start with system profile, customize for tenant
 config_manager.update_backend_profile(
@@ -981,7 +981,15 @@ flowchart TB
 **Not a declared dependency, but imported at runtime:**
 
 - `cogniverse-vespa`: `VespaConfigStore` is imported lazily inside `create_default_config_manager()` — only required when `backend.type == "vespa"`
-- `cogniverse-core.common.tenant_utils` (`require_tenant_id`, `SYSTEM_TENANT_ID`): imported directly by `config/manager.py`, `config/utils.py`, `config/unified_config.py`, `config/api_mixin.py`, and `registry/entry_point_registry.py`. This is a layering inversion relative to the Core → Foundation dependency direction shown below — `cogniverse-foundation` is unusable standalone without `cogniverse-core` installed.
+
+**Package Structure — `cogniverse_foundation/common/`:**
+
+The shared, dependency-free helpers that the whole stack uses live here so foundation code (`config/manager.py`, `config/utils.py`, `config/unified_config.py`, `config/api_mixin.py`, `registry/entry_point_registry.py`) can use them without importing upward into `cogniverse-core`:
+
+- `common/tenant_utils.py` — tenant identity helpers (`SYSTEM_TENANT_ID`, `require_tenant_id`, `canonical_tenant_id`, `parse_tenant_id`, `validate_tenant_id`, `get_tenant_storage_path`). `cogniverse_core.common.tenant_utils` re-exports these, so existing `from cogniverse_core.common.tenant_utils import ...` call sites keep working; the runtime-coupled `assert_tenant_exists` stays in core.
+- `common/dspy_module_registry.py` — `DSPyModuleRegistry` / `DSPyOptimizerRegistry`, re-exported from `cogniverse_core.common.dspy_module_registry`.
+
+This keeps the Core → Foundation dependency direction one-way: `cogniverse-foundation` no longer imports `cogniverse-core` and is usable standalone.
 
 **Dependents:**
 

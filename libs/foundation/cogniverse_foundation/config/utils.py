@@ -184,7 +184,7 @@ class ConfigUtils:
             # Create BackendConfig from system JSON. The record represents
             # the cluster-wide backend base (before tenant overrides merge
             # in), so it's tagged with SYSTEM_TENANT_ID.
-            from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+            from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 
             system_backend_data["tenant_id"] = SYSTEM_TENANT_ID
             system_backend_config = BackendConfig.from_dict(system_backend_data)
@@ -503,7 +503,7 @@ def get_config_value(
     Raises:
         ValueError: If config_manager or tenant_id is not provided
     """
-    from cogniverse_core.common.tenant_utils import require_tenant_id
+    from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
     if config_manager is None:
         raise ValueError(

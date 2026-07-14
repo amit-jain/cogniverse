@@ -457,7 +457,7 @@ class RoutingConfigUnified:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        from cogniverse_core.common.tenant_utils import require_tenant_id
+        from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         require_tenant_id(self.tenant_id, source="RoutingConfigUnified")
 
@@ -496,7 +496,7 @@ class RoutingConfigUnified:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RoutingConfigUnified":
         """Create from dictionary. Raises if tenant_id is absent."""
-        from cogniverse_core.common.tenant_utils import require_tenant_id
+        from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         tenant_id = require_tenant_id(
             data.get("tenant_id"), source="RoutingConfigUnified.from_dict"
@@ -557,7 +557,7 @@ class AgentConfigUnified:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AgentConfigUnified":
         """Create from dictionary. Raises if tenant_id is absent."""
-        from cogniverse_core.common.tenant_utils import require_tenant_id
+        from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         data = dict(data)  # don't mutate caller's dict
         tenant_id = require_tenant_id(
@@ -670,7 +670,7 @@ class BackendConfig:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        from cogniverse_core.common.tenant_utils import require_tenant_id
+        from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         require_tenant_id(self.tenant_id, source="BackendConfig")
 
@@ -690,7 +690,7 @@ class BackendConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BackendConfig":
         """Create from dictionary. Raises if tenant_id is absent."""
-        from cogniverse_core.common.tenant_utils import require_tenant_id
+        from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         tenant_id = require_tenant_id(
             data.get("tenant_id"), source="BackendConfig.from_dict"
@@ -1040,7 +1040,7 @@ class SyntheticGeneratorConfig:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        from cogniverse_core.common.tenant_utils import require_tenant_id
+        from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         require_tenant_id(self.tenant_id, source="SyntheticGeneratorConfig")
 
@@ -1059,7 +1059,7 @@ class SyntheticGeneratorConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SyntheticGeneratorConfig":
         """Create from dictionary. Raises if tenant_id is absent."""
-        from cogniverse_core.common.tenant_utils import require_tenant_id
+        from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         tenant_id = require_tenant_id(
             data.get("tenant_id"), source="SyntheticGeneratorConfig.from_dict"
