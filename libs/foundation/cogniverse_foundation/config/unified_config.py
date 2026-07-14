@@ -383,6 +383,7 @@ class SystemConfig:
             search_backend=data.get("search_backend", "vespa"),
             backend_url=data.get("backend_url", "http://localhost"),
             backend_port=data.get("backend_port", 8080),
+            application_name=data.get("application_name", "cogniverse"),
             llm_model=data.get("llm_model", "google/gemma-4-e4b-it"),
             llm_engine=data.get("llm_engine", "vllm"),
             base_url=data.get("base_url", "http://localhost:8101/v1"),
