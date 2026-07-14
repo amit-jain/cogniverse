@@ -450,3 +450,34 @@ class TestPinStorageFailure:
                 actor_id="alice",
                 tenant_id="t1",
             )
+
+
+class TestRowToRecordCorruptMetadata:
+    def test_corrupt_json_metadata_is_skipped_with_warning(self, caplog):
+        """A pin row whose metadata_ JSON is corrupt must be skipped AND
+        logged — silently dropping it makes a real pin vanish from listings
+        with no operator signal (its sibling malformed-field branch logs)."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="cogniverse_core.memory.pinning"):
+            rec = PinService._row_to_record(
+                {"id": "mem-corrupt", "metadata": '{"kind": "pin_record", NOT JSON'}
+            )
+
+        assert rec is None
+        assert any("mem-corrupt" in r.message for r in caplog.records), (
+            f"expected a warning naming the dropped row; got {[r.message for r in caplog.records]}"
+        )
+
+    def test_non_pin_row_skipped_silently(self, caplog):
+        """A well-formed row that simply isn't a pin record is filtered without
+        a warning (it's normal, not a data-integrity problem)."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="cogniverse_core.memory.pinning"):
+            rec = PinService._row_to_record(
+                {"id": "mem-other", "metadata": {"kind": "something_else"}}
+            )
+
+        assert rec is None
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
