@@ -115,6 +115,38 @@ def test_list_emits_tz_aware_utc_created_at(memory_store):
     assert parsed == datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc)
 
 
+def test_numpy_scalar_created_at_survives_round_trip(memory_store):
+    """A numpy-scalar created_at must round-trip to the original instant, not
+    get silently replaced by now(). np.int64/float32 are not int/float
+    subclasses, so the normalizer dropped them to None and insert() substituted
+    the wall clock."""
+    import time
+
+    import numpy as np
+
+    store = memory_store
+    store.insert(
+        vectors=[[0.3] * DIM],
+        payloads=[
+            {
+                "data": "np-ts",
+                "user_id": "u_np_ts",
+                "agent_id": "a",
+                "created_at": np.int64(1_700_000_000),
+            }
+        ],
+        ids=["mem-np-ts-1"],
+    )
+    results, _next = store.list(filters={"user_id": "u_np_ts"})
+    rec = next(r for r in results if r.id == "mem-np-ts-1")
+
+    assert rec.payload["created_at"] == epoch_to_iso_utc(1_700_000_000)
+    assert rec.payload["created_at"] == "2023-11-14T22:13:20+00:00"
+    # Guard against the old now()-substitution: the stored instant must be the
+    # 2023 value, nowhere near the current wall clock.
+    assert abs(1_700_000_000 - int(time.time())) > 10_000_000
+
+
 def _raw_embedding(shared_vespa, schema: str, doc_id: str) -> list:
     """Read the stored tensor via the Document v1 API — store.get() returns
     payload-only records, so tensor survival must be asserted at the raw
