@@ -32,7 +32,7 @@ class MockSearchBackend(SearchBackend):
         self.initialized = True
         self.config = config
 
-    def search(self, query: str, **kwargs):
+    def search(self, query_dict: dict):
         return []
 
     def get_document(self, doc_id: str):
@@ -71,13 +71,15 @@ class MockIngestionBackend(IngestionBackend):
         self.initialized = True
         self.config = config
 
-    def ingest_documents(self, documents: list):
+    def ingest_documents(
+        self, documents: list, schema_name: str, operation_type: str = "feed"
+    ):
         pass
 
     def ingest_stream(self, document_stream):
         pass
 
-    def update_document(self, doc_id: str, updates: dict):
+    def update_document(self, document_id: str, document, schema_name=None):
         pass
 
     def delete_document(self, doc_id: str):
@@ -306,7 +308,7 @@ class TestBackendRegistryIngestionTenantIsolation:
             def initialize(self, config: dict):
                 self.initialized = True
 
-            def search(self, query: str, **kwargs):
+            def search(self, query_dict: dict):
                 return []
 
             def get_document(self, doc_id: str):
@@ -329,13 +331,15 @@ class TestBackendRegistryIngestionTenantIsolation:
                     "binary_field": "embedding_binary",
                 }
 
-            def ingest_documents(self, documents: list):
+            def ingest_documents(
+                self, documents: list, schema_name: str, operation_type: str = "feed"
+            ):
                 pass
 
             def ingest_stream(self, document_stream):
                 pass
 
-            def update_document(self, doc_id: str, updates: dict):
+            def update_document(self, document_id: str, document, schema_name=None):
                 pass
 
             def delete_document(self, doc_id: str):

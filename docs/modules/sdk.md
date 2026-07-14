@@ -120,14 +120,7 @@ from abc import ABC, abstractmethod
 
 class SearchBackend(ABC):
     @abstractmethod
-    def search(
-        self,
-        query_embeddings: Optional[np.ndarray],
-        query_text: Optional[str],
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-        ranking_strategy: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    def search(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
         """Search implementation must be provided by subclass"""
         pass
 ```
@@ -172,7 +165,7 @@ class Backend(IngestionBackend, SearchBackend):
     # backend-specific connection setup; called exactly once by initialize()
 
     # Inherited from SearchBackend (abstract - must implement):
-    # search(query_embeddings, query_text, top_k, filters, ranking_strategy) -> List[Dict]
+    # search(query_dict) -> List[SearchResult]
     # get_document(document_id) -> Optional[Document]
     # batch_get_documents(document_ids) -> List[Optional[Document]]
     # get_statistics() -> Dict[str, Any]
@@ -185,9 +178,9 @@ class Backend(IngestionBackend, SearchBackend):
     # remove_profile(profile_name) -> None
 
     # Inherited from IngestionBackend (abstract - must implement):
-    # ingest_documents(documents, schema_name) -> Dict[str, Any]
+    # ingest_documents(documents, schema_name, operation_type="feed") -> Dict[str, Any]
     # ingest_stream(documents) -> Iterator[Dict[str, Any]]
-    # update_document(document_id, document) -> bool
+    # update_document(document_id, document, schema_name=None) -> bool
     # delete_document(document_id) -> bool
     # get_schema_info() -> Dict[str, Any]
     # validate_schema(schema_name) -> bool
@@ -681,7 +674,7 @@ cogniverse_sdk/
 **Methods (SearchBackend):**
 
 - `initialize(config)`: Initialize search backend
-- `search(query_embeddings, query_text, top_k, filters, ranking_strategy)`: Search documents
+- `search(query_dict)`: Search documents; returns a list of `SearchResult`
 - `get_document(document_id)`: Retrieve a document by ID
 - `batch_get_documents(document_ids)`: Retrieve multiple documents by ID
 - `get_statistics()`: Get search backend statistics
@@ -693,9 +686,9 @@ cogniverse_sdk/
 **Methods (IngestionBackend):**
 
 - `initialize(config)`: Initialize ingestion backend
-- `ingest_documents(documents, schema_name)`: Ingest a batch of documents
+- `ingest_documents(documents, schema_name, operation_type="feed")`: Ingest a batch of documents (`operation_type="update"` for partial field assignment)
 - `ingest_stream(documents)`: Stream documents for ingestion
-- `update_document(document_id, document)`: Update an existing document
+- `update_document(document_id, document, schema_name=None)`: Update an existing document
 - `delete_document(document_id)`: Delete a document
 - `get_schema_info()`: Get backend schema information
 - `validate_schema(schema_name)`: Validate schema exists and is configured
@@ -712,7 +705,7 @@ cogniverse_sdk/
 - `query_metadata_documents(schema, query, yql, **kwargs)`: Query metadata documents
 - `delete_metadata_document(schema, doc_id)`: Delete metadata document
 
-**Lines of Code**: ~516
+**Lines of Code**: ~523
 
 #### `interfaces/config_store.py`
 **Purpose**: Configuration storage interface with versioning
@@ -918,22 +911,25 @@ result_dict = result.to_dict()
 
 ```python
 results = backend.search(
-    query_embeddings=None,           # Optional[np.ndarray]: query embeddings
-    query_text="machine learning",   # Optional[str]: text query
-    top_k=10,                        # int: number of results
-    filters={"duration_min": 60},    # Optional[Dict]: filters
-    ranking_strategy="hybrid"        # Optional[str]: ranking strategy
+    {
+        "query": "machine learning",  # str: text query
+        "tenant_id": "acme_corp",     # str: tenant for schema scoping
+        "type": "video",              # content type
+        "top_k": 10,                  # int: number of results
+        "filters": {"duration_min": 60},  # optional field filters
+    }
 )
 ```
 
-**Returns**: `List[Dict[str, Any]]` with search results and scores
+**Returns**: `List[SearchResult]` (each carries `document`, `score`, `highlights`)
 
 #### Ingest Method
 
 ```python
 result = backend.ingest_documents(
     documents=[doc1, doc2, doc3],
-    schema_name="video_frames"
+    schema_name="video_frames",
+    operation_type="feed",  # or "update" for partial field assignment
 )
 ```
 
@@ -941,9 +937,9 @@ result = backend.ingest_documents(
 ```python
 {
     "success_count": 3,
-    "failure_count": 0,
-    "errors": [],
-    "ingestion_time_ms": 1234
+    "failed_count": 0,
+    "failed_documents": [],
+    "total_documents": 3
 }
 ```
 
@@ -1045,9 +1041,8 @@ strategies = schema_loader.load_ranking_strategies()
 
 ```python
 from cogniverse_sdk.interfaces.backend import SearchBackend
-from cogniverse_sdk.document import Document, ContentType
+from cogniverse_sdk.document import Document, ContentType, SearchResult
 from typing import List, Dict, Any, Optional
-import numpy as np
 
 class MyCustomSearchBackend(SearchBackend):
     """Custom search backend implementation (simplified example)"""
@@ -1061,24 +1056,14 @@ class MyCustomSearchBackend(SearchBackend):
         self.endpoint = config.get("endpoint")
         self.api_key = config.get("api_key")
 
-    def search(
-        self,
-        query_embeddings: Optional[np.ndarray],
-        query_text: Optional[str],
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-        ranking_strategy: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    def search(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
         """Implement search"""
-        # Simple keyword search example
+        query_text = query_dict.get("query")
+        top_k = query_dict.get("top_k", 10)
         results = []
         if query_text:
-            for doc_id, doc in list(self.documents.items())[:top_k]:
-                results.append({
-                    "id": doc_id,
-                    "score": 0.5,
-                    "fields": {"title": doc.title}
-                })
+            for doc in list(self.documents.values())[:top_k]:
+                results.append(SearchResult(document=doc, score=0.5))
         return results
 
     def get_document(self, document_id: str) -> Optional[Document]:
@@ -1110,7 +1095,7 @@ doc = Document(content_type=ContentType.VIDEO, title="Tutorial Video")
 backend.documents[doc.id] = doc
 
 # Search
-results = backend.search(query_embeddings=None, query_text="tutorial", top_k=10)
+results = backend.search({"query": "tutorial", "top_k": 10})
 ```
 
 ### Example 2: Working with Multi-Modal Documents
@@ -1519,7 +1504,7 @@ uv publish --token $PYPI_TOKEN
 
 ### Package Stats
 
-- **Total Lines**: ~1,570
+- **Total Lines**: ~1,577
 - **Files**: 8 Python files
 - **Interfaces**: 6 main interfaces (Backend, ConfigStore, SchemaLoader, WorkflowStore, AdapterStore, Document)
 - **Dependencies**: 1 external (numpy)

@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 from unittest.mock import MagicMock, patch
 
-import numpy as np
-
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -27,7 +25,7 @@ from cogniverse_core.registries.backend_registry import (
     register_ingestion_backend,
     register_search_backend,
 )
-from cogniverse_sdk.document import ContentType, Document
+from cogniverse_sdk.document import ContentType, Document, SearchResult
 from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchBackend
 
 
@@ -43,7 +41,12 @@ class MockIngestionBackend(IngestionBackend):
         self.config = config
         self.initialized = True
 
-    def ingest_documents(self, documents: List[Document]) -> Dict[str, Any]:
+    def ingest_documents(
+        self,
+        documents: List[Document],
+        schema_name: str,
+        operation_type: str = "feed",
+    ) -> Dict[str, Any]:
         return {"success_count": len(documents), "error_count": 0}
 
     def ingest_stream(self, documents: Iterator[Document]) -> Iterator[Dict[str, Any]]:
@@ -51,12 +54,17 @@ class MockIngestionBackend(IngestionBackend):
         for doc in documents:
             batch.append(doc)
             if len(batch) >= 2:
-                yield self.ingest_documents(batch)
+                yield self.ingest_documents(batch, "mock_ingestion")
                 batch = []
         if batch:
-            yield self.ingest_documents(batch)
+            yield self.ingest_documents(batch, "mock_ingestion")
 
-    def update_document(self, document_id: str, document: Document) -> bool:
+    def update_document(
+        self,
+        document_id: str,
+        document: Document,
+        schema_name: Optional[str] = None,
+    ) -> bool:
         return True
 
     def delete_document(self, document_id: str) -> bool:
@@ -81,16 +89,17 @@ class MockSearchBackend(SearchBackend):
         self.config = config
         self.initialized = True
 
-    def search(
-        self,
-        query_embeddings: Optional[np.ndarray],
-        query_text: Optional[str],
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-        ranking_strategy: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    def search(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
+        top_k = query_dict.get("top_k", 10)
         return [
-            {"document_id": f"doc_{i}", "score": 1.0 - i * 0.1}
+            SearchResult(
+                document=Document(
+                    id=f"doc_{i}",
+                    content_type=ContentType.VIDEO,
+                    metadata={"test": True},
+                ),
+                score=1.0 - i * 0.1,
+            )
             for i in range(min(3, top_k))
         ]
 
@@ -133,7 +142,12 @@ class MockFullBackend(Backend):
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         self.config = config
 
-    def ingest_documents(self, documents: List[Document]) -> Dict[str, Any]:
+    def ingest_documents(
+        self,
+        documents: List[Document],
+        schema_name: str,
+        operation_type: str = "feed",
+    ) -> Dict[str, Any]:
         for doc in documents:
             self.documents[doc.id] = doc
         return {"success_count": len(documents), "error_count": 0}
@@ -143,12 +157,17 @@ class MockFullBackend(Backend):
         for doc in documents:
             batch.append(doc)
             if len(batch) >= 2:
-                yield self.ingest_documents(batch)
+                yield self.ingest_documents(batch, "mock_full")
                 batch = []
         if batch:
-            yield self.ingest_documents(batch)
+            yield self.ingest_documents(batch, "mock_full")
 
-    def update_document(self, document_id: str, document: Document) -> bool:
+    def update_document(
+        self,
+        document_id: str,
+        document: Document,
+        schema_name: Optional[str] = None,
+    ) -> bool:
         self.documents[document_id] = document
         return True
 
@@ -164,17 +183,11 @@ class MockFullBackend(Backend):
     def validate_schema(self, schema_name: str) -> bool:
         return schema_name == "mock_full"
 
-    def search(
-        self,
-        query_embeddings: Optional[np.ndarray],
-        query_text: Optional[str],
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-        ranking_strategy: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    def search(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
+        top_k = query_dict.get("top_k", 10)
         results = []
-        for doc_id, doc in list(self.documents.items())[:top_k]:
-            results.append({"document_id": doc_id, "score": 0.9})
+        for _doc_id, doc in list(self.documents.items())[:top_k]:
+            results.append(SearchResult(document=doc, score=0.9))
         return results
 
     def get_document(self, document_id: str) -> Optional[Document]:
@@ -445,7 +458,7 @@ class TestBackendRegistry(unittest.TestCase):
             metadata={"title": "Test Document"},
         )
 
-        result = backend.ingest_documents([doc])
+        result = backend.ingest_documents([doc], "mock_full")
         self.assertEqual(result["success_count"], 1)
         self.assertEqual(result["error_count"], 0)
 
@@ -583,12 +596,14 @@ class TestBackendIntegration(unittest.TestCase):
             for i in range(5)
         ]
 
-        result = backend.ingest_documents(docs)
+        result = backend.ingest_documents(docs, "workflow_test")
         self.assertEqual(result["success_count"], 5)
 
         # Search via ingestion backend directly (it implements both interfaces)
         # Search backend from registry is a separate shared instance
-        search_results = backend.search(None, "test", top_k=3)
+        search_results = backend.search(
+            {"query": "test", "tenant_id": "test_tenant", "top_k": 3}
+        )
 
         self.assertEqual(len(search_results), 3)
 

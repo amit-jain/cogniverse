@@ -8,9 +8,7 @@ to integrate with the Cogniverse system.
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterator, List, Optional
 
-import numpy as np
-
-from cogniverse_sdk.document import Document
+from cogniverse_sdk.document import Document, SearchResult
 
 
 class IngestionBackend(ABC):
@@ -28,7 +26,10 @@ class IngestionBackend(ABC):
 
     @abstractmethod
     def ingest_documents(
-        self, documents: List[Document], schema_name: str
+        self,
+        documents: List[Document],
+        schema_name: str,
+        operation_type: str = "feed",
     ) -> Dict[str, Any]:
         """
         Ingest a batch of documents into the backend.
@@ -36,6 +37,8 @@ class IngestionBackend(ABC):
         Args:
             documents: List of Document objects to ingest
             schema_name: Schema to ingest documents into
+            operation_type: ``"feed"`` (full document) or ``"update"``
+                (partial: assign only the present fields, leave the rest)
 
         Returns:
             Ingestion results including success count, errors, etc.
@@ -56,13 +59,20 @@ class IngestionBackend(ABC):
         pass
 
     @abstractmethod
-    def update_document(self, document_id: str, document: Document) -> bool:
+    def update_document(
+        self,
+        document_id: str,
+        document: Document,
+        schema_name: Optional[str] = None,
+    ) -> bool:
         """
         Update an existing document.
 
         Args:
             document_id: ID of document to update
             document: Updated Document object
+            schema_name: Schema the document lives in (callers that share a
+                backend across schemas must pass this explicitly)
 
         Returns:
             True if successful, False otherwise
@@ -120,26 +130,23 @@ class SearchBackend(ABC):
         pass
 
     @abstractmethod
-    def search(
-        self,
-        query_embeddings: Optional[np.ndarray],
-        query_text: Optional[str],
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-        ranking_strategy: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    def search(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
         """
         Execute a search query.
 
         Args:
-            query_embeddings: Optional query embeddings for vector search
-            query_text: Optional text query for keyword search
-            top_k: Number of results to return
-            filters: Optional filters to apply
-            ranking_strategy: Optional ranking strategy to use
+            query_dict: Query parameters. Recognized keys:
+                - ``query``: text query string (or ``query_embeddings`` for
+                  a pre-computed vector; at least one is required)
+                - ``type``: content type (e.g. ``"video"``)
+                - ``tenant_id``: tenant for schema-name scoping (required)
+                - ``top_k``: number of results (default 10)
+                - ``profile`` / ``strategy``: optional profile / ranking
+                  strategy overrides
+                - ``filters``: optional field-value filter dict
 
         Returns:
-            List of search results with scores and metadata
+            List of SearchResult objects (document + score + highlights)
         """
         pass
 
