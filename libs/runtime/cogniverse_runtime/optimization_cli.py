@@ -193,6 +193,7 @@ async def run_triggered_optimization(
                 config_manager=config_manager,
                 telemetry_provider=telemetry_provider,
                 tenant_id=tenant_id,
+                teacher_endpoint=llm_config.resolve_teacher(),
             )
             results[agent_name] = result
         except Exception as e:
@@ -309,6 +310,7 @@ async def _optimize_agent(
     config_manager,
     telemetry_provider,
     tenant_id: str,
+    teacher_endpoint=None,
 ) -> dict:
     """Run DSPy optimization for a specific agent using scored examples."""
     import json as _json
@@ -318,7 +320,9 @@ async def _optimize_agent(
     )
 
     optimizer = DSPyAgentPromptOptimizer()
-    optimizer.initialize_language_model(llm_endpoint)
+    optimizer.initialize_language_model(
+        llm_endpoint, teacher_endpoint_config=teacher_endpoint
+    )
 
     # Build DSPy training examples from scored data
     import dspy
@@ -389,6 +393,7 @@ async def _optimize_agent(
         max_labeled_demos=optimizer.optimization_settings["max_labeled_demos"],
         max_rounds=optimizer.optimization_settings["max_rounds"],
         max_errors=optimizer.optimization_settings["max_errors"],
+        teacher_settings=optimizer.optimization_settings["teacher_settings"],
     )
 
     module = dspy.ChainOfThought(signature)
@@ -638,12 +643,16 @@ async def _query_spans_by_name(
     return spans_df[spans_df["name"] == span_name]
 
 
-def _create_teleprompter(trainset_size: int):
+def _create_teleprompter(trainset_size: int, teacher_settings: dict | None = None):
     """Select DSPy optimizer config based on training set size.
 
     Scales BootstrapFewShot parameters for larger training sets:
     - < 50 examples: 4 bootstrapped demos, 8 labeled, 1 round
     - >= 50 examples: 8 bootstrapped demos, 16 labeled, 2 rounds
+
+    teacher_settings (e.g. ``{"lm": teacher_lm}``) makes DSPy run the
+    bootstrap teacher on the configured teacher endpoint instead of the
+    student model teaching itself.
     """
     from dspy.teleprompt import BootstrapFewShot
 
@@ -657,6 +666,7 @@ def _create_teleprompter(trainset_size: int):
             max_labeled_demos=16,
             max_rounds=2,
             max_errors=10,
+            teacher_settings=teacher_settings,
         )
 
     logger.info("Using BootstrapFewShot for %d examples", trainset_size)
@@ -665,6 +675,7 @@ def _create_teleprompter(trainset_size: int):
         max_labeled_demos=8,
         max_rounds=1,
         max_errors=5,
+        teacher_settings=teacher_settings,
     )
 
 
@@ -987,7 +998,10 @@ async def run_simba_optimization(
 
     module = QueryEnhancementModule()
 
-    teleprompter = _create_teleprompter(len(trainset))
+    teleprompter = _create_teleprompter(
+        len(trainset),
+        teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
+    )
 
     try:
         compiled = teleprompter.compile(module, trainset=trainset)
@@ -1497,7 +1511,10 @@ async def run_profile_optimization(
 
     module = ProfileSelectionModule()
 
-    teleprompter = _create_teleprompter(len(trainset))
+    teleprompter = _create_teleprompter(
+        len(trainset),
+        teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
+    )
 
     try:
         compiled = teleprompter.compile(module, trainset=trainset)
@@ -1615,7 +1632,10 @@ async def run_entity_extraction_optimization(
 
     module = EntityExtractionModule()
 
-    teleprompter = _create_teleprompter(len(trainset))
+    teleprompter = _create_teleprompter(
+        len(trainset),
+        teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())},
+    )
 
     try:
         compiled = teleprompter.compile(module, trainset=trainset)

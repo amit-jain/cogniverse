@@ -595,6 +595,27 @@ class TestCreateTeleprompter:
             f"Expected BootstrapFewShot for 10 examples, got {type(tp).__name__}"
         )
 
+    def test_teacher_settings_forwarded_to_bootstrap(self):
+        """The configured teacher LM must reach BootstrapFewShot — DSPy runs
+        the bootstrap teacher inside dspy.context(**teacher_settings), so an
+        unforwarded teacher means the student silently teaches itself."""
+        from cogniverse_runtime.optimization_cli import _create_teleprompter
+
+        sentinel = object()
+        small = _create_teleprompter(10, teacher_settings={"lm": sentinel})
+        assert small.teacher_settings == {"lm": sentinel}
+        assert small.max_bootstrapped_demos == 4
+
+        scaled = _create_teleprompter(50, teacher_settings={"lm": sentinel})
+        assert scaled.teacher_settings == {"lm": sentinel}
+        assert scaled.max_bootstrapped_demos == 8
+
+    def test_teacher_settings_default_empty(self):
+        from cogniverse_runtime.optimization_cli import _create_teleprompter
+
+        tp = _create_teleprompter(10)
+        assert tp.teacher_settings == {}
+
     def test_49_uses_bootstrap(self):
         """Boundary: 49 examples should still use BootstrapFewShot."""
         from dspy.teleprompt import BootstrapFewShot
@@ -906,9 +927,10 @@ class TestOptimizeAgentPersistence:
                 "max_labeled_demos": 1,
                 "max_rounds": 1,
                 "max_errors": 1,
+                "teacher_settings": {},
             }
 
-            def initialize_language_model(self, endpoint):
+            def initialize_language_model(self, endpoint, teacher_endpoint_config=None):
                 self.lm = MagicMock()  # consumed by dspy.context(lm=optimizer.lm)
 
             def create_query_analysis_signature(self):
@@ -955,6 +977,67 @@ class TestOptimizeAgentPersistence:
         assert captured["kind"] == "model"
         assert captured["key"] == "dspy_compiled_search"
         assert captured["tenant_id"] == "acme:prod"
+
+    @pytest.mark.asyncio
+    async def test_optimize_agent_threads_teacher_into_bootstrap(self):
+        """_optimize_agent must hand the teacher endpoint to the real optimizer
+        and forward the resulting teacher_settings into BootstrapFewShot —
+        DSPy runs the bootstrap teacher inside dspy.context(**teacher_settings)."""
+        from unittest.mock import MagicMock
+
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from cogniverse_runtime.optimization_cli import _optimize_agent
+
+        captured: Dict[str, Any] = {}
+
+        class _FakeArtifactManager:
+            def __init__(self, telemetry_provider, tenant_id):
+                pass
+
+            async def save_blob(self, kind, key, content):
+                return "artifact-teacher"
+
+        class _FakeCompiled:
+            def dump_state(self):
+                return {"demos": []}
+
+        class _CapturingTeleprompter:
+            def __init__(self, *a, **k):
+                captured["teleprompter_kwargs"] = k
+
+            def compile(self, module, trainset=None):
+                return _FakeCompiled()
+
+        student = LLMEndpointConfig(
+            model="hosted_vllm/org/Student", api_base="http://student:8000/v1"
+        )
+        teacher = LLMEndpointConfig(
+            model="hosted_vllm/org/Teacher", api_base="http://teacher:9000/v1"
+        )
+        high_df = pd.DataFrame([{"query": "find cats", "output": "{}", "score": 0.9}])
+
+        with (
+            patch("dspy.teleprompt.BootstrapFewShot", _CapturingTeleprompter),
+            patch(
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+                _FakeArtifactManager,
+            ),
+        ):
+            result = await _optimize_agent(
+                "search",
+                pd.DataFrame([]),
+                high_df,
+                student,
+                config_manager=MagicMock(),
+                telemetry_provider=MagicMock(),
+                tenant_id="acme:prod",
+                teacher_endpoint=teacher,
+            )
+
+        assert result["status"] == "success"
+        teacher_settings = captured["teleprompter_kwargs"]["teacher_settings"]
+        assert teacher_settings["lm"].model == "hosted_vllm/org/Teacher"
+        assert teacher_settings["lm"].kwargs["api_base"] == "http://teacher:9000/v1"
 
 
 class FailingTraceStore:

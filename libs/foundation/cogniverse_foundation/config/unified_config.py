@@ -8,7 +8,7 @@ Hosts ``SystemConfig`` (global deployment-level state) +
 
 import copy
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -104,7 +104,8 @@ class LLMConfig:
 
     - primary: Global default for ALL DSPy modules, agents, optimizers.
       Also serves as the student model during optimization.
-    - teacher: For DSPy optimization (MIPROv2, GEPA, teacher examples, annotation).
+    - teacher: Bootstrap-teacher endpoint for DSPy optimization —
+      resolve_teacher() feeds BootstrapFewShot(teacher_settings={"lm": ...}).
     - overrides: Per-component partial dicts merged with primary.
       None = use primary unchanged. Only differing fields need to be specified.
     """
@@ -128,12 +129,26 @@ class LLMConfig:
             Fully resolved LLMEndpointConfig
         """
         override = self.overrides.get(component)
+        resolved = copy.deepcopy(self.primary)
         if override is None:
-            return copy.deepcopy(self.primary)
+            return resolved
 
-        merged = self.primary.to_dict()
-        merged.update(override)
-        return LLMEndpointConfig.from_dict(merged)
+        # Merge on the dataclass, never through to_dict() — it masks api_key
+        # to "***", which must never leak into a resolved endpoint.
+        valid_fields = {f.name for f in fields(resolved)}
+        for key, value in override.items():
+            if key in valid_fields:
+                setattr(resolved, key, value)
+        return resolved
+
+    def resolve_teacher(self) -> LLMEndpointConfig:
+        """Resolve the teacher endpoint for DSPy optimization.
+
+        Mirrors ``resolve()``'s no-override path: an isolated copy with the
+        real api_key preserved. The teacher drives bootstrap demo generation
+        (``BootstrapFewShot(teacher_settings={"lm": ...})``) and annotation.
+        """
+        return copy.deepcopy(self.teacher)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""

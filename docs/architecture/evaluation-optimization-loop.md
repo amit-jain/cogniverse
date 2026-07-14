@@ -373,9 +373,9 @@ Maximum 2 regeneration attempts per item. If all fail, the item is dropped (retu
 
 ### Optimizer Selection
 
-`optimization_cli.py`'s `_create_teleprompter()` — used for the `search`/`summary`/`report`
-agents under `--mode triggered`, plus the `simba`, `profile`, and `entity-extraction` CLI
-modes — always compiles with `dspy.teleprompt.BootstrapFewShot`, scaled by training-set size:
+`optimization_cli.py`'s `_create_teleprompter()` — used by the `simba`, `profile`, and
+`entity-extraction` CLI modes — always compiles with `dspy.teleprompt.BootstrapFewShot`,
+scaled by training-set size:
 
 ```mermaid
 flowchart TD
@@ -394,6 +394,12 @@ flowchart TD
     style COMPILE fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PROMOTE fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
+
+The `search`/`summary`/`report` agents under `--mode triggered` do not go through
+`_create_teleprompter()`: `_optimize_agent` builds `BootstrapFewShot` directly from
+`DSPyAgentPromptOptimizer.optimization_settings`, a fixed configuration
+(`max_bootstrapped_demos=8`, `max_labeled_demos=16`, `max_rounds=3`, `max_errors=10`) — not
+scaled by training-set size.
 
 Separately, `DSPyOptimizerRegistry` (`cogniverse_core.common.dspy_module_registry`) lets an
 individual agent's `OptimizerConfig.optimizer_type` select a different DSPy optimizer class
@@ -417,14 +423,27 @@ fails fast with a `ValueError` rather than silently falling back.
 
 ### Teacher/Student Pattern
 
-`OptimizerConfig.teacher_settings` (default `{}`) is forwarded verbatim into the DSPy
-optimizer constructor by `DynamicDSPyMixin.create_optimizer` (`**config.teacher_settings`).
-An operator sets it per agent — e.g. `{"teacher_settings": {"lm": <teacher LM>}}` via the
-agent config-update API (`api_mixin.py`) — so `BootstrapFewShot` bootstraps demonstrations
-from a larger teacher model while the compiled module still runs on the agent's regular
-(smaller/faster) LM in production. The batch CLI's own `_create_teleprompter()` leaves
-`teacher_settings` empty, so scheduled Argo compiles bootstrap from the module's own LM
-unless a per-agent teacher has been configured separately.
+Two independent mechanisms feed a teacher LM into `BootstrapFewShot`:
+
+- **Batch CLI, via `LLMConfig.teacher`.** `simba`, `profile`, and `entity-extraction` pass
+  `teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())}` into
+  `_create_teleprompter()`; `--mode triggered` resolves the same `llm_config.resolve_teacher()`
+  once per run and threads it through `_optimize_agent(teacher_endpoint=...)` →
+  `DSPyAgentPromptOptimizer.initialize_language_model(teacher_endpoint_config=...)`, which
+  populates `optimization_settings["teacher_settings"]` for `_optimize_agent`'s own
+  `BootstrapFewShot` call. `resolve_teacher()` returns an isolated copy of the centralized
+  `teacher` endpoint, so every scheduled Argo compile bootstraps demonstrations from that
+  endpoint.
+- **Per-agent config, via `OptimizerConfig.teacher_settings`.** Default `{}`, forwarded
+  verbatim into the DSPy optimizer constructor by `DynamicDSPyMixin.create_optimizer`
+  (`**config.teacher_settings`). An operator sets it per agent — e.g.
+  `{"teacher_settings": {"lm": <teacher LM>}}` via the agent config-update API
+  (`api_mixin.py`) — for optimizer selections made through that path (e.g. an agent
+  configured to run `MIPRO_V2` directly via `OptimizerConfig.optimizer_type`). Independent of
+  `LLMConfig.teacher`/`resolve_teacher()` and of the batch CLI.
+
+Either way, `BootstrapFewShot` bootstraps demonstrations from the teacher model while the
+compiled module still runs on the agent's regular (smaller/faster) LM in production.
 
 ### Optimization Trigger Conditions
 
@@ -767,7 +786,7 @@ Agents retrieve strategies at inference time via `MemoryAwareMixin.get_strategie
 | **DSPy ChainOfThought** | Prompt engineering | Entity-query generation with retry + deterministic template fallback |
 | **Confidence Scoring (4 signals)** | Data quality | Retry count + entity presence + length + reasoning quality |
 | **HITL Approval** | Data curation | Confidence-based auto-approval with rejection/regeneration cycle |
-| **BootstrapFewShot** | Few-shot learning | Batch CLI's default optimizer for all agent types, scaled by trainset size (<50 vs >=50 examples) |
+| **BootstrapFewShot** | Few-shot learning | Batch CLI's default optimizer for all agent types; `simba`/`profile`/`entity-extraction` scale by trainset size (<50 vs >=50 examples), `triggered` uses fixed settings |
 | **DSPyOptimizerRegistry** | Optimizer selection | Per-agent `OptimizerConfig.optimizer_type`: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 wired; GEPA/SIMBA reserved (unmapped) |
 | **Regression-Reject Gate** | Promotion safety | `ArtifactManager.promote_if_better` only writes artefacts when candidate ≥ baseline − tolerance |
 | **Canary Promotion** | Rollout safety | Stable per-request-seed routing between active/canary versions at a configurable traffic % |

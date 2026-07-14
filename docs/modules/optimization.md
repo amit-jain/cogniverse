@@ -963,12 +963,23 @@ uv run python -m cogniverse_runtime.optimization_cli \
 - `--log-retention-days` / `--memory-retention-days`: cleanup mode (defaults 7 / 30)
 
 **DSPy Optimizer Selection (actual behavior):**
-Every compile-based mode (`simba`, `profile`, `entity-extraction`, `workflow`'s agent steps, `triggered`)
-uses `_create_teleprompter(trainset_size)`, which always returns `dspy.teleprompt.BootstrapFewShot` —
-scaled by a single threshold, not a multi-tier optimizer selection:
+The `simba`, `profile`, and `entity-extraction` modes use
+`_create_teleprompter(trainset_size, teacher_settings=None)`, which always returns
+`dspy.teleprompt.BootstrapFewShot` — scaled by a single threshold, not a multi-tier optimizer
+selection:
 
 - < 50 examples → `BootstrapFewShot(max_bootstrapped_demos=4, max_labeled_demos=8, max_rounds=1, max_errors=5)`
 - ≥ 50 examples → `BootstrapFewShot(max_bootstrapped_demos=8, max_labeled_demos=16, max_rounds=2, max_errors=10)`
+
+All three pass `teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())}`, so the
+bootstrap teacher runs on the centralized `llm_config.teacher` endpoint. `triggered` (the
+`search`/`summary`/`report` agents) does not go through `_create_teleprompter` —
+`_optimize_agent` builds `BootstrapFewShot` directly from
+`DSPyAgentPromptOptimizer.optimization_settings` (a fixed configuration —
+`max_bootstrapped_demos=8`, `max_labeled_demos=16`, `max_rounds=3`, `max_errors=10` — not
+scaled by trainset size), with the teacher threaded through
+`_optimize_agent(teacher_endpoint=llm_config.resolve_teacher())` →
+`initialize_language_model(teacher_endpoint_config=...)`.
 
 No mode in this CLI selects MIPROv2, SIMBA, or GEPA based on data size.
 
@@ -1454,6 +1465,11 @@ pipeline.load_training_data()
 compiled = pipeline.optimize_module("query_analysis", pipeline.training_data["query_analysis"])
 ```
 
+`initialize_language_model` also accepts an optional `teacher_endpoint_config` (typically
+`llm_config.resolve_teacher()`). When given, it builds a separate `self.teacher_lm` and sets
+`optimization_settings["teacher_settings"] = {"lm": self.teacher_lm}`, so the bootstrap teacher
+runs on that LM instead of the student teaching itself.
+
 #### Optimizable Modules
 
 | Module | DSPy Signature | Purpose |
@@ -1464,8 +1480,10 @@ compiled = pipeline.optimize_module("query_analysis", pipeline.training_data["qu
 | `detailed_report` | `DetailedReportSignature` | Report structure optimization |
 
 All four are compiled with `dspy.teleprompt.BootstrapFewShot` — `DSPyAgentOptimizerPipeline.optimize_module`
-builds the `BootstrapFewShot` config from `optimizer.optimization_settings` and runs the compile scoped
-inside `dspy.context(lm=optimizer.lm)` when a real (non-mock) LM is configured.
+builds the `BootstrapFewShot` config from `optimizer.optimization_settings` (including
+`teacher_settings`, populated when `initialize_language_model` was given a
+`teacher_endpoint_config`) and runs the compile scoped inside `dspy.context(lm=optimizer.lm)`
+when a real (non-mock) LM is configured.
 
 ### Live Routing Optimization
 

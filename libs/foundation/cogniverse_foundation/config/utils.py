@@ -262,7 +262,7 @@ class ConfigUtils:
 
         Reads the 'llm_config' section which contains:
         - primary: Global default LLM for all DSPy modules/agents/optimizers
-        - teacher: LLM for DSPy optimization (MIPROv2, GEPA, annotation)
+        - teacher: Bootstrap-teacher LLM for DSPy optimization
         - overrides: Per-component partial overrides merged with primary
 
         Returns:

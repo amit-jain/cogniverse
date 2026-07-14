@@ -15,7 +15,7 @@ Cogniverse runs five classes of inference services:
 
 | Class | Purpose |
 |---|---|
-| **LLMs** (chat / generation) | Agent reasoning, query enhancement, distillation. Two tiers: a small **student** model used at runtime, and a larger **teacher** model used only during DSPy MIPROv2 optimization. |
+| **LLMs** (chat / generation) | Agent reasoning, query enhancement, distillation. Two tiers: a small **student** model used at runtime, and a larger **teacher** model used only during DSPy optimization (`BootstrapFewShot`'s `teacher_settings`). |
 | **Visual / multimodal embeddings** | ColPali/ColQwen (one pod, one model, shared by both retrieval families) for video/image patch embeddings, VideoPrism for chunk embeddings. |
 | **Text embeddings** | ColBERT-style late-interaction (LateOn, served by vLLM) for documents/code, DenseOn (ModernBERT) for query/single-vector text. |
 | **Audio (ASR + acoustic embeddings)** | Whisper transcription of audio files; CLAP for a joint audio/text acoustic embedding space. |
@@ -53,7 +53,7 @@ and writes the resulting model id verbatim into `config.json`;
 `create_dspy_lm()` passes it through unchanged. The actual destination
 is determined by `api_base`, not the prefix.
 
-### Teacher (DSPy MIPROv2 optimization only)
+### Teacher (DSPy optimization only)
 
 | Field | Value |
 |---|---|
@@ -77,7 +77,7 @@ kubectl rollout status deployment/cogniverse-vllm-llm-teacher -n cogniverse --ti
 kubectl scale deployment/cogniverse-vllm-llm-teacher -n cogniverse --replicas=0
 ```
 
-The agent code wires it via `LLMConfig.teacher` → `create_dspy_lm()` →
+The agent code wires it via `LLMConfig.resolve_teacher()` → `create_dspy_lm()` →
 `teacher_settings` on `BootstrapFewShot` in
 `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py`, driven
 by `cogniverse_runtime.optimization_cli`. See the

@@ -6,7 +6,7 @@ Complete guide for deploying LLMs and VLMs on Modal for the Cogniverse multi-age
 
 Modal provides serverless GPU infrastructure for:
 
-- **DSPy Optimization**: Teacher/student models using MIPROv2 optimizer
+- **DSPy Optimization**: Teacher/student models via `BootstrapFewShot`'s `teacher_settings`
 
 - **Video Processing**: VLMs for frame description generation during ingestion
 
@@ -35,10 +35,19 @@ endpoint_config = LLMEndpointConfig(
     api_base="https://username--general-inference-service-serve.modal.run",
 )
 
+# Teacher model — drives BootstrapFewShot's demo generation
+teacher_endpoint_config = LLMEndpointConfig(
+    model="anthropic/claude-3-5-sonnet-20241022",
+    api_key="sk-ant-...",
+)
+
 optimizer = DSPyAgentPromptOptimizer(config={
     "optimization": {"max_bootstrapped_demos": 8, "max_labeled_demos": 16}
 })
-optimizer.initialize_language_model(endpoint_config=endpoint_config)
+optimizer.initialize_language_model(
+    endpoint_config=endpoint_config,
+    teacher_endpoint_config=teacher_endpoint_config,
+)
 
 # Run optimization pipeline (teacher: Claude/GPT-4, student: Modal endpoint)
 pipeline = DSPyAgentOptimizerPipeline(optimizer)
@@ -293,8 +302,8 @@ Update your configuration file with your Modal endpoints. LLM configuration is c
 ```
 
 The teacher/student optimization workflow:
-1. **Teacher** (Claude/GPT-4) generates high-quality training examples
-2. **Student** (SmolLM3-3B on Modal) learns from these examples via MIPROv2
+1. **Teacher** (Claude/GPT-4) generates high-quality bootstrap demonstrations via `BootstrapFewShot`'s `teacher_settings`
+2. **Student** (SmolLM3-3B on Modal) is the model the compiled module actually runs on in production
 3. Optimized prompts are saved via `ArtifactManager` → telemetry `DatasetStore`
 
 ### Using Modal Services
