@@ -368,8 +368,6 @@ class ConfigUtils:
         # Routing config mappings
         routing_keys = {
             "routing_mode": lambda: self._routing_config.routing_mode,
-            "enable_caching": lambda: self._routing_config.enable_caching,
-            "cache_ttl_seconds": lambda: self._routing_config.cache_ttl_seconds,
         }
 
         # Telemetry config mappings
@@ -437,7 +435,7 @@ class ConfigUtils:
         )
 
         # Add routing keys
-        all_keys.update(["routing_mode", "enable_caching", "cache_ttl_seconds"])
+        all_keys.update(["routing_mode"])
 
         # Add telemetry keys
         all_keys.update(["telemetry_enabled", "telemetry_level"])

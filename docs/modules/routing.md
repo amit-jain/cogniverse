@@ -201,54 +201,30 @@ class RoutingConfigUnified:
     # tenant_id is REQUIRED — omitting it raises ValueError via __post_init__
     tenant_id: Optional[str] = None  # runtime-required
 
-    # Routing mode. Only "tiered" is meaningful — enable_fast_path/enable_slow_path/
-    # enable_fallback below are accepted by the schema but are NOT read by any
-    # dispatch-time decision logic today (only by the dashboard config UI and
-    # tenant-persistence tests). Do not document them as behavior-changing.
+    # Routing mode. Only "tiered" is meaningful. enable_fast_path is surfaced in
+    # the dashboard config form but is not read by dispatch logic today.
     routing_mode: str = "tiered"
     enable_fast_path: bool = True
-    enable_slow_path: bool = True
-    enable_fallback: bool = True
 
     # fast_path_confidence_threshold IS seeded into GatewayDeps by the dispatcher
     # (default aligned to 0.4 so an untouched tenant is a no-op); the optimization
-    # artifact still overrides it when present. slow_path_confidence_threshold is
-    # not consumed by dispatch logic yet.
+    # artifact still overrides it when present.
     fast_path_confidence_threshold: float = 0.4
-    slow_path_confidence_threshold: float = 0.6
-    max_routing_time_ms: int = 1000
 
-    # GLiNER configuration. gliner_model, gliner_threshold, and gliner_device
-    # ARE seeded into GatewayDeps by the dispatcher (_get_or_build_gateway_agent)
-    # as base values, so the tenant's dashboard settings reach the live gateway;
-    # the optimization artifact loaded afterward still overrides gliner_threshold.
-    # gliner_device moves a locally-loaded GLiNER onto the given torch device
-    # (ignored for the remote gliner sidecar). gliner_labels is not yet consumed.
+    # GLiNER configuration. gliner_model, gliner_threshold, and gliner_device ARE
+    # seeded into GatewayDeps by the dispatcher (_get_or_build_gateway_agent), so
+    # the tenant's dashboard settings reach the live gateway; the optimization
+    # artifact loaded afterward still overrides gliner_threshold. gliner_device
+    # moves a locally-loaded GLiNER onto the given torch device (ignored for the
+    # remote gliner sidecar).
     gliner_model: str = "urchade/gliner_large-v2.1"
     gliner_threshold: float = 0.3
     gliner_device: str = "cpu"
-    gliner_labels: List[str] = field(default_factory=list)
-
-    # LLM configuration
-    llm_provider: str = "local"
-    llm_endpoint: str = "http://localhost:11434"
-    llm_temperature: float = 0.1
-    llm_max_tokens: int = 150
-    use_chain_of_thought: bool = True
 
     # Optimization settings — consumed by scripts/auto_optimization_trigger.py
     enable_auto_optimization: bool = True
     optimization_interval_seconds: int = 3600
     min_samples_for_optimization: int = 100
-    dspy_enabled: bool = True
-    dspy_max_bootstrapped_demos: int = 10
-    dspy_max_labeled_demos: int = 50
-
-    # Caching — exposed via config/utils.py feature-flag getters; no in-process
-    # modality-keyed LRU cache implementation currently reads these fields.
-    enable_caching: bool = True
-    cache_ttl_seconds: int = 300
-    max_cache_size: int = 1000
 
     metadata: Dict[str, Any] = field(default_factory=dict)
 ```
@@ -862,27 +838,22 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
 config = RoutingConfigUnified(tenant_id="acme:production")
 
-# Confidence thresholds (schema-level; GatewayAgent reads its own
-# GatewayDeps.fast_path_confidence_threshold, default 0.4, separately)
+# fast_path threshold — seeded into GatewayDeps by the dispatcher; the
+# optimization artifact overrides it when present.
 config.fast_path_confidence_threshold = 0.75
-config.slow_path_confidence_threshold = 0.60
 
 # Auto-optimization trigger (consumed by scripts/auto_optimization_trigger.py)
 config.enable_auto_optimization = True
 config.optimization_interval_seconds = 3600
 config.min_samples_for_optimization = 100
 
-# GLiNER device (consumed wherever GLiNER is loaded in-process)
+# GLiNER device — seeded into GatewayDeps and applied to a locally-loaded model.
 config.gliner_device = "cuda"
-
-# LLM output length cap (consumed by DSPy modules that read this field)
-config.llm_max_tokens = 100
 ```
 
-`enable_fast_path` / `enable_slow_path` / `enable_fallback` / `enable_caching` / `cache_ttl_seconds` /
-`max_cache_size` are part of the persisted schema (editable via the dashboard's config-management tab and
-round-tripped by `to_dict`/`from_dict`) but are **not read by any routing dispatch or caching implementation**
-today — there is no per-modality LRU cache in this module. Do not rely on them to change runtime behavior.
+`enable_fast_path` is part of the persisted schema (editable via the dashboard's config-management tab and
+round-tripped by `to_dict`/`from_dict`) but is **not read by any routing dispatch logic** today. Do not rely
+on it to change runtime behavior.
 
 ### Error Handling
 
@@ -953,7 +924,7 @@ tenant_configs = {
         tenant_id="acme",
         routing_mode="tiered",
         gliner_threshold=0.4,
-        cache_ttl_seconds=7200,
+        gliner_device="cuda",
     ),
     "startup": RoutingConfigUnified(
         tenant_id="startup",
@@ -1018,5 +989,5 @@ For detailed information on related modules:
 - There is no in-process per-modality cache, GRPO loop, or confidence calibrator in this module today
 - Routing/orchestration quality improves via an offline annotation + XGBoost + DSPy-recompilation pipeline, not
   online reinforcement learning
-- `FusionBenefitModel` and the `enable_fast_path`/`enable_slow_path`/`enable_fallback`/`enable_caching` config
-  flags exist in the schema but have no live consumer — verify before relying on them
+- `FusionBenefitModel` and the `enable_fast_path` config flag exist in the schema but have no live consumer —
+  verify before relying on them
