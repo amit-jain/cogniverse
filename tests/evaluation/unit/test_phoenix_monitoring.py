@@ -294,6 +294,37 @@ class TestRetrievalMonitor:
         assert error_rate > monitor.alert_thresholds.error_rate
 
     @pytest.mark.unit
+    def test_check_alerts_mrr_uses_configured_floor(self):
+        """The MRR degradation alert fires against the configured mrr_drop
+        floor, not a hardcoded constant. With mrr_drop=0.3 a windowed MRR of
+        0.2 triggers an alert while 0.4 does not — 0.4 is below the previous
+        hardcoded 0.5, so the negative case fails until the config drives it."""
+        monitor = RetrievalMonitor(AlertThresholds(mrr_drop=0.3))
+
+        below = "below_floor_strategy"
+        monitor.latency_windows[below] = MetricWindow()
+        monitor.mrr_windows[below] = MetricWindow()
+        for _ in range(5):
+            monitor.mrr_windows[below].add(0.2)
+
+        above = "above_floor_strategy"
+        monitor.latency_windows[above] = MetricWindow()
+        monitor.mrr_windows[above] = MetricWindow()
+        for _ in range(5):
+            monitor.mrr_windows[above].add(0.4)
+
+        monitor._check_alerts()
+
+        below_key = f"mrr_degradation_{below}"
+        assert below_key in monitor.active_alerts
+        triggered = monitor.active_alerts[below_key]["alert"]
+        assert triggered["type"] == "mrr_degradation"
+        assert triggered["threshold"] == 0.3
+        assert triggered["value"] == pytest.approx(0.2)
+
+        assert f"mrr_degradation_{above}" not in monitor.active_alerts
+
+    @pytest.mark.unit
     def test_get_metrics_summary(self):
         """Test metrics summary generation."""
         monitor = RetrievalMonitor()
