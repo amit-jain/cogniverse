@@ -5,7 +5,7 @@ Provides a simple dict-based storage that doesn't require
 any external backend (Vespa, SQLite, etc.).
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from cogniverse_sdk.interfaces.config_store import (
@@ -42,7 +42,7 @@ class InMemoryConfigStore(ConfigStore):
     ) -> ConfigEntry:
         """Store or update a configuration entry."""
         config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Get next version number
         if config_id in self._storage:
