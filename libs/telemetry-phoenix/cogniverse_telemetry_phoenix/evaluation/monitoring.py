@@ -255,18 +255,18 @@ class RetrievalMonitor:
                         }
                     )
 
-            # Check MRR degradation
-            if profile_key in self.mrr_windows:
-                current_mrr = self.mrr_windows[profile_key].get_mean()
-                # Compare with historical baseline (simplified - would need historical data)
-                # For now, just check if MRR is too low
-                if current_mrr < 0.5:  # Threshold for acceptable MRR
+            # Windowed MRR below the configured floor; skip empty windows
+            # (get_mean() is 0.0 on empty and would alert every cycle).
+            mrr_window = self.mrr_windows.get(profile_key)
+            if mrr_window is not None and mrr_window.values:
+                current_mrr = mrr_window.get_mean()
+                if current_mrr < self.alert_thresholds.mrr_drop:
                     alerts_to_trigger.append(
                         {
                             "type": "mrr_degradation",
                             "profile": profile_key,
                             "value": current_mrr,
-                            "threshold": 0.5,
+                            "threshold": self.alert_thresholds.mrr_drop,
                         }
                     )
 
