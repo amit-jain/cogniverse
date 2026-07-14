@@ -161,3 +161,66 @@ class TestRuntimeClientMemoriesRoundTrip:
                 )
             except Exception:
                 pass
+
+    @pytest.mark.asyncio
+    async def test_agent_name_scopes_listing_to_that_agent(self, memories_client):
+        """agent_name scopes the listing to that agent's own mem0 store, not the
+        default user/strategy namespaces. A memory saved under a named agent is
+        visible under agent_name=<agent> but absent from the default listing;
+        a user memory is the reverse. If the route ignored agent_name (falling
+        through to the default namespaces) the agent memory would be missing
+        from its own scoped listing."""
+        rc, mm = memories_client
+        agent = "video_search_agent"
+        agent_marker = "Agent learned: prefer basketball clips."
+        user_marker = "User prefers concise answers."
+
+        await rc.clear_memories(tenant_id=TENANT_ID)
+
+        agent_id = mm.add_memory(
+            content=agent_marker, tenant_id=TENANT_ID, agent_name=agent, infer=False
+        )
+        user_id = mm.add_memory(
+            content=user_marker,
+            tenant_id=TENANT_ID,
+            agent_name=USER_MEMORY_AGENT,
+            infer=False,
+        )
+        assert agent_id and user_id, "seed add_memory returned no id"
+
+        try:
+            scoped = await _retry(
+                lambda: rc.list_memories(tenant_id=TENANT_ID, agent_name=agent),
+                lambda r: (
+                    r.get("status") != "error"
+                    and any(m["id"] == agent_id for m in r.get("memories", []))
+                ),
+            )
+            scoped_ids = [m["id"] for m in scoped.get("memories", [])]
+            assert agent_id in scoped_ids, (
+                f"agent memory absent under agent_name={agent}: {scoped}"
+            )
+            assert user_id not in scoped_ids, (
+                f"user memory leaked into agent_name={agent} listing: {scoped}"
+            )
+
+            default = await _retry(
+                lambda: rc.list_memories(tenant_id=TENANT_ID),
+                lambda r: (
+                    r.get("status") != "error"
+                    and any(m["id"] == user_id for m in r.get("memories", []))
+                ),
+            )
+            default_ids = [m["id"] for m in default.get("memories", [])]
+            assert user_id in default_ids, (
+                f"user memory absent from the default listing: {default}"
+            )
+            assert agent_id not in default_ids, (
+                f"agent-scoped memory leaked into the default listing: {default}"
+            )
+        finally:
+            for mid, ns in ((agent_id, agent), (user_id, USER_MEMORY_AGENT)):
+                try:
+                    mm.delete_memory(mid, tenant_id=TENANT_ID, agent_name=ns)
+                except Exception:
+                    pass
