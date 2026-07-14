@@ -210,9 +210,11 @@ class RoutingConfigUnified:
     enable_slow_path: bool = True
     enable_fallback: bool = True
 
-    # Confidence thresholds (schema-level; not consumed by GatewayAgent, which
-    # has its own fast_path_confidence_threshold on GatewayDeps, default 0.4)
-    fast_path_confidence_threshold: float = 0.7
+    # fast_path_confidence_threshold IS seeded into GatewayDeps by the dispatcher
+    # (default aligned to 0.4 so an untouched tenant is a no-op); the optimization
+    # artifact still overrides it when present. slow_path_confidence_threshold is
+    # not consumed by dispatch logic yet.
+    fast_path_confidence_threshold: float = 0.4
     slow_path_confidence_threshold: float = 0.6
     max_routing_time_ms: int = 1000
 

@@ -439,7 +439,9 @@ class RoutingConfigUnified:
     enable_fast_path: bool = True
     enable_slow_path: bool = True
     enable_fallback: bool = True
-    fast_path_confidence_threshold: float = 0.7
+    # Default matches GatewayDeps.fast_path_confidence_threshold so seeding an
+    # untouched tenant's config into the gateway is a no-op.
+    fast_path_confidence_threshold: float = 0.4
     slow_path_confidence_threshold: float = 0.6
     max_routing_time_ms: int = 1000
 
@@ -524,7 +526,7 @@ class RoutingConfigUnified:
             enable_slow_path=data.get("enable_slow_path", True),
             enable_fallback=data.get("enable_fallback", True),
             fast_path_confidence_threshold=data.get(
-                "fast_path_confidence_threshold", 0.7
+                "fast_path_confidence_threshold", 0.4
             ),
             slow_path_confidence_threshold=data.get(
                 "slow_path_confidence_threshold", 0.6
