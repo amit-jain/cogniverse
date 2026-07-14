@@ -30,7 +30,6 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         super().__init__()
         self.tenant_id: Optional[str] = None
         self.http_endpoint: str = "http://localhost:6006"
-        self.phoenix_client: Optional[Any] = None
         self._telemetry_provider: Optional[Any] = None
         self._project_name: str = "evaluation"
         self._framework = PhoenixEvaluatorFramework()
