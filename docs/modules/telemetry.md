@@ -53,8 +53,12 @@ libs/foundation/cogniverse_foundation/telemetry/
   from a Phoenix span row. Search (list output) and domain spans like
   `query_enhancement` (dict output) share the same writer and reader, so eval,
   dataset-building, experiments, and optimization read every operation uniformly.
-  Also holds the annotation constants (`RESULT_RELEVANCE`, `RESULT_ID_META_KEY`,
-  `RELEVANCE_POSITIVE_THRESHOLD`, `PREFERENCE_CHOSEN_THRESHOLD`).
+  Also holds the annotation constants (`RESULT_RELEVANCE`, `RESULT_CLICK`,
+  `RESULT_ID_META_KEY`, `RELEVANCE_POSITIVE_THRESHOLD`,
+  `PREFERENCE_CHOSEN_THRESHOLD`) that `TripletExtractor`,
+  `PreferencePairExtractor`, the trace converter, and the dashboard relevance
+  writer all import instead of hardcoding the annotation names, metadata key,
+  and thresholds at each site.
 
 ### 2. Dashboard Layer: Profile Routing Metrics (cogniverse-dashboard)
 ```text
@@ -2058,6 +2062,7 @@ def test_telemetry_throughput():
 - `test_provider_project_cache.py` — `TelemetryRegistry` caches providers per (tenant, project), not just tenant
 - `test_span_export_config.py` — `BatchExportConfig` knobs and resource attributes actually reach the live `TracerProvider`/exporter, not just round-trip through serialization
 - `test_analytics_timestamp_tz.py` — `PhoenixAnalytics.get_traces` produces timezone-aware timestamps
+- `test_phoenix_circuit_breaker.py` — a down Phoenix trips the shared circuit breaker: `PhoenixAnalytics.get_traces` degrades to `[]` and `PhoenixTraceStore.get_spans` raises `CircuitOpenError` once open, both without repeatedly dialing a dead Phoenix
 
 **Integration Tests:**
 
@@ -2067,6 +2072,8 @@ def test_telemetry_throughput():
   - Batch vs sync export modes
   - Force flush functionality
   - Graceful degradation
+- `tests/telemetry/integration/test_analytics_root_spans_real_phoenix.py` — `PhoenixAnalytics.get_traces` passes `root_spans_only=True` server-side so `limit` bounds traces (root spans), not raw spans; a trace's root would otherwise be crowded out of a small `limit` slice by its own newer children
+- `tests/telemetry/integration/test_dataset_store_event_loop.py` — `PhoenixDatasetStore.create_dataset`/`get_dataset`/`append_to_dataset` run their synchronous Phoenix HTTP calls via `asyncio.to_thread`, off the event-loop thread
 
 **Test Scenarios:**
 
@@ -2152,6 +2159,12 @@ def test_graceful_degradation():
 - Provider caching per (tenant, project): ✅
 
 - Session ID propagation: ✅
+
+- Circuit breaker degradation on Phoenix outage: ✅
+
+- Root-span filtering for trace metrics: ✅
+
+- Dataset store event-loop offload: ✅
 
 ---
 

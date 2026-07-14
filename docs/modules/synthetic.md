@@ -56,7 +56,11 @@ Everything below is importable directly from `cogniverse_synthetic` (see `__init
 | `configure_service(backend, backend_config, generator_config, llm_client)` | Replaces the router's module-level service singleton |
 | `OPTIMIZER_REGISTRY`, `OptimizerConfig` | Optimizer-to-generator/schema mapping (`registry.py`) |
 | `SyntheticDataRequest`, `SyntheticDataResponse` | API request/response schemas |
-| `QueryEnhancementExampleSchema`, `EntityExtractionExampleSchema`, `ProfileSelectionExampleSchema`, `RoutingExperienceSchema`, `WorkflowExecutionSchema` | Per-optimizer training-example schemas |
+| `ProfileSelectionExampleSchema`, `RoutingExperienceSchema`, `WorkflowExecutionSchema` | Per-optimizer training-example schemas |
+
+`QueryEnhancementExampleSchema` and `EntityExtractionExampleSchema` are defined
+in `schemas.py` but are not re-exported from `cogniverse_synthetic/__init__.py`;
+import them from `cogniverse_synthetic.schemas` (as the generator examples below do).
 
 `SyntheticDataService` also exposes `get_optimizer_info(optimizer_name)` and
 `list_all_optimizers()`, which back the `/synthetic/optimizers` endpoints.
@@ -287,7 +291,7 @@ from cogniverse_synthetic.registry import (
     validate_optimizer_exists,
 )
 
-list_optimizers()  # {"routing": "...", "workflow": "...", "profile": "...", "unified": "...", "cross_modal": "..."}
+list_optimizers()  # {"entity_extraction": "...", "query_enhancement": "...", "routing": "...", "workflow": "...", "profile": "...", "unified": "...", "cross_modal": "..."}
 get_optimizer_config("profile")  # OptimizerConfig(name='profile', schema=ProfileSelectionExampleSchema, strategy='diverse')
 ```
 
@@ -352,10 +356,12 @@ cogniverse_synthetic/
 ├── registry.py             # OPTIMIZER_REGISTRY, OptimizerConfig
 ├── profile_selector.py     # ProfileSelector (LLM or rule-based profile scoring)
 ├── generators/
-│   ├── base.py             # BaseGenerator abstract class
-│   ├── profile.py          # ProfileGenerator
-│   ├── routing.py          # RoutingGenerator
-│   └── workflow.py         # WorkflowGenerator
+│   ├── base.py                # BaseGenerator abstract class
+│   ├── entity_extraction.py   # EntityExtractionGenerator
+│   ├── profile.py             # ProfileGenerator
+│   ├── query_enhancement.py   # QueryEnhancementGenerator
+│   ├── routing.py             # RoutingGenerator
+│   └── workflow.py            # WorkflowGenerator
 ├── utils/
 │   ├── pattern_extraction.py  # PatternExtractor
 │   └── agent_inference.py     # AgentInferrer

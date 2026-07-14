@@ -55,6 +55,7 @@ flowchart TB
         RegistryDir["<span style='color:#000'><b>registry/</b><br/>Generic entry-point plugin registry</span>"]
         CachingDir["<span style='color:#000'><b>caching/</b><br/>Tenant-scoped LRU cache</span>"]
         DspyDir["<span style='color:#000'><b>dspy/</b><br/>DSPy adapters &amp; model-format helpers</span>"]
+        CommonDir["<span style='color:#000'><b>common/</b><br/>Tenant identity &amp; DSPy registry helpers</span>"]
         ConfidencePy["<span style='color:#000'>confidence.py<br/>parse_confidence()</span>"]
         InitPy["<span style='color:#000'>__init__.py</span>"]
     end
@@ -88,6 +89,11 @@ flowchart TB
         ModelFormat["<span style='color:#000'>model_format.py<br/>bare_model_name, ensure_provider_prefix</span>"]
     end
 
+    subgraph CommonFiles["<span style='color:#000'><b>common/ files</b></span>"]
+        TenantUtilsFile["<span style='color:#000'>tenant_utils.py<br/>SYSTEM_TENANT_ID, require_tenant_id, etc.</span>"]
+        DspyModuleRegistryFile["<span style='color:#000'>dspy_module_registry.py<br/>DSPyModuleRegistry, DSPyOptimizerRegistry</span>"]
+    end
+
     subgraph SeparatePackages["<span style='color:#000'><b>Separate Packages</b></span>"]
         SDKInterface["<span style='color:#000'><b>cogniverse_sdk/interfaces/</b><br/>config_store.py<br/>ConfigStore ABC, ConfigScope</span>"]
         VespaImpl["<span style='color:#000'><b>cogniverse_vespa/config/</b><br/>config_store.py<br/>VespaConfigStore implementation</span>"]
@@ -98,6 +104,7 @@ flowchart TB
     Foundation --> RegistryDir
     Foundation --> CachingDir
     Foundation --> DspyDir
+    Foundation --> CommonDir
     Foundation --> ConfidencePy
     Foundation --> InitPy
 
@@ -105,6 +112,7 @@ flowchart TB
     TelemetryDir --> TelemetryFiles
     CachingDir --> CachingFiles
     DspyDir --> DspyFiles
+    CommonDir --> CommonFiles
     RegistryDir -.-> Registry
 
     style Foundation fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -113,12 +121,14 @@ flowchart TB
     style RegistryDir fill:#b0bec5,stroke:#546e7a,color:#000
     style CachingDir fill:#81d4fa,stroke:#0288d1,color:#000
     style DspyDir fill:#81d4fa,stroke:#0288d1,color:#000
+    style CommonDir fill:#81d4fa,stroke:#0288d1,color:#000
     style ConfidencePy fill:#90caf9,stroke:#1565c0,color:#000
     style InitPy fill:#90caf9,stroke:#1565c0,color:#000
     style ConfigFiles fill:#ffcc80,stroke:#ef6c00,color:#000
     style TelemetryFiles fill:#ce93d8,stroke:#7b1fa2,color:#000
     style CachingFiles fill:#81d4fa,stroke:#0288d1,color:#000
     style DspyFiles fill:#81d4fa,stroke:#0288d1,color:#000
+    style CommonFiles fill:#81d4fa,stroke:#0288d1,color:#000
     style SeparatePackages fill:#90caf9,stroke:#1565c0,color:#000
     style Manager fill:#ffb74d,stroke:#ef6c00,color:#000
     style UnifiedConfigFile fill:#ffb74d,stroke:#ef6c00,color:#000
@@ -137,6 +147,8 @@ flowchart TB
     style TenantLru fill:#64b5f6,stroke:#1565c0,color:#000
     style LenientAdapter fill:#64b5f6,stroke:#1565c0,color:#000
     style ModelFormat fill:#64b5f6,stroke:#1565c0,color:#000
+    style TenantUtilsFile fill:#64b5f6,stroke:#1565c0,color:#000
+    style DspyModuleRegistryFile fill:#64b5f6,stroke:#1565c0,color:#000
     style SDKInterface fill:#64b5f6,stroke:#1565c0,color:#000
     style VespaImpl fill:#64b5f6,stroke:#1565c0,color:#000
 ```

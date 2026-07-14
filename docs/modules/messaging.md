@@ -77,6 +77,9 @@ MessagingGateway(
     runtime_url: str,
     mode: str = "polling",       # "polling" (dev) or "webhook" (production)
     webhook_url: str = "",
+    webhook_listen: str = "0.0.0.0",  # webhook mode: HTTP server bind address
+    webhook_port: int = 8443,         # webhook mode: HTTP server bind port
+    webhook_path: str = "",           # webhook mode: URL path Telegram POSTs updates to
     memory_manager=None,          # Mem0MemoryManager; enables auth + conversation history
     config_manager=None,          # enables invite-token registration
 )
@@ -96,7 +99,7 @@ gateway = MessagingGateway(
 await gateway.run()  # dispatches to run_polling() or run_webhook() based on mode
 ```
 
-Running the module directly (`python -m cogniverse_messaging.gateway`) reads `TELEGRAM_BOT_TOKEN` (required), `RUNTIME_URL` (default `http://localhost:28000`), `GATEWAY_MODE` (default `polling`), and `TELEGRAM_WEBHOOK_URL` (required when `GATEWAY_MODE=webhook`) from the environment.
+Running the module directly (`python -m cogniverse_messaging.gateway`) reads `TELEGRAM_BOT_TOKEN` (required), `RUNTIME_URL` (default `http://localhost:28000`), `GATEWAY_MODE` (default `polling`), `TELEGRAM_WEBHOOK_URL` (required when `GATEWAY_MODE=webhook`), `GATEWAY_WEBHOOK_LISTEN` (default `0.0.0.0`), `GATEWAY_WEBHOOK_PORT` (default `8443`), and `GATEWAY_WEBHOOK_PATH` (default `""`) from the environment.
 
 ---
 
@@ -198,6 +201,9 @@ Enable it at deploy time with `cogniverse up --messaging` (requires `TELEGRAM_BO
 | `RUNTIME_URL` | Runtime base URL (default `http://localhost:28000`). |
 | `GATEWAY_MODE` | `polling` or `webhook` (default `polling`). |
 | `TELEGRAM_WEBHOOK_URL` | Required when `GATEWAY_MODE=webhook`. |
+| `GATEWAY_WEBHOOK_LISTEN` | Webhook server bind address (default `0.0.0.0`). |
+| `GATEWAY_WEBHOOK_PORT` | Webhook server bind port (default `8443`). |
+| `GATEWAY_WEBHOOK_PATH` | URL path Telegram POSTs updates to (default `""`). |
 
 ---
 
@@ -207,7 +213,7 @@ Enable it at deploy time with `cogniverse up --messaging` (requires `TELEGRAM_BO
 uv run pytest tests/messaging/unit/ -v --tb=long
 ```
 
-Covers command parsing, invite-token auth, gateway command dispatch, and the `RuntimeClient` CRUD wrappers. Round-trip coverage against a real runtime lives in `tests/runtime/integration/test_inbound_messaging_primitive.py` and `tests/runtime/integration/test_inbound_messaging_redis.py`; end-to-end coverage lives in `tests/e2e/test_messaging_e2e.py` and `tests/e2e/test_messaging_gateway_e2e.py`.
+Covers command parsing, invite-token auth, gateway command dispatch, and the `RuntimeClient` CRUD wrappers. `tests/messaging/integration/test_gateway_webhook_serves.py` verifies `run_webhook()` actually binds and serves an HTTP server that Telegram can POST updates to, not just registers the webhook URL. Round-trip coverage against a real runtime lives in `tests/runtime/integration/test_inbound_messaging_primitive.py` and `tests/runtime/integration/test_inbound_messaging_redis.py`; end-to-end coverage lives in `tests/e2e/test_messaging_e2e.py` and `tests/e2e/test_messaging_gateway_e2e.py`.
 
 ---
 
@@ -230,7 +236,7 @@ flowchart TB
 
 `cogniverse-messaging` is not imported by any other `libs/*` package, and is not declared as a workspace dependency of any package — it talks to the runtime over HTTP and only reaches into `cogniverse_core`/`cogniverse_sdk` directly for invite-token storage in `auth.py`.
 
-**Dependencies:** `python-telegram-bot`, `httpx` (declared); `cogniverse_core`, `cogniverse_sdk` (imported directly, not declared in `pyproject.toml`)
+**Dependencies:** `python-telegram-bot[webhooks]`, `httpx` (declared); `cogniverse_core`, `cogniverse_sdk` (imported directly, not declared in `pyproject.toml`)
 
 **Dependents:** none (standalone service)
 
