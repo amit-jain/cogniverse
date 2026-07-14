@@ -90,6 +90,8 @@ class VespaPyClient:
         if not self.backend_url:
             raise ValueError("url is required in config")
         self.backend_port = config.get("port", 8080)
+        # Route feeds through pyvespa's HTTP/2 async feeder when enabled.
+        self._use_async_feed = config.get("use_async_ingestion", False)
 
         self.logger = logger or logging.getLogger(self.__class__.__name__)
 
@@ -503,20 +505,33 @@ class VespaPyClient:
                         # Add to failed list after max retries (handled by pyvespa internally)
                         batch_failed.append(doc_id)
 
-                # Use feed_iterable with production-ready configuration
-                # These parameters provide robust feeding with proper resource management
-                self.app.feed_iterable(
-                    iter=feed_batch_iter(),
-                    schema=self.schema_name,  # Use this client's schema
-                    namespace=self.namespace,
-                    operation_type=operation_type,
-                    callback=callback,
-                    # Production configuration parameters from self.feed_config
-                    max_queue_size=self.feed_config["max_queue_size"],
-                    max_workers=self.feed_config["max_workers"],
-                    max_connections=self.feed_config["max_connections"],
-                    compress=self.feed_config["compress"],
-                )
+                # Feed with production-ready configuration. feed_async_iterable
+                # is pyvespa's HTTP/2 async feeder (I/O-bound throughput) and
+                # takes the same interface as feed_iterable, minus compress.
+                if self._use_async_feed:
+                    self.app.feed_async_iterable(
+                        iter=feed_batch_iter(),
+                        schema=self.schema_name,  # Use this client's schema
+                        namespace=self.namespace,
+                        operation_type=operation_type,
+                        callback=callback,
+                        max_queue_size=self.feed_config["max_queue_size"],
+                        max_workers=self.feed_config["max_workers"],
+                        max_connections=self.feed_config["max_connections"],
+                    )
+                else:
+                    self.app.feed_iterable(
+                        iter=feed_batch_iter(),
+                        schema=self.schema_name,  # Use this client's schema
+                        namespace=self.namespace,
+                        operation_type=operation_type,
+                        callback=callback,
+                        # Production configuration parameters from self.feed_config
+                        max_queue_size=self.feed_config["max_queue_size"],
+                        max_workers=self.feed_config["max_workers"],
+                        max_connections=self.feed_config["max_connections"],
+                        compress=self.feed_config["compress"],
+                    )
 
                 # Update counts
                 success_count += batch_success
