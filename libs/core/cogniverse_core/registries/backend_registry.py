@@ -264,11 +264,19 @@ class BackendRegistry:
             backend_init_config=backend_init_config,
             schema_registry=effective_registry,
         )
+        # Atomically resolve concurrent cold-starts to one shared instance;
+        # the losing build is closed so its connection pool doesn't leak.
+        winner = cls._backend_instances.set_if_absent(instance_key, instance)
+        if winner is not instance:
+            logger.info(
+                f"Concurrent initialization of {instance_key}; closing duplicate"
+            )
+            _on_backend_evicted(instance_key, instance)
+            return winner
+
         if cls._shared_schema_registry is None and instance.schema_registry is not None:
             cls._shared_schema_registry = instance.schema_registry
 
-        # Cache instance with tenant_id (LRU eviction if over capacity)
-        cls._backend_instances.set(instance_key, instance)
         logger.info(f"Created and cached backend: {instance_key}")
 
         return instance
@@ -390,11 +398,19 @@ class BackendRegistry:
                 backend_url, backend_port
             ),
         )
+        # Atomically resolve concurrent cold-starts to one shared instance;
+        # the losing build is closed so its connection pool doesn't leak.
+        winner = cls._backend_instances.set_if_absent(instance_key, instance)
+        if winner is not instance:
+            logger.info(
+                f"Concurrent initialization of {instance_key}; closing duplicate"
+            )
+            _on_backend_evicted(instance_key, instance)
+            return winner
+
         if cls._shared_schema_registry is None and instance.schema_registry is not None:
             cls._shared_schema_registry = instance.schema_registry
 
-        # Cache shared instance (LRU eviction if over capacity)
-        cls._backend_instances.set(instance_key, instance)
         logger.info(f"Created and cached shared search backend: {instance_key}")
 
         return instance

@@ -199,8 +199,11 @@ class VespaAdapterStore(AdapterStore):
             return results
 
         except Exception as e:
-            logger.error(f"Failed to list adapters from Vespa: {e}")
-            return []
+            # A backend read FAILURE must not read as "no adapters" — that
+            # silently reverts a tenant's finetuned LoRA to the base model.
+            # Raise, matching get_adapter/get_active_adapter.
+            logger.error(f"Failed to list adapters from Vespa: {e!r}")
+            raise
 
     def get_active_adapter(
         self, tenant_id: str, agent_type: str

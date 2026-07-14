@@ -493,6 +493,112 @@ class TestSharedSchemaRegistryEndpointScoping:
         same = self._search_backend_at(registry, 1111, config_manager, schema_loader)
         assert same.schema_registry is first.schema_registry
 
+    def test_concurrent_cold_start_yields_one_cached_instance(
+        self, config_manager, schema_loader
+    ):
+        """Two threads racing an uncached backend must converge on ONE
+        instance: the cache resolves the race atomically and the losing
+        build is closed so its connection pool doesn't leak."""
+        import threading
+
+        registry = get_backend_registry()
+        barrier = threading.Barrier(2, timeout=15)
+        closed: list = []
+
+        class _RacingMockSearchBackend(MockSearchBackend):
+            def initialize(self, config: dict):
+                # Hold both threads mid-build so both pass the cache-miss
+                # check before either finishes constructing.
+                barrier.wait()
+                super().initialize(config)
+
+            def close(self):
+                closed.append(self)
+
+        registry.register_search("mockrace", _RacingMockSearchBackend)
+
+        results: list = []
+        errors: list = []
+
+        def _build():
+            try:
+                results.append(
+                    registry.get_search_backend(
+                        "mockrace",
+                        config_manager=config_manager,
+                        schema_loader=schema_loader,
+                    )
+                )
+            except Exception as exc:  # surfaced via assertion below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_build) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert errors == []
+        assert len(results) == 2
+        assert results[0] is results[1]
+        assert registry._backend_instances.get("search_mockrace") is results[0]
+        assert len(closed) == 1
+        assert closed[0] is not results[0]
+
+    def test_concurrent_ingestion_cold_start_yields_one_cached_instance(
+        self, config_manager, schema_loader
+    ):
+        """Same race as the search path: two threads cold-starting the SAME
+        tenant's ingestion backend must converge on one cached instance with
+        the losing build closed."""
+        import threading
+
+        registry = get_backend_registry()
+        barrier = threading.Barrier(2, timeout=15)
+        closed: list = []
+
+        class _RacingMockIngestionBackend(MockIngestionBackend):
+            def initialize(self, config: dict):
+                barrier.wait()
+                super().initialize(config)
+
+            def close(self):
+                closed.append(self)
+
+        registry.register_ingestion("mockrace_ingest", _RacingMockIngestionBackend)
+
+        results: list = []
+        errors: list = []
+
+        def _build():
+            try:
+                results.append(
+                    registry.get_ingestion_backend(
+                        "mockrace_ingest",
+                        tenant_id="acme",
+                        config_manager=config_manager,
+                        schema_loader=schema_loader,
+                    )
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_build) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert errors == []
+        assert len(results) == 2
+        assert results[0] is results[1]
+        assert (
+            registry._backend_instances.get("ingestion_mockrace_ingest_acme")
+            is results[0]
+        )
+        assert len(closed) == 1
+        assert closed[0] is not results[0]
+
     def test_ingestion_registry_not_reused_across_endpoints(
         self, config_manager, schema_loader
     ):

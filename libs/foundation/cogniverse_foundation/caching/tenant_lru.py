@@ -65,9 +65,14 @@ class TenantLRUCache(Generic[T]):
 
     def set(self, key: str, value: T) -> None:
         with self._lock:
+            displaced = self._data.get(key)
             self._data[key] = value
             self._data.move_to_end(key)
             self._evict_over_capacity()
+        # Release the displaced value — cached instances hold native
+        # resources (connection pools), and a silent overwrite leaks them.
+        if displaced is not None and displaced is not value:
+            self._invoke_on_evict(key, displaced)
 
     def get_or_set(self, key: str, factory: Callable[[], T]) -> T:
         """Return cached value or build + cache one atomically."""
@@ -76,6 +81,23 @@ class TenantLRUCache(Generic[T]):
                 self._data.move_to_end(key)
                 return self._data[key]
             value = factory()
+            self._data[key] = value
+            self._evict_over_capacity()
+            return value
+
+    def set_if_absent(self, key: str, value: T) -> T:
+        """Insert value unless the key is already cached; return the winner.
+
+        Lets callers build expensive instances OUTSIDE the lock (unlike
+        ``get_or_set``, which holds it through the factory) and atomically
+        resolve concurrent builds to one shared instance. The loser stays
+        the caller's to release — no ``on_evict`` fires for it.
+        """
+        with self._lock:
+            existing = self._data.get(key)
+            if existing is not None:
+                self._data.move_to_end(key)
+                return existing
             self._data[key] = value
             self._evict_over_capacity()
             return value
