@@ -46,12 +46,15 @@ class IngestionBackend(ABC):
         pass
 
     @abstractmethod
-    def ingest_stream(self, documents: Iterator[Document]) -> Iterator[Dict[str, Any]]:
+    def ingest_stream(
+        self, documents: Iterator[Document], schema_name: str
+    ) -> Iterator[Dict[str, Any]]:
         """
         Stream documents for ingestion (for large datasets).
 
         Args:
             documents: Iterator of Document objects
+            schema_name: Schema to ingest each batch into
 
         Yields:
             Ingestion results for each batch

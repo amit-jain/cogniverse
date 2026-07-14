@@ -424,13 +424,17 @@ class VespaBackend(Backend):
         return success_count, failed_ids
 
     def ingest_stream(
-        self, documents: Iterator[Document], batch_size: int = 100
+        self,
+        documents: Iterator[Document],
+        schema_name: str,
+        batch_size: int = 100,
     ) -> Iterator[Dict[str, Any]]:
         """
         Stream documents for ingestion.
 
         Args:
             documents: Iterator of Document objects
+            schema_name: Schema to ingest each batch into
             batch_size: Number of documents per batch
 
         Yields:
@@ -440,12 +444,12 @@ class VespaBackend(Backend):
         for doc in documents:
             batch.append(doc)
             if len(batch) >= batch_size:
-                yield self.ingest_documents(batch)
+                yield self.ingest_documents(batch, schema_name)
                 batch = []
 
         # Process remaining documents
         if batch:
-            yield self.ingest_documents(batch)
+            yield self.ingest_documents(batch, schema_name)
 
     def update_document(
         self,

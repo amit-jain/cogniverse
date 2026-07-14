@@ -179,7 +179,7 @@ class Backend(IngestionBackend, SearchBackend):
 
     # Inherited from IngestionBackend (abstract - must implement):
     # ingest_documents(documents, schema_name, operation_type="feed") -> Dict[str, Any]
-    # ingest_stream(documents) -> Iterator[Dict[str, Any]]
+    # ingest_stream(documents, schema_name) -> Iterator[Dict[str, Any]]
     # update_document(document_id, document, schema_name=None) -> bool
     # delete_document(document_id) -> bool
     # get_schema_info() -> Dict[str, Any]
@@ -687,7 +687,7 @@ cogniverse_sdk/
 
 - `initialize(config)`: Initialize ingestion backend
 - `ingest_documents(documents, schema_name, operation_type="feed")`: Ingest a batch of documents (`operation_type="update"` for partial field assignment)
-- `ingest_stream(documents)`: Stream documents for ingestion
+- `ingest_stream(documents, schema_name)`: Stream documents for ingestion
 - `update_document(document_id, document, schema_name=None)`: Update an existing document
 - `delete_document(document_id)`: Delete a document
 - `get_schema_info()`: Get backend schema information
