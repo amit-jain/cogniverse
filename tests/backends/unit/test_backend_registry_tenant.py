@@ -76,7 +76,7 @@ class MockIngestionBackend(IngestionBackend):
     ):
         pass
 
-    def ingest_stream(self, document_stream):
+    def ingest_stream(self, document_stream, schema_name):
         pass
 
     def update_document(self, document_id: str, document, schema_name=None):
@@ -336,7 +336,7 @@ class TestBackendRegistryIngestionTenantIsolation:
             ):
                 pass
 
-            def ingest_stream(self, document_stream):
+            def ingest_stream(self, document_stream, schema_name):
                 pass
 
             def update_document(self, document_id: str, document, schema_name=None):

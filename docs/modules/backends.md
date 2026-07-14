@@ -607,7 +607,7 @@ operations:
 | `search(query_dict)` | Tenant-scoped search (delegates to `VespaSearchBackend`) |
 | `ingest_documents(documents, schema_name)` | Batch ingest via a per-tenant `VespaPyClient` |
 | `feed(document, schema_name)` | Feed a single document |
-| `ingest_stream(documents)` | Stream ingestion for large datasets |
+| `ingest_stream(documents, schema_name)` | Stream ingestion for large datasets |
 | `update_document(document_id, document, schema_name)` | Partial or full document update |
 | `delete_document(document_id, schema_name)` | Delete a single document |
 | `get_document(document_id, schema_name)` / `batch_get_documents(document_ids)` | Point lookups |

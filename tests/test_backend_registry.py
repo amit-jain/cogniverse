@@ -49,15 +49,17 @@ class MockIngestionBackend(IngestionBackend):
     ) -> Dict[str, Any]:
         return {"success_count": len(documents), "error_count": 0}
 
-    def ingest_stream(self, documents: Iterator[Document]) -> Iterator[Dict[str, Any]]:
+    def ingest_stream(
+        self, documents: Iterator[Document], schema_name: str
+    ) -> Iterator[Dict[str, Any]]:
         batch = []
         for doc in documents:
             batch.append(doc)
             if len(batch) >= 2:
-                yield self.ingest_documents(batch, "mock_ingestion")
+                yield self.ingest_documents(batch, schema_name)
                 batch = []
         if batch:
-            yield self.ingest_documents(batch, "mock_ingestion")
+            yield self.ingest_documents(batch, schema_name)
 
     def update_document(
         self,
@@ -152,15 +154,17 @@ class MockFullBackend(Backend):
             self.documents[doc.id] = doc
         return {"success_count": len(documents), "error_count": 0}
 
-    def ingest_stream(self, documents: Iterator[Document]) -> Iterator[Dict[str, Any]]:
+    def ingest_stream(
+        self, documents: Iterator[Document], schema_name: str
+    ) -> Iterator[Dict[str, Any]]:
         batch = []
         for doc in documents:
             batch.append(doc)
             if len(batch) >= 2:
-                yield self.ingest_documents(batch, "mock_full")
+                yield self.ingest_documents(batch, schema_name)
                 batch = []
         if batch:
-            yield self.ingest_documents(batch, "mock_full")
+            yield self.ingest_documents(batch, schema_name)
 
     def update_document(
         self,
