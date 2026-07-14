@@ -154,6 +154,9 @@ class GatewayDeps(AgentDeps):
     gliner_threshold: float = Field(
         0.3, description="Entity detection confidence threshold"
     )
+    gliner_device: str = Field(
+        "cpu", description="Torch device for a locally-loaded GLiNER model"
+    )
     gliner_inference_url: Optional[str] = Field(
         None,
         description=(
@@ -279,6 +282,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             self.deps.gliner_model_name,
             logger=logger,
             inference_url=self.deps.gliner_inference_url,
+            device=self.deps.gliner_device,
         )
 
     # ------------------------------------------------------------------

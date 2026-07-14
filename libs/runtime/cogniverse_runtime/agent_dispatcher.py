@@ -133,6 +133,7 @@ class AgentDispatcher:
         routing_cfg = self._config_manager.get_routing_config(tenant_id)
         deps.gliner_model_name = routing_cfg.gliner_model
         deps.gliner_threshold = routing_cfg.gliner_threshold
+        deps.gliner_device = routing_cfg.gliner_device
         agent = GatewayAgent(deps=deps)
         agent.telemetry_manager = get_telemetry_manager()
         agent._artifact_tenant_id = tenant_id

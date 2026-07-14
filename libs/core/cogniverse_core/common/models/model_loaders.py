@@ -1188,6 +1188,7 @@ def get_or_load_gliner(
     model_name: str,
     logger: Optional[logging.Logger] = None,
     inference_url: Optional[str] = None,
+    device: Optional[str] = None,
 ) -> Optional[Any]:
     """Return a cached GLiNER instance, loading once per model name.
 
@@ -1196,9 +1197,13 @@ def get_or_load_gliner(
     ``gliner.GLiNER.from_pretrained`` and requires the heavy torch
     stack the runtime image normally omits.
 
+    ``device`` moves a locally-loaded model onto the given torch device
+    (e.g. ``"cuda"``); ``"cpu"`` / None leaves it where from_pretrained put
+    it. Ignored for the remote client (the sidecar owns its device).
+
     Returns None on load failure (callers must handle missing extractor).
     """
-    cache_key = (model_name, inference_url or "_local_")
+    cache_key = (model_name, inference_url or "_local_", device or "default")
     with _model_lock:
         cached = _gliner_cache.get(cache_key)
         if cached is not None:
@@ -1223,6 +1228,15 @@ def get_or_load_gliner(
             if logger:
                 logger.info(f"Loading GLiNER model: {model_name}")
             instance = GLiNER.from_pretrained(model_name)
+            if device and device.lower() != "cpu":
+                try:
+                    instance = instance.to(device)
+                except Exception as exc:
+                    if logger:
+                        logger.warning(
+                            f"GLiNER device move to {device} failed, staying on "
+                            f"default device: {exc}"
+                        )
             _gliner_cache[cache_key] = instance
             if logger:
                 logger.info(f"GLiNER loaded: {model_name}")
