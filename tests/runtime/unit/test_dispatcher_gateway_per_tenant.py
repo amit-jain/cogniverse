@@ -80,7 +80,10 @@ async def test_gateway_seeds_gliner_config_from_routing_config(dispatcher):
     d, _ = dispatcher
     d._config_manager = SimpleNamespace(
         get_routing_config=lambda tid: RoutingConfigUnified(
-            tenant_id=tid, gliner_model="acme/custom-gliner", gliner_threshold=0.55
+            tenant_id=tid,
+            gliner_model="acme/custom-gliner",
+            gliner_threshold=0.55,
+            gliner_device="cuda",
         )
     )
 
@@ -88,6 +91,7 @@ async def test_gateway_seeds_gliner_config_from_routing_config(dispatcher):
 
     assert agent.deps.gliner_model_name == "acme/custom-gliner"
     assert agent.deps.gliner_threshold == 0.55
+    assert agent.deps.gliner_device == "cuda"
 
 
 @pytest.mark.asyncio

@@ -396,3 +396,42 @@ class TestQueryEncodeTimeout:
                     c.close()
                 except OSError:
                     pass
+
+
+class TestGlinerDevice:
+    """get_or_load_gliner honors the requested torch device for local models."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        from cogniverse_core.common.models import model_loaders
+
+        model_loaders._gliner_cache.clear()
+        yield
+        model_loaders._gliner_cache.clear()
+
+    def test_non_cpu_device_moves_local_model_and_keys_cache(self, monkeypatch):
+        import gliner
+
+        from cogniverse_core.common.models.model_loaders import get_or_load_gliner
+
+        moved = {"to": None}
+
+        class _FakeModel:
+            def to(self, device):
+                moved["to"] = device
+                return self
+
+        monkeypatch.setattr(
+            gliner.GLiNER, "from_pretrained", lambda *a, **k: _FakeModel()
+        )
+
+        m_cuda = get_or_load_gliner("fake/gliner", device="cuda")
+        assert isinstance(m_cuda, _FakeModel)
+        assert moved["to"] == "cuda"
+
+        # cpu leaves from_pretrained's placement untouched, and device is part
+        # of the cache key so it is a distinct instance from the cuda one.
+        moved["to"] = None
+        m_cpu = get_or_load_gliner("fake/gliner", device="cpu")
+        assert moved["to"] is None
+        assert m_cpu is not m_cuda
