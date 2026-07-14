@@ -209,16 +209,24 @@ server** (the same endpoint `prepareandactivate` writes to) for the
 same reason: a deploy followed by an immediate listing must observe
 the new generation.
 
-### Process-wide singleton
+### Process-wide singleton (endpoint-scoped)
 
-`BackendRegistry._shared_schema_registry` is a class-level singleton.
-The first backend created in a process builds the registry; every
-subsequent backend reuses it via `BackendFactory.create_backend_with_dependencies`.
-Without this, an ingestion backend's writes wouldn't be visible to a
-search backend's reads in the same process — the rollback safeguard in
-`backend.deploy_schemas` would refuse every cross-component deploy.
+`BackendRegistry._shared_schema_registry` is a class-level singleton
+bound to one backend endpoint. The first backend created in a process
+builds the registry; every subsequent backend on the same url:port
+reuses it via `BackendFactory.create_backend_with_dependencies`. A
+backend configured for a different endpoint builds its own registry —
+the shared one deploys and registers through the backend it was built
+with, so cross-endpoint reuse silently routes deploys and registrations
+to the other cluster (`deploy_schema` reports success while the
+backend's own endpoint never sees the schema).
+Without the same-endpoint sharing, an ingestion backend's writes wouldn't
+be visible to a search backend's reads in the same process — the rollback
+safeguard in `backend.deploy_schemas` would refuse every cross-component
+deploy.
 
-Tested by `tests/backends/integration/test_tenant_schema_lifecycle.py::TestSharedSchemaRegistry::test_two_ingestion_backends_share_registry`.
+Tested by `tests/backends/integration/test_tenant_schema_lifecycle.py::TestSharedSchemaRegistry::test_two_ingestion_backends_share_registry`
+and `tests/backends/unit/test_backend_registry_tenant.py::TestSharedSchemaRegistryEndpointScoping`.
 
 ### Asymmetric rollback
 
@@ -248,7 +256,10 @@ Tested by `TestSchemaRegistryDeletion::test_delete_tenant_does_not_drop_peer_ten
 
 ### What you can rely on
 
-- After `deploy_schema` returns, the schema is in Vespa and the registry has the entry.
+- After `deploy_schema` returns, the schema is in Vespa and the registry
+  has the entry. If the schema does not become query-visible within the
+  convergence budget, `deploy_schemas` fails instead of reporting success
+  for a schema Vespa never activated.
 - After `delete_tenant_schemas` returns, the schemas are gone from Vespa; registry entries are tombstoned (best-effort).
 - After a crash mid-deploy, Vespa is the truth; on next startup the e2e
   fixture's `_reconcile_vespa_orphans` (test only) or

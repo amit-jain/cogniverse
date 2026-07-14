@@ -467,9 +467,15 @@ def health_client(vespa_instance, config_manager):
     FastAPI TestClient with health router.
 
     Mounts the health router for integration testing against real registries.
+    Sets ``app.state.backend_base_url`` the way ``main.py``'s lifespan does —
+    the health/readiness reachability probe (``_backend_reachable``) reads it
+    from ``request.app.state`` and treats a missing value as "startup
+    incomplete", so without this the probe 503s even with a real, reachable
+    Vespa registered.
     """
     test_app = FastAPI()
     test_app.include_router(health.router)
+    test_app.state.backend_base_url = vespa_instance["base_url"]
 
     with TestClient(test_app) as client:
         yield client

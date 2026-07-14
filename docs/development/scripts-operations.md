@@ -934,7 +934,7 @@ flowchart TB
     Merge["<span style='color:#000'>Merge registry schemas + live Vespa<br/>document types<br/>(VespaBackend.deploy_schemas)</span>"]
     Package["<span style='color:#000'>ApplicationPackage<br/>allow_schema_removal=False<br/>(refuses to drop peer-tenant schemas)</span>"]
     VespaDeploy["<span style='color:#000'>_deploy_package → Vespa config server<br/>POST /application/v2/tenant/default/prepareandactivate</span>"]
-    Converge["<span style='color:#000'>_wait_for_schema_convergence<br/>(source-ref visibility)</span>"]
+    Converge["<span style='color:#000'>_wait_for_schema_convergence<br/>(per-schema query-visibility probe; raises on timeout)</span>"]
     DevDeploy["<span style='color:#000'>Single-schema dev deploy:<br/>deploy_json_schema.py → ApplicationPackage → Vespa</span>"]
 
     Start --> Post --> Deploy --> Transform --> Merge --> Package --> VespaDeploy --> Converge

@@ -479,8 +479,12 @@ curl -X POST http://localhost:8000/admin/tenants \
 For schema cleanup, use VespaSchemaManager with SchemaRegistry. In a
 running runtime the SchemaRegistry is a process-wide singleton on
 `BackendRegistry._shared_schema_registry` — the first backend created
-in the process builds it, every subsequent backend reuses it. Direct
-construction (below) is only needed for one-off scripts or tests.
+in the process builds it, and every subsequent backend configured for
+the same backend url:port reuses it. A backend targeting a different
+endpoint builds its own registry: the shared one deploys and registers
+through the backend it was built with, so cross-endpoint reuse would
+route schema operations to the wrong cluster. Direct construction
+(below) is only needed for one-off scripts or tests.
 
 See [Schema Lifecycle: Source of Truth](./architecture/multi-tenant.md#schema-lifecycle-source-of-truth)
 for the full invariant: Vespa is authoritative, the registry is
@@ -494,7 +498,8 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 # SchemaRegistry is required for tenant schema operations.
 # In a running runtime, prefer ``BackendRegistry.get_*_backend(...)``
-# which reuses the process-wide _shared_schema_registry.
+# which reuses the process-wide _shared_schema_registry for backends
+# on the same url:port.
 config_manager = create_default_config_manager()
 schema_registry = SchemaRegistry(config_manager, backend, schema_loader)
 

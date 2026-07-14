@@ -18,8 +18,10 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_sdk.document import ContentType, Document
 from cogniverse_vespa.ingestion_client import VespaPyClient
 
-# Re-export the canonical session-scoped Vespa.
-from tests.conftest import shared_vespa  # noqa: F401
+# shared_vespa resolves via the conftest re-export. Importing it here would
+# define a second module-level FixtureDef with its own session cache — pytest
+# then boots a SECOND Vespa container mid-sweep, and cross-container schema
+# wiring breaks every later multi-tenant test in the run.
 from tests.utils.vespa_test_helpers import deploy_tenant_schema
 
 logger = logging.getLogger(__name__)
