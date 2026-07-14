@@ -59,3 +59,36 @@ def test_success_keeps_breaker_closed():
     backend._search_retried = MagicMock(return_value=["result"])
     for _ in range(5):
         assert backend.search({"query": "x"}) == ["result"]
+
+
+def test_breaker_counts_vespa_error():
+    """pyvespa raises VespaError (a bare Exception, not a RequestException)
+    for 4xx/5xx bodies and soft timeouts. The production breaker must count
+    it, or the most common Vespa error shape never trips the breaker."""
+    from unittest.mock import patch
+
+    from vespa.exceptions import VespaError
+
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
+    ):
+        backend = VespaSearchBackend(config={"url": "http://localhost", "port": 1})
+
+    calls = {"n": 0}
+
+    def soft_timeout(_qd):
+        calls["n"] += 1
+        raise VespaError("Timed out")
+
+    backend._search_retried = soft_timeout
+
+    # Production failure_threshold is 5: each VespaError must count.
+    for _ in range(5):
+        with pytest.raises(VespaError):
+            backend.search({"query": "x"})
+    assert calls["n"] == 5
+
+    with pytest.raises(CircuitOpenError):
+        backend.search({"query": "x"})
+    assert calls["n"] == 5

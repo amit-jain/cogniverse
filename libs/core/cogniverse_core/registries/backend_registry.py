@@ -114,6 +114,34 @@ class BackendRegistry:
         logger.info(f"Registered full backend: {name}")
 
     @classmethod
+    def _shared_registry_if_same_endpoint(cls, url: Any, port: Any) -> Any:
+        """Return the shared SchemaRegistry only when it is bound to the same
+        backend endpoint.
+
+        The registry deploys and registers through the backend it was built
+        with; handing it to a backend configured for a different url:port
+        silently routes that backend's schema operations to the other
+        endpoint — deploy_schema reports success while the backend's own
+        endpoint never sees the schema.
+        """
+        registry = cls._shared_schema_registry
+        if registry is None:
+            return None
+        bound = getattr(registry, "_backend", None)
+        bound_config = getattr(bound, "backend_config", None)
+        bound_url = getattr(bound, "_url", None) or getattr(bound_config, "url", None)
+        bound_port = getattr(bound, "_port", None) or getattr(
+            bound_config, "port", None
+        )
+        if (bound_url, bound_port) == (url, port):
+            return registry
+        logger.info(
+            f"Shared schema registry is bound to {bound_url}:{bound_port}; "
+            f"building a separate registry for backend at {url}:{port}"
+        )
+        return None
+
+    @classmethod
     def get_ingestion_backend(
         cls,
         name: str,
@@ -225,7 +253,9 @@ class BackendRegistry:
         # Factory handles: backend creation, SchemaRegistry creation, injection, and initialize()
         backend_class = cls._ingestion_backends[name]
 
-        effective_registry = schema_registry or cls._shared_schema_registry
+        effective_registry = schema_registry or cls._shared_registry_if_same_endpoint(
+            backend_url, backend_port
+        )
         instance = BackendFactory.create_backend_with_dependencies(
             backend_class=backend_class,
             backend_config=backend_config_obj,
@@ -356,7 +386,9 @@ class BackendRegistry:
             config_manager=config_manager,
             schema_loader=schema_loader,
             backend_init_config=backend_init_config,
-            schema_registry=cls._shared_schema_registry,
+            schema_registry=cls._shared_registry_if_same_endpoint(
+                backend_url, backend_port
+            ),
         )
         if cls._shared_schema_registry is None and instance.schema_registry is not None:
             cls._shared_schema_registry = instance.schema_registry

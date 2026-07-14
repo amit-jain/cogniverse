@@ -14,6 +14,11 @@ from vespa.package import ApplicationPackage
 # uvicorn workers without precluding the cluster-wide retry path.
 _DEPLOY_LOCK = threading.Lock()
 
+# (connect, read) for the app-package deploy POSTs. Without an explicit
+# timeout a stalled config server blocks the call forever — inside
+# _DEPLOY_LOCK that wedges every deploy in the process.
+DEPLOY_REQUEST_TIMEOUT_S = (10, 300)
+
 
 class VespaSchemaManager:
     """Deploy and manage Vespa schemas, including per-tenant lifecycle."""
@@ -492,6 +497,7 @@ class VespaSchemaManager:
                         headers={"Content-Type": "application/zip"},
                         data=app_zip,
                         verify=False,
+                        timeout=DEPLOY_REQUEST_TIMEOUT_S,
                     )
                 if response.status_code == 200:
                     break

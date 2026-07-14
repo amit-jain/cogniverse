@@ -16,7 +16,7 @@ from ._vespa_factory import make_vespa_app
 from .config_utils import calculate_config_port
 from .ingestion_client import VespaPyClient
 from .search_backend import VespaSearchBackend
-from .vespa_schema_manager import VespaSchemaManager
+from .vespa_schema_manager import DEPLOY_REQUEST_TIMEOUT_S, VespaSchemaManager
 
 # Check if async ingestion client is available (optional dependency)
 try:
@@ -1079,6 +1079,7 @@ class VespaBackend(Backend):
                     headers={"Content-Type": "application/zip"},
                     data=app_zip,
                     verify=False,
+                    timeout=DEPLOY_REQUEST_TIMEOUT_S,
                 )
                 if response.status_code == 200:
                     break
@@ -1130,18 +1131,22 @@ class VespaBackend(Backend):
         returns 404 for *any* URL (even an unknown schema), so neither is
         discriminative.
 
-        The only probe that actually fails until the schema is addressable
-        on the feed path is ``POST /search/`` with ``model.restrict=<name>``:
-        when the schema is unknown Vespa errors out listing every valid
-        source ref, and the new schema appears in that list exactly when
-        the content distributor has caught up. Once every probed schema is
-        visible we add a short buffer — search visibility converges a
-        beat before the document API accepts feeds, so without this
-        buffer the first feed still races.
+        The discriminative probe is a per-schema YQL query
+        (``select documentid from <name> where true limit 0``): while the
+        content distributor hasn't loaded the doctype Vespa returns
+        ``root.errors``; once loaded, the query returns 200 with no errors.
+        Once every probed schema is visible we add a short buffer — search
+        visibility converges a beat before the document API accepts feeds,
+        so without this buffer the first feed still races.
 
         Args:
             schema_names: Names of schemas that were just deployed
             timeout: Maximum seconds to wait for convergence
+
+        Raises:
+            RuntimeError: If any schema is still not query-visible when the
+                timeout expires. Reporting success for a schema Vespa never
+                activated lets callers feed/search a nonexistent doctype.
         """
         import time
 
@@ -1199,10 +1204,10 @@ class VespaBackend(Backend):
                 return
             time.sleep(1)
 
-        logger.warning(
-            f"Content node convergence not confirmed after {timeout}s "
-            f"(still missing: {sorted(remaining)}) — proceeding anyway "
-            "(feed retries may compensate)"
+        raise RuntimeError(
+            f"Schema convergence not confirmed after {timeout}s — deploy was "
+            f"accepted by the config server but these schemas never became "
+            f"query-visible: {sorted(remaining)}"
         )
 
     def delete_schema(
@@ -1430,13 +1435,11 @@ class VespaBackend(Backend):
             # Execute query
             results = vespa_client.query(**query_params)
 
-            # Vespa returns 4xx/5xx on bad YQL, missing schema, or server errors.
-            # pyvespa does NOT raise on non-2xx — the response object comes back
-            # with .status_code set and .json typically holding the error body.
-            # Without this check the function silently returned [] on every
-            # rejected query, indistinguishable from a clean empty result.
-            # Siblings (get_metadata_document, delete_metadata_document) both
-            # check status_code; this method was the odd one out.
+            # Belt-and-braces: pyvespa >=1.1 raises VespaError on non-2xx via
+            # raise_for_status, but keep the explicit check so a rejected query
+            # can never silently return [] indistinguishable from a clean
+            # empty result. Siblings (get_metadata_document,
+            # delete_metadata_document) check status_code the same way.
             if results.status_code != 200:
                 error_body = results.json if hasattr(results, "json") else None
                 raise RuntimeError(

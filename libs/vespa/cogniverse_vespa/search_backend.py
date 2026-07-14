@@ -24,6 +24,7 @@ from typing import Any, Deque, Dict, List, Optional
 
 import numpy as np
 import requests
+from vespa.exceptions import VespaError
 
 from cogniverse_core.common.utils.output_manager import OutputManager
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
@@ -39,6 +40,18 @@ from cogniverse_vespa._yql import yql_quote
 from cogniverse_vespa.embedding_processor import _is_single_vector_schema
 
 logger = logging.getLogger(__name__)
+
+# Transient search failures: retried and counted by the circuit breaker.
+# VespaError is a bare Exception (not a requests.RequestException) — pyvespa
+# raises it for 4xx/5xx error bodies, and _process_results raises it for
+# HTTP-200 soft timeouts (root.errors); excluding it left the most common
+# Vespa error shape unretried and invisible to the breaker.
+_TRANSIENT_SEARCH_ERRORS = (
+    requests.RequestException,
+    ConnectionError,
+    TimeoutError,
+    VespaError,
+)
 
 
 def _format_query_vector_param(arr: np.ndarray, schema_name: str):
@@ -471,11 +484,7 @@ class VespaSearchBackend(SearchBackend):
                 name=f"vespa_search:{full_url}",
                 failure_threshold=5,
                 reset_timeout_s=15.0,
-                counted_exceptions=(
-                    requests.RequestException,
-                    ConnectionError,
-                    TimeoutError,
-                ),
+                counted_exceptions=_TRANSIENT_SEARCH_ERRORS,
             )
         )
 
@@ -703,11 +712,7 @@ class VespaSearchBackend(SearchBackend):
         config=RetryConfig(
             max_attempts=3,
             initial_delay=1.0,
-            exceptions=(
-                requests.RequestException,
-                ConnectionError,
-                TimeoutError,
-            ),
+            exceptions=_TRANSIENT_SEARCH_ERRORS,
         )
     )
     def _search_retried(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
@@ -1315,12 +1320,36 @@ class VespaSearchBackend(SearchBackend):
     def _process_results(
         self, response: Any, correlation_id: str
     ) -> List[SearchResult]:
-        """Process Vespa response into SearchResult objects"""
+        """Process Vespa response into SearchResult objects.
+
+        Raises:
+            VespaError: If the response body carries ``root.errors``. Vespa
+                reports soft timeouts and container errors as HTTP 200 with
+                an errors list and partial/empty children — consuming hits
+                without this check turns a degraded backend into "no
+                results" recorded as success.
+        """
         results = []
 
         if not response or not hasattr(response, "hits"):
             logger.warning(f"[{correlation_id}] Empty response from Vespa")
             return results
+
+        root = {}
+        if hasattr(response, "get_json"):
+            root = (response.get_json() or {}).get("root", {})
+        errors = root.get("errors", [])
+        if errors:
+            raise VespaError(
+                f"[{correlation_id}] Vespa query returned errors: {errors}"
+            )
+        coverage = root.get("coverage", {})
+        if coverage.get("degraded"):
+            logger.warning(
+                f"[{correlation_id}] Vespa coverage degraded: "
+                f"{coverage.get('coverage')}% of corpus searched "
+                f"({coverage.get('degraded')})"
+            )
 
         logger.debug(
             f"[{correlation_id}] Processing {len(response.hits)} hits from Vespa"

@@ -14,8 +14,9 @@ import logging
 
 import pytest
 
-# Re-export the canonical session-scoped Vespa from the project root.
-from tests.conftest import shared_vespa  # noqa: F401
+# shared_vespa resolves via this package's conftest re-export; a module-level
+# import here would define a second FixtureDef with its own session cache and
+# boot a duplicate Vespa container mid-sweep.
 
 logger = logging.getLogger(__name__)
 

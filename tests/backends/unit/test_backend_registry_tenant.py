@@ -9,6 +9,7 @@ Tests that:
 import pytest
 
 from cogniverse_core.registries.backend_registry import (
+    BackendRegistry,
     get_backend_registry,
 )
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -424,3 +425,103 @@ class TestBackendRegistrySingleton:
 
         # Should have the cached instance
         assert len(registry2._backend_instances) == 1
+
+
+class TestSharedSchemaRegistryEndpointScoping:
+    """The shared SchemaRegistry must never cross backend endpoints.
+
+    The registry deploys and registers through the backend it was built
+    with; handing it to a backend configured for a different url:port
+    silently routes that backend's schema operations to the other endpoint —
+    deploy_schema reports success while the backend's own endpoint never
+    sees the schema.
+    """
+
+    @pytest.fixture
+    def config_manager(self, backend_config_env):
+        return create_default_config_manager()
+
+    @pytest.fixture
+    def schema_loader(self):
+        from pathlib import Path
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        return FilesystemSchemaLoader(Path("configs/schemas"))
+
+    def setup_method(self):
+        registry = get_backend_registry()
+        self._saved_ingestion = registry._ingestion_backends.copy()
+        self._saved_search = registry._search_backends.copy()
+        self._saved_full = registry._full_backends.copy()
+        self._saved_shared_registry = BackendRegistry._shared_schema_registry
+        registry.clear_instances()
+        BackendRegistry._shared_schema_registry = None
+
+    def teardown_method(self):
+        registry = get_backend_registry()
+        registry.clear_instances()
+        registry._ingestion_backends = self._saved_ingestion
+        registry._search_backends = self._saved_search
+        registry._full_backends = self._saved_full
+        BackendRegistry._shared_schema_registry = self._saved_shared_registry
+
+    def _search_backend_at(self, registry, port, config_manager, schema_loader):
+        return registry.get_search_backend(
+            "mock",
+            config={"backend": {"url": "http://localhost", "port": port}},
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+
+    def test_search_registry_not_reused_across_endpoints(
+        self, config_manager, schema_loader
+    ):
+        registry = get_backend_registry()
+        registry.register_search("mock", MockSearchBackend)
+
+        first = self._search_backend_at(registry, 1111, config_manager, schema_loader)
+        assert BackendRegistry._shared_schema_registry is first.schema_registry
+
+        # Clear only the instance cache — the seeded shared registry stays,
+        # which is exactly the state a second endpoint must not inherit.
+        registry._backend_instances.clear()
+        other = self._search_backend_at(registry, 2222, config_manager, schema_loader)
+        assert other.schema_registry is not first.schema_registry
+
+        registry._backend_instances.clear()
+        same = self._search_backend_at(registry, 1111, config_manager, schema_loader)
+        assert same.schema_registry is first.schema_registry
+
+    def test_ingestion_registry_not_reused_across_endpoints(
+        self, config_manager, schema_loader
+    ):
+        registry = get_backend_registry()
+        registry.register_ingestion("mocki", MockIngestionBackend)
+
+        first = registry.get_ingestion_backend(
+            "mocki",
+            tenant_id="tenant_a",
+            config={"backend": {"url": "http://localhost", "port": 1111}},
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        assert BackendRegistry._shared_schema_registry is first.schema_registry
+
+        other = registry.get_ingestion_backend(
+            "mocki",
+            tenant_id="tenant_b",
+            config={"backend": {"url": "http://localhost", "port": 2222}},
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        assert other.schema_registry is not first.schema_registry
+
+        same = registry.get_ingestion_backend(
+            "mocki",
+            tenant_id="tenant_c",
+            config={"backend": {"url": "http://localhost", "port": 1111}},
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        assert same.schema_registry is first.schema_registry

@@ -97,11 +97,11 @@ libs/vespa/cogniverse_vespa/
 
 **Key Files**:
 
-- `vespa_schema_manager.py`: 1093 lines - Core tenant management
+- `vespa_schema_manager.py`: 1099 lines - Core tenant management
 - `json_schema_parser.py`: 189 lines - Schema parsing
 - `ingestion_client.py`: 597 lines - PyVespa wrapper for ingestion
-- `search_backend.py`: 1550 lines - Search backend with connection pooling
-- `backend.py`: 1589 lines - Unified backend abstraction
+- `search_backend.py`: 1740 lines - Search backend with connection pooling
+- `backend.py`: 1598 lines - Unified backend abstraction
 
 **Note**: Schema templates are JSON files located in `configs/schemas/` at project root
 
