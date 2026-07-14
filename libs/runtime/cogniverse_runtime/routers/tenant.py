@@ -6,6 +6,7 @@ Allows tenants to customize their agent experience:
 - Scheduled jobs: create/list/delete Argo CronWorkflow-backed jobs
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -305,14 +306,17 @@ async def list_memories(
     items: List[MemoryItem] = []
     for ns in namespaces:
         if q:
-            raw = mgr.search_memory(
+            raw = await asyncio.to_thread(
+                mgr.search_memory,
                 query=q,
                 tenant_id=tenant_id,
                 agent_name=ns,
                 top_k=limit,
             )
         else:
-            raw = mgr.get_all_memories(tenant_id=tenant_id, agent_name=ns)
+            raw = await asyncio.to_thread(
+                mgr.get_all_memories, tenant_id=tenant_id, agent_name=ns
+            )
 
         for entry in raw:
             item = _entry_to_item(entry, ns)

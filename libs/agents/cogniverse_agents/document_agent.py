@@ -269,7 +269,9 @@ class DocumentAgent(
 
         # Retrieve relevant search patterns from memory
         if self.is_memory_enabled():
-            memory_context = self.get_relevant_context(query, top_k=3)
+            memory_context = await asyncio.to_thread(
+                self.get_relevant_context, query, top_k=3
+            )
             if memory_context:
                 logger.info(f"📚 Retrieved memory context for query: {query[:50]}...")
 

@@ -321,3 +321,47 @@ class TestDocumentAgent:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSearchDocumentsEventLoop:
+    async def test_slow_memory_recall_does_not_block_event_loop(self):
+        """Mem0 recall is a synchronous LLM/vector round trip —
+        search_documents must run it off the loop (the orchestrator already
+        does); a blocked loop stalls every concurrent request on the worker."""
+        import asyncio
+        import time as _time
+
+        agent = DocumentAgent(
+            deps=DocumentAgentDeps(
+                tenant_id="test_tenant",
+                vespa_endpoint="http://localhost:8080",
+            ),
+            port=8007,
+        )
+        agent.is_memory_enabled = lambda: True
+
+        def slow_recall(query, top_k=3):
+            _time.sleep(0.2)
+            return ""
+
+        agent.get_relevant_context = slow_recall
+
+        async def fake_text_search(query, limit):
+            return []
+
+        agent._search_text = fake_text_search
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.02)
+                ticks += 1
+
+        task = asyncio.create_task(ticker())
+        results = await agent.search_documents("cats", strategy="text", limit=1)
+        task.cancel()
+
+        assert results == []
+        assert ticks >= 5, f"event loop starved during recall: {ticks} ticks"

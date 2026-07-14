@@ -1583,3 +1583,93 @@ class TestCronWorkflowName:
         assert tenant._cron_workflow_name(
             "acme:production", "abc123"
         ) == tenant._cron_workflow_name("acme:production", "abc123")
+
+
+@pytest.mark.unit
+class TestListMemoriesEventLoop:
+    async def test_slow_recall_does_not_block_event_loop(self, mock_config_manager):
+        """Mem0 recall is a synchronous LLM/vector round trip — the route must
+        run it off the loop, or every concurrent request on the worker stalls
+        behind each namespace's recall."""
+        import asyncio
+        import time as _time
+
+        import httpx
+
+        tenant.set_config_manager(mock_config_manager)
+        app = FastAPI()
+        app.include_router(tenant.router)
+
+        mgr = MagicMock()
+
+        def slow_search(**kwargs):
+            _time.sleep(0.2)
+            return []
+
+        mgr.search_memory = slow_search
+        mgr.get_all_memories = MagicMock(return_value=[])
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.02)
+                ticks += 1
+
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                task = asyncio.create_task(ticker())
+                resp = await client.get("/acme/memories", params={"q": "cats"})
+                task.cancel()
+
+        assert resp.status_code == 200
+        assert ticks >= 5, f"event loop starved during recall: {ticks} ticks"
+
+    async def test_slow_get_all_does_not_block_event_loop(self, mock_config_manager):
+        """The no-query branch lists every namespace via get_all_memories —
+        the same synchronous round trip, and it must also run off the loop."""
+        import asyncio
+        import time as _time
+
+        import httpx
+
+        tenant.set_config_manager(mock_config_manager)
+        app = FastAPI()
+        app.include_router(tenant.router)
+
+        mgr = MagicMock()
+
+        def slow_get_all(**kwargs):
+            _time.sleep(0.2)
+            return []
+
+        mgr.get_all_memories = slow_get_all
+        mgr.search_memory = MagicMock(return_value=[])
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.02)
+                ticks += 1
+
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                task = asyncio.create_task(ticker())
+                resp = await client.get("/acme/memories")
+                task.cancel()
+
+        assert resp.status_code == 200
+        assert ticks >= 5, f"event loop starved during list: {ticks} ticks"
