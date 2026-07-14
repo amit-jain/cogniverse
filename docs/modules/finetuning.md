@@ -288,13 +288,18 @@ Triplet(
 
 #### Synthetic reader (`synthetic_reader.py`)
 
-**Purpose**: Fold APPROVED synthetic examples into the training set. Converts a
-generator's schema dicts into the same `InstructionExample` / Alpaca-text SFT
-records the trace extractors produce (shared `instruction_template`), so
-synthetic and real data are interchangeable.
+**Purpose**: Load and fold APPROVED synthetic examples into the training set.
+Reconstructs example dicts from the `approved_synthetic_data` dataset frame
+(Phoenix nests each record under `input`, stringifies list/dict fields, and
+tags bookkeeping columns), then converts them into the same `InstructionExample`
+/ Alpaca-text SFT records the trace extractors produce (shared
+`instruction_template`), so synthetic and real data are interchangeable.
 
-**API**: `format_synthetic_sft(examples, agent_type) -> List[{"text", "metadata"}]`
-and `synthetic_examples_to_instruction(examples, agent_type)`.
+**API**: `load_approved_synthetic_examples(dataset_df, agent_type) -> List[Dict]`
+reconstructs approved example dicts for `agent_type` from the dataset frame;
+`format_synthetic_sft(examples, agent_type) -> List[{"text", "metadata"}]` and
+`synthetic_examples_to_instruction(examples, agent_type)` format them into SFT
+records.
 
 ---
 
@@ -1723,7 +1728,7 @@ existing tabs in `libs/dashboard/cogniverse_dashboard/tabs/` (e.g. `evaluation.p
 
 ### Overview
 
-After training completes, adapters are automatically evaluated against the base model on a held-out test set. The set is held out by excluding every example the adapter was trained on (matched by a content hash of instruction/input/output), so metrics are never measured on memorized data. When no candidate survives the exclusion — e.g. the run trained on all available annotations — evaluation raises and is skipped rather than reporting inflated numbers. This provides objective metrics on adapter quality and improvement over baseline.
+After training completes, adapters are automatically evaluated against the base model on a held-out test set. For plain SFT (`training_method="sft"`), the set is held out by excluding every example the adapter was trained on (matched by a content hash of instruction/input/output via `example_identity()`), so metrics are never measured on memorized data; when no candidate survives the exclusion — e.g. the run trained on all available annotations — evaluation raises and is skipped rather than reporting inflated numbers. DPO and multi-turn SFT evaluation do not pass this exclusion yet (their training data isn't shaped as instruction/input/output triples), so their test set is only bounded by the recent-annotations window below. This provides objective metrics on adapter quality and improvement over baseline.
 
 ### Evaluation Metrics
 
@@ -1767,19 +1772,20 @@ config = OrchestrationConfig(
 
 ### Test Set Creation
 
-Evaluation uses a time-based split to ensure test data is NOT in the training set:
+For plain SFT, test candidates are pulled from a recent window of telemetry, then
+every candidate matching a trained example's content hash is excluded — the
+exclusion, not the time window, is what guarantees the test set is disjoint from
+training; the window only bounds how far back to look for candidates:
 
-- **Training Data**: Older annotations (used for training)
+- **Candidate Pool**: Recent annotations (last 7 days)
 
-- **Test Data**: Recent annotations (last 7 days)
+- **Held Out**: Examples the adapter was trained on are excluded by content hash (SFT only — DPO and multi-turn SFT don't pass this exclusion yet)
 
-- **Size**: Configurable (default: 50 examples)
-
-- **Sampling**: Random sample from recent data
+- **Size**: Configurable (default: 50 examples), sampled randomly from what remains after exclusion
 
 ### Evaluation Process
 
-1. **Create Test Set**: Extract recent examples from telemetry (last 7 days)
+1. **Create Test Set**: Extract recent examples from telemetry (last 7 days), excluding any that match a trained example by content hash (SFT only)
 2. **Load Base Model**: Load the base model without adapter
 3. **Evaluate Base**: Run base model on test set, compute metrics
 4. **Load Adapter**: Load the trained LoRA adapter

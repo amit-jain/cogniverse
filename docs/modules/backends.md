@@ -549,7 +549,7 @@ ingestion_backend = BackendRegistry.get_ingestion_backend(
     config_manager=config_manager,
     schema_loader=schema_loader
 )
-ingestion_backend.ingest_documents(documents)
+ingestion_backend.ingest_documents(documents, schema_name="video_colpali_smol500_mv_frame")
 ```
 
 **Key Features**:

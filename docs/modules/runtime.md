@@ -161,7 +161,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 3. Initialize `SchemaLoader` for Vespa schemas; wire `admin`/`tenant` routers and `ingestion`/`search`/`knowledge` FastAPI dependency overrides
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
 5. Initialize `SandboxManager` with a policy resolved from env/config; wire it and the agent registry to the `agents` router
-6. Mount the A2A JSON-RPC server at `/a2a` with an `AgentCard` built from the registered agents
+6. Mount the A2A JSON-RPC server at `/a2a` with an `AgentCard` built from the registered agents; tasks are held in a `BoundedInMemoryTaskStore` (LRU-capped at `A2A_MAX_TASKS`, default 10000) rather than the stock unbounded store
 7. Load backends and agents from config via `ConfigLoader` (agents are validated and registered as endpoints, not instantiated)
 8. Deploy metadata schemas via a system backend; apply deployment env-var overrides to `SystemConfig`
 9. Probe Phoenix reachability and validate inference services against configured profiles
@@ -541,13 +541,17 @@ curl -X POST http://localhost:8000/ingestion/start \
   }'
 ```
 
-**POST /ingestion/upload** - Upload single video
+**POST /ingestion/upload** - Upload a video to MinIO and enqueue ingestion via Redis
 ```bash
-curl -X POST http://localhost:8000/ingestion/upload \
+curl -X POST "http://localhost:8000/ingestion/upload?wait=true&wait_timeout=300&force=false" \
   -F "file=@tutorial.mp4" \
   -F "profile=video_colpali_smol500_mv_frame" \
+  -F "backend=vespa" \
   -F "tenant_id=acme"
 ```
+Form fields: `file` (required), `profile` (default `"default"`), `backend` (default `"vespa"`), `tenant_id` (required — 400 if missing), `org_id` (optional). Query params: `wait` (default `false` — returns immediately with just `ingest_id`), `wait_timeout` (seconds, `10`-`900`, default `300`, applies only when `wait=true`), `force` (default `false`, bypasses idempotency and re-enqueues even on a cache hit).
+
+Response always includes `ingest_id`, `sha`, `state` (`queued`|`in_flight`|`complete`|`failed`), `existing` (`true` on an idempotency hit), `filename`, `source_url`. Without `wait=true` the response stops there with `status: "queued"`. When `wait=true` reaches a terminal state, the response additionally includes `video_id`, `chunks_created`, `documents_fed`, `status` (`"success"` or the terminal `state`), and `graph_nodes`/`graph_edges` — the worker's per-segment KG-extraction counts carried through the terminal event (the route surfaces them verbatim rather than re-extracting). 429 on backpressure rejection (`axis`, `current`, `limit`, `message`); 503 if Redis/MinIO aren't configured.
 
 **GET /ingestion/status/{job_id}** - Check processing status
 ```bash
@@ -731,9 +735,15 @@ Response: `{source_tenant_id, source_memory_id, promoted_memory_id, org_trunk_te
 
 **POST /admin/tenants/{tenant_id}/memories/{memory_id}/restore** — Clear the `metadata.archived=true` flag set by the soft-delete sweep. Returns 404 once 2*TTL hard-delete has run.
 
-**Tenant self-service memory listing** (`libs/runtime/cogniverse_runtime/routers/tenant.py`, mounted at `/admin/tenant` — see [Router Architecture](#router-architecture))
+**Tenant self-service memory management** (`libs/runtime/cogniverse_runtime/routers/tenant.py`, mounted at `/admin/tenant` — see [Router Architecture](#router-architecture))
+
+**POST /admin/tenant/{tenant_id}/memories** — Save a user-defined memory. Body: `{text: str, category?: str, kind?: str, metadata?: dict}` (`metadata` merges on top of the derived `category`/`kind` fields). Response: `{status: "saved", id, type: "preference", category, kind}`.
 
 **GET /admin/tenant/{tenant_id}/memories** — List or search a tenant's memories. Query params: `q` (semantic search when set, else list all), `type` (`preference` → `_user_memories`, `strategy` → `_strategy_store`; 400 on unknown), `agent_name` (scope to one agent's mem0 store, i.e. `agent_id=agent_name` — agents store their learned memories under their own name, so this surfaces what a specific agent has remembered), `category` (post-filter on the memory's category tag), `limit` (1–200, default 20). Selection precedence: `agent_name` → `type` → both default namespaces.
+
+**DELETE /admin/tenant/{tenant_id}/memories/{memory_id}** — Delete a single user-owned memory by id. 404 if not found.
+
+**DELETE /admin/tenant/{tenant_id}/memories?category=...** — Clear user-owned memories (system/strategy namespaces are untouched). Omitted `category` clears all user memories and returns `{status: "cleared"}`; a `category` value scopes the delete and the response reports the count: `{status: "cleared", category, deleted}`. The messaging-gateway `/memories clear` command calls this route with `category` — not `agent_name`, which the route does not accept.
 
 **GET /admin/tenants/{tenant_id}/signature_variants** — List per-agent variant selections for a tenant. Response: `{tenant_id, selections: {agent_type: variant_id}}`.
 
@@ -949,6 +959,9 @@ export COGNIVERSE_SANDBOX_POLICY="optional"                 # required | optiona
 export COGNIVERSE_SANDBOX_PROBE_INTERVAL="30"                # GatewayHealthProbe cadence (seconds)
 export COGNIVERSE_SANDBOX_CERT_ROTATION_INTERVAL="300"        # mTLS cert-watch poll interval (seconds)
 export COGNIVERSE_SANDBOX_CERT_ROTATION_DISABLED="false"      # "true"/"1"/"yes" disables the cert rotator
+
+# A2A task store
+export A2A_MAX_TASKS="10000"                                # LRU cap on the in-memory A2A task store
 
 # Debug router (routers/debug.py — dark unless set)
 export COGNIVERSE_DEBUG_MEM="0"
