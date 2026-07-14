@@ -1022,8 +1022,12 @@ The cache is content-addressed by `sha256(uri || etag)`, tenant-scoped via
 `get_tenant_storage_path`, and laid out as
 `<base>/<tenant>/media/<key[:2]>/<key>/<basename>`. The original basename is
 preserved so cv2 / ffmpeg can sniff codec by extension. Writes go through
-`<base>/.staging/<uuid>` and are promoted via `os.replace` for atomicity. LRU
-eviction by `atime` triggers when total bytes exceed `max_bytes_gb`.
+`<base>/.staging/<uuid>` and are promoted via `os.replace` for atomicity.
+Entries older than `ttl_days` (by `atime`) are dropped first, then LRU by
+`atime` while total bytes exceed `max_bytes_gb`. A running byte total keeps
+under-budget puts walk-free; the tree is walked only on the first put, when
+over budget, or when a TTL sweep is due (at most once per TTL period, so an
+expired entry lingers at most one extra period).
 
 ### Local development
 
@@ -1090,7 +1094,7 @@ backfilled with `scripts/backfill_source_url.py`.
 
 | File | Coverage |
 | --- | --- |
-| `tests/core/unit/test_media_cache.py` | Content-addressed keys, atomic put, LRU eviction, atime bumping. |
+| `tests/core/unit/test_media_cache.py` | Content-addressed keys, atomic put, walk-free puts under budget, LRU and amortized-TTL-sweep eviction, atime bumping. |
 | `tests/core/unit/test_media_locator.py` | URI canonicalization, file:// / pvc:// dispatch, list enumeration, tenant isolation. |
 | `tests/core/unit/test_media_http.py` | http:// fetch + cache hit on second access (real `http.server` fixture). |
 | `tests/core/integration/test_media_minio.py` | Real MinIO container: fetch + cache, etag-aware refetch, list, stat. Requires Docker. |

@@ -39,6 +39,81 @@ class TestMakeKey:
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
+class TestPutWalkCost:
+    """put() must not rescan the whole cache while under budget.
+
+    The tree walk is O(cached files) and runs under the write lock, so a
+    per-put walk costs O(files²) across an ingestion run and serializes
+    concurrent localizes. The running byte total makes an under-budget put
+    walk-free; walks happen only on init, over-budget eviction, or a due
+    TTL sweep.
+    """
+
+    def _counting(self, cache, monkeypatch):
+        walks = {"n": 0}
+        real_iter = cache._iter_cached_files
+
+        def counting_iter():
+            walks["n"] += 1
+            return real_iter()
+
+        monkeypatch.setattr(cache, "_iter_cached_files", counting_iter)
+        return walks
+
+    def test_put_under_budget_does_not_walk(self, tmp_path, monkeypatch):
+        cache = MediaCache(tmp_path / "cache", max_bytes=1_000_000)
+        cache.put(
+            MediaCache.make_key("s3://b/0"), "0.bin", _write(tmp_path / "s0", b"x" * 10)
+        )
+
+        walks = self._counting(cache, monkeypatch)
+        for i in range(1, 5):
+            cache.put(
+                MediaCache.make_key(f"s3://b/{i}"),
+                f"{i}.bin",
+                _write(tmp_path / f"s{i}", b"x" * 10),
+            )
+
+        assert walks["n"] == 0
+
+    def test_same_key_overwrite_accounts_displaced_bytes(self, tmp_path, monkeypatch):
+        """Re-putting a key must subtract the displaced file's size from the
+        running total — otherwise the total drifts upward and, since eviction
+        triggers off it, the cache would evict earlier and earlier while the
+        on-disk truth diverges."""
+        cache = MediaCache(tmp_path / "cache", max_bytes=1_000_000)
+        key = MediaCache.make_key("s3://b/v")
+        cache.put(key, "v.bin", _write(tmp_path / "v1", b"x" * 300))
+        assert cache._total_bytes == 300
+
+        walks = self._counting(cache, monkeypatch)
+        cache.put(key, "v.bin", _write(tmp_path / "v2", b"x" * 100))
+
+        assert walks["n"] == 0
+        assert cache._total_bytes == 100
+        assert cache.total_bytes() == 100
+
+    def test_puts_after_eviction_cycle_stay_walk_free(self, tmp_path, monkeypatch):
+        cache = MediaCache(tmp_path / "cache", max_bytes=100)
+        cache.put(
+            MediaCache.make_key("s3://b/a"), "a.bin", _write(tmp_path / "a", b"x" * 60)
+        )
+        # Over budget: this put may walk to evict.
+        cache.put(
+            MediaCache.make_key("s3://b/b"), "b.bin", _write(tmp_path / "b", b"x" * 60)
+        )
+        assert cache.total_bytes() <= 100
+
+        walks = self._counting(cache, monkeypatch)
+        cache.put(
+            MediaCache.make_key("s3://b/c"), "c.bin", _write(tmp_path / "c", b"x" * 10)
+        )
+        assert walks["n"] == 0
+        assert cache.total_bytes() <= 100
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestPutGet:
     def test_round_trip(self, cache, tmp_path):
         src = _write(tmp_path / "src", b"hello")
@@ -155,16 +230,21 @@ class TestAtimeBump:
 
 class TestTtlEviction:
     """ttl_days (wired as ttl_seconds) must drop entries not accessed within
-    the window; without it the cache only ever evicts by size."""
+    the window; without it the cache only ever evicts by size. Sweeps are
+    amortized: put() walks the tree for expiry at most once per TTL period
+    (an expired entry lingers at most one extra period), so the per-put cost
+    stays O(1) while under budget."""
 
-    def test_stale_entry_evicted_on_next_put(self, tmp_path):
+    def test_stale_entry_evicted_when_sweep_due(self, tmp_path):
         cache = MediaCache(tmp_path / "cache", max_bytes=10_000_000, ttl_seconds=100)
 
         old_src = tmp_path / "old"
         old_src.write_bytes(b"x" * 100)
         old = cache.put(MediaCache.make_key("s3://b/old"), "old.mp4", old_src)
-        # Backdate access time well beyond the TTL window.
+        # Backdate access time well beyond the TTL window and make the next
+        # sweep due (a full TTL period has "elapsed" since the last one).
         os.utime(old, (time.time() - 500, time.time() - 500))
+        cache._last_ttl_sweep = time.time() - 101
 
         fresh_src = tmp_path / "fresh"
         fresh_src.write_bytes(b"x" * 100)
@@ -172,6 +252,32 @@ class TestTtlEviction:
 
         assert cache.get(MediaCache.make_key("s3://b/old"), "old.mp4") is None
         assert cache.get(MediaCache.make_key("s3://b/fresh"), "fresh.mp4") is not None
+
+    def test_sweep_not_due_defers_expiry_and_skips_walk(self, tmp_path, monkeypatch):
+        """Between sweeps an expired entry lingers (bounded by one TTL
+        period) and put() stays walk-free — the amortization contract."""
+        cache = MediaCache(tmp_path / "cache", max_bytes=10_000_000, ttl_seconds=100)
+
+        old_src = tmp_path / "old"
+        old_src.write_bytes(b"x" * 100)
+        old = cache.put(MediaCache.make_key("s3://b/old"), "old.mp4", old_src)
+        os.utime(old, (time.time() - 500, time.time() - 500))
+
+        walks = {"n": 0}
+        real_iter = cache._iter_cached_files
+
+        def counting_iter():
+            walks["n"] += 1
+            return real_iter()
+
+        monkeypatch.setattr(cache, "_iter_cached_files", counting_iter)
+
+        fresh_src = tmp_path / "fresh"
+        fresh_src.write_bytes(b"x" * 100)
+        cache.put(MediaCache.make_key("s3://b/fresh"), "fresh.mp4", fresh_src)
+
+        assert walks["n"] == 0
+        assert cache.get(MediaCache.make_key("s3://b/old"), "old.mp4") is not None
 
     def test_recent_entry_survives_ttl(self, tmp_path):
         cache = MediaCache(tmp_path / "cache", max_bytes=10_000_000, ttl_seconds=100)

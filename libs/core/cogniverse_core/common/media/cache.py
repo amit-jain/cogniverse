@@ -25,6 +25,10 @@ class MediaCache:
 
     Eviction: entries older than ``ttl_seconds`` (by ``atime``) are dropped
     first, then LRU by ``atime`` while total bytes exceed ``max_bytes``.
+    A running byte total keeps under-budget puts walk-free; the tree is
+    walked only on the first put, when over budget, or when a TTL sweep is
+    due (at most once per TTL period — an expired entry lingers at most one
+    extra period).
     """
 
     STAGING_DIR_NAME = ".staging"
@@ -43,6 +47,11 @@ class MediaCache:
             float(ttl_seconds) if ttl_seconds and ttl_seconds > 0 else None
         )
         self._lock = threading.Lock()
+        # Running byte total so an under-budget put never walks the tree
+        # (the walk is O(cached files) under the lock). None until the
+        # first put initializes it; eviction passes resync it exactly.
+        self._total_bytes: Optional[int] = None
+        self._last_ttl_sweep = 0.0
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.staging_dir.mkdir(parents=True, exist_ok=True)
 
@@ -75,9 +84,28 @@ class MediaCache:
     def put(self, key: str, basename: str, src: Path) -> Path:
         dest = self._key_to_path(key, basename)
         dest.parent.mkdir(parents=True, exist_ok=True)
+        displaced = 0
+        if dest.exists():
+            try:
+                displaced = dest.stat().st_size
+            except OSError:
+                displaced = 0
         os.replace(src, dest)
+        try:
+            added = dest.stat().st_size
+        except OSError:
+            added = 0
         with self._lock:
-            self._evict_if_needed()
+            if self._total_bytes is None:
+                self._total_bytes = self.total_bytes()
+            else:
+                self._total_bytes += added - displaced
+            ttl_due = (
+                self.ttl_seconds is not None
+                and (time.time() - self._last_ttl_sweep) >= self.ttl_seconds
+            )
+            if ttl_due or self._total_bytes > self.max_bytes:
+                self._evict_if_needed()
         return dest
 
     def _iter_cached_files(self) -> list[Path]:
@@ -112,9 +140,14 @@ class MediaCache:
         return True
 
     def _evict_if_needed(self) -> None:
+        """Full-walk pass: expire TTL-stale entries, then LRU-evict while
+        over budget. Resyncs the running byte total from the walk and stamps
+        the sweep time so put() amortizes TTL walks to once per TTL period.
+        """
         files: list[tuple[float, int, Path]] = []
         total = 0
-        cutoff = (time.time() - self.ttl_seconds) if self.ttl_seconds else None
+        now = time.time()
+        cutoff = (now - self.ttl_seconds) if self.ttl_seconds else None
         for p in self._iter_cached_files():
             try:
                 st = p.stat()
@@ -127,7 +160,11 @@ class MediaCache:
             files.append((st.st_atime, st.st_size, p))
             total += st.st_size
 
+        if self.ttl_seconds is not None:
+            self._last_ttl_sweep = now
+
         if total <= self.max_bytes:
+            self._total_bytes = total
             return
 
         files.sort(key=lambda t: t[0])
@@ -136,3 +173,4 @@ class MediaCache:
                 break
             if self._unlink(p):
                 total -= size
+        self._total_bytes = total

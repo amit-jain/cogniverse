@@ -113,3 +113,85 @@ def test_list_emits_tz_aware_utc_created_at(memory_store):
     assert parsed.tzinfo is not None
     assert parsed.utcoffset() == timedelta(0)
     assert parsed == datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc)
+
+
+def _raw_embedding(shared_vespa, schema: str, doc_id: str) -> list:
+    """Read the stored tensor via the Document v1 API — store.get() returns
+    payload-only records, so tensor survival must be asserted at the raw
+    boundary (same approach as the partial-update round-trip tests)."""
+    import requests
+
+    # Memory schemas feed under the "memory_content" namespace
+    # (VespaPyClient routes namespaces by schema family).
+    url = (
+        f"http://localhost:{shared_vespa['http_port']}/document/v1/"
+        f"memory_content/{schema}/docid/{doc_id}"
+    )
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    emb = resp.json()["fields"].get("embedding")
+    if emb is None:
+        return []
+    if isinstance(emb, dict):
+        if "values" in emb:
+            return list(emb["values"])
+        if "cells" in emb:
+            return [c["value"] for c in emb["cells"]]
+        return list(emb.values())
+    return list(emb)
+
+
+def test_update_many_preserves_embeddings_and_updates_metadata(
+    memory_store, shared_vespa
+):
+    """One batched metadata-only update: stored tensors survive untouched,
+    every document's metadata carries the new stamp, prior keys preserved."""
+    store = memory_store
+    schema = store.collection_name
+    vec_a = [0.25] * DIM
+    vec_b = [0.5] * DIM
+    store.insert(
+        vectors=[vec_a, vec_b],
+        payloads=[
+            {"data": "alpha", "user_id": "u_um", "agent_id": "a", "topic": "cats"},
+            {"data": "beta", "user_id": "u_um", "agent_id": "a", "topic": "dogs"},
+        ],
+        ids=["mem-um-a", "mem-um-b"],
+    )
+    assert _raw_embedding(shared_vespa, schema, "mem-um-a") == pytest.approx(vec_a)
+
+    store.update_many(
+        [
+            (
+                "mem-um-a",
+                None,
+                {
+                    "data": "alpha",
+                    "metadata": {
+                        "topic": "cats",
+                        "last_accessed": "2026-07-14T01:02:03+00:00",
+                    },
+                },
+            ),
+            (
+                "mem-um-b",
+                None,
+                {
+                    "data": "beta",
+                    "metadata": {
+                        "topic": "dogs",
+                        "last_accessed": "2026-07-14T01:02:03+00:00",
+                    },
+                },
+            ),
+        ]
+    )
+
+    rec_a = store.get("mem-um-a")
+    rec_b = store.get("mem-um-b")
+    assert rec_a.payload["last_accessed"] == "2026-07-14T01:02:03+00:00"
+    assert rec_b.payload["last_accessed"] == "2026-07-14T01:02:03+00:00"
+    assert rec_a.payload["topic"] == "cats"
+    assert rec_b.payload["topic"] == "dogs"
+    assert _raw_embedding(shared_vespa, schema, "mem-um-a") == pytest.approx(vec_a)
+    assert _raw_embedding(shared_vespa, schema, "mem-um-b") == pytest.approx(vec_b)

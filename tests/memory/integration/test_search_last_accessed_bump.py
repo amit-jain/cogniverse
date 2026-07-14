@@ -25,15 +25,29 @@ pytestmark = pytest.mark.integration
 
 
 class _SpyVectorStore:
-    """Vector-store stand-in recording partial-update calls."""
+    """Vector-store stand-in recording partial-update calls.
+
+    ``update_calls`` records one entry per bumped memory regardless of the
+    path taken; ``round_trips`` counts backend calls — the batched path must
+    stamp N hits in ONE round-trip, not N.
+    """
 
     def __init__(self):
         self.update_calls: List[Dict[str, Any]] = []
+        self.round_trips = 0
 
     def update(self, vector_id, vector=None, payload=None):
+        self.round_trips += 1
         self.update_calls.append(
             {"vector_id": vector_id, "vector": vector, "payload": payload}
         )
+
+    def update_many(self, items):
+        self.round_trips += 1
+        for vector_id, vector, payload in items:
+            self.update_calls.append(
+                {"vector_id": vector_id, "vector": vector, "payload": payload}
+            )
 
 
 class _SpyMemory:
@@ -73,7 +87,7 @@ def _fresh_mm(monkeypatch) -> Mem0MemoryManager:
 
 
 class TestBumpHelper:
-    def test_calls_update_once_per_hit(self, monkeypatch):
+    def test_bumps_every_hit_in_one_round_trip(self, monkeypatch):
         mm = _fresh_mm(monkeypatch)
         spy = _SpyMemory(
             [
@@ -91,6 +105,10 @@ class TestBumpHelper:
             top_k=5,
         )
         assert len(out) == 3
+        assert spy.vector_store.round_trips == 1, (
+            "the bump must batch all hits into one backend round-trip — "
+            "per-hit updates cost top_k sequential HTTP calls per search"
+        )
         assert spy.reembedding_update_calls == [], (
             "the bump must go through the vector store's partial update, "
             "not Memory.update — the latter re-embeds every hit"
@@ -146,6 +164,9 @@ class TestBumpHelper:
         class _BrokenStore(_SpyVectorStore):
             def update(self, vector_id, vector=None, payload=None):
                 raise RuntimeError("simulated store update failure")
+
+            def update_many(self, items):
+                raise RuntimeError("simulated store batch update failure")
 
         class _BrokenSpy(_SpyMemory):
             def __init__(self, hits):
@@ -210,6 +231,40 @@ class TestBumpHelper:
         )
         assert out == []
         assert spy.update_calls == []
+        assert spy.vector_store.round_trips == 0
+
+    def test_store_without_update_many_falls_back_to_per_hit(self, monkeypatch):
+        """Duck compatibility: a vector store exposing only update() still
+        gets every hit stamped, one call per hit."""
+
+        class _SingleOnlyStore:
+            def __init__(self):
+                self.update_calls: List[Dict[str, Any]] = []
+                self.round_trips = 0
+
+            def update(self, vector_id, vector=None, payload=None):
+                self.round_trips += 1
+                self.update_calls.append(
+                    {"vector_id": vector_id, "vector": vector, "payload": payload}
+                )
+
+        class _SingleOnlySpy(_SpyMemory):
+            def __init__(self, hits):
+                super().__init__(hits)
+                self.vector_store = _SingleOnlyStore()
+
+        mm = _fresh_mm(monkeypatch)
+        spy = _SingleOnlySpy([{"id": "a", "memory": "x"}, {"id": "b", "memory": "y"}])
+        mm.memory = spy
+
+        mm.search_memory(
+            query="x",
+            tenant_id="p23_tenant",
+            agent_name="p23_agent",
+            top_k=5,
+        )
+        assert sorted(c["vector_id"] for c in spy.update_calls) == ["a", "b"]
+        assert spy.vector_store.round_trips == 2
 
 
 class TestRealVespaSchemaIntegration:
