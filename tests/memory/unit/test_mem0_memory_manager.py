@@ -499,3 +499,60 @@ class TestImportChainWithoutCv2:
         )
         assert result.returncode == 0, result.stderr
         assert "IMPORT_OK" in result.stdout
+
+
+class TestContradictionScanReadFailure:
+    def test_conflict_state_read_failure_skips_persistence_and_warns(self, caplog):
+        """When the existing-conflicts read fails, the subject's current
+        state is unknown — persisting blind writes a duplicate conflict_set
+        every time the same conflict re-surfaces. The write must be skipped
+        with a warning, not silently treated as 'no existing conflicts'."""
+        import logging
+        from unittest.mock import MagicMock, patch
+
+        from cogniverse_core.memory.contradiction import CONFLICT_AGENT_NAME
+        from cogniverse_core.memory.manager import Mem0MemoryManager
+
+        Mem0MemoryManager._instances.clear()
+        mm = Mem0MemoryManager(tenant_id="p5_tenant")
+        mm._initialized = True
+        mm.tenant_id = "p5_tenant"
+        mm.config = None
+        mm._knowledge_registry = object()
+
+        memory = MagicMock()
+
+        def get_all(**kwargs):
+            if kwargs.get("agent_id") == CONFLICT_AGENT_NAME:
+                raise RuntimeError("vespa blip")
+            return {"results": []}
+
+        memory.get_all = get_all
+        mm.memory = memory
+
+        conflict = MagicMock()
+        detector = MagicMock()
+        detector.detect.return_value = [conflict]
+
+        with (
+            patch(
+                "cogniverse_core.memory.contradiction.ContradictionDetector",
+                return_value=detector,
+            ),
+            caplog.at_level(logging.WARNING),
+        ):
+            mm._detect_and_persist_contradictions(
+                memory_id="m1",
+                tenant_id="p5_tenant",
+                agent_name="search_agent",
+                metadata={"subject_key": "user:alice:city", "kind": "knowledge"},
+                content="alice lives in Paris",
+            )
+
+        memory.add.assert_not_called()
+        assert any(
+            "user:alice:city" in rec.message and "vespa blip" in rec.message
+            for rec in caplog.records
+        ), (
+            f"expected a warning naming the subject and error: {[r.message for r in caplog.records]}"
+        )

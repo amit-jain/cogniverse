@@ -13,6 +13,8 @@ can share one implementation.
 
 from __future__ import annotations
 
+import math
+
 _LABEL_BANDS = {"high": 0.9, "medium": 0.5, "low": 0.1}
 
 
@@ -40,6 +42,10 @@ def parse_confidence(raw: object, default: float = 0.0) -> float:
         # when the input is a string AND the parsed value exceeds 1.
         if had_percent or v > 1.0:
             v = v / 100.0
+    if math.isnan(v):
+        # NaN survives the range clamp (nan<0 and nan>1 are both False)
+        # and would propagate into eval scores and routing comparisons.
+        return default
     if v < 0.0:
         return 0.0
     if v > 1.0:
