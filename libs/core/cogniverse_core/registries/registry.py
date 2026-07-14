@@ -8,6 +8,7 @@ This registry provides:
 """
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Dict
 
 if TYPE_CHECKING:
@@ -158,11 +159,14 @@ class StrategyRegistry:
 
 # Global instance for easy access - lazily initialized
 _registry = None
+_registry_lock = threading.Lock()
 
 
 def get_registry() -> StrategyRegistry:
     """Get the global StrategyRegistry instance."""
     global _registry
     if _registry is None:
-        _registry = StrategyRegistry()
+        with _registry_lock:
+            if _registry is None:
+                _registry = StrategyRegistry()
     return _registry

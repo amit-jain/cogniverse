@@ -13,6 +13,7 @@ Features:
 
 import asyncio
 import logging
+import threading
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -351,6 +352,7 @@ class InMemoryQueueManager(BaseQueueManager):
 
 # Global singleton instance for convenience
 _global_queue_manager: Optional[InMemoryQueueManager] = None
+_queue_manager_lock = threading.Lock()
 
 
 def get_queue_manager(
@@ -365,10 +367,12 @@ def get_queue_manager(
     global _global_queue_manager
 
     if _global_queue_manager is None:
-        _global_queue_manager = InMemoryQueueManager(
-            default_ttl_minutes=default_ttl_minutes,
-            max_buffer_size=max_buffer_size,
-        )
+        with _queue_manager_lock:
+            if _global_queue_manager is None:
+                _global_queue_manager = InMemoryQueueManager(
+                    default_ttl_minutes=default_ttl_minutes,
+                    max_buffer_size=max_buffer_size,
+                )
 
     return _global_queue_manager
 
