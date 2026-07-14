@@ -373,3 +373,40 @@ class TestVespaConfigStoreListAllConfigs:
                 service="ver_probe",
                 config_key="versioned",
             )
+
+
+class TestPersistentSession:
+    def test_store_ops_create_no_new_sync_sessions(self, vespa_config_store):
+        """Config CRUD reuses the store's persistent session — pyvespa's
+        default per-op VespaSync costs a fresh TCP(+TLS) handshake per
+        operation, multiplied across every config cache-miss read and
+        metadata write."""
+        from unittest.mock import patch
+
+        from vespa.application import VespaSync
+
+        store = vespa_config_store
+        with patch("vespa.application.VespaSync", wraps=VespaSync) as spy:
+            store.set_config(
+                tenant_id="cs_sess:cs_sess",
+                scope=ConfigScope.SYSTEM,
+                service="svc",
+                config_key="sess_k",
+                config_value={"v": 1},
+            )
+            entry = store.get_config(
+                tenant_id="cs_sess:cs_sess",
+                scope=ConfigScope.SYSTEM,
+                service="svc",
+                config_key="sess_k",
+            )
+            history = store.get_config_history(
+                tenant_id="cs_sess:cs_sess",
+                scope=ConfigScope.SYSTEM,
+                service="svc",
+                config_key="sess_k",
+            )
+
+        assert entry is not None and entry.config_value == {"v": 1}
+        assert len(history) == 1
+        assert spy.call_count == 0

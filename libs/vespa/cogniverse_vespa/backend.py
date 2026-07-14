@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend
 
-from ._vespa_factory import make_vespa_app
+from ._vespa_factory import make_persistent_vespa_ops
 from .config_utils import calculate_config_port
 from .ingestion_client import VespaPyClient
 from .search_backend import VespaSearchBackend
@@ -1312,7 +1312,13 @@ class VespaBackend(Backend):
         change so repeated metadata calls reuse one connection pool."""
         key = (self._url, self._port)
         if self._metadata_app is None or self._metadata_app_key != key:
-            self._metadata_app = make_vespa_app(url=self._url, port=self._port)
+            if self._metadata_app is not None:
+                self._metadata_app.close()
+            # Persistent session: metadata CRUD runs per ingest/deploy —
+            # per-op VespaSync handshakes multiplied every operation.
+            self._metadata_app = make_persistent_vespa_ops(
+                url=self._url, port=self._port
+            )
             self._metadata_app_key = key
         return self._metadata_app
 
@@ -1510,6 +1516,11 @@ class VespaBackend(Backend):
         for schema_name, client in self._async_ingestion_clients.items():
             client.close()
             logger.info(f"Closed async Vespa client for schema: {schema_name}")
+
+        if self._metadata_app is not None:
+            self._metadata_app.close()
+            self._metadata_app = None
+            self._metadata_app_key = None
 
         logger.info("Closed all Vespa backend connections")
 
