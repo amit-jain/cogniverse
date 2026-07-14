@@ -55,24 +55,22 @@ class TestMetricWindow:
 
     @pytest.mark.unit
     def test_custom_window_size(self):
-        """Test custom window size."""
+        """A custom window_size must size the underlying deque."""
         window = MetricWindow(window_size=50)
 
         assert window.window_size == 50
-        # Note: The default factory creates a deque with maxlen=100 by default
-        # The implementation has a bug - window_size doesn't affect deque maxlen
+        assert window.values.maxlen == 50
 
     @pytest.mark.unit
-    def test_add_values(self):
-        """Test adding values to window."""
+    def test_add_values_respects_window_size(self):
+        """The window must retain at most window_size most-recent values."""
         window = MetricWindow(window_size=5)
 
-        # Add values
         for i in range(10):
             window.add(float(i))
 
-        # Should only keep last 100 values (due to default maxlen)
-        assert len(window.values) == 10
+        assert len(window.values) == 5
+        assert list(window.values) == [5.0, 6.0, 7.0, 8.0, 9.0]
 
     @pytest.mark.unit
     def test_get_mean_empty(self):
