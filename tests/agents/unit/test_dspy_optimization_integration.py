@@ -508,5 +508,92 @@ class TestMainCLIOrchestration:
         pipeline.save_optimized_prompts.assert_not_called()
 
 
+class TestTeacherLMWiring:
+    """The configured teacher endpoint must drive the bootstrap teacher.
+
+    config.json ships a distinct llm_config.teacher endpoint for DSPy
+    optimization; leaving teacher_settings empty makes the student model
+    teach itself and silently ignores the configured teacher.
+    """
+
+    def _endpoints(self):
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        primary = LLMEndpointConfig(
+            model="hosted_vllm/org/Student", api_base="http://student:8000/v1"
+        )
+        teacher = LLMEndpointConfig(
+            model="hosted_vllm/org/Teacher", api_base="http://teacher:9000/v1"
+        )
+        return primary, teacher
+
+    def test_initialize_with_teacher_populates_teacher_settings(self):
+        from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+            DSPyAgentPromptOptimizer,
+        )
+
+        optimizer = DSPyAgentPromptOptimizer()
+        primary, teacher = self._endpoints()
+
+        assert (
+            optimizer.initialize_language_model(
+                primary, teacher_endpoint_config=teacher
+            )
+            is True
+        )
+        assert optimizer.lm.model == "hosted_vllm/org/Student"
+        assert optimizer.teacher_lm.model == "hosted_vllm/org/Teacher"
+        assert optimizer.teacher_lm.kwargs["api_base"] == "http://teacher:9000/v1"
+        assert optimizer.optimization_settings["teacher_settings"] == {
+            "lm": optimizer.teacher_lm
+        }
+
+    def test_initialize_without_teacher_keeps_self_teaching(self):
+        from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+            DSPyAgentPromptOptimizer,
+        )
+
+        optimizer = DSPyAgentPromptOptimizer()
+        primary, _ = self._endpoints()
+
+        assert optimizer.initialize_language_model(primary) is True
+        assert optimizer.teacher_lm is None
+        assert optimizer.optimization_settings["teacher_settings"] == {}
+
+    def test_pipeline_optimize_module_passes_teacher_settings(self):
+        """The pipeline's BootstrapFewShot must receive the optimizer's
+        teacher_settings — DSPy runs the bootstrap teacher inside
+        dspy.context(**teacher_settings)."""
+        from unittest.mock import MagicMock, patch
+
+        import dspy
+
+        from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+            DSPyAgentOptimizerPipeline,
+            DSPyAgentPromptOptimizer,
+        )
+
+        optimizer = DSPyAgentPromptOptimizer()
+        primary, teacher = self._endpoints()
+        assert optimizer.initialize_language_model(
+            primary, teacher_endpoint_config=teacher
+        )
+
+        pipeline = DSPyAgentOptimizerPipeline(optimizer)
+        pipeline.initialize_modules()
+        module_name = next(iter(pipeline.modules))
+
+        with patch(
+            "cogniverse_agents.optimizer.dspy_agent_optimizer.BootstrapFewShot"
+        ) as bootstrap_cls:
+            bootstrap_cls.return_value.compile.return_value = MagicMock(
+                spec=dspy.Module
+            )
+            pipeline.optimize_module(module_name, [MagicMock(spec=dspy.Example)])
+
+        kwargs = bootstrap_cls.call_args.kwargs
+        assert kwargs["teacher_settings"] == {"lm": optimizer.teacher_lm}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

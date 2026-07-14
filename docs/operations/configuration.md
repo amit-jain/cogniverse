@@ -132,7 +132,7 @@ primary = LLMEndpointConfig(
     num_retries=1,            # total attempts per call (default: 1)
 )
 
-# Teacher LLM — used only during DSPy MIPROv2 optimization
+# Teacher LLM — used only during DSPy optimization (BootstrapFewShot's teacher_settings)
 teacher = LLMEndpointConfig(
     model="openai/cyankiwi/Qwen3.6-27B-AWQ-INT4",
     api_base="http://localhost:29011/v1",

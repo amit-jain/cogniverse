@@ -44,6 +44,7 @@ class DSPyAgentPromptOptimizer:
         self.config = config or {}
         self.optimized_prompts = {}
         self.lm = None
+        self.teacher_lm = None
 
         self.optimization_settings = {
             "max_bootstrapped_demos": 8,
@@ -61,11 +62,16 @@ class DSPyAgentPromptOptimizer:
     def initialize_language_model(
         self,
         endpoint_config: LLMEndpointConfig,
+        teacher_endpoint_config: Optional[LLMEndpointConfig] = None,
     ):
-        """Initialize DSPy language model via centralized factory.
+        """Initialize DSPy language models via centralized factory.
 
         Args:
-            endpoint_config: LLM endpoint configuration from centralized llm_config.
+            endpoint_config: Student LM endpoint from centralized llm_config.
+            teacher_endpoint_config: Optional teacher endpoint
+                (``llm_config.resolve_teacher()``). When given, the bootstrap
+                teacher runs on this LM via ``teacher_settings`` instead of
+                the student teaching itself.
 
         Returns:
             True if initialization succeeded, False otherwise.
@@ -76,6 +82,14 @@ class DSPyAgentPromptOptimizer:
                 f"Initialized DSPy language model: {endpoint_config.model} "
                 f"at {endpoint_config.api_base}"
             )
+            if teacher_endpoint_config is not None:
+                self.teacher_lm = create_dspy_lm(teacher_endpoint_config)
+                self.optimization_settings["teacher_settings"] = {"lm": self.teacher_lm}
+                logger.info(
+                    f"Initialized DSPy teacher model: "
+                    f"{teacher_endpoint_config.model} "
+                    f"at {teacher_endpoint_config.api_base}"
+                )
             return True
 
         except Exception as e:
@@ -430,6 +444,9 @@ class DSPyAgentOptimizerPipeline:
                 "max_labeled_demos"
             ],
             "max_rounds": self.optimizer.optimization_settings["max_rounds"],
+            "teacher_settings": self.optimizer.optimization_settings[
+                "teacher_settings"
+            ],
             # 'num_candidate_programs' is not supported in current DSPy version
         }
 
@@ -720,7 +737,9 @@ async def main():
     llm_config = config_utils.get_llm_config()
     endpoint_config = llm_config.primary
 
-    if not optimizer.initialize_language_model(endpoint_config):
+    if not optimizer.initialize_language_model(
+        endpoint_config, teacher_endpoint_config=llm_config.resolve_teacher()
+    ):
         print("Failed to initialize language model")
         return
 

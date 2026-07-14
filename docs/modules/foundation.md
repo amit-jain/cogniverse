@@ -340,7 +340,7 @@ llm_config = LLMConfig(
 resolved = llm_config.resolve("summarizer_agent")
 ```
 
-`primary` is the global default for all DSPy modules and also the student model during optimization. `teacher` is used by DSPy optimizers (MIPROv2, GEPA). `overrides` holds per-component partial dicts — only differing fields need to be specified; `resolve(component)` merges them onto `primary`.
+`primary` is the global default for all DSPy modules and also the student model during optimization. `teacher` is the bootstrap-teacher endpoint for DSPy optimization: `resolve_teacher()` returns an isolated copy that the optimizers hand to `BootstrapFewShot(teacher_settings={"lm": ...})`, so demo generation runs on the teacher model instead of the student teaching itself. `overrides` holds per-component partial dicts — only differing fields need to be specified; `resolve(component)` merges them field-by-field onto a copy of `primary` (never through `to_dict()`, which masks `api_key` — the resolved endpoint keeps the real key).
 
 `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM` (`cogniverse_foundation.config.llm_factory`) is the single chokepoint every `dspy.LM()` construction in the codebase goes through. It wires `api_base`/`api_key`/`temperature`/`max_tokens`/`timeout`/`num_retries` onto the LM, merges `seed` into `extra_body`, forwards `extra_headers`, and substitutes a placeholder `api_key` when `api_base` is set but no key is configured (self-hosted OAI-compat servers ignore it). Raises `ValueError` if `config.model` is empty.
 

@@ -213,3 +213,96 @@ class TestFastFailTimeout:
         )
         assert rt.request_timeout == 45.0
         assert rt.num_retries == 2
+
+
+def _llm_config():
+    from cogniverse_foundation.config.unified_config import LLMConfig
+
+    return LLMConfig(
+        primary=LLMEndpointConfig(
+            model="hosted_vllm/org/Primary",
+            api_base="http://primary:8000/v1",
+            api_key="sk-real-primary-key",
+            temperature=0.1,
+            max_tokens=1000,
+        ),
+        teacher=LLMEndpointConfig(
+            model="openai/gpt-teacher",
+            api_base="http://teacher:9000/v1",
+            temperature=0.7,
+            max_tokens=2048,
+        ),
+        overrides={
+            "summarizer_agent": {
+                "model": "hosted_vllm/org/Alt",
+                "temperature": 0.3,
+            },
+            "null_component": None,
+        },
+    )
+
+
+class TestLLMConfigResolve:
+    """resolve() merges per-component overrides on the real dataclass.
+
+    The merge must never route through to_dict() — it masks api_key to
+    "***", and a resolved endpoint's api_key goes out as the bearer token,
+    so the real key must survive resolution for overridden components.
+    """
+
+    def test_override_preserves_real_api_key(self):
+        resolved = _llm_config().resolve("summarizer_agent")
+        assert resolved.api_key == "sk-real-primary-key"
+        assert resolved.model == "hosted_vllm/org/Alt"
+        assert resolved.temperature == 0.3
+        assert resolved.max_tokens == 1000
+        assert resolved.api_base == "http://primary:8000/v1"
+
+    def test_override_can_set_its_own_api_key(self):
+        cfg = _llm_config()
+        cfg.overrides["summarizer_agent"]["api_key"] = "sk-other"
+        assert cfg.resolve("summarizer_agent").api_key == "sk-other"
+
+    def test_resolved_key_reaches_dspy_lm(self):
+        lm = create_dspy_lm(_llm_config().resolve("summarizer_agent"))
+        assert lm.kwargs["api_key"] == "sk-real-primary-key"
+        assert lm.model == "hosted_vllm/org/Alt"
+
+    def test_no_override_returns_isolated_copy_with_key(self):
+        cfg = _llm_config()
+        resolved = cfg.resolve("unknown_component")
+        assert resolved.api_key == "sk-real-primary-key"
+        assert resolved.model == "hosted_vllm/org/Primary"
+        resolved.model = "mutated"
+        assert cfg.primary.model == "hosted_vllm/org/Primary"
+
+    def test_none_override_treated_as_primary(self):
+        assert _llm_config().resolve("null_component").api_key == (
+            "sk-real-primary-key"
+        )
+
+    def test_override_result_is_isolated_from_primary(self):
+        cfg = _llm_config()
+        resolved = cfg.resolve("summarizer_agent")
+        resolved.api_key = "mutated"
+        assert cfg.primary.api_key == "sk-real-primary-key"
+
+    def test_to_dict_still_masks_api_key(self):
+        assert _llm_config().primary.to_dict()["api_key"] == "***"
+
+
+class TestLLMConfigResolveTeacher:
+    """resolve_teacher() hands optimization the configured teacher endpoint."""
+
+    def test_returns_teacher_endpoint_exactly(self):
+        teacher = _llm_config().resolve_teacher()
+        assert teacher.model == "openai/gpt-teacher"
+        assert teacher.api_base == "http://teacher:9000/v1"
+        assert teacher.temperature == 0.7
+        assert teacher.max_tokens == 2048
+
+    def test_returns_isolated_copy(self):
+        cfg = _llm_config()
+        teacher = cfg.resolve_teacher()
+        teacher.model = "mutated"
+        assert cfg.teacher.model == "openai/gpt-teacher"
