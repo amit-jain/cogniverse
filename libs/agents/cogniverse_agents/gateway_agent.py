@@ -168,6 +168,9 @@ class GatewayDeps(AgentDeps):
     fast_path_confidence_threshold: float = Field(
         0.4, description="Minimum confidence for simple (fast-path) routing"
     )
+    enable_fast_path: bool = Field(
+        True, description="When False, every query is routed through orchestration"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +426,11 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         - Query contains analysis/comparison/synthesis verbs
         - Query contains multi-step markers ("then", "after that", "first...next")
         - Query has multiple clauses (3+ commas or 2+ "and")
+        - The fast path is disabled for this tenant (enable_fast_path=False)
         """
+        # Fast path disabled for this tenant → orchestrate every query.
+        if not self.deps.enable_fast_path:
+            return True
         # No modality signal at all → can't fast-path → orchestrate. A query
         # GLiNER missed but a modality keyword caught arrives here with
         # KEYWORD_MODALITY_CONFIDENCE (>= threshold) and stays simple.

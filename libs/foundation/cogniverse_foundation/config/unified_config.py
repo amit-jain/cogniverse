@@ -432,7 +432,8 @@ class RoutingConfigUnified:
     # the schema for forward-compat but produce no dispatch-time behavior change.
     routing_mode: str = "tiered"
 
-    # Surfaced in the dashboard config form but not yet read by dispatch logic.
+    # Seeded into GatewayDeps by the dispatcher; when False the gateway routes
+    # every query through orchestration (skips the fast path).
     enable_fast_path: bool = True
     # Default matches GatewayDeps.fast_path_confidence_threshold so seeding an
     # untouched tenant's config into the gateway is a no-op.

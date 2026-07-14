@@ -201,8 +201,9 @@ class RoutingConfigUnified:
     # tenant_id is REQUIRED — omitting it raises ValueError via __post_init__
     tenant_id: Optional[str] = None  # runtime-required
 
-    # Routing mode. Only "tiered" is meaningful. enable_fast_path is surfaced in
-    # the dashboard config form but is not read by dispatch logic today.
+    # Routing mode. Only "tiered" is meaningful. enable_fast_path is seeded into
+    # GatewayDeps by the dispatcher; when False the gateway routes every query
+    # through orchestration (skips the fast path).
     routing_mode: str = "tiered"
     enable_fast_path: bool = True
 
@@ -851,9 +852,9 @@ config.min_samples_for_optimization = 100
 config.gliner_device = "cuda"
 ```
 
-`enable_fast_path` is part of the persisted schema (editable via the dashboard's config-management tab and
-round-tripped by `to_dict`/`from_dict`) but is **not read by any routing dispatch logic** today. Do not rely
-on it to change runtime behavior.
+`enable_fast_path` is editable via the dashboard's config-management tab, round-tripped by
+`to_dict`/`from_dict`, and seeded into `GatewayDeps` by the dispatcher: when `False`, `GatewayAgent._is_complex`
+returns `True` for every query, so the fast path is skipped and everything is orchestrated.
 
 ### Error Handling
 
@@ -989,5 +990,4 @@ For detailed information on related modules:
 - There is no in-process per-modality cache, GRPO loop, or confidence calibrator in this module today
 - Routing/orchestration quality improves via an offline annotation + XGBoost + DSPy-recompilation pipeline, not
   online reinforcement learning
-- `FusionBenefitModel` and the `enable_fast_path` config flag exist in the schema but have no live consumer —
-  verify before relying on them
+- `FusionBenefitModel` exists in the schema but has no live consumer — verify before relying on it
