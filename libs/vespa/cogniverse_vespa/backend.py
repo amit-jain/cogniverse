@@ -18,14 +18,8 @@ from .ingestion_client import VespaPyClient
 from .search_backend import VespaSearchBackend
 from .vespa_schema_manager import DEPLOY_REQUEST_TIMEOUT_S, VespaSchemaManager
 
-# Check if async ingestion client is available (optional dependency)
-try:
-    from .async_ingestion_client import AsyncVespaBackendAdapter  # noqa: F401
-
-    ASYNC_AVAILABLE = True
-except ImportError:
-    ASYNC_AVAILABLE = False
-
+# Async ingestion uses pyvespa's built-in feed_async_iterable (an HTTP/2 async
+# feeder callable from sync code) — no separate adapter module is needed.
 logger = logging.getLogger(__name__)
 
 
@@ -141,12 +135,6 @@ class VespaBackend(Backend):
         # Store merged config for accessing profiles and other settings
         self.config = merged_config
 
-        if merged_config.get("use_async_ingestion", False) and not ASYNC_AVAILABLE:
-            raise ImportError(
-                "Async ingestion requested (use_async_ingestion=True) but "
-                "async_ingestion_client module is not available. "
-                "Ensure cogniverse_vespa is installed with async extras."
-            )
         self.use_async_ingestion = merged_config.get("use_async_ingestion", False)
 
         # Allow config to override URL/port from BackendConfig
@@ -278,6 +266,7 @@ class VespaBackend(Backend):
                 "port": self._port,
                 "profile_config": profile_config,  # Pass only the specific profile config
                 "schema_loader": self._schema_loader_instance,  # Pass schema_loader for StrategyAwareProcessor
+                "use_async_ingestion": self.use_async_ingestion,
             }
 
             client = VespaPyClient(config=client_config, logger=logger)
