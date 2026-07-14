@@ -1373,11 +1373,11 @@ class CacheBackend(ABC):
 Manages multiple cache backends with tiered caching:
 
 ```python
-from cogniverse_core.common.cache import CacheManager, CacheConfig, BackendConfig
+from cogniverse_core.common.cache import CacheManager, CacheConfig
 
 config = CacheConfig(
     backends=[
-        BackendConfig(backend_type="structured_filesystem", priority=0),
+        {"backend_type": "structured_filesystem", "priority": 0},
     ],
     default_ttl=3600,
     enable_compression=True,

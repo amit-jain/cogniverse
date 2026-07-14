@@ -140,12 +140,16 @@ stats = await manager.get_stats()
 - Automatic tier promotion on cache hits
 - Aggregated statistics across all backends
 
-`CacheConfig.enable_compression` and `enable_stats` are accepted fields but are not
-currently read by `CacheManager` or either backend — no backend applies compression
-today. `serialization_format` on `CacheConfig` itself is likewise unused by
-`CacheManager`; each backend's own `serialization_format` (set per-backend in its
-`CONFIG_CLASS`, e.g. `StructuredFilesystemConfig.serialization_format`) is what
-actually controls pickle/json/msgpack encoding.
+`CacheConfig.enable_stats` gates statistics collection: when `False`, `CacheManager`
+stops incrementing its hit/miss/set/delete counters and `get_stats()` returns
+`{"enabled": False}`. `CacheConfig.enable_compression` and `serialization_format` are
+both propagated to each backend that does not override them (see
+`_initialize_backends`) — a backend's own `CONFIG_CLASS` field (e.g.
+`StructuredFilesystemConfig.enable_compression` / `.serialization_format`) is what it
+actually reads at runtime, and wins over the manager-level value when the backend's
+own config dict sets it explicitly. `enable_compression` controls whether `_serialize`
+gzip-compresses the payload; `serialization_format` selects pickle/json/msgpack
+encoding.
 
 ## Multi-Tenant Isolation
 
@@ -440,7 +444,7 @@ stats = await manager.get_stats()
 2. **Set appropriate TTLs**: Match TTL to data freshness requirements
 3. **Monitor hit rates**: Low hit rates may indicate cache sizing issues
 4. **Enable TTL enforcement**: Set `enable_ttl: true` and `cleanup_on_startup: true` to prevent disk exhaustion
-5. **Choose serialization per backend**: Set each backend's own `serialization_format` (`pickle` for speed, `json` for human-readable debugging, `msgpack` for compact binary) — `CacheConfig.enable_compression` is not currently applied by any backend
+5. **Choose serialization and compression deliberately**: `serialization_format` (`pickle` for speed, `json` for human-readable debugging, `msgpack` for compact binary) and `enable_compression` (gzip) both default from the top-level `CacheConfig` but can be overridden per backend — set them directly on a backend's config dict when one tier needs different tradeoffs than the rest
 6. **Bound tenant instance caches**: For `TenantLRUCache` usages, size `capacity` to the expected concurrent-tenant count; pass `on_evict` whenever the cached object holds a native resource (Vespa client, gRPC channel) that needs explicit cleanup
 
 ## Backend Registry

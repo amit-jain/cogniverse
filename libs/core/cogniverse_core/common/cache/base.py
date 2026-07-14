@@ -96,6 +96,11 @@ class CacheManager:
         self._stats = {"hits": 0, "misses": 0, "sets": 0, "deletes": 0}
         self._initialize_backends()
 
+    def _bump(self, key: str) -> None:
+        """Increment a counter, honoring config.enable_stats."""
+        if self.config.enable_stats:
+            self._stats[key] += 1
+
     def _initialize_backends(self):
         """Initialize cache backends from config"""
         # Import backends to ensure they're registered
@@ -135,14 +140,14 @@ class CacheManager:
             try:
                 value = await backend.get(key)
                 if value is not None:
-                    self._stats["hits"] += 1
+                    self._bump("hits")
                     # Populate higher priority tiers
                     await self._populate_higher_tiers(key, value, i)
                     return value
             except Exception as e:
                 logger.warning(f"Error getting from {backend.__class__.__name__}: {e}")
 
-        self._stats["misses"] += 1
+        self._bump("misses")
         return None
 
     async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
@@ -160,7 +165,7 @@ class CacheManager:
                 results.append(False)
 
         if any(results):
-            self._stats["sets"] += 1
+            self._bump("sets")
 
         return any(results)  # Success if at least one backend succeeded
 
@@ -176,7 +181,7 @@ class CacheManager:
                 results.append(False)
 
         if any(results):
-            self._stats["deletes"] += 1
+            self._bump("deletes")
 
         return any(results)
 
@@ -194,6 +199,8 @@ class CacheManager:
 
     async def get_stats(self) -> Dict[str, Any]:
         """Get aggregated statistics"""
+        if not self.config.enable_stats:
+            return {"enabled": False}
         stats = {"manager": self._stats.copy(), "backends": {}}
 
         # Aggregate size from backends
