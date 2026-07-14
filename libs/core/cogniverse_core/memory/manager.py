@@ -882,8 +882,10 @@ class Mem0MemoryManager:
         ``top_k`` embedder round-trips just to stamp a timestamp. The
         vector store still owns schema-name routing and ``metadata_``
         serialization, and ``vector=None`` leaves the stored embedding
-        untouched. Hits stamped within the last
-        ``_LAST_ACCESSED_BUMP_INTERVAL_S`` seconds are skipped entirely.
+        untouched. All eligible hits go out in ONE ``update_many`` feed
+        (falling back to per-hit ``update`` for stores without it). Hits
+        stamped within the last ``_LAST_ACCESSED_BUMP_INTERVAL_S`` seconds
+        are skipped entirely.
         """
         if not hits:
             return
@@ -893,8 +895,13 @@ class Mem0MemoryManager:
         now_iso = now.isoformat()
         memory = self.memory
         store = getattr(memory, "vector_store", None) if memory is not None else None
-        if store is None or not hasattr(store, "update"):
+        if store is None:
             return
+        has_batch = hasattr(store, "update_many")
+        if not has_batch and not hasattr(store, "update"):
+            return
+
+        pending: List[tuple] = []
         for hit in hits:
             mid = hit.get("id")
             if not mid:
@@ -916,15 +923,26 @@ class Mem0MemoryManager:
                     except ValueError:
                         pass
                 metadata["last_accessed"] = now_iso
-                store.update(
-                    vector_id=mid,
-                    vector=None,
-                    payload={"data": hit.get("memory", ""), "metadata": metadata},
-                )
+                payload = {"data": hit.get("memory", ""), "metadata": metadata}
+                if has_batch:
+                    pending.append((mid, None, payload))
+                else:
+                    store.update(vector_id=mid, vector=None, payload=payload)
             except Exception as exc:
                 logger.debug(
                     "last_accessed bump failed for memory_id=%s: %s",
                     mid,
+                    exc,
+                )
+        if pending:
+            try:
+                # One feed for all hits — per-hit updates cost top_k
+                # sequential round-trips per search.
+                store.update_many(pending)
+            except Exception as exc:
+                logger.debug(
+                    "last_accessed batch bump failed for %d memories: %s",
+                    len(pending),
                     exc,
                 )
 

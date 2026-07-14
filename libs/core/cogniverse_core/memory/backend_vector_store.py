@@ -372,6 +372,57 @@ class BackendVectorStore(VectorStoreBase):
             logger.error(f"Failed to delete {vector_id}: {e}")
             raise
 
+    def _build_update_document(
+        self,
+        vector_id: str,
+        vector: Optional[List[float]],
+        payload: Optional[Dict[str, Any]],
+    ):
+        """Build the partial-update Document update()/update_many() feed.
+
+        vector=None omits the embedding field so the stored tensor survives
+        the update untouched.
+        """
+        import numpy as np
+
+        from cogniverse_sdk.document import Document
+
+        content = payload.get("data", "") if payload else ""
+
+        metadata = {}
+        if payload:
+            if "user_id" in payload:
+                metadata["user_id"] = payload["user_id"]
+            if "agent_id" in payload:
+                metadata["agent_id"] = payload["agent_id"]
+            caller_metadata = _extract_caller_metadata(payload)
+            if caller_metadata:
+                metadata["metadata_"] = json.dumps(caller_metadata)
+            if "created_at" in payload:
+                raw_ca = payload["created_at"]
+                if isinstance(raw_ca, str):
+                    try:
+                        from datetime import datetime
+
+                        dt = datetime.fromisoformat(raw_ca.replace("Z", "+00:00"))
+                        metadata["created_at"] = int(dt.timestamp())
+                    except ValueError:
+                        metadata["created_at"] = int(time.time())
+                else:
+                    metadata["created_at"] = raw_ca
+
+        doc = Document(
+            id=vector_id,
+            text_content=content,
+            metadata=metadata,
+        )
+
+        if vector is not None:
+            doc.add_embedding(
+                "embedding", np.array(vector), {"type": "float", "raw": True}
+            )
+        return doc
+
     def update(
         self,
         vector_id: str,
@@ -383,54 +434,49 @@ class BackendVectorStore(VectorStoreBase):
             return
 
         try:
-            # VespaBackend.update_document() takes a Document object
-            import numpy as np
-
-            from cogniverse_sdk.document import Document
-
-            # Build updated document
-            content = payload.get("data", "") if payload else ""
-
-            metadata = {}
-            if payload:
-                if "user_id" in payload:
-                    metadata["user_id"] = payload["user_id"]
-                if "agent_id" in payload:
-                    metadata["agent_id"] = payload["agent_id"]
-                caller_metadata = _extract_caller_metadata(payload)
-                if caller_metadata:
-                    metadata["metadata_"] = json.dumps(caller_metadata)
-                if "created_at" in payload:
-                    raw_ca = payload["created_at"]
-                    if isinstance(raw_ca, str):
-                        try:
-                            from datetime import datetime
-
-                            dt = datetime.fromisoformat(raw_ca.replace("Z", "+00:00"))
-                            metadata["created_at"] = int(dt.timestamp())
-                        except ValueError:
-                            metadata["created_at"] = int(time.time())
-                    else:
-                        metadata["created_at"] = raw_ca
-
-            doc = Document(
-                id=vector_id,
-                text_content=content,
-                metadata=metadata,
-            )
-
-            # Add embedding using the proper method (same as insert)
-            if vector is not None:
-                doc.add_embedding(
-                    "embedding", np.array(vector), {"type": "float", "raw": True}
-                )
-
+            doc = self._build_update_document(vector_id, vector, payload)
             self.backend.update_document(
                 vector_id, doc, schema_name=(self.profile or self.collection_name)
             )
             logger.debug(f"Updated memory {vector_id}")
         except Exception as e:
             logger.error(f"Failed to update {vector_id}: {e}")
+            raise
+
+    def update_many(
+        self,
+        items: List[tuple],
+    ) -> None:
+        """Batched partial update: one backend feed for N documents.
+
+        Items are ``(vector_id, vector, payload)`` triples with update()
+        semantics. The per-item update() path costs one HTTP round-trip per
+        document; recall's last_accessed bump stamps top_k hits per search,
+        which this collapses into a single feed.
+        """
+        documents = []
+        for vector_id, vector, payload in items:
+            if not vector and not payload:
+                continue
+            documents.append(self._build_update_document(vector_id, vector, payload))
+        if not documents:
+            return
+
+        try:
+            result = self.backend.ingest_documents(
+                documents,
+                schema_name=(self.profile or self.collection_name),
+                operation_type="update",
+            )
+            success = (result or {}).get("success_count", 0)
+            if success < len(documents):
+                raise RuntimeError(
+                    f"batch update persisted only {success}/{len(documents)} "
+                    f"documents: {(result or {}).get('failed_docs')}"
+                )
+            logger.debug(f"Batch-updated {len(documents)} memories")
+        except Exception as e:
+            logger.error(f"Failed to batch-update {len(documents)} memories: {e}")
             raise
 
     def get(self, vector_id: str) -> Optional[BackendRecord]:

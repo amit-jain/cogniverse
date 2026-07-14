@@ -732,7 +732,10 @@ stat = locator.stat("https://example.com/clip.mp4")     # MediaStat(size, etag, 
 
 `MediaCache` (`common/media/cache.py`) is a content-addressed, tenant-scoped
 local cache with atomic staged writes (`os.replace`) and LRU eviction by
-`atime` once `max_bytes` is exceeded.
+`atime` once `max_bytes` is exceeded. A running byte total keeps under-budget
+puts walk-free; the tree is walked only on the first put, when over budget,
+or when a TTL sweep is due (at most once per TTL period, so an expired entry
+lingers at most one extra period).
 
 ---
 
