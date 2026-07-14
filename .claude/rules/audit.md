@@ -282,6 +282,62 @@ grep -rnE '(ttl|expire|_timeout_s|compress|enable_stats|serialization_format|_ce
 grep -rnP 'include_router\(' libs/ --include="*.py" | grep -viE 'dependencies\s*=' \
   | grep -iE 'admin|tenant|delete|ingest|graph|events'
 # then confirm NO app-level auth middleware/dependency guards the app
+
+# Store class with MIXED read-failure contracts — singular get_X hardened to
+# raise on backend failure while list_X/get_X_history in the SAME file still
+# flatten to []/None (12th audit: config_store get_config_history/list_configs/
+# list_all_configs + adapter_store.list_adapters vs their hardened get_
+# siblings — a Vespa outage reads as "no schemas registered" to schema_registry
+# and silently reverts finetuned LoRA adapters to the base model; also
+# backend.query_metadata_documents, whose []-on-400 contract a unit test
+# locks in while test_store_read_outage_raises pins the opposite for get_).
+grep -rlP 'except Exception' libs/ --include="*.py" | while read f; do \
+  grep -qP 'read FAILED|raise so callers|raise rather than mask' "$f" \
+  && grep -qP 'return \[\]$|return None$' "$f" && echo "MIXED raise/flatten: $f"; done
+
+# Escape helper the `def _escape` hunt misses — short names and lambdas
+# (12th audit: telemetry provider's nested `_esc` was found only by manual
+# read; verify each escapes BOTH backslash and the quote char it wraps with).
+grep -rnP 'def _esc\b|_esc\s*=\s*lambda|def _quote\b' libs/ --include="*.py"
+
+# Boolean capability toggle with zero behavior-changing readers — the ttl/
+# compress/timeout knob regex above misses bool toggles (12th audit:
+# CacheConfig.enable_stats defined, stats always collected regardless).
+grep -rnP '\b(enable|disable)_\w+\s*:\s*bool\s*=' libs/ --include="*.py"
+# then for each, grep the owning package for a read that changes behavior
+
+# Readiness/convergence probe that times out and "proceeds anyway" instead of
+# raising — deploy/startup reports success for a resource that never became
+# ready (12th audit: _wait_for_schema_convergence warns "proceeding anyway"
+# and deploy_schemas returns True for a schema Vespa never activated;
+# reproduced under sweep load where the 6 lifecycle tests fail together and
+# all pass in isolation. Sibling: runtime lifespan "proceeding anyway").
+grep -rniP 'proceeding anyway|continuing anyway|proceed despite' libs/ --include="*.py"
+
+# Vespa query response consumed via .hits with no root.errors / coverage
+# check — soft timeouts arrive as HTTP 200 + root.errors + partial/empty
+# children, so degraded queries return [] AND get recorded as SUCCESS
+# (12th audit: search_backend._process_results checks only hasattr(response,
+# "hits") then record_search(True); the convergence probe in backend.py DOES
+# check root.errors — the search path diverged from its own sibling).
+grep -rnP 'response\.hits|\.get\("root", \{\}\)' libs/ --include="*.py"
+# then verify an errors/coverage.degraded check inside the consuming function
+
+# Test module importing a session fixture directly (12th audit remediation) —
+# pytest treats a module-level import as a SECOND FixtureDef with its own
+# session cache, silently booting a duplicate infra container mid-sweep;
+# combined with a first-wins process singleton (_shared_schema_registry) this
+# cross-wired schema deploys across two Vespa containers and produced 6
+# chronic lifecycle failures. Fixture re-exports belong in conftest.py ONLY.
+grep -rn "from tests.conftest import" tests/ --include="*.py" | grep -v "conftest.py:"
+
+# First-wins process-global singleton handed to consumers with DIFFERENT
+# configuration — the seed captures the first consumer's binding (endpoint,
+# store, tenant) and every later consumer inherits it regardless of its own
+# config (12th audit: BackendRegistry._shared_schema_registry; fixed via
+# endpoint-scoped reuse). For each hit, check the seed's binding is compared
+# against the requesting consumer's config before reuse.
+grep -rnP 'if cls\._\w+ is None.*and|cls\._shared\w+ = ' libs/ --include="*.py" | grep -i "shared\|singleton\|global"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
