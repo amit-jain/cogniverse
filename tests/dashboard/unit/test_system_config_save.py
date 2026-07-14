@@ -135,3 +135,22 @@ def test_save_preserves_unedited_infra_fields():
     assert reloaded.minio_endpoint == "minio.svc:9000"
     assert reloaded.agent_registry_url == "http://runtime.svc:8000"
     assert reloaded.inference_service_urls == {"denseon": "http://denseon.svc:8002"}
+
+
+def test_application_name_survives_config_store_round_trip():
+    """application_name is the Vespa application-package name. to_dict wrote it
+    but from_dict dropped it, so a custom value silently reverted to
+    'cogniverse' on the next cold load (a fresh process/replica)."""
+    store = _DictConfigStore()
+    ConfigManager(store=store).set_system_config(
+        SystemConfig(application_name="acme-cogniverse")
+    )
+
+    # A fresh manager reads cold from the store via from_dict (the writing
+    # manager's instance cache would otherwise mask the serialization gap).
+    reloaded = ConfigManager(store=store).get_system_config()
+    assert reloaded.application_name == "acme-cogniverse"
+
+
+def test_application_name_defaults_when_absent():
+    assert SystemConfig.from_dict({}).application_name == "cogniverse"
