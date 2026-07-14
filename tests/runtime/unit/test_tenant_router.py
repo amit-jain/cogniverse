@@ -292,6 +292,35 @@ class TestListMemories:
         assert resp.status_code == 200
         assert mgr.get_all_memories.call_count >= 2
 
+    def test_agent_name_scopes_list_to_that_agent(self, tenant_client):
+        """agent_name filters to one agent's mem0 store (agent_id=agent_name),
+        instead of iterating the default namespaces — so the returned count is
+        actually agent-scoped, matching the gateway's '(agent=X)' reply."""
+        client, _ = tenant_client
+        mgr = self._mock_mgr([{"id": "m1", "memory": "learned", "metadata": {}}])
+
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
+            resp = client.get("/acme/memories?agent_name=document_agent")
+
+        assert resp.status_code == 200
+        assert mgr.get_all_memories.call_count == 1
+        assert mgr.get_all_memories.call_args.kwargs["agent_name"] == "document_agent"
+
+    def test_agent_name_with_query_scopes_search(self, tenant_client):
+        client, _ = tenant_client
+        mgr = self._mock_mgr([{"id": "m1", "memory": "x", "metadata": {}}])
+
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
+            resp = client.get("/acme/memories?agent_name=search_agent&q=cats")
+
+        assert resp.status_code == 200
+        assert mgr.search_memory.call_count == 1
+        assert mgr.search_memory.call_args.kwargs["agent_name"] == "search_agent"
+
     def test_type_filter_restricts_namespace(self, tenant_client):
         client, _ = tenant_client
         raw = [{"id": "s1", "memory": "Use chunk retrieval", "metadata": {}}]

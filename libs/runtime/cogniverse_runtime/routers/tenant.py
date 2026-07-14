@@ -284,6 +284,10 @@ async def list_memories(
     type: Optional[str] = Query(
         default=None, description="Filter by type: preference, strategy"
     ),
+    agent_name: Optional[str] = Query(
+        default=None,
+        description="Scope to one agent's memories (its mem0 agent_id)",
+    ),
     category: Optional[str] = Query(default=None, description="Filter by category"),
     limit: int = Query(default=20, ge=1, le=200, description="Max results"),
 ):
@@ -295,7 +299,11 @@ async def list_memories(
     """
     mgr = _get_memory_manager(tenant_id)
 
-    if type:
+    if agent_name:
+        # Agents store their learned memories under agent_id=agent_name, so
+        # scope directly to that store rather than the default namespaces.
+        namespaces = [agent_name]
+    elif type:
         ns = _TYPE_TO_NAMESPACE.get(type)
         if ns is None:
             raise HTTPException(status_code=400, detail=f"Unknown memory type: {type}")
