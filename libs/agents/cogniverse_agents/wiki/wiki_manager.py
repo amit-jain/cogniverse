@@ -7,8 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-import requests
-
 from cogniverse_agents.inference.rlm_inference import RLMInference, route_rlm_endpoint
 from cogniverse_agents.wiki.wiki_schema import WikiIndex, WikiPage, generate_slug
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
@@ -17,6 +15,10 @@ if TYPE_CHECKING:
     from cogniverse_sdk.document import Document
 
 logger = logging.getLogger(__name__)
+
+# Vespa document namespace the wiki schema feeds under (distinct from the
+# doctype/schema name — namespaces partition the document space).
+_WIKI_NAMESPACE = "wiki_content"
 
 _AUTO_FILE_AGENTS = {"detailed_report_agent", "deep_research_agent"}
 _CONTENT_SEPARATOR = "\n\n---\n\n"
@@ -328,16 +330,10 @@ class WikiManager:
 
         Raises RuntimeError if the Vespa DELETE request fails.
         """
-        url = f"{self._backend._url}:{self._backend._port}"
-        delete_url = (
-            f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{doc_id}"
-        )
         try:
-            resp = requests.delete(delete_url, timeout=10)
-            if not resp.ok:
-                raise RuntimeError(
-                    f"Vespa DELETE returned {resp.status_code}: {resp.text[:200]}"
-                )
+            self._backend.delete_document_fields(
+                doc_id, schema_name=self._schema_name, namespace=_WIKI_NAMESPACE
+            )
         except RuntimeError:
             raise
         except Exception as exc:
@@ -474,10 +470,6 @@ class WikiManager:
 
         index_content = index.render_markdown()
         index_doc_id = f"wiki_index_{safe}"
-        url = f"{self._backend._url}:{self._backend._port}"
-        feed_url = (
-            f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{index_doc_id}"
-        )
         payload = {
             "fields": {
                 "doc_id": index_doc_id,
@@ -495,11 +487,12 @@ class WikiManager:
             }
         }
         try:
-            resp = requests.post(feed_url, json=payload, timeout=10)
-            if not resp.ok:
-                logger.warning(
-                    "Index feed returned %s: %s", resp.status_code, resp.text[:200]
-                )
+            self._backend.put_document_fields(
+                index_doc_id,
+                payload["fields"],
+                schema_name=self._schema_name,
+                namespace=_WIKI_NAMESPACE,
+            )
         except Exception:
             logger.exception("Failed to feed wiki index document")
 
@@ -508,49 +501,40 @@ class WikiManager:
 
         Returns a ``cogniverse_sdk.document.Document`` (with
         ``text_content`` and ``metadata`` populated from the Vespa
-        ``fields`` blob) or ``None`` if not found. Uses direct HTTP
-        instead of ``backend.get_document`` to avoid schema
-        configuration requirements.
+        ``fields`` blob) or ``None`` if not found. Reads through the
+        backend's namespace-aware document API.
         """
         from cogniverse_sdk.document import ContentType, Document
 
-        url = f"{self._backend._url}:{self._backend._port}"
-        get_url = f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{doc_id}"
         try:
-            resp = requests.get(get_url, timeout=10)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            fields = data.get("fields", {})
-
-            return Document(
-                id=doc_id,
-                content_type=ContentType.TEXT,
-                text_content=fields.get("content", ""),
-                metadata=fields,
+            fields = self._backend.get_document_fields(
+                doc_id, schema_name=self._schema_name, namespace=_WIKI_NAMESPACE
             )
-        except requests.RequestException as exc:
-            logger.warning("Wiki document HTTP fetch failed for %s: %s", doc_id, exc)
+        except Exception as exc:
+            logger.warning("Wiki document fetch failed for %s: %s", doc_id, exc)
+            return None
+        if fields is None:
             return None
 
-    def _feed_page(self, page: WikiPage, embedding: List[float]) -> None:
-        """Feed *page* to Vespa via the Document v1 HTTP API."""
-        url = f"{self._backend._url}:{self._backend._port}"
-        feed_url = (
-            f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{page.doc_id}"
+        return Document(
+            id=doc_id,
+            content_type=ContentType.TEXT,
+            text_content=fields.get("content", ""),
+            metadata=fields,
         )
+
+    def _feed_page(self, page: WikiPage, embedding: List[float]) -> None:
+        """Feed *page* through the backend's namespace-aware document API."""
         payload = page.to_vespa_document()
         payload["fields"]["embedding"] = embedding
 
         try:
-            resp = requests.post(feed_url, json=payload, timeout=10)
-            if not resp.ok:
-                logger.warning(
-                    "Feed for %s returned %s: %s",
-                    page.doc_id,
-                    resp.status_code,
-                    resp.text[:200],
-                )
+            self._backend.put_document_fields(
+                page.doc_id,
+                payload["fields"],
+                schema_name=self._schema_name,
+                namespace=_WIKI_NAMESPACE,
+            )
         except Exception:
             logger.exception("Failed to feed wiki page %s", page.doc_id)
 

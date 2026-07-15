@@ -247,20 +247,27 @@ def wiki_vespa():
 def wiki_manager(wiki_vespa):
     """WikiManager wired to the real test Vespa instance.
 
-    backend._url/_port are set so _get_document_http and _rebuild_index can
-    construct the Vespa Document v1 URL.  backend.search returns [] so
-    _rebuild_index gracefully skips index population (full-text search over
-    wiki_content is not the focus of these tests).
+    The manager's document CRUD goes through the backend's namespace-aware
+    document API, so the fixture provides a REAL VespaBackend document slice
+    (a mock here would swallow every write as a silent no-op). Only
+    ``search`` is stubbed to [] — full-text search over wiki_content is not
+    the focus of these tests, and _rebuild_index gracefully skips index
+    population without hits.
 
     _generate_embedding falls through to the built-in zero-vector
     fallback when no embedding service is reachable — no mock needed.
     """
+    from cogniverse_vespa.backend import VespaBackend
+
     http_port = wiki_vespa["http_port"]
 
-    backend = MagicMock()
+    backend = object.__new__(VespaBackend)
     backend._url = "http://localhost"
     backend._port = http_port
-    backend.search.return_value = []
+    backend._metadata_app = None
+    backend._metadata_app_key = None
+    backend.config = {}
+    backend.search = MagicMock(return_value=[])
 
     manager = WikiManager(
         backend=backend,
