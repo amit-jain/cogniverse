@@ -518,8 +518,14 @@ class MessagingGateway:
         """Run the gateway in the configured mode."""
         if self.mode == "webhook":
             await self.run_webhook()
-        else:
+        elif self.mode == "polling":
             await self.run_polling()
+        else:
+            # A typo'd GATEWAY_MODE silently running polling binds no webhook
+            # server — the deployment receives zero messages with no error.
+            raise ValueError(
+                f"Unknown gateway mode {self.mode!r}; expected 'polling' or 'webhook'"
+            )
 
 
 def main():
