@@ -20,17 +20,18 @@
 8. [Memory Management](#memory-management)
 9. [Query Encoding](#query-encoding)
 10. [Event System](#event-system)
-11. [Approval Interfaces](#approval-interfaces)
-12. [Media Access](#media-access)
-13. [Configuration](#configuration)
-14. [Usage Examples](#usage-examples)
-15. [Architecture Position](#architecture-position)
-16. [Testing](#testing)
-17. [Cache Subsystem](#cache-subsystem)
-18. [Utility Modules](#utility-modules)
-19. [VLM Interface](#vlm-interface)
-20. [Model Loaders](#model-loaders)
-21. [Backend Factory & Profile Validation](#backend-factory--profile-validation)
+11. [Durable Execution](#durable-execution)
+12. [Approval Interfaces](#approval-interfaces)
+13. [Media Access](#media-access)
+14. [Configuration](#configuration)
+15. [Usage Examples](#usage-examples)
+16. [Architecture Position](#architecture-position)
+17. [Testing](#testing)
+18. [Cache Subsystem](#cache-subsystem)
+19. [Utility Modules](#utility-modules)
+20. [VLM Interface](#vlm-interface)
+21. [Model Loaders](#model-loaders)
+22. [Backend Factory & Profile Validation](#backend-factory--profile-validation)
 
 ---
 
@@ -101,6 +102,9 @@ cogniverse_core/
 │   ├── queue.py                 # EventQueue and QueueManager protocols
 │   └── backends/                # Backend implementations
 │       └── memory.py            # In-memory EventQueue backend
+├── durable/                     # Durable execution for long-running workflows (see Durable Execution section)
+│   ├── pipeline_checkpoint.py   # PipelineCheckpoint / PipelineCheckpointStatus / PipelineCheckpointConfig
+│   └── pipeline_checkpoint_storage.py # PipelineCheckpointStorage (span persist + resume lookup)
 ├── query/                       # Query encoding utilities (see Query Encoding section)
 │   └── encoders.py              # QueryEncoder implementations + QueryEncoderFactory
 ├── factories/                   # Factory classes
@@ -666,6 +670,47 @@ async for event in queue.subscribe():
 | `BaseEventQueue` / `BaseQueueManager` | ABCs implementing the shared queue bookkeeping |
 | `InMemoryEventQueue` / `InMemoryQueueManager` (`events/backends/memory.py`) | Default in-process implementation; `get_queue_manager()` / `reset_queue_manager()` manage the process-wide singleton |
 | `CancellationToken` (`events/queue.py`) | Cooperative cancellation signal threaded through a running task |
+
+---
+
+## Durable Execution
+
+`durable/` provides checkpoint + resume for **long-running** workflows — the
+DSPy optimization / auto-eval jobs (`optimization_cli` modes, `job_executor`)
+that run as single-container Argo pods and today lose all progress when the
+pod is killed. A checkpoint captures the stage pipeline's progress so a
+restarted run continues from the last completed stage instead of re-running
+expensive `compile()`s.
+
+This is distinct from the orchestrator's `WorkflowCheckpoint` (an agent-task
+DAG for per-query orchestration) and from `WorkflowStore` (the offline
+workflow-intelligence learning corpus).
+
+```python
+from cogniverse_core.durable import (
+    PipelineCheckpoint,
+    PipelineCheckpointStatus,
+    PipelineCheckpointStorage,
+)
+
+storage = PipelineCheckpointStorage(
+    grpc_endpoint="localhost:4317",
+    http_endpoint="http://localhost:6006",
+    tenant_id="acme:acme",
+)
+await storage.save_checkpoint(checkpoint)  # persisted as a telemetry span
+latest = await storage.get_latest_checkpoint(workflow_id)  # None if unknown; raises on outage
+for phase in latest.pending_phases():  # stages still to run
+    ...
+await storage.mark_status(checkpoint_id, PipelineCheckpointStatus.COMPLETED)
+```
+
+| Component | Purpose |
+|---|---|
+| `PipelineCheckpoint` | Resumable stage-pipeline state: `phases`, `phase_index`, `completed_units`, `cursor`, `metadata`, `resume_count`. `pending_phases()` / `completed_unit_keys()` drive resume (a `failed` unit re-runs; a `completed` one is skipped). |
+| `PipelineCheckpointStatus` | Run lifecycle: `ACTIVE`, `COMPLETED`, `FAILED`. |
+| `PipelineCheckpointConfig` | Telemetry project name + retention windows. |
+| `PipelineCheckpointStorage` | Persists checkpoints as `pipeline_checkpoint` telemetry spans; `get_latest_checkpoint` finds the most recent by `workflow_id` (status transitions recorded as span annotations). Reads raise on backend outage rather than reading as "no checkpoint". |
 
 ---
 
