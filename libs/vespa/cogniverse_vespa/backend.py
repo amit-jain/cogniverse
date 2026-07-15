@@ -572,9 +572,8 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            # Check if schema exists
-            # This would query Vespa for the schema
-            return True
+            deployed = self.schema_manager.list_deployed_document_types()
+            return schema_name in deployed
         except Exception as e:
             logger.error(f"Failed to validate schema {schema_name}: {e}")
             return False
@@ -1525,7 +1524,13 @@ class VespaBackend(Backend):
             True if healthy
         """
         if self._vespa_search_backend:
-            return self._vespa_search_backend.health_check()
+            # The search backend returns a rich status dict; this method's
+            # contract (SearchBackend ABC) is bool — coerce instead of leaking
+            # a dict that is always truthy even when degraded.
+            health = self._vespa_search_backend.health_check()
+            if isinstance(health, dict):
+                return health.get("status") == "healthy"
+            return bool(health)
 
         # Basic health check
         return self.schema_manager is not None
