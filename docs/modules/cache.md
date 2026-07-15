@@ -864,7 +864,19 @@ one filesystem write, not two. `get`/`exists`/cleanup read the mtime.
 Entries written before this change still carry a legacy `abc123.pkl.meta`
 sidecar (`{"key", "created_at", "expires_at", "ttl", "size_bytes", "format"}`);
 it is still read (and wins over the mtime) so an upgrade does not invalidate a
-warm cache.
+warm cache. A re-write of such a key clears the stale sidecar so the fresh
+ttl governs.
+
+Writes are atomic: `set()` writes a temp file, stamps its mtime, then
+`os.replace`s it into place — a concurrent read or cleanup sweep never sees a
+half-written entry or a write-time mtime it would misread as expired.
+
+**Caution — copying the cache tree:** because expiry lives in the mtime, any
+copy/restore that resets modification times (`cp` without `-p`, `rsync`
+without `-t`/`-a`, most object-store round-trips) rewrites every entry's
+expiry to the copy time, and the next read treats the whole cache as expired
+and recomputes it. Preserve timestamps (`cp -a` / `rsync -a`) when relocating
+a cache directory.
 
 **Serialization Formats:**
 
