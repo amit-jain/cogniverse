@@ -22,6 +22,29 @@ logger = logging.getLogger(__name__)
 _SEARCH_RETRY = RetryConfig(max_attempts=3, exceptions=(requests.RequestException,))
 
 
+class VespaSearchDegraded(RuntimeError):
+    """A Vespa query returned soft-timeout errors (HTTP 200 + root.errors)."""
+
+
+def vespa_search_children(data: dict, correlation_id: str = "") -> list:
+    """Return ``root.children``, raising when the query was degraded.
+
+    A Vespa soft-timeout arrives as HTTP 200 + ``root.errors`` (code 12) +
+    partial/empty ``children``. Iterating those as if complete silently
+    returns degraded results. Mirror ``search_backend._process_results``:
+    raise on errors, warn on degraded coverage, else return the hits.
+    """
+    root = (data or {}).get("root", {}) or {}
+    errors = root.get("errors")
+    if errors:
+        tag = f" [{correlation_id}]" if correlation_id else ""
+        raise VespaSearchDegraded(f"Vespa query returned errors{tag}: {errors}")
+    coverage = root.get("coverage", {}) or {}
+    if coverage.get("degraded"):
+        logger.warning("Vespa coverage degraded: %s", coverage.get("degraded"))
+    return root.get("children", []) or []
+
+
 @retry_with_backoff(config=_SEARCH_RETRY)
 def vespa_search_post(
     endpoint: str, params: dict, timeout: float = 10.0
