@@ -124,6 +124,77 @@ async def test_no_ttl_entry_never_expires(tmp_path):
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
+async def test_concurrent_reads_never_destroy_a_live_entry(tmp_path):
+    """A reader (or the cleanup sweep) racing a writer must NEVER see a fresh
+    entry as expired. The original set() wrote the data file (mtime =
+    write-time) and only then stamped the expiry via os.utime — in that window
+    a concurrent get() read mtime as the expiry, judged the entry expired, and
+    DELETED it (including never-expiring ttl=None entries); the writer's utime
+    then failed. The write must be atomic: temp file, stamp, os.replace."""
+    import asyncio
+    import time as _time
+
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    key = "profile:video:racevid:transcript"
+    assert await backend.set(key, "v0") is True  # ttl=None → never expires
+
+    stop = _time.monotonic() + 1.0
+    false_miss = 0
+    set_failures = 0
+
+    async def writer():
+        nonlocal set_failures
+        i = 0
+        while _time.monotonic() < stop:
+            if not await backend.set(key, f"v{i}"):
+                set_failures += 1
+            i += 1
+
+    async def reader():
+        nonlocal false_miss
+        while _time.monotonic() < stop:
+            if await backend.get(key) is None:
+                false_miss += 1
+
+    await asyncio.gather(writer(), reader(), reader())
+
+    assert false_miss == 0, f"{false_miss} false expiries destroyed a live entry"
+    assert set_failures == 0, f"{set_failures} set() calls failed mid-race"
+    assert await backend.get(key) is not None
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_rewrite_clears_legacy_sidecar(tmp_path):
+    """Re-writing a key that still carries a legacy .meta sidecar must clear
+    the sidecar — otherwise the STALE sidecar expiry governs the fresh write
+    (a past expires_at deleted freshly-written data on the next read)."""
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    key = "profile:video:vid9:transcript"
+    await backend.set(key, "old-data", ttl=1000)
+    cache_path = backend._key_to_path(key)
+    meta_path = backend._get_metadata_path(cache_path)
+    # Upgrade-transition state: a legacy sidecar with a stale (past) expiry.
+    meta_path.write_text(json.dumps({"expires_at": time.time() - 10}))
+
+    assert await backend.set(key, "fresh-data", ttl=3600) is True
+
+    assert not meta_path.exists(), "stale legacy sidecar must be cleared on rewrite"
+    assert await backend.get(key) == "fresh-data"
+    assert cache_path.exists()
+
+
+@pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_legacy_meta_sidecar_still_honored(tmp_path):
