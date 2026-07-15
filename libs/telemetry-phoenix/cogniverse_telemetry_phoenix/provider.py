@@ -544,6 +544,17 @@ class PhoenixDatasetStore(DatasetStore):
 
             def _append() -> None:
                 sync_client = Client(base_url=self.http_endpoint)
+                # Phoenix's append AUTO-CREATES a missing dataset, which would
+                # silently bypass the caller's create path (and its dataset
+                # metadata). Enforce the documented raise-on-missing contract
+                # with an explicit existence check.
+                try:
+                    sync_client.datasets.get_dataset(dataset=name)
+                except Exception as lookup_exc:
+                    msg = str(lookup_exc).lower()
+                    if "not found" in msg or "404" in msg:
+                        raise ValueError(f"Dataset not found: {name}") from lookup_exc
+                    raise
                 sync_client.datasets.add_examples_to_dataset(
                     dataset=name,
                     dataframe=data,
