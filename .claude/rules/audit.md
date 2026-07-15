@@ -338,6 +338,52 @@ grep -rn "from tests.conftest import" tests/ --include="*.py" | grep -v "conftes
 # endpoint-scoped reuse). For each hit, check the seed's binding is compared
 # against the requesting consumer's config before reuse.
 grep -rnP 'if cls\._\w+ is None.*and|cls\._shared\w+ = ' libs/ --include="*.py" | grep -i "shared\|singleton\|global"
+
+# Config-resolving helper invoked WITHOUT a config_manager, where the helper's
+# get_config/ConfigUtils call RAISES on config_manager=None inside a broad
+# except that degrades to nullcontext/base-model/defaults — the feature is
+# silently DEAD ON ARRIVAL with only a warning log (13th audit:
+# profile_selection_agent → adapter_lm_context → get_config(None) ValueError
+# → base model; masked by tests that patched get_config). The sibling that
+# works via a different seam is the tell.
+grep -rnP 'get_config\([^)]*config_manager=None|adapter_lm_context\([^,)]+,\s*"[^"]+"\s*\)' libs/ --include="*.py"
+# then check whether a wrapping try/except swallows the ValueError into a fallback
+
+# State/expiry encoded in a file's mtime via os.utime and read back via
+# stat().st_mtime. Two hazards: (a) a reader/cleanup in the write→utime window
+# sees mtime=write-time and deletes a FRESH entry as expired — the writer's
+# utime then hits a missing file (13th audit: structured_filesystem set(),
+# 800/800 false-miss repro incl. never-expire entries); (b) any mtime-resetting
+# op (cp without -p, rsync without -t/-a, restore) silently expires the whole
+# cache. Require tmp-write + utime(tmp) + os.replace, or a sidecar/manifest.
+grep -rnP 'os\.utime\(' libs/ --include="*.py"
+
+# Hot-path per-request config read that BYPASSES the manager's scoped TTL
+# cache — a get_*_config that calls store.get_config directly while siblings
+# route through _cached_config_value → an uncached synchronous Vespa query on
+# the event loop per dispatch (13th audit: get_agent_config via
+# _agent_behavior_kwargs).
+grep -rnP 'def get_\w+_config\(' libs/foundation/cogniverse_foundation/config/manager.py
+# then for each, confirm the body routes through _cached_config_value
+
+# Module-level memo keyed by a content signature (path,mtime)/(dir,mtime-sig)
+# with NO eviction — every source edit adds a key, old keys never drop; and/or
+# the memo returns the SHARED mutable value (caller mutation poisons the cache)
+# (13th audit: _ALL_STRATEGIES_CACHE). Prefer clear()-then-set single-entry
+# replace (as _JSON_CONFIG_CACHE does) + defensive copy on return.
+grep -rnP '^_[A-Z_]+(CACHE|MEMO)\b\s*[:=]' libs/ --include="*.py"
+# then check the write path for eviction and the return path for copying
+
+# Method typed `-> bool` that returns a delegatee whose own signature returns
+# Dict/other — the type lie ships green because no test calls it (13th audit:
+# VespaBackend.health_check -> bool returning VespaSearchBackend.health_check's
+# Dict).
+grep -rnP 'def \w+\([^)]*\)\s*->\s*bool:\s*$' libs/ --include="*.py" -A3 | grep -B2 'return self\.\w+\.\w+\('
+
+# Validator whose try body is a comment + unconditional `return True` — a
+# validation method that never validates (13th audit: backend.validate_schema
+# "# This would query Vespa" → return True; its except branch is dead).
+grep -rnP 'def (validate|verify|check)_\w+' libs/ --include="*.py" -A6 | grep -B4 'return True' | grep -B2 '# .*would\|# TODO\|pass$'
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
