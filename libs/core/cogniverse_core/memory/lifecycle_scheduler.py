@@ -87,7 +87,11 @@ class LifecycleScheduler:
         for manager in list(self._get_warm()):
             tenant_id = getattr(manager, "tenant_id", None) or "unknown"
             try:
-                pinned_ids = self._pin_lookup(manager) if self._pin_lookup else set()
+                pinned_ids = (
+                    await asyncio.to_thread(self._pin_lookup, manager)
+                    if self._pin_lookup
+                    else set()
+                )
                 deleted_by_kind = await asyncio.to_thread(
                     manager.cleanup_with_schema,
                     self._registry,
