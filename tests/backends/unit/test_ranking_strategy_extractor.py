@@ -187,3 +187,91 @@ def test_hybrid_rank_profiles_honor_phase_order_naming(schema):
         assert binary_first["first_phase"] != text_first["first_phase"], (
             f"opposite-named hybrid profiles must differ (suffix={suffix!r})"
         )
+
+
+def test_vanished_schema_file_is_skipped_not_fatal(tmp_path, monkeypatch):
+    """A schema file that disappears between the directory glob and the
+    signature stat() must be skipped — previously the unguarded stat in the
+    memo-signature comprehension raised FileNotFoundError and 500'd every
+    strategy listing during a concurrent schema rewrite."""
+    from pathlib import Path
+
+    _write_schema(
+        tmp_path,
+        {
+            "schema": "survivor",
+            "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
+            "rank-profiles": [_FLOAT_PROFILE],
+        },
+    )
+    ghost = tmp_path / "ghost_schema.json"  # in the listing, never on disk
+
+    real_glob = Path.glob
+
+    def glob_with_ghost(self, pattern):
+        results = list(real_glob(self, pattern))
+        if self == tmp_path:
+            results.append(ghost)
+        return results
+
+    monkeypatch.setattr(Path, "glob", glob_with_ghost)
+
+    out = extract_all_ranking_strategies(tmp_path)
+
+    assert "s" in out  # the survivor parsed
+    assert "ghost" not in out
+
+
+def test_memo_keeps_a_single_entry_per_directory(tmp_path):
+    """Schema edits must REPLACE the dir's memo entry, not accrete new ones —
+    the signature-keyed dict otherwise grows by one full strategies map per
+    edit for the life of the process."""
+    import os
+    import time as _time
+
+    import cogniverse_vespa.ranking_strategy_extractor as rse
+
+    _write_schema(
+        tmp_path,
+        {
+            "schema": "memo_bound",
+            "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
+            "rank-profiles": [_FLOAT_PROFILE],
+        },
+    )
+    schema_file = tmp_path / "s_schema.json"
+    dir_key = str(tmp_path.resolve())
+
+    for i in range(3):
+        st = schema_file.stat()
+        os.utime(
+            schema_file,
+            ns=(st.st_atime_ns, st.st_mtime_ns + (i + 1) * 1_000_000_000),
+        )
+        extract_all_ranking_strategies(tmp_path)
+        _time.sleep(0.01)
+
+    entries = [k for k in rse._ALL_STRATEGIES_CACHE if k[0] == dir_key]
+    assert len(entries) == 1, f"{len(entries)} memo entries accreted for one directory"
+
+
+def test_memo_hit_returns_a_fresh_dict_not_the_shared_one(tmp_path):
+    """A caller mutating the returned mapping must not poison the memo for
+    every later caller."""
+    _write_schema(
+        tmp_path,
+        {
+            "schema": "poison_probe",
+            "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
+            "rank-profiles": [_FLOAT_PROFILE],
+        },
+    )
+
+    first = extract_all_ranking_strategies(tmp_path)
+    assert "s" in first
+    first["INJECTED_SCHEMA"] = {}
+    del first["s"]
+
+    second = extract_all_ranking_strategies(tmp_path)
+    assert "INJECTED_SCHEMA" not in second, "caller mutation poisoned the memo"
+    assert "s" in second

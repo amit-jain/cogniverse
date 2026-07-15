@@ -315,17 +315,25 @@ def extract_all_ranking_strategies(
     schema dir reuse the parsed result (a schema edit invalidates it).
     """
     schema_files = sorted(schema_dir.glob("*.json"))
-    signature = frozenset(
-        (f.name, f.stat().st_mtime_ns)
-        for f in schema_files
-        if f.name != "ranking_strategies.json"
-    )
-    cache_key = (str(schema_dir.resolve()), signature)
+    signature_parts = []
+    for f in schema_files:
+        if f.name == "ranking_strategies.json":
+            continue
+        try:
+            signature_parts.append((f.name, f.stat().st_mtime_ns))
+        except OSError:
+            # File vanished between glob and stat (concurrent rewrite) —
+            # treat it as absent rather than failing the whole listing.
+            continue
+    signature = frozenset(signature_parts)
+    dir_key = str(schema_dir.resolve())
+    cache_key = (dir_key, signature)
 
     with _ALL_STRATEGIES_LOCK:
         cached = _ALL_STRATEGIES_CACHE.get(cache_key)
     if cached is not None:
-        return cached
+        # Shallow copy so a caller mutating the mapping can't poison the memo.
+        return dict(cached)
 
     extractor = RankingStrategyExtractor()
     all_strategies = {}
@@ -344,8 +352,12 @@ def extract_all_ranking_strategies(
             logger.error(f"Failed to extract strategies from {schema_file}: {e}")
 
     with _ALL_STRATEGIES_LOCK:
+        # Single entry per directory: a schema edit REPLACES the dir's memo
+        # instead of accreting one dead entry per edit for the process's life.
+        for stale_key in [k for k in _ALL_STRATEGIES_CACHE if k[0] == dir_key]:
+            del _ALL_STRATEGIES_CACHE[stale_key]
         _ALL_STRATEGIES_CACHE[cache_key] = all_strategies
-    return all_strategies
+    return dict(all_strategies)
 
 
 def save_ranking_strategies(
