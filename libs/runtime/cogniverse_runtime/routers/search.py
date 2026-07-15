@@ -266,7 +266,11 @@ async def list_strategies(
         )
 
     try:
-        strategies = search_service.get_available_strategies(resolved, tenant_id)
+        # The first extraction globs+parses the schema JSONs (memoized after);
+        # keep even that off the event loop.
+        strategies = await asyncio.to_thread(
+            search_service.get_available_strategies, resolved, tenant_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 

@@ -97,6 +97,47 @@ def test_extract_all_strips_only_trailing_schema_suffix(tmp_path):
     assert "code_index" not in all_strategies
 
 
+def test_extract_all_ranking_strategies_memoized_and_invalidates(tmp_path):
+    import os
+    from unittest.mock import patch
+
+    import cogniverse_vespa.ranking_strategy_extractor as rse
+
+    _write_schema(
+        tmp_path,
+        {
+            "schema": "memo_probe",
+            "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
+            "rank-profiles": [_FLOAT_PROFILE],
+        },
+    )
+
+    parsed = []
+    real = rse.RankingStrategyExtractor.extract_from_schema
+
+    def spy(self, path):
+        parsed.append(path.name)
+        return real(self, path)
+
+    with patch.object(rse.RankingStrategyExtractor, "extract_from_schema", spy):
+        first = extract_all_ranking_strategies(tmp_path)
+        assert parsed == ["s_schema.json"]  # cold call parses the file
+        assert "float_float" in first["s"]
+
+        parsed.clear()
+        second = extract_all_ranking_strategies(tmp_path)
+        assert parsed == []  # unchanged dir -> cache hit, no re-parse
+        assert second == first
+
+        # A schema edit (new mtime) invalidates the memo and re-parses.
+        parsed.clear()
+        schema_file = tmp_path / "s_schema.json"
+        st = schema_file.stat()
+        os.utime(schema_file, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        extract_all_ranking_strategies(tmp_path)
+        assert parsed == ["s_schema.json"]  # re-parsed after the edit
+
+
 from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
