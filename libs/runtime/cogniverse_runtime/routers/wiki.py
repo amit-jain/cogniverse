@@ -6,6 +6,7 @@ Wiki state is per-tenant. The runtime injects a factory via
 ``get_wiki_manager_for_tenant``. Same pattern as ``routers/graph.py``.
 """
 
+import asyncio
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
@@ -68,7 +69,10 @@ async def save_wiki(request: WikiSaveRequest) -> Dict[str, Any]:
     """Persist an agent interaction as a wiki page for the request's tenant."""
     wm = get_wiki_manager_for_tenant(request.tenant_id)
     response_text = str(request.response.get("answer", request.response))
-    page = wm.save_session(
+    # The manager's Vespa I/O is synchronous — run it off the event loop so a
+    # slow write can't stall every other request (mirrors the graph router).
+    page = await asyncio.to_thread(
+        wm.save_session,
         query=request.query,
         response=response_text,
         entities=request.entities,
@@ -86,7 +90,9 @@ async def save_wiki(request: WikiSaveRequest) -> Dict[str, Any]:
 async def search_wiki(request: WikiSearchRequest) -> Dict[str, Any]:
     """Full-text search over wiki pages for the request's tenant."""
     wm = get_wiki_manager_for_tenant(request.tenant_id)
-    results = wm.search(query=request.query, top_k=request.top_k)
+    results = await asyncio.to_thread(
+        wm.search, query=request.query, top_k=request.top_k
+    )
     return {"results": results, "count": len(results)}
 
 
@@ -96,7 +102,7 @@ async def get_wiki_topic(
 ) -> Dict[str, Any]:
     """Retrieve a topic page by slug for the given tenant."""
     wm = get_wiki_manager_for_tenant(tenant_id)
-    topic = wm.get_topic(slug)
+    topic = await asyncio.to_thread(wm.get_topic, slug)
     if topic is None:
         raise HTTPException(status_code=404, detail=f"Topic '{slug}' not found")
     return topic
@@ -108,7 +114,7 @@ async def get_wiki_index(
 ) -> Dict[str, Any]:
     """Return the rendered wiki index for the given tenant."""
     wm = get_wiki_manager_for_tenant(tenant_id)
-    index_content = wm.get_index()
+    index_content = await asyncio.to_thread(wm.get_index)
     return {"content": index_content or ""}
 
 
@@ -118,7 +124,7 @@ async def lint_wiki(
 ) -> Dict[str, Any]:
     """Run lint checks for the given tenant and return a quality report."""
     wm = get_wiki_manager_for_tenant(tenant_id)
-    return wm.lint()
+    return await asyncio.to_thread(wm.lint)
 
 
 @router.delete("/topic/{slug}")
@@ -130,7 +136,7 @@ async def delete_wiki_topic(
     safe = wm._tenant_id.replace(":", "_")
     doc_id = f"wiki_topic_{safe}_{slug}"
     try:
-        wm.delete_page(doc_id)
+        await asyncio.to_thread(wm.delete_page, doc_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return {"status": "deleted", "doc_id": doc_id, "slug": slug}

@@ -754,7 +754,9 @@ async def _extract_graph_per_segment_inner(
         if edge.edge_id not in bucket["claim_ids"]:
             bucket["claim_ids"].append(edge.edge_id)
 
-    counts = mgr.upsert(linked)
+    # Sync graph upsert (per-node/edge Vespa feeds + convergence sleeps) must
+    # not block the worker's asyncio loop — that freezes shutdown + Redis claim.
+    counts = await asyncio.to_thread(mgr.upsert, linked)
 
     await _write_backrefs_to_content(
         backrefs_by_segment=backrefs_by_segment,
