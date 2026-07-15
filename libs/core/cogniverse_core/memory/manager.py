@@ -188,6 +188,7 @@ class Mem0MemoryManager:
         backend_config_port: Optional[int] = None,
         base_schema_name: str = "agent_memories",
         auto_create_schema: bool = True,
+        embedding_dims: int = 768,
         knowledge_registry: Optional[object] = None,
     ) -> None:
         """
@@ -214,6 +215,8 @@ class Mem0MemoryManager:
             backend_config_port: Backend config endpoint port (default: 19071)
             base_schema_name: Base schema name (default: agent_memories)
             auto_create_schema: Auto-deploy tenant schema if not exists
+            embedding_dims: Embedder output dimension the vector store is
+                configured with (default 768 for DenseOn)
 
         Raises:
             ValueError: If tenant_id not set
@@ -433,7 +436,7 @@ class Mem0MemoryManager:
                 "config": {
                     "collection_name": tenant_schema_name,  # Tenant-specific schema
                     "backend_client": backend,  # Pre-configured backend instance
-                    "embedding_model_dims": 768,  # DenseOn output dimension
+                    "embedding_model_dims": embedding_dims,  # embedder output dim
                     "tenant_id": self.tenant_id,  # Pass tenant_id directly
                     "profile": base_schema_name,  # Pass base schema/profile name
                 },
