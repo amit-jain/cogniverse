@@ -435,3 +435,109 @@ class TestGlinerDevice:
         m_cpu = get_or_load_gliner("fake/gliner", device="cpu")
         assert moved["to"] is None
         assert m_cpu is not m_cuda
+
+
+@pytest.mark.unit
+class TestRemoteGlinerClientHTTPContract:
+    """RemoteGlinerClient against a REAL HTTP server speaking the sidecar
+    contract — the remote path GatewayAgent routing and graph extraction use
+    in production was only ever mocked, and its ``except → []`` masks any
+    contract drift as silently-empty entities."""
+
+    def _serve(self, handler_fn):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                status, payload = handler_fn(self.path, body)
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *a):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+    def test_entities_round_trip_with_exact_request_payload(self):
+        import json
+
+        from cogniverse_core.common.models.model_loaders import RemoteGlinerClient
+
+        seen = {}
+
+        def handler(path, body):
+            seen["path"] = path
+            seen["payload"] = json.loads(body)
+            return 200, json.dumps(
+                {
+                    "entities": [
+                        {"text": "Marie Curie", "label": "person", "score": 0.93},
+                        {"text": "radium", "label": "chemical", "score": 0.88},
+                    ]
+                }
+            ).encode()
+
+        server, url = self._serve(handler)
+        try:
+            client = RemoteGlinerClient(url, "gliner_large-v2.1")
+            entities = client.predict_entities(
+                "Marie Curie discovered radium",
+                ["person", "chemical"],
+                threshold=0.5,
+            )
+        finally:
+            server.shutdown()
+
+        assert seen["path"] == "/predict_entities"
+        assert seen["payload"] == {
+            "text": "Marie Curie discovered radium",
+            "labels": ["person", "chemical"],
+            "threshold": 0.5,
+            "model": "gliner_large-v2.1",
+        }
+        assert entities == [
+            {"text": "Marie Curie", "label": "person", "score": 0.93},
+            {"text": "radium", "label": "chemical", "score": 0.88},
+        ]
+
+    def test_contract_drift_degrades_to_empty_list(self):
+        import json
+
+        from cogniverse_core.common.models.model_loaders import RemoteGlinerClient
+
+        server, url = self._serve(lambda p, b: (200, json.dumps({"foo": 1}).encode()))
+        try:
+            client = RemoteGlinerClient(url, "gliner_large-v2.1")
+            assert client.predict_entities("text", ["person"]) == []
+        finally:
+            server.shutdown()
+
+    def test_server_error_degrades_to_empty_list(self):
+        from cogniverse_core.common.models.model_loaders import RemoteGlinerClient
+
+        server, url = self._serve(lambda p, b: (500, b"{}"))
+        try:
+            client = RemoteGlinerClient(url, "gliner_large-v2.1")
+            assert client.predict_entities("text", ["person"]) == []
+        finally:
+            server.shutdown()
+
+    def test_get_or_load_gliner_returns_remote_client_for_url(self):
+        from cogniverse_core.common.models.model_loaders import (
+            RemoteGlinerClient,
+            get_or_load_gliner,
+        )
+
+        loaded = get_or_load_gliner(
+            "gliner_large-v2.1", inference_url="http://gliner:8080"
+        )
+        assert isinstance(loaded, RemoteGlinerClient)
+        assert loaded._url == "http://gliner:8080"
