@@ -113,7 +113,16 @@ async def test_log_evaluations_round_trips_through_phoenix(eval_telemetry):
         "log_evaluations annotation was never read back from Phoenix"
     )
     assert len(ann) == 1, ann.to_dict("records")
+
+    # Pin the real Phoenix annotation frame shape the get_annotations docstring
+    # describes: span_id is the INDEX (not a column), name is surfaced as
+    # annotation_name, and result.* are flattened columns.
+    assert ann.index.name == "span_id", ann.index.name
+    assert "span_id" not in ann.columns, ann.columns.tolist()
+    assert span_id in ann.index, ann.index.tolist()
+    assert "annotation_name" in ann.columns, ann.columns.tolist()
+    assert ann.iloc[0]["annotation_name"] == "search_relevance", ann.columns.tolist()
+
     row = ann.iloc[0]
-    # Column names surfaced to check the real Phoenix annotation shape.
     assert row["result.score"] == 0.75, ann.columns.tolist()
     assert row["result.label"] == "relevant", ann.columns.tolist()

@@ -285,12 +285,15 @@ class PhoenixAnnotationStore(AnnotationStore):
             annotation_names: Optional filter by annotation names
 
         Returns:
-            DataFrame with columns:
-            - span_id: Associated span
+            DataFrame indexed by span_id (one row per span annotation). Columns:
+            - annotation_name: Annotation name (the client renames "name")
             - result.label: Annotation label
             - result.score: Annotation score
-            - metadata.*: Annotation metadata (flattened)
-            - created_at: Timestamp
+            - result.explanation: Annotation explanation
+            - metadata: Annotation metadata dict (a single column, not flattened)
+            - annotator_kind, created_at, updated_at, source, user_id,
+              identifier, id: Phoenix annotation bookkeeping fields
+            Empty DataFrame when spans_df is empty or no annotations exist.
         """
         try:
             if spans_df.empty:
