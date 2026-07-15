@@ -121,6 +121,9 @@ class DynamicDSPyMixin:
         # override _active_adapter_model(); the base mixin returns None so every
         # other agent stays on the base model.
         adapter_model = self._active_adapter_model()
+        # Recorded so adapter-aware agents can detect a later activation and
+        # rebuild the LM without a process restart.
+        self._active_adapter_model_name = adapter_model or None
         if adapter_model:
             endpoint_config.adapter_path = endpoint_config.model
             endpoint_config.model = ensure_provider_prefix(adapter_model)
