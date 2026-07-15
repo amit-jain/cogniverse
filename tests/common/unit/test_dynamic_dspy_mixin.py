@@ -36,6 +36,17 @@ class TestAgent(DynamicDSPyMixin):
         self.initialize_dynamic_dspy(config)
 
 
+class _AdapterRoutingAgent(DynamicDSPyMixin):
+    """Adapter-aware agent that routes its LM to a fixed adapter model name."""
+
+    def __init__(self, config: AgentConfig, adapter_model):
+        self._adapter_model = adapter_model
+        self.initialize_dynamic_dspy(config)
+
+    def _active_adapter_model(self):
+        return self._adapter_model
+
+
 class TestDynamicDSPyMixin:
     """Test DynamicDSPyMixin functionality"""
 
@@ -583,3 +594,39 @@ class TestPrimaryKnobsCarryIntoAgentLM:
         assert ep.extra_body == {"top_k": 5}
         assert ep.request_timeout == 300.0
         assert ep.num_retries == 3
+
+
+class TestActiveAdapterRouting:
+    """When a tenant has an active fine-tuned adapter for the agent, the LM
+    routes to the adapter's served model name — vLLM serves the LoRA by name,
+    so this applies the tenant's fine-tuning at inference. No active adapter
+    keeps the agent on the base model (the common case). This closes the
+    finetuning->inference loop the adapter registry only half-wired before."""
+
+    def _config(self):
+        return AgentConfig(
+            agent_name="ta",
+            agent_version="1.0.0",
+            agent_description="t",
+            agent_url="http://x:8000",
+            capabilities=["entity_extraction"],
+            skills=[],
+            module_config=ModuleConfig(
+                module_type=DSPyModuleType.PREDICT, signature="TestSignature"
+            ),
+            llm_model="gpt-4",
+            llm_base_url="http://localhost:11434",
+        )
+
+    def test_lm_routes_to_active_adapter_model(self):
+        with patch("dspy.LM") as mock_lm:
+            agent = _AdapterRoutingAgent(self._config(), adapter_model="entity_sft_v3")
+            # LM model routed to the adapter's served name (provider-prefixed).
+            assert mock_lm.call_args[0][0] == "openai/entity_sft_v3"
+            # The base model is preserved as adapter_path bookkeeping.
+            assert agent._dspy_lm is not None
+
+    def test_lm_stays_on_base_model_without_adapter(self):
+        with patch("dspy.LM") as mock_lm:
+            _AdapterRoutingAgent(self._config(), adapter_model=None)
+            assert mock_lm.call_args[0][0] == "openai/gpt-4"

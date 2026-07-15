@@ -115,12 +115,37 @@ class DynamicDSPyMixin:
             endpoint_config.request_timeout = primary.request_timeout
             endpoint_config.num_retries = primary.num_retries
 
+        # Route the LM to this tenant's active fine-tuned adapter for the agent
+        # when one exists — vLLM serves the LoRA server-side, selected by model
+        # name (see LLMEndpointConfig.adapter_path). Adapter-aware agents
+        # override _active_adapter_model(); the base mixin returns None so every
+        # other agent stays on the base model.
+        adapter_model = self._active_adapter_model()
+        if adapter_model:
+            endpoint_config.adapter_path = endpoint_config.model
+            endpoint_config.model = ensure_provider_prefix(adapter_model)
+            logger.info(
+                "Routing %s LM to active adapter model: %s",
+                config.agent_name,
+                adapter_model,
+            )
+
         endpoint_config = self._route_through_semantic_router(endpoint_config)
 
         self._dspy_lm = create_dspy_lm(endpoint_config)
         logger.info(
             f"Created DSPy LM: {endpoint_config.model} @ {endpoint_config.api_base}"
         )
+
+    def _active_adapter_model(self) -> Optional[str]:
+        """Served model name of this agent's active fine-tuned adapter, or None.
+
+        The base mixin never routes to an adapter. Adapter-aware agents override
+        this to look up the active adapter for their ``(tenant, agent_type)`` and
+        return its served name — vLLM serves the LoRA under that name, so routing
+        the LM ``model`` there applies the tenant's fine-tuning at inference.
+        """
+        return None
 
     def _route_through_semantic_router(
         self, endpoint: LLMEndpointConfig

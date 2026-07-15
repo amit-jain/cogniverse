@@ -53,6 +53,50 @@ class TestTextAnalysisAgent:
         mock_initialize_dspy.assert_called_once()
         mock_register_signature.assert_called_once()
 
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
+    @patch("cogniverse_foundation.config.utils.get_config")
+    def test_active_adapter_model_routes_to_entity_extraction_adapter(
+        self,
+        mock_get_config,
+        mock_initialize_dspy,
+        mock_register_signature,
+        config_manager_memory,
+    ):
+        """The agent routes its LM to the tenant's active entity_extraction
+        adapter — closing the finetuning->inference loop. No active adapter
+        (the common case) returns None so the base model is used."""
+        mock_get_config.return_value = {
+            "text_analysis_port": 8005,
+            "llm_model": "gpt-4",
+            "llm_base_url": "http://localhost:11434",
+        }
+        agent = TextAnalysisAgent(
+            tenant_id="acme:acme", config_manager=config_manager_memory
+        )
+
+        adapter = MagicMock()
+        adapter.name = "entity_sft_v3"
+        registry = MagicMock()
+        registry.get_active_adapter.return_value = adapter
+
+        with patch(
+            "cogniverse_finetuning.registry.AdapterRegistry", return_value=registry
+        ):
+            assert agent._active_adapter_model() == "entity_sft_v3"
+        registry.get_active_adapter.assert_called_once_with(
+            agent.tenant_id, "entity_extraction"
+        )
+
+        # No active adapter → base model.
+        registry.get_active_adapter.return_value = None
+        with patch(
+            "cogniverse_finetuning.registry.AdapterRegistry", return_value=registry
+        ):
+            assert agent._active_adapter_model() is None
+
     def test_initialization_without_tenant_id_raises_error(self, config_manager_memory):
         """Test that initializing without tenant_id raises ValueError"""
         with pytest.raises(ValueError, match="tenant_id is required"):
