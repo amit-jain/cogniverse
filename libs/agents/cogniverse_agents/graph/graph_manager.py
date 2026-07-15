@@ -43,6 +43,9 @@ from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
 
 logger = logging.getLogger(__name__)
 
+# Vespa document namespace the knowledge-graph schema feeds under.
+_GRAPH_NAMESPACE = "graph_content"
+
 
 class GraphManager:
     """Manages the knowledge graph for a single tenant, backed by Vespa."""
@@ -349,10 +352,9 @@ class GraphManager:
 
         return qt_blocks, qtb_blocks
 
-    def _feed_with_retry(
-        self, feed_url: str, payload: dict, doc_id: str, kind: str
-    ) -> bool:
-        """POST a graph node/edge to Vespa, retrying on schema-convergence races.
+    def _feed_with_retry(self, doc_id: str, fields: dict, kind: str) -> bool:
+        """Put a graph node/edge through the backend document API, retrying on
+        schema-convergence races.
 
         Vespa's content-distributor convergence trails the config server by a
         few seconds after a fresh schema deploy. A feed during that window
@@ -372,52 +374,42 @@ class GraphManager:
         backoff = 2.0
         for attempt in range(8):
             try:
-                resp = self._http.post(feed_url, json=payload, timeout=10)
-            except Exception:
-                logger.exception("Failed to feed graph %s %s", kind, doc_id)
-                return False
-            if resp.ok:
-                return True
-            body = resp.text
-            transient = (resp.status_code == 400 and "does not exist" in body) or (
-                resp.status_code == 500 and "No handler for document type" in body
-            )
-            if not transient or attempt == 7:
-                logger.warning(
-                    "Feed for %s %s returned %s: %s",
-                    kind,
+                self._backend.put_document_fields(
                     doc_id,
-                    resp.status_code,
-                    body[:2000],
+                    fields,
+                    schema_name=self._schema_name,
+                    namespace=_GRAPH_NAMESPACE,
                 )
-                return False
-            _time.sleep(backoff)
-            backoff = min(backoff * 1.5, 8.0)
+                return True
+            except Exception as exc:
+                body = str(exc)
+                transient = (
+                    "does not exist" in body or "No handler for document type" in body
+                )
+                if not transient or attempt == 7:
+                    logger.warning(
+                        "Feed for %s %s failed: %s", kind, doc_id, body[:2000]
+                    )
+                    return False
+                _time.sleep(backoff)
+                backoff = min(backoff * 1.5, 8.0)
         return False
 
     def _feed_node(self, node: Node, tensor_fields: Dict[str, Any]) -> bool:
-        url = f"{self._backend._url}:{self._backend._port}"
-        feed_url = (
-            f"{url}/document/v1/graph_content/{self._schema_name}/docid/{node.doc_id}"
-        )
         payload = node.to_vespa_document()
         # tensor_fields is empty when encoding failed — ship the node
         # without embeddings rather than blocking the upsert. Mapped
         # tensor attributes tolerate absent values.
         for k, v in tensor_fields.items():
             payload["fields"][k] = v
-        return self._feed_with_retry(feed_url, payload, node.doc_id, "node")
+        return self._feed_with_retry(node.doc_id, payload["fields"], "node")
 
     def _feed_edge(self, edge: Edge) -> bool:
         """Feed an edge document. Edges don't carry embeddings — semantic
         retrieval is over nodes only — so the mapped embedding fields are
         omitted entirely (Vespa attribute tensors handle absence)."""
-        url = f"{self._backend._url}:{self._backend._port}"
-        feed_url = (
-            f"{url}/document/v1/graph_content/{self._schema_name}/docid/{edge.doc_id}"
-        )
         payload = edge.to_vespa_document()
-        return self._feed_with_retry(feed_url, payload, edge.doc_id, "edge")
+        return self._feed_with_retry(edge.doc_id, payload["fields"], "edge")
 
     def _search_filtered(
         self, conditions: List[str], top_k: int
@@ -494,19 +486,15 @@ class GraphManager:
         """Fetch a single edge's fields by its deterministic ``edge_id``.
 
         The edge doc_id is ``kg_edge_{safe_tenant}_{edge_id}`` (see
-        ``Edge.doc_id``), so a direct Document v1 GET resolves it without
+        ``Edge.doc_id``), so a direct by-id document GET resolves it without
         visiting and filtering the whole edge set. Returns ``None`` when the
         edge does not exist or the GET fails.
         """
         doc_id = f"kg_edge_{_safe_tenant(self._tenant_id)}_{edge_id}"
-        url = f"{self._backend._url}:{self._backend._port}"
-        get_url = f"{url}/document/v1/graph_content/{self._schema_name}/docid/{doc_id}"
         try:
-            resp = self._http.get(get_url, timeout=15)
-            if resp.status_code == 404 or not resp.ok:
-                return None
-            data = resp.json()
-            return data.get("fields", data)
+            return self._backend.get_document_fields(
+                doc_id, schema_name=self._schema_name, namespace=_GRAPH_NAMESPACE
+            )
         except Exception:
             logger.exception("Edge GET failed for edge_id=%s", edge_id)
             return None
