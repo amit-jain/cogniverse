@@ -405,3 +405,50 @@ class TestAgentBehaviorConfigWiring:
             dispatcher._agent_behavior_kwargs("acme:acme", "detailed_report_agent")
             == {}
         )
+
+    @pytest.mark.asyncio
+    async def test_dispatch_threads_persisted_toggles_into_summarizer_deps(
+        self, monkeypatch
+    ):
+        """Dispatch-level pin: the persisted per-tenant toggles must land in
+        the CONSTRUCTED SummarizerDeps — dropping the kwargs splat at the
+        construction site would keep the helper test green while every
+        dispatch silently used the Deps defaults."""
+        from unittest.mock import AsyncMock
+
+        dispatcher, cm = self._dispatcher_with_real_config()
+        cm.set_agent_config(
+            tenant_id="acme:acme",
+            agent_name="summarizer_agent",
+            agent_config=self._agent_config(
+                "summarizer_agent",
+                thinking_enabled=False,
+                visual_analysis_enabled=False,
+            ),
+        )
+        entry = MagicMock()
+        entry.capabilities = ["summarization"]
+        dispatcher._registry.get_agent.return_value = entry
+
+        captured = {}
+
+        class _CapturingSummarizer:
+            def __init__(self, deps, config_manager=None):
+                captured["deps"] = deps
+
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent",
+            _CapturingSummarizer,
+        )
+        monkeypatch.setattr(
+            dispatcher, "_resolve_answer_search_results", AsyncMock(return_value=[])
+        )
+
+        agent, typed_input = await dispatcher.create_streaming_agent(
+            "summarizer_agent", "summarize the clips", "acme:acme"
+        )
+
+        assert isinstance(agent, _CapturingSummarizer)
+        assert captured["deps"].thinking_enabled is False
+        assert captured["deps"].visual_analysis_enabled is False
+        assert captured["deps"].tenant_id == "acme:acme"
