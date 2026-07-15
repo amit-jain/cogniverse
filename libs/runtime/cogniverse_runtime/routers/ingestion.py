@@ -1021,6 +1021,25 @@ async def _write_backrefs_to_content(
         }
         async with semaphore:
             try:
+                # Vespa answers an update with create=false on an ABSENT doc
+                # with a plain 200 no-op — a drifted video_id/segment
+                # derivation would silently drop every back-ref. Check the
+                # target exists so drift surfaces in the logs.
+                exists = await asyncio.to_thread(
+                    backend.get_document_fields,
+                    doc_id,
+                    schema_name=schema,
+                    namespace="content",
+                )
+                if exists is None:
+                    logger.warning(
+                        "Content back-ref target missing: %s/%s — "
+                        "entity/relation/claim ids dropped for segment %s",
+                        schema,
+                        doc_id,
+                        segment_id,
+                    )
+                    return
                 await asyncio.to_thread(
                     backend.update_document_fields,
                     doc_id,
