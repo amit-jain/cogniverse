@@ -1,16 +1,21 @@
 """Integration tests for the joint-trace ColBERT query encoding.
 
 Exercises ``ColBERTQueryEncoder.encode(query, trace=...)`` against the
-real ``colbert_pylate`` sidecar referenced by ``configs/config.json``.
-Without a reachable sidecar the encoder cannot produce byte-stable
-output, so the whole module skips.
+real vLLM ``lightonai/LateOn`` sidecar the ``pylate_server`` fixture
+provisions. The sidecar is self-provisioned, so these run on a fresh
+checkout without any pre-started service.
 
 The four cases lock:
   - Empty-trace encoding shape + array.
   - Non-empty-trace encoding array.
-  - MaxSim cosine against a pinned document encoding for both.
+  - MaxSim cosine against a pinned document encoding, plus the semantic
+    lift (a radioactivity CoT trace raises similarity to the radium doc).
   - Top-1 retrieval through ``GraphManager.search_nodes`` swaps the top
     node when a CoT trace is supplied (the AgentIR lift).
+
+Encoding goldens compare with an absolute tolerance, not byte-equality:
+served-model float output drifts a few percent across vLLM/BLAS/hardware
+versions. See ``GOLDEN_ATOL`` for the sizing.
 """
 
 from __future__ import annotations
@@ -37,8 +42,24 @@ pytestmark = pytest.mark.integration
 # Golden file helpers
 # ---------------------------------------------------------------------------
 
+# Goldens are committed (see ../goldens/) so this suite runs on a fresh
+# checkout. They bind to model ``lightonai/LateOn`` served by vLLM with the
+# ``ColBERTModernBertModel`` hf-override (the pylate_server fixture). Re-record
+# after a deliberate model/serving change with ``RECORD_GOLDEN=1 uv run pytest
+# tests/core/integration/test_joint_trace_encoding.py``.
 GOLDEN_DIR = Path(__file__).parent / "goldens"
 RECORD_GOLDEN = os.environ.get("RECORD_GOLDEN") == "1"
+
+# Served-model embeddings are not byte-stable across serving-stack, BLAS, or
+# hardware versions. Measured cross-version drift between the 2026-06-12
+# recording and the current vLLM stack was max |Δ|≈0.028 (mean ≈0.006) on
+# values in [-0.52, 0.32]. An absolute tolerance of 0.05 (~2x that drift)
+# tolerates the numeric variance while still catching the real regressions —
+# a wrong model, a wrong architecture (shape change), or NaN/Inf.
+GOLDEN_ATOL = 0.05
+# The MaxSim cosine scalars drift ~3e-3 across the same versions; 0.02 leaves
+# a comfortable margin while still anchoring the value.
+COSINE_ATOL = 0.02
 
 
 def assert_golden_json(actual, name: str) -> None:
@@ -59,7 +80,13 @@ def assert_golden_npy(actual_array: np.ndarray, name: str) -> None:
         np.save(path, actual_array)
         return
     expected = np.load(path)
-    assert np.array_equal(actual_array, expected), f"Golden mismatch for {name}"
+    assert actual_array.shape == expected.shape, (
+        f"Golden shape mismatch for {name}: {actual_array.shape} != {expected.shape}"
+    )
+    assert np.allclose(actual_array, expected, rtol=0.0, atol=GOLDEN_ATOL), (
+        f"Golden drift for {name} exceeds atol={GOLDEN_ATOL}: "
+        f"max|Δ|={np.abs(actual_array - expected).max():.4f}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -92,11 +119,11 @@ def test_encode_no_trace_shape_and_array(colbert_encoder):
 
 
 # ---------------------------------------------------------------------------
-# encode("discover", trace=<cot>) byte-equal golden
+# encode("discover", trace=<cot>) matches golden within tolerance
 # ---------------------------------------------------------------------------
 
 
-def test_encode_with_trace_byte_equal_golden(colbert_encoder):
+def test_encode_with_trace_matches_golden(colbert_encoder):
     arr = colbert_encoder.encode(
         "discover",
         trace="medical history involving radioactivity research",
@@ -121,7 +148,7 @@ def _maxsim_cosine(query_arr: np.ndarray, doc_arr: np.ndarray) -> float:
     return float(per_q_max.mean())
 
 
-def test_cosine_pairs_byte_equal_golden(colbert_encoder):
+def test_cosine_pairs_match_golden_and_trace_lifts_similarity(colbert_encoder):
     arr_no_trace = colbert_encoder.encode("discover", trace="")
     arr_with_trace = colbert_encoder.encode(
         "discover",
@@ -139,11 +166,26 @@ def test_cosine_pairs_byte_equal_golden(colbert_encoder):
     else:
         doc_arr = np.load(doc_path)
 
+    no_trace_cosine = _maxsim_cosine(arr_no_trace, doc_arr)
+    with_trace_cosine = _maxsim_cosine(arr_with_trace, doc_arr)
+
+    # The semantic contract, portable across serving stacks: a CoT trace about
+    # radioactivity research must raise MaxSim similarity to the radium doc.
+    assert with_trace_cosine > no_trace_cosine, (no_trace_cosine, with_trace_cosine)
+
     pairs = {
-        "no_trace_cosine": round(_maxsim_cosine(arr_no_trace, doc_arr), 4),
-        "with_trace_cosine": round(_maxsim_cosine(arr_with_trace, doc_arr), 4),
+        "no_trace_cosine": round(no_trace_cosine, 4),
+        "with_trace_cosine": round(with_trace_cosine, 4),
     }
-    assert_golden_json(pairs, "cosine_pairs_discover.json")
+    if RECORD_GOLDEN:
+        assert_golden_json(pairs, "cosine_pairs_discover.json")
+        return
+    expected = json.loads((GOLDEN_DIR / "cosine_pairs_discover.json").read_text())
+    for key, value in pairs.items():
+        assert abs(value - expected[key]) <= COSINE_ATOL, (
+            f"{key} drift {abs(value - expected[key]):.4f} > atol={COSINE_ATOL} "
+            f"(got {value}, golden {expected[key]})"
+        )
 
 
 # ---------------------------------------------------------------------------
