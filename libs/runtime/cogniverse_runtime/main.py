@@ -287,6 +287,45 @@ def build_wiki_manager_factory(wiki_backend, config, config_manager):
     return _wiki_manager_factory
 
 
+def build_pin_lookup(knowledge_registry):
+    """Pin-lookup callable for the lifecycle scheduler.
+
+    Returns the pinned-id set for one tenant's Mem0 manager. A lookup failure
+    (e.g. a backend outage) RAISES instead of returning an empty set — an
+    empty set would read as "no pins" and let the scheduler prune genuinely
+    pinned memories; the raise makes tick_once skip that tenant's cleanup for
+    the tick (fail-safe: never prune when pins can't be confirmed).
+    """
+
+    def _pin_lookup(mm: object) -> set:
+        tenant_id = getattr(mm, "tenant_id", None)
+        if not tenant_id:
+            return set()
+        try:
+            # Honor admin PinService quota overrides set via
+            # PUT /admin/tenants/{t}/pin_quotas. PinQuotas.for_tenant
+            # checks the admin runtime dict first, then TenantConfig
+            # metadata, then defaults.
+            from cogniverse_core.memory.pinning import PinQuotas, PinService
+
+            pin_svc = PinService(
+                mm,
+                knowledge_registry,
+                quotas=PinQuotas.for_tenant(tenant_id),
+            )
+            return {rec.target_memory_id for rec in pin_svc.list_pins(tenant_id)}
+        except Exception as exc:
+            logger.warning(
+                "Pin lookup failed for tenant %s during lifecycle tick; "
+                "skipping cleanup this tick: %r",
+                tenant_id,
+                exc,
+            )
+            raise
+
+    return _pin_lookup
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
@@ -1032,7 +1071,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ):
         from cogniverse_core.memory.lifecycle_scheduler import LifecycleScheduler
         from cogniverse_core.memory.manager import Mem0MemoryManager
-        from cogniverse_core.memory.pinning import PinService
         from cogniverse_core.memory.schema import build_default_registry
 
         lifecycle_interval = float(
@@ -1040,37 +1078,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         knowledge_registry = build_default_registry()
 
-        def _pin_lookup(mm: object) -> set:
-            """Build the pinned-id set for a single tenant's Mem0 manager."""
-            tenant_id = getattr(mm, "tenant_id", None)
-            if not tenant_id:
-                return set()
-            try:
-                # Honor admin PinService quota overrides set via
-                # PUT /admin/tenants/{t}/pin_quotas. PinQuotas.for_tenant
-                # checks the admin runtime dict first, then TenantConfig
-                # metadata, then defaults.
-                from cogniverse_core.memory.pinning import PinQuotas
-
-                pin_svc = PinService(
-                    mm,
-                    knowledge_registry,
-                    quotas=PinQuotas.for_tenant(tenant_id),
-                )
-                return {rec.target_memory_id for rec in pin_svc.list_pins(tenant_id)}
-            except Exception as exc:
-                # A pin-lookup failure (e.g. a backend outage) must NOT read as
-                # "no pins" — returning an empty set here let the scheduler
-                # prune genuinely-pinned memories. Re-raise so tick_once skips
-                # this tenant's cleanup this tick (fail-safe: never prune when
-                # pins can't be confirmed).
-                logger.warning(
-                    "Pin lookup failed for tenant %s during lifecycle tick; "
-                    "skipping cleanup this tick: %r",
-                    tenant_id,
-                    exc,
-                )
-                raise
+        _pin_lookup = build_pin_lookup(knowledge_registry)
 
         lifecycle_scheduler = LifecycleScheduler(
             get_warm_managers=Mem0MemoryManager._instances.values,
