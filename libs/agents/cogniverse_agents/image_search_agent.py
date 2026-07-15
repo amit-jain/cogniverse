@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 from pydantic import Field
 
+from cogniverse_agents.search.vespa_query import vespa_search_children
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.models.model_loaders import get_or_load_model
@@ -362,7 +363,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         results = []
         data = response.json()
 
-        for hit in data.get("root", {}).get("children", []):
+        for hit in vespa_search_children(data):
             fields = hit.get("fields", {})
             results.append(
                 ImageResult(

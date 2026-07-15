@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import Field as PydanticField
 
+from cogniverse_agents.search.vespa_query import vespa_search_children
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
@@ -376,7 +377,7 @@ class AudioAnalysisAgent(
             results = []
             data = response.json()
 
-            for hit in data.get("root", {}).get("children", []):
+            for hit in vespa_search_children(data):
                 fields = hit.get("fields", {})
                 results.append(
                     AudioResult(
@@ -449,7 +450,7 @@ class AudioAnalysisAgent(
             results = []
             data = response.json()
 
-            for hit in data.get("root", {}).get("children", []):
+            for hit in vespa_search_children(data):
                 fields = hit.get("fields", {})
                 results.append(
                     AudioResult(
@@ -515,7 +516,7 @@ class AudioAnalysisAgent(
             results = []
             data = response.json()
 
-            for hit in data.get("root", {}).get("children", []):
+            for hit in vespa_search_children(data):
                 fields = hit.get("fields", {})
                 results.append(
                     AudioResult(
