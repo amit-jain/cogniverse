@@ -241,3 +241,29 @@ async def test_keyframe_image_round_trips_raw_for_any_frame_id(tmp_path):
         path = backend._key_to_path(key)
         assert path.suffix == ".jpg"
         assert path.read_bytes() == raw  # raw on disk, not a pickle envelope
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_cleanup_drops_legacy_sidecar_alongside_expired_entry(tmp_path):
+    """The startup sweep must remove a legacy .meta sidecar together with its
+    expired data file — leaving it would orphan sidecars forever (and a later
+    same-key write already clears them, but the sweep path never ran in a
+    test)."""
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    key = "profile:video:legacy9:transcript"
+    await backend.set(key, "old", ttl=1000)
+    cache_path = backend._key_to_path(key)
+    meta_path = backend._get_metadata_path(cache_path)
+    # Legacy entry shape: sidecar with a PAST expiry governs the file.
+    meta_path.write_text(json.dumps({"expires_at": time.time() - 50}))
+
+    await backend._cleanup_expired()
+
+    assert not cache_path.exists(), "expired entry must be swept"
+    assert not meta_path.exists(), "its legacy sidecar must be dropped too"

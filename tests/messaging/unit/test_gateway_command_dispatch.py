@@ -464,3 +464,19 @@ class TestHandleMessage:
 
         sent = [c.args[0] for c in update.message.reply_text.await_args_list]
         assert sent == expected_chunks
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestHandleHelp:
+    @pytest.mark.asyncio
+    async def test_help_command_replies_with_help_text(self):
+        from cogniverse_messaging.gateway import MessagingGateway
+        from cogniverse_messaging.telegram_handler import format_help
+
+        g = MessagingGateway(bot_token="fake", runtime_url="http://runtime")
+        update = _message_update(text="/help")
+
+        await g._handle_help(update, context=None)
+
+        update.message.reply_text.assert_awaited_once_with(format_help())

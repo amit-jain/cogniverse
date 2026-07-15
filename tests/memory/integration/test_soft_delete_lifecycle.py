@@ -305,3 +305,28 @@ class TestArchiveRestoreDoNotReembed:
         assert "archived" not in md, "restore clears the archived flag"
         assert "archived_at" not in md
         assert md["kind"] == "external_doc"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_flip_falls_back_to_memory_update_without_partial_store():
+    """The safety net: a Mem0 memory whose vector store exposes no partial
+    update() must still archive via Memory.update (re-embedding accepted as
+    the fallback cost) — this branch never executed anywhere."""
+
+    class _NoUpdateStore:
+        pass
+
+    class _FallbackMemory:
+        def __init__(self):
+            self.vector_store = _NoUpdateStore()
+            self.update_calls = []
+
+        def update(self, memory_id=None, data=None, metadata=None):
+            self.update_calls.append((memory_id, data, metadata))
+
+    mm = _spy_mm()
+    mm.memory = _FallbackMemory()
+
+    assert mm._flip_metadata_no_reembed("m1", "text", {"archived": True}) is True
+    assert mm.memory.update_calls == [("m1", "text", {"archived": True})]
