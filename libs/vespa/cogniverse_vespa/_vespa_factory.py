@@ -41,10 +41,10 @@ def make_vespa_app(*, url: str, port: Optional[int] = None) -> Vespa:
 class PersistentVespaOps:
     """pyvespa app wrapper whose data-plane ops reuse ONE HTTP session.
 
-    ``Vespa.query()``/``feed_data_point()``/``get_data()``/``delete_data()``
+    ``Vespa.query()``/``feed_data_point()``/``get_data()``/``delete_data()``/``update_data()``
     each run ``with VespaSync(self, pool_maxsize=1)`` — a fresh connection
     pool and TCP(+TLS) handshake per operation. Long-lived callers (the
-    config/adapter stores, the backend's metadata client) route those four
+    config/adapter stores, the backend's metadata client) route those five
     ops through a persistent session instead; ``.url`` proxies the wrapped
     app for Document v1 visit URL construction.
     """
@@ -60,7 +60,7 @@ class PersistentVespaOps:
 
     def __getattr__(self, name):
         # Non-data-plane attributes (get_application_status, deploy helpers)
-        # fall through to the wrapped app; only the four data-plane ops and
+        # fall through to the wrapped app; only the five data-plane ops and
         # ``url`` route through the persistent session.
         return getattr(self.app, name)
 
@@ -75,6 +75,9 @@ class PersistentVespaOps:
 
     def delete_data(self, *args, **kwargs):
         return self._sync.delete_data(*args, **kwargs)
+
+    def update_data(self, *args, **kwargs):
+        return self._sync.update_data(*args, **kwargs)
 
     def close(self) -> None:
         try:
