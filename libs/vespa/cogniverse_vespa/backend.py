@@ -1314,6 +1314,100 @@ class VespaBackend(Backend):
             self._metadata_app_key = key
         return self._metadata_app
 
+    # ------------------------------------------------------------------
+    # Raw-fields document primitives (namespace-aware)
+    # ------------------------------------------------------------------
+    # The single sanctioned Vespa Document v1 surface for callers that own
+    # their field shapes (wiki pages, knowledge-graph nodes/edges, content
+    # back-refs). Hand-built ``/document/v1`` HTTP bypassed session reuse,
+    # escaping, and the backend error contract. Namespace defaults to
+    # pyvespa's behavior (namespace == schema) so existing callers are
+    # unaffected. All writes RAISE on failure — the status and body ride in
+    # the exception text so callers can match transient convergence shapes.
+
+    @staticmethod
+    def _check_document_response(resp, op: str, document_id: str):
+        status = getattr(resp, "status_code", None)
+        if status is not None and not (200 <= status < 300):
+            body = getattr(resp, "json", None)
+            raise RuntimeError(
+                f"Vespa document {op} failed for '{document_id}' "
+                f"(HTTP {status}): {body}"
+            )
+        return resp
+
+    def put_document_fields(
+        self,
+        document_id: str,
+        fields: Dict[str, Any],
+        schema_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> None:
+        """Full-put a raw Vespa ``fields`` dict as one document."""
+        schema_name = schema_name or self.config.get("schema_name")
+        resp = self._metadata_vespa_app().feed_data_point(
+            schema=schema_name,
+            data_id=document_id,
+            fields=fields,
+            namespace=namespace,
+        )
+        self._check_document_response(resp, "put", document_id)
+
+    def get_document_fields(
+        self,
+        document_id: str,
+        schema_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch one document's raw ``fields`` dict, or None when absent."""
+        schema_name = schema_name or self.config.get("schema_name")
+        resp = self._metadata_vespa_app().get_data(
+            schema=schema_name,
+            data_id=document_id,
+            namespace=namespace,
+            raise_on_not_found=False,
+        )
+        status = getattr(resp, "status_code", None)
+        if status == 404:
+            return None
+        self._check_document_response(resp, "get", document_id)
+        body = getattr(resp, "json", {}) or {}
+        return body.get("fields", {})
+
+    def update_document_fields(
+        self,
+        document_id: str,
+        fields: Dict[str, Any],
+        schema_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+        create: bool = False,
+    ) -> None:
+        """Partial-update raw fields (pyvespa auto-wraps assign semantics)."""
+        schema_name = schema_name or self.config.get("schema_name")
+        resp = self._metadata_vespa_app().update_data(
+            schema=schema_name,
+            data_id=document_id,
+            fields=fields,
+            namespace=namespace,
+            create=create,
+        )
+        self._check_document_response(resp, "update", document_id)
+
+    def delete_document_fields(
+        self,
+        document_id: str,
+        schema_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> None:
+        """Delete one document under an explicit namespace."""
+        schema_name = schema_name or self.config.get("schema_name")
+        resp = self._metadata_vespa_app().delete_data(
+            schema=schema_name,
+            data_id=document_id,
+            namespace=namespace,
+        )
+        self._check_document_response(resp, "delete", document_id)
+
     def create_metadata_document(
         self, schema: str, doc_id: str, fields: Dict[str, Any]
     ) -> bool:
