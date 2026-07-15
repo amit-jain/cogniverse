@@ -393,15 +393,22 @@ class StructuredFilesystemBackend(CacheBackend):
         cleared = 0
 
         if pattern and pattern.endswith("*"):
-            # Pattern-based clearing
-            prefix = pattern[:-1]
+            # Pattern-based clearing. Keys sanitize into paths losing the ':'
+            # separators and the literal 'video' marker, so the raw prefix
+            # never appears in any path — match on the sanitized tokens
+            # instead (a bare raw-prefix match made "profile:video:<id>:*"
+            # a silent no-op).
+            prefix = pattern[:-1].rstrip(":")
+            tokens = [
+                self._sanitize_path_component(part)
+                for part in prefix.split(":")
+                if part and part != "video"
+            ]
 
-            # Find all files that match the pattern
             for path in self.base_path.rglob("*"):
                 if path.is_file():
-                    # Try to reconstruct the key from path
-                    # This is approximate but should work for most cases
-                    if prefix in str(path):
+                    path_str = str(path)
+                    if tokens and all(token in path_str for token in tokens):
                         try:
                             path.unlink()
                             cleared += 1
