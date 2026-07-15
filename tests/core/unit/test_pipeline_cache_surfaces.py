@@ -106,3 +106,67 @@ async def test_get_cache_stats_shape(cache):
         "transcripts": "Not implemented",
         "descriptions": "Not implemented",
     }
+
+
+@pytest.mark.asyncio
+async def test_invalidate_video_does_not_wipe_prefix_sibling_profiles(tmp_path):
+    """invalidate_video on profile 'direct_video_global' must NOT also delete
+    the same video's cache under 'direct_video_global_large' — the token match
+    is by path SEGMENT, not substring."""
+    from cogniverse_core.common.cache.base import CacheConfig, CacheManager
+    from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
+
+    def _cache(profile):
+        mgr = CacheManager(
+            CacheConfig(
+                backends=[
+                    {
+                        "backend_type": "structured_filesystem",
+                        "base_path": str(tmp_path / "cache"),
+                        "cleanup_on_startup": False,
+                    }
+                ]
+            )
+        )
+        return PipelineArtifactCache(mgr, ttl=3600, profile=profile)
+
+    base = _cache("direct_video_global")
+    large = _cache("direct_video_global_large")
+    await base.set_transcript("/videos/clip.mp4", {"text": "base", "segments": []})
+    await large.set_transcript("/videos/clip.mp4", {"text": "large", "segments": []})
+
+    cleared = await base.invalidate_video("/videos/clip.mp4")
+
+    assert cleared == 1
+    assert await base.get_transcript("/videos/clip.mp4") is None
+    large_survivor = await large.get_transcript("/videos/clip.mp4")
+    assert large_survivor is not None, "sibling _large profile was wrongly wiped"
+    assert large_survivor["text"] == "large"
+
+
+@pytest.mark.asyncio
+async def test_clear_star_wipes_all_and_nonwildcard_clears_one_key(tmp_path):
+    """clear('*') == clear-all; a non-wildcard pattern clears only that key
+    (never a full wipe)."""
+    from cogniverse_core.common.cache.backends.structured_filesystem import (
+        StructuredFilesystemBackend,
+        StructuredFilesystemConfig,
+    )
+
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path / "c"), cleanup_on_startup=False
+        )
+    )
+    await backend.set("prof:video:v1:transcript", {"a": 1})
+    await backend.set("prof:video:v2:transcript", {"b": 2})
+
+    # Non-wildcard clears exactly one entry, leaving the other.
+    n = await backend.clear("prof:video:v1:transcript")
+    assert n == 1
+    assert await backend.get("prof:video:v1:transcript") is None
+    assert await backend.get("prof:video:v2:transcript") == {"b": 2}
+
+    # '*' clears everything that remains.
+    await backend.clear("*")
+    assert await backend.get("prof:video:v2:transcript") is None
