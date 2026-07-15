@@ -188,6 +188,33 @@ class TextAnalysisAgent(
             return None
         return adapter.name if adapter else None
 
+    _ADAPTER_RECHECK_INTERVAL_S = 300.0
+
+    def _refresh_adapter_lm_if_changed(self) -> None:
+        """Rebuild the DSPy LM when the tenant's active adapter changed.
+
+        The LM is baked at construction, and standalone agents are cached per
+        tenant — without this, an adapter activated after the agent warmed up
+        never applied until a restart. Bounded cost: one registry lookup per
+        interval per warm agent.
+        """
+        import time as _time
+
+        now = _time.monotonic()
+        if now - getattr(self, "_adapter_checked_at", 0.0) < (
+            self._ADAPTER_RECHECK_INTERVAL_S
+        ):
+            return
+        self._adapter_checked_at = now
+        current = self._active_adapter_model()
+        if current != getattr(self, "_active_adapter_model_name", None):
+            logger.info(
+                "Active adapter changed (%s -> %s); rebuilding LM",
+                getattr(self, "_active_adapter_model_name", None),
+                current,
+            )
+            self._configure_dspy_lm(self.config)
+
     def analyze_text(self, text: str, analysis_type: str = "summary") -> Dict[str, Any]:
         """
         Analyze text using dynamically configured DSPy module.
@@ -200,6 +227,7 @@ class TextAnalysisAgent(
             Analysis result with confidence score
         """
         # Get or create module (will use cached if available)
+        self._refresh_adapter_lm_if_changed()
         module = self.get_or_create_module("text_analysis")
 
         text = self.inject_context_into_prompt(text, text)

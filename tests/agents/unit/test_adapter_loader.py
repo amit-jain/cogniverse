@@ -366,3 +366,48 @@ def test_base_agent_adapter_lm_context_defaults_to_noop():
 
     ctx = AgentBase._adapter_lm_context(Mock())
     assert isinstance(ctx, nullcontext)
+
+
+@pytest.mark.unit
+def test_text_analysis_picks_up_adapter_activated_after_construction(monkeypatch):
+    """An adapter activated AFTER the agent was built (and cached) must take
+    effect within the re-check interval — the LM was previously baked once at
+    construction, so a cached standalone agent served the base model until a
+    process restart."""
+
+    from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
+
+    agent = object.__new__(TextAnalysisAgent)
+    agent.tenant_id = "acme:acme"
+    agent.config = Mock()
+    active = {"name": None}
+    monkeypatch.setattr(
+        agent.__class__,
+        "_active_adapter_model",
+        lambda self: active["name"],
+        raising=True,
+    )
+
+    rebuilt = []
+
+    def fake_configure(config):
+        rebuilt.append(agent._active_adapter_model())
+
+    agent._configure_dspy_lm = fake_configure
+    agent._active_adapter_model_name = None  # what construction resolved
+    agent._adapter_checked_at = 0.0  # interval elapsed
+
+    # No change → no rebuild.
+    agent._refresh_adapter_lm_if_changed()
+    assert rebuilt == []
+
+    # Operator activates an adapter; interval elapsed → LM rebuilt to it.
+    active["name"] = "entity_sft_v9"
+    agent._adapter_checked_at = 0.0
+    agent._refresh_adapter_lm_if_changed()
+    assert rebuilt == ["entity_sft_v9"]
+
+    # Within the interval → no extra registry lookups / rebuilds.
+    active["name"] = "entity_sft_v10"
+    agent._refresh_adapter_lm_if_changed()
+    assert rebuilt == ["entity_sft_v9"]
