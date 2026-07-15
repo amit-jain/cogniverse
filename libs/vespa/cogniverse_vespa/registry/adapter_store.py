@@ -270,13 +270,13 @@ class VespaAdapterStore(AdapterStore):
         if current_active:
             current_id = current_active["fields"]["adapter_id"]
             if current_id != adapter_id:
-                self._update_adapter_field(current_id, "is_active", 0)
-                self._update_adapter_field(current_id, "status", "inactive")
+                self._update_adapter_fields(
+                    current_id, {"is_active": 0, "status": "inactive"}
+                )
                 logger.info(f"Deactivated previous adapter {current_id}")
 
         # Activate the new adapter
-        self._update_adapter_field(adapter_id, "is_active", 1)
-        self._update_adapter_field(adapter_id, "status", "active")
+        self._update_adapter_fields(adapter_id, {"is_active": 1, "status": "active"})
         logger.info(f"Activated adapter {adapter_id} for {tenant_id}/{agent_type}")
 
     def deactivate_adapter(self, adapter_id: str) -> None:
@@ -286,8 +286,7 @@ class VespaAdapterStore(AdapterStore):
         Args:
             adapter_id: Adapter to deactivate
         """
-        self._update_adapter_field(adapter_id, "is_active", 0)
-        self._update_adapter_field(adapter_id, "status", "inactive")
+        self._update_adapter_fields(adapter_id, {"is_active": 0, "status": "inactive"})
         logger.info(f"Deactivated adapter {adapter_id}")
 
     def deprecate_adapter(self, adapter_id: str) -> None:
@@ -299,8 +298,9 @@ class VespaAdapterStore(AdapterStore):
         Args:
             adapter_id: Adapter to deprecate
         """
-        self._update_adapter_field(adapter_id, "is_active", 0)
-        self._update_adapter_field(adapter_id, "status", "deprecated")
+        self._update_adapter_fields(
+            adapter_id, {"is_active": 0, "status": "deprecated"}
+        )
         logger.info(f"Deprecated adapter {adapter_id}")
 
     def delete_adapter(self, adapter_id: str) -> bool:
@@ -323,16 +323,12 @@ class VespaAdapterStore(AdapterStore):
             logger.error(f"Failed to delete adapter {adapter_id}: {e}")
             return False
 
-    def _update_adapter_field(
-        self, adapter_id: str, field_name: str, field_value: Any
-    ) -> None:
-        """
-        Update a single field on an adapter.
+    def _update_adapter_fields(self, adapter_id: str, updates: Dict[str, Any]) -> None:
+        """Update several fields on an adapter in ONE read + ONE write.
 
-        Args:
-            adapter_id: Adapter identifier
-            field_name: Field to update
-            field_value: New value
+        set_active/deactivate/deprecate change ``is_active`` AND ``status``
+        together; updating them field-by-field re-read and re-wrote the whole
+        document once per field (4 reads + 4 writes for a single set_active).
 
         Raises:
             ValueError: If adapter not found
@@ -346,8 +342,8 @@ class VespaAdapterStore(AdapterStore):
         system_fields = {"sddocname", "documentid", "relevance"}
         fields = {k: v for k, v in adapter["fields"].items() if k not in system_fields}
 
-        # Update field
-        fields[field_name] = field_value
+        # Apply the updates in one shot
+        fields.update(updates)
         fields["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         # Save back
@@ -357,6 +353,12 @@ class VespaAdapterStore(AdapterStore):
             data_id=doc_id,
             fields=fields,
         )
+
+    def _update_adapter_field(
+        self, adapter_id: str, field_name: str, field_value: Any
+    ) -> None:
+        """Update a single field on an adapter (delegates to the batched path)."""
+        self._update_adapter_fields(adapter_id, {field_name: field_value})
 
     def health_check(self) -> bool:
         """
