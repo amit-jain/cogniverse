@@ -26,6 +26,7 @@ import dspy
 import httpx
 from pydantic import BaseModel, Field
 
+from cogniverse_agents._coercion import coerce_float
 from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.orchestrator.checkpoint_types import (
@@ -1685,8 +1686,8 @@ class OrchestratorAgent(
         snippet: Dict[str, Any] = {
             "source_doc_id": str(source_doc_id),
             "segment_id": str(segment_id),
-            "ts_start": float(ts_start) if ts_start is not None else 0.0,
-            "ts_end": float(ts_end) if ts_end is not None else 0.0,
+            "ts_start": coerce_float(ts_start),
+            "ts_end": coerce_float(ts_end),
             "text": str(text),
         }
         if raw.get("score") is not None:
@@ -1740,15 +1741,15 @@ class OrchestratorAgent(
                 "source_doc_id": str(hit.get("source_doc_id") or ""),
                 "video_id": str(hit.get("source_doc_id") or hit.get("video_id") or ""),
                 "segment_id": str(hit.get("segment_id") or ""),
-                "ts_start": float(hit.get("ts_start") or 0.0),
-                "ts_end": float(hit.get("ts_end") or 0.0),
+                "ts_start": coerce_float(hit.get("ts_start")),
+                "ts_end": coerce_float(hit.get("ts_end")),
                 "score": hit.get("score"),
             }
             if entry["score"] is None:
                 unscored.append(entry)
             else:
                 scored.append(entry)
-        scored.sort(key=lambda h: float(h.get("score") or 0.0), reverse=True)
+        scored.sort(key=lambda h: coerce_float(h.get("score")), reverse=True)
         return scored + unscored
 
     @staticmethod
@@ -1969,8 +1970,8 @@ class OrchestratorAgent(
             ts_end = snippet.get("ts_end", 0.0) or 0.0
             return {
                 "source_doc_id": doc_id,
-                "ts_start": float(ts_start),
-                "ts_end": float(ts_end),
+                "ts_start": coerce_float(ts_start),
+                "ts_end": coerce_float(ts_end),
             }
         return None
 

@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import Field
 
+from cogniverse_agents._coercion import coerce_float
 from cogniverse_agents.graph.graph_schema import normalize_name
 from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -190,8 +191,8 @@ def _node_passes_mention_filter(
         if video_id is not None and str(m.get("source_doc_id") or "") != str(video_id):
             continue
         if ts_range is not None:
-            ms = float(m.get("ts_start") or 0.0)
-            me = float(m.get("ts_end") or 0.0)
+            ms = coerce_float(m.get("ts_start"))
+            me = coerce_float(m.get("ts_end"))
             if not _ranges_overlap(ms, me, ts_range[0], ts_range[1]):
                 continue
         return True
@@ -264,8 +265,8 @@ class KnowledgeGraphTraversalAgent(
             ) != str(video_id):
                 continue
             if ts_range is not None:
-                e_start = float(edge_fields.get("ts_start") or 0.0)
-                e_end = float(edge_fields.get("ts_end") or 0.0)
+                e_start = coerce_float(edge_fields.get("ts_start"))
+                e_end = coerce_float(edge_fields.get("ts_end"))
                 if not _ranges_overlap(e_start, e_end, ts_range[0], ts_range[1]):
                     continue
             target = str(edge_fields.get("target_node_id") or "")

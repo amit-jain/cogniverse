@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
@@ -11,6 +13,7 @@ from cogniverse_agents.kg_traversal_agent import (
     KGTraversalDeps,
     KGTraversalInput,
     KnowledgeGraphTraversalAgent,
+    _node_passes_mention_filter,
 )
 from cogniverse_core.agents.rlm_options import RLMOptions
 
@@ -248,3 +251,53 @@ def test_agent_capabilities_advertised():
     assert agent.agent_name == "kg_traversal_agent"
     assert "kg_traversal" in agent.capabilities
     assert agent.port == 8022
+
+
+class TestMentionFilterCrashSafety:
+    """A Mention blob stores ts_start/ts_end as arbitrary JSON — a real
+    extractor can emit human-readable strings ("00:05"). The time-window
+    filter must coerce them defensively, not crash on float()."""
+
+    def test_non_numeric_mention_timestamp_does_not_crash(self):
+        node_fields = {
+            "mentions": json.dumps(
+                [{"source_doc_id": "v1", "ts_start": "garbage", "ts_end": "bad"}]
+            )
+        }
+        # garbage -> 0.0; the [50,100] window excludes a 0.0 point, so the
+        # node is filtered out — and, crucially, no ValueError is raised.
+        assert _node_passes_mention_filter(node_fields, "v1", (50.0, 100.0)) is False
+
+    def test_numeric_string_mention_timestamp_overlaps(self):
+        node_fields = {
+            "mentions": json.dumps(
+                [{"source_doc_id": "v1", "ts_start": "5", "ts_end": "9"}]
+            )
+        }
+        assert _node_passes_mention_filter(node_fields, "v1", (0.0, 100.0)) is True
+
+
+class TestEdgeFilterCrashSafety:
+    """The traverse() time-window filter reads ts_start/ts_end off each edge
+    dict. A non-numeric value must degrade to 0.0, not crash traverse()."""
+
+    def test_non_numeric_edge_timestamp_does_not_crash(self):
+        agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id="acme"))
+        fake_gm = SimpleNamespace(
+            _visit_edges=lambda source_node_id: [
+                {
+                    "source_doc_id": "v1",
+                    "ts_start": "garbage",
+                    "ts_end": "bad",
+                    "target_node_id": "t",
+                    "relation": "knows",
+                    "source_node_id": "s",
+                }
+            ],
+            _visit=lambda doc_type, top_k: [],
+        )
+        agent.set_graph_manager(fake_gm)
+        # ts_range forces the edge float() coercion path; garbage -> 0.0 is
+        # excluded from [50,100] so the edge drops without a ValueError.
+        out = agent.traverse("s", filters={"video_id": "v1", "ts_range": (50.0, 100.0)})
+        assert out == {"nodes": [], "edges": []}
