@@ -325,9 +325,14 @@ async def test_call_dspy_carries_adapter_lm_into_worker_thread():
     seen = {}
 
     class _Mod:
-        def forward(self, **kwargs):
+        def __call__(self, **kwargs):
             seen["lm"] = dspy.settings.lm
             seen["thread"] = threading.get_ident()
+            seen["via"] = "__call__"
+            return dspy.Prediction(out="ok")
+
+        def forward(self, **kwargs):
+            seen["via"] = "forward"
             return dspy.Prediction(out="ok")
 
     class _Agent(AgentBase[AgentInput, AgentOutput, AgentDeps]):
@@ -345,6 +350,10 @@ async def test_call_dspy_carries_adapter_lm_into_worker_thread():
     assert prediction.out == "ok"
     assert seen["lm"] is sentinel, "adapter LM did not reach the worker thread"
     assert seen["thread"] != threading.get_ident()
+    # call_dspy must go through module(...) — calling module.forward(...)
+    # directly bypasses DSPy's __call__ instrumentation (callbacks, usage
+    # tracking, history) and emits a deprecation warning on every dispatch.
+    assert seen["via"] == "__call__", f"invoked via {seen['via']}"
 
 
 @pytest.mark.unit

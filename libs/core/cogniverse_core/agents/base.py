@@ -462,10 +462,13 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                             "token", str(chunk), data={"accumulated": accumulated}
                         )
                 if prediction is None:
-                    prediction = await asyncio.to_thread(module.forward, **kwargs)
+                    prediction = await asyncio.to_thread(module, **kwargs)
                 return prediction
             else:
-                return await asyncio.to_thread(module.forward, **kwargs)
+                # module(...) not module.forward(...): forward bypasses DSPy's
+                # __call__ instrumentation (callbacks, usage tracking, history)
+                # and warns on every dispatch.
+                return await asyncio.to_thread(module, **kwargs)
 
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:
         """
