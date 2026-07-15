@@ -271,6 +271,34 @@ class VespaConfigStore(ConfigStore):
             )
         return dropped
 
+    def count_version_rows(self) -> Dict[str, int]:
+        """Count EVERY stored version row per config_id via a Document v1 visit.
+
+        ``list_all_configs`` returns only latest versions; the prune dry-run
+        needs the full per-id row counts to report what pruning would drop.
+        """
+        import requests
+
+        url = f"{self.vespa_app.url}/document/v1/"
+        path = f"{url}{self.schema_name}/{self.schema_name}/docid/"
+        params: Dict[str, Any] = {"wantedDocumentCount": 1000}
+        counts: Dict[str, int] = {}
+        continuation: Optional[str] = None
+        while True:
+            if continuation:
+                params["continuation"] = continuation
+            resp = requests.get(path, params=params, timeout=60)
+            resp.raise_for_status()
+            payload = resp.json()
+            for doc in payload.get("documents") or []:
+                cid = (doc.get("fields") or {}).get("config_id")
+                if cid:
+                    counts[cid] = counts.get(cid, 0) + 1
+            continuation = payload.get("continuation")
+            if not continuation:
+                break
+        return counts
+
     def prune_all_configs(self, *, keep: Optional[int] = None) -> int:
         """One-shot prune across every config_id in the schema.
 
