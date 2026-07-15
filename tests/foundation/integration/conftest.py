@@ -12,6 +12,11 @@ The container config (``_sr_stack/{envoy.yaml,sr-config.yaml,stub_upstream.py}``
 addresses peers by the docker network aliases ``semantic-router`` and
 ``stub-upstream``, so only the container names and the published Envoy port vary
 per process.
+
+The router's classifier bundle and embedding model are cached in persistent
+named volumes (``cog-sr-models`` / ``cog-sr-hf-cache``) so the multi-GB download
+happens once per host; the readiness budget adapts to whether the caches are
+already warm.
 """
 
 from __future__ import annotations
@@ -29,6 +34,17 @@ _STACK_DIR = Path(__file__).resolve().parent / "_sr_stack"
 _ENVOY_IMAGE = "envoyproxy/envoy:v1.31-latest"
 _SR_IMAGE = "ghcr.io/vllm-project/semantic-router/vllm-sr:latest"
 _STUB_IMAGE = "python:3.12-slim"
+
+# Persistent caches so the router's classifier bundle (/app/models) and any
+# HuggingFace-hosted embedding model download ONCE per host instead of every
+# run: docker rm -f otherwise discards them, and a cold ~GB download blows the
+# readiness budget (the reason this suite errored on a cold runner). Named
+# volumes mirror the face-embed-cache idiom — the test still owns its infra.
+_SR_MODELS_VOLUME = "cog-sr-models"
+_SR_HF_VOLUME = "cog-sr-hf-cache"
+# Classifier bundle marker relative to the volume root (mounted at
+# /app/models); present ⇒ the bundle is cached and the router starts warm.
+_SR_CLASSIFIER_MARKER = "mmbert32k-intent-classifier-merged/category_mapping.json"
 
 
 def _free_port() -> int:
@@ -55,6 +71,23 @@ def _docker(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
     )
 
 
+def _sr_models_cached() -> bool:
+    """True when the persistent volume already holds the classifier bundle,
+    so the router starts warm and the readiness budget can be short."""
+    probe = _docker(
+        "run",
+        "--rm",
+        "-v",
+        f"{_SR_MODELS_VOLUME}:/models",
+        _STUB_IMAGE,
+        "test",
+        "-f",
+        f"/models/{_SR_CLASSIFIER_MARKER}",
+        timeout=60,
+    )
+    return probe.returncode == 0
+
+
 @pytest.fixture(scope="module")
 def semantic_router_stack():
     """Yield ``{"base_url", "host_port"}`` for a live Envoy->SR->stub chain."""
@@ -73,6 +106,12 @@ def semantic_router_stack():
 
     reap_dead_owner_containers()
     owner_label = f"{OWNER_LABEL}={os.getpid()}"
+
+    # Provision persistent model caches before starting the router so the
+    # download happens once per host, not every run.
+    _docker("volume", "create", _SR_MODELS_VOLUME)
+    _docker("volume", "create", _SR_HF_VOLUME)
+    warm_start = _sr_models_cached()
 
     # localhost must bypass any outbound HTTPS proxy the environment sets.
     prev_no_proxy = (os.environ.get("NO_PROXY"), os.environ.get("no_proxy"))
@@ -125,6 +164,10 @@ def semantic_router_stack():
             "semantic-router",
             "-v",
             f"{_STACK_DIR / 'sr-config.yaml'}:/app/config.yaml:ro",
+            "-v",
+            f"{_SR_MODELS_VOLUME}:/app/models",
+            "-v",
+            f"{_SR_HF_VOLUME}:/root/.cache/huggingface",
             _SR_IMAGE,
             timeout=300,
         )
@@ -160,7 +203,12 @@ def semantic_router_stack():
         # fall through to the tier default — so polling Envoy's /v1/models (up
         # far earlier) would race the tests. ``startup_complete`` marks the real
         # classifier ready.
-        deadline = time.time() + 600
+        #
+        # A cold first run downloads the classifier bundle + embedding model
+        # into the persistent volumes; a warm run reuses them. Size the wait to
+        # whichever path this run takes so a genuine hang still fails promptly.
+        budget_s = 300 if warm_start else 1800
+        deadline = time.time() + budget_s
         while time.time() < deadline:
             out = _docker("logs", router)
             if "startup_complete" in (out.stdout + out.stderr):
@@ -169,8 +217,8 @@ def semantic_router_stack():
         else:
             logs = _docker("logs", "--tail", "40", router).stdout
             pytest.fail(
-                f"semantic-router classifier runtime not ready in 600s\n"
-                f"router logs:\n{logs}"
+                f"semantic-router classifier runtime not ready in {budget_s}s "
+                f"(warm_start={warm_start})\nrouter logs:\n{logs}"
             )
 
         # Then confirm the Envoy -> ext_proc -> stub path answers end to end.
