@@ -463,6 +463,76 @@ class TestVespaAdapterStore:
         call_args = mock_vespa_app.query.call_args
         assert "is_active = 1" in call_args.kwargs["yql"]
 
+    def test_set_active_batches_field_updates_one_read_write_per_adapter(self):
+        """set_active flips is_active + status on the old and the new adapter.
+        Each adapter must be read once and written once — not once per field.
+        Field-by-field updates cost 4 reads + 4 writes for a single set_active;
+        this pins the batched 2-reads + 2-writes (plus the get_active query)."""
+
+        class _Resp:
+            def __init__(self, hits):
+                self.hits = hits
+
+        class _FakeVespaApp:
+            def __init__(self, docs):
+                self.docs = docs
+                self.query_count = 0
+                self.feeds = []
+
+            def query(self, yql):
+                self.query_count += 1
+                if "is_active = 1" in yql:
+                    hits = [
+                        {"fields": f}
+                        for f in self.docs.values()
+                        if f.get("is_active") == 1
+                    ]
+                elif "adapter_id contains" in yql:
+                    hits = [{"fields": f} for aid, f in self.docs.items() if aid in yql]
+                else:
+                    hits = []
+                return _Resp(hits[:1])
+
+            def feed_data_point(self, schema, data_id, fields):
+                self.feeds.append(dict(fields))
+                self.docs[fields["adapter_id"]] = dict(fields)
+
+        from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
+
+        fake = _FakeVespaApp(
+            {
+                "adp_old": {
+                    "adapter_id": "adp_old",
+                    "tenant_id": "t1",
+                    "agent_type": "routing",
+                    "is_active": 1,
+                    "status": "active",
+                },
+                "adp_new": {
+                    "adapter_id": "adp_new",
+                    "tenant_id": "t1",
+                    "agent_type": "routing",
+                    "is_active": 0,
+                    "status": "inactive",
+                },
+            }
+        )
+        store = VespaAdapterStore(vespa_app=fake)
+
+        store.set_active("adp_new", "t1", "routing")
+
+        # get_active (1) + read adp_old (1) + read adp_new (1) = 3 queries.
+        assert fake.query_count == 3, fake.query_count
+        # One write per adapter, not one per field.
+        assert len(fake.feeds) == 2, [f.get("adapter_id") for f in fake.feeds]
+
+        by_id = {f["adapter_id"]: f for f in fake.feeds}
+        # Both fields landed in the SAME write for each adapter.
+        assert by_id["adp_old"]["is_active"] == 0
+        assert by_id["adp_old"]["status"] == "inactive"
+        assert by_id["adp_new"]["is_active"] == 1
+        assert by_id["adp_new"]["status"] == "active"
+
     def test_delete_adapter(self, adapter_store, mock_vespa_app):
         """Test deleting adapter."""
         result = adapter_store.delete_adapter("test-adapter-123")
