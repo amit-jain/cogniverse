@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 import aiofiles
 import msgpack
@@ -287,35 +288,52 @@ class StructuredFilesystemBackend(CacheBackend):
         """Store value in cache"""
         await self._run_startup_cleanup_if_needed()
         file_path = self._key_to_path(key)
+        tmp_path = file_path.with_name(f"{file_path.name}.{uuid4().hex[:8]}.tmp")
 
         try:
             # Create parent directory
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Write data
+            # Write to a temp file, stamp the expiry into its mtime, then
+            # atomically replace the destination. The destination therefore
+            # always carries its true expiry — a concurrent read or cleanup
+            # sweep can never observe a fresh entry with a write-time mtime,
+            # judge it expired, and destroy it. A partial write is never
+            # visible under the final name either.
             if isinstance(value, bytes) and file_path.suffix == ".jpg":
                 # This is image data
-                async with aiofiles.open(file_path, "wb") as f:
+                async with aiofiles.open(tmp_path, "wb") as f:
                     await f.write(value)
             else:
                 # Regular data - serialize it. pickle + gzip is CPU-bound; run
                 # it off the event loop so concurrent requests keep flowing.
                 data = await asyncio.to_thread(self._serialize, value)
-                async with aiofiles.open(file_path, "wb") as f:
+                async with aiofiles.open(tmp_path, "wb") as f:
                     await f.write(data)
 
-            # Encode expiry in the file mtime instead of a sidecar file — one
-            # fewer write per entry. A ttl sets mtime to expires_at; no ttl uses
-            # the never-expires sentinel.
+            # Expiry lives in the file mtime — one fewer write per entry. A
+            # ttl sets mtime to expires_at; no ttl uses the never-expires
+            # sentinel.
             now = time.time()
             expires_at = now + ttl if (ttl is not None and ttl > 0) else _NEVER_EXPIRES
-            os.utime(file_path, (now, expires_at))
+            os.utime(tmp_path, (now, expires_at))
+
+            # A legacy .meta sidecar (written before mtime-encoding) would
+            # override the fresh mtime with a stale expiry — clear it so this
+            # write's own ttl governs.
+            self._get_metadata_path(file_path).unlink(missing_ok=True)
+
+            os.replace(tmp_path, file_path)
 
             self._stats["sets"] += 1
             return True
 
         except Exception as e:
             logger.error(f"Error writing cache file {file_path}: {e}")
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
             return False
 
     async def delete(self, key: str) -> bool:
@@ -421,6 +439,8 @@ class StructuredFilesystemBackend(CacheBackend):
                 if path.is_file():
                     if path.suffix == ".meta":
                         total_metadata_files += 1
+                    elif path.suffix == ".tmp":
+                        continue  # in-flight atomic write, not an entry
                     else:
                         total_size += path.stat().st_size
                         total_files += 1
@@ -498,7 +518,9 @@ class StructuredFilesystemBackend(CacheBackend):
             # .meta sidecars are read via _read_expiry). The tree walk is sync
             # (pathlib), so yield periodically to keep the loop responsive.
             for path in self.base_path.rglob("*"):
-                if not path.is_file() or path.suffix == ".meta":
+                if not path.is_file() or path.suffix in (".meta", ".tmp"):
+                    # .tmp = an in-flight atomic write; sweeping it would race
+                    # the writer's os.replace.
                     continue
                 checked_count += 1
                 if checked_count % 100 == 0:
