@@ -410,3 +410,91 @@ class TestPersistentSession:
         assert entry is not None and entry.config_value == {"v": 1}
         assert len(history) == 1
         assert spy.call_count == 0
+
+
+@pytest.mark.integration
+class TestExportImportRoundTrip:
+    """export_configs → import_configs round-trips real configs through real
+    Vespa — the dashboard's backup/restore path had zero test reach (and
+    ConfigManager.export_configs is a DIFFERENT implementation, so this store
+    pair was never exercised anywhere)."""
+
+    def test_export_then_import_onto_a_new_tenant(self, vespa_config_store):
+        import time
+        import uuid
+
+        store = vespa_config_store
+        src = f"exp_src_{uuid.uuid4().hex[:6]}"
+        dst = f"exp_dst_{uuid.uuid4().hex[:6]}"
+
+        store.set_config(
+            tenant_id=src,
+            scope=ConfigScope.SYSTEM,
+            service="runtime",
+            config_key="feature_flags",
+            config_value={"beta": True, "limit": 5},
+        )
+        store.set_config(
+            tenant_id=src,
+            scope=ConfigScope.AGENT,
+            service="summarizer_agent",
+            config_key="agent_config",
+            config_value={"thinking_enabled": False},
+        )
+        time.sleep(1)  # visibility
+
+        exported = store.export_configs(src)
+        assert exported["tenant_id"] == src
+        assert exported["include_history"] is False
+        by_key = {c["config_key"]: c for c in exported["configs"]}
+        assert by_key["feature_flags"]["config_value"] == {"beta": True, "limit": 5}
+        assert by_key["feature_flags"]["scope"] == "system"
+        assert by_key["agent_config"]["config_value"] == {"thinking_enabled": False}
+        assert by_key["agent_config"]["service"] == "summarizer_agent"
+
+        imported = store.import_configs(dst, exported)
+        assert imported == 2
+        time.sleep(1)
+
+        restored = store.get_config(
+            tenant_id=dst,
+            scope=ConfigScope.SYSTEM,
+            service="runtime",
+            config_key="feature_flags",
+        )
+        assert restored is not None
+        assert restored.config_value == {"beta": True, "limit": 5}
+        restored_agent = store.get_config(
+            tenant_id=dst,
+            scope=ConfigScope.AGENT,
+            service="summarizer_agent",
+            config_key="agent_config",
+        )
+        assert restored_agent.config_value == {"thinking_enabled": False}
+
+    def test_export_with_history_returns_all_versions(self, vespa_config_store):
+        import time
+        import uuid
+
+        store = vespa_config_store
+        tenant = f"exp_hist_{uuid.uuid4().hex[:6]}"
+        for i in range(3):
+            store.set_config(
+                tenant_id=tenant,
+                scope=ConfigScope.SYSTEM,
+                service="runtime",
+                config_key="versioned_key",
+                config_value={"rev": i},
+            )
+        time.sleep(1)
+
+        exported = store.export_configs(tenant, include_history=True)
+        assert exported["include_history"] is True
+        versions = sorted(
+            c["version"]
+            for c in exported["configs"]
+            if c["config_key"] == "versioned_key"
+        )
+        assert versions == [1, 2, 3]
+        values = {c["version"]: c["config_value"] for c in exported["configs"]}
+        assert values[3] == {"rev": 2}
