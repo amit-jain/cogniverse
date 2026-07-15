@@ -202,16 +202,12 @@ flowchart TB
     PROF["<span style='color:#000'>profile_name/<br/>Profile-based namespace</span>"]
     KF["<span style='color:#000'>keyframes/<br/>Keyframe extraction results</span>"]
     VID1["<span style='color:#000'>video_id_1/</span>"]
-    META1["<span style='color:#000'>metadata.pkl<br/>Keyframe metadata timestamps counts</span>"]
-    META1M["<span style='color:#000'>metadata.pkl.meta<br/>Cache metadata TTL created_at</span>"]
+    META1["<span style='color:#000'>metadata.pkl<br/>Keyframe metadata timestamps counts<br/>(expiry in the file mtime)</span>"]
     F0["<span style='color:#000'>frame_0.jpg<br/>Individual keyframe images</span>"]
-    F0M["<span style='color:#000'>frame_0.jpg.meta</span>"]
     F42["<span style='color:#000'>frame_42.jpg</span>"]
-    F42M["<span style='color:#000'>frame_42.jpg.meta</span>"]
 
     TR["<span style='color:#000'>transcripts/<br/>Audio transcription results</span>"]
     TRV1["<span style='color:#000'>video_id_1.pkl<br/>Transcript data segments text</span>"]
-    TRV1M["<span style='color:#000'>video_id_1.pkl.meta<br/>Cache metadata</span>"]
 
     DESC["<span style='color:#000'>descriptions/<br/>VLM frame descriptions</span>"]
     DESCV1["<span style='color:#000'>video_id_1.pkl<br/>Frame-level descriptions</span>"]
@@ -230,14 +226,10 @@ flowchart TB
 
     KF --> VID1
     VID1 --> META1
-    VID1 --> META1M
     VID1 --> F0
-    VID1 --> F0M
     VID1 --> F42
-    VID1 --> F42M
 
     TR --> TRV1
-    TR --> TRV1M
 
     DESC --> DESCV1
 
@@ -254,13 +246,9 @@ flowchart TB
     style SEG fill:#ce93d8,stroke:#7b1fa2,color:#000
     style VID1 fill:#b0bec5,stroke:#546e7a,color:#000
     style META1 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style META1M fill:#b0bec5,stroke:#546e7a,color:#000
     style F0 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style F0M fill:#b0bec5,stroke:#546e7a,color:#000
     style F42 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style F42M fill:#b0bec5,stroke:#546e7a,color:#000
     style TRV1 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style TRV1M fill:#b0bec5,stroke:#546e7a,color:#000
     style DESCV1 fill:#a5d6a7,stroke:#388e3c,color:#000
     style SEGV1 fill:#b0bec5,stroke:#546e7a,color:#000
     style SEG0 fill:#b0bec5,stroke:#546e7a,color:#000
@@ -861,20 +849,22 @@ class StructuredFilesystemConfig:
 → ~/.cache/cogniverse/pipeline/profile/segments/a3f2e9d8c7b6a5f4/.../frame_1.jpg
 ```
 
-**Metadata Files:**
-```python
-# Cache file: abc123.pkl
-# Metadata file: abc123.pkl.meta
+**Expiry (encoded in the file mtime):**
 
-{
-    "key": "profile:video:abc123:transcript",
-    "created_at": 1696723200.0,
-    "expires_at": 1697328000.0,  # created_at + ttl
-    "ttl": 604800,               # 7 days in seconds
-    "size_bytes": 15234,
-    "format": "pickle"
-}
+Expiry is stored in each cache file's modification time rather than a per-entry
+`.meta` sidecar — `set()` `os.utime()`s the file to `expires_at` (or a
+far-future never-expires sentinel when no ttl is given), so a cached entry costs
+one filesystem write, not two. `get`/`exists`/cleanup read the mtime.
+
+```python
+# Cache file: abc123.pkl  (mtime == expires_at == created_at + ttl)
+# No sidecar file is written.
 ```
+
+Entries written before this change still carry a legacy `abc123.pkl.meta`
+sidecar (`{"key", "created_at", "expires_at", "ttl", "size_bytes", "format"}`);
+it is still read (and wins over the mtime) so an upgrade does not invalidate a
+warm cache.
 
 **Serialization Formats:**
 
@@ -976,11 +966,11 @@ Clean up expired entries on startup.
 
 **Process:**
 
-1. Find all .meta files
+1. Walk the cache's data files
 
-2. Check expiration timestamp
+2. Read each entry's expiry (its file mtime, or a legacy `.meta` sidecar)
 
-3. Delete expired cache file + metadata
+3. Delete expired cache files (plus any legacy sidecar)
 
 4. Update eviction statistics
 
@@ -1558,7 +1548,7 @@ flowchart TB
     Store["<span style='color:#000'>STORE IN CACHE<br/>await pipeline_cache.set_keyframes(video_path, metadata, images)</span>"]
 
     subgraph CacheManager["<span style='color:#000'>CacheManager.set()</span>"]
-        Tier1["<span style='color:#000'>Tier 1 (Filesystem)<br/>• Serialize: pickle/json/msgpack<br/>• Write to ~/.cache/.../keyframes/xxx/<br/>• Create .meta file with TTL<br/>• Success ✓</span>"]
+        Tier1["<span style='color:#000'>Tier 1 (Filesystem)<br/>• Serialize: pickle/json/msgpack<br/>• Write to ~/.cache/.../keyframes/xxx/<br/>• Stamp expiry into the file mtime<br/>• Success ✓</span>"]
         Tier2["<span style='color:#000'>Tier 2 (S3/MinIO, if enabled)<br/>• Same key, shared bucket<br/>• Survives pod restart<br/>• Success ✓</span>"]
     end
 
