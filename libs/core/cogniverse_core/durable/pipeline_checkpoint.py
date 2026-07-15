@@ -92,10 +92,16 @@ class PipelineCheckpoint:
         phases = data.get("phases", "[]")
         if isinstance(phases, str):
             phases = json.loads(phases) if phases else []
+        # A persisted null/none-list shape must not crash resume later
+        # (pending_phases subscripts; completed_unit_keys calls .items()).
+        if not isinstance(phases, list):
+            phases = []
 
         completed_units = data.get("completed_units", "{}")
         if isinstance(completed_units, str):
             completed_units = json.loads(completed_units) if completed_units else {}
+        if not isinstance(completed_units, dict):
+            completed_units = {}
 
         cursor = data.get("cursor")
         if isinstance(cursor, str):
