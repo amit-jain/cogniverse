@@ -1,6 +1,6 @@
 """GraphManager — persists nodes/edges to Vespa and supports queries.
 
-Follows the same pattern as WikiManager: takes a VespaSearchBackend,
+Follows the same pattern as WikiManager: takes a VespaBackend,
 feeds documents via the Document v1 HTTP API, queries via YQL.
 
 Embeddings are multi-vector ColBERT (LateOn 128-dim per token) served
@@ -60,7 +60,8 @@ class GraphManager:
     ) -> None:
         """
         Args:
-            backend: VespaSearchBackend instance (provides _url, _port).
+            backend: VespaBackend instance (provides the document API +
+                _url/_port); node/edge upsert uses put/get_document_fields.
             tenant_id: Tenant identifier.
             schema_name: Tenant-specific schema name
                          (e.g. "knowledge_graph_acme_production").

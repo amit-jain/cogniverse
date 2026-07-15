@@ -64,3 +64,31 @@ def test_persistent_transient_gives_up_after_the_attempt_budget(monkeypatch):
 
     assert mgr._feed_with_retry("kg_node_x", {"f": 1}, "node") is False
     assert backend.put_document_fields.call_count == 8  # the loop's attempt cap
+
+
+class TestGetEdgeById:
+    """get_edge_by_id (2 prod callers: audit_explanation + citation_tracing)
+    reads through the backend document API by the deterministic edge doc_id."""
+
+    def test_returns_fields_for_an_existing_edge(self):
+        backend = MagicMock()
+        backend.get_document_fields.return_value = {"relation": "cites", "weight": 1}
+        mgr = _manager(backend)
+
+        out = mgr.get_edge_by_id("edge42")
+
+        assert out == {"relation": "cites", "weight": 1}
+        (doc_id,), kwargs = backend.get_document_fields.call_args
+        assert doc_id == "kg_edge_acme_acme_edge42"
+        assert kwargs["namespace"] == "graph_content"
+        assert kwargs["schema_name"] == "knowledge_graph_acme"
+
+    def test_missing_edge_returns_none(self):
+        backend = MagicMock()
+        backend.get_document_fields.return_value = None
+        assert _manager(backend).get_edge_by_id("nope") is None
+
+    def test_backend_error_degrades_to_none(self):
+        backend = MagicMock()
+        backend.get_document_fields.side_effect = RuntimeError("vespa down")
+        assert _manager(backend).get_edge_by_id("edge42") is None
