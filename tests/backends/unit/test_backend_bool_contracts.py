@@ -54,3 +54,97 @@ def test_health_check_coerces_status_dict_to_bool():
 
     search.health_check.return_value = {"status": "degraded", "components": {}}
     assert backend.health_check() is False
+
+
+def test_get_schema_info_reports_initialization_flags():
+    backend = _bare_backend()
+    backend.config = {"schema_name": "video_colpali_smol500_mv_frame"}
+    backend._initialized_as_search = True
+    backend._initialized_as_ingestion = True
+    backend._vespa_search_backend = MagicMock()
+
+    info = backend.get_schema_info()
+
+    assert info == {
+        "name": "video_colpali_smol500_mv_frame",
+        "backend": "vespa",
+        "initialized": True,
+        "search_enabled": True,
+        "ingestion_enabled": True,
+    }
+
+
+def test_get_schema_info_requires_initialization():
+    backend = object.__new__(VespaBackend)
+    backend.schema_manager = None
+    with pytest.raises(RuntimeError, match="not initialized"):
+        backend.get_schema_info()
+
+
+class TestConfigStoreHealthCheck:
+    def _store(self, app):
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+
+        store = object.__new__(VespaConfigStore)
+        store.vespa_app = app
+        store.schema_name = "config_metadata"
+        return store
+
+    def test_healthy_when_query_succeeds(self):
+        app = MagicMock()
+        app.query.return_value = MagicMock(hits=[])
+        assert self._store(app).health_check() is True
+        assert "config_metadata" in app.query.call_args.kwargs["yql"]
+
+    def test_unhealthy_when_query_raises(self):
+        app = MagicMock()
+        app.query.side_effect = ConnectionError("vespa down")
+        assert self._store(app).health_check() is False
+
+
+class TestEmbeddingRequirements:
+    def _search_backend(self):
+        from cogniverse_vespa.search_backend import VespaSearchBackend
+
+        return object.__new__(VespaSearchBackend)
+
+    def test_requirements_derived_from_schema_strategies(self):
+        import cogniverse_vespa.search_backend as sb
+
+        backend = self._search_backend()
+        original = sb._RANKING_STRATEGIES_CACHE
+        sb._RANKING_STRATEGIES_CACHE = {
+            "video_probe_schema": {
+                "float_float": {
+                    "needs_float_embeddings": True,
+                    "embedding_field": "embedding",
+                },
+                "binary_binary": {
+                    "needs_binary_embeddings": True,
+                    "embedding_field": "embedding_binary",
+                },
+            }
+        }
+        try:
+            reqs = backend.get_embedding_requirements("video_probe_schema")
+        finally:
+            sb._RANKING_STRATEGIES_CACHE = original
+
+        assert reqs == {
+            "needs_float": True,
+            "needs_binary": True,
+            "float_field": "embedding",
+            "binary_field": "embedding_binary",
+        }
+
+    def test_unknown_schema_raises_with_available_list(self):
+        import cogniverse_vespa.search_backend as sb
+
+        backend = self._search_backend()
+        original = sb._RANKING_STRATEGIES_CACHE
+        sb._RANKING_STRATEGIES_CACHE = {"known_schema": {"s": {}}}
+        try:
+            with pytest.raises(ValueError, match="known_schema"):
+                backend.get_embedding_requirements("missing_schema")
+        finally:
+            sb._RANKING_STRATEGIES_CACHE = original
