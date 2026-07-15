@@ -393,6 +393,21 @@ grep -rnP 'def (validate|verify|check)_\w+' libs/ --include="*.py" -A6 | grep -B
 # distinguishes construction from prose mentions ("document/v1 URL"). Enforced
 # by tests/backends/unit/test_docv1_confined_to_vespa.py.
 grep -rn 'document/v1/' libs/ --include="*.py" | grep -vE '^libs/vespa/|main\.py:'
+
+# Agent raw-requests Vespa /search/ consumer that reads root.children after
+# ONLY a status_code!=200 guard, with NO root.errors/coverage.degraded check
+# (14th audit: document_agent/image_search_agent/audio_analysis_agent all read
+# data.get("root",{}).get("children",[]) directly — a Vespa soft-timeout is
+# HTTP 200 + root.errors code 12 + partial children, so degraded results ship
+# as complete; diverged from search_backend._process_results which raises on
+# root.errors. Fixed via the shared vespa_search_children() helper).
+grep -rnP 'data\.get\("root", \{\}\)\.get\("children"' libs/agents/ --include="*.py"
+# then confirm the enclosing method raises on root.errors before iterating
+
+# object.__new__(ProductionClass) OUTSIDE tests — a production path building a
+# partially-initialized instance that skips __init__ invariants (14th audit
+# hunt; none found in prod, but the pattern recurs in fixtures and can leak in).
+grep -rnP 'object\.__new__\(|__class__\.__new__\(' libs/ --include="*.py"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
@@ -434,6 +449,30 @@ done
 ```
 
 The 5th audit's `text_analysis.analyze_text` finding (LM built per-tenant but never used) is Class E. Mock provider + auto-attribute access (5th's finetuning find) is the *test-side* of the same class.
+
+### Class F — Concurrency, thread-safety, resource lifecycle, multi-process consistency
+
+The other five classes audit code in isolation; Class F attacks what happens when it runs *together*. **Execute or full-read call chains — do NOT grep-heuristic** (a grep for "added backend calls without to_thread" misses the case where the blocking call is in a *sync manager method* and the un-offloaded caller is an *unchanged/adjacent* async route — the 14th audit's deep-read caught 3 such sites a diff-grep declared clean). Detect:
+
+1. **Shared-session thread-safety** — for any long-lived client shared across threads, verify the wrapper holds no per-request mutable state, then hammer N threads × M ops through ONE instance against a real backend, asserting zero exceptions + zero cross-talk (14th: PersistentVespaOps over httpr.Client — safe; 2400 ops, 0 exceptions).
+2. **Non-atomic get-then-set on a process cache/registry** — every cold-start build must use `set_if_absent`+close-loser or `get_or_set`, never `get()`+`set()`; the displaced-close causes a *use-after-close* on the loser's session, not just a leak (14th: EntryPointRegistry.get() — 24 threads → 23 use-after-close; canonical fix backend_registry.py `set_if_absent`).
+3. **Sync blocking I/O on an async loop** — for every `async def`, confirm each pyvespa/`requests`/`time.sleep`/blocking-read is inside `await asyncio.to_thread(...)`; a `to_thread` call *adjacent* to a bare sync call in the same function is the tell (14th: wiki routes, ingestion.py graph upsert, lifecycle_scheduler pin lookup each offloaded the neighbor but not the call). Trace to the loop: main API loop stalls all requests; a sequential worker loop stalls shutdown/claim and `_time.sleep` retries freeze it for minutes.
+4. **Unlocked lazy init of a session-owning attr** — `if self._x is None: self._x = build()` racing two first-touches leaks the loser; a single-call "primer" is a tell the init is unguarded (14th: `_metadata_vespa_app`, `get_config_manager_singleton`).
+5. **Atomic-write orphans** — tmp→`os.replace` needs an age-gated `.tmp` reaper; a blanket suffix-skip in cleanup grows disk unboundedly across hard-kills (14th: structured_filesystem cleanup).
+6. **Multi-replica staleness** — flag only *unbounded* in-process staleness on correctness-bearing values (a TTL-bounded scoped cache is fine).
+
+```bash
+# sync blocking call NOT offloaded, sitting next to a to_thread in the same async def
+grep -rnPB6 'await asyncio\.to_thread' libs/ --include="*.py" | grep -PE '(mgr|manager|wm|self\._\w+)\.\w+\([^)]*\)\s*$' | grep -v to_thread
+# non-atomic registry cold-start build (get then set instead of set_if_absent)
+grep -rnPA6 'cls\._instances\.get\(|self\._instances\.get\(' libs/ --include="*.py" | grep -PB6 '_instances\.set\('
+# unlocked lazy session init
+grep -rnPA3 'if self\._\w*(app|client|session) is None' libs/ --include="*.py" | grep -P '= make_|\.syncio\(|Client\('
+# atomic-write cleanup blanket-skipping .tmp with no age gate
+grep -rnPA2 '\.suffix (in \([^)]*\.tmp|== "\.tmp")' libs/ --include="*.py" | grep -i continue | grep -v st_mtime
+```
+
+Class F is invisible to every isolation-based class: a passing single-thread test proves nothing about concurrent use. Run the hammer; read the whole async call chain.
 
 ---
 
