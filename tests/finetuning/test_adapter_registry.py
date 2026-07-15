@@ -879,3 +879,45 @@ class TestAdapterStoreEntryPointDiscovery:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.unit
+class TestUpdateFieldFiltering:
+    def test_system_field_in_updates_never_reaches_the_feed(self):
+        """The system-field filter must run AFTER the updates merge — filtering
+        first let a caller-supplied Vespa system field reach feed_data_point
+        (Vespa 400)."""
+
+        class _Resp:
+            def __init__(self, hits):
+                self.hits = hits
+
+        class _App:
+            def __init__(self):
+                self.fed = None
+
+            def query(self, yql):
+                return _Resp(
+                    [{"fields": {"adapter_id": "a1", "sddocname": "adapters"}}]
+                )
+
+            def feed_data_point(self, schema, data_id, fields):
+                self.fed = fields
+
+        from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
+
+        app = _App()
+        store = VespaAdapterStore(vespa_app=app)
+        store._update_adapter_fields("a1", {"documentid": "HACK", "status": "x"})
+
+        assert "documentid" not in app.fed
+        assert "sddocname" not in app.fed
+        assert app.fed["status"] == "x"
+
+
+@pytest.mark.unit
+def test_resolve_adapter_path_rejects_underivable_name(tmp_path):
+    from cogniverse_finetuning.registry import resolve_adapter_path
+
+    with pytest.raises(ValueError, match="adapter name"):
+        resolve_adapter_path("s3://", cache_dir=str(tmp_path))
