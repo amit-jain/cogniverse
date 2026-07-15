@@ -106,12 +106,23 @@ def search_result_row(result: Any) -> dict:
         )
         score = getattr(result, "score", None)
     video_id = source or _id
+    # Coerce defensively: a non-numeric score must not raise, and NaN/inf must
+    # not reach output.value — json.dumps would emit invalid JSON (NaN) that
+    # strict consumers (Phoenix UI, JSON.parse) reject.
+    import math
+
+    try:
+        score_f = float(score) if score is not None else 0.0
+    except (TypeError, ValueError):
+        score_f = 0.0
+    if not math.isfinite(score_f):
+        score_f = 0.0
     return {
         "document_id": doc_id,
         "video_id": video_id,
         "source_id": source or video_id,
         "id": _id,
-        "score": float(score) if score is not None else 0.0,
+        "score": score_f,
         "content": content,
     }
 
