@@ -388,44 +388,65 @@ class StructuredFilesystemBackend(CacheBackend):
         return True
 
     async def clear(self, pattern: Optional[str] = None) -> int:
-        """Clear cache entries matching pattern"""
+        """Clear cache entries.
+
+        - ``None`` or ``"*"`` clears the whole cache.
+        - ``"<key-prefix>:*"`` clears entries whose path matches the prefix.
+        - any other value clears the single entry at that exact key.
+        """
         await self._run_startup_cleanup_if_needed()
         cleared = 0
 
-        if pattern and pattern.endswith("*"):
-            # Pattern-based clearing. Keys sanitize into paths losing the ':'
-            # separators and the literal 'video' marker, so the raw prefix
-            # never appears in any path — match on the sanitized tokens
-            # instead (a bare raw-prefix match made "profile:video:<id>:*"
-            # a silent no-op).
-            prefix = pattern[:-1].rstrip(":")
-            tokens = [
-                self._sanitize_path_component(part)
-                for part in prefix.split(":")
-                if part and part != "video"
-            ]
-
-            for path in self.base_path.rglob("*"):
-                if path.is_file():
-                    path_str = str(path)
-                    if tokens and all(token in path_str for token in tokens):
-                        try:
-                            path.unlink()
-                            cleared += 1
-                        except (OSError, PermissionError):
-                            pass
-        else:
-            # Clear everything
+        if pattern is None or pattern == "*":
             import shutil
 
             try:
                 shutil.rmtree(self.base_path)
                 self.base_path.mkdir(parents=True, exist_ok=True)
-
-                # Count cleared files (approximate)
                 cleared = self._stats.get("total_files", 0)
             except Exception as e:
                 logger.error(f"Error clearing cache: {e}")
+            return cleared
+
+        if not pattern.endswith("*"):
+            # Non-wildcard: clear exactly one key's entry (do NOT fall through
+            # to a full wipe — a stray non-* pattern must not nuke the cache).
+            path = self._key_to_path(pattern)
+            for target in (path, self._get_metadata_path(path)):
+                try:
+                    if target.is_file():
+                        target.unlink()
+                        cleared += 1
+                except OSError:
+                    pass
+            return cleared
+
+        # Wildcard prefix. Keys sanitize into paths losing the ':' separators
+        # and the literal 'video' marker, so match on the sanitized tokens as
+        # whole path SEGMENTS — a substring test made profile "direct_video_
+        # global" also delete the sibling "direct_video_global_large".
+        prefix = pattern[:-1].rstrip(":")
+        tokens = [
+            self._sanitize_path_component(part)
+            for part in prefix.split(":")
+            if part and part != "video"
+        ]
+        if not tokens:
+            return 0
+
+        for path in self.base_path.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(self.base_path)
+            # A token matches a full directory segment or the file's stem
+            # (transcripts store the video id as ``<id>.pkl``).
+            segments = set(rel.parts) | {path.stem}
+            if all(token in segments for token in tokens):
+                try:
+                    path.unlink()
+                    cleared += 1
+                except (OSError, PermissionError):
+                    pass
 
         return cleared
 
