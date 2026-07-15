@@ -1459,3 +1459,104 @@ class TestEnsureMemoryForTenant:
         ) as init:
             orchestrator_agent._ensure_memory_for_tenant("acme:prod")
         init.assert_not_called()
+
+
+class TestCoerceFloat:
+    """coerce_float maps untrusted A2A/KG numeric fields to a finite float
+    instead of raising. Sub-agent results and KG mention blobs carry
+    ts_start/ts_end/score as arbitrary JSON — a real agent may emit "00:12",
+    "high", "" or null, and a naked float() would crash the evidence walk."""
+
+    def test_numeric_passthrough(self):
+        from cogniverse_agents._coercion import coerce_float
+
+        assert coerce_float(12.5) == 12.5
+        assert coerce_float(5) == 5.0
+
+    def test_numeric_string_parsed(self):
+        from cogniverse_agents._coercion import coerce_float
+
+        assert coerce_float("12.5") == 12.5
+        assert coerce_float("3600") == 3600.0
+
+    def test_non_numeric_string_falls_back(self):
+        from cogniverse_agents._coercion import coerce_float
+
+        assert coerce_float("00:12") == 0.0
+        assert coerce_float("high") == 0.0
+        assert coerce_float("") == 0.0
+
+    def test_none_and_wrong_type_fall_back(self):
+        from cogniverse_agents._coercion import coerce_float
+
+        assert coerce_float(None) == 0.0
+        assert coerce_float([1, 2]) == 0.0
+        assert coerce_float({"a": 1}) == 0.0
+
+    def test_custom_default(self):
+        from cogniverse_agents._coercion import coerce_float
+
+        assert coerce_float("nope", default=-1.0) == -1.0
+        assert coerce_float(None, default=7.0) == 7.0
+
+    def test_large_value_not_clamped(self):
+        # Unlike parse_confidence, coerce_float must NOT clamp to [0,1] — a
+        # 125.7s video timestamp and an unbounded ranking score survive whole.
+        from cogniverse_agents._coercion import coerce_float
+
+        assert coerce_float(125.7) == 125.7
+        assert coerce_float(15.3) == 15.3
+
+    def test_non_finite_falls_back(self):
+        # NaN/inf in a sort key or interval check corrupt ordering — reject.
+        from cogniverse_agents._coercion import coerce_float
+
+        assert coerce_float(float("nan")) == 0.0
+        assert coerce_float(float("inf")) == 0.0
+        assert coerce_float("nan") == 0.0
+        assert coerce_float("inf") == 0.0
+
+
+class TestEvidenceCoercionCrashSafety:
+    """A sub-agent A2A result carries ts_start/ts_end/score as arbitrary
+    JSON. Non-numeric values degrade to 0.0 rather than crashing the
+    evidence-extraction and ranking path."""
+
+    def test_coerce_snippet_non_numeric_timestamp_does_not_crash(self):
+        snippet = OrchestratorAgent._coerce_evidence_snippet(
+            {
+                "source_doc_id": "doc1",
+                "ts_start": "00:12",
+                "ts_end": "00:34",
+                "text": "some evidence",
+            }
+        )
+        assert snippet is not None
+        assert snippet["ts_start"] == 0.0
+        assert snippet["ts_end"] == 0.0
+        assert snippet["source_doc_id"] == "doc1"
+
+    def test_coerce_snippet_numeric_string_timestamp_parsed(self):
+        snippet = OrchestratorAgent._coerce_evidence_snippet(
+            {"source_doc_id": "doc1", "ts_start": "12.5", "ts_end": "34", "text": "x"}
+        )
+        assert snippet["ts_start"] == 12.5
+        assert snippet["ts_end"] == 34.0
+
+    def test_coerce_snippet_large_timestamp_not_clamped(self):
+        snippet = OrchestratorAgent._coerce_evidence_snippet(
+            {"source_doc_id": "doc1", "ts_start": 125.7, "ts_end": 130.2, "text": "x"}
+        )
+        assert snippet["ts_start"] == 125.7
+        assert snippet["ts_end"] == 130.2
+
+    def test_rank_evidence_non_numeric_score_does_not_crash_sort(self):
+        ranked = OrchestratorAgent._rank_evidence_for_metadata(
+            [
+                {"source_doc_id": "str_score", "score": "high"},
+                {"source_doc_id": "num_score", "score": 0.9},
+            ]
+        )
+        # No ValueError in the sort; the numeric-score hit sorts first, the
+        # string-score hit coerces to 0.0 for ordering and lands after it.
+        assert [e["source_doc_id"] for e in ranked] == ["num_score", "str_score"]
