@@ -420,7 +420,11 @@ class TestWikiVespaIntegration:
         )
 
     def test_lint_detects_empty_page(self, wiki_manager):
-        """Feed an empty topic page to Vespa, verify lint flags it."""
+        """Feed an empty topic page and assert it persists as an empty page.
+
+        The lint RULE itself is unit-tested in test_wiki_manager.py; this
+        fixture stubs backend.search so it exercises only persistence.
+        """
         manager, port = wiki_manager
 
         # Feed a topic page with very short content (< 50 chars)

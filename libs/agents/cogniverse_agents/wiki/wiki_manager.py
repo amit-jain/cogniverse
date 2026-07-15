@@ -37,7 +37,8 @@ class WikiManager:
     ) -> None:
         """
         Args:
-            backend: VespaSearchBackend instance (provides get_document, search).
+            backend: VespaBackend instance (provides the document API +
+                search); document CRUD uses put/get/delete_document_fields.
             tenant_id: Tenant identifier (e.g. "acme:production").
             schema_name: Vespa schema name for this tenant's wiki pages
                          (e.g. "wiki_pages_acme_production"). Must NOT contain

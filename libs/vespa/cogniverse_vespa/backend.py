@@ -1354,6 +1354,11 @@ class VespaBackend(Backend):
 
     @staticmethod
     def _check_document_response(resp, op: str, document_id: str):
+        # Defensive net: pyvespa's data-plane ops call raise_for_status
+        # internally, so a 4xx/5xx normally surfaces as a VespaError (whose
+        # text still carries Vespa's message, which the graph retry matches)
+        # BEFORE reaching here. This catches the rare returns-non-2xx-without-
+        # raising case and the documented raise-with-status contract.
         status = getattr(resp, "status_code", None)
         if status is not None and not (200 <= status < 300):
             body = getattr(resp, "json", None)
