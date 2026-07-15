@@ -295,3 +295,27 @@ async def test_cleanup_reaps_old_tmp_orphans_but_spares_fresh_ones(tmp_path):
 
     assert not old.exists(), "stale .tmp orphan must be reaped"
     assert fresh.exists(), "a fresh in-flight .tmp must be spared"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_set_failure_returns_false_and_leaves_no_tmp(tmp_path, monkeypatch):
+    """A serialize failure mid-set must return False and leave no orphaned
+    .tmp behind (the except-branch cleanup)."""
+    from cogniverse_core.common.cache.backends.structured_filesystem import (
+        StructuredFilesystemBackend,
+        StructuredFilesystemConfig,
+    )
+
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(base_path=str(tmp_path), cleanup_on_startup=False)
+    )
+    monkeypatch.setattr(
+        backend, "_serialize", lambda v: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    ok = await backend.set("prof:video:v1:transcript", {"a": 1})
+
+    assert ok is False
+    assert list(tmp_path.rglob("*.tmp")) == [], "failed set left an orphaned .tmp"

@@ -32,6 +32,12 @@ class VespaBackend(Backend):
     a unified interface compatible with the backend registry.
     """
 
+    # Class-level fallback so partially-constructed instances (test slices via
+    # object.__new__ that skip __init__) still have a lock for the lazy
+    # metadata-session init; __init__ replaces it with a per-instance lock so
+    # real backends don't contend across instances.
+    _metadata_app_lock = threading.Lock()
+
     def __init__(self, backend_config, schema_loader=None, config_manager=None):
         """
         Initialize Vespa backend.

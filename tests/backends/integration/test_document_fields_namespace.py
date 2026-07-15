@@ -118,3 +118,23 @@ def test_get_missing_document_returns_none(doc_backend):
         )
         is None
     )
+
+
+def test_update_with_create_makes_a_missing_document(doc_backend):
+    """update_document_fields(create=True) upserts an absent doc — the create
+    branch the ingestion path deliberately does NOT use, pinned here."""
+    doc_id = f"ns-{uuid.uuid4().hex[:8]}"
+
+    doc_backend.update_document_fields(
+        doc_id,
+        _fields(doc_id, "created-via-update"),
+        schema_name=SCHEMA,
+        namespace=NAMESPACE,
+        create=True,
+    )
+
+    got = doc_backend.get_document_fields(
+        doc_id, schema_name=SCHEMA, namespace=NAMESPACE
+    )
+    assert got is not None
+    assert got["config_value"] == "created-via-update"
