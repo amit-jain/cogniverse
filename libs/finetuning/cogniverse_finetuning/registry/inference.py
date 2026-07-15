@@ -189,6 +189,11 @@ def resolve_adapter_path(adapter_uri: str, cache_dir: str) -> str:
     # e.g., s3://bucket/adapters/<name> -> <cache_dir>/<name>
     uri_parts = adapter_uri.split("/")
     adapter_name = uri_parts[-1] if uri_parts[-1] else uri_parts[-2]
+    if not adapter_name:
+        raise ValueError(
+            f"cannot derive an adapter name from {adapter_uri!r}; "
+            "expected a URI like s3://bucket/adapters/<name>"
+        )
     local_path = str(cache_path / adapter_name)
 
     return download_adapter(adapter_uri, local_path)

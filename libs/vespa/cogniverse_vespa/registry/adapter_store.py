@@ -338,12 +338,12 @@ class VespaAdapterStore(AdapterStore):
         if not adapter:
             raise ValueError(f"Adapter not found: {adapter_id}")
 
-        # Filter out Vespa system fields that can't be written back
+        # Apply the updates, then filter Vespa system fields — filtering
+        # first let a system field smuggled in via ``updates`` reach the feed.
         system_fields = {"sddocname", "documentid", "relevance"}
-        fields = {k: v for k, v in adapter["fields"].items() if k not in system_fields}
-
-        # Apply the updates in one shot
+        fields = dict(adapter["fields"])
         fields.update(updates)
+        fields = {k: v for k, v in fields.items() if k not in system_fields}
         fields["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         # Save back

@@ -87,7 +87,9 @@ class InMemoryConfigStore(ConfigStore):
             return None
 
         if version is not None:
-            return versions.get(version)
+            # VespaConfigStore coerces int(version); mirror it so a string
+            # version behaves identically against both stores.
+            return versions.get(int(version))
         else:
             # Return latest version
             latest_version = max(versions.keys())
