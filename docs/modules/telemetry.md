@@ -1431,12 +1431,14 @@ with backend_search_span(
 
 ---
 
-#### `add_search_results_to_span(span, results)`
+#### `add_search_results_to_span(span, results, output_value=None)`
 Add search results details to span.
 
 **Attributes Set:**
 
 - `num_results`: Number of results
+
+- `output.value`: Canonical JSON list of result rows (the shape every search consumer reads)
 
 - `top_score`: Score of top result
 
@@ -1451,6 +1453,24 @@ from cogniverse_foundation.telemetry.context import search_span, add_search_resu
 with search_span(tenant_id="acme", query="test") as span:
     results = search(query)
     add_search_results_to_span(span, results)
+```
+
+#### `serialize_search_results(results) -> str`
+Serialize the result rows to the canonical `output.value` JSON once. A search
+records the same result set on both its RETRIEVER (backend) and CHAIN spans;
+serialize once with this helper and pass the string as `output_value` to both
+`add_search_results_to_span` calls so the O(N) row-build runs a single time per
+query rather than per span.
+
+```python
+from cogniverse_foundation.telemetry.context import (
+    add_search_results_to_span,
+    serialize_search_results,
+)
+
+output_value = serialize_search_results(results)
+add_search_results_to_span(backend_span, results, output_value=output_value)
+add_search_results_to_span(search_span, results, output_value=output_value)
 ```
 
 ---

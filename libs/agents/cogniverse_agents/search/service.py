@@ -220,6 +220,7 @@ class SearchService:
             add_search_results_to_span,
             backend_search_span,
             search_span,
+            serialize_search_results,
         )
 
         # Resolve profile config and encoder
@@ -272,9 +273,16 @@ class SearchService:
                 }
                 results = search_backend.search(query_dict)
 
-                add_search_results_to_span(backend_span_ctx, results)
+                # Serialize the result rows once and record the same payload on
+                # both the RETRIEVER (backend) and CHAIN (search) spans.
+                results_output_value = serialize_search_results(results)
+                add_search_results_to_span(
+                    backend_span_ctx, results, output_value=results_output_value
+                )
 
-            add_search_results_to_span(search_span_ctx, results)
+            add_search_results_to_span(
+                search_span_ctx, results, output_value=results_output_value
+            )
 
             return results
 

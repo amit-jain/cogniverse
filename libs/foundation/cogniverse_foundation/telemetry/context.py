@@ -130,19 +130,33 @@ def backend_search_span(
             raise
 
 
-def add_search_results_to_span(span, results):
+def serialize_search_results(results) -> str:
+    """Serialize the result set to the canonical ``output.value`` JSON once.
+
+    The same result list is recorded on both the RETRIEVER and CHAIN spans of a
+    search; callers serialize with this helper once and pass the string to both
+    ``add_search_results_to_span`` calls so the O(N) row-build runs a single
+    time per query rather than per span.
+    """
+    from .span_contract import search_result_row
+
+    return json.dumps([search_result_row(r) for r in results])
+
+
+def add_search_results_to_span(span, results, output_value: str | None = None):
     """Record the search result set on the span.
 
     Writes the canonical ``output.value`` (a JSON list of superset result rows,
     the shape every search consumer reads) plus ``num_results`` / ``top_score``
-    scalars and a top-3 event for human debugging.
+    scalars and a top-3 event for human debugging. Pass ``output_value`` from
+    ``serialize_search_results`` to reuse a single serialization across the two
+    spans of one search.
     """
-    from .span_contract import search_result_row
+    if output_value is None:
+        output_value = serialize_search_results(results)
 
     span.set_attribute("num_results", len(results))
-    span.set_attribute(
-        "output.value", json.dumps([search_result_row(r) for r in results])
-    )
+    span.set_attribute("output.value", output_value)
 
     if results:
         span.set_attribute(
