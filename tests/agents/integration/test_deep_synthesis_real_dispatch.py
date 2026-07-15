@@ -37,6 +37,7 @@ from cogniverse_agents.orchestrator_agent import (
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_runtime.routers.agents import AgentTask
 
 pytestmark = pytest.mark.integration
 
@@ -51,10 +52,13 @@ def fake_subagent_app() -> FastAPI:
     app = FastAPI()
     app.state.calls: list[Dict[str, Any]] = []
 
-    @app.post("/agents/fake_search/process")
-    async def _process(payload: Dict[str, Any]):
-        app.state.calls.append(payload)
-        return {"answer": f"REAL_SUBAGENT_ANSWER for {payload.get('query', '')[:40]}"}
+    # Validate the REAL AgentTask contract — the same boundary the production
+    # /agents/{name}/process route enforces. agent_name is required, so a
+    # dispatch payload that omits it returns 422 exactly as production would.
+    @app.post("/agents/{agent_name}/process")
+    async def _process(agent_name: str, task: AgentTask):
+        app.state.calls.append(task.model_dump())
+        return {"answer": f"REAL_SUBAGENT_ANSWER for {task.query[:40]}"}
 
     return app
 
@@ -106,18 +110,22 @@ class TestRealSubagentDispatch:
         # when _build_deep_synthesis_workflow runs.
         monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
         orchestrator, app, _ = orchestrator_with_subagent
-        workflow = orchestrator._build_deep_synthesis_workflow()
+        # Build with a REQUEST tenant distinct from any deps value — the
+        # dispatch must carry THIS tenant, not deps.tenant_id / __system__.
+        workflow = orchestrator._build_deep_synthesis_workflow("req_tenant_xyz")
         assert workflow is not None
 
         # Pull the inner dispatcher out of the constructed workflow.
         dispatcher_fn = workflow._dispatch
         snippet = await dispatcher_fn("What is the capital of France?", "fake_search")
-        # Real HTTP roundtrip: app.state.calls must record the POST.
+        # Real HTTP roundtrip against the real AgentTask contract.
         assert len(app.state.calls) == 1
         recorded = app.state.calls[0]
+        # agent_name is required by AgentTask; a payload missing it 422s.
+        assert recorded["agent_name"] == "fake_search"
         assert recorded["query"] == "What is the capital of France?"
-        # Tenant id is plumbed through the context block.
-        assert recorded["context"]["tenant_id"] == "f41_test_tenant"
+        # The REQUEST tenant reached the sub-agent (not deps / __system__).
+        assert recorded["context"]["tenant_id"] == "req_tenant_xyz"
         # Answer field flows back as the snippet.
         assert "REAL_SUBAGENT_ANSWER" in snippet
         assert snippet.endswith("What is the capital of France?")
@@ -127,7 +135,7 @@ class TestRealSubagentDispatch:
     ):
         monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
         orchestrator, app, _ = orchestrator_with_subagent
-        workflow = orchestrator._build_deep_synthesis_workflow()
+        workflow = orchestrator._build_deep_synthesis_workflow("t")
         snippet = await workflow._dispatch("anything", "agent_does_not_exist")
         # No HTTP call made for the unregistered agent.
         assert app.state.calls == []
@@ -168,7 +176,7 @@ class TestRealSubagentDispatch:
             config_manager=cm,
             http_client=client,
         )
-        workflow = orchestrator._build_deep_synthesis_workflow()
+        workflow = orchestrator._build_deep_synthesis_workflow("t")
         snippet = await workflow._dispatch("q", "broken_agent")
         # Workflow must continue (not raise); snippet says call failed.
         assert "broken_agent" in snippet
@@ -207,7 +215,7 @@ class TestRealSubagentDispatch:
             config_manager=cm,
             http_client=client,
         )
-        workflow = orchestrator._build_deep_synthesis_workflow()
+        workflow = orchestrator._build_deep_synthesis_workflow("t")
         snippet = await workflow._dispatch("q", "weird_agent")
         # Snippet must contain the response payload (so the RLM step
         # can still try to make sense of it). Specifically the unique
@@ -225,7 +233,7 @@ class TestEndToEndWorkflowRunWithRealDispatch:
         comes from the REAL sub-agent, not a stub string."""
         monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
         orchestrator, app, _ = orchestrator_with_subagent
-        workflow = orchestrator._build_deep_synthesis_workflow()
+        workflow = orchestrator._build_deep_synthesis_workflow("t")
 
         # Replace the RLM with one that emits SUBMIT() immediately so the
         # loop completes after the seed fan-out — we want to assert the

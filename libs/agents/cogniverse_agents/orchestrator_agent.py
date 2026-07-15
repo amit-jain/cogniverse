@@ -764,7 +764,7 @@ class OrchestratorAgent(
         if self.event_queue is not None:
             await self.event_queue.enqueue(event)
 
-    def _build_deep_synthesis_workflow(self):
+    def _build_deep_synthesis_workflow(self, tenant_id: str):
         """Construct a :class:`DeepSynthesisWorkflow` for opt-in deep mode.
 
         Used by ``_process_impl`` when ``input.synthesis_depth == "deep"``.
@@ -788,7 +788,7 @@ class OrchestratorAgent(
             return None
 
         try:
-            tenant_id = getattr(self.deps, "tenant_id", None) or "__system__"
+            tenant_id = tenant_id or "__system__"
             cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
             llm_primary = cfg.get_llm_config().primary
         except Exception as exc:
@@ -826,14 +826,12 @@ class OrchestratorAgent(
                 process_url = ep.url.rstrip("/") + (
                     ep.process_endpoint or f"/agents/{sub_agent_name}/process"
                 )
-                tenant_id_for_call = (
-                    getattr(self.deps, "tenant_id", None) or "__system__"
-                )
                 resp = await client.post(
                     process_url,
                     json={
+                        "agent_name": sub_agent_name,
                         "query": query,
-                        "context": {"tenant_id": tenant_id_for_call},
+                        "context": {"tenant_id": tenant_id},
                     },
                     timeout=getattr(ep, "timeout", 30),
                 )
@@ -881,7 +879,7 @@ class OrchestratorAgent(
         # Workflow owns its own per-tenant rate limit + hard call cap; on
         # any failure fall back to plan-then-act so the request still completes.
         if (input.synthesis_depth or "").lower() == "deep":
-            workflow = self._build_deep_synthesis_workflow()
+            workflow = self._build_deep_synthesis_workflow(input.tenant_id)
             if workflow is not None:
                 try:
                     seed_subagents = list(self.registry.list_agents())[:6]
