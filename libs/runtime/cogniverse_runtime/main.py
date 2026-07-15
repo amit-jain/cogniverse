@@ -1059,12 +1059,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
                 return {rec.target_memory_id for rec in pin_svc.list_pins(tenant_id)}
             except Exception as exc:
-                logger.debug(
-                    "Pin lookup failed for tenant %s during lifecycle tick: %s",
+                # A pin-lookup failure (e.g. a backend outage) must NOT read as
+                # "no pins" — returning an empty set here let the scheduler
+                # prune genuinely-pinned memories. Re-raise so tick_once skips
+                # this tenant's cleanup this tick (fail-safe: never prune when
+                # pins can't be confirmed).
+                logger.warning(
+                    "Pin lookup failed for tenant %s during lifecycle tick; "
+                    "skipping cleanup this tick: %r",
                     tenant_id,
                     exc,
                 )
-                return set()
+                raise
 
         lifecycle_scheduler = LifecycleScheduler(
             get_warm_managers=Mem0MemoryManager._instances.values,

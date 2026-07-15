@@ -194,3 +194,43 @@ def test_authority_violation_persists_no_pin_record(pin_environment):
     assert service.is_pinned(target_id, TENANT) is False
     listed = [r for r in service.list_pins(TENANT) if r.target_memory_id == target_id]
     assert listed == []
+
+
+def test_pin_reads_raise_on_outage_so_cleanup_cannot_prune_pinned(
+    pin_environment, monkeypatch
+):
+    """A backend outage during pin lookup must RAISE, not read as "no pins".
+
+    Otherwise the schema-driven lifecycle cleanup would treat a genuinely
+    pinned memory as unpinned during a transient outage and prune it (data
+    loss). Pins a real memory, injects a store outage at the manager->store
+    boundary, and asserts the pin reads raise instead of silently returning
+    []/False (the scheduler then skips cleanup — see
+    tests/core/unit/test_lifecycle_scheduler.py::
+    test_pin_lookup_failure_skips_cleanup_never_prunes).
+    """
+    mm, registry = pin_environment
+    service = PinService(mm, registry)
+
+    target_id = _seed_target(mm, "tenant_instruction")
+    service.pin(
+        target_memory_id=target_id,
+        target_kind="tenant_instruction",
+        pinned_by=Pinnable.TENANT_ADMIN,
+        actor_id="admin_alpha",
+        tenant_id=TENANT,
+    )
+    # Sanity: the pin reads back through real Vespa.
+    assert service.is_pinned(target_id, TENANT) is True
+
+    def _boom(*a, **k):
+        raise ConnectionError("vespa unreachable")
+
+    monkeypatch.setattr(mm.memory, "get_all", _boom)
+
+    # Both pin-read paths now raise instead of flattening the outage to
+    # []/False, so a pinned memory is never mistaken for unpinned mid-outage.
+    with pytest.raises(Exception):
+        service.list_pins(TENANT)
+    with pytest.raises(Exception):
+        service.is_pinned(target_id, TENANT)

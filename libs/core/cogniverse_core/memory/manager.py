@@ -1002,8 +1002,13 @@ class Mem0MemoryManager:
             return memories
 
         except Exception as e:
-            logger.error(f"Failed to get all memories: {e}")
-            return []
+            # A backend outage is not "no memories" — raise so callers can't
+            # mistake an outage for an empty store. The pin lookup that feeds
+            # the lifecycle cleanup depends on this: flattening to [] here read
+            # a genuinely-pinned memory as unpinned during an outage and let
+            # the scheduler prune it. Best-effort callers already try/except.
+            logger.error(f"Failed to get all memories: {e!r}")
+            raise
 
     def delete_memory(
         self,
