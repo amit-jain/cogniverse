@@ -467,6 +467,7 @@ def initialize(
     backend_config_port: Optional[int] = None,
     base_schema_name: str = "agent_memories",
     auto_create_schema: bool = True,
+    embedding_dims: int = 768,
     knowledge_registry: Optional[object] = None,
 ) -> None:
     """

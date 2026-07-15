@@ -113,6 +113,51 @@ class TestMem0MemoryManager:
             manager.config["vector_store"]["config"]["collection_name"]
             == "agent_memories_test_tenant"
         )
+        # Default embedding dimension is DenseOn's 768.
+        assert manager.config["vector_store"]["config"]["embedding_model_dims"] == 768
+
+    @patch("cogniverse_core.registries.backend_registry.get_backend_registry")
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_initialize_threads_embedding_dims(
+        self,
+        mock_memory_class,
+        mock_get_backend_registry,
+        manager,
+    ):
+        """The embedding dimension is config-driven, not hardcoded 768 — a
+        non-DenseOn embedder's dimension flows through to the vector store."""
+        from pathlib import Path
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        mock_memory_class.from_config.return_value = MagicMock()
+        mock_backend = MagicMock()
+        mock_backend.get_tenant_schema_name.return_value = "agent_memories_test_tenant"
+        mock_backend.deploy_schema.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.get_ingestion_backend.return_value = mock_backend
+        mock_get_backend_registry.return_value = mock_registry
+
+        store = InMemoryConfigStore()
+        store.initialize()
+        config_manager = ConfigManager(store=store)
+
+        manager.initialize(
+            backend_host="localhost",
+            backend_port=8080,
+            llm_model="test-llm",
+            embedding_model="some/other-embedder",
+            llm_base_url="http://localhost:11434/v1",
+            embedder_base_url="http://localhost:8000",
+            base_schema_name="agent_memories",
+            config_manager=config_manager,
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            embedding_dims=1024,
+        )
+
+        assert manager.config["vector_store"]["config"]["embedding_model_dims"] == 1024
 
     @patch("cogniverse_core.memory.manager.Memory")
     def test_add_memory(self, mock_memory_class, manager):
