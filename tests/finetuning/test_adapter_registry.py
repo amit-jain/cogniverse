@@ -836,5 +836,46 @@ class TestConvenienceFunctions:
         assert (tmp_path / "downloaded" / "config.json").exists()
 
 
+@pytest.mark.unit
+class TestAdapterStoreEntryPointDiscovery:
+    """The ``cogniverse.adapter.stores`` entry-point group is the production
+    path for resolving an ``AdapterStore``; the rest of the suite injects
+    ``store=`` directly, so the discovery path itself was never exercised."""
+
+    def test_vespa_discovered_and_instantiated_via_entry_point(self):
+        from unittest.mock import MagicMock
+
+        from cogniverse_core.registries import AdapterStoreRegistry
+        from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
+
+        AdapterStoreRegistry.reset()
+        try:
+            # Real importlib.metadata resolution of the entry-point group.
+            assert AdapterStoreRegistry.is_available("vespa"), (
+                AdapterStoreRegistry.list_available()
+            )
+            store = AdapterStoreRegistry.get(
+                name="vespa", config={"vespa_app": MagicMock()}
+            )
+            assert isinstance(store, VespaAdapterStore)
+            # Config-scoped cache: same backend key returns the same instance.
+            store2 = AdapterStoreRegistry.get(
+                name="vespa", config={"vespa_app": MagicMock()}
+            )
+            assert store2 is store
+        finally:
+            AdapterStoreRegistry.reset()
+
+    def test_unknown_store_name_raises(self):
+        from cogniverse_core.registries import AdapterStoreRegistry
+
+        AdapterStoreRegistry.reset()
+        try:
+            with pytest.raises(ValueError, match="not found"):
+                AdapterStoreRegistry.get(name="nonexistent", config={})
+        finally:
+            AdapterStoreRegistry.reset()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
