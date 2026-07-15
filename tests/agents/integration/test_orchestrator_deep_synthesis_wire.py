@@ -70,6 +70,7 @@ class TestOptInRouting:
         # Stub the workflow constructor to return a controlled fake whose
         # ``run`` we observe — that's how we know the wire reached it.
         observed_runs: list = []
+        built_with: list = []
 
         class _FakeWorkflow:
             async def run(self, *, query, tenant_id, seed_subagents):
@@ -87,7 +88,11 @@ class TestOptInRouting:
                     trajectory=[],
                 )
 
-        orchestrator._build_deep_synthesis_workflow = lambda: _FakeWorkflow()
+        def _build(tenant_id):
+            built_with.append(tenant_id)
+            return _FakeWorkflow()
+
+        orchestrator._build_deep_synthesis_workflow = _build
 
         out = await orchestrator._process_impl(
             OrchestratorInput(
@@ -100,6 +105,9 @@ class TestOptInRouting:
             "OrchestratorInput.synthesis_depth=deep did not reach "
             "DeepSynthesisWorkflow.run — the wire is dead"
         )
+        # The request tenant is threaded into the build helper (it resolves
+        # the per-tenant LLM endpoint and the sub-agent dispatch context).
+        assert built_with == ["b7_int_tenant"]
         assert observed_runs[0]["query"].startswith("Compare refund")
         assert out.workflow_id == "deep_synthesis"
         assert out.final_output["answer"] == "DEEP-SYNTH-OK"
@@ -115,9 +123,9 @@ class TestOptInRouting:
         called: list = []
         original = orchestrator._build_deep_synthesis_workflow
 
-        def _track():
+        def _track(tenant_id):
             called.append(True)
-            return original()
+            return original(tenant_id)
 
         orchestrator._build_deep_synthesis_workflow = _track  # type: ignore[method-assign]
 
@@ -160,7 +168,7 @@ class TestOptInRouting:
             async def run(self, **kw):
                 raise RuntimeError("simulated workflow failure")
 
-        orchestrator._build_deep_synthesis_workflow = lambda: _BoomWorkflow()
+        orchestrator._build_deep_synthesis_workflow = lambda tenant_id: _BoomWorkflow()
         orchestrator._process_impl_locked = AsyncMock(
             return_value=MagicMock(
                 workflow_id="default_after_fallback",
@@ -199,7 +207,7 @@ class TestBuildHelper:
             "cogniverse_foundation.config.utils.get_config",
             side_effect=RuntimeError("no LLM"),
         ):
-            wf = orchestrator._build_deep_synthesis_workflow()
+            wf = orchestrator._build_deep_synthesis_workflow("b7_no_llm")
         assert wf is None
 
     async def test_returns_workflow_when_llm_available(self, monkeypatch):
@@ -218,7 +226,7 @@ class TestBuildHelper:
             registry=registry,
             config_manager=cm,
         )
-        wf = orchestrator._build_deep_synthesis_workflow()
+        wf = orchestrator._build_deep_synthesis_workflow("b7_with_llm")
         assert isinstance(wf, DeepSynthesisWorkflow)
 
     async def test_build_routes_rlm_through_semantic_router_when_enabled(
@@ -250,7 +258,7 @@ class TestBuildHelper:
             registry=registry,
             config_manager=cm,
         )
-        wf = orchestrator._build_deep_synthesis_workflow()
+        wf = orchestrator._build_deep_synthesis_workflow("b7_gw_tenant")
         assert isinstance(wf, DeepSynthesisWorkflow)
         assert wf._rlm.llm_config.api_base == "http://semantic-router:9099/v1"
         assert wf._rlm.llm_config.extra_headers == {
