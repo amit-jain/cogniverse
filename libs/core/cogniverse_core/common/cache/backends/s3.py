@@ -263,7 +263,8 @@ class S3CacheBackend(CacheBackend):
         fmt = envelope.get("format", self.format)
         if fmt == "raw":
             return body
-        return self._deserialize(body, fmt)
+        # gunzip + unpickle is CPU-bound; keep it off the event loop.
+        return await asyncio.to_thread(self._deserialize, body, fmt)
 
     async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         s3_key = self._s3_key(key)
@@ -271,7 +272,8 @@ class S3CacheBackend(CacheBackend):
             body = value
             envelope: Dict[str, Any] = {"format": "raw"}
         else:
-            body = self._serialize(value)
+            # pickle + gzip is CPU-bound; keep it off the event loop.
+            body = await asyncio.to_thread(self._serialize, value)
             envelope = {"format": self.format}
         if ttl is not None and ttl > 0:
             envelope["expires_at"] = time.time() + ttl

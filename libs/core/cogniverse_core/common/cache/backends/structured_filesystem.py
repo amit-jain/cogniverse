@@ -266,7 +266,9 @@ class StructuredFilesystemBackend(CacheBackend):
                 data = await f.read()
 
             self._stats["hits"] += 1
-            return self._deserialize(data)
+            # gunzip + unpickle is CPU-bound (tens of ms on a large artifact);
+            # run it off the event loop so concurrent requests keep flowing.
+            return await asyncio.to_thread(self._deserialize, data)
 
         except Exception as e:
             logger.error(f"Error reading cache file {file_path}: {e}")
@@ -289,8 +291,9 @@ class StructuredFilesystemBackend(CacheBackend):
                     await f.write(value)
                 data_size = len(value)
             else:
-                # Regular data - serialize it
-                data = self._serialize(value)
+                # Regular data - serialize it. pickle + gzip is CPU-bound; run
+                # it off the event loop so concurrent requests keep flowing.
+                data = await asyncio.to_thread(self._serialize, value)
                 async with aiofiles.open(file_path, "wb") as f:
                     await f.write(data)
                 data_size = len(data)
