@@ -5,7 +5,7 @@ Simple agent demonstrating dynamic DSPy configuration and optimization.
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import dspy
 import uvicorn
@@ -157,6 +157,36 @@ class TextAnalysisAgent(
         logger.info(
             f"TextAnalysisAgent initialized with module type: {self.config.module_config.module_type.value}"
         )
+
+    def _active_adapter_model(self) -> Optional[str]:
+        """Route the LM to this tenant's active entity_extraction adapter.
+
+        Closes the finetuning->inference loop: a LoRA adapter trained for this
+        tenant's entity extraction is served by vLLM under its registry name, so
+        returning that name makes analyze_text() run against the fine-tuned
+        model. No active adapter (the common case) → None → base model. Any
+        registry/import failure degrades to the base model rather than breaking
+        agent construction.
+        """
+        tenant_id = getattr(self, "tenant_id", None)
+        if not tenant_id:
+            return None
+        try:
+            from cogniverse_finetuning.registry import AdapterRegistry
+        except ImportError:
+            return None
+        try:
+            adapter = AdapterRegistry().get_active_adapter(
+                tenant_id, "entity_extraction"
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade to the base model
+            logger.warning(
+                "active-adapter lookup failed for %s/entity_extraction: %r — base model",
+                tenant_id,
+                exc,
+            )
+            return None
+        return adapter.name if adapter else None
 
     def analyze_text(self, text: str, analysis_type: str = "summary") -> Dict[str, Any]:
         """
