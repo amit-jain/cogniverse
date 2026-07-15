@@ -236,3 +236,18 @@ def test_metadata_app_lazy_init_is_thread_safe():
 
     assert len(built) == 1, f"{len(built)} PersistentVespaOps built — lazy init raced"
     assert len({id(a) for a in apps}) == 1, "threads got different metadata apps"
+
+
+def test_document_field_numpy_scalars_are_coerced():
+    """np.int64 in a field must not TypeError at the JSON step — the primitive
+    coerces numpy scalars to native Python before feeding."""
+    import json
+
+    import numpy as np
+
+    coerced = VespaBackend._coerce_field_values(
+        {"count": np.int64(7), "score": np.float64(0.5), "name": "x", "ids": ["a"]}
+    )
+    assert coerced == {"count": 7, "score": 0.5, "name": "x", "ids": ["a"]}
+    assert type(coerced["count"]) is int
+    json.dumps(coerced)  # must not raise

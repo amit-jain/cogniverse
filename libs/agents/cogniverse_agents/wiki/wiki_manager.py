@@ -513,7 +513,9 @@ class WikiManager:
         except Exception as exc:
             logger.warning("Wiki document fetch failed for %s: %s", doc_id, exc)
             return None
-        if fields is None:
+        if not fields:
+            # get returns {} for a doc that exists with no readable fields —
+            # treat that as absent, not a phantom empty topic to merge into.
             return None
 
         return Document(
