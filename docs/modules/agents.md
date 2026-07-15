@@ -43,10 +43,9 @@
 9. [RLM Inference (Recursive Language Models)](#rlm-inference-recursive-language-models)
 10. [Testing](#testing)
 11. [Audit Checklist](#audit-checklist)
-12. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
-13. [Real-Time Event Notifications](#real-time-event-notifications)
-14. [Approval Workflow System](#approval-workflow-system)
-15. [Inference System](#inference-system)
+12. [Real-Time Event Notifications](#real-time-event-notifications)
+13. [Approval Workflow System](#approval-workflow-system)
+14. [Inference System](#inference-system)
     - [RLMInference](#rlminference)
     - [RLMResult](#rlmresult)
     - [InstrumentedRLM](#instrumentedrlm)
@@ -62,7 +61,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 **Search and Orchestration Agents:**
 
 1. **GatewayAgent** - Query entry point: GLiNER-based triage classifying queries as simple or complex (<100ms, no LLM)
-2. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion, checkpointing
+2. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion
 3. **SearchAgent** - Multi-modal video search (ColPali, VideoPrism)
 4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
 5. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
@@ -155,10 +154,8 @@ graph TD
     SearchDir --> LearnedRerank["<span style='color:#000'>learned_reranker.py</span>"]
     SearchDir --> RerankersDir["<span style='color:#000'>rerankers/</span>"]
 
-    Root --> OrchDir["<span style='color:#000'><b>orchestrator/</b><br/>4 files</span>"]
+    Root --> OrchDir["<span style='color:#000'><b>orchestrator/</b><br/>2 files</span>"]
     OrchDir --> OrchInit["<span style='color:#000'>__init__.py</span>"]
-    OrchDir --> CheckpointStorage["<span style='color:#000'>checkpoint_storage.py</span>"]
-    OrchDir --> CheckpointTypes["<span style='color:#000'>checkpoint_types.py</span>"]
     OrchDir --> SuffContext["<span style='color:#000'>sufficient_context_signature.py</span>"]
 
     Root --> OptDir["<span style='color:#000'><b>optimizer/</b><br/>5 files</span>"]
@@ -1472,8 +1469,8 @@ async def _create_plan(
 **`_execute_plan(plan: OrchestrationPlan) -> Dict[str, Any]`**
 
 Action Phase: Execute orchestration plan with parallel execution support.
-Emits streaming progress events per step, saves checkpoints after each batch,
-and checks for cancellation between steps.
+Emits streaming progress events per step and checks for cancellation between
+steps.
 
 ```python
 async def _execute_plan(
@@ -1520,10 +1517,6 @@ async def _execute_plan(
         for (step_idx, _), (name, result) in zip(ready_steps, results):
             agent_results[name] = result
             executed[step_idx] = True
-
-        # Save checkpoint after each batch (if configured)
-        if self._should_checkpoint():
-            await self._save_checkpoint(plan, workflow_id, ...)
 
     return agent_results
 ```
@@ -3051,7 +3044,7 @@ When `GatewayAgent` classifies the query as `complex`:
 | Component | Role | Location |
 |---|---|---|
 | **GatewayAgent** | Entry point, classifies queries as simple/complex via GLiNER | `cogniverse_agents/gateway_agent.py` |
-| **OrchestratorAgent** | Autonomous A2A orchestrator: planning, execution, fusion, checkpointing | `cogniverse_agents/orchestrator_agent.py` |
+| **OrchestratorAgent** | Autonomous A2A orchestrator: planning, execution, fusion | `cogniverse_agents/orchestrator_agent.py` |
 | **AgentTask** | HTTP wire schema carrying enrichment fields to execution agents | `cogniverse_runtime/routers/agents.py` |
 
 ---
@@ -4472,255 +4465,6 @@ def test_tenant_isolation(config_manager):
 
 ---
 
-## Durable Execution (Workflow Checkpointing)
-
-### Overview
-
-The `OrchestratorAgent` supports durable execution through workflow checkpointing. This enables:
-
-- **Checkpoint**: Save workflow state after each phase
-- **Resume**: Restart failed workflows from the last checkpoint
-- **Replay**: Skip completed tasks and use cached results
-- **Fault Tolerance**: Recover from process restarts or failures
-
-### Checkpoint Types
-
-```python
-from cogniverse_agents.orchestrator.checkpoint_types import (
-    CheckpointConfig,
-    CheckpointLevel,
-    CheckpointStatus,
-    TaskCheckpoint,
-    WorkflowCheckpoint,
-)
-
-# Checkpoint granularity
-class CheckpointLevel(Enum):
-    PHASE = "phase"           # Checkpoint after each phase (default)
-    TASK = "task"             # Checkpoint after each task
-    PHASE_AND_TASK = "both"   # Checkpoint at both levels
-
-# Checkpoint lifecycle
-class CheckpointStatus(Enum):
-    ACTIVE = "active"         # Current checkpoint
-    SUPERSEDED = "superseded" # Replaced by newer checkpoint
-    FAILED = "failed"         # Workflow failed at this checkpoint
-    COMPLETED = "completed"   # Workflow completed successfully
-```
-
-### Checkpoint State Machine
-
-The following diagram shows the lifecycle of workflow checkpoints:
-
-```mermaid
-stateDiagram-v2
-    [*] --> ACTIVE: save_checkpoint()
-
-    ACTIVE --> SUPERSEDED: New checkpoint created<br/>(workflow continues)
-    ACTIVE --> COMPLETED: Workflow succeeded<br/>(all phases done)
-    ACTIVE --> FAILED: Workflow error<br/>(unrecoverable)
-
-    SUPERSEDED --> [*]: Retained for history<br/>(cleanup after retention period)
-
-    FAILED --> ACTIVE: resume_workflow()<br/>(creates new checkpoint)
-
-    COMPLETED --> [*]: Retained for audit<br/>(cleanup after retention period)
-
-    note right of ACTIVE
-        Current checkpoint for workflow
-        Only one ACTIVE per workflow_id
-        Contains full task states
-    end note
-
-    note right of SUPERSEDED
-        Historical checkpoint
-        Enables time-travel debugging
-        Can fork from any checkpoint
-    end note
-
-    note left of FAILED
-        Workflow stopped at this phase
-        Can be resumed
-        Retains all completed task results
-    end note
-
-    classDef blue fill:#90caf9,stroke:#1565c0,color:#000
-    classDef green fill:#a5d6a7,stroke:#388e3c,color:#000
-    classDef orange fill:#ffcc80,stroke:#ef6c00,color:#000
-    classDef purple fill:#ce93d8,stroke:#7b1fa2,color:#000
-
-    class ACTIVE blue
-    class SUPERSEDED orange
-    class COMPLETED green
-    class FAILED purple
-```
-
-**State Transitions:**
-| From | To | Trigger | Action |
-|------|-----|---------|--------|
-| (none) | ACTIVE | `save_checkpoint()` | Create new checkpoint with workflow state |
-| ACTIVE | SUPERSEDED | New phase starts | Previous checkpoint marked superseded |
-| ACTIVE | COMPLETED | All phases done | Workflow succeeded, mark complete |
-| ACTIVE | FAILED | Unrecoverable error | Workflow stopped, can resume later |
-| FAILED | ACTIVE | `resume_workflow()` | New checkpoint created from failed state |
-
-### Enabling Checkpointing
-
-```python
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig, CheckpointLevel
-from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
-from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_foundation.config.manager import ConfigManager
-
-# Create checkpoint storage (Phoenix span-based)
-storage = WorkflowCheckpointStorage(
-    grpc_endpoint="localhost:4317",
-    http_endpoint="http://localhost:6006",
-    tenant_id="acme"
-)
-
-# Configure checkpointing
-config = CheckpointConfig(
-    enabled=True,
-    level=CheckpointLevel.PHASE,
-    project_name="workflow_checkpoints",
-    retain_completed_hours=24 * 7,   # Keep completed for 7 days
-    retain_failed_hours=24 * 30      # Keep failed for 30 days
-)
-
-# Create orchestrator with checkpointing
-orchestrator = OrchestratorAgent(
-    deps=OrchestratorDeps(),
-    registry=registry,
-    config_manager=config_manager,
-    checkpoint_config=config,
-    checkpoint_storage=storage,
-)
-```
-
-### Resuming Failed Workflows
-
-```python
-# Get list of resumable workflows (queried from checkpoint storage directly)
-resumable = await orchestrator.checkpoint_storage.get_resumable_workflows(tenant_id="acme")
-# Returns: [{"workflow_id": "wf_123", "original_query": "...", ...}, ...]
-
-# Fetch the latest checkpoint for a specific workflow
-checkpoint_data = await orchestrator.resume_workflow(resumable[0]["workflow_id"])
-# Returns the checkpoint as a dict (checkpoint_id, current_phase, task_states, ...),
-# or None if no checkpoint exists for that workflow_id
-```
-
-### Resume Algorithm
-
-`resume_workflow(workflow_id)` loads and returns the latest checkpoint's
-state — it does not itself re-execute the remaining tasks:
-
-```text
-1. Load latest checkpoint for workflow_id via checkpoint_storage.get_latest_checkpoint()
-2. If none found, log a warning and return None
-3. Otherwise return checkpoint.to_dict() (task_states, current_phase, execution_order, ...)
-```
-
-Reconstructing the `OrchestrationPlan` from that checkpoint data and
-re-executing only the incomplete steps (skipping `task_states` entries with
-`status="completed"`) is caller-side logic today — the checkpoint dict gives
-the caller everything needed to do so, but `OrchestratorAgent` does not drive
-that loop itself.
-
-### Checkpoint Storage
-
-Checkpoints are stored as Phoenix spans following the same pattern as `ApprovalStorageImpl`:
-
-```python
-class WorkflowCheckpointStorage:
-    """Phoenix span-based checkpoint storage"""
-
-    async def save_checkpoint(checkpoint: WorkflowCheckpoint) -> str
-    async def get_latest_checkpoint(workflow_id: str) -> Optional[WorkflowCheckpoint]
-    async def get_checkpoint_by_id(checkpoint_id: str) -> Optional[WorkflowCheckpoint]
-    async def mark_checkpoint_status(checkpoint_id: str, status: CheckpointStatus)
-    async def list_workflow_checkpoints(workflow_id: str) -> List[WorkflowCheckpoint]
-    async def get_resumable_workflows(tenant_id: Optional[str]) -> List[Dict]
-```
-
-### Workflow Checkpoint Structure
-
-```python
-@dataclass
-class WorkflowCheckpoint:
-    checkpoint_id: str              # Unique checkpoint ID
-    workflow_id: str                # Workflow being checkpointed
-    tenant_id: str                  # Tenant identifier
-    workflow_status: str            # Current workflow status
-    current_phase: int              # Phase index (0-based)
-    original_query: str             # Original user query
-    execution_order: List[List[str]] # Task execution phases
-    metadata: Dict[str, Any]        # Additional metadata
-    task_states: Dict[str, TaskCheckpoint]  # Task states
-    checkpoint_time: datetime       # When checkpoint was created
-    checkpoint_status: CheckpointStatus     # Active/superseded/etc.
-    parent_checkpoint_id: Optional[str]     # For forking
-    resume_count: int               # Number of resume attempts
-
-@dataclass
-class TaskCheckpoint:
-    task_id: str                    # Task identifier
-    agent_name: str                 # Agent that executed task
-    query: str                      # Task query
-    dependencies: List[str]         # Task dependencies
-    status: str                     # completed/running/failed/waiting
-    result: Optional[Dict]          # Task result (if completed)
-    error: Optional[str]            # Error message (if failed)
-    retry_count: int                # Number of retries
-    start_time: Optional[datetime]  # When task started
-    end_time: Optional[datetime]    # When task completed
-```
-
-### Example: Complete Checkpoint Flow
-
-```python
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig
-from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
-
-# Setup
-storage = WorkflowCheckpointStorage(
-    grpc_endpoint="localhost:4317",
-    http_endpoint="http://localhost:6006",
-    tenant_id="acme",
-)
-config = CheckpointConfig(enabled=True)
-orchestrator = OrchestratorAgent(
-    deps=OrchestratorDeps(),
-    registry=registry,
-    config_manager=config_manager,
-    checkpoint_config=config,
-    checkpoint_storage=storage,
-)
-
-# Execute workflow (checkpoints saved automatically after each phase)
-try:
-    result = await orchestrator._process_impl(
-        OrchestratorInput(
-            query="Find videos about machine learning and summarize them",
-            tenant_id="acme",
-        )
-    )
-except Exception as e:
-    print(f"Workflow failed: {e}")
-
-    # Get resumable workflows and fetch the latest checkpoint for one
-    resumable = await storage.get_resumable_workflows(tenant_id="acme")
-    if resumable:
-        checkpoint_data = await orchestrator.resume_workflow(resumable[0]["workflow_id"])
-        # checkpoint_data carries task_states/current_phase for the caller
-        # to reconstruct the plan and re-run only the incomplete steps
-```
-
----
-
 ## Real-Time Event Notifications
 
 ### Overview
@@ -4728,7 +4472,7 @@ except Exception as e:
 The `OrchestratorAgent` integrates with the A2A EventQueue system for real-time progress notifications. This enables:
 
 - **Multiple Subscribers**: Dashboard + CLI can watch the same workflow simultaneously
-- **Automatic Event Emission**: Checkpoint saves automatically emit A2A-compatible events
+- **Automatic Event Emission**: The sufficiency-gate `InstrumentedRLM` emits Status/Progress events per REPL iteration
 - **Graceful Cancellation**: Workflows can be cancelled at phase boundaries
 - **Reconnection with Replay**: Clients can resume from a specific event offset
 
@@ -4736,28 +4480,18 @@ The `OrchestratorAgent` integrates with the A2A EventQueue system for real-time 
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
 from cogniverse_core.events import get_queue_manager
 
 # Create event queue for the workflow
 manager = get_queue_manager()
 queue = await manager.create_queue("workflow_123", "tenant1")
 
-# Create checkpoint storage with event queue (automatic event emission)
-storage = WorkflowCheckpointStorage(
-    grpc_endpoint="localhost:4317",
-    http_endpoint="http://localhost:6006",
-    tenant_id="tenant1",
-    event_queue=queue,  # Events emitted on checkpoint saves
-)
-
-# Create orchestrator
+# Create orchestrator with the event queue
 orchestrator = OrchestratorAgent(
     deps=OrchestratorDeps(),
     registry=registry,
     config_manager=config_manager,
-    checkpoint_storage=storage,
-    event_queue=queue,  # Additional events at non-checkpoint boundaries
+    event_queue=queue,
 )
 ```
 
@@ -4766,12 +4500,12 @@ orchestrator = OrchestratorAgent(
 `self.event_queue` on `OrchestratorAgent` reaches two channels — there is no
 per-phase "planning"/"executing" push beyond these:
 
-1. **Checkpoint saves** (`checkpoint_storage.save_checkpoint`) automatically
-   enqueue a `StatusEvent` + `ProgressEvent` pair whenever `checkpoint_storage`
-   was built with the same `event_queue` — one pair per checkpointed phase.
-2. **Sufficiency-gate RLM promotion** (evidence too large for a single
+1. **Sufficiency-gate RLM promotion** (evidence too large for a single
    `ChainOfThought` call) runs through `InstrumentedRLM(event_queue=self.event_queue, ...)`,
    which emits its own per-iteration `StatusEvent`/`ProgressEvent` sequence.
+2. **`OrchestratorAgent._emit_event()`** is a generic hook that enqueues onto
+   `event_queue` when one is configured (no-op otherwise), for ad-hoc events —
+   the sufficiency-gate RLM is the actual workflow-level emitter today.
 
 Per-agent progress narration (`self.emit_progress("planning", ...)`,
 `"execution"`, `"aggregating"`, `"complete"`) is a separate, dict-based
@@ -5138,4 +4872,4 @@ destination. External SaaS providers use their own litellm prefix:
 
 ---
 
-**Summary**: The Agents package provides tenant-aware agent implementations that integrate with the core SDK. All agents require `tenant_id`, use tenant-specific schemas, and support memory, telemetry, and health checks. The package includes intelligent profile selection (ProfileSelectionAgent), entity extraction (EntityExtractionAgent), multi-agent orchestration (OrchestratorAgent), ensemble search with RRF fusion (SearchAgent), **durable execution with workflow checkpointing**, **real-time event notifications**, **human-in-the-loop approval workflows**, **A2A protocol tools**, **video playback tools**, and **RLM inference** for large-context processing in fault-tolerant, observable workflows.
+**Summary**: The Agents package provides tenant-aware agent implementations that integrate with the core SDK. All agents require `tenant_id`, use tenant-specific schemas, and support memory, telemetry, and health checks. The package includes intelligent profile selection (ProfileSelectionAgent), entity extraction (EntityExtractionAgent), multi-agent orchestration (OrchestratorAgent), ensemble search with RRF fusion (SearchAgent), **real-time event notifications**, **human-in-the-loop approval workflows**, **A2A protocol tools**, **video playback tools**, and **RLM inference** for large-context processing in fault-tolerant, observable workflows.

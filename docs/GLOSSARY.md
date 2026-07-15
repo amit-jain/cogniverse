@@ -72,13 +72,7 @@ Read-only A2A agent (`cogniverse_agents/cross_tenant_comparison_agent.py`) that 
 Thread-safe signal for graceful task cancellation. Used by EventQueue to coordinate workflow/ingestion abort at phase boundaries.
 
 ### Checkpoint
-Saved state during workflow execution for durability. Allows resuming workflows after failures without re-executing completed tasks.
-
-### CheckpointLevel
-Granularity of checkpointing: `PHASE`, `TASK`, or `PHASE_AND_TASK`.
-
-### CheckpointStatus
-State of a checkpoint: `ACTIVE`, `SUPERSEDED`, `FAILED`, `COMPLETED`.
+Saved state of a long-running optimization / auto-eval workflow, persisted so a restarted run resumes from the last completed stage instead of re-running expensive work. Implemented by `PipelineCheckpoint` in `cogniverse_core/durable` — not per-query orchestration.
 
 ### ColPali
 Multi-vector embedding model for images/documents. Creates patch-level embeddings for fine-grained similarity search.
@@ -112,7 +106,7 @@ Training technique using preference pairs (chosen/rejected). Cogniverse extracts
 Framework for programming language models with signatures and modules. Enables prompt optimization and composable LLM programs.
 
 ### Durable Execution
-Workflow execution that survives failures via checkpointing. Completed tasks are replayed from cache on resume.
+Checkpoint + resume for long-running optimization / auto-eval workflows in `cogniverse_core/durable`. A restarted run continues from the last completed stage instead of re-running expensive work. See `PipelineCheckpoint` / `PipelineCheckpointStorage`.
 
 ---
 
@@ -399,7 +393,7 @@ Model that understands both images and text. Used for generating frame descripti
 ## W
 
 ### Workflow
-Multi-step agent execution plan. Managed by `OrchestratorAgent` with checkpointing support.
+Multi-step agent execution plan. Managed by `OrchestratorAgent`.
 
 ### WorkflowIntelligence
 System for learning and adapting workflows based on performance. Optimizes agent selection and parameters.

@@ -163,13 +163,12 @@ orchestrator = OrchestratorAgent(
     deps=deps,
     registry=registry,
     config_manager=config_manager,
-    event_queue=queue,  # forwarded to checkpoint saves + the sufficiency-gate RLM
+    event_queue=queue,  # forwarded to the sufficiency-gate RLM + the generic _emit_event hook
 )
 
-# Process query via A2A task protocol. If checkpoint_storage is configured,
-# checkpoint saves after each task-group batch emit Status/ProgressEvent;
-# the sufficiency-gate InstrumentedRLM emits events once evidence crosses
-# the RLM promotion threshold. See "How It Works" below for the full picture.
+# Process query via A2A task protocol. The sufficiency-gate InstrumentedRLM
+# emits Status/ProgressEvent once evidence crosses the RLM promotion threshold.
+# See "How It Works" below for the full picture.
 input_data = OrchestratorInput(query="Find videos about cats", tenant_id="tenant1")
 result = await orchestrator._process_impl(input_data)
 ```
@@ -347,36 +346,14 @@ all. It is a distinct mechanism with its own replay semantics
 `/events/ingestion/{job_id}` endpoint documented above, which streams from an
 in-memory `EventQueue` for the in-process (non-Redis) ingestion pipeline.
 
-## Checkpoint-Event Integration
+## Workflow Event Emission
 
-Checkpoint saves automatically emit A2A events when an EventQueue is provided. This unifies state persistence with real-time notifications:
-
-```python
-from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
-from cogniverse_core.events import get_queue_manager
-
-manager = get_queue_manager()
-queue = await manager.create_queue("workflow_123", "tenant1")
-
-# Create checkpoint storage with event queue
-checkpoint_storage = WorkflowCheckpointStorage(
-    grpc_endpoint="localhost:4317",
-    http_endpoint="http://localhost:6006",
-    tenant_id="tenant1",
-    event_queue=queue,  # Events emitted automatically on checkpoint save
-)
-
-# When a checkpoint is saved, these events are automatically emitted:
-# 1. StatusEvent - state change notification
-# 2. ProgressEvent - task completion progress (if tasks exist)
-```
+`OrchestratorAgent` pushes real-time `StatusEvent`/`ProgressEvent` notifications onto the `EventQueue` it was constructed with. Two channels reach that queue.
 
 ### How It Works
 
-1. **Checkpoint saves** emit A2A-compatible status/progress events automatically (`WorkflowCheckpointStorage._emit_checkpoint_event`) — this is the primary source of workflow-level `StatusEvent`/`ProgressEvent` notifications today.
-2. **Orchestrator** forwards its `event_queue` into the sufficient-context-gate `InstrumentedRLM` (used once accumulated evidence crosses the RLM promotion threshold in the iterative retrieval loop), which emits `StatusEvent`/`ProgressEvent` per REPL iteration. The orchestrator also signals `event_queue.cancel()` when an inbound `"stop"` message is drained, so any `InstrumentedRLM` running inside a sub-agent's chain observes cancellation at its next iteration.
-3. **`OrchestratorAgent._emit_event()`** is a generic hook (`enqueue` if `event_queue` is configured, no-op otherwise) available for emitting ad-hoc events, but it is not currently called from the planning/execution/completion boundaries of `_process_impl` — checkpoint saves and the sufficiency-gate RLM are the actual emitters.
-4. **No duplicate code paths** - state changes trigger notifications automatically
+1. **Sufficiency-gate RLM**: the orchestrator forwards its `event_queue` into the sufficient-context-gate `InstrumentedRLM` (used once accumulated evidence crosses the RLM promotion threshold in the iterative retrieval loop), which emits `StatusEvent`/`ProgressEvent` per REPL iteration. The orchestrator also signals `event_queue.cancel()` when an inbound `"stop"` message is drained, so any `InstrumentedRLM` running inside a sub-agent's chain observes cancellation at its next iteration.
+2. **`OrchestratorAgent._emit_event()`** is a generic hook (`enqueue` if `event_queue` is configured, no-op otherwise) available for emitting ad-hoc events, but it is not currently called from the planning/execution/completion boundaries of `_process_impl` — the sufficiency-gate RLM is the actual workflow-level emitter today.
 
 ### Event Flow
 
@@ -388,48 +365,24 @@ flowchart TD
     RLMPromotion{"<span style='color:#000'>Evidence exceeds<br/>RLM promotion threshold?</span>"}
     RLMEvent["<span style='color:#000'>InstrumentedRLM emits<br/>StatusEvent + ProgressEvent<br/>per REPL iteration</span>"]
 
-    TaskGroup1["<span style='color:#000'>First task group completes</span>"]
-    TaskGroup1Event["<span style='color:#000'>Checkpoint saves<br/>StatusEvent + ProgressEvent</span>"]
-
-    TaskGroup2["<span style='color:#000'>Second task group completes</span>"]
-    TaskGroup2Event["<span style='color:#000'>Checkpoint saves<br/>StatusEvent + ProgressEvent</span>"]
+    TaskGroups["<span style='color:#000'>Task groups execute<br/>(progress via emit_progress<br/>dict stream, not EventQueue)</span>"]
 
     Completion["<span style='color:#000'>Completion</span>"]
-    CompletionEvent1["<span style='color:#000'>Checkpoint saves<br/>StatusEvent(COMPLETED)</span>"]
 
     Start --> Iteration
     Iteration --> RLMPromotion
     RLMPromotion -- "yes" --> RLMEvent
-    RLMEvent --> TaskGroup1
-    RLMPromotion -- "no" --> TaskGroup1
-    TaskGroup1 --> TaskGroup1Event
-    TaskGroup1Event --> TaskGroup2
-    TaskGroup2 --> TaskGroup2Event
-    TaskGroup2Event --> Completion
-    Completion --> CompletionEvent1
+    RLMEvent --> TaskGroups
+    RLMPromotion -- "no" --> TaskGroups
+    TaskGroups --> Completion
 
     style Start fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Iteration fill:#a5d6a7,stroke:#388e3c,color:#000
     style RLMPromotion fill:#a5d6a7,stroke:#388e3c,color:#000
     style RLMEvent fill:#ffcc80,stroke:#ef6c00,color:#000
-    style TaskGroup1 fill:#81d4fa,stroke:#0288d1,color:#000
-    style TaskGroup1Event fill:#ffcc80,stroke:#ef6c00,color:#000
-    style TaskGroup2 fill:#81d4fa,stroke:#0288d1,color:#000
-    style TaskGroup2Event fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TaskGroups fill:#81d4fa,stroke:#0288d1,color:#000
     style Completion fill:#a5d6a7,stroke:#388e3c,color:#000
-    style CompletionEvent1 fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
-
-## Relationship with Checkpoints
-
-| Concern | Solution |
-|---------|----------|
-| Pod crashes mid-workflow | Checkpoints → resume from last state |
-| Client wants progress updates | EventQueue → push notifications |
-| Client disconnects/reconnects | EventQueue replay (short-term) |
-| Dashboard shows live status | EventQueue subscription |
-
-**Key Design Principle**: Checkpoints handle crash recovery (durable), EventQueue handles notifications (ephemeral). When both are configured together, checkpoint saves automatically emit events - single source of truth for state changes.
 
 ## Testing
 
@@ -454,7 +407,6 @@ uv run pytest tests/events/integration/ -v
 | `libs/runtime/cogniverse_runtime/routers/events.py` | SSE streaming endpoints |
 | `libs/runtime/cogniverse_runtime/ingestion/pipeline.py` | `VideoIngestionPipeline` — emits events during video ingestion |
 | `libs/agents/cogniverse_agents/orchestrator_agent.py` | `OrchestratorAgent` — accepts `event_queue`, emits workflow events |
-| `libs/agents/cogniverse_agents/orchestrator/checkpoint_storage.py` | Checkpoint storage with event emission |
 | `libs/agents/cogniverse_agents/mixins/rlm_aware_mixin.py` | `RLMAwareMixin.get_rlm()` — wires `event_queue` into RLM inference |
 | `libs/agents/cogniverse_agents/inference/rlm_inference.py` | `RLMInference` — forwards `event_queue` to `InstrumentedRLM` |
 | `libs/agents/cogniverse_agents/inference/instrumented_rlm.py` | `InstrumentedRLM` — emits Status/Progress events per REPL iteration |

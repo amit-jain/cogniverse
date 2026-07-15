@@ -169,7 +169,7 @@ flowchart TD
 
 *Generation + Routing*:
 - `gateway_agent.py` — LLM-free entry triage (GLiNER + deterministic rules), hands off to the orchestrator or a direct execution agent
-- `orchestrator_agent.py` — DSPy planning + A2A fan-out to sub-agents, checkpoint/resume, cross-modal fusion
+- `orchestrator_agent.py` — DSPy planning + A2A fan-out to sub-agents, cross-modal fusion
 - `summarizer_agent.py` — structured summaries with a thinking phase and VLM visual analysis
 - `detailed_report_agent.py` — comprehensive multi-section reports with optional RLM synthesis
 - `profile_selection_agent.py` — DSPy-driven backend search profile selection with a heuristic fallback
@@ -366,15 +366,10 @@ Cross-cutting track for the memory/provenance/trust stack and the agents that co
 2. Follow: system base (`backend` section of `configs/config.json`) → tenant overrides fetched via `ConfigManager.get_backend_config` → deep-merged per-profile in `ConfigUtils._ensure_backend_config` → profile lookup via `ConfigManager.get_backend_profile`
 3. Files: `foundation/config/manager.py` → `foundation/config/utils.py` (`ConfigUtils._ensure_backend_config`) → `foundation/config/unified_config.py` (`BackendConfig`, `BackendProfileConfig`)
 
-### Exercise 4: Understand Checkpoint Recovery
-1. Start: `OrchestratorAgent._process_impl(...)` with checkpoint support
-2. Follow: Load checkpoint → Skip completed → Resume from phase
-3. Files: agents/orchestrator_agent.py → agents/orchestrator/checkpoint_storage.py
-
-### Exercise 4b: Trace Real-Time Event Flow
+### Exercise 4: Trace Real-Time Event Flow
 1. Start: Create EventQueue for workflow
-2. Follow: Checkpoint save → Event emission → SSE subscription
-3. Files: core/events/ → agents/orchestrator/checkpoint_storage.py → runtime/routers/events.py
+2. Follow: Sufficiency-gate RLM promotion → Event emission → SSE subscription
+3. Files: core/events/ → agents/orchestrator_agent.py → runtime/routers/events.py
 
 ### Exercise 5: Trace Fine-Tuning Pipeline
 1. Start: Phoenix annotations
