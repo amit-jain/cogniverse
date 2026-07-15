@@ -164,9 +164,18 @@ class BackendVectorStore(VectorStoreBase):
         else:
             self.is_telemetry = False
 
+        if not isinstance(embedding_model_dims, int) or embedding_model_dims <= 0:
+            raise ValueError(
+                f"embedding_model_dims must be a positive int, "
+                f"got {embedding_model_dims!r}"
+            )
+
         self.collection_name = collection_name
         self.backend = backend_client
         self.vector_size = embedding_model_dims
+        # mem0 reads getattr(vector_store, "embedding_model_dims", 1536) —
+        # expose the true value under the name it looks for.
+        self.embedding_model_dims = embedding_model_dims
         self.tenant_id = tenant_id
         self.profile = profile
         logger.info(
@@ -178,7 +187,23 @@ class BackendVectorStore(VectorStoreBase):
         """Schema should already be deployed via backend"""
         self.collection_name = name
         self.vector_size = vector_size
+        self.embedding_model_dims = vector_size
         logger.info(f"Collection {name} initialized (vector_size={vector_size})")
+
+    def _require_dims(self, vector, what: str) -> None:
+        """Fail fast on a wrong-dimension vector — a mismatched embedder or
+        schema otherwise surfaces as a downstream Vespa 400 (or silently
+        garbage ANN scores) with no hint of the cause."""
+        try:
+            got = len(vector)
+        except TypeError:
+            return  # non-sized inputs are validated downstream
+        if got != self.vector_size:
+            raise ValueError(
+                f"{what} has {got} dimensions but "
+                f"'{self.collection_name}' expects {self.vector_size} "
+                f"(embedding_model_dims)"
+            )
 
     def insert(
         self,
@@ -193,6 +218,9 @@ class BackendVectorStore(VectorStoreBase):
             return ids if ids else [str(uuid.uuid4()) for _ in vectors]
 
         logger.info(f"Inserting {len(vectors)} vectors into {self.collection_name}")
+
+        for vector in vectors:
+            self._require_dims(vector, "insert vector")
 
         if not ids:
             import uuid
@@ -286,6 +314,7 @@ class BackendVectorStore(VectorStoreBase):
         if vectors is None:
             logger.error("Search called without embedding vectors")
             return []
+        self._require_dims(vectors, "query vector")
 
         # Build filter dict
         backend_filters = {}

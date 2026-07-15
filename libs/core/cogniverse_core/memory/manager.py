@@ -224,6 +224,11 @@ class Mem0MemoryManager:
         if not self.tenant_id:
             raise ValueError("tenant_id must be set before initialize()")
 
+        if not isinstance(embedding_dims, int) or embedding_dims <= 0:
+            raise ValueError(
+                f"embedding_dims must be a positive int, got {embedding_dims!r}"
+            )
+
         # Idempotency: the dispatcher runs initialize_memory per dispatched
         # request (via MemoryAwareMixin), and this manager is a per-tenant
         # singleton — rebuilding Memory.from_config each time reconstructed
