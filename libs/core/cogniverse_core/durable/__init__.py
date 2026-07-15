@@ -1,8 +1,9 @@
 """Durable execution for long-running workflows.
 
-Stage-pipeline checkpoint + resume for the long-running optimization / eval
-jobs (`optimization_cli` modes, `job_executor`) that today lose all progress
-when their Argo pod is killed. Persists to the telemetry-span substrate.
+Stage-pipeline checkpoint + resume for long-running optimization / eval jobs
+that lose all progress when their Argo pod is killed. Consumed today by
+``optimization_cli``'s triggered mode; persists to the telemetry-span
+substrate.
 """
 
 from cogniverse_core.durable.pipeline_checkpoint import (

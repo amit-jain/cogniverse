@@ -279,3 +279,31 @@ async def test_resume_skips_a_real_dspy_compile(
     assert run2_calls == ["detailed_report"]
     # search's result comes from the checkpoint — the real run-1 artifact.
     assert result2["search"]["artifact_id"] == real_artifact_id
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_from_dict_coerces_malformed_persisted_shapes():
+    """A persisted null ``phases`` / list-shaped ``completed_units`` must not
+    crash resume later — ``pending_phases`` subscripts phases and
+    ``completed_unit_keys`` calls ``.items()``."""
+    from cogniverse_core.durable import PipelineCheckpoint
+
+    base = {
+        "checkpoint_id": "c1",
+        "workflow_id": "w1",
+        "tenant_id": "t1",
+        "status": "active",
+        "phases": None,
+        "phase_index": 0,
+        "completed_units": ["not", "a", "dict"],
+        "metadata": "{}",
+        "created_at": "2026-07-15T00:00:00+00:00",
+        "resume_count": 0,
+    }
+    cp = PipelineCheckpoint.from_dict(base)
+
+    assert cp.phases == []
+    assert cp.completed_units == {}
+    assert cp.pending_phases() == []
+    assert cp.completed_unit_keys() == set()
