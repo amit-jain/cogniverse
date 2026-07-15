@@ -59,3 +59,64 @@ async def test_create_dataset_runs_off_event_loop_thread(
     # Round-trip correctness preserved by the offload.
     loaded = await store.get_dataset("loop-thread-test")
     assert len(loaded) == 2
+
+
+@pytest.mark.asyncio
+async def test_append_to_dataset_round_trips_and_offloads(
+    phoenix_container, monkeypatch
+):
+    """append_to_dataset adds a new version to an EXISTING dataset via the
+    real Phoenix append API, off the event loop; get_dataset then returns the
+    full appended history."""
+    import uuid
+
+    from phoenix.client.resources.datasets import Datasets
+
+    store = PhoenixDatasetStore(phoenix_container["http_endpoint"], "acme:acme")
+    name = f"append-rt-{uuid.uuid4().hex[:6]}"
+    meta = {"input_keys": ["question"], "output_keys": ["answer"]}
+
+    dsid = await store.create_dataset(
+        name, pd.DataFrame({"question": ["q1"], "answer": ["a1"]}), metadata=meta
+    )
+    assert dsid
+
+    loop_thread = threading.get_ident()
+    observed: dict[str, int] = {}
+    real_append = Datasets.add_examples_to_dataset
+
+    def spy(self, *args, **kwargs):
+        observed["thread"] = threading.get_ident()
+        return real_append(self, *args, **kwargs)
+
+    monkeypatch.setattr(Datasets, "add_examples_to_dataset", spy)
+
+    await store.append_to_dataset(
+        name, pd.DataFrame({"question": ["q2"], "answer": ["a2"]}), metadata=meta
+    )
+
+    assert observed["thread"] != loop_thread, (
+        "phoenix append ran on the event-loop thread — not offloaded"
+    )
+
+    loaded = await store.get_dataset(name)
+    questions = sorted(str(row["input"]["question"]) for _, row in loaded.iterrows())
+    assert questions == ["q1", "q2"], (
+        f"append did not extend the dataset history: {loaded.to_dict('records')}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_append_to_missing_dataset_raises_value_error(phoenix_container):
+    """The not-found case maps to ValueError — callers own dataset creation
+    (append cannot infer their full metadata)."""
+    import uuid
+
+    store = PhoenixDatasetStore(phoenix_container["http_endpoint"], "acme:acme")
+
+    with pytest.raises(ValueError, match="not found|Dataset not found"):
+        await store.append_to_dataset(
+            f"never-created-{uuid.uuid4().hex[:6]}",
+            pd.DataFrame({"question": ["q"], "answer": ["a"]}),
+            metadata={"input_keys": ["question"], "output_keys": ["answer"]},
+        )
