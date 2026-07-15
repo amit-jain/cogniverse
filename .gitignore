@@ -93,6 +93,13 @@ test_float_*.py
 # regenerate locally before running the byte-equal replay suites.
 tests/**/goldens/
 
+# ...except the joint-trace ColBERT goldens: they are the pinned contract the
+# suite compares against with a tolerance, and must be present so the suite
+# runs on a fresh checkout (a missing golden errors, not skips).
+!tests/core/integration/goldens/
+!tests/core/integration/goldens/*.npy
+!tests/core/integration/goldens/*.json
+
 # Temporary files
 *.tmp
 *.temp
