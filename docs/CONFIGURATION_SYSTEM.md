@@ -249,6 +249,7 @@ class ConfigScope(Enum):
     TELEMETRY = "telemetry"  # Observability settings
     SCHEMA = "schema"        # Per-tenant schema deployment bookkeeping (SchemaRegistry)
     BACKEND = "backend"      # Backend and profile configuration
+    DURABLE = "durable"      # Durable-execution enablement (long-running optimization/eval)
 ```
 
 **Usage Example**:

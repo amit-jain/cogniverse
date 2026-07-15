@@ -23,12 +23,125 @@ import json
 import logging
 import os
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.durable import (
+    PipelineCheckpoint,
+    PipelineCheckpointStatus,
+    PipelineCheckpointStorage,
+)
 from cogniverse_foundation.telemetry.span_contract import read_span_io
 
 logger = logging.getLogger(__name__)
+
+
+class _TriggeredOptCheckpointer:
+    """Per-agent checkpoint + resume for ``run_triggered_optimization``.
+
+    A killed Argo pod re-runs the whole ``--mode triggered`` invocation from
+    scratch. When durable execution is enabled for the tenant, each successful
+    agent compile is checkpointed (as a telemetry span keyed by a workflow id
+    derived from tenant + trigger dataset), so a re-run skips the agents that
+    already compiled instead of redoing their expensive DSPy ``compile()``.
+    """
+
+    def __init__(self, storage, workflow_id, tenant_id, agents, trigger_dataset):
+        self._storage = storage
+        self._workflow_id = workflow_id
+        self._tenant_id = tenant_id
+        self._agents = list(agents)
+        self._trigger_dataset = trigger_dataset
+        self._units: Dict[str, Dict[str, Any]] = {}
+        self._resume_count = 0
+
+    @classmethod
+    async def maybe_resume(
+        cls,
+        *,
+        config_manager,
+        telemetry_manager,
+        tenant_id: str,
+        agents: List[str],
+        trigger_dataset: str,
+        phoenix_endpoint: str,
+    ) -> Optional["_TriggeredOptCheckpointer"]:
+        """Build a checkpointer (loading prior progress) if enabled, else None."""
+        if not config_manager.get_durable_execution_config(tenant_id).enabled:
+            return None
+
+        provider_config = (
+            getattr(telemetry_manager.config, "provider_config", None) or {}
+        )
+        grpc_endpoint = provider_config.get("grpc_endpoint") or getattr(
+            telemetry_manager.config, "otlp_endpoint", None
+        )
+        http_endpoint = provider_config.get("http_endpoint") or phoenix_endpoint
+        storage = PipelineCheckpointStorage(
+            grpc_endpoint=grpc_endpoint,
+            http_endpoint=http_endpoint,
+            tenant_id=tenant_id,
+            telemetry_manager=telemetry_manager,
+        )
+        workflow_id = f"opt_triggered:{tenant_id}:{trigger_dataset}"
+        inst = cls(storage, workflow_id, tenant_id, agents, trigger_dataset)
+
+        latest = await storage.get_latest_checkpoint(workflow_id)
+        if (
+            latest is not None
+            and latest.status != PipelineCheckpointStatus.COMPLETED.value
+        ):
+            inst._units = dict(latest.completed_units)
+            inst._resume_count = latest.resume_count + 1
+            logger.info(
+                "Resuming optimization %s from checkpoint (%d agents already done)",
+                workflow_id,
+                len(inst.done_agents()),
+            )
+        return inst
+
+    def done_agents(self) -> set:
+        return {
+            agent
+            for agent, unit in self._units.items()
+            if isinstance(unit, dict) and unit.get("status") == "completed"
+        }
+
+    def stored_result(self, agent_name: str) -> Dict[str, Any]:
+        return self._units[agent_name]["result"]
+
+    async def record(self, agent_name: str, result: Dict[str, Any]) -> None:
+        """Persist a checkpoint recording ``agent_name`` as completed."""
+        self._units[agent_name] = {"status": "completed", "result": result}
+        await self._save(PipelineCheckpointStatus.ACTIVE)
+
+    async def finalize(self, had_failure: bool) -> None:
+        """Mark the workflow completed when the run finished cleanly.
+
+        On a failure the last ACTIVE checkpoint is left in place so the next
+        run resumes and retries the un-compiled agents.
+        """
+        if not had_failure:
+            await self._save(PipelineCheckpointStatus.COMPLETED)
+
+    async def _save(self, status: PipelineCheckpointStatus) -> None:
+        checkpoint = PipelineCheckpoint(
+            checkpoint_id=f"ckpt_{uuid.uuid4().hex[:12]}",
+            workflow_id=self._workflow_id,
+            tenant_id=self._tenant_id,
+            status=status.value,
+            phases=self._agents,
+            phase_index=len(self.done_agents()),
+            completed_units=self._units,
+            metadata={
+                "trigger_dataset": self._trigger_dataset,
+                "agents": self._agents,
+            },
+            created_at=datetime.now(timezone.utc),
+            resume_count=self._resume_count,
+        )
+        await self._storage.save_checkpoint(checkpoint)
 
 
 def _query_enhancement_pairs(spans_df) -> List[Dict[str, Any]]:
@@ -169,7 +282,24 @@ async def run_triggered_optimization(
     llm_config = config_utils.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
+    checkpointer = await _TriggeredOptCheckpointer.maybe_resume(
+        config_manager=config_manager,
+        telemetry_manager=telemetry_manager,
+        tenant_id=tenant_id,
+        agents=agents,
+        trigger_dataset=trigger_dataset,
+        phoenix_endpoint=phoenix_endpoint,
+    )
+
     for agent_name in agents:
+        if checkpointer is not None and agent_name in checkpointer.done_agents():
+            results[agent_name] = checkpointer.stored_result(agent_name)
+            logger.info(
+                "Resuming: agent '%s' already optimized, skipping recompile",
+                agent_name,
+            )
+            continue
+
         agent_df = trigger_df[trigger_df["agent"] == agent_name]
         if agent_df.empty:
             logger.info(f"No training data for agent '{agent_name}', skipping")
@@ -196,6 +326,8 @@ async def run_triggered_optimization(
                 teacher_endpoint=llm_config.resolve_teacher(),
             )
             results[agent_name] = result
+            if checkpointer is not None:
+                await checkpointer.record(agent_name, result)
         except Exception as e:
             logger.error(f"Optimization failed for {agent_name}: {e}")
             results[agent_name] = {"status": "failed", "error": str(e)}
@@ -298,6 +430,13 @@ async def run_triggered_optimization(
     except Exception as e:
         logger.warning(f"Post-optimization eval failed (non-fatal): {e}")
         results["post_optimization_eval"] = {"error": str(e)}
+
+    if checkpointer is not None:
+        had_failure = any(
+            isinstance(results.get(a), dict) and results[a].get("status") == "failed"
+            for a in agents
+        )
+        await checkpointer.finalize(had_failure)
 
     return results
 
