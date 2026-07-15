@@ -236,18 +236,27 @@ class PhoenixAnalytics:
             },
         }
 
-        # Overall response time statistics
+        # Overall response time statistics. NaN/inf (single-trace std, or an
+        # all-None duration column) would make the dict fail strict JSON and
+        # 500 through any JSONResponse — coerce them to None.
+        import math
+
+        def _finite(v):
+            fv = float(v)
+            return fv if math.isfinite(fv) else None
+
+        dm = df["duration_ms"]
         stats["response_time"] = {
-            "mean": df["duration_ms"].mean(),
-            "median": df["duration_ms"].median(),
-            "min": df["duration_ms"].min(),
-            "max": df["duration_ms"].max(),
-            "std": df["duration_ms"].std(),
-            "p50": df["duration_ms"].quantile(0.50),
-            "p75": df["duration_ms"].quantile(0.75),
-            "p90": df["duration_ms"].quantile(0.90),
-            "p95": df["duration_ms"].quantile(0.95),
-            "p99": df["duration_ms"].quantile(0.99),
+            "mean": _finite(dm.mean()),
+            "median": _finite(dm.median()),
+            "min": _finite(dm.min()),
+            "max": _finite(dm.max()),
+            "std": _finite(dm.std()),
+            "p50": _finite(dm.quantile(0.50)),
+            "p75": _finite(dm.quantile(0.75)),
+            "p90": _finite(dm.quantile(0.90)),
+            "p95": _finite(dm.quantile(0.95)),
+            "p99": _finite(dm.quantile(0.99)),
         }
 
         # Success/failure rates

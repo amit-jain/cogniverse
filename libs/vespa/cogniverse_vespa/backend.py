@@ -1331,6 +1331,22 @@ class VespaBackend(Backend):
     # the exception text so callers can match transient convergence shapes.
 
     @staticmethod
+    def _coerce_field_values(fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Coerce numpy scalars to native Python so the JSON step can't choke.
+
+        np.int64 is NOT an int subclass — ``json.dumps`` raises TypeError on it
+        (np.float64 slips through as a float subclass). One shallow pass over
+        the field dict via ``.item()`` mirrors the coercion the timestamp /
+        embedding paths already do.
+        """
+        import numpy as np
+
+        out = {}
+        for k, v in fields.items():
+            out[k] = v.item() if isinstance(v, np.generic) else v
+        return out
+
+    @staticmethod
     def _check_document_response(resp, op: str, document_id: str):
         status = getattr(resp, "status_code", None)
         if status is not None and not (200 <= status < 300):
@@ -1353,7 +1369,7 @@ class VespaBackend(Backend):
         resp = self._metadata_vespa_app().feed_data_point(
             schema=schema_name,
             data_id=document_id,
-            fields=fields,
+            fields=self._coerce_field_values(fields),
             namespace=namespace,
         )
         self._check_document_response(resp, "put", document_id)
@@ -1392,7 +1408,7 @@ class VespaBackend(Backend):
         resp = self._metadata_vespa_app().update_data(
             schema=schema_name,
             data_id=document_id,
-            fields=fields,
+            fields=self._coerce_field_values(fields),
             namespace=namespace,
             create=create,
         )

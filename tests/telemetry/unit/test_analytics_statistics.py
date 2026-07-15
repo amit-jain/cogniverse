@@ -157,3 +157,14 @@ def test_provider_client_property_contract():
     provider._http_endpoint = "http://localhost:6006"
     client = provider.client
     assert isinstance(client, Client)
+
+
+def test_single_trace_stats_are_json_safe(analytics):
+    """One trace → pandas std is NaN; the stats dict must stay strict-JSON
+    encodable (NaN would 500 through a JSONResponse)."""
+    import json
+
+    stats = analytics.calculate_statistics(_traces()[:1])
+    assert stats["response_time"]["std"] is None
+    assert stats["response_time"]["mean"] == 100.0
+    json.dumps(stats, allow_nan=False)  # must not raise

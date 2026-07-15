@@ -613,3 +613,24 @@ class TestWikiDelete:
         )
         with pytest.raises(RuntimeError, match="wiki_topic_gone"):
             mgr.delete_page("wiki_topic_gone")
+
+
+@pytest.mark.unit
+def test_get_document_http_treats_empty_fields_as_absent():
+    """An empty fields dict from Vespa must read as a missing doc (None), not
+    a phantom empty topic that later merges get corrupted into."""
+    from unittest.mock import MagicMock
+
+    from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+    backend = MagicMock()
+    backend._url = "http://x"
+    backend._port = 8080
+    backend.search.return_value = []
+    mgr = WikiManager(backend=backend, tenant_id="t:t", schema_name="wiki_pages_t")
+
+    backend.get_document_fields.return_value = {}
+    assert mgr._get_document_http("wiki_topic_missing") is None
+
+    backend.get_document_fields.return_value = None
+    assert mgr._get_document_http("wiki_topic_gone") is None
