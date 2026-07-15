@@ -889,3 +889,126 @@ class TestBoundedInMemoryTaskStore:
         assert await store.get("b") is None
         assert (await store.get("a")).id == "a"
         assert (await store.get("c")).id == "c"
+
+
+@pytest.mark.asyncio
+class TestGatewayComplexHandoff:
+    """The gateway's fast/slow decision drives the dispatcher's handoff.
+
+    ``_execute_gateway_task``'s complex branch (``gateway.complexity ==
+    "complex"`` -> ``_execute_orchestration_task`` with ``gateway_context``)
+    had no test — existing tests assert the gateway OUTPUTS "complex" but
+    never drive the dispatcher's handoff itself. These pin both branches:
+    complex hands off to orchestration with the classification threaded
+    through; simple routes to the execution agent and never orchestrates.
+    """
+
+    @staticmethod
+    def _isolate(dispatcher):
+        # No rails / egress gate — isolate the fast/slow handoff branch.
+        dispatcher._get_rail_chains = lambda tenant_id: None
+        dispatcher.consult_egress_policy = lambda *a, **k: None
+        dispatcher._verify_routing_egress = lambda *a, **k: None
+
+    @staticmethod
+    def _gateway_returning(gw_output):
+        from types import SimpleNamespace
+
+        return AsyncMock(
+            return_value=SimpleNamespace(
+                _process_impl=AsyncMock(return_value=gw_output)
+            )
+        )
+
+    async def test_complex_query_hands_off_to_orchestration(self, mock_dispatcher):
+        from cogniverse_agents.gateway_agent import GatewayOutput
+
+        gw_output = GatewayOutput(
+            query="compare refund policies across subsidiaries",
+            complexity="complex",
+            modality="video",
+            generation_type="detailed_report",
+            routed_to="orchestrator_agent",
+            confidence=0.83,
+            reasoning="multi-step comparison across subsidiaries",
+        )
+        mock_dispatcher._get_or_build_gateway_agent = self._gateway_returning(gw_output)
+        self._isolate(mock_dispatcher)
+
+        captured = {}
+
+        async def _spy_orchestration(query, context, tenant_id, gateway_context):
+            captured.update(
+                query=query,
+                context=context,
+                tenant_id=tenant_id,
+                gateway_context=gateway_context,
+            )
+            return {
+                "status": "success",
+                "agent": "orchestrator_agent",
+                "answer": "orchestrated",
+            }
+
+        mock_dispatcher._execute_orchestration_task = _spy_orchestration
+
+        result = await mock_dispatcher._execute_gateway_task(
+            "compare refund policies across subsidiaries",
+            {"tenant_id": "acme:prod", "top_k": 10},
+            "acme:prod",
+        )
+
+        # The complex query reached orchestration with the request tenant...
+        assert captured["query"] == "compare refund policies across subsidiaries"
+        assert captured["tenant_id"] == "acme:prod"
+        # ...and the gateway's classification threaded through as gateway_context.
+        assert captured["gateway_context"] == {
+            "modality": "video",
+            "generation_type": "detailed_report",
+            "confidence": 0.83,
+        }
+        # ...and the orchestration result flows back to the caller.
+        assert result["agent"] == "orchestrator_agent"
+        assert result["answer"] == "orchestrated"
+
+    async def test_simple_query_routes_downstream_not_orchestration(
+        self, mock_dispatcher
+    ):
+        from cogniverse_agents.gateway_agent import GatewayOutput
+
+        gw_output = GatewayOutput(
+            query="find the red car clip",
+            complexity="simple",
+            modality="video",
+            generation_type="raw_results",
+            routed_to="video_search_agent",
+            confidence=0.6,
+            reasoning="single-modal keyword lookup",
+        )
+        mock_dispatcher._get_or_build_gateway_agent = self._gateway_returning(gw_output)
+        self._isolate(mock_dispatcher)
+
+        orchestration_called = False
+
+        async def _no_orchestration(*a, **k):
+            nonlocal orchestration_called
+            orchestration_called = True
+            return {}
+
+        mock_dispatcher._execute_orchestration_task = _no_orchestration
+
+        async def _fake_downstream(
+            *, agent_name, query, tenant_id, top_k, conversation_history
+        ):
+            return {"status": "success", "agent": agent_name, "results": []}
+
+        mock_dispatcher._execute_downstream_agent = _fake_downstream
+
+        result = await mock_dispatcher._execute_gateway_task(
+            "find the red car clip", {"tenant_id": "acme:prod"}, "acme:prod"
+        )
+
+        # Simple queries never reach orchestration; they route to the agent.
+        assert orchestration_called is False
+        assert result["gateway"]["complexity"] == "simple"
+        assert result["gateway"]["routed_to"] == "video_search_agent"
