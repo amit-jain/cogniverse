@@ -706,9 +706,12 @@ routes its DSPy LM `model` to the active adapter's registry name instead:
   `TextAnalysisAgent` → `entity_extraction`).
 - Agents whose DSPy module runs on the shared global LM override the
   `AgentBase._adapter_lm_context()` hook — `call_dspy` wraps each invocation in
-  it — using `adapter_lm_context(tenant_id, agent_type)` to bind a
-  `dspy.context(lm=...)` whose model is the adapter's name (e.g.
-  `ProfileSelectionAgent` → `profile_selection`). No active adapter → base model.
+  it — using `adapter_lm_context(tenant_id, agent_type, config_manager)` to bind
+  a `dspy.context(lm=...)` whose model is the adapter's name (e.g.
+  `ProfileSelectionAgent` → `profile_selection`). The dispatcher injects
+  `_config_manager` onto generically-executed agents so the helper can resolve
+  the tenant LM endpoint; with no manager it falls back to the process-default
+  one. No active adapter → base model.
 
 ---
 

@@ -234,7 +234,11 @@ class ProfileSelectionAgent(
         )
         if not tenant_id:
             return nullcontext()
-        return adapter_lm_context(tenant_id, "profile_selection")
+        return adapter_lm_context(
+            tenant_id,
+            "profile_selection",
+            config_manager=getattr(self, "_config_manager", None),
+        )
 
     def _load_artifact(self) -> None:
         """Load optimized DSPy profile selection module from artifact store.
