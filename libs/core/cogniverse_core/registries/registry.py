@@ -140,9 +140,12 @@ class StrategyRegistry:
 
     def list_profiles(self) -> list:
         """List all available profiles."""
-        return list(
-            self.strategy_config.config.get("video_processing_profiles", {}).keys()
-        )
+        # Profiles live under backend.profiles — the same source get_strategy
+        # resolves from. The old read targeted a config key that does not
+        # exist, so this always returned [] (and the experiment tracker's
+        # profile fallback silently produced zero experiments).
+        backend_config = self.strategy_config.config.get("backend", {})
+        return list(backend_config.get("profiles", {}).keys())
 
     def list_ranking_strategies(self, profile_name: str) -> list:
         """List all ranking strategies for a profile."""
