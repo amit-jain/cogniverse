@@ -28,7 +28,7 @@ class _CapturingBackend:
                 "operation_type": operation_type,
             }
         )
-        return {"success_count": len(documents), "failed_docs": []}
+        return {"success_count": len(documents), "failed_documents": []}
 
     def update_document(self, doc_id, doc, schema_name):
         self.update_document_calls.append(doc_id)
@@ -77,12 +77,14 @@ def test_update_many_raises_when_feed_drops_documents():
     def dropping_ingest(documents, schema_name, operation_type="feed"):
         return {
             "success_count": len(documents) - 1,
-            "failed_docs": [documents[-1].id],
+            "failed_documents": [documents[-1].id],
         }
 
     backend.ingest_documents = dropping_ingest
 
-    with pytest.raises(RuntimeError, match=r"persisted only 1/2"):
+    # The diagnostic must NAME the dropped ids — the read used a key the
+    # real ingest_documents never returns, so it always printed None.
+    with pytest.raises(RuntimeError, match=r"persisted only 1/2.*mem-2"):
         store.update_many(
             [
                 ("mem-1", None, {"data": "x", "metadata": {"last_accessed": "t1"}}),

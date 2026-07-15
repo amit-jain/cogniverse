@@ -501,7 +501,7 @@ class BackendVectorStore(VectorStoreBase):
             if success < len(documents):
                 raise RuntimeError(
                     f"batch update persisted only {success}/{len(documents)} "
-                    f"documents: {(result or {}).get('failed_docs')}"
+                    f"documents: {(result or {}).get('failed_documents')}"
                 )
             logger.debug(f"Batch-updated {len(documents)} memories")
         except Exception as e:
