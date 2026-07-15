@@ -213,17 +213,18 @@ class ConfigManager:
         Returns:
             AgentConfig or None if not found
         """
-        entry = self.store.get_config(
-            tenant_id=tenant_id,
-            scope=ConfigScope.AGENT,
-            service=agent_name,
-            config_key="agent_config",
+        # Served from the scoped TTL cache — this read sits on the
+        # per-dispatch answer path (behavior toggles for every summarizer /
+        # report dispatch), so an uncached read cost one synchronous Vespa
+        # query per dispatch while the sibling scopes were cached.
+        value = self._cached_config_value(
+            ConfigScope.AGENT, tenant_id, agent_name, "agent_config"
         )
 
-        if entry is None:
+        if value is None:
             return None
 
-        unified = AgentConfigUnified.from_dict(entry.config_value)
+        unified = AgentConfigUnified.from_dict(value)
         return unified.agent_config
 
     def set_agent_config(
@@ -249,6 +250,7 @@ class ConfigManager:
             config_key="agent_config",
             config_value=unified.to_dict(),
         )
+        self._invalidate_scoped_config(ConfigScope.AGENT, tenant_id)
 
         logger.info(f"Set agent config for {tenant_id}:{agent_name}")
         return agent_config

@@ -133,3 +133,77 @@ class TestAgentConfig:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestAgentConfigManagerCaching:
+    """get_agent_config serves repeat reads from the manager's scoped TTL
+    cache — it sits on the per-dispatch answer path (behavior toggles for
+    every summarizer/report dispatch), so an uncached read cost one
+    synchronous Vespa query per dispatch while sibling scopes (routing,
+    telemetry) were cached. set_agent_config invalidates the cache so a
+    fresh write is visible immediately."""
+
+    def _manager_with_counting_store(self):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        store.initialize()
+        calls = {"get": 0}
+        real_get = store.get_config
+
+        def counting_get(*args, **kwargs):
+            calls["get"] += 1
+            return real_get(*args, **kwargs)
+
+        store.get_config = counting_get
+        return ConfigManager(store=store), calls
+
+    def _config(self, description="v1"):
+        return AgentConfig(
+            agent_name="summarizer_agent",
+            agent_version="1.0.0",
+            agent_description=description,
+            agent_url="http://x:8003",
+            capabilities=["summarization"],
+            skills=[],
+            module_config=ModuleConfig(
+                module_type=DSPyModuleType.PREDICT, signature="S"
+            ),
+        )
+
+    def test_repeat_reads_hit_the_scoped_cache(self):
+        cm, calls = self._manager_with_counting_store()
+        cm.set_agent_config("acme:acme", "summarizer_agent", self._config("v1"))
+
+        first = cm.get_agent_config("acme:acme", "summarizer_agent")
+        second = cm.get_agent_config("acme:acme", "summarizer_agent")
+
+        assert first.agent_description == "v1"
+        assert second.agent_description == "v1"
+        assert calls["get"] == 1, "second read must be served by the TTL cache"
+
+    def test_absent_config_is_negative_cached(self):
+        cm, calls = self._manager_with_counting_store()
+
+        assert cm.get_agent_config("acme:acme", "summarizer_agent") is None
+        assert cm.get_agent_config("acme:acme", "summarizer_agent") is None
+
+        assert calls["get"] == 1, "the no-config case must be cached too"
+
+    def test_set_invalidates_the_cache(self):
+        cm, _ = self._manager_with_counting_store()
+        cm.set_agent_config("acme:acme", "summarizer_agent", self._config("v1"))
+        assert (
+            cm.get_agent_config("acme:acme", "summarizer_agent").agent_description
+            == "v1"
+        )
+
+        cm.set_agent_config("acme:acme", "summarizer_agent", self._config("v2"))
+
+        assert (
+            cm.get_agent_config("acme:acme", "summarizer_agent").agent_description
+            == "v2"
+        ), "a write must invalidate the cached read"
