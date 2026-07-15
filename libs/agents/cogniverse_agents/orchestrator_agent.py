@@ -7,7 +7,6 @@ Implements two-phase orchestration:
 
 Features:
 - Streaming progress events per step
-- Checkpoint/resume for durable execution
 - Cross-modal fusion for multi-agent result aggregation
 - Workflow intelligence (template matching + execution recording)
 - Cancellation of in-flight workflows
@@ -29,12 +28,6 @@ from pydantic import BaseModel, Field
 from cogniverse_agents._coercion import coerce_float
 from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_agents.orchestrator.checkpoint_types import (
-    CheckpointConfig,
-    CheckpointStatus,
-    TaskCheckpoint,
-    WorkflowCheckpoint,
-)
 from cogniverse_agents.orchestrator.sufficient_context_signature import (
     SufficientContextSignature,
 )
@@ -91,9 +84,6 @@ async def _resolve_inbound_registry_for_orchestrator(redis_url: str = ""):
 
 
 if TYPE_CHECKING:
-    from cogniverse_agents.orchestrator.checkpoint_storage import (
-        WorkflowCheckpointStorage,
-    )
     from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
     from cogniverse_core.events import EventQueue
     from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -577,7 +567,6 @@ class OrchestratorAgent(
     Features:
     - Dynamic agent discovery from AgentRegistry (no hardcoded enum)
     - Streaming progress events per step
-    - Checkpoint/resume for durable execution
     - Cross-modal fusion for multi-agent result aggregation
     - Workflow intelligence (template matching + execution recording)
     - Cancellation of in-flight workflows
@@ -589,8 +578,6 @@ class OrchestratorAgent(
         registry: "AgentRegistry",
         config_manager: "ConfigManager" = None,
         port: int = 8013,
-        checkpoint_config: Optional[CheckpointConfig] = None,
-        checkpoint_storage: Optional["WorkflowCheckpointStorage"] = None,
         event_queue: Optional["EventQueue"] = None,
         workflow_intelligence: Optional["WorkflowIntelligence"] = None,
         http_client: Optional[httpx.AsyncClient] = None,
@@ -603,8 +590,6 @@ class OrchestratorAgent(
             registry: AgentRegistry for dynamic agent discovery
             config_manager: ConfigManager instance (REQUIRED)
             port: Port for A2A server
-            checkpoint_config: Configuration for durable execution checkpoints
-            checkpoint_storage: Storage backend for checkpoints
             event_queue: Optional EventQueue for real-time notifications
             workflow_intelligence: Optional WorkflowIntelligence for template matching
             http_client: Optional httpx client used for A2A sub-agent calls.
@@ -625,10 +610,6 @@ class OrchestratorAgent(
         self.registry = registry
         self._config_manager = config_manager
         self._http_client_override = http_client
-
-        # Checkpoint support
-        self.checkpoint_config = checkpoint_config or CheckpointConfig(enabled=False)
-        self.checkpoint_storage = checkpoint_storage
 
         # Event queue for external consumers
         self.event_queue = event_queue
@@ -1404,8 +1385,8 @@ class OrchestratorAgent(
 
         Discovers agents from the real AgentRegistry, calls them via HTTP,
         and passes tenant_id/session_id through to each agent.
-        Emits streaming progress events per step, saves checkpoints after
-        each step, and checks for cancellation between steps.
+        Emits streaming progress events per step and checks for cancellation
+        between steps.
 
         Args:
             plan: OrchestrationPlan to execute
@@ -1565,17 +1546,6 @@ class OrchestratorAgent(
                 agent_results[agent_name] = result
                 executed[step_idx] = True
                 step_count += 1
-
-            # Save checkpoint after each batch of steps (if configured)
-            if self._should_checkpoint():
-                await self._save_checkpoint(
-                    plan,
-                    tenant_id=tenant_id,
-                    workflow_id=workflow_id,
-                    current_step=step_count,
-                    status=CheckpointStatus.ACTIVE,
-                    agent_results=agent_results,
-                )
 
         return agent_results
 
@@ -2603,94 +2573,6 @@ class OrchestratorAgent(
             "content": "\n\n".join(content_parts),
             "confidence": total_confidence / len(task_results),
         }
-
-    # Checkpoint methods
-
-    def _should_checkpoint(self) -> bool:
-        """Check if checkpointing is enabled and configured."""
-        return self.checkpoint_config.enabled and self.checkpoint_storage is not None
-
-    async def _save_checkpoint(
-        self,
-        plan: OrchestrationPlan,
-        tenant_id: str,
-        workflow_id: str,
-        current_step: int,
-        status: CheckpointStatus,
-        agent_results: Optional[Dict[str, Any]] = None,
-    ) -> Optional[str]:
-        """Save a checkpoint of the current workflow state."""
-        if self.checkpoint_storage is None:
-            return None
-
-        try:
-            task_states = {}
-            for i, step in enumerate(plan.steps):
-                completed = i < current_step
-                task_states[f"step_{i}"] = TaskCheckpoint(
-                    task_id=f"step_{i}",
-                    agent_name=step.agent_name,
-                    query=step.input_data.get("query", ""),
-                    dependencies=[str(d) for d in step.depends_on],
-                    status="completed" if completed else "pending",
-                    result=(
-                        agent_results.get(step.agent_name)
-                        if agent_results and completed
-                        else None
-                    ),
-                )
-
-            from datetime import datetime, timezone
-
-            checkpoint = WorkflowCheckpoint(
-                checkpoint_id=f"ckpt_{uuid.uuid4().hex[:12]}",
-                workflow_id=workflow_id,
-                tenant_id=tenant_id,
-                workflow_status="running"
-                if status == CheckpointStatus.ACTIVE
-                else status.value,
-                current_phase=current_step,
-                original_query=plan.query,
-                execution_order=[[f"step_{i}"] for i in range(len(plan.steps))],
-                metadata={"reasoning": plan.reasoning},
-                task_states=task_states,
-                checkpoint_time=datetime.now(timezone.utc),
-                checkpoint_status=status,
-            )
-
-            checkpoint_id = await self.checkpoint_storage.save_checkpoint(checkpoint)
-            logger.info(
-                f"Saved checkpoint {checkpoint_id} for workflow {workflow_id} "
-                f"(step {current_step}, status: {status.value})"
-            )
-            return checkpoint_id
-
-        except Exception as e:
-            logger.error(f"Failed to save checkpoint: {e}")
-            return None
-
-    async def resume_workflow(self, workflow_id: str) -> Optional[Dict[str, Any]]:
-        """Resume a workflow from its latest checkpoint.
-
-        Args:
-            workflow_id: ID of the workflow to resume
-
-        Returns:
-            Checkpoint data if found, None if no checkpoint exists
-        """
-        if self.checkpoint_storage is None:
-            return None
-
-        checkpoint = await self.checkpoint_storage.get_latest_checkpoint(workflow_id)
-        if checkpoint is None:
-            logger.warning(f"No checkpoint found for workflow {workflow_id}")
-            return None
-
-        logger.info(
-            f"Resuming workflow {workflow_id} from checkpoint {checkpoint.checkpoint_id} "
-            f"(step {checkpoint.current_phase})"
-        )
-        return checkpoint.to_dict()
 
     # Cancellation
 

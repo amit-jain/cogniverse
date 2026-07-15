@@ -243,30 +243,22 @@ class TestOrchestratorAgent:
         assert len(orchestrator_agent.registry.agents) == 8
 
     def test_agent_initialization_with_optional_deps(self, mock_agent_registry):
-        """Test agent initializes with checkpoint, event_queue, workflow_intelligence"""
+        """Test agent initializes with event_queue, workflow_intelligence"""
         with patch("dspy.ChainOfThought"):
             deps = OrchestratorDeps()
             mock_config_manager = _make_mock_config_manager()
-            mock_checkpoint_storage = Mock()
             mock_event_queue = Mock()
             mock_workflow_intelligence = Mock()
-            from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig
-
-            checkpoint_config = CheckpointConfig(enabled=True)
 
             agent = OrchestratorAgent(
                 deps=deps,
                 registry=mock_agent_registry,
                 config_manager=mock_config_manager,
                 port=8013,
-                checkpoint_config=checkpoint_config,
-                checkpoint_storage=mock_checkpoint_storage,
                 event_queue=mock_event_queue,
                 workflow_intelligence=mock_workflow_intelligence,
             )
 
-            assert agent.checkpoint_config.enabled is True
-            assert agent.checkpoint_storage is mock_checkpoint_storage
             assert agent.event_queue is mock_event_queue
             assert agent.workflow_intelligence is mock_workflow_intelligence
 
@@ -825,106 +817,6 @@ class TestOrchestratorStreaming:
         phases = [e["phase"] for e in progress_events]
         assert "executing" in phases
         assert "step_complete" in phases
-
-
-class TestOrchestratorCheckpointing:
-    """Test checkpoint/resume functionality"""
-
-    @pytest.mark.asyncio
-    async def test_checkpoint_saved_after_step(self, mock_agent_registry):
-        """Test that checkpoint is saved after each step when configured"""
-        with patch("dspy.ChainOfThought"):
-            from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig
-
-            mock_storage = AsyncMock()
-            mock_storage.save_checkpoint = AsyncMock(return_value="ckpt_123")
-
-            agent = OrchestratorAgent(
-                deps=OrchestratorDeps(),
-                registry=mock_agent_registry,
-                config_manager=_make_mock_config_manager(),
-                port=8013,
-                checkpoint_config=CheckpointConfig(enabled=True),
-                checkpoint_storage=mock_storage,
-            )
-
-        mock_response = Mock()
-        mock_response.raise_for_status = Mock()
-        mock_response.json.return_value = {"status": "success"}
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
-        mock_cm = Mock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cm.__aexit__ = AsyncMock(return_value=False)
-
-        plan = OrchestrationPlan(
-            query="test",
-            steps=[
-                AgentStep(
-                    agent_name="search_agent",
-                    input_data={"query": "test"},
-                    depends_on=[],
-                    reasoning="Search",
-                ),
-            ],
-            parallel_groups=[],
-            reasoning="Test",
-        )
-
-        with patch(
-            "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-            return_value=mock_cm,
-        ):
-            await agent._execute_plan(
-                plan, tenant_id="test:unit", workflow_id="wf_test"
-            )
-
-        # Checkpoint storage should have been called
-        mock_storage.save_checkpoint.assert_called_once()
-        saved_checkpoint = mock_storage.save_checkpoint.call_args[0][0]
-        assert saved_checkpoint.workflow_id == "wf_test"
-        assert saved_checkpoint.current_phase == 1
-
-    @pytest.mark.asyncio
-    async def test_resume_from_checkpoint(self, mock_agent_registry):
-        """Test resuming a workflow from checkpoint"""
-        with patch("dspy.ChainOfThought"):
-            from cogniverse_agents.orchestrator.checkpoint_types import (
-                CheckpointConfig,
-            )
-
-            mock_checkpoint = Mock()
-            mock_checkpoint.checkpoint_id = "ckpt_abc"
-            mock_checkpoint.current_phase = 1
-            mock_checkpoint.to_dict.return_value = {
-                "checkpoint_id": "ckpt_abc",
-                "workflow_id": "wf_test",
-                "current_phase": 1,
-            }
-
-            mock_storage = AsyncMock()
-            mock_storage.get_latest_checkpoint = AsyncMock(return_value=mock_checkpoint)
-
-            agent = OrchestratorAgent(
-                deps=OrchestratorDeps(),
-                registry=mock_agent_registry,
-                config_manager=_make_mock_config_manager(),
-                port=8013,
-                checkpoint_config=CheckpointConfig(enabled=True),
-                checkpoint_storage=mock_storage,
-            )
-
-        result = await agent.resume_workflow("wf_test")
-
-        assert result is not None
-        assert result["checkpoint_id"] == "ckpt_abc"
-        mock_storage.get_latest_checkpoint.assert_called_once_with("wf_test")
-
-    @pytest.mark.asyncio
-    async def test_resume_returns_none_without_storage(self, orchestrator_agent):
-        """Test resume returns None when no checkpoint storage configured"""
-        result = await orchestrator_agent.resume_workflow("wf_test")
-        assert result is None
 
 
 class TestOrchestratorFusion:

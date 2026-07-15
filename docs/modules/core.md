@@ -682,9 +682,8 @@ pod is killed. A checkpoint captures the stage pipeline's progress so a
 restarted run continues from the last completed stage instead of re-running
 expensive `compile()`s.
 
-This is distinct from the orchestrator's `WorkflowCheckpoint` (an agent-task
-DAG for per-query orchestration) and from `WorkflowStore` (the offline
-workflow-intelligence learning corpus).
+This is distinct from `WorkflowStore` (the offline workflow-intelligence
+learning corpus).
 
 ```python
 from cogniverse_core.durable import (

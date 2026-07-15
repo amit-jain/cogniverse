@@ -21,7 +21,7 @@
 ## Module Overview
 
 ### Purpose
-The Routing Module provides intelligent query routing via A2A agents: `GatewayAgent` for fast rule-based/GLiNER classification, `OrchestratorAgent` for complex multi-agent coordination, `QueryEnhancementAgent` for query enrichment, `ProfileSelectionAgent` for backend-profile selection, and supporting infrastructure in `routing/` and `orchestrator/` for offline optimization, annotation, checkpointing, and relationship extraction.
+The Routing Module provides intelligent query routing via A2A agents: `GatewayAgent` for fast rule-based/GLiNER classification, `OrchestratorAgent` for complex multi-agent coordination, `QueryEnhancementAgent` for query enrichment, `ProfileSelectionAgent` for backend-profile selection, and supporting infrastructure in `routing/` and `orchestrator/` for offline optimization, annotation, and relationship extraction.
 
 ### Key Features
 - **Gateway Classification**: `GatewayAgent` uses GLiNER zero-shot NER (with a deterministic keyword fallback) to classify modality, generation type, and simple-vs-complex — **no LLM call**, targeting <100ms
@@ -30,7 +30,6 @@ The Routing Module provides intelligent query routing via A2A agents: `GatewayAg
 - **Composable Query Analysis**: `OrchestratorAgent`'s iterative retrieval loop uses `ComposableQueryAnalysisModule` (GLiNER fast path / LLM unified path) from `routing/dspy_relationship_router.py` for query reformulation
 - **Profile Selection**: `ProfileSelectionAgent` uses DSPy reasoning (with a keyword fallback) to pick the best backend search profile; `ProfilePerformanceOptimizer` learns profile choice from Phoenix evaluation data via XGBoost
 - **Offline Optimization**: An annotation-driven feedback loop (`AnnotationAgent`, `LLMAutoAnnotator`, `OrchestrationEvaluator`) plus XGBoost meta-models feed a batch optimization CLI that recompiles DSPy modules (`BootstrapFewShot`) and gateway thresholds as tenant artifacts
-- **Checkpoint/Resume**: `OrchestratorAgent` workflows can be checkpointed (`orchestrator/checkpoint_storage.py`, `checkpoint_types.py`) and resumed
 
 ### Package Structure
 ```text
@@ -41,8 +40,6 @@ libs/agents/cogniverse_agents/
 ├── profile_selection_agent.py             # Per-query backend profile classifier (DSPy + heuristic fallback)
 ├── orchestrator/
 │   ├── __init__.py
-│   ├── checkpoint_storage.py              # WorkflowCheckpointStorage (durable checkpoint persistence)
-│   ├── checkpoint_types.py                # CheckpointLevel, CheckpointStatus, TaskCheckpoint, WorkflowCheckpoint, CheckpointConfig
 │   └── sufficient_context_signature.py    # SufficientContextSignature (DSPy gate for the iterative retrieval loop)
 ├── routing/
 │   ├── __init__.py
@@ -613,15 +610,7 @@ Used by `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`.
 
 ---
 
-### 12. Checkpoint/Resume (`orchestrator/checkpoint_storage.py`, `orchestrator/checkpoint_types.py`)
-
-**Purpose**: Durable execution state for `OrchestratorAgent` workflows so long-running multi-agent plans can be
-resumed after a crash or restart.
-
-- `checkpoint_types.py`: `CheckpointLevel`, `CheckpointStatus`, `TaskCheckpoint`, `WorkflowCheckpoint`,
-  `CheckpointConfig`
-- `checkpoint_storage.py`: `WorkflowCheckpointStorage` — persists/loads `WorkflowCheckpoint` records, consumed
-  by `OrchestratorAgent._save_checkpoint` / `resume_workflow`
+### 12. Sufficient Context Gate (`orchestrator/sufficient_context_signature.py`)
 
 `orchestrator/sufficient_context_signature.py`'s `SufficientContextSignature` is the DSPy signature backing
 `OrchestratorAgent._run_sufficiency_gate` — the check that decides whether the iterative retrieval loop has
