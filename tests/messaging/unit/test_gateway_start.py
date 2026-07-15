@@ -188,3 +188,23 @@ def test_main_constructs_gateway_from_env_and_runs(monkeypatch):
     assert kwargs["runtime_url"] == "http://rt:1234"
     assert kwargs["mode"] == "polling"
     run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_rejects_unknown_mode():
+    """A typo'd GATEWAY_MODE (e.g. 'webook') must fail loudly — silently
+    falling through to polling binds no webhook server and the deployment
+    receives zero messages with no error anywhere."""
+    from unittest.mock import AsyncMock, patch
+
+    g = MessagingGateway(
+        bot_token="123:FAKE", runtime_url="http://runtime", mode="webook"
+    )
+    with (
+        patch.object(g, "run_webhook", new=AsyncMock()) as wh,
+        patch.object(g, "run_polling", new=AsyncMock()) as pl,
+    ):
+        with pytest.raises(ValueError, match="webook"):
+            await g.run()
+        wh.assert_not_awaited()
+        pl.assert_not_awaited()
