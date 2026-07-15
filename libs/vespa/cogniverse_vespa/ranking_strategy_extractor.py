@@ -5,14 +5,25 @@ Extracts ranking profile configurations from schema JSON files for use by search
 
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from cogniverse_vespa.embedding_processor import _is_single_vector_schema
 
 logger = logging.getLogger(__name__)
+
+# Memoize the per-directory extraction: the schema JSONs are static config, so
+# re-globbing and re-parsing ~21 files on every /search/strategies call (and
+# every backend strategy resolution) is pure waste. Keyed by (resolved dir, the
+# set of (filename, mtime_ns)) so a genuine schema edit invalidates the entry
+# while an unchanged dir is a cheap glob+stat instead of 21 json.load calls.
+_ALL_STRATEGIES_CACHE: Dict[
+    Tuple[str, frozenset], Dict[str, Dict[str, "RankingStrategyInfo"]]
+] = {}
+_ALL_STRATEGIES_LOCK = threading.Lock()
 
 
 class SearchStrategyType(Enum):
@@ -298,12 +309,28 @@ class RankingStrategyExtractor:
 def extract_all_ranking_strategies(
     schema_dir: Path,
 ) -> Dict[str, Dict[str, RankingStrategyInfo]]:
-    """Extract ranking strategies from all schemas in a directory"""
+    """Extract ranking strategies from all schemas in a directory.
+
+    Memoized by directory content signature: repeated calls for an unchanged
+    schema dir reuse the parsed result (a schema edit invalidates it).
+    """
+    schema_files = sorted(schema_dir.glob("*.json"))
+    signature = frozenset(
+        (f.name, f.stat().st_mtime_ns)
+        for f in schema_files
+        if f.name != "ranking_strategies.json"
+    )
+    cache_key = (str(schema_dir.resolve()), signature)
+
+    with _ALL_STRATEGIES_LOCK:
+        cached = _ALL_STRATEGIES_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
     extractor = RankingStrategyExtractor()
     all_strategies = {}
 
-    for schema_file in schema_dir.glob("*.json"):
+    for schema_file in schema_files:
         # Skip ranking_strategies.json
         if schema_file.name == "ranking_strategies.json":
             continue
@@ -316,6 +343,8 @@ def extract_all_ranking_strategies(
         except Exception as e:
             logger.error(f"Failed to extract strategies from {schema_file}: {e}")
 
+    with _ALL_STRATEGIES_LOCK:
+        _ALL_STRATEGIES_CACHE[cache_key] = all_strategies
     return all_strategies
 
 
