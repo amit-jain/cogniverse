@@ -70,7 +70,7 @@ Per-agent DSPy module and optimizer settings (`AgentConfig` in `cogniverse_found
 - Optimizer selection (`bootstrap_few_shot`, `labeled_few_shot`, `bootstrap_few_shot_with_random_search`, `copro`, `mipro_v2`, `gepa`, `simba`)
 - Model-specific parameters
 - Prompt templates and signatures (DSPy module `signature`)
-- Resource allocations (`max_processing_time`)
+- Per-tenant agent-behavior toggles (`thinking_enabled`, `visual_analysis_enabled`) — the dispatcher threads these into the summarizer / detailed-report agent Deps
 
 ### Routing Configuration
 

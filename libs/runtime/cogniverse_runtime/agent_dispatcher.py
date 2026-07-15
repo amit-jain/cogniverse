@@ -868,7 +868,10 @@ class AgentDispatcher:
                 DetailedReportInput,
             )
 
-            deps = DetailedReportDeps(tenant_id=tenant_id)
+            deps = DetailedReportDeps(
+                tenant_id=tenant_id,
+                **self._agent_behavior_kwargs(tenant_id, "detailed_report_agent"),
+            )
             agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
             typed_input = DetailedReportInput(
                 query=query,
@@ -885,7 +888,10 @@ class AgentDispatcher:
                 SummarizerInput,
             )
 
-            deps = SummarizerDeps(tenant_id=tenant_id)
+            deps = SummarizerDeps(
+                tenant_id=tenant_id,
+                **self._agent_behavior_kwargs(tenant_id, "summarizer_agent"),
+            )
             agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
             typed_input = SummarizerInput(
                 query=query,
@@ -1162,6 +1168,38 @@ class AgentDispatcher:
             response["rewritten_query"] = resolved_query
 
         return response
+
+    def _agent_behavior_kwargs(self, tenant_id: str, agent_name: str) -> Dict[str, Any]:
+        """Per-tenant thinking/visual toggles for an answer agent's Deps.
+
+        Reads the tenant's persisted ``AgentConfig`` (set via
+        ``ConfigManager.set_agent_config``) and threads ``thinking_enabled`` /
+        ``visual_analysis_enabled`` into the agent's Deps. Returns an empty dict
+        — so the Deps field defaults apply — when no per-tenant config is set,
+        or when the config read fails (a behavior toggle must not break
+        dispatch).
+        """
+        from cogniverse_foundation.config.agent_config import AgentConfig
+
+        try:
+            cfg = self._config_manager.get_agent_config(tenant_id, agent_name)
+        except Exception as exc:
+            logger.warning(
+                "agent config read failed for %s/%s: %r — using Deps defaults",
+                tenant_id,
+                agent_name,
+                exc,
+            )
+            return {}
+        # get_agent_config is typed Optional[AgentConfig]; anything else (None,
+        # or a test double that doesn't honor the contract) means no per-tenant
+        # override, so the Deps field defaults apply.
+        if not isinstance(cfg, AgentConfig):
+            return {}
+        return {
+            "thinking_enabled": cfg.thinking_enabled,
+            "visual_analysis_enabled": cfg.visual_analysis_enabled,
+        }
 
     async def _resolve_answer_search_results(
         self,
@@ -1599,7 +1637,10 @@ class AgentDispatcher:
             SummaryRequest,
         )
 
-        deps = SummarizerDeps(tenant_id=tenant_id)
+        deps = SummarizerDeps(
+            tenant_id=tenant_id,
+            **self._agent_behavior_kwargs(tenant_id, "summarizer_agent"),
+        )
         agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
         await asyncio.to_thread(
             self._init_agent_memory, agent, "summarizer_agent", tenant_id
@@ -1656,7 +1697,10 @@ class AgentDispatcher:
             ReportRequest,
         )
 
-        deps = DetailedReportDeps(tenant_id=tenant_id)
+        deps = DetailedReportDeps(
+            tenant_id=tenant_id,
+            **self._agent_behavior_kwargs(tenant_id, "detailed_report_agent"),
+        )
         agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
         await asyncio.to_thread(
             self._init_agent_memory, agent, "detailed_report_agent", tenant_id
