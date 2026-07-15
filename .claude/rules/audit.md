@@ -384,6 +384,15 @@ grep -rnP 'def \w+\([^)]*\)\s*->\s*bool:\s*$' libs/ --include="*.py" -A3 | grep 
 # validation method that never validates (13th audit: backend.validate_schema
 # "# This would query Vespa" → return True; its except branch is dead).
 grep -rnP 'def (validate|verify|check)_\w+' libs/ --include="*.py" -A6 | grep -B4 'return True' | grep -B2 '# .*would\|# TODO\|pass$'
+
+# Raw Vespa document/v1 URL construction OUTSIDE libs/vespa — a caller
+# hand-building /document/v1/<ns>/<schema>/docid/<id> HTTP bypasses the backend
+# abstraction's session reuse, error contract, and namespace handling (14th
+# audit migration: wiki_manager, graph_manager, ingestion router — all moved
+# onto VespaBackend.put/get/update/delete_document_fields). The trailing slash
+# distinguishes construction from prose mentions ("document/v1 URL"). Enforced
+# by tests/backends/unit/test_docv1_confined_to_vespa.py.
+grep -rn 'document/v1/' libs/ --include="*.py" | grep -vE '^libs/vespa/|main\.py:'
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
