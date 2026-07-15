@@ -675,7 +675,8 @@ plus two helpers for enriching an existing span:
 | `search_span(tenant_id, query, top_k=10, ranking_strategy="default", profile="unknown", backend="vespa")` | Context manager for a `search_service.search` span (`component="search_service"`) |
 | `encode_span(tenant_id, encoder_type, query_length=0, query="")` | Context manager for an `encoder.<type>.encode` span (`component="encoder"`) |
 | `backend_search_span(tenant_id, backend_type="vespa", schema_name="unknown", ranking_strategy="default", top_k=10, has_embeddings=False, query_text="")` | Context manager for a `search.execute` span (`component="backend"`) |
-| `add_search_results_to_span(span, results)` | Set `num_results`/`top_score` attributes and a `search_results` event from a list of results |
+| `add_search_results_to_span(span, results, output_value=None)` | Set `num_results`/`output.value`/`top_score` attributes and a `search_results` event; pass `output_value` to reuse one serialization across both spans |
+| `serialize_search_results(results)` | Serialize result rows to the canonical `output.value` JSON once (feed the result to both `add_search_results_to_span` calls of a search) |
 | `add_embedding_details_to_span(span, embeddings)` | Set `embedding_shape`/`embedding_dtype`/norm-mean/norm-std attributes from an embeddings array |
 
 Each context manager wraps `TelemetryManager.span()`, so it still goes through

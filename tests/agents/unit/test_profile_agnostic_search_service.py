@@ -404,3 +404,94 @@ class TestGetAvailableStrategies:
             )
         with pytest.raises(ValueError, match="missing 'schema_name'"):
             svc.get_available_strategies("broken", "acme:acme")
+
+
+@pytest.mark.unit
+class TestSearchResultsSerializedOncePerQuery:
+    """The result set is JSON-serialized once per search; the identical payload
+    is recorded on both the RETRIEVER (backend) and CHAIN (search) spans.
+    Serializing per span doubled the O(N) row-build on every query."""
+
+    def test_serialized_once_and_identical_on_both_spans(self, search_service):
+        import json
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+
+        import cogniverse_foundation.telemetry.context as ctx
+
+        results = [
+            SimpleNamespace(
+                document=SimpleNamespace(
+                    id=f"doc{i}",
+                    metadata={"source_id": f"vid{i}"},
+                    content_type=None,
+                ),
+                score=1.0 - i * 0.1,
+            )
+            for i in range(5)
+        ]
+
+        class RecordingSpan:
+            def __init__(self):
+                self.attrs = {}
+
+            def set_attribute(self, key, value):
+                self.attrs[key] = value
+
+            def add_event(self, *a, **k):
+                pass
+
+        backend_span = RecordingSpan()
+        chain_span = RecordingSpan()
+
+        @contextmanager
+        def fake_backend_span(**kwargs):
+            yield backend_span
+
+        @contextmanager
+        def fake_search_span(**kwargs):
+            yield chain_span
+
+        serialize_calls = []
+        real_serialize = ctx.serialize_search_results
+
+        def counting_serialize(res):
+            serialize_calls.append(len(res))
+            return real_serialize(res)
+
+        mock_encoder = MagicMock()
+        mock_backend = MagicMock()
+        mock_backend.search.return_value = results
+
+        with (
+            patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
+            patch.object(search_service, "_get_encoder", return_value=mock_encoder),
+            patch(
+                "cogniverse_foundation.telemetry.context.backend_search_span",
+                fake_backend_span,
+            ),
+            patch(
+                "cogniverse_foundation.telemetry.context.search_span",
+                fake_search_span,
+            ),
+            patch(
+                "cogniverse_foundation.telemetry.context.serialize_search_results",
+                counting_serialize,
+            ),
+        ):
+            mock_reg.return_value.get_search_backend.return_value = mock_backend
+            out = search_service.search(
+                query="find sunsets",
+                profile="frame_based_colpali",
+                tenant_id="acme",
+            )
+
+        assert out is results
+        # The O(N) row-build ran exactly once for the whole query, over 5 rows.
+        assert serialize_calls == [5], serialize_calls
+        # Both spans carry the identical, real serialization of all 5 rows.
+        assert backend_span.attrs["output.value"] == chain_span.attrs["output.value"]
+        assert backend_span.attrs["num_results"] == 5
+        assert chain_span.attrs["num_results"] == 5
+        rows = json.loads(backend_span.attrs["output.value"])
+        assert [r["document_id"] for r in rows] == [f"doc{i}" for i in range(5)]
