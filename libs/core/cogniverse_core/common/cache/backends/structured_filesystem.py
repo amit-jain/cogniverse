@@ -6,6 +6,7 @@ import asyncio
 import gzip
 import json
 import logging
+import os
 import pickle
 import time
 from dataclasses import dataclass
@@ -18,6 +19,14 @@ import msgpack
 from ..base import CacheBackend
 
 logger = logging.getLogger(__name__)
+
+# Expiry is encoded in each cache file's mtime (set() os.utime's it to
+# expires_at) instead of a per-entry ``.meta`` sidecar — that sidecar doubled
+# the filesystem writes on every cached frame during ingestion. A no-ttl entry
+# gets this far-future mtime so it never expires. Entries written before this
+# change still carry a legacy ``.meta`` sidecar and are read via it (see
+# ``_read_expiry``), so an upgrade does not invalidate a warm cache.
+_NEVER_EXPIRES = 4102444800.0  # 2100-01-01 UTC
 
 
 @dataclass
@@ -244,14 +253,13 @@ class StructuredFilesystemBackend(CacheBackend):
             self._stats["misses"] += 1
             return None
 
-        # Check metadata for expiration
+        # Check expiration (encoded in the file mtime, or a legacy sidecar).
         if self.config.enable_ttl:
-            metadata = await self._read_metadata(file_path)
-            if metadata and "expires_at" in metadata:
-                if time.time() > metadata["expires_at"]:
-                    await self.delete(key)
-                    self._stats["misses"] += 1
-                    return None
+            expires_at = await self._read_expiry(file_path)
+            if expires_at is not None and time.time() > expires_at:
+                await self.delete(key)
+                self._stats["misses"] += 1
+                return None
 
         try:
             # Special handling for image files
@@ -289,28 +297,19 @@ class StructuredFilesystemBackend(CacheBackend):
                 # This is image data
                 async with aiofiles.open(file_path, "wb") as f:
                     await f.write(value)
-                data_size = len(value)
             else:
                 # Regular data - serialize it. pickle + gzip is CPU-bound; run
                 # it off the event loop so concurrent requests keep flowing.
                 data = await asyncio.to_thread(self._serialize, value)
                 async with aiofiles.open(file_path, "wb") as f:
                     await f.write(data)
-                data_size = len(data)
 
-            # Write metadata
-            metadata = {
-                "key": key,
-                "created_at": time.time(),
-                "size_bytes": data_size,
-                "format": self.format if not isinstance(value, bytes) else "raw",
-            }
-
-            if ttl is not None and ttl > 0:
-                metadata["expires_at"] = time.time() + ttl
-                metadata["ttl"] = ttl
-
-            await self._write_metadata(file_path, metadata)
+            # Encode expiry in the file mtime instead of a sidecar file — one
+            # fewer write per entry. A ttl sets mtime to expires_at; no ttl uses
+            # the never-expires sentinel.
+            now = time.time()
+            expires_at = now + ttl if (ttl is not None and ttl > 0) else _NEVER_EXPIRES
+            os.utime(file_path, (now, expires_at))
 
             self._stats["sets"] += 1
             return True
@@ -362,12 +361,11 @@ class StructuredFilesystemBackend(CacheBackend):
         if not file_path.exists():
             return False
 
-        # Check expiration if TTL is enabled
+        # Check expiration if TTL is enabled (mtime, or a legacy sidecar).
         if self.config.enable_ttl:
-            metadata = await self._read_metadata(file_path)
-            if metadata and "expires_at" in metadata:
-                if time.time() > metadata["expires_at"]:
-                    return False
+            expires_at = await self._read_expiry(file_path)
+            if expires_at is not None and time.time() > expires_at:
+                return False
 
         return True
 
@@ -438,7 +436,11 @@ class StructuredFilesystemBackend(CacheBackend):
         return file_path.parent / f"{file_path.name}.meta"
 
     async def _read_metadata(self, file_path: Path) -> Optional[Dict[str, Any]]:
-        """Read metadata for a cache file"""
+        """Read the legacy ``.meta`` sidecar for a cache file, if one exists.
+
+        New entries no longer write a sidecar (expiry is in the mtime); this
+        only returns data for entries written before that change.
+        """
         meta_path = self._get_metadata_path(file_path)
 
         if not meta_path.exists():
@@ -452,15 +454,21 @@ class StructuredFilesystemBackend(CacheBackend):
             logger.error(f"Error reading metadata {meta_path}: {e}")
             return None
 
-    async def _write_metadata(self, file_path: Path, metadata: Dict[str, Any]):
-        """Write metadata for a cache file"""
-        meta_path = self._get_metadata_path(file_path)
+    async def _read_expiry(self, file_path: Path) -> Optional[float]:
+        """Expiry timestamp for a cache entry, or None if the file is gone.
 
+        A legacy ``.meta`` sidecar (older entries) wins so an upgrade doesn't
+        invalidate a warm cache: its ``expires_at`` is used, or the never-expires
+        sentinel when it recorded no ttl. Otherwise expiry is the file mtime,
+        which ``set`` stamps to ``expires_at`` (or the sentinel for no ttl).
+        """
+        meta = await self._read_metadata(file_path)
+        if meta is not None:
+            return meta.get("expires_at", _NEVER_EXPIRES)
         try:
-            async with aiofiles.open(meta_path, "w") as f:
-                await f.write(json.dumps(metadata, indent=2))
-        except Exception as e:
-            logger.error(f"Error writing metadata {meta_path}: {e}")
+            return file_path.stat().st_mtime
+        except OSError:
+            return None
 
     async def _run_startup_cleanup_if_needed(self) -> None:
         """Kick off the one-time startup cleanup on the first async operation.
@@ -486,37 +494,30 @@ class StructuredFilesystemBackend(CacheBackend):
         checked_count = 0
 
         try:
-            # Find all metadata files. The tree walk is sync (pathlib), so
-            # yield periodically to keep the loop responsive during big walks.
-            for meta_path in self.base_path.rglob("*.meta"):
+            # Walk the cache's data files (expiry is in their mtime; legacy
+            # .meta sidecars are read via _read_expiry). The tree walk is sync
+            # (pathlib), so yield periodically to keep the loop responsive.
+            for path in self.base_path.rglob("*"):
+                if not path.is_file() or path.suffix == ".meta":
+                    continue
                 checked_count += 1
                 if checked_count % 100 == 0:
                     await asyncio.sleep(0)
 
                 try:
-                    async with aiofiles.open(meta_path, "r") as f:
-                        content = await f.read()
-                        metadata = json.loads(content)
-
-                    # Check if expired
-                    if (
-                        "expires_at" in metadata
-                        and time.time() > metadata["expires_at"]
-                    ):
-                        # Delete the cache file and metadata
-                        cache_file = (
-                            meta_path.parent / meta_path.stem
-                        )  # Remove .meta extension
-
-                        if cache_file.exists():
-                            cache_file.unlink()
-                        meta_path.unlink()
+                    expires_at = await self._read_expiry(path)
+                    if expires_at is not None and time.time() > expires_at:
+                        path.unlink()
+                        # Drop any legacy sidecar alongside it.
+                        meta_path = self._get_metadata_path(path)
+                        if meta_path.exists():
+                            meta_path.unlink()
 
                         expired_count += 1
                         self._stats["evictions"] += 1
 
                 except Exception as e:
-                    logger.error(f"Error processing metadata file {meta_path}: {e}")
+                    logger.error(f"Error processing cache file {path}: {e}")
 
             logger.info(
                 f"Cleanup complete: checked {checked_count} files, removed {expired_count} expired entries"

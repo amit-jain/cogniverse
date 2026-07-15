@@ -8,6 +8,7 @@ run were never purged.
 from __future__ import annotations
 
 import json
+import os
 import time
 
 import pytest
@@ -19,7 +20,11 @@ from cogniverse_core.common.cache.backends.structured_filesystem import (
 
 
 async def _seed_expired_entry(base_path: str, key: str):
-    """Write a cache entry then back-date its metadata so it is expired."""
+    """Write a cache entry then back-date its mtime so it is expired.
+
+    Expiry is encoded in the file mtime (no .meta sidecar), so aging an entry
+    means back-dating that mtime.
+    """
     seeder = StructuredFilesystemConfig(
         base_path=base_path, cleanup_on_startup=False, enable_ttl=True
     )
@@ -27,10 +32,8 @@ async def _seed_expired_entry(base_path: str, key: str):
     await backend.set(key, "stale-data", ttl=1000)
 
     cache_path = backend._key_to_path(key)
-    meta_path = backend._get_metadata_path(cache_path)
-    meta = json.loads(meta_path.read_text())
-    meta["expires_at"] = time.time() - 100
-    meta_path.write_text(json.dumps(meta))
+    past = time.time() - 100
+    os.utime(cache_path, (past, past))
     return cache_path
 
 
@@ -76,6 +79,74 @@ async def test_no_startup_cleanup_leaves_expired_file_until_accessed(tmp_path):
     # No startup sweep — the expired file remains until its key is accessed.
     assert cache_path.exists() is True
     assert backend._needs_cleanup is False
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_expiry_encoded_in_mtime_without_sidecar(tmp_path):
+    """set() records expiry in the file mtime and writes NO .meta sidecar —
+    one fewer filesystem write per cached entry."""
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    await backend.set("k", "data", ttl=1000)
+    cache_path = backend._key_to_path("k")
+
+    # No sidecar written; expiry lives in the mtime (~now + ttl).
+    assert not backend._get_metadata_path(cache_path).exists()
+    assert cache_path.stat().st_mtime == pytest.approx(time.time() + 1000, abs=5)
+    assert await backend.get("k") == "data"
+
+    # Back-dating the mtime expires the entry — get purges it.
+    past = time.time() - 10
+    os.utime(cache_path, (past, past))
+    assert await backend.get("k") is None
+    assert cache_path.exists() is False
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_no_ttl_entry_never_expires(tmp_path):
+    """A set() with no ttl gets the never-expires mtime sentinel."""
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    await backend.set("k", "data")  # no ttl
+    cache_path = backend._key_to_path("k")
+    assert cache_path.stat().st_mtime > time.time() + 10**9  # far future
+    assert await backend.get("k") == "data"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_legacy_meta_sidecar_still_honored(tmp_path):
+    """An entry written before mtime-encoding (a .meta sidecar) is read via the
+    sidecar, so an upgrade does not invalidate a warm cache: a future sidecar
+    expiry wins over a past mtime."""
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    await backend.set("k", "data", ttl=1000)
+    cache_path = backend._key_to_path("k")
+
+    # Simulate a legacy entry: a sidecar with a FUTURE expiry over a PAST mtime.
+    backend._get_metadata_path(cache_path).write_text(
+        json.dumps({"expires_at": time.time() + 1000})
+    )
+    past = time.time() - 500
+    os.utime(cache_path, (past, past))
+
+    # The sidecar (future) wins over the mtime (past) → still readable.
+    assert await backend.get("k") == "data"
 
 
 @pytest.mark.unit
