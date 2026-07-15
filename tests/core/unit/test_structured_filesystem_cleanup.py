@@ -267,3 +267,31 @@ async def test_cleanup_drops_legacy_sidecar_alongside_expired_entry(tmp_path):
 
     assert not cache_path.exists(), "expired entry must be swept"
     assert not meta_path.exists(), "its legacy sidecar must be dropped too"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_cleanup_reaps_old_tmp_orphans_but_spares_fresh_ones(tmp_path):
+    """A .tmp left by a crash between write and os.replace is reaped once it's
+    older than the safety window; a fresh in-flight .tmp is spared."""
+    import cogniverse_core.common.cache.backends.structured_filesystem as sfs
+
+    backend = sfs.StructuredFilesystemBackend(
+        sfs.StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    d = tmp_path / "misc"
+    d.mkdir(parents=True, exist_ok=True)
+    old = d / "k.abc123.tmp"
+    fresh = d / "k.def456.tmp"
+    old.write_bytes(b"orphan")
+    fresh.write_bytes(b"in-flight")
+    past = time.time() - (sfs._TMP_ORPHAN_MAX_AGE_S + 60)
+    os.utime(old, (past, past))
+
+    await backend._cleanup_expired()
+
+    assert not old.exists(), "stale .tmp orphan must be reaped"
+    assert fresh.exists(), "a fresh in-flight .tmp must be spared"
