@@ -678,6 +678,8 @@ class TestSearchNodesRealVespa:
         mgr._schema_name = GRAPH_SCHEMA
         mgr._tenant_id = TENANT_ID
         mgr._backend = SimpleNamespace(_url="http://localhost", _port=port)
+        # __new__ skips __init__; the /search/ query path needs the session.
+        mgr._http = requests.Session()
 
         # Controlled query blocks bypass the pylate encoder — the encoder
         # output is exercised elsewhere; here we cover the Vespa query path.
@@ -758,6 +760,8 @@ class TestSearchNodesRealVespa:
         mgr._schema_name = GRAPH_SCHEMA
         mgr._tenant_id = TENANT_ID
         mgr._backend = SimpleNamespace(_url="http://localhost", _port=port)
+        # __new__ skips __init__; the /search/ query path needs the session.
+        mgr._http = requests.Session()
         monkeypatch.setattr(
             mgr,
             "_encode_query_blocks",
