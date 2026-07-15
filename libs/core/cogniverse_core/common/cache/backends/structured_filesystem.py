@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 # ``_read_expiry``), so an upgrade does not invalidate a warm cache.
 _NEVER_EXPIRES = 4102444800.0  # 2100-01-01 UTC
 
+# A .tmp file older than this is an orphan from a crash between the atomic
+# write and os.replace — reaped by the cleanup sweep. Comfortably longer than
+# any real serialize+write so a live writer's temp is never removed.
+_TMP_ORPHAN_MAX_AGE_S = 3600.0
+
 
 @dataclass
 class StructuredFilesystemConfig:
@@ -546,9 +551,18 @@ class StructuredFilesystemBackend(CacheBackend):
             # .meta sidecars are read via _read_expiry). The tree walk is sync
             # (pathlib), so yield periodically to keep the loop responsive.
             for path in self.base_path.rglob("*"):
-                if not path.is_file() or path.suffix in (".meta", ".tmp"):
-                    # .tmp = an in-flight atomic write; sweeping it would race
-                    # the writer's os.replace.
+                if not path.is_file() or path.suffix == ".meta":
+                    continue
+                if path.suffix == ".tmp":
+                    # An in-flight atomic write — but a crash between tmp-write
+                    # and os.replace orphans one forever. Reap only those older
+                    # than the safety window so a live writer is never raced.
+                    try:
+                        if time.time() - path.stat().st_mtime > _TMP_ORPHAN_MAX_AGE_S:
+                            path.unlink()
+                            expired_count += 1
+                    except OSError:
+                        pass
                     continue
                 checked_count += 1
                 if checked_count % 100 == 0:
