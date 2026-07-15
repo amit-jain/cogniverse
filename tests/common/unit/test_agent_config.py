@@ -207,3 +207,70 @@ class TestAgentConfigManagerCaching:
             cm.get_agent_config("acme:acme", "summarizer_agent").agent_description
             == "v2"
         ), "a write must invalidate the cached read"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestConfigManagerReservedReads:
+    """get_agent_config_history and get_config_value — reserved read surfaces
+    with no production caller yet; pinned so they stay correct."""
+
+    def _manager(self):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        store.initialize()
+        return ConfigManager(store=store)
+
+    def test_agent_config_history_returns_versions(self):
+        cm = self._manager()
+        for i in range(3):
+            cm.set_agent_config(
+                "acme:acme",
+                "summarizer_agent",
+                AgentConfig(
+                    agent_name="summarizer_agent",
+                    agent_version=f"1.0.{i}",
+                    agent_description=f"rev {i}",
+                    agent_url="http://x",
+                    capabilities=["summarization"],
+                    skills=[],
+                    module_config=ModuleConfig(
+                        module_type=DSPyModuleType.PREDICT, signature="S"
+                    ),
+                ),
+            )
+
+        history = cm.get_agent_config_history("acme:acme", "summarizer_agent")
+
+        assert [c.agent_version for c in history] == ["1.0.2", "1.0.1", "1.0.0"]
+
+    def test_get_config_value_returns_value_or_default(self):
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        cm = self._manager()
+        cm.set_config_value(
+            tenant_id="acme:acme",
+            scope=ConfigScope.SYSTEM,
+            service="runtime",
+            config_key="flag",
+            config_value={"on": True},
+        )
+
+        assert cm.get_config_value(
+            tenant_id="acme:acme",
+            scope=ConfigScope.SYSTEM,
+            service="runtime",
+            config_key="flag",
+        ) == {"on": True}
+        assert (
+            cm.get_config_value(
+                tenant_id="acme:acme",
+                scope=ConfigScope.SYSTEM,
+                service="runtime",
+                config_key="absent",
+                default="fallback",
+            )
+            == "fallback"
+        )

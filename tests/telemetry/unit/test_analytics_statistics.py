@@ -140,3 +140,20 @@ def test_generate_report_assembles_stats_and_visualizations(analytics, monkeypat
     for name, payload in report["visualizations"].items():
         parsed = json.loads(payload)
         assert parsed.get("data"), f"visualization {name} serialized empty"
+
+
+def test_provider_client_property_contract():
+    """PhoenixProvider.client returns a sync phoenix Client bound to the
+    initialized endpoint, and refuses before initialization."""
+    from phoenix.client import Client
+
+    from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+
+    provider = object.__new__(PhoenixProvider)
+    provider._http_endpoint = None
+    with pytest.raises(RuntimeError, match="not initialized"):
+        _ = provider.client
+
+    provider._http_endpoint = "http://localhost:6006"
+    client = provider.client
+    assert isinstance(client, Client)

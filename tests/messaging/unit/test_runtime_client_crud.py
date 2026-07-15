@@ -285,3 +285,52 @@ class TestErrorHandling:
 
         result = await rc.delete_job(tenant_id="acme", job_id="abc")
         assert result == {"status": "ok"}
+
+
+@pytest.mark.unit
+class TestStreamEvents:
+    @pytest.mark.asyncio
+    async def test_stream_events_parses_sse_and_skips_garbage(self):
+        """stream_events yields each parsed `data:` JSON event from a REAL SSE
+        response, skipping malformed JSON and non-data lines."""
+        import json as _json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        from cogniverse_messaging.runtime_client import RuntimeClient
+
+        class _SSEHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                assert self.path == "/events/workflows/task-42"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                body = (
+                    'data: {"event": "progress", "pct": 10}\n'
+                    "\n"
+                    ": comment line ignored\n"
+                    "data: NOT-JSON\n"
+                    "\n"
+                    'data: {"event": "done", "pct": 100}\n'
+                    "\n"
+                )
+                self.wfile.write(body.encode())
+
+            def log_message(self, *a):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _SSEHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+
+        try:
+            client = RuntimeClient(url)
+            events = [e async for e in client.stream_events("task-42")]
+            await client.close()
+        finally:
+            server.shutdown()
+
+        assert events == [
+            {"event": "progress", "pct": 10},
+            {"event": "done", "pct": 100},
+        ], _json.dumps(events)
