@@ -159,29 +159,35 @@ def add_search_results_to_span(span, results, output_value: str | None = None):
     span.set_attribute("output.value", output_value)
 
     if results:
-        span.set_attribute(
-            "top_score", results[0].score if hasattr(results[0], "score") else 0
-        )
+        from .span_contract import search_result_row
+
+        # Route through search_result_row so dict rows and object rows get the
+        # same treatment — the previous attribute access crashed on the dict
+        # shape the sibling serializer explicitly supports.
+        first_row = search_result_row(results[0])
+        span.set_attribute("top_score", first_row["score"])
 
         # Add details about top results as span event
         top_3_results = []
         for i, res in enumerate(results[:3]):
-            result_detail = {
-                "rank": i + 1,
-                "document_id": res.document.id if res.document else "unknown",
-                "video_id": (
-                    res.document.metadata.get("source_id", "unknown")
-                    if res.document
-                    else "unknown"
-                ),
-                "score": getattr(res, "score", 0),
-                "content_type": (
-                    str(res.document.content_type.value)
-                    if res.document and res.document.content_type
-                    else "unknown"
-                ),
-            }
-            top_3_results.append(result_detail)
+            row = search_result_row(res)
+            if isinstance(res, dict):
+                raw_ct = res.get("content_type")
+            else:
+                doc = getattr(res, "document", None)
+                raw_ct = getattr(doc, "content_type", None) if doc else None
+            content_type = (
+                str(getattr(raw_ct, "value", raw_ct)) if raw_ct else "unknown"
+            )
+            top_3_results.append(
+                {
+                    "rank": i + 1,
+                    "document_id": row["document_id"] or "unknown",
+                    "video_id": row["video_id"] or "unknown",
+                    "score": row["score"],
+                    "content_type": content_type,
+                }
+            )
         span.add_event("search_results", {"top_3": str(top_3_results)})
 
 
