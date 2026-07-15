@@ -190,3 +190,49 @@ def test_factory_builds_configured_search_backend():
     )
     assert isinstance(backend, VespaSearchBackend)
     assert backend.schema_name == "video_colpali_smol500_mv_frame"
+
+
+def test_metadata_app_lazy_init_is_thread_safe():
+    """Concurrent first-touches of _metadata_vespa_app must build exactly ONE
+    PersistentVespaOps — an unlocked lazy init let two threads each construct
+    one and leak the loser's session pool."""
+    import threading
+    from unittest.mock import patch
+
+    from cogniverse_vespa.backend import VespaBackend
+
+    backend = object.__new__(VespaBackend)
+    backend._url = "http://localhost"
+    backend._port = 8080
+    backend._metadata_app = None
+    backend._metadata_app_key = None
+    backend._metadata_app_lock = threading.Lock()
+
+    built = []
+
+    def fake_make(**kwargs):
+        m = MagicMock()
+        built.append(m)
+        return m
+
+    barrier = threading.Barrier(12)
+    apps = []
+    alock = threading.Lock()
+
+    def worker():
+        barrier.wait()
+        app = backend._metadata_vespa_app()
+        with alock:
+            apps.append(app)
+
+    with patch(
+        "cogniverse_vespa.backend.make_persistent_vespa_ops", side_effect=fake_make
+    ):
+        threads = [threading.Thread(target=worker) for _ in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert len(built) == 1, f"{len(built)} PersistentVespaOps built — lazy init raced"
+    assert len({id(a) for a in apps}) == 1, "threads got different metadata apps"

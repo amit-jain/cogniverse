@@ -7,6 +7,7 @@ and SearchBackend interfaces, with self-registration to the backend registry.
 
 import logging
 import re
+import threading
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_sdk.document import Document
@@ -82,6 +83,7 @@ class VespaBackend(Backend):
         # connection pool per call.
         self._metadata_app = None
         self._metadata_app_key = None
+        self._metadata_app_lock = threading.Lock()
 
         # SchemaRegistry will be injected later (no circular dependency)
         self.schema_registry = None
@@ -1303,16 +1305,19 @@ class VespaBackend(Backend):
         """Cached pyvespa app for metadata ops; rebuilt only when url/port
         change so repeated metadata calls reuse one connection pool."""
         key = (self._url, self._port)
-        if self._metadata_app is None or self._metadata_app_key != key:
-            if self._metadata_app is not None:
-                self._metadata_app.close()
-            # Persistent session: metadata CRUD runs per ingest/deploy —
-            # per-op VespaSync handshakes multiplied every operation.
-            self._metadata_app = make_persistent_vespa_ops(
-                url=self._url, port=self._port
-            )
-            self._metadata_app_key = key
-        return self._metadata_app
+        # Guard the lazy (re)build: two concurrent first-touches would each
+        # construct a PersistentVespaOps and leak the loser's session pool.
+        with self._metadata_app_lock:
+            if self._metadata_app is None or self._metadata_app_key != key:
+                if self._metadata_app is not None:
+                    self._metadata_app.close()
+                # Persistent session: metadata CRUD runs per ingest/deploy —
+                # per-op VespaSync handshakes multiplied every operation.
+                self._metadata_app = make_persistent_vespa_ops(
+                    url=self._url, port=self._port
+                )
+                self._metadata_app_key = key
+            return self._metadata_app
 
     # ------------------------------------------------------------------
     # Raw-fields document primitives (namespace-aware)

@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -557,6 +558,7 @@ def create_default_config_manager() -> ConfigManager:
 
 # Singleton instance for convenience (optional, can use factory directly)
 _config_manager_singleton: Optional[ConfigManager] = None
+_config_manager_singleton_lock = threading.Lock()
 
 
 def get_config_manager_singleton() -> ConfigManager:
@@ -578,5 +580,7 @@ def get_config_manager_singleton() -> ConfigManager:
     """
     global _config_manager_singleton
     if _config_manager_singleton is None:
-        _config_manager_singleton = create_default_config_manager()
+        with _config_manager_singleton_lock:
+            if _config_manager_singleton is None:
+                _config_manager_singleton = create_default_config_manager()
     return _config_manager_singleton
