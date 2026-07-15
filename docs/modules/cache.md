@@ -1476,45 +1476,6 @@ success = await pipeline_cache.set_segment_frames(
 
 ---
 
-#### `async get_all_artifacts(video_path: str, pipeline_config: Dict[str, Any]) -> VideoArtifacts`
-Get all cached artifacts for a video based on pipeline config.
-
-**Parameters:**
-
-- `video_path`: Path to video file
-
-- `pipeline_config`: Pipeline configuration dict
-
-**Returns:** VideoArtifacts container
-
-**Example:**
-```python
-pipeline_config = {
-    "extract_keyframes": True,
-    "keyframe_strategy": "similarity",
-    "keyframe_threshold": 0.999,
-    "max_frames_per_video": 3000,
-    "transcribe_audio": True,
-    "whisper_model": "base",
-    "generate_descriptions": True,
-    "vlm_model": "Qwen/Qwen2-VL-2B-Instruct"
-}
-
-artifacts = await pipeline_cache.get_all_artifacts(
-    "/path/to/robot_soccer.mp4",
-    pipeline_config
-)
-
-if artifacts.keyframes:
-    print(f"Keyframes: {len(artifacts.keyframes['keyframes'])}")
-if artifacts.audio_transcript:
-    print(f"Transcript: {len(artifacts.audio_transcript['text'])} chars")
-if artifacts.frame_descriptions:
-    print(f"Descriptions: {len(artifacts.frame_descriptions['frame_descriptions'])}")
-```
-
----
-
 #### `async invalidate_video(video_path: str) -> int`
 Invalidate all cached artifacts for a video.
 
@@ -1556,39 +1517,6 @@ placeholder dict.
 ```python
 stats = await pipeline_cache.get_cache_stats()
 print(stats["overall"]["manager"]["hit_rate"])
-```
-
----
-
-### 2. VideoArtifacts (pipeline_cache.py:20-43)
-
-**Purpose:** Dataclass container returned by `get_all_artifacts()`, bundling every artifact type cached for one video.
-
-**Fields:**
-```python
-@dataclass
-class VideoArtifacts:
-    video_id: str
-    keyframes: Optional[Dict[str, Any]] = None
-    audio_transcript: Optional[Dict[str, Any]] = None
-    frame_descriptions: Optional[Dict[str, Any]] = None
-    embeddings: Optional[Dict[str, Any]] = None
-```
-
-Note: `get_all_artifacts()` only ever populates `keyframes`, `audio_transcript`,
-and `frame_descriptions` — the `embeddings` field exists on the dataclass but
-is never set by the current pipeline cache.
-
-#### `is_complete(pipeline_config: Dict[str, Any]) -> bool`
-Check whether every artifact type enabled in `pipeline_config` (via
-`extract_keyframes`, `transcribe_audio`, `generate_descriptions`,
-`generate_embeddings`) is present on this instance.
-
-**Example:**
-```python
-artifacts = await pipeline_cache.get_all_artifacts(video_path, pipeline_config)
-if not artifacts.is_complete(pipeline_config):
-    print("Some artifacts still need to be computed")
 ```
 
 ---
@@ -1873,12 +1801,18 @@ pipeline_config = {
     "vlm_model": "Qwen/Qwen2-VL-2B-Instruct"
 }
 
-artifacts = await pipeline_cache.get_all_artifacts(video_path, pipeline_config)
+keyframes = await pipeline_cache.get_keyframes(
+    video_path, strategy="similarity", threshold=0.999, max_frames=3000
+)
+transcript = await pipeline_cache.get_transcript(video_path, model_size="base")
+descriptions = await pipeline_cache.get_descriptions(
+    video_path, model_name="Qwen/Qwen2-VL-2B-Instruct"
+)
 
-print(f"\nArtifacts status:")
-print(f"  Keyframes: {'✓' if artifacts.keyframes else '✗'}")
-print(f"  Transcript: {'✓' if artifacts.audio_transcript else '✗'}")
-print(f"  Descriptions: {'✓' if artifacts.frame_descriptions else '✗'}")
+print("\nArtifacts status:")
+print(f"  Keyframes: {'✓' if keyframes else '✗'}")
+print(f"  Transcript: {'✓' if transcript else '✗'}")
+print(f"  Descriptions: {'✓' if descriptions else '✗'}")
 ```
 
 ---

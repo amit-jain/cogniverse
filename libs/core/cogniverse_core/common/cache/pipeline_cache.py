@@ -5,7 +5,6 @@ Pipeline artifact caching system for video processing results
 import hashlib
 import logging
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -15,32 +14,6 @@ import numpy as np
 from .base import CacheManager
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class VideoArtifacts:
-    """Container for all video processing artifacts"""
-
-    video_id: str
-    keyframes: Optional[Dict[str, Any]] = None
-    audio_transcript: Optional[Dict[str, Any]] = None
-    frame_descriptions: Optional[Dict[str, Any]] = None
-    embeddings: Optional[Dict[str, Any]] = None
-
-    def is_complete(self, pipeline_config: Dict[str, Any]) -> bool:
-        """Check if all required artifacts are present based on pipeline config"""
-        if pipeline_config.get("extract_keyframes", False) and not self.keyframes:
-            return False
-        if pipeline_config.get("transcribe_audio", False) and not self.audio_transcript:
-            return False
-        if (
-            pipeline_config.get("generate_descriptions", False)
-            and not self.frame_descriptions
-        ):
-            return False
-        if pipeline_config.get("generate_embeddings", False) and not self.embeddings:
-            return False
-        return True
 
 
 class PipelineArtifactCache:
@@ -253,47 +226,6 @@ class PipelineArtifactCache:
         )
 
         return await self.cache.set(artifact_key, descriptions_data, self.ttl)
-
-    async def get_all_artifacts(
-        self, video_path: str, pipeline_config: Dict[str, Any]
-    ) -> VideoArtifacts:
-        """Get all cached artifacts for a video based on pipeline config"""
-        artifacts = VideoArtifacts(video_id=Path(video_path).stem)
-
-        # Get artifacts based on what's enabled in pipeline
-        if pipeline_config.get("extract_keyframes", False):
-            # Determine strategy from config
-            strategy = pipeline_config.get("keyframe_strategy", "similarity")
-            if strategy == "similarity":
-                artifacts.keyframes = await self.get_keyframes(
-                    video_path,
-                    strategy=strategy,
-                    threshold=pipeline_config.get("keyframe_threshold", 0.999),
-                    max_frames=pipeline_config.get("max_frames_per_video", 3000),
-                )
-            elif strategy == "fps":
-                artifacts.keyframes = await self.get_keyframes(
-                    video_path,
-                    strategy=strategy,
-                    fps=pipeline_config.get("keyframe_fps", 1.0),
-                    max_frames=pipeline_config.get("max_frames_per_video", 3000),
-                )
-
-        if pipeline_config.get("transcribe_audio", False):
-            artifacts.audio_transcript = await self.get_transcript(
-                video_path, model_size=pipeline_config.get("whisper_model", "base")
-            )
-
-        if pipeline_config.get("generate_descriptions", False):
-            artifacts.frame_descriptions = await self.get_descriptions(
-                video_path,
-                model_name=pipeline_config.get(
-                    "vlm_model", "Qwen/Qwen2-VL-2B-Instruct"
-                ),
-                batch_size=pipeline_config.get("vlm_batch_size", 500),
-            )
-
-        return artifacts
 
     async def get_segment_frames(
         self,

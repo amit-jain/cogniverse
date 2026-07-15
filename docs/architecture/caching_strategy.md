@@ -253,17 +253,11 @@ segment = await cache.get_segment_frames(
     end_time=6.0
 )
 
-# Check all cached artifacts for a video
-artifacts = await cache.get_all_artifacts(
-    video_path="/path/to/video.mp4",
-    pipeline_config={"extract_keyframes": True, "transcribe_audio": True}
-)
-
 # Invalidate all cache entries for a video
 await cache.invalidate_video(video_path="/path/to/video.mp4")
 ```
 
-`PipelineArtifactCache` supports four artifact types end to end: keyframes, audio transcripts, frame descriptions, and temporal segment frames (`VideoArtifacts.is_complete(pipeline_config)` checks all four against a pipeline config). Full per-method parameter documentation lives in `docs/modules/cache.md`.
+`PipelineArtifactCache` supports four artifact types end to end: keyframes, audio transcripts, frame descriptions, and temporal segment frames, each fetched with its own getter. Full per-method parameter documentation lives in `docs/modules/cache.md`.
 
 ## Structured Filesystem Backend
 
@@ -384,9 +378,7 @@ pipeline = VideoIngestionPipeline(
 # - Segment frames cached for chunked/segment-based profiles
 #
 # Note: embeddings themselves are not cached by PipelineArtifactCache —
-# VideoArtifacts.embeddings exists as a field but is never populated by
-# get_all_artifacts(); embedding generation is not part of this cache's
-# supported artifact set.
+# embedding generation is not part of this cache's supported artifact set.
 ```
 
 ## Configuration
@@ -503,7 +495,7 @@ cache.clear()                               # evicts everything, invoking on_evi
 
 - `libs/core/cogniverse_core/common/cache/base.py` - `CacheBackend` ABC, `CacheManager`, `BackendConfig`
 - `libs/core/cogniverse_core/common/cache/registry.py` - `CacheBackendRegistry` (CONFIG_CLASS dispatch)
-- `libs/core/cogniverse_core/common/cache/pipeline_cache.py` - `PipelineArtifactCache`, `VideoArtifacts`
+- `libs/core/cogniverse_core/common/cache/pipeline_cache.py` - `PipelineArtifactCache`
 - `libs/core/cogniverse_core/common/cache/backends/structured_filesystem.py` - `StructuredFilesystemBackend`
 - `libs/core/cogniverse_core/common/cache/backends/s3.py` - `S3CacheBackend`
 - `libs/runtime/cogniverse_runtime/ingestion/pipeline.py` - Pipeline integration

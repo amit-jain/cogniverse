@@ -1438,7 +1438,7 @@ result = await manager.get("key")
 Caches video processing pipeline artifacts:
 
 ```python
-from cogniverse_core.common.cache import PipelineArtifactCache, VideoArtifacts
+from cogniverse_core.common.cache import PipelineArtifactCache
 
 cache = PipelineArtifactCache(
     cache_manager,
@@ -1461,10 +1461,6 @@ metadata = await cache.get_keyframes(
     strategy="similarity",
     load_images=True
 )
-
-# Check completeness
-artifacts = VideoArtifacts(video_id="vid123", keyframes=..., audio_transcript=...)
-is_complete = artifacts.is_complete(pipeline_config)
 ```
 
 ### CacheBackendRegistry (registry.py)
