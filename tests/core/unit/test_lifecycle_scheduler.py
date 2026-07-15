@@ -66,6 +66,33 @@ class TestTickOnce:
     @pytest.mark.unit
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
+    async def test_pin_lookup_failure_skips_cleanup_never_prunes(self, registry):
+        """A pin-lookup failure (backend outage) must skip cleanup entirely,
+        NOT proceed with an empty pin set — else the scheduler would prune
+        genuinely-pinned memories it couldn't confirm."""
+        manager = FakeManager("outage-tenant", {"conversation_turn": 9})
+
+        def _raising_pin_lookup(_manager):
+            raise ConnectionError("pin store unreachable")
+
+        scheduler = LifecycleScheduler(
+            get_warm_managers=lambda: [manager],
+            registry=registry,
+            interval_seconds=60.0,
+            pin_lookup=_raising_pin_lookup,
+        )
+
+        summary = await scheduler.tick_once()
+
+        # cleanup_with_schema was NEVER called — nothing was pruned.
+        assert manager.calls == []
+        assert summary["total_deleted"] == 0
+        # The tenant is recorded as errored so operators can investigate.
+        assert "error" in summary["tenants"]["outage-tenant"]
+
+    @pytest.mark.unit
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
     async def test_per_tenant_failure_does_not_abort_run(self, registry):
         managers = [
             FakeManager("ok-tenant", {"conversation_turn": 2}),
