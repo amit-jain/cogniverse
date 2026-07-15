@@ -200,6 +200,8 @@ config_manager.set_agent_config(
 | `get_agent_config_history(tenant_id, agent_name, limit=10)` | Get config version history |
 | `get_routing_config(tenant_id="your_org:production", service="gateway_agent")` | Get routing configuration |
 | `set_routing_config(routing_config, tenant_id=None, service="gateway_agent")` | Set routing configuration |
+| `get_durable_execution_config(tenant_id, service="optimization")` | Get durable-execution enablement (default off) |
+| `set_durable_execution_config(durable_config, tenant_id=None, service="optimization")` | Set durable-execution enablement |
 | `get_telemetry_config(tenant_id="your_org:production", service="telemetry")` | Get telemetry configuration |
 | `set_telemetry_config(telemetry_config, tenant_id=None, service="telemetry")` | Set telemetry configuration |
 | `get_backend_config(tenant_id="your_org:production", service="backend")` | Get backend configuration |
@@ -287,9 +289,17 @@ routing_config = RoutingConfigUnified(
     tenant_id="acme",
     routing_mode="tiered",  # "tiered", "ensemble", "hybrid"
     enable_fast_path=True,
-    enable_slow_path=True,
-    fast_path_confidence_threshold=0.7,
-    slow_path_confidence_threshold=0.6
+    fast_path_confidence_threshold=0.4,
+)
+```
+
+**DurableExecutionConfig** - Durable-execution enablement for long-running optimization/eval workflows:
+```python
+from cogniverse_foundation.config.unified_config import DurableExecutionConfig
+
+durable_config = DurableExecutionConfig(
+    tenant_id="acme",
+    enabled=True,  # checkpoint + resume the triggered-optimization job (default False)
 )
 ```
 

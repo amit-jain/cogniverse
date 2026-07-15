@@ -501,6 +501,29 @@ class RoutingConfigUnified:
 
 
 @dataclass
+class DurableExecutionConfig:
+    """Per-tenant durable-execution enablement for long-running workflows.
+
+    Gates whether the optimization / auto-eval jobs checkpoint their progress
+    so a killed Argo pod resumes from the last completed stage instead of
+    re-running expensive compiles. Default off.
+    """
+
+    tenant_id: str = ""
+    enabled: bool = False
+
+    def to_dict(self) -> dict:
+        return {"tenant_id": self.tenant_id, "enabled": self.enabled}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DurableExecutionConfig":
+        return cls(
+            tenant_id=data.get("tenant_id", ""),
+            enabled=bool(data.get("enabled", False)),
+        )
+
+
+@dataclass
 class AgentConfigUnified:
     """
     Agent configuration with tenant support.

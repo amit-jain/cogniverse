@@ -363,6 +363,7 @@ class ConfigScope(Enum):
     TELEMETRY = "telemetry"
     SCHEMA = "schema"
     BACKEND = "backend"
+    DURABLE = "durable"
 ```
 
 **ConfigEntry Dataclass:**

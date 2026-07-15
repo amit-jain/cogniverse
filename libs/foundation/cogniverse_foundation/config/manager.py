@@ -19,6 +19,7 @@ from cogniverse_foundation.config.unified_config import (
     AgentConfigUnified,
     BackendConfig,
     BackendProfileConfig,
+    DurableExecutionConfig,
     RoutingConfigUnified,
     SystemConfig,
 )
@@ -383,6 +384,48 @@ class ConfigManager:
 
         logger.info(f"Set routing config for {routing_config.tenant_id}:{service}")
         return routing_config
+
+    # ========== Durable Execution Configuration ==========
+
+    def get_durable_execution_config(
+        self, tenant_id: str = None, service: str = "optimization"
+    ) -> DurableExecutionConfig:
+        """Get per-tenant durable-execution config (defaults to disabled)."""
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_durable_execution_config"
+        )
+        value = self._cached_config_value(
+            ConfigScope.DURABLE, tenant_id, service, "durable_execution_config"
+        )
+        if value is None:
+            return DurableExecutionConfig(tenant_id=tenant_id)
+        return DurableExecutionConfig.from_dict(value)
+
+    def set_durable_execution_config(
+        self,
+        durable_config: DurableExecutionConfig,
+        tenant_id: Optional[str] = None,
+        service: str = "optimization",
+    ) -> DurableExecutionConfig:
+        """Set per-tenant durable-execution config."""
+        if tenant_id:
+            durable_config.tenant_id = tenant_id
+        durable_config.tenant_id = require_tenant_id(
+            durable_config.tenant_id,
+            source="ConfigManager.set_durable_execution_config",
+        )
+        self.store.set_config(
+            tenant_id=durable_config.tenant_id,
+            scope=ConfigScope.DURABLE,
+            service=service,
+            config_key="durable_execution_config",
+            config_value=durable_config.to_dict(),
+        )
+        self._invalidate_scoped_config(ConfigScope.DURABLE, durable_config.tenant_id)
+        logger.info(
+            f"Set durable execution config for {durable_config.tenant_id}:{service}"
+        )
+        return durable_config
 
     # ========== Telemetry Configuration ==========
 
