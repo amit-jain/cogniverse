@@ -148,3 +148,45 @@ class TestEmbeddingRequirements:
                 backend.get_embedding_requirements("missing_schema")
         finally:
             sb._RANKING_STRATEGIES_CACHE = original
+
+
+def test_feed_wraps_single_document_ingest():
+    """feed() delegates one document to ingest_documents and maps the result
+    to (success_count, failed_ids) — incl. both failed-document shapes."""
+    from cogniverse_sdk.document import Document
+
+    backend = object.__new__(VespaBackend)
+    doc = Document(id="d1", text_content="x", metadata={})
+
+    backend.ingest_documents = lambda docs, schema: {
+        "success_count": 1,
+        "failed_documents": [],
+    }
+    assert backend.feed(doc, "some_schema") == (1, [])
+
+    backend.ingest_documents = lambda docs, schema: {
+        "success_count": 0,
+        "failed_documents": ["d1"],
+    }
+    assert backend.feed(doc, "some_schema") == (0, ["d1"])
+
+    backend.ingest_documents = lambda docs, schema: {
+        "success_count": 0,
+        "failed_documents": [{"id": "d1", "reason": "400"}],
+    }
+    assert backend.feed(doc, "some_schema") == (0, ["d1"])
+
+
+def test_factory_builds_configured_search_backend():
+    from cogniverse_vespa.search_backend import (
+        VespaSearchBackend,
+        create_vespa_search_backend,
+    )
+
+    backend = create_vespa_search_backend(
+        "video_colpali_smol500_mv_frame",
+        backend_url="http://localhost:9",
+        enable_connection_pool=False,
+    )
+    assert isinstance(backend, VespaSearchBackend)
+    assert backend.schema_name == "video_colpali_smol500_mv_frame"
