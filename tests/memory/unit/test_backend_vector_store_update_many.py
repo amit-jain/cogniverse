@@ -122,3 +122,67 @@ def test_update_many_builds_same_document_shape_as_update():
         "topic": "pets",
         "last_accessed": "2026-07-14T00:00:00+00:00",
     }
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestDimensionValidation:
+    """embedding_model_dims is a REAL contract, not bookkeeping: a vector of
+    the wrong dimension fails fast with a clear error instead of a downstream
+    Vespa 400 (or silently garbage ANN scores), and the attribute mem0 reads
+    (``embedding_model_dims``) is exposed with the true value."""
+
+    def _store(self, dims=768):
+        from unittest.mock import MagicMock
+
+        from cogniverse_core.memory.backend_vector_store import BackendVectorStore
+
+        return BackendVectorStore(
+            collection_name="agent_memories_t",
+            backend_client=MagicMock(),
+            embedding_model_dims=dims,
+            tenant_id="t",
+            profile="agent_memories",
+        )
+
+    def test_constructor_rejects_non_positive_dims(self):
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError, match="embedding_model_dims"):
+            self._store(dims=0)
+        with _pytest.raises(ValueError, match="embedding_model_dims"):
+            self._store(dims=-1)
+
+    def test_mem0_visible_attribute_carries_true_dims(self):
+        store = self._store(dims=1024)
+        # mem0 reads getattr(vector_store, "embedding_model_dims", 1536); the
+        # store previously only set vector_size, so mem0 saw the 1536 default.
+        assert store.embedding_model_dims == 1024
+        assert store.vector_size == 1024
+        store.create_col("agent_memories_t2", 512, "cosine")
+        assert store.embedding_model_dims == 512
+        assert store.vector_size == 512
+
+    def test_insert_rejects_wrong_dimension_vector(self):
+        import pytest as _pytest
+
+        store = self._store(dims=768)
+        with _pytest.raises(ValueError, match="512.*768|768.*512"):
+            store.insert(vectors=[[0.1] * 512], payloads=[{"data": "x"}], ids=["m1"])
+        store.backend.ingest_documents.assert_not_called()
+
+    def test_search_rejects_wrong_dimension_query(self):
+        import pytest as _pytest
+
+        store = self._store(dims=768)
+        with _pytest.raises(ValueError, match="512.*768|768.*512"):
+            store.search("q", vectors=[0.1] * 512, limit=3)
+
+    def test_correct_dimension_flows_through(self):
+        store = self._store(dims=8)
+        store.backend.ingest_documents.return_value = {"success_count": 1}
+        store.insert(vectors=[[0.1] * 8], payloads=[{"data": "x"}], ids=["m1"])
+        store.backend.ingest_documents.assert_called_once()
