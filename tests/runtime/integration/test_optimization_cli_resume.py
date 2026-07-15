@@ -92,15 +92,13 @@ async def test_resume_skips_already_compiled_agents(
     trigger = multi_agent_trigger_dataset
     workflow_id = f"opt_triggered:{tenant}:{trigger}"
 
-    # Enable durable execution (the store round-trip is unit-tested separately).
-    monkeypatch.setattr(
-        config_manager,
-        "get_durable_execution_config",
-        lambda tenant_id=None, **k: DurableExecutionConfig(
-            tenant_id=tenant, enabled=True
-        ),
-        raising=False,
+    # Enable durable execution through the REAL config store (Vespa-backed):
+    # exercises set -> store -> the CLI's get_durable_execution_config read,
+    # not a monkeypatched flag.
+    config_manager.set_durable_execution_config(
+        DurableExecutionConfig(enabled=True), tenant_id=tenant
     )
+    assert config_manager.get_durable_execution_config(tenant).enabled is True
 
     # Neutralize the best-effort post-steps (strategy distillation + golden
     # eval) so the test stays fast and focused on the agent-loop resume.
