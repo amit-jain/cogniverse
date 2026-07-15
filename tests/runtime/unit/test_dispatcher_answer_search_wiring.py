@@ -338,3 +338,70 @@ class TestStreamingCapabilityOrdering:
         )
         assert isinstance(agent, _ReportStub)
         assert type(typed_input).__name__ == "DetailedReportInput"
+
+
+class TestAgentBehaviorConfigWiring:
+    """The dispatcher threads per-tenant thinking_enabled / visual_analysis_enabled
+    from the persisted AgentConfig into the summarizer / detailed-report Deps.
+    Before this, those config fields were persistable but never reached the
+    agents (the dispatcher built the Deps with tenant_id only)."""
+
+    def _dispatcher_with_real_config(self):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        store.initialize()
+        cm = ConfigManager(store=store)
+        dispatcher = AgentDispatcher(
+            agent_registry=MagicMock(),
+            config_manager=cm,
+            schema_loader=MagicMock(),
+        )
+        return dispatcher, cm
+
+    def _agent_config(self, name, **behavior):
+        from cogniverse_foundation.config.agent_config import (
+            AgentConfig,
+            DSPyModuleType,
+            ModuleConfig,
+        )
+
+        return AgentConfig(
+            agent_name=name,
+            agent_version="1.0.0",
+            agent_description="test",
+            agent_url="http://x",
+            capabilities=["summarization"],
+            skills=[],
+            module_config=ModuleConfig(
+                module_type=DSPyModuleType.PREDICT, signature="S"
+            ),
+            **behavior,
+        )
+
+    def test_per_tenant_toggles_reach_deps_kwargs(self):
+        dispatcher, cm = self._dispatcher_with_real_config()
+        cm.set_agent_config(
+            tenant_id="acme:acme",
+            agent_name="summarizer_agent",
+            agent_config=self._agent_config(
+                "summarizer_agent",
+                thinking_enabled=False,
+                visual_analysis_enabled=False,
+            ),
+        )
+
+        kwargs = dispatcher._agent_behavior_kwargs("acme:acme", "summarizer_agent")
+        assert kwargs == {
+            "thinking_enabled": False,
+            "visual_analysis_enabled": False,
+        }
+
+    def test_no_per_tenant_config_yields_defaults(self):
+        dispatcher, _ = self._dispatcher_with_real_config()
+        # No config set → empty kwargs so the Deps field defaults (True) apply.
+        assert (
+            dispatcher._agent_behavior_kwargs("acme:acme", "detailed_report_agent")
+            == {}
+        )

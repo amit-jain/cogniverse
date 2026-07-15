@@ -77,7 +77,6 @@ class AgentConfig:
     # Agent behavior
     thinking_enabled: bool = True
     visual_analysis_enabled: bool = True
-    max_processing_time: int = 300
 
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -119,7 +118,6 @@ class AgentConfig:
             "llm_max_tokens": self.llm_max_tokens,
             "thinking_enabled": self.thinking_enabled,
             "visual_analysis_enabled": self.visual_analysis_enabled,
-            "max_processing_time": self.max_processing_time,
             "metadata": self.metadata,
         }
 
@@ -167,6 +165,5 @@ class AgentConfig:
             llm_max_tokens=data.get("llm_max_tokens"),
             thinking_enabled=data.get("thinking_enabled", True),
             visual_analysis_enabled=data.get("visual_analysis_enabled", True),
-            max_processing_time=data.get("max_processing_time", 300),
             metadata=data.get("metadata", {}),
         )
