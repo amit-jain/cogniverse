@@ -304,3 +304,163 @@ class TestParseJobsCreateArgs:
             None,
             None,
         )
+
+
+def _message_update(
+    text=None, caption=None, photo=None, video=None, user_id=7, chat_id=99
+):
+    """Full fake Telegram Update for driving _handle_message itself."""
+    update = MagicMock()
+    update.effective_user.id = user_id
+    update.effective_chat.id = chat_id
+    msg = update.message
+    msg.text = text
+    msg.caption = caption
+    msg.photo = photo or []
+    msg.video = video
+    msg.reply_text = AsyncMock()
+    msg.chat.send_action = AsyncMock()
+    return update
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestHandleMessage:
+    """Drive the central _handle_message handler itself — registration gate,
+    parse_message routing, media extraction, dispatch_agent call, and the
+    chunked-reply loop. Every non-command Telegram message and the
+    /search|/summarize|/report|/research|/code commands flow through here;
+    previously only the sub-handlers were tested."""
+
+    def _gateway(self, tenant_id="acme:acme"):
+        g = MessagingGateway(bot_token="fake-token", runtime_url="http://runtime")
+        g.runtime_client = MagicMock()
+        g.runtime_client.dispatch_agent = AsyncMock(
+            return_value={"message": "the answer"}
+        )
+        g._user_mapper = MagicMock()
+        g._user_mapper.get_tenant_id.return_value = tenant_id
+        return g
+
+    @pytest.mark.asyncio
+    async def test_unregistered_user_is_gated_and_never_dispatched(self):
+        from cogniverse_messaging.telegram_handler import format_registration_required
+
+        g = self._gateway(tenant_id=None)
+        update = _message_update(text="find sunsets")
+
+        await g._handle_message(update, context=None)
+
+        update.message.reply_text.assert_awaited_once_with(
+            format_registration_required()
+        )
+        g.runtime_client.dispatch_agent.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_plain_text_dispatches_to_gateway_agent_with_history(self):
+        g = self._gateway()
+        conv = MagicMock()
+        conv.get_history.return_value = [{"role": "user", "content": "earlier"}]
+        g._get_conversation_manager = MagicMock(return_value=conv)
+        update = _message_update(text="find sunsets over water")
+
+        await g._handle_message(update, context=None)
+
+        g.runtime_client.dispatch_agent.assert_awaited_once_with(
+            agent_name="gateway_agent",
+            query="find sunsets over water",
+            tenant_id="acme:acme",
+            context_id="99",
+            conversation_history=[{"role": "user", "content": "earlier"}],
+            context={},
+        )
+        update.message.chat.send_action.assert_awaited_once_with("typing")
+        update.message.reply_text.assert_awaited_once_with("the answer")
+        # Both turns stored: the user's query and the assistant's reply.
+        conv.store_turn.assert_any_call("99", "user", "find sunsets over water")
+        conv.store_turn.assert_any_call("99", "assistant", "the answer")
+
+    @pytest.mark.asyncio
+    async def test_search_command_routes_to_search_agent(self):
+        g = self._gateway()
+        update = _message_update(text="/search red kite on a beach")
+
+        await g._handle_message(update, context=None)
+
+        kwargs = g.runtime_client.dispatch_agent.await_args.kwargs
+        assert kwargs["agent_name"] == "search_agent"
+        assert kwargs["query"] == "red kite on a beach"
+        assert kwargs["tenant_id"] == "acme:acme"
+
+    @pytest.mark.asyncio
+    async def test_help_replies_without_dispatching(self):
+        from cogniverse_messaging.telegram_handler import format_help
+
+        g = self._gateway()
+        update = _message_update(text="/help")
+
+        await g._handle_message(update, context=None)
+
+        update.message.reply_text.assert_awaited_once_with(format_help())
+        g.runtime_client.dispatch_agent.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_photo_with_caption_threads_media_context(self):
+        g = self._gateway()
+        photo = MagicMock()
+        photo.file_id = "photo-file-123"
+        update = _message_update(caption="what is in this image", photo=[photo])
+
+        await g._handle_message(update, context=None)
+
+        kwargs = g.runtime_client.dispatch_agent.await_args.kwargs
+        assert kwargs["context"] == {
+            "media_type": "photo",
+            "media_file_id": "photo-file-123",
+        }
+        assert kwargs["query"] == "what is in this image"
+
+    @pytest.mark.asyncio
+    async def test_empty_query_prompts_for_usage(self):
+        g = self._gateway()
+        update = _message_update(text="/search")
+
+        await g._handle_message(update, context=None)
+
+        g.runtime_client.dispatch_agent.assert_not_awaited()
+        reply = update.message.reply_text.await_args.args[0]
+        assert "query" in reply.lower() or "help" in reply.lower()
+
+    @pytest.mark.asyncio
+    async def test_wiki_command_delegates_to_wiki_handler_with_tenant(self):
+        g = self._gateway()
+        g._handle_wiki_command = AsyncMock()
+        update = _message_update(text="/wiki search ColPali")
+
+        await g._handle_message(update, context=None)
+
+        args = g._handle_wiki_command.await_args.args
+        assert args[0] is update
+        assert args[1].is_wiki and args[1].wiki_subcommand == "search"
+        assert args[2] == "acme:acme"
+        g.runtime_client.dispatch_agent.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_long_response_is_replied_chunk_by_chunk(self):
+        """A response beyond Telegram's message limit is split by
+        format_agent_response and EVERY chunk is sent, in order."""
+        from cogniverse_messaging.telegram_handler import format_agent_response
+
+        long_message = "\n".join(f"line {i}: " + "x" * 80 for i in range(120))
+        response = {"message": long_message}
+        expected_chunks = format_agent_response(response)
+        assert len(expected_chunks) >= 2  # exceeds MAX_MESSAGE_LENGTH -> split
+
+        g = self._gateway()
+        g.runtime_client.dispatch_agent = AsyncMock(return_value=response)
+        update = _message_update(text="find clips")
+
+        await g._handle_message(update, context=None)
+
+        sent = [c.args[0] for c in update.message.reply_text.await_args_list]
+        assert sent == expected_chunks
