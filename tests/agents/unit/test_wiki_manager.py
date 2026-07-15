@@ -571,34 +571,45 @@ class TestWikiDelete:
             schema_name="wiki_pages_acme_production",
         )
 
-    def test_delete_calls_vespa_http(self):
+    def test_delete_routes_through_backend_document_api(self):
         mgr = self._make_manager()
-        with patch("cogniverse_agents.wiki.wiki_manager.requests.delete") as mock_del:
-            mock_del.return_value = MagicMock(ok=True, status_code=200)
-            with patch.object(mgr, "_rebuild_index"):
-                mgr.delete_page("wiki_topic_acme_production_ml")
+        with patch.object(mgr, "_rebuild_index"):
+            mgr.delete_page("wiki_topic_acme_production_ml")
 
-        mock_del.assert_called_once()
-        call_url = mock_del.call_args[0][0]
-        assert "wiki_topic_acme_production_ml" in call_url
-        assert "wiki_pages_acme_production" in call_url
+        mgr._backend.delete_document_fields.assert_called_once_with(
+            "wiki_topic_acme_production_ml",
+            schema_name="wiki_pages_acme_production",
+            namespace="wiki_content",
+        )
 
     def test_delete_rebuilds_index(self):
         mgr = self._make_manager()
-        with patch("cogniverse_agents.wiki.wiki_manager.requests.delete") as mock_del:
-            mock_del.return_value = MagicMock(ok=True, status_code=200)
-            with patch.object(mgr, "_rebuild_index") as mock_rebuild:
-                mgr.delete_page("wiki_topic_acme_production_ml")
+        with patch.object(mgr, "_rebuild_index") as mock_rebuild:
+            mgr.delete_page("wiki_topic_acme_production_ml")
 
         mock_rebuild.assert_called_once()
 
     def test_delete_raises_on_vespa_error(self):
+        """The backend primitive raises RuntimeError on a non-2xx (status +
+        body in the message) — delete_page must propagate it untouched."""
         import pytest
 
         mgr = self._make_manager()
-        with patch("cogniverse_agents.wiki.wiki_manager.requests.delete") as mock_del:
-            mock_del.return_value = MagicMock(
-                ok=False, status_code=404, text="Not Found"
-            )
-            with pytest.raises(RuntimeError, match="404"):
-                mgr.delete_page("nonexistent_doc")
+        mgr._backend.delete_document_fields.side_effect = RuntimeError(
+            "Vespa document delete failed for 'nonexistent_doc' (HTTP 404): Not Found"
+        )
+        with pytest.raises(RuntimeError, match="404"):
+            mgr.delete_page("nonexistent_doc")
+
+    def test_delete_wraps_connection_failures_in_runtime_error(self):
+        """A non-RuntimeError failure (e.g. pyvespa's own error type on a
+        connection drop) is wrapped into the documented RuntimeError contract
+        naming the page."""
+        import pytest
+
+        mgr = self._make_manager()
+        mgr._backend.delete_document_fields.side_effect = ConnectionError(
+            "vespa unreachable"
+        )
+        with pytest.raises(RuntimeError, match="wiki_topic_gone"):
+            mgr.delete_page("wiki_topic_gone")
