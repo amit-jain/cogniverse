@@ -68,6 +68,63 @@ def get_active_adapter_path(
         return None
 
 
+def adapter_lm_context(tenant_id: str, agent_type: str, config_manager=None):
+    """A ``dspy.context`` binding the tenant's active adapter LM for
+    ``agent_type``, or a ``nullcontext`` when no adapter is active.
+
+    For agents whose DSPy call runs on the shared global LM (not a per-agent
+    one), this is the seam that applies a tenant's fine-tuning: the active
+    adapter's registry ``name`` becomes the LM model (vLLM serves the LoRA by
+    name), built from the tenant's own LM endpoint. Any missing registry,
+    absent adapter, or endpoint-resolution failure degrades to the base model.
+    """
+    from contextlib import nullcontext
+
+    try:
+        from cogniverse_finetuning.registry import AdapterRegistry
+    except ImportError:
+        return nullcontext()
+
+    try:
+        adapter = AdapterRegistry().get_active_adapter(tenant_id, agent_type)
+    except Exception as exc:  # noqa: BLE001 — degrade to the base model
+        logger.warning(
+            "active-adapter lookup failed for %s/%s: %r — base model",
+            tenant_id,
+            agent_type,
+            exc,
+        )
+        return nullcontext()
+
+    if not adapter:
+        return nullcontext()
+
+    try:
+        import dataclasses
+
+        import dspy
+
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.utils import get_config
+        from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
+
+        system_config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        primary = system_config.get_llm_config().primary
+        endpoint = dataclasses.replace(
+            primary, model=ensure_provider_prefix(adapter.name)
+        )
+        return dspy.context(lm=create_dspy_lm(endpoint))
+    except Exception as exc:  # noqa: BLE001 — degrade to the base model
+        logger.warning(
+            "failed to build adapter LM for %s/%s (%s): %r — base model",
+            tenant_id,
+            agent_type,
+            adapter.name,
+            exc,
+        )
+        return nullcontext()
+
+
 def get_adapter_metadata(
     tenant_id: str,
     agent_type: str,

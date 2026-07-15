@@ -215,6 +215,27 @@ class ProfileSelectionAgent(
             f"profiles: {len(deps.available_profiles)}"
         )
 
+    def _adapter_lm_context(self):
+        """Route the DSPy call to this tenant's active profile_selection adapter.
+
+        Closes the finetuning->inference loop for profile selection: the module
+        runs on the shared global LM, so this binds a per-request LM context to
+        the tenant's fine-tuned adapter when one is active (base model
+        otherwise). The request tenant is injected by the dispatcher.
+        """
+        from contextlib import nullcontext
+
+        from cogniverse_agents.adapter_loader import adapter_lm_context
+
+        tenant_id = (
+            getattr(self, "_artifact_tenant_id", None)
+            or getattr(self, "tenant_id", None)
+            or getattr(self.deps, "tenant_id", None)
+        )
+        if not tenant_id:
+            return nullcontext()
+        return adapter_lm_context(tenant_id, "profile_selection")
+
     def _load_artifact(self) -> None:
         """Load optimized DSPy profile selection module from artifact store.
 
