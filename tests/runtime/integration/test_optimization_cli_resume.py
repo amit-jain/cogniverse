@@ -1,12 +1,16 @@
-"""Durable-execution resume for run_triggered_optimization (real Phoenix).
+"""Durable-execution resume for run_triggered_optimization.
 
 A killed Argo pod re-runs the whole `--mode triggered` invocation. With
-durable execution enabled, each successful agent compile is checkpointed to
-Phoenix, so the re-run skips the agents that already compiled. This drives
-the real CLI path against a real Phoenix Docker: run once where the last
-agent crashes (leaving the earlier two checkpointed), then re-run and assert
-that ONLY the un-compiled agent is recompiled — the expensive DSPy
-compile is stubbed so the test exercises resume wiring, not compile quality.
+durable execution enabled (per-tenant config), each successful agent compile
+is checkpointed to Phoenix so the re-run skips the agents that already
+compiled. Both tests enable durable execution through the real Vespa config
+store and drive the real CLI against real Phoenix:
+
+  * ``test_resume_skips_already_compiled_agents`` stubs the DSPy compile for
+    fast, deterministic wiring coverage (mutation-proven).
+  * ``test_resume_skips_a_real_dspy_compile`` runs an actual BootstrapFewShot
+    compile against a test-managed Ollama LM (``ensure_host_ollama``) and
+    proves a resume run does NOT re-run that expensive real compile.
 """
 
 from __future__ import annotations
@@ -19,8 +23,14 @@ import pytest
 
 from cogniverse_foundation.config.unified_config import DurableExecutionConfig
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from tests.fixtures.llm import is_test_lm_available
 
 pytestmark = pytest.mark.integration
+
+skip_if_no_lm = pytest.mark.skipif(
+    not is_test_lm_available(),
+    reason="Test LM not available for the real-compile durable resume test",
+)
 
 _AGENTS = ["search", "detailed_report", "summarizer"]
 
@@ -178,3 +188,94 @@ async def test_resume_skips_already_compiled_agents(
         tenant, workflow_id, lambda c: c.status == "completed"
     )
     assert done is not None and done.status == "completed"
+
+
+@skip_if_no_lm
+@pytest.mark.asyncio
+async def test_resume_skips_a_real_dspy_compile(
+    multi_agent_trigger_dataset,
+    config_manager,
+    phoenix_container,
+    ensure_host_ollama,
+    monkeypatch,
+):
+    """End-to-end: a REAL DSPy compile is checkpointed and a resume run SKIPS it.
+
+    Run 1 really compiles ``search`` against the test-managed Ollama LM
+    (``ensure_host_ollama``), then crashes on ``detailed_report`` — leaving an
+    active checkpoint. Run 2 resumes and must NOT re-run search's expensive
+    compile: it returns the checkpointed real artifact and retries only the
+    failed agent. Durable execution is enabled through the real Vespa config
+    store."""
+    from cogniverse_runtime import optimization_cli
+
+    tenant = "test:unit"
+    trigger = multi_agent_trigger_dataset
+    workflow_id = f"opt_triggered:{tenant}:{trigger}"
+    agents = ["search", "detailed_report"]
+
+    config_manager.set_durable_execution_config(
+        DurableExecutionConfig(enabled=True), tenant_id=tenant
+    )
+
+    def _boom(*a, **k):
+        raise RuntimeError("disabled in test")
+
+    monkeypatch.setattr("cogniverse_core.memory.manager.Mem0MemoryManager", _boom)
+    monkeypatch.setattr("cogniverse_evaluation.quality_monitor.QualityMonitor", _boom)
+
+    real_optimize = optimization_cli._optimize_agent
+
+    # --- Run 1: real compile of search; detailed_report crashes -> active checkpoint. ---
+    async def _run1(*, agent_name, **kw):
+        if agent_name == "detailed_report":
+            raise RuntimeError("simulated crash after search compiled")
+        return await real_optimize(agent_name=agent_name, **kw)
+
+    monkeypatch.setattr(optimization_cli, "_optimize_agent", _run1)
+
+    result1 = await optimization_cli.run_triggered_optimization(
+        tenant_id=tenant,
+        agents=agents,
+        trigger_dataset=trigger,
+        config_manager=config_manager,
+        phoenix_endpoint=phoenix_container["http_endpoint"],
+    )
+    assert result1["search"]["status"] == "success", result1["search"]
+    real_artifact_id = result1["search"]["artifact_id"]
+    assert real_artifact_id, "run 1 did not persist a real compiled artifact"
+
+    latest = await _await_checkpoint(
+        tenant, workflow_id, lambda c: "search" in c.completed_unit_keys()
+    )
+    assert latest is not None
+    assert latest.completed_unit_keys() == {"search"}
+    assert latest.status == "active"
+
+    # --- Run 2 (resume): search's real compile must be skipped, not re-run. ---
+    run2_calls: list[str] = []
+
+    async def _run2(*, agent_name, **kw):
+        run2_calls.append(agent_name)
+        return {
+            "status": "success",
+            "artifact_id": f"r2_{agent_name}",
+            "training_examples": 5,
+        }
+
+    monkeypatch.setattr(optimization_cli, "_optimize_agent", _run2)
+
+    result2 = await optimization_cli.run_triggered_optimization(
+        tenant_id=tenant,
+        agents=agents,
+        trigger_dataset=trigger,
+        config_manager=config_manager,
+        phoenix_endpoint=phoenix_container["http_endpoint"],
+    )
+    # search (real-compiled in run 1) is NOT recompiled; only the failed agent retries.
+    assert "search" not in run2_calls, (
+        f"resume re-ran search's real compile: {run2_calls}"
+    )
+    assert run2_calls == ["detailed_report"]
+    # search's result comes from the checkpoint — the real run-1 artifact.
+    assert result2["search"]["artifact_id"] == real_artifact_id
