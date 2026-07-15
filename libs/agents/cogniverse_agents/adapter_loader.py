@@ -77,6 +77,14 @@ def adapter_lm_context(tenant_id: str, agent_type: str, config_manager=None):
     adapter's registry ``name`` becomes the LM model (vLLM serves the LoRA by
     name), built from the tenant's own LM endpoint. Any missing registry,
     absent adapter, or endpoint-resolution failure degrades to the base model.
+
+    Args:
+        tenant_id: Tenant whose active adapter applies.
+        agent_type: Adapter agent type (e.g. ``profile_selection``).
+        config_manager: ConfigManager for resolving the tenant LM endpoint —
+            pass the dispatcher-injected manager when available. When None,
+            the process-default manager is resolved so the standalone-agent
+            path still binds the adapter instead of silently degrading.
     """
     from contextlib import nullcontext
 
@@ -105,9 +113,20 @@ def adapter_lm_context(tenant_id: str, agent_type: str, config_manager=None):
         import dspy
 
         from cogniverse_foundation.config.llm_factory import create_dspy_lm
-        from cogniverse_foundation.config.utils import get_config
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
         from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
 
+        if config_manager is None:
+            # Standalone-agent path (no dispatcher injection). get_config
+            # REQUIRES a manager — passing None raises, and the except below
+            # would then silently strand every tenant on the base model, so
+            # resolve the process-default manager here (same bootstrap the
+            # AdapterRegistry above uses). An unresolvable environment still
+            # degrades via the except.
+            config_manager = create_default_config_manager()
         system_config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         primary = system_config.get_llm_config().primary
         endpoint = dataclasses.replace(

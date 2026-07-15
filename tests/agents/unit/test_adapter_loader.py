@@ -88,43 +88,52 @@ def test_no_active_adapter_returns_none():
         )
 
 
+def _real_config_manager():
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
+def _config_json_primary_api_base() -> str:
+    import json
+    from pathlib import Path
+
+    cfg = json.loads(Path("configs/config.json").read_text())
+    return cfg["llm_config"]["primary"]["api_base"]
+
+
 @pytest.mark.unit
 def test_adapter_lm_context_binds_adapter_model_when_active():
-    """With an active adapter, the context binds an LM built from the tenant's
-    endpoint with the adapter's registry name as the model (vLLM serves the
-    LoRA by name)."""
+    """With an active adapter and a real config manager, the context binds a
+    REAL dspy.LM built from the tenant's endpoint (config.json llm_config
+    .primary) with the adapter's registry name as the model — no config or LM
+    boundary is mocked, so a break anywhere in get_config → get_llm_config →
+    create_dspy_lm fails here instead of being patched away."""
     import dspy
 
     from cogniverse_agents.adapter_loader import adapter_lm_context
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
     adapter = Mock()
     adapter.name = "profile_sft_v2"
     registry = Mock()
     registry.get_active_adapter.return_value = adapter
 
-    primary = LLMEndpointConfig(model="openai/base", api_base="http://x/v1")
-    system_config = Mock()
-    system_config.get_llm_config.return_value = Mock(primary=primary)
-    sentinel_lm = Mock()
+    ambient = Mock()
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=registry):
+        with dspy.context(lm=ambient):
+            with adapter_lm_context(
+                "acme:acme", "profile_selection", config_manager=_real_config_manager()
+            ):
+                bound = dspy.settings.lm
+            restored = dspy.settings.lm
 
-    with (
-        patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=registry),
-        patch(
-            "cogniverse_foundation.config.utils.get_config", return_value=system_config
-        ),
-        patch(
-            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
-            return_value=sentinel_lm,
-        ) as mock_factory,
-    ):
-        with adapter_lm_context("acme:acme", "profile_selection"):
-            assert dspy.settings.lm is sentinel_lm
-
-    # The LM was built from an endpoint whose model is the adapter's name.
-    endpoint = mock_factory.call_args.args[0]
-    assert endpoint.model == "openai/profile_sft_v2"
-    assert endpoint.api_base == "http://x/v1"  # tenant endpoint preserved
+    assert bound is not ambient, "adapter LM never bound — ran on the base model"
+    assert bound.model == "openai/profile_sft_v2"
+    assert bound.kwargs["api_base"] == _config_json_primary_api_base()
+    assert restored is ambient  # context cleanly restored
 
 
 @pytest.mark.unit
@@ -145,10 +154,37 @@ def test_adapter_lm_context_is_noop_without_active_adapter():
 
 
 @pytest.mark.unit
+def test_adapter_lm_context_without_manager_resolves_default(monkeypatch):
+    """Standalone-agent path: with NO config_manager passed, the helper must
+    resolve the process-default manager instead of silently degrading — the
+    original wiring let get_config(config_manager=None) raise into the broad
+    except and stranded every tenant on the base model."""
+    import dspy
+
+    from cogniverse_agents.adapter_loader import adapter_lm_context
+
+    adapter = Mock()
+    adapter.name = "profile_sft_v2"
+    registry = Mock()
+    registry.get_active_adapter.return_value = adapter
+
+    cm = _real_config_manager()
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        lambda: cm,
+    )
+
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=registry):
+        with adapter_lm_context("acme:acme", "profile_selection"):
+            assert dspy.settings.lm.model == "openai/profile_sft_v2"
+
+
+@pytest.mark.unit
 def test_profile_selection_agent_routes_to_its_adapter(monkeypatch):
     """ProfileSelectionAgent._adapter_lm_context delegates to adapter_lm_context
-    for its agent_type using the dispatcher-injected tenant — so call_dspy runs
-    the profile-selection module against the tenant's fine-tuned adapter."""
+    with its agent_type, the dispatcher-injected tenant AND the dispatcher-
+    injected config_manager — without the manager the helper cannot build the
+    tenant endpoint and the adapter is silently dropped."""
     from contextlib import nullcontext
 
     from cogniverse_agents.profile_selection_agent import ProfileSelectionAgent
@@ -156,19 +192,159 @@ def test_profile_selection_agent_routes_to_its_adapter(monkeypatch):
     # Bypass the heavy __init__ (LM/registration); exercise only the override.
     agent = object.__new__(ProfileSelectionAgent)
     agent._artifact_tenant_id = "acme:acme"
+    agent._config_manager = Mock(name="injected_config_manager")
     agent.deps = Mock()
 
     captured = {}
 
-    def fake_ctx(tenant_id, agent_type):
-        captured["args"] = (tenant_id, agent_type)
+    def fake_ctx(tenant_id, agent_type, config_manager=None):
+        captured["args"] = (tenant_id, agent_type, config_manager)
         return nullcontext()
 
     monkeypatch.setattr("cogniverse_agents.adapter_loader.adapter_lm_context", fake_ctx)
 
     with agent._adapter_lm_context():
         pass
-    assert captured["args"] == ("acme:acme", "profile_selection")
+    assert captured["args"] == (
+        "acme:acme",
+        "profile_selection",
+        agent._config_manager,
+    )
+
+
+@pytest.mark.unit
+def test_profile_selection_binds_adapter_with_injected_config_manager():
+    """PRODUCTION SHAPE, end to end through the override: the dispatcher
+    injects _config_manager + _artifact_tenant_id; with an active adapter the
+    override must bind the adapter LM through the REAL helper + REAL config
+    path. This is the regression the masked tests missed — the original
+    override passed no config_manager, get_config raised, and every DSPy call
+    silently ran on the base model."""
+    import dspy
+
+    from cogniverse_agents.profile_selection_agent import ProfileSelectionAgent
+
+    adapter = Mock()
+    adapter.name = "profile_sft_v2"
+    registry = Mock()
+    registry.get_active_adapter.return_value = adapter
+
+    agent = object.__new__(ProfileSelectionAgent)
+    agent._artifact_tenant_id = "acme:acme"
+    agent._config_manager = _real_config_manager()  # dispatcher injection
+    agent.deps = Mock()
+
+    ambient = Mock()
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=registry):
+        with dspy.context(lm=ambient):
+            with agent._adapter_lm_context():
+                bound = dspy.settings.lm
+
+    assert bound is not ambient, "adapter never bound — ran on the base model"
+    assert bound.model == "openai/profile_sft_v2"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generic_dispatch_injects_config_manager(monkeypatch):
+    """_execute_generic_agent injects the dispatcher's config_manager onto the
+    agent (same pattern as telemetry_manager) so per-tenant adapter/LM
+    resolution has a real config source instead of silently degrading."""
+    import sys
+    import types
+    from typing import Optional
+
+    from pydantic import BaseModel
+
+    from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+    from cogniverse_runtime.config_loader import ConfigLoader
+
+    built = {}
+
+    class FakeGenericDeps(BaseModel):
+        pass
+
+    class FakeGenericInput(BaseModel):
+        query: str
+        tenant_id: Optional[str] = None
+
+    class FakeGenericAgent:
+        def __init__(self, deps):
+            self.deps = deps
+            built["agent"] = self
+
+        async def process(self, typed_input):
+            return types.SimpleNamespace()
+
+    mod = types.ModuleType("fake_generic_mod")
+    mod.FakeGenericDeps = FakeGenericDeps
+    mod.FakeGenericInput = FakeGenericInput
+    mod.FakeGenericAgent = FakeGenericAgent
+    monkeypatch.setitem(sys.modules, "fake_generic_mod", mod)
+    monkeypatch.setitem(
+        ConfigLoader.AGENT_CLASSES, "fake_generic", "fake_generic_mod:FakeGenericAgent"
+    )
+
+    cm = _real_config_manager()
+    dispatcher = AgentDispatcher(
+        agent_registry=Mock(), config_manager=cm, schema_loader=Mock()
+    )
+    monkeypatch.setattr(dispatcher, "_resolve_gliner_url", lambda: None)
+    monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
+    monkeypatch.setattr(dispatcher, "_bind_graph_manager", lambda *a, **k: None)
+    monkeypatch.setattr(dispatcher, "_apply_artefact_overlay", lambda *a, **k: None)
+
+    result = await dispatcher._execute_generic_agent(
+        "fake_generic", "some query", {}, "acme:acme"
+    )
+
+    assert result["status"] == "success"
+    assert built["agent"]._config_manager is cm
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_call_dspy_carries_adapter_lm_into_worker_thread():
+    """The adapter LM bound by _adapter_lm_context must reach module.forward
+    inside call_dspy's asyncio.to_thread worker (dspy overrides are
+    contextvar-backed and to_thread copies the context). A propagation
+    regression would silently run every adapter-aware agent on the base
+    model while staying green everywhere else."""
+    import threading
+
+    import dspy
+
+    from cogniverse_core.agents.base import (
+        AgentBase,
+        AgentDeps,
+        AgentInput,
+        AgentOutput,
+    )
+
+    sentinel = dspy.LM("openai/adapter-sentinel", api_base="http://x/v1", api_key="k")
+    seen = {}
+
+    class _Mod:
+        def forward(self, **kwargs):
+            seen["lm"] = dspy.settings.lm
+            seen["thread"] = threading.get_ident()
+            return dspy.Prediction(out="ok")
+
+    class _Agent(AgentBase[AgentInput, AgentOutput, AgentDeps]):
+        async def _process_impl(self, input):  # pragma: no cover — not driven
+            raise NotImplementedError
+
+        def _adapter_lm_context(self):
+            return dspy.context(lm=sentinel)
+
+    agent = object.__new__(_Agent)
+    agent._progress_queue = None
+
+    prediction = await agent.call_dspy(_Mod(), output_field="out")
+
+    assert prediction.out == "ok"
+    assert seen["lm"] is sentinel, "adapter LM did not reach the worker thread"
+    assert seen["thread"] != threading.get_ident()
 
 
 @pytest.mark.unit

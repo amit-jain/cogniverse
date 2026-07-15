@@ -780,6 +780,11 @@ class AgentDispatcher:
 
         agent.telemetry_manager = get_telemetry_manager()
         agent._artifact_tenant_id = tenant_id
+        # Config access for per-tenant adapter/LM resolution (e.g. the
+        # profile_selection adapter context) — same injection pattern as
+        # telemetry_manager. Never clobber an agent-owned manager.
+        if getattr(agent, "_config_manager", None) is None:
+            agent._config_manager = self._config_manager
         if hasattr(agent, "_load_artifact"):
             await asyncio.to_thread(agent._load_artifact)
         # ``set_dispatched_artefact`` lives on MemoryAwareMixin; non-mixin
