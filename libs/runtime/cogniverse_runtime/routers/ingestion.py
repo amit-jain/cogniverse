@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-import httpx
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -763,6 +762,7 @@ async def _extract_graph_per_segment_inner(
         source_doc_id=source_doc_id,
         tenant_id=tenant_id,
         config_manager=config_manager,
+        backend=mgr._backend,
     )
 
     return {
@@ -920,14 +920,15 @@ async def _write_backrefs_to_content(
     source_doc_id: str,
     tenant_id: str,
     config_manager: ConfigManager,
+    backend: Any,
 ) -> None:
     """PATCH ``entity_ids`` / ``relation_ids`` / ``claim_ids`` onto content docs.
 
     For each segment with back-refs, look up its content schema and doc_id
     from ``processing_results`` and issue a Vespa Document v1 partial
-    update with ``{"fields": {"entity_ids": {"assign": [...]}}}``. Uses
-    ``httpx.AsyncClient`` so all PATCHes for a single ingest fire
-    concurrently.
+    update with ``{"entity_ids": [...]}`` through the backend document API
+    (namespace ``content``); each update runs off the event loop via
+    ``asyncio.to_thread`` so all updates for one ingest fire concurrently.
     """
     if not backrefs_by_segment:
         return
@@ -946,8 +947,6 @@ async def _write_backrefs_to_content(
             "or .backend_port not configured"
         )
         return
-    base_url = f"{bu.rstrip('/')}:{bp}"
-
     # Build segment_id → (schema, doc_id) lookup. The pipeline doesn't
     # emit a top-level fed_documents list, so derive the per-segment
     # content doc_ids from the keyframes the segmentation step
@@ -1005,43 +1004,47 @@ async def _write_backrefs_to_content(
     if not targets:
         return
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        semaphore = asyncio.Semaphore(8)
+    # Prime the backend's persistent session once (single-threaded) so the
+    # concurrent to_thread updates below reuse it without racing its lazy init.
+    backend._metadata_vespa_app()
+    semaphore = asyncio.Semaphore(8)
 
-        async def _patch(segment_id: str, schema: str, doc_id: str) -> None:
-            backrefs = backrefs_by_segment[segment_id]
-            # Vespa Document v1 URL format:
-            #   /document/v1/<namespace>/<doctype>/docid/<id>
-            # Content schemas live under the ``content`` namespace
-            # (the embedding feed writes ``id:content:<schema>::<id>``),
-            # not under the schema name. Older versions of this function
-            # used ``<schema>/<schema>/docid/<id>`` which silently 404s.
-            url = f"{base_url.rstrip('/')}/document/v1/content/{schema}/docid/{doc_id}"
-            payload = {
-                "fields": {
-                    "entity_ids": {"assign": list(backrefs.get("entity_ids", []))},
-                    "relation_ids": {"assign": list(backrefs.get("relation_ids", []))},
-                    "claim_ids": {"assign": list(backrefs.get("claim_ids", []))},
-                }
-            }
-            async with semaphore:
-                resp = await client.put(url, json=payload)
-            if not resp.is_success:
+    async def _patch(segment_id: str, schema: str, doc_id: str) -> None:
+        backrefs = backrefs_by_segment[segment_id]
+        # Content schemas live under the ``content`` namespace (the embedding
+        # feed writes ``id:content:<schema>::<id>``), not the schema name.
+        # pyvespa's update auto-wraps these plain field values as assigns.
+        fields = {
+            "entity_ids": list(backrefs.get("entity_ids", [])),
+            "relation_ids": list(backrefs.get("relation_ids", [])),
+            "claim_ids": list(backrefs.get("claim_ids", [])),
+        }
+        async with semaphore:
+            try:
+                await asyncio.to_thread(
+                    backend.update_document_fields,
+                    doc_id,
+                    fields,
+                    schema_name=schema,
+                    namespace="content",
+                    create=False,
+                )
+            except Exception as exc:  # noqa: BLE001 — one doc's failure must
+                # not abort the rest of the ingest's back-refs.
                 logger.warning(
-                    "Content back-ref PATCH failed for %s/%s (%s): %s",
+                    "Content back-ref update failed for %s/%s: %s",
                     schema,
                     doc_id,
-                    resp.status_code,
-                    resp.text[:500],
+                    exc,
                 )
 
-        await asyncio.gather(
-            *(
-                _patch(segment_id, schema, doc_id)
-                for segment_id in backrefs_by_segment
-                for schema, doc_id in targets.get(segment_id, [])
-            )
+    await asyncio.gather(
+        *(
+            _patch(segment_id, schema, doc_id)
+            for segment_id in backrefs_by_segment
+            for schema, doc_id in targets.get(segment_id, [])
         )
+    )
 
 
 async def run_ingestion(
