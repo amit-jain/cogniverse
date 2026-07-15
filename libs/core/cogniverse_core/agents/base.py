@@ -361,6 +361,20 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         span_name = f"{self.__class__.__name__}.process"
         return self.telemetry_manager.span(span_name, tenant_id=tenant_id)
 
+    def _adapter_lm_context(self) -> ContextManager[Any]:
+        """Return a context manager binding this agent's active fine-tuned
+        adapter LM for the duration of a ``call_dspy`` invocation, or a
+        ``nullcontext`` when there is no adapter to apply.
+
+        The base agent never routes to an adapter. Adapter-aware agents (whose
+        DSPy call runs on the shared global LM rather than a per-agent one)
+        override this to look up their tenant's active adapter and, if present,
+        return ``dspy.context(lm=<adapter LM>)`` — vLLM serves the LoRA by name,
+        so the DSPy call runs against the fine-tuned model. Opt-in and safe: a
+        non-overriding agent's call is wrapped in a zero-cost no-op.
+        """
+        return nullcontext()
+
     def set_rails(
         self,
         input_rails: Optional["RailChain"] = None,
@@ -426,7 +440,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         """
         import asyncio
 
-        with _dispatched_prompt_overlay(self, module):
+        with self._adapter_lm_context(), _dispatched_prompt_overlay(self, module):
             if self._progress_queue is not None:
                 import dspy
 

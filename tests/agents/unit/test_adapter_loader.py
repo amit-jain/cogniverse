@@ -86,3 +86,98 @@ def test_no_active_adapter_returns_none():
         assert (
             get_active_adapter_path("t1", "routing", adapter_cache_dir="/cache") is None
         )
+
+
+@pytest.mark.unit
+def test_adapter_lm_context_binds_adapter_model_when_active():
+    """With an active adapter, the context binds an LM built from the tenant's
+    endpoint with the adapter's registry name as the model (vLLM serves the
+    LoRA by name)."""
+    import dspy
+
+    from cogniverse_agents.adapter_loader import adapter_lm_context
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    adapter = Mock()
+    adapter.name = "profile_sft_v2"
+    registry = Mock()
+    registry.get_active_adapter.return_value = adapter
+
+    primary = LLMEndpointConfig(model="openai/base", api_base="http://x/v1")
+    system_config = Mock()
+    system_config.get_llm_config.return_value = Mock(primary=primary)
+    sentinel_lm = Mock()
+
+    with (
+        patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=registry),
+        patch(
+            "cogniverse_foundation.config.utils.get_config", return_value=system_config
+        ),
+        patch(
+            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+            return_value=sentinel_lm,
+        ) as mock_factory,
+    ):
+        with adapter_lm_context("acme:acme", "profile_selection"):
+            assert dspy.settings.lm is sentinel_lm
+
+    # The LM was built from an endpoint whose model is the adapter's name.
+    endpoint = mock_factory.call_args.args[0]
+    assert endpoint.model == "openai/profile_sft_v2"
+    assert endpoint.api_base == "http://x/v1"  # tenant endpoint preserved
+
+
+@pytest.mark.unit
+def test_adapter_lm_context_is_noop_without_active_adapter():
+    """No active adapter → the ambient LM is left in place (nullcontext)."""
+    import dspy
+
+    from cogniverse_agents.adapter_loader import adapter_lm_context
+
+    registry = Mock()
+    registry.get_active_adapter.return_value = None
+    ambient = Mock()
+
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=registry):
+        with dspy.context(lm=ambient):
+            with adapter_lm_context("acme:acme", "profile_selection"):
+                assert dspy.settings.lm is ambient
+
+
+@pytest.mark.unit
+def test_profile_selection_agent_routes_to_its_adapter(monkeypatch):
+    """ProfileSelectionAgent._adapter_lm_context delegates to adapter_lm_context
+    for its agent_type using the dispatcher-injected tenant — so call_dspy runs
+    the profile-selection module against the tenant's fine-tuned adapter."""
+    from contextlib import nullcontext
+
+    from cogniverse_agents.profile_selection_agent import ProfileSelectionAgent
+
+    # Bypass the heavy __init__ (LM/registration); exercise only the override.
+    agent = object.__new__(ProfileSelectionAgent)
+    agent._artifact_tenant_id = "acme:acme"
+    agent.deps = Mock()
+
+    captured = {}
+
+    def fake_ctx(tenant_id, agent_type):
+        captured["args"] = (tenant_id, agent_type)
+        return nullcontext()
+
+    monkeypatch.setattr("cogniverse_agents.adapter_loader.adapter_lm_context", fake_ctx)
+
+    with agent._adapter_lm_context():
+        pass
+    assert captured["args"] == ("acme:acme", "profile_selection")
+
+
+@pytest.mark.unit
+def test_base_agent_adapter_lm_context_defaults_to_noop():
+    """A non-overriding agent's _adapter_lm_context is a nullcontext, so
+    call_dspy is unaffected for every agent that doesn't opt in."""
+    from contextlib import nullcontext
+
+    from cogniverse_core.agents.base import AgentBase
+
+    ctx = AgentBase._adapter_lm_context(Mock())
+    assert isinstance(ctx, nullcontext)

@@ -696,6 +696,20 @@ class OrchestratorAgent(AdapterAwareMixin):
             self.model = self._load_with_adapter(adapter_path)
 ```
 
+`AdapterAwareMixin`/`get_active_adapter_path` return a filesystem **path** — for
+agents that load a model locally. Production agents run against the shared vLLM
+server, which serves LoRA adapters **by model name**, so at inference an agent
+routes its DSPy LM `model` to the active adapter's registry name instead:
+
+- Agents built on `DynamicDSPyMixin` (per-agent LM) override
+  `_active_adapter_model()` to return the active adapter's name (e.g.
+  `TextAnalysisAgent` → `entity_extraction`).
+- Agents whose DSPy module runs on the shared global LM override the
+  `AgentBase._adapter_lm_context()` hook — `call_dspy` wraps each invocation in
+  it — using `adapter_lm_context(tenant_id, agent_type)` to bind a
+  `dspy.context(lm=...)` whose model is the adapter's name (e.g.
+  `ProfileSelectionAgent` → `profile_selection`). No active adapter → base model.
+
 ---
 
 ## Data Flow
