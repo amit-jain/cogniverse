@@ -687,9 +687,11 @@ Agents can use `AdapterAwareMixin` to automatically load fine-tuned adapters:
 from cogniverse_agents import AdapterAwareMixin, get_active_adapter_path
 
 class OrchestratorAgent(AdapterAwareMixin):
-    def __init__(self, tenant_id: str):
+    def __init__(self, tenant_id: str, config_manager):
         self.tenant_id = tenant_id
-        adapter_path = self.load_adapter_if_available("routing")
+        # Cloud-backed adapters download under SystemConfig.adapter_cache_dir.
+        cache_dir = config_manager.get_system_config().adapter_cache_dir
+        adapter_path = self.load_adapter_if_available("routing", cache_dir)
         if adapter_path:
             self.model = self._load_with_adapter(adapter_path)
 ```

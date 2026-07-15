@@ -14,27 +14,38 @@ logger = logging.getLogger(__name__)
 def get_active_adapter_path(
     tenant_id: str,
     agent_type: str,
+    adapter_cache_dir: str,
 ) -> Optional[str]:
     """
-    Get the active adapter path for a tenant and agent type.
+    Get the active adapter's local path for a tenant and agent type.
 
-    This is a convenience function for agents to load fine-tuned adapters.
+    Resolves the adapter's effective URI through ``resolve_adapter_path``: a
+    local ``file://`` adapter yields its path directly, while a cloud-backed
+    adapter (``s3://`` / ``modal://``) is downloaded under ``adapter_cache_dir``.
+    Returning ``adapter.adapter_path`` verbatim only ever worked for locally
+    trained adapters — cloud URIs need this resolution step.
 
     Args:
         tenant_id: Tenant identifier
         agent_type: Agent type (routing, profile_selection, entity_extraction)
+        adapter_cache_dir: Directory cloud-backed adapters download into —
+            source it from ``SystemConfig.adapter_cache_dir``. Required even for
+            local adapters so the call signature is uniform.
 
     Returns:
-        Filesystem path to the active adapter, or None if no active adapter
+        Local filesystem path to the active adapter, or None if none is active
 
     Example:
-        >>> adapter_path = get_active_adapter_path("tenant1", "routing")
+        >>> cache_dir = config_manager.get_system_config().adapter_cache_dir
+        >>> adapter_path = get_active_adapter_path("tenant1", "routing", cache_dir)
         >>> if adapter_path:
-        ...     # Load adapter into model
         ...     model.load_adapter(adapter_path)
     """
     try:
-        from cogniverse_finetuning.registry import AdapterRegistry
+        from cogniverse_finetuning.registry import (
+            AdapterRegistry,
+            resolve_adapter_path,
+        )
 
         registry = AdapterRegistry()
         adapter = registry.get_active_adapter(tenant_id, agent_type)
@@ -44,7 +55,7 @@ def get_active_adapter_path(
                 f"Found active adapter for {tenant_id}/{agent_type}: "
                 f"{adapter.name} v{adapter.version}"
             )
-            return adapter.adapter_path
+            return resolve_adapter_path(adapter.get_effective_uri(), adapter_cache_dir)
 
         logger.debug(f"No active adapter for {tenant_id}/{agent_type}")
         return None
@@ -121,12 +132,16 @@ class AdapterAwareMixin:
         ...             self._apply_adapter(adapter_path)
     """
 
-    def load_adapter_if_available(self, agent_type: str) -> Optional[str]:
+    def load_adapter_if_available(
+        self, agent_type: str, adapter_cache_dir: str
+    ) -> Optional[str]:
         """
         Load active adapter from registry if available.
 
         Args:
             agent_type: Agent type to look up
+            adapter_cache_dir: Directory cloud-backed adapters download into
+                (``SystemConfig.adapter_cache_dir``)
 
         Returns:
             Adapter path if found, None otherwise
@@ -136,7 +151,7 @@ class AdapterAwareMixin:
             logger.debug("No tenant_id available, skipping adapter lookup")
             return None
 
-        return get_active_adapter_path(tenant_id, agent_type)
+        return get_active_adapter_path(tenant_id, agent_type, adapter_cache_dir)
 
     def get_adapter_info(self, agent_type: str) -> Optional[dict]:
         """
