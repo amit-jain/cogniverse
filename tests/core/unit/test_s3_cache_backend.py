@@ -111,6 +111,41 @@ async def test_dict_round_trips_exact_value(fake):
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
+async def test_serialization_runs_off_the_event_loop(fake):
+    """pickle+gzip is CPU-bound; set()/get() must offload it to a worker thread
+    (the S3 network I/O already is) so it never blocks the event loop."""
+    import threading
+
+    backend = _backend(fake)
+    loop_thread = threading.get_ident()
+
+    ser_thread = {}
+    real_ser = backend._serialize
+
+    def spy_ser(value):
+        ser_thread["id"] = threading.get_ident()
+        return real_ser(value)
+
+    deser_thread = {}
+    real_deser = backend._deserialize
+
+    def spy_deser(data, fmt):
+        deser_thread["id"] = threading.get_ident()
+        return real_deser(data, fmt)
+
+    backend._serialize = spy_ser
+    backend._deserialize = spy_deser
+
+    key = "p:video:abc:transcript"
+    await backend.set(key, {"payload": list(range(100))})
+    assert ser_thread["id"] != loop_thread, "serialize ran on the event loop"
+
+    assert await backend.get(key) == {"payload": list(range(100))}
+    assert deser_thread["id"] != loop_thread, "deserialize ran on the event loop"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
 async def test_image_bytes_round_trip_not_deserialized(fake):
     backend = _backend(fake)
     jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01"

@@ -117,3 +117,39 @@ def test_backend_override_wins_over_manager_flag(tmp_path):
 def test_gzip_magic_matches_stdlib(tmp_path):
     # Guard the magic-byte constant against drift.
     assert gzip.compress(b"x")[:2] == b"\x1f\x8b"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_serialization_runs_off_the_event_loop(tmp_path):
+    """pickle+gzip is CPU-bound; set()/get() must offload it to a worker
+    thread so a large artifact's serialization does not block the loop."""
+    import threading
+
+    backend = _backend(tmp_path, True)
+    loop_thread = threading.get_ident()
+
+    ser_thread = {}
+    real_ser = backend._serialize
+
+    def spy_ser(value):
+        ser_thread["id"] = threading.get_ident()
+        return real_ser(value)
+
+    deser_thread = {}
+    real_deser = backend._deserialize
+
+    def spy_deser(data):
+        deser_thread["id"] = threading.get_ident()
+        return real_deser(data)
+
+    backend._serialize = spy_ser
+    backend._deserialize = spy_deser
+
+    key = "profile:video:vid1:transcript"
+    await backend.set(key, {"payload": list(range(100))})
+    assert ser_thread["id"] != loop_thread, "serialize ran on the event loop"
+
+    assert await backend.get(key) == {"payload": list(range(100))}
+    assert deser_thread["id"] != loop_thread, "deserialize ran on the event loop"
