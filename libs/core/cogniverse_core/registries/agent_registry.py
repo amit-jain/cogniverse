@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import httpx
 
 from cogniverse_core.common.agent_models import AgentEndpoint
-from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
@@ -40,11 +39,9 @@ class AgentRegistry:
                 "Dependency injection is mandatory - pass ConfigManager() explicitly."
             )
 
+        # config_manager is required (DI hygiene — see the None check above) but
+        # this registry resolves nothing from it: agents self-register over HTTP.
         self.tenant_id = require_tenant_id(tenant_id, source="AgentRegistry")
-        self.config_manager = config_manager
-        self.config = get_config(
-            tenant_id=self.tenant_id, config_manager=config_manager
-        )
         self.agents: Dict[str, AgentEndpoint] = {}
         self.capabilities: Dict[str, List[str]] = {}  # capability -> agent names
         # Constructed lazily on first use — a registry used only for local

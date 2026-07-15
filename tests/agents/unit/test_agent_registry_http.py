@@ -47,6 +47,19 @@ class TestAgentRegistryHTTPEndpoints:
 
         return TestClient(app)
 
+    def test_registry_stores_no_resolved_config(self, config_manager):
+        """The registry self-registers agents over HTTP and no longer pays a
+        full get_config() resolution per instantiation — nothing read the
+        result, and the wasted resolution ran on every construction."""
+        registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
+        assert not hasattr(registry, "config"), "must not resolve/store config"
+        assert not hasattr(registry, "config_manager"), (
+            "must not store config_manager — it reads nothing from it"
+        )
+        # config_manager is still required (DI hygiene).
+        with pytest.raises(ValueError, match="config_manager is required"):
+            AgentRegistry(tenant_id="test:unit", config_manager=None)
+
     def test_register_agent_endpoint(self, test_client, agent_registry):
         """Test POST /agents/register endpoint"""
         registration_data = {
