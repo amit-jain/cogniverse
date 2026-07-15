@@ -49,10 +49,22 @@ class PersistentVespaOps:
     app for Document v1 visit URL construction.
     """
 
-    def __init__(self, app: Vespa, connections: int = 4):
+    def __init__(self, app: Vespa, connections: int = 4, timeout_s: float = 15.0):
         self.app = app
         self._sync = app.syncio(connections=connections)
         self._sync._open_http_client()
+        # pyvespa hardcodes a 120s client timeout. The callers this wrapper
+        # serves (config/adapter stores, metadata CRUD, wiki/graph/back-ref
+        # document ops) carried explicit 10-15s timeouts before consolidating
+        # here — a hung Vespa must fail fast, not block two minutes per op.
+        try:
+            self._sync.http_client.timeout = timeout_s
+            # pyvespa retries connection-class errors (incl. timeouts) up to
+            # num_retries_429 times with backoff — 11 attempts turned one hung
+            # op into ~10x the timeout. Down-Vespa connects still fail fast.
+            self._sync.num_retries_429 = 2
+        except Exception as exc:  # noqa: BLE001 — keep the session usable
+            logger.warning("Could not set Vespa client timeout: %s", exc)
 
     @property
     def url(self) -> str:
@@ -87,9 +99,15 @@ class PersistentVespaOps:
 
 
 def make_persistent_vespa_ops(
-    *, url: str, port: Optional[int] = None, connections: int = 4
+    *,
+    url: str,
+    port: Optional[int] = None,
+    connections: int = 4,
+    timeout_s: float = 15.0,
 ) -> PersistentVespaOps:
     """``make_vespa_app`` + a persistent sync session for data-plane ops."""
     return PersistentVespaOps(
-        make_vespa_app(url=url, port=port), connections=connections
+        make_vespa_app(url=url, port=port),
+        connections=connections,
+        timeout_s=timeout_s,
     )
