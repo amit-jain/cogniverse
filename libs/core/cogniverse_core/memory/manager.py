@@ -1329,6 +1329,32 @@ class Mem0MemoryManager:
                 return {}
         return meta if isinstance(meta, dict) else {}
 
+    def _flip_metadata_no_reembed(
+        self, memory_id: str, data: str, metadata: Dict[str, Any]
+    ) -> bool:
+        """Rewrite a memory's metadata WITHOUT re-embedding its text.
+
+        Archive and restore only toggle the ``archived`` flag; the text is
+        unchanged, so re-embedding it is pure waste. Routes through the vector
+        store's partial update (``vector=None`` leaves the stored tensor
+        untouched) — the same path ``_bump_last_accessed_for_hits`` uses —
+        instead of Mem0's ``Memory.update``, which re-embeds over HTTP on every
+        call. Falls back to ``Memory.update`` only when no partial-update store
+        is available. Exceptions propagate to the caller.
+        """
+        store = getattr(self.memory, "vector_store", None) if self.memory else None
+        if store is not None and hasattr(store, "update"):
+            store.update(
+                vector_id=memory_id,
+                vector=None,
+                payload={"data": data, "metadata": metadata},
+            )
+            return True
+        if self.memory:
+            self.memory.update(memory_id=memory_id, data=data, metadata=metadata)
+            return True
+        return False
+
     def _archive_memory(
         self,
         memory_id: str,
@@ -1348,13 +1374,7 @@ class Mem0MemoryManager:
         new_meta["archived"] = True
         new_meta["archived_at"] = datetime.now(timezone.utc).isoformat()
         try:
-            # Mem0.update requires `data` — pass the current content so
-            # the memory text is preserved.
-            self.memory.update(
-                memory_id=memory_id,
-                data=existing_data,
-                metadata=new_meta,
-            )
+            self._flip_metadata_no_reembed(memory_id, existing_data, new_meta)
             logger.info(
                 "Soft-deleted (archived) memory %s for tenant %s",
                 memory_id,
@@ -1393,7 +1413,7 @@ class Mem0MemoryManager:
         meta.pop("archived_at", None)
         existing_data = target.get("memory") or target.get("text") or ""
         try:
-            self.memory.update(memory_id=memory_id, data=existing_data, metadata=meta)
+            self._flip_metadata_no_reembed(memory_id, existing_data, meta)
         except Exception as exc:
             logger.warning("restore: update failed for %s: %s", memory_id, exc)
             return False

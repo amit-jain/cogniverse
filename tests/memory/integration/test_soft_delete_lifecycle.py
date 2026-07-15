@@ -212,3 +212,96 @@ class TestSoftDeleteCycle:
         assert not any(str(r.get("id")) == mid for r in full), (
             "hard-deleted memory must not appear under include_archived=True either"
         )
+
+
+class _ArchiveSpyVectorStore:
+    def __init__(self):
+        self.update_calls: list[dict] = []
+
+    def update(self, vector_id, vector=None, payload=None):
+        self.update_calls.append(
+            {"vector_id": vector_id, "vector": vector, "payload": payload}
+        )
+
+
+class _ArchiveSpyMemory:
+    """Mem0 stand-in exposing the partial-update store and recording any
+    (forbidden) ``Memory.update`` call — that path re-embeds the text."""
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.vector_store = _ArchiveSpyVectorStore()
+        self.reembedding_update_calls: list[str] = []
+
+    def get_all(self, user_id=None):
+        return {"results": list(self._rows)}
+
+    def update(self, memory_id=None, data=None, metadata=None):
+        self.reembedding_update_calls.append(memory_id)
+
+
+def _spy_mm() -> Mem0MemoryManager:
+    Mem0MemoryManager._instances.clear()
+    mm = Mem0MemoryManager(tenant_id="archive_spy")
+    mm._initialized = True
+    mm.tenant_id = "archive_spy"
+    mm.config = None
+    mm._knowledge_registry = None
+    return mm
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestArchiveRestoreDoNotReembed:
+    """Archive and restore only toggle ``metadata.archived`` — the text is
+    unchanged, so they must route through the vector store's partial update
+    (``vector=None`` keeps the stored embedding) instead of Mem0's
+    ``Memory.update``, which re-embeds the text over HTTP on every call."""
+
+    def test_archive_flips_flag_without_reembedding(self):
+        mm = _spy_mm()
+        spy = _ArchiveSpyMemory([])
+        mm.memory = spy
+
+        mm._archive_memory("m1", {"kind": "external_doc"}, existing_data="the fact")
+
+        assert spy.reembedding_update_calls == [], (
+            "archive must not call Memory.update — that re-embeds the text"
+        )
+        assert len(spy.vector_store.update_calls) == 1
+        call = spy.vector_store.update_calls[0]
+        assert call["vector_id"] == "m1"
+        assert call["vector"] is None, "vector=None keeps the stored embedding"
+        assert call["payload"]["data"] == "the fact", "text is preserved unchanged"
+        md = call["payload"]["metadata"]
+        assert md["archived"] is True
+        assert md["archived_at"]
+        assert md["kind"] == "external_doc", "existing metadata keys survive"
+
+    def test_restore_clears_flag_without_reembedding(self):
+        mm = _spy_mm()
+        archived_row = {
+            "id": "m1",
+            "memory": "the fact",
+            "metadata": {
+                "kind": "external_doc",
+                "archived": True,
+                "archived_at": "2026-01-01T00:00:00+00:00",
+            },
+        }
+        spy = _ArchiveSpyMemory([archived_row])
+        mm.memory = spy
+
+        assert mm.restore_archived_memory("m1") is True
+
+        assert spy.reembedding_update_calls == [], (
+            "restore must not call Memory.update — that re-embeds the text"
+        )
+        assert len(spy.vector_store.update_calls) == 1
+        call = spy.vector_store.update_calls[0]
+        assert call["vector"] is None
+        assert call["payload"]["data"] == "the fact"
+        md = call["payload"]["metadata"]
+        assert "archived" not in md, "restore clears the archived flag"
+        assert "archived_at" not in md
+        assert md["kind"] == "external_doc"
