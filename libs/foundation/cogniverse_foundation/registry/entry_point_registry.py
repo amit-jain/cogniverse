@@ -260,7 +260,14 @@ class EntryPointRegistry(Generic[T]):
 
         klass = cls._registry_classes[name]
         instance = cls._create_instance(klass, config or {}, tenant_id)
-        cls._instances.set(cache_key, instance)
+        # Atomically resolve concurrent cold-starts to one shared instance. A
+        # plain set() would displace-and-close an instance another thread is
+        # already holding (use-after-close on the store's HTTP/Vespa session);
+        # set_if_absent keeps the winner and hands us the loser to release.
+        winner = cls._instances.set_if_absent(cache_key, instance)
+        if winner is not instance:
+            _on_instance_evicted(cache_key, instance)
+            return winner
         logger.info("Created %s: %s", cls._label, cache_key)
         return instance
 
