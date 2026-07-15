@@ -33,7 +33,8 @@ _ALLOWED_FILES = {"libs/runtime/cogniverse_runtime/main.py"}
 
 def test_no_raw_document_v1_construction_outside_vespa_package():
     offenders = []
-    for py in (_REPO_ROOT / "libs").rglob("*.py"):
+    roots = [_REPO_ROOT / "libs", _REPO_ROOT / "scripts"]
+    for py in (f for root in roots for f in root.rglob("*.py")):
         rel = py.relative_to(_REPO_ROOT).as_posix()
         if rel.startswith(_ALLOWED_PREFIXES) or rel in _ALLOWED_FILES:
             continue

@@ -498,3 +498,38 @@ class TestExportImportRoundTrip:
         assert versions == [1, 2, 3]
         values = {c["version"]: c["config_value"] for c in exported["configs"]}
         assert values[3] == {"rev": 2}
+
+
+@pytest.mark.integration
+class TestCountVersionRows:
+    def test_counts_every_version_row_per_config_id(self, vespa_config_store):
+        """count_version_rows sees ALL version rows (visit), not just latest —
+        the prune dry-run needs the full per-id row counts."""
+        import time
+        import uuid
+
+        store = vespa_config_store
+        tenant = f"vc_{uuid.uuid4().hex[:6]}"
+        for i in range(3):
+            store.set_config(
+                tenant_id=tenant,
+                scope=ConfigScope.SYSTEM,
+                service="runtime",
+                config_key="multi",
+                config_value={"rev": i},
+            )
+        store.set_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SYSTEM,
+            service="runtime",
+            config_key="single",
+            config_value={"rev": 0},
+        )
+        time.sleep(1)
+
+        counts = store.count_version_rows()
+
+        multi_id = f"{tenant}:system:runtime:multi"
+        single_id = f"{tenant}:system:runtime:single"
+        assert counts[multi_id] == 3
+        assert counts[single_id] == 1

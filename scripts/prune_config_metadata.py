@@ -47,26 +47,7 @@ def main() -> int:
     )
 
     if args.dry_run:
-        import requests
-
-        url = f"{store.vespa_app.url}/document/v1/"
-        path = f"{url}{store.schema_name}/{store.schema_name}/docid/"
-        params = {"wantedDocumentCount": 1000}
-        counts: dict[str, int] = {}
-        continuation = None
-        while True:
-            if continuation:
-                params["continuation"] = continuation
-            resp = requests.get(path, params=params, timeout=60)
-            resp.raise_for_status()
-            payload = resp.json()
-            for doc in payload.get("documents") or []:
-                cid = (doc.get("fields") or {}).get("config_id")
-                if cid:
-                    counts[cid] = counts.get(cid, 0) + 1
-            continuation = payload.get("continuation")
-            if not continuation:
-                break
+        counts = store.count_version_rows()
         total_rows = sum(counts.values())
         would_drop = sum(max(0, c - args.keep) for c in counts.values())
         print(f"distinct config_ids: {len(counts)}")
