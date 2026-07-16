@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from cogniverse_agents.search.vespa_query import VespaSearchDegraded
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
@@ -429,6 +430,10 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
             context=dispatch_context,
             top_k=task.top_k,
         )
+    except VespaSearchDegraded as e:
+        # Vespa soft-timeout (HTTP 200 + root.errors): the backend is up but
+        # degraded — 503 tells the caller to retry, instead of an opaque 500.
+        raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         detail = str(e)
         if "not found" in detail:

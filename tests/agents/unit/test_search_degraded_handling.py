@@ -53,3 +53,61 @@ def test_degraded_coverage_warns_but_returns_hits(caplog):
         hits = vespa_search_children(body)
     assert len(hits) == 1
     assert any("degraded" in r.getMessage().lower() for r in caplog.records)
+
+
+class _DegradedHTTPResponse:
+    """HTTP 200 whose body carries root.errors — a Vespa soft-timeout."""
+
+    status_code = 200
+    text = "ok"
+
+    def json(self):
+        return {
+            "root": {
+                "errors": [{"code": 12, "summary": "Timeout", "message": "timed out"}],
+                "children": [],
+            }
+        }
+
+
+@pytest.mark.asyncio
+async def test_document_text_search_raises_on_degraded_body(monkeypatch):
+    """search_documents must surface a soft-timeout, not flatten it to []."""
+    import numpy as np
+
+    from cogniverse_agents.document_agent import DocumentAgent, DocumentAgentDeps
+
+    monkeypatch.setattr(
+        "cogniverse_agents.search.vespa_query.vespa_search_post",
+        lambda *a, **k: _DegradedHTTPResponse(),
+    )
+    agent = DocumentAgent(
+        deps=DocumentAgentDeps(tenant_id="t1", vespa_endpoint="http://localhost:1")
+    )
+    # Bypass the lazy ColBERT load — the seam under test is the Vespa response.
+    agent._text_query_encoder = type(
+        "_Enc", (), {"encode": staticmethod(lambda q: np.zeros((4, 128), np.float32))}
+    )()
+    with pytest.raises(VespaSearchDegraded, match="errors"):
+        await agent.search_documents(query="quarterly report", strategy="text", limit=3)
+
+
+@pytest.mark.asyncio
+async def test_audio_transcript_search_raises_on_degraded_body(monkeypatch):
+    """search_audio must surface a soft-timeout through both except layers."""
+    from cogniverse_agents.audio_analysis_agent import (
+        AudioAnalysisAgent,
+        AudioAnalysisDeps,
+    )
+
+    monkeypatch.setattr(
+        "cogniverse_agents.search.vespa_query.vespa_search_post",
+        lambda *a, **k: _DegradedHTTPResponse(),
+    )
+    agent = AudioAnalysisAgent(
+        deps=AudioAnalysisDeps(tenant_id="t1", vespa_endpoint="http://localhost:1")
+    )
+    with pytest.raises(VespaSearchDegraded, match="errors"):
+        await agent.search_audio(
+            query="keynote speech", search_mode="transcript", limit=3
+        )
