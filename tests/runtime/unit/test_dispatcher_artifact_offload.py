@@ -47,6 +47,16 @@ async def test_gateway_load_artifact_runs_off_the_event_loop(monkeypatch):
     d._verify_routing_egress = lambda *a, **k: None
     d._get_rail_chains = lambda *a, **k: None
     d._resolve_gliner_url = lambda *a, **k: None
+    # The gateway build seeds GLiNER deps from the tenant routing config.
+    d._config_manager = SimpleNamespace(
+        get_routing_config=lambda tenant_id: SimpleNamespace(
+            gliner_model="urchade/gliner_multi-v2.1",
+            gliner_threshold=0.3,
+            gliner_device="cpu",
+            fast_path_confidence_threshold=0.7,
+            enable_fast_path=True,
+        )
+    )
 
     loop_thread = threading.get_ident()
     with pytest.raises(_StopHere):
