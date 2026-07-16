@@ -336,6 +336,27 @@ class TestStatusStream:
         assert events[1][1]["progress"] == 0.5
 
     @pytest.mark.asyncio
+    async def test_status_stream_is_capped_and_expires(self, redis):
+        """A chatty job must not grow its status stream unbounded, and the
+        stream must carry a TTL so a finished job's stream is reclaimed instead
+        of leaking one immortal ``ingest:status:<id>`` stream per ingest."""
+        ingest_id = f"ing_{uuid.uuid4().hex[:8]}"
+        key = queue._status_stream_key(ingest_id)
+        for i in range(queue.STATUS_STREAM_MAXLEN + 25):
+            await queue.publish_status(redis, ingest_id, {"state": "running", "i": i})
+
+        # XADD MAXLEN trims the oldest, so the count is capped and the newest
+        # events (current state) are the ones retained.
+        assert await redis.xlen(key) == queue.STATUS_STREAM_MAXLEN
+        ttl = await redis.ttl(key)
+        assert 0 < ttl <= queue.STATUS_STREAM_TTL_SECONDS, (
+            f"status stream must carry a positive TTL, got {ttl}"
+        )
+        # FIFO trim drops the oldest 25 (0..24); the oldest retained is now 25.
+        events = await queue.read_status_since(redis, ingest_id)
+        assert events[0][1]["i"] == 25
+
+    @pytest.mark.asyncio
     async def test_read_status_resumes_from_last_id(self, redis):
         """Late-connecting SSE clients must be able to replay only the
         events they haven't seen — not the whole history every poll."""
