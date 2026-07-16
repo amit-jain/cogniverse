@@ -754,18 +754,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 BackendProfileConfig,
             )
 
+            # Re-affirm the durable ``wiki_semantic`` profile from config.json
+            # into any already-cached backends via the change listener. Fields
+            # MUST match config.json (DenseOn 768-d single-vector); WikiManager
+            # generates DenseOn query embeddings, so the old embeddinggemma /
+            # "dense" values here were inconsistent with what it actually feeds.
             wiki_profile = {
                 "type": "wiki",
-                "model": "google/embeddinggemma-300m",
-                "embedding_model": "google/embeddinggemma-300m",
-                "embedding_dims": 768,
-                "strategy": "semantic_search",
+                "embedding_model": "lightonai/DenseOn",
+                "embedding_type": "single_vector",
                 "schema_name": "wiki_pages",
-                "embedding_type": "dense",
                 "schema_config": {"embedding_dims": 768},
             }
             config_manager.add_backend_profile(
-                BackendProfileConfig.from_dict("wiki_pages", wiki_profile),
+                BackendProfileConfig.from_dict("wiki_semantic", wiki_profile),
                 tenant_id=SYSTEM_TENANT_ID,
                 service="backend",
             )
