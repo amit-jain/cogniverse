@@ -36,6 +36,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -1174,6 +1175,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def register_degraded_search_handler(app: FastAPI) -> None:
+    """Map VespaSearchDegraded from any route to a 503 with the error detail.
+
+    Search consumers (media agents, graph manager) raise it on a Vespa
+    soft-timeout; without this handler those raises surface as opaque 500s.
+    """
+    from cogniverse_agents.search.vespa_query import VespaSearchDegraded
+
+    @app.exception_handler(VespaSearchDegraded)
+    async def _degraded_search_to_503(request, exc: VespaSearchDegraded):
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+register_degraded_search_handler(app)
 
 # Include routers
 app.include_router(health.router, tags=["health"])

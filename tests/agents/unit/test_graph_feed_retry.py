@@ -88,7 +88,9 @@ class TestGetEdgeById:
         backend.get_document_fields.return_value = None
         assert _manager(backend).get_edge_by_id("nope") is None
 
-    def test_backend_error_degrades_to_none(self):
+    def test_backend_error_raises_not_none(self):
+        """An outage must not be mistaken for a missing edge."""
         backend = MagicMock()
         backend.get_document_fields.side_effect = RuntimeError("vespa down")
-        assert _manager(backend).get_edge_by_id("edge42") is None
+        with pytest.raises(RuntimeError, match="vespa down"):
+            _manager(backend).get_edge_by_id("edge42")

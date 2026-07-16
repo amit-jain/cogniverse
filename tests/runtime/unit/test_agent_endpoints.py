@@ -523,6 +523,25 @@ class TestProcessRouteDegradedMapping:
         assert resp.status_code == 503
         assert "code 12" in resp.json()["detail"]
 
+    def test_app_level_handler_maps_degraded_to_503(self):
+        """Routes without their own mapping (graph, wiki) get the app-level
+        VespaSearchDegraded -> 503 handler registered by main.py."""
+        from cogniverse_agents.search.vespa_query import VespaSearchDegraded
+        from cogniverse_runtime.main import register_degraded_search_handler
+
+        test_app = FastAPI()
+        register_degraded_search_handler(test_app)
+
+        @test_app.get("/boom")
+        async def boom():
+            raise VespaSearchDegraded("Vespa query returned errors: [code 12]")
+
+        with TestClient(test_app) as client:
+            resp = client.get("/boom")
+
+        assert resp.status_code == 503
+        assert "code 12" in resp.json()["detail"]
+
 
 @pytest.mark.unit
 class TestStreamingAgentConstruction:
