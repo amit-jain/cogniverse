@@ -157,6 +157,18 @@ class TestVespaTimestampOnPartialUpdate:
         ]
         assert fields["created_at"] == 12345
 
+    def test_numpy_supplied_created_at_honoured(self):
+        """np.int64 is not an int subclass — the timestamp gate missed numpy
+        epochs and stamped now() instead of the supplied value (back-dating,
+        re-ingest, and migration callers)."""
+        import numpy as np
+
+        client = self._memory_client()
+        fields = client.process(
+            self._doc(created_at=np.int64(12345)), operation_type="feed"
+        )["fields"]
+        assert fields["created_at"] == 12345
+
 
 @pytest.mark.unit
 class TestYqlQuote:

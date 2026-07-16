@@ -25,6 +25,16 @@ from cogniverse_vespa._vespa_factory import make_vespa_app
 from .embedding_processor import VespaEmbeddingProcessor, schema_is_single_vector
 from .strategy_aware_processor import StrategyAwareProcessor
 
+
+def _native_epoch(value):
+    """Coerce a numpy epoch scalar to native — np.int64 is not an int
+    subclass, so the isinstance timestamp gates missed numpy values and
+    stamped now() instead of the supplied epoch."""
+    import numpy as np
+
+    return value.item() if isinstance(value, np.generic) else value
+
+
 # Unix-epoch ms / s magnitude bands for sanity-checking caller stamps.
 # Anything outside [1970-01-01, 2100-01-01] is almost certainly a unit
 # confusion (seconds passed as ms, or vice versa) — reject loudly rather
@@ -333,14 +343,14 @@ class VespaPyClient:
         # the partial-assign would otherwise overwrite the original creation
         # time on every metadata-only update (e.g. mem0 memory updates).
         if "creation_timestamp" in self.schema_fields:
-            ts = doc.metadata.get("creation_timestamp")
+            ts = _native_epoch(doc.metadata.get("creation_timestamp"))
             if isinstance(ts, (int, float)) and not isinstance(ts, bool):
                 _validate_ms_timestamp(ts, "creation_timestamp")
                 fields["creation_timestamp"] = int(ts)
             elif operation_type == "feed":
                 fields["creation_timestamp"] = int(time.time() * 1000)
         elif "created_at" in self.schema_fields:
-            ts = doc.metadata.get("created_at")
+            ts = _native_epoch(doc.metadata.get("created_at"))
             if isinstance(ts, (int, float)) and not isinstance(ts, bool):
                 _validate_s_timestamp(ts, "created_at")
                 fields["created_at"] = int(ts)
