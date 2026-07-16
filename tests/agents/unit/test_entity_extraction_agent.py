@@ -669,3 +669,38 @@ class TestEntityExtractionArtifactLoading:
             entity_agent.telemetry_manager = mock_tm
             entity_agent._artifact_tenant_id = "test:unit"
             entity_agent._load_artifact()
+
+
+@pytest.mark.asyncio
+async def test_gliner_fast_path_offloaded_from_event_loop():
+    """GLiNER inference + spaCy is sync CPU-heavy work; _process_impl must run it
+    off the loop so a concurrent request isn't stalled for the extraction."""
+    import asyncio
+    import time
+
+    agent = _make_extraction_agent()
+    agent._gliner_extractor = object()  # non-None: take the fast path
+
+    def _blocking_fast_path(query):
+        time.sleep(0.3)
+        return ([Entity(text="Obama", type="PERSON", confidence=0.9)], [], "gliner")
+
+    agent._extract_fast_path = _blocking_fast_path
+
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def ticker():
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    t = asyncio.create_task(ticker())
+    await agent._process_impl(
+        EntityExtractionInput(query="tell me about Obama", tenant_id=TEST_TENANT_ID)
+    )
+    stop.set()
+    await t
+
+    assert ticks >= 10, f"only {ticks} ticks — GLiNER ran on the event loop"
