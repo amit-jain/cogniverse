@@ -18,7 +18,7 @@ from cogniverse_agents.search.vespa_query import vespa_search_children
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.models.model_loaders import get_or_load_model
-from cogniverse_core.query.encoders import ColPaliQueryEncoder
+from cogniverse_core.query.encoders import QueryEncoderFactory
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,16 @@ class ImageSearchDeps(AgentDeps):
     vespa_endpoint: str = Field("http://localhost:8080", description="Vespa endpoint")
     colpali_model: str = Field(
         "TomoroAI/tomoro-colqwen3-embed-4b", description="ColPali model name"
+    )
+    encoder_config: Any = Field(
+        None,
+        description="Merged config (ConfigUtils) supplying backend.profiles and "
+        "inference_service_urls so the query encoder routes through the deployed "
+        "sidecar. Required for search; without it encoder resolution fails loud.",
+    )
+    image_profile: str = Field(
+        "image_colpali_mv",
+        description="config.json profile for the ColPali image-search encoder",
     )
 
 
@@ -123,6 +133,8 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         self._vespa_endpoint = deps.vespa_endpoint
         self._colpali_model_name = deps.colpali_model
         self._tenant_id = deps.tenant_id
+        self._encoder_config = deps.encoder_config
+        self._image_profile = deps.image_profile
 
         # Lazy load models
         self._colpali_model = None
@@ -157,10 +169,16 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
     @property
     def query_encoder(self):
-        """Get query encoder"""
+        """ColPali image-search encoder, resolved through QueryEncoderFactory so
+        the image_profile's declared sidecar (inference_service_urls) is used.
+
+        Building a bare local ColPaliQueryEncoder here ignored the deployed
+        sidecar and raised "remote-only" for the ColQwen model in every
+        deployment; the factory picks the right encoder type and wires the URL.
+        """
         if self._query_encoder is None:
-            self._query_encoder = ColPaliQueryEncoder(
-                model_name=self._colpali_model_name
+            self._query_encoder = QueryEncoderFactory.create_encoder(
+                self._image_profile, config=self._encoder_config
             )
         return self._query_encoder
 

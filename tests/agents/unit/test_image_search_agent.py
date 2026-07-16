@@ -5,7 +5,9 @@ Tests ColPali-based image search with Vespa integration.
 """
 
 import asyncio
+import json
 import threading
+from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
@@ -17,6 +19,20 @@ from cogniverse_agents.image_search_agent import (
     ImageSearchAgent,
     ImageSearchDeps,
 )
+from cogniverse_core.query.encoders import QueryEncoderFactory
+
+_CONFIG = json.loads(Path("configs/config.json").read_text())
+_COLPALI_URL = "http://sentinel-colpali:8000"
+
+
+class _MergedConfig:
+    """ConfigUtils shape create_encoder consumes: .get('backend') + urls."""
+
+    def __init__(self, urls):
+        self.inference_service_urls = dict(urls)
+
+    def get(self, key, default=None):
+        return _CONFIG.get(key, default)
 
 
 class TestImageSearchAgent:
@@ -24,13 +40,18 @@ class TestImageSearchAgent:
 
     def setup_method(self):
         """Set up test fixtures"""
+        QueryEncoderFactory._encoder_cache.clear()
         self.agent = ImageSearchAgent(
             deps=ImageSearchDeps(
                 tenant_id="test_tenant",
                 vespa_endpoint="http://localhost:8080",
+                encoder_config=_MergedConfig({"vllm_colpali": _COLPALI_URL}),
             ),
             port=8005,
         )
+
+    def teardown_method(self):
+        QueryEncoderFactory._encoder_cache.clear()
 
     def test_initialization(self):
         """Test agent initialization"""
@@ -62,20 +83,16 @@ class TestImageSearchAgent:
         assert call_args[0] == "TomoroAI/tomoro-colqwen3-embed-4b"  # model_name
         assert "colpali_model" in call_args[1]  # config
 
-    @patch("cogniverse_core.query.encoders.get_or_load_model")
-    def test_query_encoder_initialization(self, mock_get_model):
-        """Test query encoder is initialized correctly"""
-        mock_model = MagicMock()
-        mock_processor = MagicMock()
-        mock_get_model.return_value = (mock_model, mock_processor)
-
-        # Access query_encoder property
+    def test_query_encoder_routes_through_deployed_sidecar(self):
+        """The encoder must resolve through QueryEncoderFactory so the image
+        profile's declared sidecar is used — not a bare local ColPali load that
+        raises "remote-only" for the ColQwen model in every deployment."""
         encoder = self.agent.query_encoder
 
-        # The encoder must be a concrete object exposing .model that
-        # holds the exact mock returned by the loader.
-        assert hasattr(encoder, "model")
-        assert encoder.model is mock_model
+        # Remote mode: a RemoteInferenceClient pointed at the configured URL,
+        # never a locally loaded model.
+        assert encoder._remote_client is not None
+        assert encoder._remote_client.endpoint_url == _COLPALI_URL
 
     @pytest.mark.asyncio
     @patch.object(ImageSearchAgent, "query_encoder", new_callable=PropertyMock)

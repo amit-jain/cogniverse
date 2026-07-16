@@ -21,7 +21,7 @@ from cogniverse_agents.search.vespa_query import vespa_search_children
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.models.model_loaders import get_or_load_model
-from cogniverse_core.query.encoders import ColPaliQueryEncoder
+from cogniverse_core.query.encoders import QueryEncoderFactory
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,20 @@ class DocumentAgentDeps(AgentDeps):
     vespa_endpoint: str = Field("http://localhost:8080", description="Vespa endpoint")
     colpali_model: str = Field(
         "TomoroAI/tomoro-colqwen3-embed-4b", description="ColPali model name"
+    )
+    encoder_config: Any = Field(
+        None,
+        description="Merged config (ConfigUtils) supplying backend.profiles and "
+        "inference_service_urls so query encoders route through the deployed "
+        "sidecar. Required for search; without it encoder resolution fails loud.",
+    )
+    text_profile: str = Field(
+        "document_text_semantic",
+        description="config.json profile for the ColBERT text-search encoder",
+    )
+    visual_profile: str = Field(
+        "document_visual_colpali",
+        description="config.json profile for the ColPali visual-search encoder",
     )
     enable_memory: bool = Field(False, description="Enable memory (requires Mem0)")
     memory_backend_host: Optional[str] = Field(
@@ -191,6 +205,9 @@ class DocumentAgent(
         self._vespa_endpoint = deps.vespa_endpoint
         self._colpali_model_name = deps.colpali_model
         self._tenant_id = deps.tenant_id
+        self._encoder_config = deps.encoder_config
+        self._text_profile = deps.text_profile
+        self._visual_profile = deps.visual_profile
 
         # Lazy load models
         self._colpali_model = None
@@ -228,25 +245,32 @@ class DocumentAgent(
 
     @property
     def query_encoder(self):
-        """Get ColPali query encoder for visual strategy"""
+        """ColPali visual-search encoder, resolved through QueryEncoderFactory so
+        the visual_profile's declared sidecar (inference_service_urls) is used.
+
+        Building a bare local ColPaliQueryEncoder here ignored the deployed
+        sidecar and raised "remote-only" for the ColQwen model in every
+        deployment; the factory picks the right encoder type and wires the URL.
+        """
         if self._query_encoder is None:
-            self._query_encoder = ColPaliQueryEncoder(
-                model_name=self._colpali_model_name
+            self._query_encoder = QueryEncoderFactory.create_encoder(
+                self._visual_profile, config=self._encoder_config
             )
         return self._query_encoder
 
     @property
     def text_query_encoder(self):
-        """ColBERT query encoder for the text strategy.
+        """ColBERT text-search encoder, resolved through QueryEncoderFactory.
 
-        document_text stores ColBERT per-token embeddings (LateOn, 128-d via
-        DocumentTextEmbeddingStrategy); the query must be encoded with the same
-        model to match the deployed schema's token{},v[128] tensor.
+        document_text stores ColBERT per-token embeddings (LateOn, 128-d); the
+        factory routes through the text_profile's declared embedding sidecar so
+        the query matches the deployed schema's token{},v[128] tensor instead of
+        importing pylate in-process.
         """
         if self._text_query_encoder is None:
-            from cogniverse_core.query.encoders import ColBERTQueryEncoder
-
-            self._text_query_encoder = ColBERTQueryEncoder(embedding_dim=128)
+            self._text_query_encoder = QueryEncoderFactory.create_encoder(
+                self._text_profile, config=self._encoder_config
+            )
         return self._text_query_encoder
 
     async def search_documents(

@@ -401,6 +401,14 @@ class QueryEncoderFactory:
         if service_name:
             service_urls = getattr(system_config, "inference_service_urls", {}) or {}
             inference_url = service_urls.get(service_name)
+            if not inference_url:
+                raise ValueError(
+                    f"Profile {profile!r} specifies inference_services.embedding="
+                    f"{service_name!r} but no URL is configured. Deployed services: "
+                    f"{sorted(service_urls)}. Enable inference.{service_name} in the "
+                    f"Helm values or remove the inference_services.embedding field "
+                    f"to fall back to local loading."
+                )
 
         if model_loader == "colbert":
             return _build_colbert_encoder(
