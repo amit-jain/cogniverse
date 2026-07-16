@@ -53,8 +53,12 @@ def test_lvt_schema_enables_nearest_neighbor(tmp_path):
         tmp_path,
         {
             "name": "video_videoprism_lvt_global",
-            "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
-            "rank-profiles": [_FLOAT_PROFILE],
+            "document": {
+                "fields": [{"name": "embedding", "type": "tensor<float>(x[128])"}]
+            },
+            "rank-profiles": [
+                {**_FLOAT_PROFILE, "first_phase": "closeness(field, embedding)"}
+            ],
         },
     )
 
@@ -70,8 +74,12 @@ def test_sv_schema_still_enables_nearest_neighbor(tmp_path):
         tmp_path,
         {
             "schema": "video_colpali_sv_frame",
-            "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
-            "rank-profiles": [_FLOAT_PROFILE],
+            "document": {
+                "fields": [{"name": "embedding", "type": "tensor<float>(x[128])"}]
+            },
+            "rank-profiles": [
+                {**_FLOAT_PROFILE, "first_phase": "closeness(field, embedding)"}
+            ],
         },
     )
 
@@ -275,3 +283,263 @@ def test_memo_hit_returns_a_fresh_dict_not_the_shared_one(tmp_path):
     second = extract_all_ranking_strategies(tmp_path)
     assert "INJECTED_SCHEMA" not in second, "caller mutation poisoned the memo"
     assert "s" in second
+
+
+# --------------------------------------------------------------------------- #
+# nearestNeighbor is derived structurally from the schema: the profile's first
+# phase must score against a dense 1-d embedding attribute. The previous
+# profile-NAME allowlist silently dropped ANN for any profile named outside it
+# (the wiki hybrid/semantic_search profiles ranked BM25-only with a dead
+# closeness term), while text-first profiles must stay off ANN.
+# --------------------------------------------------------------------------- #
+
+_WIKI_FIELDS = {
+    "fields": [
+        {"name": "title", "type": "string"},
+        {"name": "content", "type": "string"},
+        {"name": "embedding", "type": "tensor<float>(d0[768])"},
+    ]
+}
+
+
+def test_wiki_hybrid_profile_gets_nearestneighbor(tmp_path):
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "wiki_pages",
+            "document": _WIKI_FIELDS,
+            "rank-profiles": [
+                {
+                    "name": "hybrid",
+                    "inputs": [{"name": "query(q)", "type": "tensor<float>(d0[768])"}],
+                    "first_phase": {
+                        "expression": (
+                            "0.6 * closeness(field, embedding) "
+                            "+ 0.2 * bm25(title) + 0.2 * bm25(content)"
+                        )
+                    },
+                }
+            ],
+        },
+    )
+    s = RankingStrategyExtractor().extract_from_schema(path)["hybrid"]
+    assert s.use_nearestneighbor is True
+    assert s.nearestneighbor_field == "embedding"
+    assert s.nearestneighbor_tensor == "q"
+    assert s.needs_text_query is True
+
+
+def test_wiki_semantic_search_profile_gets_nearestneighbor(tmp_path):
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "wiki_pages",
+            "document": _WIKI_FIELDS,
+            "rank-profiles": [
+                {
+                    "name": "semantic_search",
+                    "inputs": [{"name": "query(q)", "type": "tensor<float>(d0[768])"}],
+                    "first_phase": {"expression": "closeness(field, embedding)"},
+                }
+            ],
+        },
+    )
+    s = RankingStrategyExtractor().extract_from_schema(path)["semantic_search"]
+    assert s.use_nearestneighbor is True
+    assert s.nearestneighbor_field == "embedding"
+    assert s.nearestneighbor_tensor == "q"
+
+
+_SV_FIELDS = {
+    "fields": [
+        {"name": "video_title", "type": "string"},
+        {"name": "embedding", "type": "tensor<float>(v[768])"},
+        {"name": "embedding_binary", "type": "tensor<int8>(v[96])"},
+    ]
+}
+
+
+def test_function_indirection_resolves_to_nearestneighbor(tmp_path):
+    """hybrid_float_bm25 hides closeness behind the visual_sim function."""
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "video_test_sv_chunk",
+            "document": _SV_FIELDS,
+            "rank-profiles": [
+                {
+                    "name": "hybrid_float_bm25",
+                    "inputs": [{"name": "query(qt)", "type": "tensor<float>(v[768])"}],
+                    "functions": [
+                        {
+                            "name": "visual_sim",
+                            "expression": "closeness(field, embedding)",
+                        },
+                        {"name": "text_sim", "expression": "bm25(video_title)"},
+                    ],
+                    "first_phase": "visual_sim",
+                    "second_phase": {"expression": "text_sim", "rerank_count": 100},
+                }
+            ],
+        },
+    )
+    s = RankingStrategyExtractor().extract_from_schema(path)["hybrid_float_bm25"]
+    assert s.use_nearestneighbor is True
+    assert s.nearestneighbor_field == "embedding"
+    assert s.nearestneighbor_tensor == "qt"
+
+
+def test_attribute_first_phase_uses_binary_pair(tmp_path):
+    """float_binary scores query(qt) against the unpacked binary attribute —
+    ANN retrieval must target the binary field with the binary tensor."""
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "video_test_sv_chunk",
+            "document": _SV_FIELDS,
+            "rank-profiles": [
+                {
+                    "name": "float_binary",
+                    "inputs": [
+                        {"name": "query(qtb)", "type": "tensor<int8>(v[96])"},
+                        {"name": "query(qt)", "type": "tensor<float>(v[768])"},
+                    ],
+                    "functions": [
+                        {
+                            "name": "unpack_binary_representation",
+                            "expression": "2*unpack_bits(attribute(embedding_binary)) - 1",
+                        }
+                    ],
+                    "first_phase": "sum(query(qt) * unpack_binary_representation, v)",
+                }
+            ],
+        },
+    )
+    s = RankingStrategyExtractor().extract_from_schema(path)["float_binary"]
+    assert s.use_nearestneighbor is True
+    assert s.nearestneighbor_field == "embedding_binary"
+    assert s.nearestneighbor_tensor == "qtb"
+
+
+def test_binary_first_phase_prefers_binary_tensor(tmp_path):
+    """phased retrieves by binary closeness and reranks float — ANN must pair
+    the binary field with qtb even though qt is also declared."""
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "video_test_sv_chunk",
+            "document": _SV_FIELDS,
+            "rank-profiles": [
+                {
+                    "name": "phased",
+                    "inputs": [
+                        {"name": "query(qtb)", "type": "tensor<int8>(v[96])"},
+                        {"name": "query(qt)", "type": "tensor<float>(v[768])"},
+                    ],
+                    "first_phase": "closeness(field, embedding_binary)",
+                    "second_phase": {
+                        "expression": "sum(query(qt) * unpack, v)",
+                        "rerank_count": 100,
+                    },
+                }
+            ],
+        },
+    )
+    s = RankingStrategyExtractor().extract_from_schema(path)["phased"]
+    assert s.use_nearestneighbor is True
+    assert s.nearestneighbor_field == "embedding_binary"
+    assert s.nearestneighbor_tensor == "qtb"
+
+
+def test_text_first_phase_stays_off_ann(tmp_path):
+    """hybrid_bm25_binary retrieves by text and reranks by vector — retrieval
+    must stay text-driven, not switch to ANN."""
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "video_test_sv_chunk",
+            "document": _SV_FIELDS,
+            "rank-profiles": [
+                {
+                    "name": "hybrid_bm25_binary",
+                    "inputs": [{"name": "query(qtb)", "type": "tensor<int8>(v[96])"}],
+                    "functions": [
+                        {
+                            "name": "visual_sim",
+                            "expression": "closeness(field, embedding_binary)",
+                        },
+                        {"name": "text_sim", "expression": "bm25(video_title)"},
+                    ],
+                    "first_phase": "text_sim",
+                    "second_phase": {"expression": "visual_sim", "rerank_count": 100},
+                }
+            ],
+        },
+    )
+    s = RankingStrategyExtractor().extract_from_schema(path)["hybrid_bm25_binary"]
+    assert s.use_nearestneighbor is False
+
+
+def test_mapped_tensor_field_never_ann(tmp_path):
+    """Multi-vector (mapped) embedding fields cannot be ANN targets, whatever
+    the profile is named."""
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "code_lateon_mv",
+            "document": {
+                "fields": [
+                    {
+                        "name": "embedding",
+                        "type": "tensor<float>(patch{}, v[48])",
+                    }
+                ]
+            },
+            "rank-profiles": [
+                {
+                    "name": "float_float",
+                    "inputs": [
+                        {
+                            "name": "query(qt)",
+                            "type": "tensor<float>(querytoken{}, v[48])",
+                        }
+                    ],
+                    "functions": [
+                        {
+                            "name": "max_sim",
+                            "expression": (
+                                "sum(reduce(sum(query(qt) * attribute(embedding), v),"
+                                " max, patch), querytoken)"
+                            ),
+                        }
+                    ],
+                    "first_phase": "max_sim",
+                }
+            ],
+        },
+    )
+    s = RankingStrategyExtractor().extract_from_schema(path)["float_float"]
+    assert s.use_nearestneighbor is False
+
+
+def test_substring_text_in_name_does_not_classify_text(tmp_path):
+    """A profile whose NAME merely embeds the letters 'text' (context_boost)
+    but ranks purely by closeness must stay PURE_VISUAL."""
+    from cogniverse_vespa.ranking_strategy_extractor import SearchStrategyType
+
+    path = _write_schema(
+        tmp_path,
+        {
+            "name": "video_test_sv_chunk",
+            "document": _SV_FIELDS,
+            "rank-profiles": [
+                {
+                    "name": "context_boost",
+                    "inputs": [{"name": "query(qt)", "type": "tensor<float>(v[768])"}],
+                    "first_phase": "closeness(field, embedding)",
+                }
+            ],
+        },
+    )
+    s = RankingStrategyExtractor().extract_from_schema(path)["context_boost"]
+    assert s.strategy_type is SearchStrategyType.PURE_VISUAL

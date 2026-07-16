@@ -5,15 +5,27 @@ Extracts ranking profile configurations from schema JSON files for use by search
 
 import json
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from cogniverse_vespa.embedding_processor import _is_single_vector_schema
-
 logger = logging.getLogger(__name__)
+
+# A dense 1-d indexed tensor (ANN-capable attribute) — mapped/multi-dim
+# tensors (multi-vector patch embeddings) never match.
+_DENSE_TENSOR_TYPE_RE = re.compile(
+    r"^tensor<(?P<cell>float|bfloat16|double|int8)>\(\s*\w+\[\d+\]\s*\)$"
+)
+
+
+def _dense_cell_type(field_type: str) -> Optional[str]:
+    """Cell type of a dense 1-d indexed tensor field, else None."""
+    m = _DENSE_TENSOR_TYPE_RE.match((field_type or "").strip())
+    return m.group("cell") if m else None
+
 
 # Memoize the per-directory extraction: the schema JSONs are static config, so
 # re-globbing and re-parsing ~21 files on every /search/strategies call (and
@@ -68,7 +80,6 @@ class RankingStrategyExtractor:
             schema_json = json.load(f)
 
         schema_name = schema_json.get("schema", schema_json.get("name", ""))
-        is_single_vector = _is_single_vector_schema(schema_name)
 
         fields = {f["name"]: f for f in schema_json["document"]["fields"]}
 
@@ -77,9 +88,7 @@ class RankingStrategyExtractor:
         for profile in schema_json.get(
             "rank-profiles", schema_json.get("rank_profiles", [])
         ):
-            strategy_info = self._parse_ranking_profile(
-                profile, fields, is_single_vector, schema_name
-            )
+            strategy_info = self._parse_ranking_profile(profile, fields, schema_name)
             strategies[strategy_info.name] = strategy_info
 
         return strategies
@@ -88,7 +97,6 @@ class RankingStrategyExtractor:
         self,
         profile: Dict[str, Any],
         fields: Dict[str, Dict],
-        is_single_vector: bool,
         schema_name: str,
     ) -> RankingStrategyInfo:
         """Parse a single ranking profile"""
@@ -118,7 +126,9 @@ class RankingStrategyExtractor:
             "bm25" in profile_name.lower()
             or "bm25(" in first_phase_expr
             or "userInput" in first_phase_expr
-            or "text" in profile_name.lower()
+            # Token match — a bare substring test classified any name merely
+            # embedding the letters (e.g. "context_boost") as text-seeking.
+            or "text" in profile_name.lower().split("_")
         )
 
         if needs_text_query and not (needs_float_embeddings or needs_binary_embeddings):
@@ -130,40 +140,36 @@ class RankingStrategyExtractor:
         else:
             strategy_type = SearchStrategyType.HYBRID
 
-        # Single-vector schemas use nearestNeighbor for ANN search; multi-vector
-        # patch-based schemas use MaxSim over all patches instead.
+        # nearestNeighbor (ANN) is derived structurally: the profile's FIRST
+        # phase must score against a dense 1-d embedding attribute (directly
+        # via closeness/attribute or through a profile function). The previous
+        # profile-NAME allowlist silently dropped ANN for any profile named
+        # outside it — the wiki hybrid/semantic_search profiles ranked
+        # BM25-only with a dead closeness term. Multi-vector (mapped) fields
+        # never match; text-first profiles (bm25 first phase with a vector
+        # second phase) correctly stay off ANN.
         use_nearestneighbor = False
         nearestneighbor_field = None
         nearestneighbor_tensor = None
 
-        if is_single_vector and strategy_type in [
+        if strategy_type in [
             SearchStrategyType.PURE_VISUAL,
             SearchStrategyType.HYBRID,
         ]:
-            if profile_name in [
-                "float_float",
-                "binary_binary",
-                "float_binary",
-                "phased",
-                "hybrid_float_bm25",
-                "hybrid_binary_bm25",
-            ]:
-                use_nearestneighbor = True
-
-                if profile_name == "float_float":
-                    nearestneighbor_field = "embedding"
-                    nearestneighbor_tensor = "qt"
-                elif profile_name in ["binary_binary", "phased"]:
-                    nearestneighbor_field = "embedding_binary"
-                    nearestneighbor_tensor = "qtb"
-                elif "qt" in inputs and not (
-                    "qtb" in inputs and "binary" in profile_name
-                ):
-                    nearestneighbor_field = "embedding"
-                    nearestneighbor_tensor = "qt"
-                elif "qtb" in inputs:
-                    nearestneighbor_field = "embedding_binary"
-                    nearestneighbor_tensor = "qtb"
+            ann_field = self._first_phase_embedding_field(profile)
+            cell = (
+                _dense_cell_type(fields.get(ann_field, {}).get("type", ""))
+                if ann_field
+                else None
+            )
+            if cell is not None:
+                want_int8 = cell == "int8"
+                for input_name, input_type in inputs.items():
+                    if ("int8" in input_type) == want_int8:
+                        use_nearestneighbor = True
+                        nearestneighbor_field = ann_field
+                        nearestneighbor_tensor = input_name
+                        break
 
         query_tensor_name = None
 
@@ -212,6 +218,43 @@ class RankingStrategyExtractor:
             query_tensors_needed=query_tensors_needed,
             schema_name=schema_name,
         )
+
+    def _first_phase_embedding_field(self, profile: Dict[str, Any]) -> Optional[str]:
+        """Embedding attribute the FIRST phase scores against, or None.
+
+        Resolves profile-function indirection (``first_phase: visual_sim``
+        with ``visual_sim = closeness(field, embedding)``) by substituting
+        function bodies, then extracts the closeness/attribute reference.
+        Only the first phase matters — it drives retrieval; a second-phase
+        vector rerank on top of a bm25 first phase must not switch retrieval
+        to ANN.
+        """
+        functions = {
+            f.get("name", ""): f.get("expression", "")
+            for f in profile.get("functions", [])
+        }
+        first_phase = profile.get("first_phase", profile.get("first-phase", ""))
+        if isinstance(first_phase, dict):
+            expr = first_phase.get("expression", "")
+        else:
+            expr = str(first_phase or "")
+
+        for _ in range(4):  # bounded function-indirection depth
+            expanded = expr
+            for name, body in functions.items():
+                if name:
+                    expanded = re.sub(rf"\b{re.escape(name)}\b", f"({body})", expanded)
+            if expanded == expr:
+                break
+            expr = expanded
+
+        m = re.search(r"closeness\(field,\s*(\w+)\)", expr)
+        if m:
+            return m.group(1)
+        m = re.search(r"attribute\((\w+)\)", expr)
+        if m:
+            return m.group(1)
+        return None
 
     def _extract_embedding_field(
         self, profile: Dict[str, Any], query_tensor_name: str | None

@@ -122,6 +122,16 @@ def test_wiki_search_returns_a_fed_page(wiki_manager):
         f"search did not surface the ColPali page; got {results!r}"
     )
 
+    # Semantic recall: the hybrid profile emits nearestNeighbor, so a page is
+    # retrievable on embedding closeness alone (the fixed embedder makes every
+    # page maximally close). With the dead-closeness ranking this query had
+    # zero lexical overlap -> zero hits and 0.0 scores.
+    semantic_hits = mgr.search("zzz gibberish nonlexical", top_k=5)
+    assert semantic_hits, "nearestNeighbor did not fire — no semantic recall"
+    assert semantic_hits[0]["score"] >= 0.5, (
+        f"closeness term is dead; hybrid score {semantic_hits[0]['score']}"
+    )
+
     # Index + lint enumerate the fed pages. The rebuild inside save_session
     # ran before Vespa made the feeds searchable, so rebuild again now that
     # visibility has settled — this pins the enumerate -> render -> feed loop
