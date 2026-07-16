@@ -75,6 +75,44 @@ class SearchResponse(BaseModel):
     session_id: Optional[str] = None
 
 
+def _resolve_service_and_profile(
+    tenant_id: str,
+    requested_profile: Optional[str],
+    config_manager: ConfigManager,
+    schema_loader: SchemaLoader,
+) -> tuple[SearchService, str]:
+    """Build the config-backed SearchService and resolve the search profile.
+
+    Runs the ConfigUtils ensure-chain (system + routing + telemetry + backend
+    config reads — synchronous Vespa/file I/O) and the profile lookup, so
+    callers offload it via ``asyncio.to_thread`` to keep the loop free.
+
+    Profile resolution: request wins, else ``active_video_profile``, else the
+    first registered backend profile. No silent "default" string fallback —
+    the string "default" isn't a valid profile.
+    """
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    search_service = SearchService(
+        config=config,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+    profile = requested_profile or config.get("active_video_profile")
+    if not profile:
+        profiles_dict = config.get("backend", {}).get("profiles", {}) or {}
+        if profiles_dict:
+            profile = next(iter(profiles_dict))
+    if not profile:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No profile specified on the request and no "
+                "active_video_profile configured on the runtime."
+            ),
+        )
+    return search_service, profile
+
+
 @router.post("/", response_model=None)
 async def search(
     request: SearchRequest,
@@ -121,30 +159,15 @@ async def search(
 
     with context_manager as span:
         try:
-            config = get_config(tenant_id=tenant_id, config_manager=config_manager)
-
-            # Create profile-agnostic search service
-            search_service = SearchService(
-                config=config,
-                config_manager=config_manager,
-                schema_loader=schema_loader,
+            # Config ensure-chain (sync Vespa reads) + service construction run
+            # off the loop; the search itself is offloaded below.
+            search_service, profile = await asyncio.to_thread(
+                _resolve_service_and_profile,
+                tenant_id,
+                request.profile,
+                config_manager,
+                schema_loader,
             )
-            # Resolve profile: request wins, else config.active_video_profile,
-            # else the first registered backend profile.  No silent "default"
-            # string fallback — the string "default" isn't a valid profile.
-            profile = request.profile or config.get("active_video_profile")
-            if not profile:
-                profiles_dict = config.get("backend", {}).get("profiles", {}) or {}
-                if profiles_dict:
-                    profile = next(iter(profiles_dict))
-            if not profile:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "No profile specified on the request and no "
-                        "active_video_profile configured on the runtime."
-                    ),
-                )
 
             if request.stream:
                 # Streaming response
@@ -244,26 +267,14 @@ async def list_strategies(
     tenant and resolves the profile the same way ``POST /search`` does. The
     returned names can be passed straight to the ``strategy`` field.
     """
-    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
-    search_service = SearchService(
-        config=config,
-        config_manager=config_manager,
-        schema_loader=schema_loader,
+    # Config ensure-chain + service construction run off the loop.
+    search_service, resolved = await asyncio.to_thread(
+        _resolve_service_and_profile,
+        tenant_id,
+        profile,
+        config_manager,
+        schema_loader,
     )
-
-    resolved = profile or config.get("active_video_profile")
-    if not resolved:
-        profiles_dict = config.get("backend", {}).get("profiles", {}) or {}
-        if profiles_dict:
-            resolved = next(iter(profiles_dict))
-    if not resolved:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "No profile specified and no active_video_profile configured "
-                "on the runtime."
-            ),
-        )
 
     try:
         # The first extraction globs+parses the schema JSONs (memoized after);

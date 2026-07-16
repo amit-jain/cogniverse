@@ -311,3 +311,51 @@ async def test_tenant_clear_memories_offloaded(monkeypatch):
         lambda: tenant.clear_memories("acme:acme", category=None)
     )
     assert ticks >= 10, f"only {ticks} ticks — clear_agent_memory ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_search_route_offloads_config_resolution(monkeypatch):
+    """POST /search resolves the ConfigUtils ensure-chain (system + routing +
+    telemetry + backend config reads) and builds the SearchService off the
+    loop. A cold config read does synchronous Vespa I/O; run inline it stalled
+    every concurrent request before the already-offloaded search even began."""
+    from contextlib import contextmanager
+
+    from cogniverse_runtime.routers import search as search_router
+
+    async def _noop_tenant(tenant_id):
+        return None
+
+    monkeypatch.setattr(search_router, "assert_tenant_exists", _noop_tenant)
+
+    @contextmanager
+    def _noop_span(*a, **k):
+        yield MagicMock()
+
+    tm = MagicMock()
+    tm.span = _noop_span
+    tm.session_span = _noop_span
+    monkeypatch.setattr(search_router, "get_telemetry_manager", lambda: tm)
+
+    def _slow_get(*a, **k):
+        time.sleep(0.3)  # cold ConfigUtils ensure-chain read
+        return "video_profile"
+
+    slow_config = MagicMock()
+    slow_config.get = _slow_get
+    monkeypatch.setattr(search_router, "get_config", lambda **k: slow_config)
+
+    svc = MagicMock()
+    svc.search.return_value = []
+    monkeypatch.setattr(search_router, "SearchService", lambda **k: svc)
+
+    req = search_router.SearchRequest(query="q", tenant_id="acme:acme")
+    ticks = await _ticks_during(
+        lambda: search_router.search(
+            req, config_manager=MagicMock(), schema_loader=MagicMock()
+        )
+    )
+    assert ticks >= 10, (
+        f"only {ticks} ticks during a 0.3s config resolution — the ConfigUtils "
+        "ensure-chain ran on the event loop"
+    )
