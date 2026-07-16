@@ -418,34 +418,32 @@ def _make_mock_result(
     page_type: str = "topic",
     updated_at: str = "2026-04-05T00:00:00+00:00",
     cross_references: str = "[]",
-) -> MagicMock:
-    """Build a mock backend search result."""
-    result = MagicMock()
-    doc = MagicMock()
-    doc.text_content = content
-    doc.metadata = {
+) -> dict:
+    """Build a wiki page field dict as the page enumeration returns it."""
+    return {
         "doc_id": doc_id,
         "title": title,
+        "content": content,
         "page_type": page_type,
         "updated_at": updated_at,
         "cross_references": cross_references,
     }
-    result.document = doc
-    return result
 
 
 @pytest.mark.unit
 class TestWikiLint:
-    def _make_manager(self, search_results):
+    def _make_manager(self, pages):
         from cogniverse_agents.wiki.wiki_manager import WikiManager
 
-        backend = MagicMock()
-        backend.search.return_value = search_results
-        return WikiManager(
-            backend=backend,
+        mgr = WikiManager(
+            backend=MagicMock(),
             tenant_id="acme:production",
             schema_name="wiki_pages_acme_production",
         )
+        # Lint's classification logic is under test here; the enumeration
+        # transport itself is pinned by TestWikiPageEnumeration.
+        mgr._list_pages = lambda top_k=500: pages
+        return mgr
 
     def test_detects_empty_pages(self):
         results = [
@@ -634,3 +632,174 @@ def test_get_document_http_treats_empty_fields_as_absent():
 
     backend.get_document_fields.return_value = None
     assert mgr._get_document_http("wiki_topic_gone") is None
+
+
+def _wired_manager(backend=None):
+    from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+    if backend is None:
+        backend = MagicMock()
+    backend._url = "http://x"
+    backend._port = 8080
+    return WikiManager(backend=backend, tenant_id="t:t", schema_name="wiki_pages_t")
+
+
+class _PagesResponse:
+    """HTTP 200 /search/ body listing wiki pages as unranked children."""
+
+    status_code = 200
+    text = "ok"
+
+    def __init__(self, fields_list):
+        self._fields = fields_list
+
+    def json(self):
+        return {"root": {"children": [{"fields": f} for f in self._fields]}}
+
+
+_TOPIC = {
+    "doc_id": "wiki_topic_t_t_colpali",
+    "page_type": "topic",
+    "title": "ColPali",
+    "slug": "colpali",
+    "content": "ColPali is a late-interaction visual document retrieval model.",
+    "cross_references": "[]",
+    "updated_at": "2099-01-01T00:00:00+00:00",
+}
+_SESSION = {
+    "doc_id": "wiki_session_t_t_abc",
+    "page_type": "session",
+    "title": "Session — what is colpali",
+    "slug": "session_abc",
+    "content": "Discussed ColPali retrieval.",
+    "cross_references": "[]",
+    "updated_at": "2099-01-01T00:00:00+00:00",
+}
+_INDEX = {
+    "doc_id": "wiki_index_t_t",
+    "page_type": "index",
+    "title": "Wiki Index — t:t",
+    "slug": "wiki_index",
+    "content": "# Wiki Index — t:t",
+    "cross_references": "[]",
+    "updated_at": "2099-01-01T00:00:00+00:00",
+}
+
+
+@pytest.mark.unit
+class TestWikiPageEnumeration:
+    """Index rebuild and lint enumerate pages with an unranked filtered query —
+    the previous ranked semantic_search-without-embeddings always failed encoder
+    resolution and was swallowed, so the index and lint reported zero pages."""
+
+    def test_rebuild_index_lists_pages_without_embeddings(self, monkeypatch):
+        calls = {}
+
+        def fake_post(endpoint, params, timeout=10.0):
+            calls["params"] = params
+            return _PagesResponse([_TOPIC, _SESSION, _INDEX])
+
+        monkeypatch.setattr(
+            "cogniverse_agents.search.vespa_query.vespa_search_post", fake_post
+        )
+        backend = MagicMock()
+        mgr = _wired_manager(backend)
+        mgr._rebuild_index()
+
+        assert calls["params"]["ranking"] == "unranked"
+        assert not any(k.startswith("input.query") for k in calls["params"])
+        assert 'tenant_id contains "t:t"' in calls["params"]["yql"]
+
+        fed = backend.put_document_fields.call_args
+        content = fed.args[1]["content"]
+        assert "- **ColPali**" in content
+        assert "Session — what is colpali" in content
+        assert "_No topics yet._" not in content
+        # The index document must not list itself as a page.
+        assert "- **Wiki Index" not in content
+
+    def test_lint_counts_pages_via_enumeration(self, monkeypatch):
+        monkeypatch.setattr(
+            "cogniverse_agents.search.vespa_query.vespa_search_post",
+            lambda *a, **k: _PagesResponse([_TOPIC, _SESSION, _INDEX]),
+        )
+        report = _wired_manager().lint()
+
+        assert report["total_pages"] == 3
+        # The topic is unreferenced by the session -> exactly one orphan.
+        assert [o["doc_id"] for o in report["orphan_pages"]] == [
+            "wiki_topic_t_t_colpali"
+        ]
+        assert report["stale_pages"] == []
+        assert report["empty_pages"] == []
+        assert report["issues_found"] == 1
+
+    def test_lint_raises_on_outage(self, monkeypatch):
+        import requests
+
+        def refuse(*a, **k):
+            raise requests.ConnectionError("refused")
+
+        monkeypatch.setattr(
+            "cogniverse_agents.search.vespa_query.vespa_search_post", refuse
+        )
+        with pytest.raises(requests.ConnectionError):
+            _wired_manager().lint()
+
+
+@pytest.mark.unit
+class TestWikiFailureContract:
+    """Wiki reads and writes surface backend failures — a down Vespa previously
+    read as saved/empty/healthy (save returned a WikiPage having persisted
+    nothing; search -> []; get_topic -> None; lint -> zero-issue report)."""
+
+    def _patch_embedder(self, monkeypatch):
+        import numpy as np
+
+        monkeypatch.setattr(
+            "cogniverse_core.common.models.semantic_embedder.get_semantic_embedder",
+            lambda *a, **k: MagicMock(
+                encode=lambda text, is_query=False: np.zeros(768, np.float32)
+            ),
+        )
+
+    def test_save_session_raises_when_feed_fails(self, monkeypatch):
+        self._patch_embedder(monkeypatch)
+        backend = MagicMock()
+        backend.put_document_fields.side_effect = ConnectionError("refused")
+        mgr = _wired_manager(backend)
+        with pytest.raises(ConnectionError):
+            mgr.save_session(
+                query="q", response="r", entities=[], agent_name="search_agent"
+            )
+
+    def test_search_raises_on_outage(self, monkeypatch):
+        self._patch_embedder(monkeypatch)
+        backend = MagicMock()
+        backend.search.side_effect = RuntimeError("vespa down")
+        mgr = _wired_manager(backend)
+        with pytest.raises(RuntimeError, match="vespa down"):
+            mgr.search("colpali")
+
+    def test_search_query_dict_has_no_schema_key(self, monkeypatch):
+        self._patch_embedder(monkeypatch)
+        backend = MagicMock()
+        backend.search.return_value = []
+        mgr = _wired_manager(backend)
+        mgr.search("colpali")
+        query_dict = backend.search.call_args.args[0]
+        assert "schema" not in query_dict
+        assert query_dict["type"] == "wiki"
+        assert query_dict["strategy"] == "hybrid"
+
+    def test_get_topic_outage_raises_not_none(self):
+        backend = MagicMock()
+        backend.get_document_fields.side_effect = ConnectionError("refused")
+        mgr = _wired_manager(backend)
+        with pytest.raises(ConnectionError):
+            mgr.get_topic("colpali")
+
+    def test_get_index_missing_returns_none(self):
+        backend = MagicMock()
+        backend.get_document_fields.return_value = None
+        assert _wired_manager(backend).get_index() is None

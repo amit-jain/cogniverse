@@ -121,3 +121,20 @@ def test_wiki_search_returns_a_fed_page(wiki_manager):
     assert "colpali" in blob, (
         f"search did not surface the ColPali page; got {results!r}"
     )
+
+    # Index + lint enumerate the fed pages. The rebuild inside save_session
+    # ran before Vespa made the feeds searchable, so rebuild again now that
+    # visibility has settled — this pins the enumerate -> render -> feed loop
+    # (which previously failed encoder resolution and reported zero pages).
+    mgr._rebuild_index()
+    index_md = mgr.get_index()
+    assert index_md is not None
+    assert "- **ColPali**" in index_md
+    assert "- **Whisper**" in index_md
+    assert "_No topics yet._" not in index_md
+
+    time.sleep(2)
+    report = mgr.lint()
+    assert report["total_pages"] == 5  # 2 topics + 2 sessions + 1 index
+    assert report["orphan_pages"] == []  # both topics are cross-referenced
+    assert report["issues_found"] == 0
