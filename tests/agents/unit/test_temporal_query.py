@@ -21,6 +21,17 @@ class TestExtractTimeRange:
         assert start == _NOW - timedelta(days=30)
         assert end == _NOW
 
+    def test_huge_relative_window_clamps_instead_of_overflowing(self):
+        # "last 3000 years" -> 1,095,000 days would underflow past datetime.min;
+        # "last 9999999999 days" would overflow timedelta (max 999999999 days).
+        # Both must clamp to the earliest representable instant, not raise
+        # OverflowError (which the search route surfaced as a 500).
+        for query in ("fossils from the last 3000 years", "the last 9999999999 days"):
+            start, end = extract_time_range(query, now=_NOW)
+            assert end == _NOW
+            assert start.year == 1  # clamped to datetime.min
+            assert start < end
+
     def test_explicit_year(self):
         start, end = extract_time_range("footage from 2023", now=_NOW)
         assert start == datetime(2023, 1, 1, tzinfo=timezone.utc)
