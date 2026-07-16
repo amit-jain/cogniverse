@@ -629,7 +629,10 @@ class VideoIngestionPipeline:
         if not cached:
             return None
         metadata, images = cached if isinstance(cached, tuple) else (cached, {})
-        self._rehydrate_keyframe_images(video_path, metadata, images)
+        # cv2.imwrite re-encodes every frame back to this pod's disk — off loop.
+        await asyncio.to_thread(
+            self._rehydrate_keyframe_images, video_path, metadata, images
+        )
         return metadata
 
     async def set_cached_keyframes(
@@ -638,7 +641,8 @@ class VideoIngestionPipeline:
         if not self.cache or not keyframes_metadata:
             return
         self._ensure_frame_ids(keyframes_metadata)
-        images = self._load_keyframe_images(keyframes_metadata)
+        # cv2.imread decodes every frame from disk — keep it off the loop.
+        images = await asyncio.to_thread(self._load_keyframe_images, keyframes_metadata)
         await self.cache.set_keyframes(
             str(video_path),
             keyframes_metadata,
