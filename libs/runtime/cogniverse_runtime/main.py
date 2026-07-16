@@ -1168,6 +1168,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if lifecycle_scheduler is not None:
         await lifecycle_scheduler.stop()
     await queue_manager.stop_cleanup_loop()
+    # Tear down pooled OpenShell sessions so a restart doesn't orphan one live
+    # gateway container per agent_type. close() does gateway RPCs — off the loop.
+    try:
+        await asyncio.to_thread(sandbox_manager.close)
+    except Exception as exc:
+        logger.warning("SandboxManager close failed during shutdown: %s", exc)
     logger.info("Cogniverse Runtime shut down successfully")
 
 
