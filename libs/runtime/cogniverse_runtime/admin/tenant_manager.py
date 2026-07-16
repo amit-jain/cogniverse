@@ -622,27 +622,36 @@ async def list_organizations_internal() -> List[str]:
     Lives next to ``list_tenants_for_org_internal`` so callers that need
     a global tenant sweep (e.g. the daily-cleanup CronWorkflow) can
     enumerate without going through the FastAPI HTTPException-raising
-    route. Returns an empty list rather than raising on backend error
-    so a single bad organization document does not crash the sweep.
+    route. Raises 503 on a backend outage rather than returning [] — an
+    empty list read as "no orgs" let the cleanup cron report success while
+    doing nothing (memories never expire). A malformed org document is
+    skipped by the ``org_id`` filter, not swallowed as a whole-sweep empty.
     """
+    backend = get_backend()
     try:
-        backend = get_backend()
         documents = backend.query_metadata_documents(
             schema="organization_metadata",
             yql="select * from organization_metadata where true",
             hits=400,
         )
-        return [fields["org_id"] for fields in documents if fields.get("org_id")]
     except Exception as e:
         logger.error(f"Failed to list organizations: {e}")
-        return []
+        raise HTTPException(
+            status_code=503, detail="Organization registry temporarily unavailable"
+        )
+    return [fields["org_id"] for fields in documents if fields.get("org_id")]
 
 
 async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
-    """Internal helper to list tenants"""
-    try:
-        backend = get_backend()
+    """Internal helper to list tenants.
 
+    Raises 503 on a backend outage rather than returning [] — an empty list
+    read as "no tenants" let the per-org cleanup cron report success while
+    processing nothing.
+    """
+    backend = get_backend()
+
+    try:
         # Query tenants for this org using term matching in userQuery
         documents = backend.query_metadata_documents(
             schema="tenant_metadata",
@@ -650,10 +659,16 @@ async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
             query=f"org_id:{org_id}",
             hits=400,
         )
+    except Exception as e:
+        logger.error(f"Failed to list tenants for {org_id}: {e}")
+        raise HTTPException(
+            status_code=503, detail="Tenant registry temporarily unavailable"
+        )
 
-        tenants = []
-        for fields in documents:
-            tenant = Tenant(
+    tenants = []
+    for fields in documents:
+        tenants.append(
+            Tenant(
                 tenant_full_id=fields.get("tenant_full_id"),
                 org_id=fields.get("org_id"),
                 tenant_name=fields.get("tenant_name"),
@@ -662,13 +677,9 @@ async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
                 status=fields.get("status", "active"),
                 schemas_deployed=fields.get("schemas_deployed", []),
             )
-            tenants.append(tenant)
+        )
 
-        return tenants
-
-    except Exception as e:
-        logger.error(f"Failed to list tenants for {org_id}: {e}")
-        return []
+    return tenants
 
 
 @router.get("/tenants/{tenant_full_id}", response_model=Tenant)

@@ -73,3 +73,45 @@ async def test_assert_tenant_exists_surfaces_503_not_404_on_outage(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await tenant_utils.assert_tenant_exists(tid)
     assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_list_organizations_internal_raises_on_outage(monkeypatch):
+    """A whole-sweep [] on outage let the cleanup cron report success while
+    doing nothing — it must raise so the cron fails loudly instead."""
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.query_metadata_documents.side_effect = RuntimeError("Vespa 503")
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    with pytest.raises(HTTPException) as exc:
+        await tm.list_organizations_internal()
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_list_tenants_for_org_internal_raises_on_outage(monkeypatch):
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.query_metadata_documents.side_effect = RuntimeError("Vespa 503")
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    with pytest.raises(HTTPException) as exc:
+        await tm.list_tenants_for_org_internal("acme")
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_list_tenants_for_org_internal_returns_tenants_on_success(monkeypatch):
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.query_metadata_documents.return_value = [
+        {"tenant_full_id": "acme:prod", "org_id": "acme", "tenant_name": "prod"},
+    ]
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    tenants = await tm.list_tenants_for_org_internal("acme")
+    assert [t.tenant_full_id for t in tenants] == ["acme:prod"]
