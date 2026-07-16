@@ -2067,6 +2067,16 @@ class TestDateFilter:
         with pytest.raises(ValueError):
             SearchAgent._build_date_filter("not-a-date", None)
 
+    def test_epoch_seconds_int_is_coerced_to_milliseconds(self):
+        # 1704067200 s (2024-01-01) must become 1704067200000 ms, not be treated
+        # as ms (which would land the bound near 1970 and empty the filter).
+        f = SearchAgent._build_date_filter(1704067200, 1706659200)
+        assert f == {"creation_timestamp": {"gte": 1704067200000, "lte": 1706659200000}}
+
+    def test_epoch_milliseconds_int_passes_through(self):
+        f = SearchAgent._build_date_filter(1704067200000, None)
+        assert f == {"creation_timestamp": {"gte": 1704067200000}}
+
 
 @pytest.mark.unit
 class TestDspyConfidenceGate:
