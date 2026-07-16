@@ -39,8 +39,10 @@ def test_videoprism_is_global_token_match(model_name, expected):
 @pytest.fixture(autouse=True)
 def _reset_encoder_cache():
     QueryEncoderFactory._encoder_cache.clear()
+    QueryEncoderFactory._encoder_key_locks.clear()
     yield
     QueryEncoderFactory._encoder_cache.clear()
+    QueryEncoderFactory._encoder_key_locks.clear()
 
 
 def _build_system_config(
@@ -295,3 +297,50 @@ def test_cache_key_separates_profiles_with_same_model_different_routing(mock_get
     assert encoder_a is not encoder_b
     assert encoder_a.get_embedding_dim() == 128
     assert encoder_b.get_embedding_dim() == 64
+
+
+def test_concurrent_cold_start_builds_one_encoder_per_key():
+    """8 threads asking for the same key concurrently must trigger exactly ONE
+    construction and all receive the same instance. Unlocked get-then-set spanned
+    the multi-GB model build, so concurrent cold starts each built a duplicate."""
+    import threading
+    import time
+
+    profile_body = {
+        "embedding_model": "lightonai/Reason-ModernColBERT",
+        "model_loader": "colbert",
+        "schema_config": {"embedding_dim": 128},
+    }
+    config = _build_system_config("document_text_semantic", profile_body)
+
+    build_count = 0
+    count_lock = threading.Lock()
+
+    def _slow_build(model_name, profile, profile_config, system_config):
+        nonlocal build_count
+        with count_lock:
+            build_count += 1
+        time.sleep(0.3)  # the model-load window the race spanned
+        return MagicMock()
+
+    results = []
+    with patch.object(
+        QueryEncoderFactory, "_create_encoder_instance", staticmethod(_slow_build)
+    ):
+
+        def _worker():
+            results.append(
+                QueryEncoderFactory.create_encoder(
+                    profile="document_text_semantic", config=config
+                )
+            )
+
+        threads = [threading.Thread(target=_worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert build_count == 1, f"built {build_count} encoders, expected exactly 1"
+    assert len(results) == 8
+    assert all(r is results[0] for r in results), "threads got different instances"
