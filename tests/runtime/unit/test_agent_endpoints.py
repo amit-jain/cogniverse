@@ -472,6 +472,57 @@ class TestModalitySearchDispatchSerialization:
         assert result["results"][0]["document_id"] == "doc1"
         assert result["results"][0]["title"] == "Doc One"
 
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_document_dispatch_propagates_degraded(self, dispatcher, monkeypatch):
+        """A Vespa soft-timeout raised by the agent must reach dispatch callers —
+        the dispatcher must not flatten it into a success-shaped empty result."""
+        from cogniverse_agents.search.vespa_query import VespaSearchDegraded
+
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
+        stub = MagicMock()
+        stub.search_documents = AsyncMock(
+            side_effect=VespaSearchDegraded("Vespa query returned errors: [code 12]")
+        )
+        monkeypatch.setattr(
+            "cogniverse_agents.document_agent.DocumentAgent", lambda *a, **k: stub
+        )
+
+        with pytest.raises(VespaSearchDegraded, match="code 12"):
+            await dispatcher._execute_document_search_task("report", "acme:prod", 5)
+
+
+@pytest.mark.unit
+class TestProcessRouteDegradedMapping:
+    """POST /agents/{name}/process maps VespaSearchDegraded to 503, not a bare 500."""
+
+    def test_process_route_maps_degraded_to_503(self, monkeypatch):
+        from cogniverse_agents.search.vespa_query import VespaSearchDegraded
+
+        stub_dispatcher = MagicMock()
+        stub_dispatcher.dispatch = AsyncMock(
+            side_effect=VespaSearchDegraded("Vespa query returned errors: [code 12]")
+        )
+        monkeypatch.setattr(
+            agents_router, "_ensure_dispatcher", lambda: stub_dispatcher
+        )
+
+        test_app = FastAPI()
+        test_app.include_router(agents_router.router, prefix="/agents")
+        with TestClient(test_app) as client:
+            resp = client.post(
+                "/agents/document_agent/process",
+                json={
+                    "agent_name": "document_agent",
+                    "query": "quarterly report",
+                    "context": {"tenant_id": "acme:prod"},
+                },
+            )
+
+        assert resp.status_code == 503
+        assert "code 12" in resp.json()["detail"]
+
 
 @pytest.mark.unit
 class TestStreamingAgentConstruction:

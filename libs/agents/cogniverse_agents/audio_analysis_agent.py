@@ -261,8 +261,10 @@ class AudioAnalysisAgent(
             return results
 
         except Exception as e:
+            # Surface the failure (degraded Vespa, outage, sidecar error) —
+            # returning [] here made every backend failure read as "no results".
             logger.error(f"❌ Audio search failed: {e}")
-            return []
+            raise
 
     async def transcribe_audio(
         self,
@@ -397,7 +399,7 @@ class AudioAnalysisAgent(
 
         except Exception as e:
             logger.error(f"❌ Transcript search failed: {e}")
-            return []
+            raise
 
     async def _search_acoustic(self, query: str, limit: int) -> List[AudioResult]:
         """Search by acoustic similarity from a TEXT query via CLAP."""
@@ -470,7 +472,7 @@ class AudioAnalysisAgent(
 
         except Exception as e:
             logger.error(f"❌ Acoustic search failed: {e}")
-            return []
+            raise
 
     async def _search_hybrid(self, query: str, limit: int) -> List[AudioResult]:
         """Search by hybrid (BM25 transcript + semantic embeddings)"""
@@ -536,7 +538,7 @@ class AudioAnalysisAgent(
 
         except Exception as e:
             logger.error(f"❌ Hybrid search failed: {e}")
-            return []
+            raise
 
     async def find_similar_audio(
         self,
@@ -581,7 +583,7 @@ class AudioAnalysisAgent(
 
         except Exception as e:
             logger.error(f"❌ Similar audio search failed: {e}")
-            return []
+            raise
 
     def _get_audio_path(self, audio_url: str) -> str:
         """Resolve an audio URL or path to a local file via the MediaLocator.

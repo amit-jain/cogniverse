@@ -324,7 +324,9 @@ class DocumentAgent(
                 )
                 logger.debug("💾 Stored document search failure in memory")
 
-            return []
+            # Surface the failure (degraded Vespa, outage, encoder error) —
+            # returning [] here made every backend failure read as "no results".
+            raise
 
     def _select_strategy(self, query: str) -> str:
         """
