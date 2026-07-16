@@ -5,6 +5,7 @@ Tests image_content and audio_content Vespa schemas with test Vespa Docker insta
 Validates schema uploads, data ingestion, and search functionality.
 """
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -86,6 +87,8 @@ def test_vespa_manager():
             "-d",
             "--name",
             container_name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
             "-p",
             f"{test_port}:8080",
             "-p",
