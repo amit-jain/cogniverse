@@ -5,6 +5,7 @@ Provides standard memory interface for all agents using Mem0.
 Handles context retrieval, memory updates, and lifecycle management.
 """
 
+import asyncio
 import logging
 from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
@@ -601,10 +602,17 @@ class MemoryAwareMixin:
         try:
             import json
 
-            from cogniverse_foundation.config.utils import create_default_config_manager
+            from cogniverse_foundation.config.utils import (
+                get_config_manager_singleton,
+            )
             from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-            cm = create_default_config_manager()
+            # Reuse the dispatcher-injected manager (or the process singleton)
+            # instead of building a fresh VespaConfigStore + TCP session on every
+            # dispatch — this runs per request on the enrichment path.
+            cm = (
+                getattr(self, "_config_manager", None) or get_config_manager_singleton()
+            )
             entry = cm.store.get_config(
                 tenant_id=tenant_id,
                 scope=ConfigScope.SYSTEM,
@@ -664,6 +672,18 @@ class MemoryAwareMixin:
         parts.append(f"## Current Query:\n{query}")
 
         return "\n\n".join(parts)
+
+    async def inject_context_into_prompt_async(self, prompt: str, query: str) -> str:
+        """Async wrapper: offload the sync ConfigStore + mem0 reads off the loop.
+
+        inject_context_into_prompt does 3-6 blocking Vespa/mem0 round-trips
+        (tenant instructions, relevant context, strategies). Called inline from
+        an async _process_impl it stalls the whole event loop — and every other
+        in-flight request — for the duration. ContextVars set on the current
+        task are copied into the to_thread worker, so per-request tenant/session
+        state still resolves correctly inside the offloaded call.
+        """
+        return await asyncio.to_thread(self.inject_context_into_prompt, prompt, query)
 
     def remember_success(
         self,

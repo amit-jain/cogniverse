@@ -1970,7 +1970,9 @@ class SearchAgent(
                     "query_optimization", "Optimizing query with DSPy..."
                 )
                 search_query = query
-                enriched_query = self.inject_context_into_prompt(query, query)
+                enriched_query = await self.inject_context_into_prompt_async(
+                    query, query
+                )
                 try:
                     dspy_result = await self.call_dspy(
                         self.search_module,

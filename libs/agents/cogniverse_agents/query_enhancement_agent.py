@@ -298,7 +298,7 @@ class QueryEnhancementAgent(
         prompt_query = query
         if input.tenant_id is not None:
             self.set_tenant_for_context(input.tenant_id)
-            prompt_query = self.inject_context_into_prompt(query, query)
+            prompt_query = await self.inject_context_into_prompt_async(query, query)
 
         # Build entity context from upstream EntityExtractionAgent
         entity_context = self._build_entity_context(input.entities, input.relationships)

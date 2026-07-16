@@ -898,7 +898,9 @@ and structure summary based on identified themes and content categories.
         if input.enhanced_query:
             summary_query = input.enhanced_query
         elif input.tenant_id is not None:
-            summary_query = self.inject_context_into_prompt(input.query, input.query)
+            summary_query = await self.inject_context_into_prompt_async(
+                input.query, input.query
+            )
         else:
             summary_query = input.query
 

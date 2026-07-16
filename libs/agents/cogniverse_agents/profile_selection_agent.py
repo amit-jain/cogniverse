@@ -318,7 +318,7 @@ class ProfileSelectionAgent(
         prompt_query = query
         if input.tenant_id is not None:
             self.set_tenant_for_context(input.tenant_id)
-            prompt_query = self.inject_context_into_prompt(query, query)
+            prompt_query = await self.inject_context_into_prompt_async(query, query)
 
         # Convert profiles list to comma-separated string for DSPy
         profiles_str = ", ".join(profiles) if isinstance(profiles, list) else profiles
