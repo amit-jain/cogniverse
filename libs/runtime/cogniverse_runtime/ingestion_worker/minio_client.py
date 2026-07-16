@@ -1,7 +1,8 @@
 """MinIO upload helper for the ``/ingestion/upload`` multipart path.
 
 Multipart uploads land in MinIO under
-``s3://{default_bucket}/{tenant_id}/{ingest_uuid}.{ext}``. The
+``s3://{default_bucket}/{tenant_id}/{sha256(content)}.{ext}`` — content
+addressable so identical bytes dedupe to one object. The
 ingestion queue then carries the resulting ``s3://`` URL — workers
 fetch via ``MediaLocator`` which already speaks ``s3://`` against the
 same MinIO endpoint.
@@ -14,8 +15,8 @@ used elsewhere in the runtime.
 
 from __future__ import annotations
 
+import hashlib
 import os
-import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -65,13 +66,15 @@ def upload_bytes(
 ) -> str:
     """Upload ``content`` to MinIO under a tenant-scoped key, return s3:// URL.
 
-    The object key is ``{tenant_id}/{uuid}.{ext}`` so collisions across
-    tenants and across submissions of the same filename are
-    impossible. ``filename`` is only used to derive the suffix.
+    The object key is ``{tenant_id}/{sha256(content)}.{ext}`` — content
+    addressable, so identical bytes resubmitted (the same file re-uploaded)
+    map to ONE object and ONE idempotency sha. A uuid key made every upload
+    unique, defeating dedup: re-uploads re-ran the whole pipeline and doubled
+    the index. ``filename`` is only used to derive the suffix.
     """
     bucket_name = bucket or _default_bucket()
     suffix = Path(filename).suffix if filename else ""
-    key = f"{tenant_id}/{uuid.uuid4().hex}{suffix}"
+    key = f"{tenant_id}/{hashlib.sha256(content).hexdigest()}{suffix}"
 
     client = _client()
     extra: dict = {}
