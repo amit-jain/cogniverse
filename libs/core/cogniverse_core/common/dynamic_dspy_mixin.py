@@ -62,12 +62,18 @@ class DynamicDSPyMixin:
             f"with module type: {config.module_config.module_type.value}"
         )
 
-    def _configure_dspy_lm(self, config: AgentConfig):
+    _UNSET_ADAPTER = object()
+
+    def _configure_dspy_lm(self, config: AgentConfig, adapter_model=_UNSET_ADAPTER):
         """
         Configure DSPy language model via centralized factory.
 
         Args:
             config: Agent configuration
+            adapter_model: Pre-resolved active-adapter name. Pass this to avoid
+                a second registry lookup when the caller already resolved it
+                (e.g. the adapter-change refresh); the sentinel default means
+                "look it up".
         """
         # The LM endpoint/model/key are deployment-runtime, not agent state.
         # An AgentConfig persisted on an earlier deploy carries a stale/None
@@ -120,7 +126,8 @@ class DynamicDSPyMixin:
         # name (see LLMEndpointConfig.adapter_path). Adapter-aware agents
         # override _active_adapter_model(); the base mixin returns None so every
         # other agent stays on the base model.
-        adapter_model = self._active_adapter_model()
+        if adapter_model is self._UNSET_ADAPTER:
+            adapter_model = self._active_adapter_model()
         # Recorded so adapter-aware agents can detect a later activation and
         # rebuild the LM without a process restart.
         self._active_adapter_model_name = adapter_model or None
