@@ -166,6 +166,31 @@ def _probe_phoenix_reachability() -> None:
         logger.warning(msg)
 
 
+def reaffirm_wiki_profile(config_manager, config: dict) -> None:
+    """Re-affirm config.json's ``wiki_semantic`` profile into cached backends.
+
+    The add fans through the profile-change listener into every cached search
+    backend. The profile is READ from the loaded config dict (the same source
+    the search backend resolves profiles from) — a hardcoded copy here
+    drifted from config.json silently. Raises when the profile is missing:
+    wiki search cannot resolve without it.
+    """
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
+    profiles = (config.get("backend") or {}).get("profiles") or {}
+    raw = profiles.get("wiki_semantic")
+    if raw is None:
+        raise RuntimeError(
+            "wiki_semantic profile missing from config — wiki search "
+            "cannot resolve a profile of type 'wiki'"
+        )
+    config_manager.add_backend_profile(
+        BackendProfileConfig.from_dict("wiki_semantic", raw),
+        tenant_id=SYSTEM_TENANT_ID,
+        service="backend",
+    )
+
+
 def _log_workflow_submission_status() -> None:
     """Log whether workflow-engine submission is enabled, at startup."""
     from cogniverse_runtime.config_loader import get_workflow_settings
@@ -751,30 +776,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # registration itself is cluster-wide (all tenants see the same
         # profile shape), so it lives under SYSTEM_TENANT_ID.
         try:
-            from cogniverse_foundation.config.unified_config import (
-                BackendProfileConfig,
-            )
-
-            # Re-affirm the durable ``wiki_semantic`` profile from config.json
-            # into any already-cached backends via the change listener. Fields
-            # MUST match config.json: WikiManager generates DenseOn 768-d
-            # single-vector query embeddings, so the profile's model/type must
-            # be DenseOn/single_vector for search to rank in the same space.
-            wiki_profile = {
-                "type": "wiki",
-                "embedding_model": "lightonai/DenseOn",
-                "embedding_type": "single_vector",
-                "schema_name": "wiki_pages",
-                "schema_config": {"embedding_dims": 768},
-            }
-            config_manager.add_backend_profile(
-                BackendProfileConfig.from_dict("wiki_semantic", wiki_profile),
-                tenant_id=SYSTEM_TENANT_ID,
-                service="backend",
-            )
+            reaffirm_wiki_profile(config_manager, config)
             logger.info("Wiki backend profile registered")
         except Exception as exc:
-            logger.debug("Wiki profile register skipped: %s", exc)
+            logger.warning("Wiki profile register failed: %s", exc)
 
         wiki_router.set_wiki_manager_factory(
             build_wiki_manager_factory(wiki_backend, config, config_manager)

@@ -266,3 +266,73 @@ class TestWikiFactoryCanonicalizesTenant:
         assert deployed == [canon]
         assert m_simple.kw["tenant_id"] == canon
         assert m_simple.kw["schema_name"] == f"wiki_pages_{canon.replace(':', '_')}"
+
+
+@pytest.mark.unit
+class TestWikiProfileReaffirmation:
+    """Startup re-affirms the wiki_semantic profile by READING the loaded
+    config — the previous hardcoded copy in main.py drifted from config.json
+    silently, and nothing pinned their identity."""
+
+    def test_reaffirm_reads_and_readds_the_loaded_profile(self):
+        from cogniverse_runtime.main import reaffirm_wiki_profile
+
+        cm = MagicMock()
+        config = {
+            "backend": {
+                "profiles": {
+                    "wiki_semantic": {
+                        "type": "wiki",
+                        "schema_name": "wiki_pages",
+                        "embedding_model": "lightonai/DenseOn",
+                        "embedding_type": "single_vector",
+                        "schema_config": {"embedding_dims": 768},
+                    }
+                }
+            }
+        }
+
+        reaffirm_wiki_profile(cm, config)
+
+        add_args = cm.add_backend_profile.call_args
+        profile = add_args.args[0]
+        assert profile.schema_name == "wiki_pages"
+        assert add_args.kwargs["tenant_id"] == "__system__"
+        assert add_args.kwargs["service"] == "backend"
+
+    def test_reaffirm_raises_when_profile_missing(self):
+        from cogniverse_runtime.main import reaffirm_wiki_profile
+
+        with pytest.raises(RuntimeError, match="wiki_semantic profile missing"):
+            reaffirm_wiki_profile(MagicMock(), {"backend": {"profiles": {}}})
+
+    def test_wiki_semantic_profile_consistent_across_config_and_chart(self):
+        """configs/config.json and the Helm chart's config.json must carry the
+        identical wiki_semantic profile — the deployed runtime reads the chart
+        copy, local runs read configs/, and a divergence puts search in a
+        different embedding space per environment."""
+        import json
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[3]
+        dev = json.loads((repo / "configs/config.json").read_text())
+        dev_profile = dev["backend"]["profiles"]["wiki_semantic"]
+
+        assert dev_profile["type"] == "wiki"
+        assert dev_profile["schema_name"] == "wiki_pages"
+        assert dev_profile["schema_config"]["embedding_dims"] == 768
+
+        chart_text = (repo / "charts/cogniverse/files/config.json").read_text()
+        start = chart_text.index('"wiki_semantic"')
+        brace = chart_text.index("{", start)
+        depth, end = 0, brace
+        for i, ch in enumerate(chart_text[brace:], brace):
+            depth += ch == "{"
+            depth -= ch == "}"
+            if depth == 0:
+                end = i + 1
+                break
+        chart_profile = json.loads(chart_text[brace:end])
+        assert chart_profile == dev_profile, (
+            "chart wiki_semantic profile drifted from configs/config.json"
+        )
