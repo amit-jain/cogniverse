@@ -1,6 +1,7 @@
 """Query encoders for different video processing profiles."""
 
 import logging
+import threading
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional
 
@@ -315,6 +316,11 @@ class QueryEncoderFactory:
 
     # (model_name, inference_service, embedding_dim) → QueryEncoder instance
     _encoder_cache: dict = {}
+    # Short-held guard for the two dicts; per-key locks so concurrent cold
+    # starts of the SAME key don't each build a duplicate (multi-GB) encoder,
+    # while different keys still build in parallel. Mirrors get_or_load_gliner.
+    _encoder_cache_lock = threading.Lock()
+    _encoder_key_locks: dict = {}
 
     @classmethod
     def create_encoder(
@@ -366,16 +372,28 @@ class QueryEncoderFactory:
             schema_config.get("embedding_dim"),
         )
 
-        if cache_key in cls._encoder_cache:
+        cached = cls._encoder_cache.get(cache_key)
+        if cached is not None:
             logger.info(f"Reusing cached encoder for key: {cache_key}")
-            return cls._encoder_cache[cache_key]
+            return cached
 
-        encoder = cls._create_encoder_instance(
-            model_name, profile, profile_config, config
-        )
-        cls._encoder_cache[cache_key] = encoder
-        logger.info(f"Cached encoder for key {cache_key} ({type(encoder).__name__})")
-        return encoder
+        with cls._encoder_cache_lock:
+            key_lock = cls._encoder_key_locks.setdefault(cache_key, threading.Lock())
+
+        with key_lock:
+            # Re-check inside the per-key lock: another thread may have built it
+            # while we waited.
+            cached = cls._encoder_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            encoder = cls._create_encoder_instance(
+                model_name, profile, profile_config, config
+            )
+            cls._encoder_cache[cache_key] = encoder
+            logger.info(
+                f"Cached encoder for key {cache_key} ({type(encoder).__name__})"
+            )
+            return encoder
 
     @staticmethod
     def _create_encoder_instance(
