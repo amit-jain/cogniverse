@@ -472,11 +472,17 @@ class ApprovalStorageImpl(ApprovalStorage):
             return batch
 
         except Exception as e:
+            # A telemetry outage is NOT "batch not found". get_pending_batches
+            # (the sibling querying the same spans) lets get_spans raise, and so
+            # must this: flattening to None made an outage read as a missing
+            # batch, so apply_approvals kept the stale pre-decision batch and the
+            # workflow sat in awaiting_approval forever. A genuine not-found
+            # returns None above (empty spans); this branch is a real failure.
             logger.error(
                 f"Error retrieving batch {batch_id} from telemetry backend: {e}",
                 exc_info=True,
             )
-            return None
+            raise
 
     async def update_item(
         self, item: ReviewItem, batch_id: Optional[str] = None
@@ -714,8 +720,12 @@ class ApprovalStorageImpl(ApprovalStorage):
             return None
 
         except Exception as e:
+            # Outage is NOT "span not indexed yet" (that returns None above). A
+            # backend failure flattened to None silently skipped the approval
+            # decision annotation in apply_decision (the item persisted APPROVED
+            # but the decision log was lost). Raise so the caller surfaces it.
             logger.error(f"Error finding span for item {item_id}: {e}")
-            return None
+            raise
 
     async def log_approval_decision(
         self,
@@ -864,7 +874,11 @@ class ApprovalStorageImpl(ApprovalStorage):
             return True
 
         except Exception as e:
+            # Outage while appending: raise instead of returning False. A
+            # swallowed False left apply_decision reporting success with the item
+            # marked APPROVED but never written to the training dataset — a torn
+            # state. (An empty item list returns False above; that's a no-op.)
             logger.error(
                 f"Failed to append items to training dataset: {e}", exc_info=True
             )
-            return False
+            raise
