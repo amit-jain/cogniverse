@@ -709,7 +709,10 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                         {
                             "result_id": result.get("id", "unknown"),
                             "insights": analysis.get("insights", []),
-                            "confidence": analysis.get("confidence", 0.0),
+                            # VLMInterface.analyze_visual_content emits
+                            # relevance_score, not confidence — the old key was
+                            # always absent, so every visual analysis reported 0.0.
+                            "confidence": analysis.get("relevance_score", 0.0),
                         }
                     )
                 except Exception as e:

@@ -451,6 +451,38 @@ class TestDetailedReportAgentCoreFunctionality:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
+    async def test_visual_analysis_reads_relevance_score_as_confidence(self):
+        """The VLM emits relevance_score, not confidence — the report used to read
+        the absent 'confidence' key and reported 0.0 for every visual result."""
+        from cogniverse_agents.detailed_report_agent import (
+            DetailedReportAgent,
+            ReportRequest,
+        )
+
+        from types import SimpleNamespace
+
+        agent = object.__new__(DetailedReportAgent)
+        agent.visual_analysis_enabled = True
+        agent.vlm = Mock()
+        agent.vlm.analyze_visual_content = AsyncMock(
+            return_value={"insights": ["a chart"], "relevance_score": 0.85}
+        )
+
+        request = ReportRequest(
+            query="q",
+            search_results=[{"id": "r1", "image_path": "/tmp/x.jpg"}],
+            report_type="comprehensive",
+            include_visual_analysis=True,
+        )
+        thinking = SimpleNamespace(visual_assessment={"has_visual_content": True})
+        out = await agent._perform_visual_analysis(request, thinking)
+
+        assert len(out) == 1
+        assert out[0]["confidence"] == 0.85
+        assert out[0]["insights"] == ["a chart"]
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
     async def test_generate_report_full_workflow(
         self, agent_with_mocks, sample_report_request
     ):
