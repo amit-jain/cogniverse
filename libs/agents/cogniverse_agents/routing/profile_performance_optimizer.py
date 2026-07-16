@@ -280,7 +280,11 @@ class ProfilePerformanceOptimizer:
             X, y, test_size=test_size, random_state=42, stratify=y
         )
 
-        # Default XGBoost parameters
+        # Default XGBoost parameters. eval_metric must match the objective:
+        # XGBoost uses a binary objective for 2 classes, so mlogloss (multiclass)
+        # crashes with "num_class=1"; pick logloss for the binary case (a tenant
+        # with exactly two profiles).
+        n_classes = len(np.unique(y))
         params = {
             "max_depth": 5,
             "n_estimators": 200,
@@ -289,7 +293,7 @@ class ProfilePerformanceOptimizer:
             "subsample": 0.8,
             "colsample_bytree": 0.8,
             "random_state": 42,
-            "eval_metric": "mlogloss",
+            "eval_metric": "mlogloss" if n_classes > 2 else "logloss",
         }
         params.update(xgb_params)
 
