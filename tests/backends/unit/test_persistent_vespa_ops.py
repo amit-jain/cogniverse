@@ -37,6 +37,7 @@ def test_ops_route_through_the_persistent_session_without_new_syncs():
         ops.feed_data_point(schema="s", data_id="d", fields={})
         ops.get_data(schema="s", data_id="d")
         ops.delete_data(schema="s", data_id="d")
+        ops.update_data(schema="s", data_id="d", fields={})
 
     assert spy.call_count == 1
     assert session.query.call_count == 1
@@ -46,6 +47,7 @@ def test_ops_route_through_the_persistent_session_without_new_syncs():
     assert session.feed_data_point.call_count == 1
     assert session.get_data.call_count == 1
     assert session.delete_data.call_count == 1
+    assert session.update_data.call_count == 1
 
 
 def test_close_releases_the_http_client():
