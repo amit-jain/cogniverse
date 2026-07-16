@@ -921,3 +921,84 @@ def test_resolve_adapter_path_rejects_underivable_name(tmp_path):
 
     with pytest.raises(ValueError, match="adapter name"):
         resolve_adapter_path("s3://", cache_dir=str(tmp_path))
+
+
+class TestSetActiveCrashConsistency:
+    def _fake_app(self, fail_on_adapter=None):
+        class _Resp:
+            def __init__(self, hits):
+                self.hits = hits
+
+        class _FakeVespaApp:
+            def __init__(self, docs):
+                self.docs = docs
+                self.feeds = []
+
+            def query(self, yql):
+                if "is_active = 1" in yql:
+                    hits = [
+                        {"fields": f}
+                        for f in self.docs.values()
+                        if f.get("is_active") == 1
+                    ]
+                elif "adapter_id contains" in yql:
+                    hits = [{"fields": f} for aid, f in self.docs.items() if aid in yql]
+                else:
+                    hits = []
+                return _Resp(hits[:1])
+
+            def feed_data_point(self, schema, data_id, fields):
+                if fields["adapter_id"] == fail_on_adapter:
+                    raise RuntimeError("vespa write failed mid-switch")
+                self.feeds.append(dict(fields))
+                self.docs[fields["adapter_id"]] = dict(fields)
+
+        return _FakeVespaApp(
+            {
+                "adp_old": {
+                    "adapter_id": "adp_old",
+                    "tenant_id": "t1",
+                    "agent_type": "routing",
+                    "is_active": 1,
+                    "status": "active",
+                },
+                "adp_new": {
+                    "adapter_id": "adp_new",
+                    "tenant_id": "t1",
+                    "agent_type": "routing",
+                    "is_active": 0,
+                    "status": "inactive",
+                },
+            }
+        )
+
+    def test_activation_failure_restores_previous_active(self):
+        """A failure between deactivate-old and activate-new must not leave
+        the tenant with ZERO active adapters — inference silently reverts to
+        the base model until a retry. The switch compensates by re-activating
+        the previous adapter before surfacing the error."""
+        from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
+
+        fake = self._fake_app(fail_on_adapter="adp_new")
+        store = VespaAdapterStore(vespa_app=fake)
+
+        with pytest.raises(RuntimeError, match="mid-switch"):
+            store.set_active("adp_new", "t1", "routing")
+
+        assert fake.docs["adp_old"]["is_active"] == 1, (
+            "previous active adapter was not restored — tenant has no "
+            "active adapter after a failed switch"
+        )
+        assert fake.docs["adp_old"]["status"] == "active"
+        assert fake.docs["adp_new"]["is_active"] == 0
+
+    def test_happy_switch_unchanged(self):
+        from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
+
+        fake = self._fake_app()
+        store = VespaAdapterStore(vespa_app=fake)
+
+        store.set_active("adp_new", "t1", "routing")
+
+        assert fake.docs["adp_old"]["is_active"] == 0
+        assert fake.docs["adp_new"]["is_active"] == 1

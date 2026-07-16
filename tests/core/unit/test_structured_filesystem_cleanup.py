@@ -319,3 +319,41 @@ async def test_set_failure_returns_false_and_leaves_no_tmp(tmp_path, monkeypatch
 
     assert ok is False
     assert list(tmp_path.rglob("*.tmp")) == [], "failed set left an orphaned .tmp"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_failed_overwrite_leaves_legacy_entry_intact(tmp_path, monkeypatch):
+    """A failed os.replace (disk full) mid-set must not destroy the OLD entry.
+
+    The legacy .meta sidecar was unlinked BEFORE the replace, so a failed
+    replace left the old data file without its (future-expiry) sidecar — its
+    past mtime then read as expired and the next get() deleted a live entry.
+    """
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    await backend.set("k", "old-data", ttl=1000)
+    cache_path = backend._key_to_path("k")
+    # Legacy entry shape: a FUTURE-expiry sidecar governing a PAST mtime.
+    backend._get_metadata_path(cache_path).write_text(
+        json.dumps({"expires_at": time.time() + 1000})
+    )
+    past = time.time() - 500
+    os.utime(cache_path, (past, past))
+
+    real_replace = os.replace
+
+    def enospc(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "replace", enospc)
+    assert await backend.set("k", "new-data", ttl=3600) is False
+    monkeypatch.setattr(os, "replace", real_replace)
+
+    assert await backend.get("k") == "old-data", (
+        "failed overwrite destroyed the legacy entry"
+    )
