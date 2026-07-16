@@ -527,12 +527,11 @@ class TestMemoryAwareMixinInstructions:
         }
         mock_cm = MagicMock()
         mock_cm.store.get_config.return_value = mock_entry
+        # The mixin reuses the dispatcher-injected config manager (or the process
+        # singleton) rather than building a fresh one per call — inject it.
+        agent._config_manager = mock_cm
 
-        with patch(
-            "cogniverse_foundation.config.utils.create_default_config_manager",
-            return_value=mock_cm,
-        ):
-            result = agent._get_tenant_instructions()
+        result = agent._get_tenant_instructions()
 
         assert result == "Always be helpful."
 
@@ -547,12 +546,11 @@ class TestMemoryAwareMixinInstructions:
                 self._memory_initialized = False
 
         agent = FakeAgent()
+        mock_cm = MagicMock()
+        mock_cm.store.get_config.side_effect = RuntimeError("store unavailable")
+        agent._config_manager = mock_cm
 
-        with patch(
-            "cogniverse_foundation.config.utils.create_default_config_manager",
-            side_effect=RuntimeError("store unavailable"),
-        ):
-            result = agent._get_tenant_instructions()
+        result = agent._get_tenant_instructions()
 
         assert result is None
 
@@ -572,12 +570,9 @@ class TestMemoryAwareMixinInstructions:
         mock_entry.config_value = {"text": "", "updated_at": "2024-01-01"}
         mock_cm = MagicMock()
         mock_cm.store.get_config.return_value = mock_entry
+        agent._config_manager = mock_cm
 
-        with patch(
-            "cogniverse_foundation.config.utils.create_default_config_manager",
-            return_value=mock_cm,
-        ):
-            result = agent._get_tenant_instructions()
+        result = agent._get_tenant_instructions()
 
         assert result is None
 
