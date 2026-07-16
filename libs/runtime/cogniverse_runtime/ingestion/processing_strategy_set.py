@@ -227,9 +227,11 @@ class ProcessingStrategySet:
                     # A cache hit rehydrates the frames to this pod's disk, so
                     # upload here too — otherwise a re-ingest (or a video first
                     # ingested before this wiring existed) never lands its
-                    # keyframes in object storage.
-                    pipeline_context.upload_keyframes_to_object_store(
-                        video_path, cached
+                    # keyframes in object storage. MinIO HTTP — off the loop.
+                    await asyncio.to_thread(
+                        pipeline_context.upload_keyframes_to_object_store,
+                        video_path,
+                        cached,
                     )
                     return {"keyframes": cached}
                 # Full cv2 decode of the video — run off the event loop so
@@ -242,7 +244,12 @@ class ProcessingStrategySet:
                 num_frames = len(result.get("keyframes", [])) if result else 0
                 pipeline_context.logger.info(f"  🖼️ Extracted {num_frames} keyframes")
                 await pipeline_context.set_cached_keyframes(video_path, result)
-                pipeline_context.upload_keyframes_to_object_store(video_path, result)
+                # MinIO HTTP upload — off the loop.
+                await asyncio.to_thread(
+                    pipeline_context.upload_keyframes_to_object_store,
+                    video_path,
+                    result,
+                )
                 return {"keyframes": result}
 
         elif "chunk" in requirements:
