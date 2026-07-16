@@ -132,6 +132,9 @@ def _probe_phoenix_reachability() -> None:
         "yes",
     )
     try:
+        import socket
+        from urllib.parse import urlparse
+
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         tm = get_telemetry_manager()
@@ -141,18 +144,18 @@ def _probe_phoenix_reachability() -> None:
             )
             return
 
-        with tm.span(
-            "startup.probe",
-            tenant_id=SYSTEM_TENANT_ID,
-            component="search_service",
-        ) as span:
-            # NoOpSpan has no record_exception/set_attribute side effects;
-            # if we got a real span we set an attribute to force any error
-            # in the export pipeline to surface here rather than later.
-            if hasattr(span, "set_attribute"):
-                span.set_attribute("startup.probe", True)
+        # Emitting a span proves nothing: TelemetryManager.span() swallows
+        # tracer/export errors and yields a NoOpSpan, so the block never raises
+        # even with Phoenix down — the probe always logged "OK". Actually check
+        # the OTLP collector is listening with a TCP connect.
+        endpoint = tm.config.otlp_endpoint
+        parsed = urlparse(endpoint if "://" in endpoint else f"//{endpoint}")
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 4317
+        with socket.create_connection((host, port), timeout=5.0):
+            pass
 
-        logger.info(f"Phoenix reachability probe OK (otlp={tm.config.otlp_endpoint})")
+        logger.info(f"Phoenix reachability probe OK (otlp={endpoint})")
     except Exception as exc:
         msg = (
             f"Phoenix reachability probe FAILED: {exc}. "
