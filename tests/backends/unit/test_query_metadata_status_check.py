@@ -1,11 +1,13 @@
 """Regression test for VespaBackend.query_metadata_documents
 status_code handling.
 
-pyvespa does NOT raise on a non-2xx response — it returns a response
-object with ``.status_code`` set and ``.json`` holding the error body.
-The pre-fix code path read ``results.json.get("root", {}).get("children",
-[])`` directly, which evaluates to ``[]`` on a 4xx error body, so the
-function silently returned an empty list. Callers (``BackendVectorStore.
+Real pyvespa RAISES VespaError on non-2xx (raise_for_status; only a 404
+returns), so the status_code branch here is a belt-and-braces net for the
+rare returns-without-raising shape — the raise path is covered by
+test_vespa_error_propagates below. The pre-fix code path read
+``results.json.get("root", {}).get("children", [])`` directly, which
+evaluates to ``[]`` on an error body, so the function silently returned
+an empty list. Callers (``BackendVectorStore.
 list``, ``ProvenanceStore.fetch``, the admin tenant routes) cannot
 distinguish "no matches" from "Vespa rejected the query."
 
@@ -171,3 +173,23 @@ def test_uninitialized_backend_raises(backend: VespaBackend) -> None:
     backend._url = None
     with pytest.raises(RuntimeError, match="not initialized"):
         backend.query_metadata_documents(schema="x", yql="y")
+
+
+def test_vespa_error_propagates(backend: VespaBackend) -> None:
+    """The REAL non-2xx shape: pyvespa raise_for_status raises VespaError on
+    4xx/5xx (only 404 returns) — it must propagate, not flatten to []."""
+    from vespa.exceptions import VespaError
+
+    class _RaisingVespaClient:
+        def query(self, **kwargs):
+            raise VespaError("400 Could not create query from YQL")
+
+    with patch(
+        "cogniverse_vespa.backend.make_persistent_vespa_ops",
+        return_value=_RaisingVespaClient(),
+    ):
+        with pytest.raises(VespaError, match="Could not create query"):
+            backend.query_metadata_documents(
+                schema="organization_metadata",
+                yql="select * from organization_metadata where true",
+            )

@@ -87,8 +87,10 @@ class TestVespaPartialUpdate:
         backend.ingest_documents.assert_not_called()
 
     def test_delete_metadata_document_returns_false_on_non_200(self, monkeypatch):
-        """pyvespa.delete_data does not raise on 4xx/5xx; the backend must check
-        the status_code, not assume success on no-exception."""
+        """Belt-and-braces branch: real pyvespa delete_data raise_for_status
+        RAISES VespaError on every 4xx/5xx except 404, so a returned non-200
+        response only occurs for a 404 (or a pyvespa contract change). The
+        status check must still map it to False."""
         from cogniverse_vespa import backend as vespa_backend_mod
 
         backend = object.__new__(VespaBackend)
@@ -99,6 +101,33 @@ class TestVespaPartialUpdate:
 
         client = MagicMock()
         client.delete_data = MagicMock(return_value=MagicMock(status_code=500))
+        monkeypatch.setattr(
+            vespa_backend_mod, "make_persistent_vespa_ops", lambda **_kw: client
+        )
+
+        ok = backend.delete_metadata_document(schema="s", doc_id="d1")
+
+        assert ok is False
+        client.delete_data.assert_called_once()
+
+    def test_delete_metadata_document_returns_false_when_pyvespa_raises(
+        self, monkeypatch
+    ):
+        """The REAL error shape: pyvespa raise_for_status raises VespaError on
+        4xx/5xx — the raise path must map to False, same as the status check.
+        Previously only the unreal returns-non-200 shape was covered."""
+        from vespa.exceptions import VespaError
+
+        from cogniverse_vespa import backend as vespa_backend_mod
+
+        backend = object.__new__(VespaBackend)
+        backend._url = "http://localhost"
+        backend._port = 8080
+        backend._metadata_app = None
+        backend._metadata_app_key = None
+
+        client = MagicMock()
+        client.delete_data = MagicMock(side_effect=VespaError("500 backend error"))
         monkeypatch.setattr(
             vespa_backend_mod, "make_persistent_vespa_ops", lambda **_kw: client
         )

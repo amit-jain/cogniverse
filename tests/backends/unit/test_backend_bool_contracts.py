@@ -282,3 +282,29 @@ def test_document_field_nested_numpy_values_are_coerced():
     assert out["plain"] == "text"
     assert out["n"] == 42
     json.dumps(out)
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_check_document_response_raises_on_non_2xx():
+    """The document primitives' defensive net: a returned non-2xx (pyvespa's
+    rare returns-without-raising shape) maps to RuntimeError naming the op and
+    document id; 2xx passes through silently."""
+    from types import SimpleNamespace
+
+    from cogniverse_vespa.backend import VespaBackend
+
+    with pytest.raises(RuntimeError) as exc:
+        VespaBackend._check_document_response(
+            SimpleNamespace(status_code=507, json={"message": "disk full"}),
+            "put",
+            "doc-1",
+        )
+    msg = str(exc.value)
+    assert "put" in msg
+    assert "doc-1" in msg
+    assert "507" in msg
+
+    VespaBackend._check_document_response(
+        SimpleNamespace(status_code=200, json={}), "put", "doc-1"
+    )
