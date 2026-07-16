@@ -30,6 +30,16 @@ ACTIVE_KEY_PREFIX = "ingest:active:"
 # Must exceed the longest expected ingestion job.
 ACTIVE_TTL_SECONDS = int(os.environ.get("INGEST_ACTIVE_TTL_SECONDS", "3600"))
 
+# Per-job status stream bounds. Without them each ingest left an immortal
+# ``ingest:status:<id>`` stream in Redis: no length cap (a chatty job grew it
+# unbounded) and no TTL (it lived forever after the job finished). The cap
+# keeps the most recent events; the sliding TTL reclaims a finished job's
+# stream while a still-active job keeps refreshing it.
+STATUS_STREAM_MAXLEN = int(os.environ.get("INGEST_STATUS_STREAM_MAXLEN", "1000"))
+STATUS_STREAM_TTL_SECONDS = int(
+    os.environ.get("INGEST_STATUS_STREAM_TTL_SECONDS", str(6 * 60 * 60))
+)
+
 
 @dataclass(frozen=True)
 class IngestJob:
@@ -187,8 +197,20 @@ async def publish_status(redis: aioredis.Redis, ingest_id: str, event: dict) -> 
     Events are JSON-serialised into a single ``data`` field so any
     nested structure (progress dicts, artifact lists) round-trips
     without being flattened into stream fields.
+
+    The stream is capped (``MAXLEN``) and given a sliding TTL so it can't grow
+    unbounded and is reclaimed after the job goes quiet, instead of leaking one
+    immortal stream per ingest.
     """
-    return await redis.xadd(_status_stream_key(ingest_id), {"data": json.dumps(event)})
+    key = _status_stream_key(ingest_id)
+    msg_id = await redis.xadd(
+        key,
+        {"data": json.dumps(event)},
+        maxlen=STATUS_STREAM_MAXLEN,
+        approximate=False,
+    )
+    await redis.expire(key, STATUS_STREAM_TTL_SECONDS)
+    return msg_id
 
 
 async def read_status_since(
