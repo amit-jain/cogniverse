@@ -192,12 +192,29 @@ class OrchestrationAnnotationStorage:
             logger.error(f"❌ Error querying annotated spans: {e!r}")
             raise
 
+        if spans_df.empty:
+            logger.info("📭 No orchestration spans found in time range")
+            return []
+
+        # Annotations live in Phoenix's separate annotation store — fetch them
+        # once and join by span_id. The old per-span read went through a
+        # nonexistent ``provider.evaluations.get_evaluations`` and raised
+        # AttributeError on every project that had annotations.
+        annotations_df = await self.provider.annotations.get_annotations(
+            spans_df=spans_df,
+            project=self.project_name,
+            annotation_names=["orchestration_quality"],
+        )
+        annotations_by_span: Dict[str, Any] = {}
+        if annotations_df is not None and not annotations_df.empty:
+            annotations_by_span = {sid: row for sid, row in annotations_df.iterrows()}
+
         # Filter for orchestration spans with evaluations
         annotated_spans = []
 
         for _, span_row in spans_df.iterrows():
             # Check if span has orchestration_quality evaluation
-            evaluations = await self._get_span_evaluations(span_row)
+            evaluations = self._get_span_evaluations(span_row, annotations_by_span)
 
             if not evaluations:
                 continue
@@ -228,44 +245,31 @@ class OrchestrationAnnotationStorage:
         logger.info(f"📊 Found {len(annotated_spans)} annotated orchestration spans")
         return annotated_spans
 
-    async def _get_span_evaluations(self, span_row) -> List[Dict]:
+    def _get_span_evaluations(
+        self, span_row, annotations_by_span: Dict[str, Any]
+    ) -> List[Dict]:
+        """Build the orchestration_quality evaluation dict(s) for a span from the
+        pre-fetched annotation rows (keyed by span_id).
+
+        Returns [] when the span has no annotation. The annotation row carries
+        result.label / result.score / annotator_kind / metadata (the columns the
+        provider's get_annotations emits, indexed by span_id).
         """
-        Extract evaluations for a span
+        span_id = span_row.get("context.span_id")
+        if not span_id:
+            return []
 
-        Note: This uses Phoenix API to get evaluations attached to spans.
-        The actual implementation depends on Phoenix client capabilities.
-        """
-        try:
-            span_id = span_row.get("context.span_id")
-            if not span_id:
-                return []
+        ann_row = annotations_by_span.get(span_id)
+        if ann_row is None:
+            return []
 
-            # Get evaluations for this span from provider
-            evals_df = await self.provider.evaluations.get_evaluations(
-                span_ids=[span_id]
-            )
-
-            if evals_df.empty:
-                return []
-
-            # Filter for orchestration_quality evaluations
-            orch_evals = evals_df[evals_df["name"] == "orchestration_quality"]
-
-            evaluations = []
-            for _, eval_row in orch_evals.iterrows():
-                evaluations.append(
-                    {
-                        "annotator_kind": eval_row.get("annotator_kind", "unknown"),
-                        "result": {
-                            "label": eval_row.get("label"),
-                            "score": eval_row.get("score", 0.0),
-                        },
-                        "metadata": eval_row.get("metadata", {}),
-                    }
-                )
-
-            return evaluations
-
-        except Exception as e:
-            logger.error(f"Error extracting evaluations for span {span_id}: {e}")
-            raise
+        return [
+            {
+                "annotator_kind": ann_row.get("annotator_kind", "unknown"),
+                "result": {
+                    "label": ann_row.get("result.label"),
+                    "score": ann_row.get("result.score", 0.0),
+                },
+                "metadata": ann_row.get("metadata", {}),
+            }
+        ]
