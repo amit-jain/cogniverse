@@ -64,15 +64,17 @@ class TestAudioAnalysisAgent:
                 "children": [
                     {
                         "relevance": 0.90,
+                        # Field names are the deployed audio_content schema's --
+                        # audio_transcript / audio_duration / audio_language, not
+                        # bare transcript/duration/language (which never populate
+                        # and previously shipped every hit empty).
                         "fields": {
                             "audio_id": "audio_001",
                             "source_url": "http://example.com/audio1.mp3",
                             "audio_title": "Test Podcast",
-                            "transcript": "This is a test podcast about AI",
-                            "duration": 300.0,
-                            "speaker_labels": ["Speaker A"],
-                            "detected_events": ["speech"],
-                            "language": "en",
+                            "audio_transcript": "This is a test podcast about AI",
+                            "audio_duration": 300.0,
+                            "audio_language": "en",
                         },
                     }
                 ]
@@ -85,10 +87,12 @@ class TestAudioAnalysisAgent:
             query="AI podcast", search_mode="transcript", limit=20
         )
 
-        # Verify results
+        # Verify results -- the transcript/duration/language must round-trip from
+        # the schema field names, not come back empty.
         assert len(results) == 1
         assert results[0].audio_id == "audio_001"
         assert results[0].title == "Test Podcast"
+        assert results[0].transcript == "This is a test podcast about AI"
         assert results[0].duration == 300.0
         assert results[0].language == "en"
 

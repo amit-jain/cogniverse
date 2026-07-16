@@ -388,12 +388,12 @@ class AudioAnalysisAgent(
                         audio_id=fields.get("audio_id", ""),
                         audio_url=fields.get("source_url", ""),
                         title=fields.get("audio_title", ""),
-                        transcript=fields.get("transcript", ""),
-                        duration=fields.get("duration", 0.0),
+                        transcript=fields.get("audio_transcript", ""),
+                        duration=fields.get("audio_duration", 0.0),
                         relevance_score=hit.get("relevance", 0.0),
                         speaker_labels=fields.get("speaker_labels", []),
                         detected_events=fields.get("detected_events", []),
-                        language=fields.get("language", "unknown"),
+                        language=fields.get("audio_language", "unknown"),
                     )
                 )
 
@@ -463,12 +463,12 @@ class AudioAnalysisAgent(
                         audio_id=fields.get("audio_id", ""),
                         audio_url=fields.get("source_url", ""),
                         title=fields.get("audio_title", ""),
-                        transcript=fields.get("transcript", ""),
-                        duration=fields.get("duration", 0.0),
+                        transcript=fields.get("audio_transcript", ""),
+                        duration=fields.get("audio_duration", 0.0),
                         relevance_score=hit.get("relevance", 0.0),
                         speaker_labels=fields.get("speaker_labels", []),
                         detected_events=fields.get("detected_events", []),
-                        language=fields.get("language", "unknown"),
+                        language=fields.get("audio_language", "unknown"),
                     )
                 )
 
@@ -531,12 +531,12 @@ class AudioAnalysisAgent(
                         audio_id=fields.get("audio_id", ""),
                         audio_url=fields.get("source_url", ""),
                         title=fields.get("audio_title", ""),
-                        transcript=fields.get("transcript", ""),
-                        duration=fields.get("duration", 0.0),
+                        transcript=fields.get("audio_transcript", ""),
+                        duration=fields.get("audio_duration", 0.0),
                         relevance_score=hit.get("relevance", 0.0),
                         speaker_labels=fields.get("speaker_labels", []),
                         detected_events=fields.get("detected_events", []),
-                        language=fields.get("language", "unknown"),
+                        language=fields.get("audio_language", "unknown"),
                     )
                 )
 

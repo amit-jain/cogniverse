@@ -58,6 +58,8 @@ def audio_schema(shared_vespa):
             "audio_title": "matching clip",
             "source_url": "s3://corpus/audio/match.mp3",
             "audio_transcript": "a person describing the matching clip in detail",
+            "audio_duration": 42.5,
+            "audio_language": "en",
             "acoustic_embedding": {"values": _MATCH_VEC},
         },
         "audio_other": {
@@ -193,6 +195,14 @@ class TestAudioAcousticHybridSearch:
         assert results, "acoustic search returned no results"
         assert results[0].audio_id == "audio_match", [r.audio_id for r in results]
         assert results[0].relevance_score > 0
+        # The transcript/duration/language must round-trip from the deployed
+        # schema's audio_transcript/audio_duration/audio_language fields, not
+        # come back empty from the wrong bare field names.
+        assert (
+            results[0].transcript == "a person describing the matching clip in detail"
+        )
+        assert results[0].duration == 42.5
+        assert results[0].language == "en"
 
     @pytest.mark.asyncio
     async def test_search_hybrid_retrieves_with_acoustic_and_text(self, audio_agent):
