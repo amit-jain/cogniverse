@@ -266,6 +266,7 @@ class VespaAdapterStore(AdapterStore):
             Exception: If Vespa operation fails
         """
         # First, deactivate any currently active adapter
+        previous_id = None
         current_active = self.get_active_adapter(tenant_id, agent_type)
         if current_active:
             current_id = current_active["fields"]["adapter_id"]
@@ -273,10 +274,38 @@ class VespaAdapterStore(AdapterStore):
                 self._update_adapter_fields(
                     current_id, {"is_active": 0, "status": "inactive"}
                 )
+                previous_id = current_id
                 logger.info(f"Deactivated previous adapter {current_id}")
 
-        # Activate the new adapter
-        self._update_adapter_fields(adapter_id, {"is_active": 1, "status": "active"})
+        # Activate the new adapter. A failure here would strand the tenant
+        # with ZERO active adapters (inference silently reverts to the base
+        # model until a retry) — compensate by restoring the previous one.
+        try:
+            self._update_adapter_fields(
+                adapter_id, {"is_active": 1, "status": "active"}
+            )
+        except Exception:
+            if previous_id:
+                try:
+                    self._update_adapter_fields(
+                        previous_id, {"is_active": 1, "status": "active"}
+                    )
+                    logger.warning(
+                        "Activation of %s failed; restored previous active adapter %s",
+                        adapter_id,
+                        previous_id,
+                    )
+                except Exception:
+                    logger.error(
+                        "Activation of %s failed AND restoring %s failed — "
+                        "%s/%s has NO active adapter until set_active is "
+                        "retried",
+                        adapter_id,
+                        previous_id,
+                        tenant_id,
+                        agent_type,
+                    )
+            raise
         logger.info(f"Activated adapter {adapter_id} for {tenant_id}/{agent_type}")
 
     def deactivate_adapter(self, adapter_id: str) -> None:

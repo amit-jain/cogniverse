@@ -323,12 +323,15 @@ class StructuredFilesystemBackend(CacheBackend):
             expires_at = now + ttl if (ttl is not None and ttl > 0) else _NEVER_EXPIRES
             os.utime(tmp_path, (now, expires_at))
 
+            os.replace(tmp_path, file_path)
+
             # A legacy .meta sidecar (written before mtime-encoding) would
             # override the fresh mtime with a stale expiry — clear it so this
-            # write's own ttl governs.
+            # write's own ttl governs. Only AFTER the replace succeeded: a
+            # failed replace (disk full) must leave the old entry fully
+            # intact, and unlinking first stripped the sidecar whose future
+            # expiry kept the legacy entry alive.
             self._get_metadata_path(file_path).unlink(missing_ok=True)
-
-            os.replace(tmp_path, file_path)
 
             self._stats["sets"] += 1
             return True
