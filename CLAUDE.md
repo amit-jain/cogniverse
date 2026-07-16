@@ -106,7 +106,7 @@ CODE+DOCS  → lint-and-quality → doc-verifier → quality-enforcer → commit
 
 When running a codebase audit (`codebase-integrity-auditor`, periodic health check, or a user-requested deep pass), follow `.claude/rules/audit.md`. One audit, all detection methods in parallel — do not defer findings to "the next audit."
 
-The five orthogonal bug classes (every finding belongs to one — run every sweep):
+The orthogonal bug classes (every finding belongs to one — run every sweep):
 
 ```
 A  tests-lock-in-bug      mocks at the system boundary, asserts the code's
@@ -115,6 +115,10 @@ B  untested-surface       routes / CLIs / tabs / __main__ no test reaches
 C  cross-file pattern     syntactic footguns swept by regex across the repo
 D  edge-input fuzz        (1, N) tensors, naive datetimes, embedded quotes
 E  silent-context drop    self._<config> attrs set in __init__, never read
+F  concurrency/lifecycle  shared sessions, event-loop blocking, lazy-init
+                          races, reaper-vs-writer, shutdown ordering
+G  fault injection        boundary down/hung/failing mid-op: raise-vs-mask
+                          contracts, torn multi-step writes, retry budgets
 ```
 
 Single-pass protocol: Phase 0 inventory → Phases 1–6 in parallel (one per class + execute-the-happy-path) → Phase 7 review gate → Phase 8 fix via the pre-commit protocol. Every CRIT/HIGH finding ships either a fix with a real-boundary regression test, or a written-plan TODO doc with inline pointer-TODOs at the affected sites. Extend the Class C hunt list with any new footgun the cycle surfaces.

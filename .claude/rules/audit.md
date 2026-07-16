@@ -18,13 +18,13 @@ Across five audits the methodology grew strictly by accretion:
 
 Each step **trusted the artifacts the previous step trusted**. Each next audit had to drop one more trust assumption. The reason we needed five passes is that we kept discovering blind spots one at a time instead of enumerating them up front.
 
-**This protocol enumerates them up front.** The five detection methods below are orthogonal; run all five in one audit cycle.
+**This protocol enumerates them up front.** The detection methods below (classes A–G) are orthogonal; run all of them in one audit cycle.
 
 ---
 
-## The five bug classes and their detection methods
+## The bug classes and their detection methods
 
-Every finding in audits 1–5 falls into one of these five classes. Hunt every class in every audit. No class is optional.
+Every finding so far falls into one of these classes (A–G). Hunt every class in every audit. No class is optional.
 
 ### Class A — Tests that lock in the broken contract
 
@@ -408,6 +408,57 @@ grep -rnP 'data\.get\("root", \{\}\)\.get\("children"' libs/agents/ --include="*
 # partially-initialized instance that skips __init__ invariants (14th audit
 # hunt; none found in prod, but the pattern recurs in fixtures and can leak in).
 grep -rnP 'object\.__new__\(|__class__\.__new__\(' libs/ --include="*.py"
+
+# A raise-on-degraded search helper consumed INSIDE a broad except that
+# returns [] — the except re-swallows the VespaSearchDegraded the helper
+# raises, defeating soft-timeout surfacing (15th: document_agent + audio agent
+# re-swallowed while image re-raised; the graph manager never adopted the
+# helper at all). For each async search/find method consuming the helper,
+# confirm the enclosing except RE-RAISES, never returns [].
+grep -rnP '\.post\([^)]*/search/|vespa_search_children' libs/agents/ --include="*.py"
+# then read each enclosing method: `except Exception` must `raise`
+
+# Test mocks a pyvespa data-plane/query op to RETURN a non-2xx status_code
+# WITHOUT raising — real pyvespa raise_for_status raises on every 4xx/5xx
+# except 404, so the mock exercises a belt-and-braces branch via a shape the
+# boundary can't produce while the real raise->except path stays untested
+# (15th: delete 500-mock + query 400-mock, both with FALSE "pyvespa does not
+# raise" docstrings the SUT's own comments contradicted).
+grep -rnP 'status_code\s*=\s*(4|5)\d\d' tests/ --include="*.py" | grep -viE '404|raise|side_effect'
+grep -rniP 'pyvespa[^\n]*(does not|doesn.t|not) raise' tests/ libs/ --include="*.py"
+
+# Runtime startup add_*/register_* that HARDCODES a dict duplicating a
+# configs/config.json section inside a broad-except swallow — the copy drifts
+# silently and nothing pins the identity (15th: main.py wiki_semantic dup;
+# fixed by reading the loaded config + a chart-vs-configs identity test).
+grep -rnPA6 'add_backend_profile\(|register_\w+_profile\(' libs/runtime/ --include="*.py" | grep -P '=\s*\{'
+
+# Async route/handler calling a blocking deploy/convergence primitive (with
+# internal sleeps) DIRECTLY on the loop while a SIBLING call site offloads the
+# same call via to_thread (15th: admin.py deploy_schema x2 vs tenant_manager's
+# offload; the sigusr1 handler ran a Vespa round-trip inline against its own
+# "must return immediately" comment).
+grep -rnPB10 'schema_registry\.deploy_schema\(|reload_config\(\)' libs/runtime/ --include="*.py" | grep -P 'async def|add_signal_handler|to_thread'
+
+# The offloaded-the-neighbor-not-the-hot-loop tell: an async def containing
+# BOTH an await asyncio.to_thread AND a bare sync extractor/LM/HTTP call in a
+# loop (15th: ingestion offloaded the 30s upsert while per-segment GLiNER
+# [240s timeouts] + the face pipeline ran inline, deferring SIGTERM to a
+# SIGKILL). Confirm each such call is itself inside to_thread.
+grep -rnP '\.(extract_from_text|predict_entities)\(|_run_\w+_pipeline\(' libs/runtime/ --include="*.py"
+
+# A function that ACCEPTS a *_contains/name_*/query filter param and never
+# references it in its body — callers believe they filtered; every row comes
+# back (15th: graph _visit(name_contains=query) returned ALL tenant nodes on
+# the encoder-down fallback).
+grep -rnP 'def \w+\([^)]*_contains[^)]*\)' libs/ --include="*.py"
+# then confirm the param appears in the function body
+
+# Profile-name allowlist gating a query-construction feature — any profile
+# named outside the list silently loses the feature (15th: use_nearestneighbor
+# allowlist killed semantic ranking for wiki/memory/audio profiles; replaced
+# by structural derivation from the rank profile's first-phase expression).
+grep -rnP 'profile_name in \[|profile_name in \(' libs/ --include="*.py"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
@@ -473,6 +524,44 @@ grep -rnPA2 '\.suffix (in \([^)]*\.tmp|== "\.tmp")' libs/ --include="*.py" | gre
 ```
 
 Class F is invisible to every isolation-based class: a passing single-thread test proves nothing about concurrent use. Run the hammer; read the whole async call chain.
+
+### Class G — Fault injection / failure-path execution
+
+Every other class (including F's hammers) executes against HEALTHY boundaries. Class G runs the same paths with the boundary DOWN, HUNG, or FAILING MID-OPERATION and asserts the failure CONTRACT: raise-with-context (good) vs silent success / empty / None (bug) vs torn partial state (worst). The 12th cycle hardened base-store reads to raise; Class G catches the SAME bug re-introduced one layer UP (a manager's `except Exception: return []` re-flattens a primitive that now raises — 15th: wiki_manager + graph_manager did exactly this over the hardened doc primitives) and TORN state in multi-step writes no single-boundary test can see (15th: adapter set_active stranded a tenant with ZERO active adapters → silent base-model reversion).
+
+Detection (EXECUTE — do not grep-conclude):
+
+1. **Reads under outage** — point each store/manager at a DEAD PORT and a `docker pause`d container. Every read must raise (or return an explicit error object), never `[]`/`None`/`{}`/zero-counts indistinguishable from no-data ("empty graph" / "healthy wiki" illusions).
+2. **Multi-step writes** — enumerate every get-then-set / deactivate-then-activate / feed-then-backref / node-then-edge sequence; monkeypatch step N to raise and inspect persisted state for a torn result. Fixes are compensation (restore prior state before re-raising) or idempotent-retry safety.
+3. **HTTP degradation** — stub server returning 503/429/507/connection-reset/SLOW-trickle; TIME the retry budget: per-attempt timeout × retry count is the real hang bound (15th: "15s fail-fast" was 45s hung — 3 attempts), and confirm no non-idempotent op is retried blindly.
+4. **Disk failure** — monkeypatch `os.replace`/`os.utime`/write → ENOSPC/EACCES mid-`set()`: the OLD value must survive a failed overwrite (15th: sidecar unlinked BEFORE replace destroyed legacy entries), no partial entry readable, no orphan tmp beyond the reaper.
+5. **LM/telemetry down** — error surfaced vs silently swallowed into a base-model/no-op fallback; distinguish build-time laziness from call-time failure.
+6. **Partial batches** — doc k of N schema-invalid: failure report names exactly the failed ids AND the good docs persist.
+
+Greppable precursors (Class C sweeps them; G then executes the hits):
+
+```bash
+# Manager-layer re-flatten: except returning []/None/success around a backend
+# call whose primitive RAISES on outage (15th: wiki_manager save/search/lint,
+# graph_manager reads — router replied 200 "saved" with nothing persisted).
+grep -rnPA3 'except Exception' libs/agents/ --include="*.py" \
+  | grep -B3 -E 'return \[\]|return None|return \{\}|logger\.exception' \
+  | grep -B1 'self\._backend\.'
+
+# Multi-step write with no compensation: >=2 sequential backend writes in one
+# method — step-2 failure orphans step-1 (15th: adapter set_active).
+grep -rnPA12 'def set_active|def .*activate|def .*switch' libs/ --include="*.py" \
+  | grep -cP '_update_\w+_fields\(|feed_data_point\('   # >=2 in one method = suspect
+
+# Sidecar/metadata unlink or utime BEFORE os.replace — a failed replace
+# destroys the old entry's liveness metadata (15th: structured_filesystem).
+grep -rnPB4 'os\.replace\(' libs/ --include="*.py" | grep -P '\.unlink\(|os\.utime\('
+
+# Retry count silently multiplying the timeout budget — worst-case hang is
+# timeout x attempts, not timeout (15th: 15s x 3 = 45s per op, compounding
+# across multi-feed paths like save_session).
+grep -rnPA3 'num_retries\w*\s*=' libs/ --include="*.py" | grep -P 'timeout'
+```
 
 ---
 
