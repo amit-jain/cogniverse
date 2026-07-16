@@ -1198,6 +1198,16 @@
           "embedding_dim": 48,
           "binary_dim": 6
         }
+      },
+      "wiki_semantic": {
+        "type": "wiki",
+        "description": "Wiki page hybrid search: DenseOn 768-d dense closeness + BM25 over title/content. Pages are fed directly by WikiManager (not the ingestion pipeline); the hybrid ranking strategy comes from the wiki_pages schema.",
+        "schema_name": "wiki_pages",
+        "embedding_model": "lightonai/DenseOn",
+        "embedding_type": "single_vector",
+        "schema_config": {
+          "embedding_dims": 768
+        }
       }
     },
     "default_profiles": {
