@@ -122,27 +122,45 @@ class GraphManager:
             )
         return None
 
-    def upsert(self, result: ExtractionResult) -> Dict[str, int]:
+    def upsert(self, result: ExtractionResult) -> Dict[str, Any]:
         """Upsert extracted nodes and edges into Vespa.
 
-        Returns a dict with counts: nodes_upserted, edges_upserted.
+        Returns a dict with counts (nodes_upserted, edges_upserted) and the
+        ids that failed to persist (failed_ids), so the caller can surface a
+        partial/total feed failure instead of reporting a silent success.
+
+        The first failed feed flips off the per-item retry budget for the rest
+        of the batch: a persistent schema-missing/backend-down failure otherwise
+        spends the full ~40s convergence retry on every single document.
         """
         nodes_upserted = 0
         edges_upserted = 0
+        failed_ids: list[str] = []
+        retry = True
 
         merged_nodes = self._merge_duplicate_nodes(result.nodes)
         if merged_nodes:
             texts = [f"{node.name}\n{node.description}" for node in merged_nodes]
             tensor_fields_per_node = self._encode_documents(texts)
             for node, tensor_fields in zip(merged_nodes, tensor_fields_per_node):
-                if self._feed_node(node, tensor_fields):
+                if self._feed_node(node, tensor_fields, retry=retry):
                     nodes_upserted += 1
+                else:
+                    failed_ids.append(node.doc_id)
+                    retry = False
 
         for edge in result.edges:
-            if self._feed_edge(edge):
+            if self._feed_edge(edge, retry=retry):
                 edges_upserted += 1
+            else:
+                failed_ids.append(edge.doc_id)
+                retry = False
 
-        return {"nodes_upserted": nodes_upserted, "edges_upserted": edges_upserted}
+        return {
+            "nodes_upserted": nodes_upserted,
+            "edges_upserted": edges_upserted,
+            "failed_ids": failed_ids,
+        }
 
     def search_nodes(
         self, query: str, top_k: int = 10, trace: str = ""
@@ -350,7 +368,9 @@ class GraphManager:
 
         return qt_blocks, qtb_blocks
 
-    def _feed_with_retry(self, doc_id: str, fields: dict, kind: str) -> bool:
+    def _feed_with_retry(
+        self, doc_id: str, fields: dict, kind: str, retry: bool = True
+    ) -> bool:
         """Put a graph node/edge through the backend document API, retrying on
         schema-convergence races.
 
@@ -369,8 +389,12 @@ class GraphManager:
         """
         import time as _time
 
+        # retry=False (set once the batch has already seen a failure) collapses
+        # to a single attempt so a persistent failure doesn't spend the full
+        # ~40s convergence budget on every remaining document.
+        max_attempts = 8 if retry else 1
         backoff = 2.0
-        for attempt in range(8):
+        for attempt in range(max_attempts):
             try:
                 self._backend.put_document_fields(
                     doc_id,
@@ -384,7 +408,7 @@ class GraphManager:
                 transient = (
                     "does not exist" in body or "No handler for document type" in body
                 )
-                if not transient or attempt == 7:
+                if not transient or attempt == max_attempts - 1:
                     logger.warning(
                         "Feed for %s %s failed: %s", kind, doc_id, body[:2000]
                     )
@@ -393,21 +417,27 @@ class GraphManager:
                 backoff = min(backoff * 1.5, 8.0)
         return False
 
-    def _feed_node(self, node: Node, tensor_fields: Dict[str, Any]) -> bool:
+    def _feed_node(
+        self, node: Node, tensor_fields: Dict[str, Any], retry: bool = True
+    ) -> bool:
         payload = node.to_vespa_document()
         # tensor_fields is empty when encoding failed — ship the node
         # without embeddings rather than blocking the upsert. Mapped
         # tensor attributes tolerate absent values.
         for k, v in tensor_fields.items():
             payload["fields"][k] = v
-        return self._feed_with_retry(node.doc_id, payload["fields"], "node")
+        return self._feed_with_retry(
+            node.doc_id, payload["fields"], "node", retry=retry
+        )
 
-    def _feed_edge(self, edge: Edge) -> bool:
+    def _feed_edge(self, edge: Edge, retry: bool = True) -> bool:
         """Feed an edge document. Edges don't carry embeddings — semantic
         retrieval is over nodes only — so the mapped embedding fields are
         omitted entirely (Vespa attribute tensors handle absence)."""
         payload = edge.to_vespa_document()
-        return self._feed_with_retry(edge.doc_id, payload["fields"], "edge")
+        return self._feed_with_retry(
+            edge.doc_id, payload["fields"], "edge", retry=retry
+        )
 
     def _search_filtered(
         self, conditions: List[str], top_k: int

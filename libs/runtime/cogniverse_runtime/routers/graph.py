@@ -97,6 +97,7 @@ class UpsertResponse(BaseModel):
     status: str
     nodes_upserted: int
     edges_upserted: int
+    failed_ids: list[str] = []
 
 
 class NodeSearchResponse(BaseModel):
@@ -192,7 +193,24 @@ async def upsert(request: UpsertRequest) -> UpsertResponse:
         edges=edges,
     )
     counts = await asyncio.to_thread(mgr.upsert, result)
-    return UpsertResponse(status="upserted", **counts)
+    failed_ids = counts.get("failed_ids", [])
+    requested = len(nodes) + len(edges)
+    upserted = counts["nodes_upserted"] + counts["edges_upserted"]
+
+    if requested and upserted == 0:
+        # Every feed failed — the backend rejected the whole batch (schema
+        # missing/unconverged, or Vespa down). Returning 200 "upserted" with
+        # zero counts hid a total data loss; surface it so the caller retries.
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Graph upsert persisted 0/{requested} documents; "
+                f"failed ids: {failed_ids[:20]}"
+            ),
+        )
+
+    status = "upserted" if not failed_ids else "partially_upserted"
+    return UpsertResponse(status=status, **counts)
 
 
 @router.get("/search", response_model=NodeSearchResponse)

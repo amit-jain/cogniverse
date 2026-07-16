@@ -808,7 +808,7 @@ Per-tenant wiki knowledge pages (`libs/runtime/cogniverse_runtime/routers/wiki.p
 
 Knowledge-graph upsert, search, and traversal (`libs/runtime/cogniverse_runtime/routers/graph.py`), tenant-scoped via a `GraphManager` factory injected at startup (same pattern as the wiki router). Every route canonicalizes `tenant_id` via `canonical_tenant_id` and calls `assert_tenant_exists` before touching graph state.
 
-**POST /graph/upsert** — Upsert a batch of nodes and edges for a tenant. Response model `UpsertResponse` (per-kind counts).
+**POST /graph/upsert** — Upsert a batch of nodes and edges for a tenant. Response model `UpsertResponse` (per-kind counts plus `failed_ids`; `status` is `partially_upserted` when some feeds fail). A batch where every feed fails returns 502 rather than a 200 with zero counts.
 
 **GET /graph/search?tenant_id=...&q=...&top_k=10** — Semantic search over graph nodes (`top_k` 1-100).
 
