@@ -37,6 +37,7 @@ from cogniverse_agents.graph.graph_schema import (
     _safe_tenant,
     normalize_name,
 )
+from cogniverse_agents.search.vespa_query import vespa_search_children
 from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
 from cogniverse_vespa._yql import yql_quote
 from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
@@ -180,17 +181,13 @@ class GraphManager:
             "model.restrict": self._schema_name,
         }
         url = f"{self._backend._url}:{self._backend._port}/search/"
-        try:
-            resp = self._http.post(url, json=body, timeout=10)
-            if not resp.ok:
-                raise RuntimeError(f"search returned {resp.status_code}: {resp.text}")
-            data = resp.json()
-            return [
-                h.get("fields", h) for h in data.get("root", {}).get("children", [])
-            ]
-        except Exception as exc:
-            logger.warning("Node search failed, trying YQL-only fallback: %s", exc)
-            return self._visit(doc_type="node", name_contains=query, top_k=top_k)
+        # A Vespa-side failure (non-2xx, outage, soft-timeout) surfaces — the
+        # YQL-visit fallback is reserved for encoder failures above; cascading
+        # a failing Vespa into a second query only masked the degradation.
+        resp = self._http.post(url, json=body, timeout=10)
+        if not resp.ok:
+            raise RuntimeError(f"search returned {resp.status_code}: {resp.text}")
+        return [h.get("fields", h) for h in vespa_search_children(resp.json())]
 
     def get_neighbors(self, node_name: str, depth: int = 1) -> Dict[str, Any]:
         """Get direct neighbors of a node (edges out and in)."""
@@ -435,12 +432,10 @@ class GraphManager:
         }
         resp = self._http.post(f"{url}/search/", json=body, timeout=15)
         if not resp.ok:
-            logger.error(
-                "Graph query failed (%s): %s", resp.status_code, resp.text[:200]
+            raise RuntimeError(
+                f"Graph query failed ({resp.status_code}): {resp.text[:200]}"
             )
-            return []
-        data = resp.json()
-        return [c.get("fields", {}) for c in data.get("root", {}).get("children", [])]
+        return [c.get("fields", {}) for c in vespa_search_children(resp.json())]
 
     def _visit(
         self,
@@ -450,18 +445,16 @@ class GraphManager:
         source_doc_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch documents of a given doc_type for this tenant, optionally
-        scoped server-side to one ``source_doc_id``."""
+        scoped server-side to a name filter or one ``source_doc_id``."""
         conditions = [
             f"doc_type contains {yql_quote(doc_type)}",
             f"tenant_id contains {yql_quote(self._tenant_id)}",
         ]
+        if name_contains:
+            conditions.append(f"name contains {yql_quote(name_contains)}")
         if source_doc_id:
             conditions.append(f"source_doc_id contains {yql_quote(source_doc_id)}")
-        try:
-            return self._search_filtered(conditions, top_k)
-        except Exception:
-            logger.exception("Graph query failed for doc_type=%s", doc_type)
-            return []
+        return self._search_filtered(conditions, top_k)
 
     def _visit_edges(
         self,
@@ -477,25 +470,18 @@ class GraphManager:
             conditions.append(f"source_node_id contains {yql_quote(source_node_id)}")
         if target_node_id:
             conditions.append(f"target_node_id contains {yql_quote(target_node_id)}")
-        try:
-            return self._search_filtered(conditions, top_k=100)
-        except Exception:
-            logger.exception("Edge query failed")
-            return []
+        return self._search_filtered(conditions, top_k=100)
 
     def get_edge_by_id(self, edge_id: str) -> Optional[Dict[str, Any]]:
         """Fetch a single edge's fields by its deterministic ``edge_id``.
 
         The edge doc_id is ``kg_edge_{safe_tenant}_{edge_id}`` (see
         ``Edge.doc_id``), so a direct by-id document GET resolves it without
-        visiting and filtering the whole edge set. Returns ``None`` when the
-        edge does not exist or the GET fails.
+        visiting and filtering the whole edge set. Returns ``None`` only when
+        the edge does not exist; a backend failure raises so an outage is
+        never mistaken for a missing edge.
         """
         doc_id = f"kg_edge_{_safe_tenant(self._tenant_id)}_{edge_id}"
-        try:
-            return self._backend.get_document_fields(
-                doc_id, schema_name=self._schema_name, namespace=_GRAPH_NAMESPACE
-            )
-        except Exception:
-            logger.exception("Edge GET failed for edge_id=%s", edge_id)
-            return None
+        return self._backend.get_document_fields(
+            doc_id, schema_name=self._schema_name, namespace=_GRAPH_NAMESPACE
+        )
