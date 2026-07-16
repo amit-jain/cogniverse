@@ -62,3 +62,15 @@ def test_ops_time_out_fast_against_a_hung_vespa(hanging_server):
         f"hung-Vespa op took {elapsed:.1f}s — the 120s pyvespa default is back "
         f"(raised {excinfo.type.__name__})"
     )
+
+
+def test_search_connection_failfast():
+    """The user-facing search session must carry the same fail-fast clamp as
+    the document/config sessions — it kept pyvespa's 120s x 11-attempt
+    defaults, so a hung Vespa blocked each query for minutes."""
+    from cogniverse_vespa.search_backend import VespaConnection
+
+    conn = VespaConnection("http://localhost:1", "conn-failfast")
+
+    assert conn._sync.http_client.timeout == 15.0
+    assert conn._sync.num_retries_429 == 2

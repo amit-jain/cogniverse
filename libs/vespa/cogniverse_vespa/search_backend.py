@@ -35,7 +35,7 @@ from cogniverse_sdk.document import (
     SearchResult,
 )
 from cogniverse_sdk.interfaces.backend import SearchBackend
-from cogniverse_vespa._vespa_factory import make_vespa_app
+from cogniverse_vespa._vespa_factory import apply_failfast_timeouts, make_vespa_app
 from cogniverse_vespa._yql import yql_quote
 from cogniverse_vespa.embedding_processor import _is_single_vector_schema
 
@@ -240,6 +240,10 @@ class VespaConnection:
         self.vespa = make_vespa_app(url=url)
         self._sync = self.vespa.syncio(connections=4)
         self._sync._open_http_client()
+        # Same fail-fast clamp as the document/config sessions — without it
+        # the user-facing search path kept pyvespa's 120s x 11-attempt
+        # defaults, so a hung Vespa blocked each query for minutes.
+        apply_failfast_timeouts(self._sync)
         self.created_at = time.time()
         self.last_used = time.time()
         self.is_healthy = True

@@ -38,6 +38,23 @@ def make_vespa_app(*, url: str, port: Optional[int] = None) -> Vespa:
     return Vespa(url=url)
 
 
+def apply_failfast_timeouts(sync_session, timeout_s: float = 15.0) -> None:
+    """Clamp a pyvespa sync session to fail-fast timeouts.
+
+    pyvespa hardcodes a 120s client timeout and retries connection-class
+    errors (including timeouts) up to ``num_retries_429`` times with backoff
+    — 11 attempts turned one hung op into ~10x the timeout. The clamp bounds
+    a HUNG Vespa at ``timeout_s`` x 3 attempts per op (a refused connection
+    still fails in milliseconds). Applied to every long-lived session: the
+    document/config/adapter ops wrapper and the search connection pool.
+    """
+    try:
+        sync_session.http_client.timeout = timeout_s
+        sync_session.num_retries_429 = 2
+    except Exception as exc:  # noqa: BLE001 — keep the session usable
+        logger.warning("Could not set Vespa client timeout: %s", exc)
+
+
 class PersistentVespaOps:
     """pyvespa app wrapper whose data-plane ops reuse ONE HTTP session.
 
@@ -53,18 +70,7 @@ class PersistentVespaOps:
         self.app = app
         self._sync = app.syncio(connections=connections)
         self._sync._open_http_client()
-        # pyvespa hardcodes a 120s client timeout. The callers this wrapper
-        # serves (config/adapter stores, metadata CRUD, wiki/graph/back-ref
-        # document ops) carried explicit 10-15s timeouts before consolidating
-        # here — a hung Vespa must fail fast, not block two minutes per op.
-        try:
-            self._sync.http_client.timeout = timeout_s
-            # pyvespa retries connection-class errors (incl. timeouts) up to
-            # num_retries_429 times with backoff — 11 attempts turned one hung
-            # op into ~10x the timeout. Down-Vespa connects still fail fast.
-            self._sync.num_retries_429 = 2
-        except Exception as exc:  # noqa: BLE001 — keep the session usable
-            logger.warning("Could not set Vespa client timeout: %s", exc)
+        apply_failfast_timeouts(self._sync, timeout_s=timeout_s)
 
     @property
     def url(self) -> str:
