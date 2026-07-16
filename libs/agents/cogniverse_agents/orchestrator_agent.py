@@ -15,6 +15,7 @@ Features:
 import asyncio
 import json
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -639,8 +640,11 @@ class OrchestratorAgent(
 
         super().__init__(deps=deps, config=config, dspy_module=orchestration_module)
 
-        # Track which tenants have memory initialized
+        # Track which tenants have memory initialized. The lock guards the
+        # first-touch init, which is offloaded to worker threads — without it
+        # concurrent first requests each build a Mem0 stack and leak the losers.
         self._memory_initialized_tenants: set = set()
+        self._memory_init_lock = threading.Lock()
 
         logger.info(
             f"OrchestratorAgent initialized with {len(self.registry.agents)} registered agents"
@@ -678,6 +682,14 @@ class OrchestratorAgent(
         if tenant_id in self._memory_initialized_tenants:
             return
 
+        with self._memory_init_lock:
+            # Re-check under the lock: a racing thread may have initialized
+            # while we waited (this runs offloaded on worker threads).
+            if tenant_id in self._memory_initialized_tenants:
+                return
+            self._init_memory_for_tenant_locked(tenant_id)
+
+    def _init_memory_for_tenant_locked(self, tenant_id: str) -> None:
         try:
             from cogniverse_foundation.config.utils import get_config
 
@@ -990,8 +1002,10 @@ class OrchestratorAgent(
                 )
                 inbound_queue = None
 
-        # Lazy memory initialization for this tenant
-        self._ensure_memory_for_tenant(tenant_id)
+        # Lazy memory initialization for this tenant. First touch builds a Mem0
+        # stack (embedder + Vespa vector store) — a multi-second sync build kept
+        # off the loop; the lock inside makes concurrent first touches safe.
+        await asyncio.to_thread(self._ensure_memory_for_tenant, tenant_id)
 
         # Get relevant context from memory (cross-session). Mem0 search is a
         # synchronous LLM/vector round trip — run it off the event loop.
