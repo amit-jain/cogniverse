@@ -363,7 +363,9 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         results = []
         data = response.json()
 
-        for hit in vespa_search_children(data):
+        for hit in vespa_search_children(
+            data, correlation_id=f"image_search_agent:{self._tenant_id}"
+        ):
             fields = hit.get("fields", {})
             results.append(
                 ImageResult(

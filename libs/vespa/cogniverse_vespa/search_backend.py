@@ -235,7 +235,6 @@ class VespaConnection:
     """
 
     def __init__(self, url: str, connection_id: str):
-        self.url = url
         self.connection_id = connection_id
         self.vespa = make_vespa_app(url=url)
         self._sync = self.vespa.syncio(connections=4)
@@ -244,7 +243,6 @@ class VespaConnection:
         # the user-facing search path kept pyvespa's 120s x 11-attempt
         # defaults, so a hung Vespa blocked each query for minutes.
         apply_failfast_timeouts(self._sync)
-        self.created_at = time.time()
         self.last_used = time.time()
         self.is_healthy = True
         self._lock = threading.Lock()
@@ -418,7 +416,6 @@ class VespaSearchBackend(SearchBackend):
         backend_url: str = None,
         backend_port: int = None,
         schema_name: str = None,
-        profile: str = None,
         query_encoder: Optional[Any] = None,
         enable_metrics: bool = True,
         enable_connection_pool: bool = True,
@@ -431,14 +428,13 @@ class VespaSearchBackend(SearchBackend):
         """
         Initialize Vespa search backend.
 
-        When config is provided, backend_url/backend_port/schema_name/profile are ignored.
-        Schema and profile are resolved at query time from search() parameters.
+        When config is provided, backend_url/backend_port/schema_name are ignored.
+        The profile is resolved at query time from search() parameters.
 
         Args:
             backend_url: Backend URL (used when config is None)
             backend_port: Backend port (used when config is None)
             schema_name: Schema name (used when config is None; set per-query otherwise)
-            profile: Profile name (used when config is None; set per-query otherwise)
             query_encoder: Optional query encoder instance
             enable_metrics: Whether to collect metrics
             enable_connection_pool: Whether to use connection pooling
@@ -462,13 +458,11 @@ class VespaSearchBackend(SearchBackend):
             self.profiles = dict(config.get("profiles", {}))
             self.default_profiles = dict(config.get("default_profiles", {}))
             self.schema_name = None
-            self.profile = None
             self.query_encoder = query_encoder or config.get("query_encoder")
         else:
             self.backend_url = backend_url
             self.backend_port = backend_port
             self.schema_name = schema_name
-            self.profile = profile
             self.query_encoder = query_encoder
             self.profiles = {}
             self.default_profiles = {}
@@ -525,7 +519,6 @@ class VespaSearchBackend(SearchBackend):
         self.backend_url = config.get("url", "http://localhost")
         self.backend_port = config.get("port", 8080)
         self.schema_name = config.get("schema_name")
-        self.profile = config.get("profile")
         self.query_encoder = None
 
         # Populate profiles/default_profiles from config. Earlier versions
@@ -948,7 +941,6 @@ class VespaSearchBackend(SearchBackend):
                 raise ValueError(f"No strategies found in profile '{profile_name}'")
 
         self.schema_name = schema_name
-        self.profile = profile_name
 
         logger.info(
             f"[{correlation_id}] Query resolved: type={content_type}, profile={profile_name}, "

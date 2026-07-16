@@ -55,7 +55,6 @@ class MessagingGateway:
         config_manager=None,
     ):
         self.bot_token = bot_token
-        self.runtime_url = runtime_url
         self.mode = mode
         self.webhook_url = webhook_url
         self.webhook_listen = webhook_listen

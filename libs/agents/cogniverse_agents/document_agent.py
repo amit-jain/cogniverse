@@ -449,7 +449,9 @@ class DocumentAgent(
         results = []
         data = response.json()
 
-        for hit in vespa_search_children(data):
+        for hit in vespa_search_children(
+            data, correlation_id=f"document_agent:{self._tenant_id}"
+        ):
             fields = hit.get("fields", {})
             results.append(
                 DocumentResult(
@@ -518,7 +520,9 @@ class DocumentAgent(
         results = []
         data = response.json()
 
-        for hit in vespa_search_children(data):
+        for hit in vespa_search_children(
+            data, correlation_id=f"document_agent:{self._tenant_id}"
+        ):
             fields = hit.get("fields", {})
             results.append(
                 DocumentResult(
