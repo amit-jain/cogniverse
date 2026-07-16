@@ -423,17 +423,22 @@ class TestSummarizerAgentCoreFunctionality:
                 query=query,
                 summary_type=summary_type,
             )
-            return Mock(summary="AI demos, an ML tutorial, and a research paper.")
+            return Mock(
+                summary="AI demos, an ML tutorial, and a research paper.",
+                key_points="demos shown, tutorial covered, paper cited",
+            )
 
         agent.call_dspy = _fake_call_dspy
 
         results = sample_summary_request.search_results
-        brief_summary = await agent._generate_brief_summary(
+        brief_summary, key_points = await agent._generate_brief_summary(
             sample_summary_request, results, thinking_phase, []
         )
 
         # DSPy output is returned verbatim — the agent does not post-process it.
         assert brief_summary == "AI demos, an ML tutorial, and a research paper."
+        # The LM's key_points come back parsed, not the canned templates.
+        assert key_points == ["demos shown", "tutorial covered", "paper cited"]
         # The brief path requests the "summary" field with summary_type="brief"
         # and hands DSPy a "- {title}: {content_type}" block for the top results.
         assert captured["output_field"] == "summary"
@@ -475,11 +480,14 @@ class TestSummarizerAgentCoreFunctionality:
                 query=query,
                 summary_type=summary_type,
             )
-            return Mock(summary="A comprehensive LLM-written synthesis of the results.")
+            return Mock(
+                summary="A comprehensive LLM-written synthesis of the results.",
+                key_points="synthesis point one\nsynthesis point two",
+            )
 
         agent.call_dspy = _fake_call_dspy
 
-        summary = await agent._generate_comprehensive_summary(
+        summary, key_points = await agent._generate_comprehensive_summary(
             sample_summary_request,
             sample_summary_request.search_results,
             thinking_phase,
@@ -488,6 +496,8 @@ class TestSummarizerAgentCoreFunctionality:
         )
 
         assert summary == "A comprehensive LLM-written synthesis of the results."
+        # Newline-delimited LM key_points are parsed into a list.
+        assert key_points == ["synthesis point one", "synthesis point two"]
         assert captured["output_field"] == "summary"
         assert captured["summary_type"] == "comprehensive"
         assert captured["query"] == "AI technology overview"
@@ -560,7 +570,10 @@ class TestSummarizerAgentCoreFunctionality:
             module, *, output_field, content, query, summary_type, keyframes
         ):
             assert summary_type == "comprehensive"
-            return Mock(summary=comprehensive_summary)
+            return Mock(
+                summary=comprehensive_summary,
+                key_points="AI adoption rising, tooling maturing, costs falling",
+            )
 
         agent.call_dspy = _fake_call_dspy
 
@@ -569,7 +582,13 @@ class TestSummarizerAgentCoreFunctionality:
         assert isinstance(result, SummaryResult)
         # The default comprehensive path returns the DSPy summary verbatim.
         assert result.summary == comprehensive_summary
-        assert isinstance(result.key_points, list)
+        # The LM's key_points flow all the way to the result — not the canned
+        # "N high-relevance results found" templates the agent used to emit.
+        assert result.key_points == [
+            "AI adoption rising",
+            "tooling maturing",
+            "costs falling",
+        ]
         assert isinstance(result.thinking_phase, ThinkingPhase)
         assert 0.0 <= result.confidence_score <= 1.0
 
@@ -1195,6 +1214,39 @@ class TestA2AExecutorStreaming:
 
         # Non-streaming: dispatch() called, not create_streaming_agent
         mock_dispatcher.dispatch.assert_called_once()
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestParseKeyPoints:
+    """The LM's key_points field (declared comma-separated) is parsed robustly
+    across the formats real LMs emit, so genuine output isn't discarded."""
+
+    def test_comma_separated(self):
+        assert SummarizerAgent._parse_key_points("alpha, beta, gamma") == [
+            "alpha",
+            "beta",
+            "gamma",
+        ]
+
+    def test_newline_delimited(self):
+        assert SummarizerAgent._parse_key_points("first\nsecond\nthird") == [
+            "first",
+            "second",
+            "third",
+        ]
+
+    def test_bullet_and_number_prefixes_stripped(self):
+        assert SummarizerAgent._parse_key_points("- one\n- two") == ["one", "two"]
+        assert SummarizerAgent._parse_key_points("1. one\n2) two") == ["one", "two"]
+
+    def test_empty_and_non_string_yield_no_points(self):
+        assert SummarizerAgent._parse_key_points("") == []
+        assert SummarizerAgent._parse_key_points("   ") == []
+        # A non-string (e.g. an unset DSPy field) yields nothing rather than a
+        # garbage single-element list, so the canned fallback runs instead.
+        assert SummarizerAgent._parse_key_points(None) == []
+        assert SummarizerAgent._parse_key_points(object()) == []
 
 
 if __name__ == "__main__":
