@@ -33,6 +33,7 @@ Usage:
 """
 
 import asyncio
+import contextvars
 import logging
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
@@ -59,6 +60,18 @@ if TYPE_CHECKING:
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 logger = logging.getLogger(__name__)
+
+# Per-invocation progress queue for streaming. A dispatcher CACHES agent
+# instances and shares one across concurrent requests, so this must NOT be
+# instance state (self._progress_queue): a second concurrent stream would
+# overwrite the first's queue, cross-wiring their events and leaking the raw
+# loop-local sentinel into the wrong stream while the first hangs. A ContextVar
+# scopes the queue to each _stream_with_progress invocation (and the
+# create_task'd _process_impl that inherits its context), like the memory
+# mixin's session/artefact ContextVars.
+_PROGRESS_QUEUE: contextvars.ContextVar[Optional[asyncio.Queue]] = (
+    contextvars.ContextVar("_agent_progress_queue", default=None)
+)
 
 
 class ConversationTurn(BaseModel):
@@ -294,7 +307,6 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         self.deps = deps
         self._process_count = 0
         self._error_count = 0
-        self._progress_queue: Optional[asyncio.Queue] = None
         self._input_rails: Optional["RailChain"] = None
         self._output_rails: Optional["RailChain"] = None
 
@@ -400,7 +412,8 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
             message: Human-readable status message
             data: Optional partial results to include in the event
         """
-        if self._progress_queue is None:
+        queue = _PROGRESS_QUEUE.get()
+        if queue is None:
             return
         event: Dict[str, Any] = {
             "type": "status" if data is None else "partial",
@@ -409,7 +422,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         }
         if data is not None:
             event["data"] = data
-        self._progress_queue.put_nowait(event)
+        queue.put_nowait(event)
 
     async def call_dspy(
         self,
@@ -441,7 +454,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         import asyncio
 
         with self._adapter_lm_context(), _dispatched_prompt_overlay(self, module):
-            if self._progress_queue is not None:
+            if _PROGRESS_QUEUE.get() is not None:
                 import dspy
 
                 streaming_fn = dspy.streamify(
@@ -587,8 +600,13 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         Agents do NOT override this. They call self.emit_progress() from
         within _process_impl() instead.
         """
-        self._progress_queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue()
         _SENTINEL = object()
+        # Scope the queue to THIS invocation so emit_progress (called from the
+        # create_task'd _process_impl, which inherits this context) targets this
+        # request's queue — not a concurrent request's that overwrote a shared
+        # instance attribute.
+        token = _PROGRESS_QUEUE.set(queue)
 
         result_holder: list = []
         error_holder: list = []
@@ -601,13 +619,13 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
             except Exception as e:
                 error_holder.append(e)
             finally:
-                self._progress_queue.put_nowait(_SENTINEL)
+                queue.put_nowait(_SENTINEL)
 
         task = asyncio.create_task(_run_impl())
 
         try:
             while True:
-                event = await self._progress_queue.get()
+                event = await queue.get()
                 if event is _SENTINEL:
                     break
                 yield event
@@ -632,7 +650,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                 else:
                     yield {"type": "final", "data": payload}
         finally:
-            self._progress_queue = None
+            _PROGRESS_QUEUE.reset(token)
             if not task.done():
                 task.cancel()
                 try:
