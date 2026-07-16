@@ -149,16 +149,25 @@ class TestUserTenantMapper:
         assert call_kwargs["metadata"]["tenant_id"] == "acme:alice"
 
     def test_get_tenant_id_reads_system_partition(self, memory_manager):
-        """get_tenant_id must search the SYSTEM partition (where register_user
-        writes), not some other tenant — the read/write partitions must match."""
-        memory_manager.search_memory.return_value = [
-            {"memory": "User 12345 on telegram is mapped to tenant acme:alice"}
+        """get_tenant_id must enumerate the SYSTEM partition (where
+        register_user writes), not some other tenant — the read/write
+        partitions must match, and the match is exact on metadata."""
+        memory_manager.get_all_memories.return_value = [
+            {
+                "memory": "User 12345 on telegram is mapped to tenant acme:alice",
+                "metadata": {
+                    "type": "user_mapping",
+                    "platform": "telegram",
+                    "external_user_id": "12345",
+                    "tenant_id": "acme:alice",
+                },
+            }
         ]
 
         mapper = UserTenantMapper(memory_manager)
         result = mapper.get_tenant_id("telegram", "12345")
         assert result == "acme:alice"
-        assert memory_manager.search_memory.call_args.kwargs["tenant_id"] == (
+        assert memory_manager.get_all_memories.call_args.kwargs["tenant_id"] == (
             SYSTEM_TENANT_ID
         )
 
@@ -177,12 +186,12 @@ class TestUserTenantMapper:
                 self, content, tenant_id, agent_name, metadata=None, infer=True
             ):
                 self.store.setdefault((tenant_id, agent_name), []).append(
-                    {"memory": content}
+                    {"memory": content, "metadata": metadata or {}}
                 )
                 return "mem_1"
 
-            def search_memory(self, query, tenant_id, agent_name, top_k=5):
-                return self.store.get((tenant_id, agent_name), [])[:top_k]
+            def get_all_memories(self, tenant_id, agent_name):
+                return self.store.get((tenant_id, agent_name), [])
 
         mapper = UserTenantMapper(_PartitionedMemory())
         assert mapper.register_user("telegram", "12345", "acme:alice") is True
@@ -191,7 +200,7 @@ class TestUserTenantMapper:
         assert mapper.get_tenant_id("telegram", "99999") is None
 
     def test_get_tenant_id_not_found(self, memory_manager):
-        memory_manager.search_memory.return_value = []
+        memory_manager.get_all_memories.return_value = []
 
         mapper = UserTenantMapper(memory_manager)
         result = mapper.get_tenant_id("telegram", "99999")
