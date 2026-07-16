@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from cogniverse_agents.inference.rlm_inference import RLMInference, route_rlm_endpoint
 from cogniverse_agents.wiki.wiki_schema import WikiIndex, WikiPage, generate_slug
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_vespa._yql import yql_quote
 
 if TYPE_CHECKING:
     from cogniverse_sdk.document import Document
@@ -158,24 +159,19 @@ class WikiManager:
         query_vec = np.asarray(
             self._generate_embedding(query, is_query=True), dtype=np.float32
         )
-        try:
-            # ``hybrid`` combines closeness(embedding) with bm25(title/content).
-            # Gives usable scores on the current backend whether or not the
-            # nearestNeighbor YQL fast path fires for this schema.
-            results = self._backend.search(
-                {
-                    "query": query,
-                    "type": "wiki",
-                    "top_k": top_k,
-                    "schema": self._schema_name,
-                    "tenant_id": self._tenant_id,
-                    "strategy": "hybrid",
-                    "query_embeddings": query_vec,
-                }
-            )
-        except Exception:
-            logger.exception("Wiki search failed")
-            return []
+        # ``hybrid`` combines closeness(embedding) with bm25(title/content).
+        # A backend failure raises — flattening it to [] made an outage
+        # indistinguishable from a wiki with no matching pages.
+        results = self._backend.search(
+            {
+                "query": query,
+                "type": "wiki",
+                "top_k": top_k,
+                "tenant_id": self._tenant_id,
+                "strategy": "hybrid",
+                "query_embeddings": query_vec,
+            }
+        )
 
         out = []
         for r in results:
@@ -233,35 +229,18 @@ class WikiManager:
         import json as _json
         from datetime import timedelta
 
-        try:
-            results = self._backend.search(
-                {
-                    "query": f"tenant_id:{self._tenant_id}",
-                    "type": "wiki",
-                    "top_k": 500,
-                    "schema": self._schema_name,
-                    "tenant_id": self._tenant_id,
-                    "strategy": "semantic_search",
-                }
-            )
-        except Exception:
-            logger.exception("Wiki lint: backend search failed")
-            results = []
+        all_pages = self._list_pages()
 
         # Collect all doc_ids referenced as cross_references in session pages.
         referenced_ids: set = set()
-        all_pages = []
-        for r in results:
-            doc = r.document
-            page_type = doc.metadata.get("page_type", "")
-            if page_type == "session":
-                raw = doc.metadata.get("cross_references", "[]")
+        for fields in all_pages:
+            if fields.get("page_type", "") == "session":
+                raw = fields.get("cross_references", "[]")
                 try:
                     refs = _json.loads(raw) if isinstance(raw, str) else raw
                 except Exception:
                     refs = []
                 referenced_ids.update(refs)
-            all_pages.append(doc)
 
         now = datetime.now(timezone.utc)
         stale_threshold = timedelta(days=30)
@@ -270,11 +249,11 @@ class WikiManager:
         stale_pages = []
         empty_pages = []
 
-        for doc in all_pages:
-            page_type = doc.metadata.get("page_type", "")
-            doc_id = doc.metadata.get("doc_id", "")
-            title = doc.metadata.get("title", "")
-            content = doc.text_content or doc.metadata.get("content", "")
+        for fields in all_pages:
+            page_type = fields.get("page_type", "")
+            doc_id = fields.get("doc_id", "")
+            title = fields.get("title", "")
+            content = fields.get("content", "")
 
             # Skip index and session pages for orphan/empty checks.
             if page_type in ("index", "session"):
@@ -294,7 +273,7 @@ class WikiManager:
             # failures explicitly — silently dropping them used to
             # under-report the stale-page count (a page with a
             # malformed updated_at would just vanish from the lint).
-            updated_at_raw = doc.metadata.get("updated_at", "")
+            updated_at_raw = fields.get("updated_at", "")
             if updated_at_raw:
                 try:
                     updated_at = datetime.fromisoformat(updated_at_raw)
@@ -441,32 +420,53 @@ class WikiManager:
             )
             return old_content + _CONTENT_SEPARATOR + new_content
 
+    def _list_pages(self, top_k: int = 500) -> List[Dict[str, Any]]:
+        """All wiki pages for this tenant, as field dicts.
+
+        Unranked filtered query — enumeration must not depend on a query
+        encoder or ranking profile (the previous ranked semantic search
+        without embeddings failed encoder resolution on every call, so the
+        index and lint saw zero pages).
+        """
+        from cogniverse_agents.search.vespa_query import (
+            vespa_search_children,
+            vespa_search_post,
+        )
+
+        endpoint = f"{self._backend._url}:{self._backend._port}"
+        body = {
+            "yql": (
+                f"select * from {self._schema_name} "
+                f"where tenant_id contains {yql_quote(self._tenant_id)}"
+            ),
+            "hits": top_k,
+            # The default query profile caps hits at 400; raise the native
+            # limits per request so a large wiki enumerates fully.
+            "maxHits": top_k,
+            "maxOffset": top_k,
+            "ranking": "unranked",
+            "model.restrict": self._schema_name,
+        }
+        resp = vespa_search_post(endpoint, body, 15)
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"Wiki page enumeration failed ({resp.status_code}): {resp.text[:200]}"
+            )
+        return [c.get("fields", {}) for c in vespa_search_children(resp.json())]
+
     def _rebuild_index(self) -> None:
         """Query all wiki pages for this tenant and rebuild the index document."""
         safe = self._tenant_id.replace(":", "_")
 
-        try:
-            results = self._backend.search(
-                {
-                    "query": f"tenant_id:{self._tenant_id}",
-                    "type": "wiki",
-                    "top_k": 500,
-                    "schema": self._schema_name,
-                    "tenant_id": self._tenant_id,
-                    "strategy": "semantic_search",
-                }
-            )
-        except Exception:
-            logger.warning("Could not fetch pages for index rebuild; skipping.")
-            results = []
-
         index = WikiIndex(tenant_id=self._tenant_id)
-        for r in results:
-            doc = r.document
-            page_type = doc.metadata.get("page_type", "topic")
-            title = doc.metadata.get("title", "")
-            slug = doc.metadata.get("slug", generate_slug(title))
-            summary = (doc.text_content or "")[:120]
+        for fields in self._list_pages():
+            page_type = fields.get("page_type", "topic")
+            if page_type == "index":
+                # The index document must not list itself.
+                continue
+            title = fields.get("title", "")
+            slug = fields.get("slug", generate_slug(title))
+            summary = (fields.get("content", "") or "")[:120]
             index.add_page(page_type, title, slug, summary)
 
         index_content = index.render_markdown()
@@ -487,15 +487,12 @@ class WikiManager:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         }
-        try:
-            self._backend.put_document_fields(
-                index_doc_id,
-                payload["fields"],
-                schema_name=self._schema_name,
-                namespace=_WIKI_NAMESPACE,
-            )
-        except Exception:
-            logger.exception("Failed to feed wiki index document")
+        self._backend.put_document_fields(
+            index_doc_id,
+            payload["fields"],
+            schema_name=self._schema_name,
+            namespace=_WIKI_NAMESPACE,
+        )
 
     def _get_document_http(self, doc_id: str) -> Optional["Document"]:
         """Fetch a wiki document from Vespa via HTTP GET.
@@ -507,13 +504,11 @@ class WikiManager:
         """
         from cogniverse_sdk.document import ContentType, Document
 
-        try:
-            fields = self._backend.get_document_fields(
-                doc_id, schema_name=self._schema_name, namespace=_WIKI_NAMESPACE
-            )
-        except Exception as exc:
-            logger.warning("Wiki document fetch failed for %s: %s", doc_id, exc)
-            return None
+        # A backend failure raises — masking it as None turned an outage into
+        # "topic missing", which duplicated topics on the next merge.
+        fields = self._backend.get_document_fields(
+            doc_id, schema_name=self._schema_name, namespace=_WIKI_NAMESPACE
+        )
         if not fields:
             # get returns {} for a doc that exists with no readable fields —
             # treat that as absent, not a phantom empty topic to merge into.
@@ -527,19 +522,20 @@ class WikiManager:
         )
 
     def _feed_page(self, page: WikiPage, embedding: List[float]) -> None:
-        """Feed *page* through the backend's namespace-aware document API."""
+        """Feed *page* through the backend's namespace-aware document API.
+
+        A feed failure raises — swallowing it let ``save_session`` return a
+        fully-formed page that was never persisted.
+        """
         payload = page.to_vespa_document()
         payload["fields"]["embedding"] = embedding
 
-        try:
-            self._backend.put_document_fields(
-                page.doc_id,
-                payload["fields"],
-                schema_name=self._schema_name,
-                namespace=_WIKI_NAMESPACE,
-            )
-        except Exception:
-            logger.exception("Failed to feed wiki page %s", page.doc_id)
+        self._backend.put_document_fields(
+            page.doc_id,
+            payload["fields"],
+            schema_name=self._schema_name,
+            namespace=_WIKI_NAMESPACE,
+        )
 
     def _generate_embedding(self, text: str, is_query: bool = False) -> List[float]:
         """Return a 768-dim text embedding via the shared SemanticEmbedder.
