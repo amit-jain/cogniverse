@@ -296,6 +296,33 @@ class TestFlattenSearchHit:
         hit = {"title": "explicit", "score": 0.5, "metadata": {"video_title": "meta"}}
         assert _flatten_search_hit(hit)["title"] == "explicit"
 
+    def test_lifts_document_title_and_full_text(self):
+        """A document-profile hit nests document_title/full_text; without lifting
+        them the summarizer rendered every source as 'Unknown' with no content."""
+        hit = {
+            "id": "a1",
+            "score": 5.04,
+            "metadata": {
+                "document_id": "a1",
+                "document_title": "Quarterly Report",
+                "full_text": "Revenue grew 12% in the zephyrite division.",
+            },
+        }
+        flat = _flatten_search_hit(hit)
+        assert flat["title"] == "Quarterly Report"
+        assert flat["description"] == "Revenue grew 12% in the zephyrite division."
+        assert flat["text_content"] == "Revenue grew 12% in the zephyrite division."
+
+    def test_lifts_audio_title(self):
+        hit = {
+            "id": "aud1",
+            "score": 0.9,
+            "metadata": {"audio_title": "Keynote", "audio_transcript": "welcome all"},
+        }
+        flat = _flatten_search_hit(hit)
+        assert flat["title"] == "Keynote"
+        assert flat["description"] == "welcome all"
+
     def test_hit_without_metadata_returned_unchanged(self):
         hit = {"video_id": "v", "source_url": "s3://b/t/v.mp4", "segment_id": 0}
         assert _flatten_search_hit(hit) is hit

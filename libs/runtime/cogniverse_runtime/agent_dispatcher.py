@@ -51,9 +51,19 @@ def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(metadata, dict):
         return hit
     flat: Dict[str, Any] = {**metadata, **hit}
-    if not flat.get("title") and metadata.get("video_title"):
-        flat["title"] = metadata["video_title"]
-    text = metadata.get("segment_description") or metadata.get("audio_transcript")
+    if not flat.get("title"):
+        # Each content type names its title differently; document/image/audio
+        # hits carried document_title/full_text etc. that were never lifted, so
+        # document-profile summaries rendered every source as "Unknown".
+        for key in ("video_title", "document_title", "audio_title", "image_title"):
+            if metadata.get(key):
+                flat["title"] = metadata[key]
+                break
+    text = (
+        metadata.get("segment_description")
+        or metadata.get("audio_transcript")
+        or metadata.get("full_text")
+    )
     if text:
         flat.setdefault("description", text)
         flat.setdefault("text_content", text)
