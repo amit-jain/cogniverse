@@ -308,3 +308,34 @@ def test_check_document_response_raises_on_non_2xx():
     VespaBackend._check_document_response(
         SimpleNamespace(status_code=200, json={}), "put", "doc-1"
     )
+
+
+def test_get_metadata_document_returns_none_on_genuine_404():
+    """pyvespa returns a 404 as a non-raising response; a missing doc is None,
+    not an error."""
+    backend = object.__new__(VespaBackend)
+    backend._url = "http://localhost"
+    client = MagicMock()
+    client.get_data = MagicMock(return_value=MagicMock(status_code=404))
+    backend._metadata_vespa_app = MagicMock(return_value=client)
+
+    assert (
+        backend.get_metadata_document(schema="tenant_metadata", doc_id="missing")
+        is None
+    )
+
+
+def test_get_metadata_document_raises_on_backend_failure():
+    """A backend failure (connection error / 5xx that pyvespa raises) must NOT
+    flatten to None — that made an outage indistinguishable from 'not found',
+    so assert_tenant_exists 404'd every request during a Vespa blip."""
+    from vespa.exceptions import VespaError
+
+    backend = object.__new__(VespaBackend)
+    backend._url = "http://localhost"
+    client = MagicMock()
+    client.get_data = MagicMock(side_effect=VespaError("connection refused"))
+    backend._metadata_vespa_app = MagicMock(return_value=client)
+
+    with pytest.raises(VespaError):
+        backend.get_metadata_document(schema="tenant_metadata", doc_id="acme:acme")

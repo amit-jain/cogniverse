@@ -11,9 +11,10 @@ an empty list. Callers (``BackendVectorStore.
 list``, ``ProvenanceStore.fetch``, the admin tenant routes) cannot
 distinguish "no matches" from "Vespa rejected the query."
 
-Siblings ``get_metadata_document`` (returns ``None``) and
-``delete_metadata_document`` (returns ``False``) both check
-``status_code``; ``query_metadata_documents`` was the odd one out.
+Siblings ``get_metadata_document`` (returns ``None`` on a genuine 404,
+raises on a backend failure) and ``delete_metadata_document`` (returns
+``False``) both check ``status_code``; ``query_metadata_documents`` was
+the odd one out.
 
 A non-2xx raises ``RuntimeError`` carrying the HTTP status and response
 body, and a transport failure propagates as-is — matching the raise-on-

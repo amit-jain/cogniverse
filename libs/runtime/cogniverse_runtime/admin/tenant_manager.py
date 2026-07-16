@@ -314,31 +314,38 @@ async def get_organization(org_id: str) -> Organization:
 
 async def get_organization_internal(org_id: str) -> Optional[Organization]:
     """Internal helper to get organization"""
+    backend = get_backend()
+
     try:
-        backend = get_backend()
-
-        fields = backend.get_metadata_document(
-            schema="organization_metadata", doc_id=org_id
+        # Blocking Vespa GET — off the event loop.
+        fields = await asyncio.to_thread(
+            backend.get_metadata_document,
+            schema="organization_metadata",
+            doc_id=org_id,
         )
-
-        if not fields:
-            return None
-
-        # Compute tenant_count dynamically by querying tenants
-        tenants = await list_tenants_for_org_internal(org_id)
-
-        return Organization(
-            org_id=fields.get("org_id"),
-            org_name=fields.get("org_name"),
-            created_at=fields.get("created_at"),
-            created_by=fields.get("created_by"),
-            status=fields.get("status", "active"),
-            tenant_count=len(tenants),
-        )
-
     except Exception as e:
-        logger.warning(f"Error getting organization {org_id}: {e}")
+        # Outage is not "org not found" — surface 503 so a create/read during a
+        # backend blip doesn't 404 (or, for create, clobber a live org read as
+        # missing).
+        logger.error(f"Organization registry read failed for {org_id}: {e}")
+        raise HTTPException(
+            status_code=503, detail="Organization registry temporarily unavailable"
+        )
+
+    if not fields:
         return None
+
+    # Compute tenant_count dynamically by querying tenants
+    tenants = await list_tenants_for_org_internal(org_id)
+
+    return Organization(
+        org_id=fields.get("org_id"),
+        org_name=fields.get("org_name"),
+        created_at=fields.get("created_at"),
+        created_by=fields.get("created_by"),
+        status=fields.get("status", "active"),
+        tenant_count=len(tenants),
+    )
 
 
 @router.delete("/organizations/{org_id}")
@@ -694,33 +701,37 @@ async def get_tenant_internal(tenant_full_id: str) -> Optional[Tenant]:
     (``acme:acme``). Without this, GET /admin/tenants/{tid} returns 404 even
     immediately after a successful POST that used the simple form.
     """
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    backend = get_backend()
+    canonical = canonical_tenant_id(tenant_full_id)
+
     try:
-        from cogniverse_core.common.tenant_utils import canonical_tenant_id
-
-        backend = get_backend()
-        canonical = canonical_tenant_id(tenant_full_id)
-
         # Blocking Vespa GET — run off the event loop; this sits under
         # assert_tenant_exists on every search/ingestion/graph request.
         fields = await asyncio.to_thread(
             backend.get_metadata_document, schema="tenant_metadata", doc_id=canonical
         )
-
-        if not fields:
-            return None
-        return Tenant(
-            tenant_full_id=fields.get("tenant_full_id"),
-            org_id=fields.get("org_id"),
-            tenant_name=fields.get("tenant_name"),
-            created_at=fields.get("created_at"),
-            created_by=fields.get("created_by"),
-            status=fields.get("status", "active"),
-            schemas_deployed=fields.get("schemas_deployed", []),
+    except Exception as e:
+        # A backend outage is NOT "tenant not found". Surface 503 so callers
+        # retry, instead of a permanent-looking 404 on every tenant-scoped
+        # request during a Vespa blip (which reads as "the tenant was deleted").
+        logger.error(f"Tenant registry read failed for {tenant_full_id}: {e}")
+        raise HTTPException(
+            status_code=503, detail="Tenant registry temporarily unavailable"
         )
 
-    except Exception as e:
-        logger.warning(f"Error getting tenant {tenant_full_id}: {e}")
+    if not fields:
         return None
+    return Tenant(
+        tenant_full_id=fields.get("tenant_full_id"),
+        org_id=fields.get("org_id"),
+        tenant_name=fields.get("tenant_name"),
+        created_at=fields.get("created_at"),
+        created_by=fields.get("created_by"),
+        status=fields.get("status", "active"),
+        schemas_deployed=fields.get("schemas_deployed", []),
+    )
 
 
 @router.delete("/tenants/{tenant_full_id}")

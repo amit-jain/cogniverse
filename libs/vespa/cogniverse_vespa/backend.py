@@ -1511,13 +1511,20 @@ class VespaBackend(Backend):
             response = vespa_client.get_data(schema=schema, data_id=doc_id)
 
             if not response or response.status_code != 200:
+                # A genuine not-found: pyvespa returns a 404 as a non-raising
+                # response, so this is "document absent", not a backend failure.
                 return None
 
             result = response.json
             return result.get("fields", {})
         except Exception as e:
+            # A backend failure (connection error, 5xx) is NOT "document not
+            # found" — pyvespa surfaces a 404 as a non-raising response handled
+            # above, so reaching here means the backend is unreachable/erroring.
+            # Raise so callers can return 503 instead of a misleading 404 that
+            # reads as "the document was deleted".
             logger.error(f"Failed to get metadata document {schema}/{doc_id}: {e}")
-            return None
+            raise
 
     def query_metadata_documents(
         self,
