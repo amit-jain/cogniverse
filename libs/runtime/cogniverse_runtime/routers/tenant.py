@@ -242,7 +242,10 @@ async def create_memory(tenant_id: str, request: MemoryCreateRequest):
         # Caller-supplied metadata wins over the derived fields above.
         metadata.update(request.metadata)
 
-    memory_id = mgr.add_memory(
+    # Blocking mem0 write (embedder HTTP + Vespa) — off the event loop, like
+    # the list_memories sibling below.
+    memory_id = await asyncio.to_thread(
+        mgr.add_memory,
         content=request.text,
         tenant_id=tenant_id,
         agent_name=_USER_MEMORY_AGENT,
@@ -346,7 +349,8 @@ async def delete_memory(tenant_id: str, memory_id: str):
     """
     mgr = _get_memory_manager(tenant_id)
 
-    success = mgr.delete_memory(
+    success = await asyncio.to_thread(
+        mgr.delete_memory,
         memory_id=memory_id,
         tenant_id=tenant_id,
         agent_name=_USER_MEMORY_AGENT,
@@ -371,30 +375,38 @@ async def clear_memories(
     mgr = _get_memory_manager(tenant_id)
 
     if category:
-        results = mgr.get_all_memories(
-            tenant_id=tenant_id,
-            agent_name=_USER_MEMORY_AGENT,
-        )
-        deleted = 0
-        for r in results:
-            if not isinstance(r, dict):
-                continue
-            meta = r.get("metadata", {})
-            if meta.get("category") == category:
-                mid = r.get("id")
-                if mid:
-                    mgr.delete_memory(
-                        memory_id=str(mid),
-                        tenant_id=tenant_id,
-                        agent_name=_USER_MEMORY_AGENT,
-                    )
-                    deleted += 1
+        # The get + per-memory deletes are N blocking Vespa round-trips — run
+        # the whole sweep off the event loop in one worker.
+        def _clear_category() -> int:
+            results = mgr.get_all_memories(
+                tenant_id=tenant_id,
+                agent_name=_USER_MEMORY_AGENT,
+            )
+            deleted = 0
+            for r in results:
+                if not isinstance(r, dict):
+                    continue
+                meta = r.get("metadata", {})
+                if meta.get("category") == category:
+                    mid = r.get("id")
+                    if mid:
+                        mgr.delete_memory(
+                            memory_id=str(mid),
+                            tenant_id=tenant_id,
+                            agent_name=_USER_MEMORY_AGENT,
+                        )
+                        deleted += 1
+            return deleted
+
+        deleted = await asyncio.to_thread(_clear_category)
         logger.info(
             "Cleared %d '%s' memories for tenant=%s", deleted, category, tenant_id
         )
         return {"status": "cleared", "category": category, "deleted": deleted}
 
-    mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT)
+    await asyncio.to_thread(
+        mgr.clear_agent_memory, tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT
+    )
     logger.info("Cleared all user memories for tenant=%s", tenant_id)
     return {"status": "cleared"}
 
