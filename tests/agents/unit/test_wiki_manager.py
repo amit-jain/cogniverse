@@ -3,6 +3,7 @@ Unit tests for wiki page dataclasses, slug generation, and WikiManager.
 """
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -349,6 +350,72 @@ class TestSaveSession:
 
 
 @pytest.mark.unit
+@pytest.mark.ci_fast
+class TestTopicMergeIdempotency:
+    """A client retry after a partial-save 500 re-runs the whole topic merge.
+    Re-appending the same response duplicated the topic body and double-counted
+    update_count; the merge must be idempotent for already-merged content."""
+
+    def _make_manager(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        return WikiManager(
+            backend=MagicMock(),
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+    def _existing(self, content, update_count):
+        return SimpleNamespace(
+            text_content=content,
+            metadata={
+                "content": content,
+                "sources": "[]",
+                "update_count": update_count,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    def test_reappend_of_already_merged_content_is_a_noop(self):
+        mgr = self._make_manager()
+        response = "Machine learning is a subset of AI."
+        # The topic already contains this response (from the first, partial save).
+        existing = self._existing(f"Older content.\n\n{response}", update_count=2)
+
+        with (
+            patch.object(mgr, "_get_document_http", return_value=existing),
+            patch.object(mgr, "_feed_page") as mock_feed,
+        ):
+            page = mgr._get_or_create_topic(
+                entity="Machine Learning", new_content=response, sources=[]
+            )
+
+        # Not duplicated, and update_count NOT re-incremented.
+        assert page.content.count(response) == 1
+        assert page.update_count == 2
+        mock_feed.assert_called_once()
+
+    def test_new_content_still_appends_and_increments(self):
+        mgr = self._make_manager()
+        existing = self._existing("Older content only.", update_count=2)
+
+        with (
+            patch.object(mgr, "_get_document_http", return_value=existing),
+            patch.object(mgr, "_should_use_rlm_for_merge", return_value=False),
+            patch.object(mgr, "_feed_page"),
+        ):
+            page = mgr._get_or_create_topic(
+                entity="Machine Learning",
+                new_content="A genuinely new fact.",
+                sources=[],
+            )
+
+        assert "Older content only." in page.content
+        assert "A genuinely new fact." in page.content
+        assert page.update_count == 3
+
+
+@pytest.mark.unit
 class TestEmbeddingPromptPrefix:
     """DenseOn prompting is applied client-side: queries must embed with
     ``is_query=True`` (``query:`` prefix) and stored documents with
@@ -404,6 +471,18 @@ class TestEmbeddingPromptPrefix:
         assert args[0] == "a stored document body"
         assert kwargs.get("is_query") is False
         assert len(vec) == 768
+
+    def test_embedder_outage_raises_instead_of_zero_vector(self):
+        """A dead embedder must raise, not return a zero vector — persisting a
+        zero embedding poisons the stored page's hybrid ranking permanently."""
+        mgr = self._make_manager()
+
+        with patch(
+            "cogniverse_core.common.models.semantic_embedder.get_semantic_embedder",
+            side_effect=RuntimeError("denseon sidecar unreachable"),
+        ):
+            with pytest.raises(RuntimeError, match="embedding generation failed"):
+                mgr._generate_embedding("a stored document body")
 
 
 # ---------------------------------------------------------------------------
