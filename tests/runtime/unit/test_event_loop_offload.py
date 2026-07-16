@@ -282,3 +282,32 @@ async def test_graph_read_route_offloads_factory_resolution(monkeypatch):
         f"only {ticks} ticks during a 0.3s graph-manager resolution — it ran on "
         "the event loop"
     )
+
+
+@pytest.mark.asyncio
+async def test_tenant_create_memory_offloaded(monkeypatch):
+    """POST a user memory runs the blocking mem0 add (embedder HTTP + Vespa) off
+    the loop — run inline it stalled every concurrent request."""
+    from cogniverse_runtime.routers import tenant
+
+    mgr = MagicMock()
+    mgr.add_memory = _blocking(0.3)
+    monkeypatch.setattr(tenant, "_get_memory_manager", lambda tid: mgr)
+
+    req = tenant.MemoryCreateRequest(text="remember this")
+    ticks = await _ticks_during(lambda: tenant.create_memory("acme:acme", req))
+    assert ticks >= 10, f"only {ticks} ticks — add_memory ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_tenant_clear_memories_offloaded(monkeypatch):
+    from cogniverse_runtime.routers import tenant
+
+    mgr = MagicMock()
+    mgr.clear_agent_memory = _blocking(0.3)
+    monkeypatch.setattr(tenant, "_get_memory_manager", lambda tid: mgr)
+
+    ticks = await _ticks_during(
+        lambda: tenant.clear_memories("acme:acme", category=None)
+    )
+    assert ticks >= 10, f"only {ticks} ticks — clear_agent_memory ran on the loop"
