@@ -71,6 +71,8 @@ def redis_url():
             "-d",
             "--name",
             CONTAINER_NAME,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
             "-p",
             f"{port}:6379",
             "redis:7.4-alpine",

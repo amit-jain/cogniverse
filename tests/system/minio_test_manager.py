@@ -7,6 +7,7 @@ helper for fixture setup (bucket creation, object upload).
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import time
@@ -85,6 +86,8 @@ class MinIOTestManager:
                 "--rm",
                 "--name",
                 name,
+                "--label",
+                f"cogniverse-test-owner-pid={os.getpid()}",
                 "-p",
                 f"{api_port}:9000",
                 "-p",

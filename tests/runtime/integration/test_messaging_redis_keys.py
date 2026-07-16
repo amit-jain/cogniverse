@@ -13,6 +13,7 @@ Assertions:
 
 from __future__ import annotations
 
+import os
 import platform
 import socket
 import subprocess
@@ -61,6 +62,8 @@ def redis_url():
             "-d",
             "--name",
             CONTAINER_NAME,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
             "-p",
             f"{port}:6379",
             "--platform",

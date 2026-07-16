@@ -89,6 +89,8 @@ def phoenix_test_server():
                 "-d",
                 "--name",
                 container_name,
+                "--label",
+                f"cogniverse-test-owner-pid={os.getpid()}",
                 "-p",
                 "26006:6006",  # HTTP port
                 "-p",

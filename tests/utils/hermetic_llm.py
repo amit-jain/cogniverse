@@ -69,6 +69,8 @@ def _spawn(device: str, gpu_utilization: float = 0.25) -> None:
         "-d",
         "--name",
         CONTAINER,
+        "--label",
+        f"cogniverse-test-owner-pid={os.getpid()}",
         "-p",
         f"{HOST_PORT}:8000",
         "-v",

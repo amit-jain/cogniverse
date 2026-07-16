@@ -9,6 +9,7 @@ and that the stored content is retrievable via the Document v1 HTTP API.
 """
 
 import json
+import os
 import platform
 import subprocess
 import threading
@@ -196,6 +197,8 @@ def wiki_vespa():
             "-d",
             "--name",
             CONTAINER_NAME,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
             "-p",
             f"{http_port}:8080",
             "-p",
