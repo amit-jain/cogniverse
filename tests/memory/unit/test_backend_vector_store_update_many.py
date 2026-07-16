@@ -188,3 +188,30 @@ class TestDimensionValidation:
         store.backend.ingest_documents.return_value = {"success_count": 1}
         store.insert(vectors=[[0.1] * 8], payloads=[{"data": "x"}], ids=["m1"])
         store.backend.ingest_documents.assert_called_once()
+
+
+class TestCreatedAtNormalization:
+    """Stored created_at epochs must normalize to ISO on every read path —
+    np.int64 is not an int subclass, so the plain isinstance gate missed
+    numpy epochs and stringified them to bare digits instead of ISO."""
+
+    def test_numpy_epoch_normalizes_to_iso(self):
+        import numpy as np
+
+        from cogniverse_core.memory._timestamps import epoch_to_iso_utc
+        from cogniverse_core.memory.backend_vector_store import _created_at_iso
+
+        epoch = 1700000000
+        expected = epoch_to_iso_utc(epoch)
+        assert _created_at_iso(np.int64(epoch)) == expected
+        assert _created_at_iso(np.float64(epoch)) == expected
+        assert _created_at_iso(epoch) == expected
+        assert _created_at_iso(float(epoch)) == expected
+
+    def test_string_and_none_pass_through(self):
+        from cogniverse_core.memory.backend_vector_store import _created_at_iso
+
+        assert _created_at_iso("2024-01-01T00:00:00+00:00") == (
+            "2024-01-01T00:00:00+00:00"
+        )
+        assert _created_at_iso(None) is None

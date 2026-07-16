@@ -13,6 +13,24 @@ from mem0.vector_stores.base import VectorStoreBase
 
 from cogniverse_core.memory._timestamps import epoch_to_iso_utc, to_epoch_seconds
 
+
+def _created_at_iso(value):
+    """Normalize a stored created_at to ISO — numpy epochs included.
+
+    np.int64 is not an int subclass, so the plain isinstance gate missed
+    numpy epochs and stringified them to bare digits instead of ISO.
+    """
+    import numpy as np
+
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return epoch_to_iso_utc(value)
+    if value is not None and not isinstance(value, str):
+        return str(value)
+    return value
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -367,9 +385,7 @@ class BackendVectorStore(VectorStoreBase):
             mem0_results = []
             for search_result in search_results:
                 doc = search_result.document
-                created_at = doc.metadata.get("created_at")
-                if isinstance(created_at, (int, float)):
-                    created_at = epoch_to_iso_utc(created_at)
+                created_at = _created_at_iso(doc.metadata.get("created_at"))
 
                 mem0_results.append(
                     BackendSearchResult(
@@ -531,11 +547,7 @@ class BackendVectorStore(VectorStoreBase):
                 else:
                     vector = embedding
 
-            created_at = doc.metadata.get("created_at")
-            if isinstance(created_at, (int, float)):
-                created_at = epoch_to_iso_utc(created_at)
-            elif created_at is not None and not isinstance(created_at, str):
-                created_at = str(created_at)
+            created_at = _created_at_iso(doc.metadata.get("created_at"))
 
             return BackendRecord(
                 id=doc.id,
@@ -607,9 +619,7 @@ class BackendVectorStore(VectorStoreBase):
             # Convert to mem0 format
             mem0_results = []
             for result in results:
-                created_at = result.get("created_at")
-                if isinstance(created_at, (int, float)):
-                    created_at = epoch_to_iso_utc(created_at)
+                created_at = _created_at_iso(result.get("created_at"))
 
                 mem0_results.append(
                     BackendSearchResult(
