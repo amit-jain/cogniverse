@@ -453,8 +453,12 @@ class AgentDispatcher:
         try:
             am = self._artifact_manager_factory(tenant_id)
         except Exception as exc:
-            logger.debug(
-                "Artefact factory failed for tenant=%s: %s",
+            # A telemetry/Phoenix outage here silently reverts every request to
+            # the un-optimized DEFAULT prompts. That's an acceptable degrade, but
+            # it must be VISIBLE (warning, not debug) so an operator sees that
+            # optimized prompts stopped being served.
+            logger.warning(
+                "Artefact factory failed for tenant=%s — serving default prompts: %s",
                 tenant_id,
                 exc,
             )
@@ -471,8 +475,11 @@ class AgentDispatcher:
                 variant_id=variant_id,
             )
         except Exception as exc:
-            logger.debug(
-                "load_for_request(%s, seed=%s, variant=%s) failed: %s",
+            # Same degraded-mode reversion as above — warn so the fallback to
+            # default prompts is not invisible.
+            logger.warning(
+                "load_for_request(%s, seed=%s, variant=%s) failed — serving "
+                "default prompts: %s",
                 agent_name,
                 request_seed,
                 variant_id,
