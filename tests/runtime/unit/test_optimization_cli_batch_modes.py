@@ -693,7 +693,7 @@ class TestComputeGatewayThresholdsAlgorithm:
 
     The calibration has three branches:
       (1) simple_error_rate > 0.2        → optimized = min(0.4 + 0.1, 0.95) = 0.5
-      (2) complex_err < 0.05 AND mean > 0.8 → optimized = max(0.4 - 0.05, 0.5) = 0.5
+      (2) complex_err < 0.05 AND mean > 0.8 → optimized = max(0.4 - 0.05, 0.3) = 0.35
       (3) otherwise                       → optimized = 0.4 (default)
 
     ``gliner_threshold`` is always ``round(max(0.15, min(p25 * 0.8, 0.5)), 3)``.
@@ -771,8 +771,9 @@ class TestComputeGatewayThresholdsAlgorithm:
 
     def test_high_confidence_low_complex_errors_lowers_threshold(self):
         """Branch (2): complex_error_rate = 0, mean_confidence = 0.9 > 0.8,
-        simple_error_rate = 0 (not > 0.2). Optimizer lowers threshold from
-        0.4 → max(0.35, 0.5) = 0.5."""
+        simple_error_rate = 0 (not > 0.2). Optimizer lowers the threshold from
+        0.4 → max(0.35, 0.3) = 0.35 so MORE queries stay on the fast path — the
+        floor must be below the 0.4 default, not above it."""
         from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
 
         rows = [{"complexity": "simple", "confidence": 0.9} for _ in range(10)] + [
@@ -783,7 +784,9 @@ class TestComputeGatewayThresholdsAlgorithm:
         assert result["status"] == "ready"
 
         t = result["thresholds"]
-        assert t["fast_path_confidence_threshold"] == 0.5
+        # Genuinely lowered from the 0.4 default (the pre-fix 0.5 floor RAISED it).
+        assert t["fast_path_confidence_threshold"] == pytest.approx(0.35)
+        assert t["fast_path_confidence_threshold"] < 0.4
         # p25 = 0.9 → gliner = round(max(0.15, min(0.72, 0.5)), 3) = 0.5
         assert t["gliner_threshold"] == 0.5
 
