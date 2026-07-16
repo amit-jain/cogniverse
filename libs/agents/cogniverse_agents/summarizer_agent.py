@@ -358,7 +358,7 @@ class SummarizerAgent(
                         )
 
                 self.emit_progress("summarization", "Generating summary...")
-                summary = await self._generate_summary(
+                summary, lm_key_points = await self._generate_summary(
                     request, thinking_phase, visual_insights
                 )
                 summary = self._enforce_max_length(summary, self.max_summary_length)
@@ -368,7 +368,11 @@ class SummarizerAgent(
                     data={"summary": summary},
                 )
 
-                key_points = self._extract_key_points(request, thinking_phase, summary)
+                # Prefer the LM's key points; fall back to the derived template
+                # only when the LM produced none (bullet/no-result paths).
+                key_points = lm_key_points or self._extract_key_points(
+                    request, thinking_phase, summary
+                )
                 confidence_score = self._calculate_confidence(request, thinking_phase)
 
                 result = SummaryResult(
@@ -649,8 +653,9 @@ and structure summary based on identified themes and content categories.
         query: str,
         summary_type: str,
         keyframes: List[dspy.Image],
-    ) -> str:
-        """Run DSPy summarization, streaming tokens via emit_progress when active."""
+    ) -> tuple[str, List[str]]:
+        """Run DSPy summarization, returning the summary and the LM's parsed
+        key points. Streams tokens via emit_progress when active."""
         result = await self.call_dspy(
             self.summarization_module,
             output_field="summary",
@@ -659,15 +664,39 @@ and structure summary based on identified themes and content categories.
             summary_type=summary_type,
             keyframes=keyframes,
         )
-        return result.summary
+        return result.summary, self._parse_key_points(getattr(result, "key_points", ""))
+
+    @staticmethod
+    def _parse_key_points(raw: Any) -> List[str]:
+        """Parse the LM's ``key_points`` output into a clean list.
+
+        The signature declares comma-separated, but real LMs often emit one
+        point per line and/or bullet/number prefixes; handle both so genuine
+        output isn't dropped in favor of the canned fallback. A non-string
+        (e.g. an unset field) yields no points."""
+        if not isinstance(raw, str) or not raw.strip():
+            return []
+        lines = [ln for ln in raw.replace("\r", "").split("\n") if ln.strip()]
+        if len(lines) <= 1:
+            lines = raw.split(",")
+        points: List[str] = []
+        for ln in lines:
+            cleaned = ln.strip().lstrip("-*•").strip()
+            head, sep, tail = cleaned.partition(" ")
+            if sep and head.rstrip(".)").isdigit():
+                cleaned = tail.strip()
+            if cleaned:
+                points.append(cleaned)
+        return points
 
     async def _generate_summary(
         self,
         request: SummaryRequest,
         thinking_phase: ThinkingPhase,
         visual_insights: List[str],
-    ) -> str:
-        """Generate the main summary text"""
+    ) -> tuple[str, List[str]]:
+        """Generate the main summary text and the LM's key points (empty for the
+        deterministic bullet/no-result paths, which have no LM key points)."""
         logger.info("Generating summary...")
 
         # Sort results by relevance
@@ -700,12 +729,12 @@ and structure summary based on identified themes and content categories.
         results: List[Dict[str, Any]],
         thinking_phase: ThinkingPhase,
         keyframe_images: List[dspy.Image],
-    ) -> str:
+    ) -> tuple[str, List[str]]:
         """Generate brief summary using DSPy"""
         result_count = len(results)
 
         if result_count == 0:
-            return f"No relevant results found for '{request.query}'."
+            return f"No relevant results found for '{request.query}'.", []
 
         # Prepare content for DSPy
         content_parts = []
@@ -729,8 +758,8 @@ and structure summary based on identified themes and content categories.
         request: SummaryRequest,
         results: List[Dict[str, Any]],
         thinking_phase: ThinkingPhase,
-    ) -> str:
-        """Generate bullet point summary"""
+    ) -> tuple[str, List[str]]:
+        """Generate bullet point summary (deterministic template, no LM)"""
         points = [
             f"• Query: '{request.query}'",
             f"• Results found: {len(results)}",
@@ -744,7 +773,7 @@ and structure summary based on identified themes and content categories.
             score = result.get("relevance", result.get("score", 0))
             points.append(f"• {title} (relevance: {score:.2f})")
 
-        return "\n".join(points)
+        return "\n".join(points), []
 
     async def _generate_comprehensive_summary(
         self,
@@ -753,7 +782,7 @@ and structure summary based on identified themes and content categories.
         thinking_phase: ThinkingPhase,
         visual_insights: List[str],
         keyframe_images: List[dspy.Image],
-    ) -> str:
+    ) -> tuple[str, List[str]]:
         """Generate comprehensive summary using DSPy.
 
         Builds a content block from the top results (title/type/relevance plus
@@ -761,7 +790,7 @@ and structure summary based on identified themes and content categories.
         it to the DSPy summarization module with ``summary_type='comprehensive'``.
         """
         if not results:
-            return f"No relevant results found for '{request.query}'."
+            return f"No relevant results found for '{request.query}'.", []
 
         content_parts = []
         for result in results:
