@@ -111,6 +111,34 @@ class TestIdleEviction:
         assert client.create_calls == 2
         assert seen[1] is not first_session
 
+    def test_evict_idle_destroys_outside_the_lock(self):
+        """session.delete() is an un-timed gateway RPC; evict_idle must run it
+        OUTSIDE the pool lock (like close_all) so a hung gateway can't freeze
+        every checkout/release behind it."""
+        client = _CountingClient()
+        pool = SandboxSessionPool(
+            client,
+            config=SandboxPoolConfig(max_pool_size=4, max_idle_seconds=0.05),
+        )
+
+        lock_free_during_destroy = []
+        seen = []
+        pool.with_session("search_agent", lambda s: seen.append(s))
+        session = seen[0]
+
+        def _delete_checking_lock():
+            # If the pool lock is acquirable here, the destroy runs off-lock.
+            acquired = pool._lock.acquire(blocking=False)
+            lock_free_during_destroy.append(acquired)
+            if acquired:
+                pool._lock.release()
+            session.delete_count += 1
+
+        session.delete = _delete_checking_lock
+        time.sleep(0.1)
+        assert pool.evict_idle() == 1
+        assert lock_free_during_destroy == [True]
+
 
 class TestCapacityCap:
     def test_oldest_idle_evicted_when_pool_full(self):
@@ -188,6 +216,35 @@ class TestCloseAll:
         for s in sessions:
             assert s.delete_count == 1
         assert pool.stats()["pool_size"] == 0
+
+    def test_manager_close_tears_down_pool_and_client(self):
+        """SandboxManager.close() (wired into the runtime lifespan shutdown so a
+        restart doesn't orphan gateway containers) must destroy pooled sessions
+        and close the client."""
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=4))
+        sessions = []
+        pool.with_session("a", lambda s: sessions.append(s))
+
+        closed = {"client": False}
+
+        class _Client:
+            def close(self):
+                closed["client"] = True
+
+        mgr = object.__new__(SandboxManager)
+        mgr._pool = pool
+        mgr._client = _Client()
+        mgr._available = True
+
+        mgr.close()
+
+        assert sessions[0].delete_count == 1
+        assert closed["client"] is True
+        assert mgr._pool is None
+        assert mgr._client is None
 
 
 class TestReturnValue:

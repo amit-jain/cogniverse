@@ -161,18 +161,19 @@ class SandboxSessionPool:
         small enough that the scan is cheap).
         """
         cutoff = (now or time.monotonic()) - self._config.max_idle_seconds
-        evicted = 0
         with self._lock:
             stale = [
                 k
                 for k, e in self._entries.items()
                 if not e.in_use and e.last_used_at < cutoff
             ]
-            for k in stale:
-                entry = self._entries.pop(k)
-                evicted += 1
-                # Best-effort destroy outside the lock.
-                self._destroy_session_quiet(entry.session)
+            stale_entries = [self._entries.pop(k) for k in stale]
+        # Destroy OUTSIDE the lock (like close_all): session.delete() is an
+        # un-timed gateway RPC — holding self._lock across it would block every
+        # checkout/release behind a hung gateway.
+        for entry in stale_entries:
+            self._destroy_session_quiet(entry.session)
+        evicted = len(stale_entries)
         if evicted:
             logger.info("Sandbox pool evicted %d idle sessions", evicted)
         return evicted
