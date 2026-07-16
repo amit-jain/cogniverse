@@ -156,7 +156,9 @@ class AgentDispatcher:
         try:
             from cogniverse_runtime.routers.graph import get_graph_manager
 
-            setter(get_graph_manager(tenant_id))
+            # Read-side enrichment bind: deploy=False so consulting the graph
+            # never triggers a schema redeploy that could drop just-fed rows.
+            setter(get_graph_manager(tenant_id, deploy=False))
         except Exception as exc:  # graph backend not configured / unavailable
             logger.debug("Graph manager bind skipped for tenant %s: %s", tenant_id, exc)
 
@@ -773,7 +775,7 @@ class AgentDispatcher:
         # can consult the shared graph (with cross-document Mention provenance)
         # complementary to their own mem0 memory. Fail-safe: agents fall back to
         # the mem0-only path when the graph backend isn't configured.
-        self._bind_graph_manager(agent, tenant_id)
+        await asyncio.to_thread(self._bind_graph_manager, agent, tenant_id)
 
         # Inject global TelemetryManager for span emission
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager

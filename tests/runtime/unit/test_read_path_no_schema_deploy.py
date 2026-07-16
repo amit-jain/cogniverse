@@ -87,3 +87,66 @@ def test_get_graph_manager_defaults_to_deploy_true(_restore_graph_factory):
     )
     graph_router.get_graph_manager("acme:prod")
     assert captured == [True]
+
+
+class _FakeGraphMgr:
+    def search_nodes(self, q, top_k=10):
+        return []
+
+    def get_neighbors(self, node, depth=1):
+        return {"node_id": "n", "name": node, "out_edges": [], "in_edges": []}
+
+    def get_path(self, source, target, max_depth=4):
+        return []
+
+    def get_stats(self):
+        return {"node_count": 0, "edge_count": 0, "top_nodes": []}
+
+    def upsert(self, result):
+        return {"nodes_upserted": 1, "edges_upserted": 0, "failed_ids": []}
+
+
+@pytest.fixture
+def _capture_deploy(monkeypatch, _restore_graph_factory):
+    captured = []
+
+    def _factory(tenant_id, deploy=True):
+        captured.append(deploy)
+        return _FakeGraphMgr()
+
+    graph_router.set_graph_manager_factory(_factory)
+
+    async def _noop(tenant_id):
+        return None
+
+    monkeypatch.setattr(
+        "cogniverse_core.common.tenant_utils.assert_tenant_exists", _noop
+    )
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_graph_read_routes_pass_deploy_false(_capture_deploy):
+    # Each read route must resolve the manager with deploy=False so a GET can't
+    # trigger a schema redeploy. The prior pin only covered the helper's flag
+    # forwarding, not that the routes actually pass it.
+    await graph_router.search_nodes(tenant_id="acme:acme", q="x", top_k=5)
+    await graph_router.get_neighbors(tenant_id="acme:acme", node="n", depth=1)
+    await graph_router.get_path(
+        tenant_id="acme:acme", source="a", target="b", max_depth=4
+    )
+    await graph_router.get_stats(tenant_id="acme:acme")
+
+    assert _capture_deploy == [False, False, False, False]
+
+
+@pytest.mark.asyncio
+async def test_graph_upsert_route_passes_deploy_true(_capture_deploy):
+    from cogniverse_runtime.routers.graph import NodeDoc, UpsertRequest
+
+    await graph_router.upsert(
+        UpsertRequest(
+            tenant_id="acme:acme", source_doc_id="d1", nodes=[NodeDoc(name="x")]
+        )
+    )
+    assert _capture_deploy == [True]

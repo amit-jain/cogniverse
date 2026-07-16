@@ -146,7 +146,10 @@ async def upsert(request: UpsertRequest) -> UpsertResponse:
     # stats live in the same Vespa schema but never see each other.
     tenant_id = canonical_tenant_id(request.tenant_id)
     await assert_tenant_exists(tenant_id)
-    mgr = get_graph_manager(tenant_id)
+    # Write path: deploy=True (default) is correct — the first upsert for a new
+    # tenant deploys the schema. Offload the resolution: the deploy blocks on
+    # Vespa convergence sleeps for seconds.
+    mgr = await asyncio.to_thread(get_graph_manager, tenant_id)
 
     nodes = [
         Node(
@@ -227,7 +230,10 @@ async def search_nodes(
 
     tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
-    mgr = get_graph_manager(tenant_id)
+    # deploy=False: a read must never trigger a schema redeploy (drops just-fed
+    # rows). Resolution is offloaded — even without a deploy it does a blocking
+    # config read on a cold cache.
+    mgr = await asyncio.to_thread(get_graph_manager, tenant_id, deploy=False)
     nodes = await asyncio.to_thread(mgr.search_nodes, q, top_k=top_k)
     return NodeSearchResponse(nodes=nodes, count=len(nodes))
 
@@ -246,7 +252,7 @@ async def get_neighbors(
 
     tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
-    mgr = get_graph_manager(tenant_id)
+    mgr = await asyncio.to_thread(get_graph_manager, tenant_id, deploy=False)
     result = await asyncio.to_thread(mgr.get_neighbors, node, depth=depth)
     return NeighborsResponse(**result)
 
@@ -266,7 +272,7 @@ async def get_path(
 
     tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
-    mgr = get_graph_manager(tenant_id)
+    mgr = await asyncio.to_thread(get_graph_manager, tenant_id, deploy=False)
     path = await asyncio.to_thread(mgr.get_path, source, target, max_depth=max_depth)
     return PathResponse(
         source=source,
@@ -286,6 +292,6 @@ async def get_stats(tenant_id: str) -> StatsResponse:
 
     tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
-    mgr = get_graph_manager(tenant_id)
+    mgr = await asyncio.to_thread(get_graph_manager, tenant_id, deploy=False)
     stats = await asyncio.to_thread(mgr.get_stats)
     return StatsResponse(tenant_id=tenant_id, **stats)
