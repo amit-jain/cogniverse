@@ -8,6 +8,7 @@ generates code, executes in an OpenShell sandbox, evaluates output, and iterates
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
 import uuid
@@ -372,8 +373,17 @@ class CodingAgent(
         test_command: str,
         language: str,
     ) -> Dict[str, Any]:
-        """Execute code in an OpenShell sandbox. Refuses to run without one."""
-        if not self._sandbox_manager or not self._sandbox_manager.available:
+        """Execute code in an OpenShell sandbox. Refuses to run without one.
+
+        The connectivity probe and both sandbox execs are synchronous gRPC/socket
+        calls (write exec 30s, run exec up to 300s); offload them so a coding
+        task cannot freeze the shared API loop and trip k8s liveness mid-run.
+        """
+        sandbox_available = (
+            self._sandbox_manager is not None
+            and await asyncio.to_thread(lambda: self._sandbox_manager.available)
+        )
+        if not sandbox_available:
             raise RuntimeError(
                 "CodingAgent requires a SandboxManager with an available OpenShell "
                 "gateway. Executing LLM-generated code without sandbox isolation "
@@ -392,13 +402,15 @@ class CodingAgent(
             f"mkdir -p $(dirname {file_path}) && "
             f"cat > {file_path} << 'SANDBOX_CODE_EOF'\n{code}\nSANDBOX_CODE_EOF"
         )
-        self._sandbox_manager.exec_in_sandbox(
+        await asyncio.to_thread(
+            self._sandbox_manager.exec_in_sandbox,
             agent_type="coding_agent",
             command=["sh", "-c", write_cmd],
             timeout_seconds=30,
         )
 
-        result = self._sandbox_manager.exec_in_sandbox(
+        result = await asyncio.to_thread(
+            self._sandbox_manager.exec_in_sandbox,
             agent_type="coding_agent",
             command=["sh", "-c", run_cmd],
             timeout_seconds=300,

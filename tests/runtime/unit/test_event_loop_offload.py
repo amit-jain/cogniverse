@@ -211,3 +211,39 @@ async def test_admin_schema_deploy_offloaded(monkeypatch):
     )
 
     assert ticks >= 15, f"event loop starved during schema deploy: only {ticks} ticks"
+
+
+@pytest.mark.asyncio
+async def test_coding_sandbox_exec_offloaded():
+    """CodingAgent._execute_in_sandbox runs the sync gRPC sandbox exec (and the
+    connectivity probe) off the loop. Run inline, the write+run execs (up to
+    30s + 300s) plus the .available TCP probe froze the whole API loop and
+    tripped k8s liveness mid-task."""
+    from cogniverse_agents.coding_agent import CodingAgent
+
+    class _BlockingSandbox:
+        @property
+        def available(self):
+            time.sleep(0.1)  # blocking connectivity probe (socket.create_connection)
+            return True
+
+        def exec_in_sandbox(self, agent_type, command, timeout_seconds):
+            time.sleep(0.15)  # blocking gRPC session exec
+            return {"exit_code": 0, "stdout": "ok", "stderr": ""}
+
+    agent = object.__new__(CodingAgent)
+    agent._sandbox_manager = _BlockingSandbox()
+
+    ticks = await _ticks_during(
+        lambda: agent._execute_in_sandbox(
+            file_path="/workspace/solution.py",
+            code="print('hi')",
+            test_command="python solution.py",
+            language="python",
+        )
+    )
+
+    assert ticks >= 30, (
+        f"event loop starved during sandbox exec: only {ticks} ticks — the sync "
+        "gRPC exec/probe ran on the loop"
+    )
