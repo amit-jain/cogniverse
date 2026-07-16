@@ -1727,6 +1727,19 @@ class AgentDispatcher:
             "result": dataclasses.asdict(result),
         }
 
+    async def _build_encoder_config(self):
+        """Merged config (backend.profiles + inference_service_urls) the media
+        agents hand to QueryEncoderFactory so query encoders route through the
+        deployed sidecar. System-scoped: inference URLs are infra-level, not
+        per-tenant. Built off the loop — the ConfigUtils ensure-chain reads Vespa.
+        """
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+        from cogniverse_foundation.config.utils import get_config
+
+        return await asyncio.to_thread(
+            get_config, SYSTEM_TENANT_ID, self._config_manager
+        )
+
     async def _execute_image_search_task(
         self, query: str, tenant_id: str, top_k: int
     ) -> Dict[str, Any]:
@@ -1739,6 +1752,7 @@ class AgentDispatcher:
         deps = ImageSearchDeps(
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,
+            encoder_config=await self._build_encoder_config(),
         )
         agent = ImageSearchAgent(deps=deps)
 
@@ -1793,6 +1807,7 @@ class AgentDispatcher:
         deps = DocumentAgentDeps(
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,
+            encoder_config=await self._build_encoder_config(),
         )
         agent = DocumentAgent(deps=deps)
         await asyncio.to_thread(

@@ -637,7 +637,14 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 
 `QueryEncoderFactory._create_encoder_instance` resolves the encoder in this
 order: `profile_config["model_loader"]` (authoritative) → model-name substring
-→ profile-name substring, raising `ValueError` if none match.
+→ profile-name substring, raising `ValueError` if none match. When a profile
+declares `inference_services.embedding` but the merged config's
+`inference_service_urls` has no URL for that service, the factory raises
+`ValueError` naming the service (all families, not just ColBERT) rather than
+silently falling back to a local load — so a misconfigured sidecar fails loud.
+Search agents (document/image) resolve their encoders through this factory,
+passing the merged config, so they route through the deployed sidecar exactly
+as the `/search` path does.
 
 ---
 
