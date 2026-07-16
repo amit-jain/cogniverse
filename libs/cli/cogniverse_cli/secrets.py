@@ -69,7 +69,7 @@ def sync_hf_token_to_cluster(required: bool = False) -> bool:
     """Create or update the ``hf-token`` Secret in the cogniverse namespace.
 
     Required for deployments that pull gated HuggingFace models
-    (EmbeddingGemma, Gemma chat weights, etc.). Safe no-op when the
+    (the Gemma LLM chat weights, etc.). Safe no-op when the
     token isn't available *unless* ``required=True`` — callers set that
     when the chart definitely needs the token (e.g. ``inference.dense_vllm``
     enabled with a gated model).
@@ -84,7 +84,7 @@ def sync_hf_token_to_cluster(required: bool = False) -> bool:
             return False
         console.print(
             "[yellow]HF_TOKEN not found — skipping hf-token secret. "
-            "Gated HuggingFace models (e.g. EmbeddingGemma) will fail to load.[/yellow]"
+            "Gated HuggingFace models (e.g. the Gemma LLM) will fail to load.[/yellow]"
         )
         return False
 

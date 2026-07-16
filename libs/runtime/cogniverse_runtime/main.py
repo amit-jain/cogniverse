@@ -756,9 +756,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             # Re-affirm the durable ``wiki_semantic`` profile from config.json
             # into any already-cached backends via the change listener. Fields
-            # MUST match config.json (DenseOn 768-d single-vector); WikiManager
-            # generates DenseOn query embeddings, so the old embeddinggemma /
-            # "dense" values here were inconsistent with what it actually feeds.
+            # MUST match config.json: WikiManager generates DenseOn 768-d
+            # single-vector query embeddings, so the profile's model/type must
+            # be DenseOn/single_vector for search to rank in the same space.
             wiki_profile = {
                 "type": "wiki",
                 "embedding_model": "lightonai/DenseOn",
