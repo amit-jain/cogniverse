@@ -340,6 +340,16 @@ class ProfileSelectionAgent(
         selected_profile = result.selected_profile or (
             profiles[0] if isinstance(profiles, list) and profiles else "default"
         )
+        # The LM can hallucinate or decorate a profile name; if it isn't one of
+        # the available profiles, fall back to the first available rather than
+        # letting an unknown name reach SearchService (which raises ValueError).
+        if isinstance(profiles, list) and profiles and selected_profile not in profiles:
+            logger.warning(
+                "LLM selected unknown profile %r; falling back to %r",
+                selected_profile,
+                profiles[0],
+            )
+            selected_profile = profiles[0]
         modality = result.modality or "text"
         reasoning = result.reasoning or ""
         query_intent = result.query_intent or "text_search"
