@@ -100,15 +100,31 @@ async def _event_stream(
         )
         yield f"data: {connect_data}\n\n"
 
-        # Subscribe to queue
-        async for event in queue.subscribe(from_offset=from_offset):
-            # Serialize event to JSON
-            event_data = event.model_dump_json()
-            yield f"data: {event_data}\n\n"
+        # Subscribe to the queue, interleaving SSE heartbeat comments so an
+        # idle workflow doesn't let a proxy/load balancer drop the connection.
+        # asyncio.wait (unlike wait_for) leaves the pending __anext__ running on
+        # timeout, so the next event is never lost while we heartbeat.
+        subscription = queue.subscribe(from_offset=from_offset)
+        next_event = asyncio.ensure_future(subscription.__anext__())
+        try:
+            while True:
+                done, _ = await asyncio.wait({next_event}, timeout=heartbeat_interval)
+                if not done:
+                    # SSE comment line — ignored by clients, keeps the pipe warm.
+                    yield ": heartbeat\n\n"
+                    continue
+                try:
+                    event = next_event.result()
+                except StopAsyncIteration:
+                    break
+                next_event = asyncio.ensure_future(subscription.__anext__())
 
-            # Check if this is a completion or error event
-            if event.event_type in ("complete", "error"):
-                break
+                yield f"data: {event.model_dump_json()}\n\n"
+
+                if event.event_type in ("complete", "error"):
+                    break
+        finally:
+            next_event.cancel()
 
     except asyncio.CancelledError:
         logger.info(f"SSE stream cancelled for task {task_id}")

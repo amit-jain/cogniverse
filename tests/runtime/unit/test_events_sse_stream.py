@@ -150,3 +150,46 @@ def test_ingestion_stream_uses_same_event_shape(client: TestClient) -> None:
     assert events[0]["type"] == "connected"
     assert events[1]["event_type"] == "complete"
     assert events[1]["task_id"] == "ing-sse"
+
+
+@pytest.mark.asyncio
+async def test_event_stream_emits_heartbeats_while_idle() -> None:
+    """An idle subscription emits SSE heartbeat comments every
+    heartbeat_interval so a proxy/load balancer doesn't drop the connection.
+    The documented heartbeat_interval was accepted but never used, so a
+    long-running workflow that went quiet silently lost its stream."""
+    reset_queue_manager()
+    qm = get_queue_manager()
+    queue = await qm.create_queue(task_id="wf-hb", tenant_id="acme")
+
+    chunks: list[str] = []
+
+    async def consume() -> None:
+        async for chunk in events_router._event_stream(
+            "wf-hb", from_offset=0, heartbeat_interval=0.05
+        ):
+            chunks.append(chunk)
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.2)  # idle: no events published, only heartbeats flow
+    heartbeats = [c for c in chunks if c.startswith(": heartbeat")]
+
+    # Publishing a completion event ends the stream cleanly.
+    await queue.enqueue(
+        StatusEvent(
+            event_type="complete",
+            task_id="wf-hb",
+            tenant_id="acme",
+            phase="done",
+            state="completed",
+            message="done",
+        )
+    )
+    await asyncio.wait_for(task, timeout=2.0)
+    reset_queue_manager()
+
+    assert len(heartbeats) >= 2, (
+        f"expected periodic heartbeats during 0.2s idle, got {len(heartbeats)}"
+    )
+    # The real completion event is still delivered and closes the stream.
+    assert any(c.startswith("data:") and "complete" in c for c in chunks)
