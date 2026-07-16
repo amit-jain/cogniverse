@@ -461,3 +461,73 @@ class TestProfileSelectionArtifactLoading:
             profile_agent.telemetry_manager = mock_tm
             profile_agent._artifact_tenant_id = "test:unit"
             profile_agent._load_artifact()
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestProfileMembershipGuard:
+    """A hallucinated/decorated profile name from the LM must not reach
+    SearchService (which raises ValueError on an unknown profile) — the agent
+    falls back to an available profile instead."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_selected_profile_falls_back_to_available(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        agent = object.__new__(ProfileSelectionAgent)
+        agent.deps = SimpleNamespace(
+            available_profiles=["video_colpali_base", "text_bge_base"]
+        )
+        agent.dspy_module = Mock()
+        agent.call_dspy = AsyncMock(
+            return_value=SimpleNamespace(
+                selected_profile="video_hallucinated_xyz",  # not in the list
+                confidence="0.9",
+                modality="video",
+                reasoning="r",
+                query_intent="video_search",
+                complexity="medium",
+            )
+        )
+        agent._generate_alternatives = lambda *a, **k: []
+
+        out = await agent._process_impl(
+            ProfileSelectionInput(
+                query="cat videos",
+                available_profiles=["video_colpali_base", "text_bge_base"],
+            )
+        )
+
+        assert out.selected_profile == "video_colpali_base"
+
+    @pytest.mark.asyncio
+    async def test_valid_selected_profile_is_kept(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        agent = object.__new__(ProfileSelectionAgent)
+        agent.deps = SimpleNamespace(
+            available_profiles=["video_colpali_base", "text_bge_base"]
+        )
+        agent.dspy_module = Mock()
+        agent.call_dspy = AsyncMock(
+            return_value=SimpleNamespace(
+                selected_profile="text_bge_base",
+                confidence="0.8",
+                modality="text",
+                reasoning="r",
+                query_intent="text_search",
+                complexity="medium",
+            )
+        )
+        agent._generate_alternatives = lambda *a, **k: []
+
+        out = await agent._process_impl(
+            ProfileSelectionInput(
+                query="define ml",
+                available_profiles=["video_colpali_base", "text_bge_base"],
+            )
+        )
+
+        assert out.selected_profile == "text_bge_base"
