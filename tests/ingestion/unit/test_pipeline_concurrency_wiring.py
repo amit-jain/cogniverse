@@ -41,8 +41,10 @@ async def _capture_semaphore(pipe, monkeypatch, **kwargs):
         raise _Stop()
 
     monkeypatch.setattr(asyncio, "Semaphore", fake_semaphore)
+    # A single dummy item: an empty batch short-circuits before the semaphore,
+    # so we need one file to reach the concurrency-control setup under test.
     with pytest.raises(_Stop):
-        await pipe.process_videos_concurrent([], **kwargs)
+        await pipe.process_videos_concurrent(["dummy.mp4"], **kwargs)
     return captured["n"]
 
 

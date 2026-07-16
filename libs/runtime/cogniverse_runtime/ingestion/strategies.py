@@ -15,12 +15,49 @@ from .processor_base import BaseStrategy
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
 DOCUMENT_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".doc", ".rtf"}
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv"}
 CODE_EXTENSIONS = {
     "python": {".py"},
     "javascript": {".js", ".jsx", ".mjs"},
     "typescript": {".ts", ".tsx"},
     "go": {".go"},
 }
+
+
+def content_type_for_profile(
+    profile_name: str, profile_config: dict[str, Any] | None = None
+) -> str:
+    """Derive the ingest content type from a profile.
+
+    Profiles encode their media type in the profile / schema name
+    (``document_*`` / ``audio_*`` / ``image_*`` / ``video_*``); anything else
+    defaults to video. Callers may override explicitly.
+    """
+    schema = (profile_config or {}).get("schema_name", "") or ""
+    name = f"{profile_name} {schema}".lower()
+    if "document" in name:
+        return "document"
+    if "audio" in name:
+        return "audio"
+    if "image" in name:
+        return "image"
+    return "video"
+
+
+def discover_ingestible_files(content_dir: Path, content_type: str) -> list[Path]:
+    """Discover ingestible items in a directory for a content type.
+
+    Video yields one entry per video file (each processed independently);
+    image/audio/document yield the directory itself, which the per-type strategy
+    expands into individual items. The REST ingestion path previously hard-globbed
+    ``**/*.mp4`` for every profile, so non-video ingestion discovered zero files.
+    """
+    if content_type in ("image", "audio", "document"):
+        return [content_dir]
+    files: list[Path] = []
+    for ext in VIDEO_EXTENSIONS:
+        files.extend(content_dir.glob(f"**/*{ext}"))
+    return sorted(files)
 
 
 class FrameSegmentationStrategy(BaseStrategy):

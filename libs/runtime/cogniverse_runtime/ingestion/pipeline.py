@@ -1126,6 +1126,21 @@ class VideoIngestionPipeline:
         self.job_id = f"ingestion_{uuid.uuid4().hex[:8]}"
         start_time = time.time()
 
+        # An empty batch is "nothing to do", not a failure — short-circuit
+        # before the per-video averaging (total_time / len) divides by zero.
+        if not video_files:
+            self.logger.info(f"Ingestion job {self.job_id}: no files to process")
+            return {
+                "job_id": self.job_id,
+                "status": "completed",
+                "total_videos": 0,
+                "successful": 0,
+                "failed": 0,
+                "cancelled": 0,
+                "execution_time_seconds": 0.0,
+                "results": [],
+            }
+
         self.logger.info(
             f"Starting ingestion job {self.job_id} with {len(video_files)} videos"
         )

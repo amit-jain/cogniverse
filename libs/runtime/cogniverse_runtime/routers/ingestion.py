@@ -62,6 +62,9 @@ class IngestionRequest(BaseModel):
     backend: str = "vespa"
     tenant_id: Optional[str] = None
     org_id: Optional[str] = None
+    # Media type to discover in video_dir: video|document|audio|image. When
+    # omitted it is derived from the profile name.
+    content_type: Optional[str] = None
     max_videos: Optional[int] = None
     batch_size: int = 10
 
@@ -1095,9 +1098,17 @@ async def run_ingestion(
             schema_name=request.profile,
         )
 
-        # Get video files
+        # Discover ingestible files by the profile's content type instead of
+        # hard-globbing **/*.mp4 (which found zero files for document/audio/image
+        # profiles and then crashed the pipeline on an empty batch).
+        from cogniverse_runtime.ingestion.strategies import (
+            content_type_for_profile,
+            discover_ingestible_files,
+        )
+
         video_dir = Path(request.video_dir)
-        video_files = list(video_dir.glob("**/*.mp4"))
+        content_type = request.content_type or content_type_for_profile(request.profile)
+        video_files = discover_ingestible_files(video_dir, content_type)
 
         if request.max_videos:
             video_files = video_files[: request.max_videos]
