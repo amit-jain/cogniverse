@@ -256,12 +256,20 @@ class MessagingGateway:
             await update.message.reply_text(str(content)[:3500])
         elif subcmd == "lint":
             result = await self.runtime_client.lint_wiki(tenant_id=tenant_id)
-            issues = result.get("issues", [])
-            await update.message.reply_text(
-                f"Wiki lint: {len(issues)} issue(s) found."
-                if issues
-                else "Wiki lint: no issues."
-            )
+            # WikiManager.lint returns issues_found (int) plus orphan/stale/empty
+            # page lists — NOT an "issues" key. Reading the missing key made
+            # /wiki lint always report "no issues".
+            issue_count = result.get("issues_found", 0)
+            if issue_count:
+                orphan = len(result.get("orphan_pages", []))
+                stale = len(result.get("stale_pages", []))
+                empty = len(result.get("empty_pages", []))
+                await update.message.reply_text(
+                    f"Wiki lint: {issue_count} issue(s) found "
+                    f"({orphan} orphan, {stale} stale, {empty} empty)."
+                )
+            else:
+                await update.message.reply_text("Wiki lint: no issues.")
         elif subcmd == "delete":
             if not parsed.query:
                 await update.message.reply_text("Usage: /wiki delete <slug>")

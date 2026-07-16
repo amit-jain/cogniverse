@@ -32,7 +32,16 @@ def gateway_with_mock_client():
         return_value={"slug": "foo", "content": "topic body"}
     )
     mock_client.get_wiki_index = AsyncMock(return_value={"content": "INDEX"})
-    mock_client.lint_wiki = AsyncMock(return_value={"issues": []})
+    # The real WikiManager.lint shape: issues_found (int) + page lists.
+    mock_client.lint_wiki = AsyncMock(
+        return_value={
+            "orphan_pages": [],
+            "stale_pages": [],
+            "empty_pages": [],
+            "total_pages": 3,
+            "issues_found": 0,
+        }
+    )
     mock_client.delete_wiki_topic = AsyncMock(return_value={"status": "deleted"})
     mock_client.set_instructions = AsyncMock(
         return_value={"text": "x", "updated_at": "now"}
@@ -110,6 +119,34 @@ class TestWikiDispatch:
         await g._handle_wiki_command(mock_update, parsed, "acme")
 
         client.lint_wiki.assert_awaited_once_with(tenant_id="acme")
+        # No issues in the default fixture -> "no issues" reply.
+        reply = mock_update.message.reply_text.await_args.args[0]
+        assert "no issues" in reply.lower()
+
+    @pytest.mark.asyncio
+    async def test_wiki_lint_reports_real_issues_in_reply(
+        self, gateway_with_mock_client, mock_update
+    ):
+        """The reply must reflect the real lint report (issues_found + page
+        lists), not the missing "issues" key that always read as no issues."""
+        g, client = gateway_with_mock_client
+        client.lint_wiki = AsyncMock(
+            return_value={
+                "orphan_pages": ["a", "b"],
+                "stale_pages": ["c"],
+                "empty_pages": [],
+                "total_pages": 5,
+                "issues_found": 3,
+            }
+        )
+        parsed = parse_message("/wiki lint")
+
+        await g._handle_wiki_command(mock_update, parsed, "acme")
+
+        reply = mock_update.message.reply_text.await_args.args[0]
+        assert "3 issue(s) found" in reply
+        assert "2 orphan" in reply
+        assert "1 stale" in reply
 
     @pytest.mark.asyncio
     async def test_wiki_delete_calls_runtime_client(

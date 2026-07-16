@@ -38,7 +38,9 @@ class TestWikiLintNoLongerOrphaned:
         # Stage 2: gateway must have a dispatch arm and call lint_wiki().
         g = MessagingGateway(bot_token="x", runtime_url="http://x")
         mock_client = MagicMock()
-        mock_client.lint_wiki = AsyncMock(return_value={"issues": []})
+        mock_client.lint_wiki = AsyncMock(
+            return_value={"issues_found": 0, "orphan_pages": [], "total_pages": 0}
+        )
         g.runtime_client = mock_client
 
         update = MagicMock()
