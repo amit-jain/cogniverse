@@ -40,6 +40,11 @@ def test_empty_result_is_not_an_error():
     assert vespa_search_children({}) == []
 
 
+def test_non_dict_coverage_shape_does_not_crash():
+    body = {"root": {"coverage": "full", "children": [{"fields": {"id": "d1"}}]}}
+    assert len(vespa_search_children(body)) == 1
+
+
 def test_degraded_coverage_warns_but_returns_hits(caplog):
     import logging
 

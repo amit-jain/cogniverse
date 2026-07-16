@@ -357,3 +357,48 @@ async def test_failed_overwrite_leaves_legacy_entry_intact(tmp_path, monkeypatch
     assert await backend.get("k") == "old-data", (
         "failed overwrite destroyed the legacy entry"
     )
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_dotdot_key_component_cannot_escape_base_path(tmp_path):
+    """A '..' key component became a literal directory segment — the sanitizer
+    replaced slashes and metachars but not dot-dot, so a crafted key wrote
+    OUTSIDE base_path. The backend is registered generically; keys are not
+    guaranteed hex-digest-shaped forever."""
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    key = "..:video:vid9:transcript"
+
+    resolved = backend._key_to_path(key).resolve()
+    assert resolved.is_relative_to(tmp_path.resolve()), (
+        f"key escaped base_path: {resolved}"
+    )
+
+    assert await backend.set(key, "payload", ttl=60) is True
+    assert await backend.get(key) == "payload"
+    escaped = tmp_path.parent / "transcripts"
+    assert not escaped.exists(), f"cache wrote outside base_path: {escaped}"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_nul_byte_key_set_returns_false_not_raises(tmp_path):
+    """set() promises bool. A NUL byte in the key made the error-path cleanup
+    (tmp_path.unlink) raise ValueError past the OSError-only except, so set()
+    raised instead of returning False while get()/exists() degraded safely."""
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(
+            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+        )
+    )
+    key = "pro\x00file:video:vid:transcript"
+
+    assert await backend.set(key, "x", ttl=60) is False
+    assert await backend.get(key) is None
+    assert await backend.exists(key) is False

@@ -106,6 +106,11 @@ class StructuredFilesystemBackend(CacheBackend):
         for old, new in replacements.items():
             component = component.replace(old, new)
 
+        # A bare "."/".." component becomes a literal directory segment and
+        # walks OUT of base_path; an empty component collapses the path.
+        if component in (".", "..", ""):
+            component = "_"
+
         # Limit length to avoid filesystem limits
         if len(component) > 200:
             component = component[:200]
@@ -340,7 +345,9 @@ class StructuredFilesystemBackend(CacheBackend):
             logger.error(f"Error writing cache file {file_path}: {e}")
             try:
                 tmp_path.unlink(missing_ok=True)
-            except OSError:
+            except (OSError, ValueError):
+                # ValueError: a NUL byte in the key poisons the path itself —
+                # unlink must not turn set()'s bool contract into a raise.
                 pass
             return False
 
