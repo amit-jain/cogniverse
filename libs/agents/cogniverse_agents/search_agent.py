@@ -973,7 +973,7 @@ class SearchAgent(
 
             except Exception as e:
                 logger.error(f"Search failed for profile {profile_name}: {e}")
-                return profile_name, []
+                return profile_name, e
 
         # Create shared thread pool and run searches in parallel
         with concurrent.futures.ThreadPoolExecutor(
@@ -985,10 +985,15 @@ class SearchAgent(
             ]
             profile_results_list = await asyncio.gather(*search_tasks)
 
-        # Convert to dict
-        profile_results = {
-            profile: results for profile, results in profile_results_list if results
-        }
+        # A leg that raised returns its exception. If EVERY leg failed, that's a
+        # backend outage — re-raise like the plain-text path instead of
+        # flattening to [] (which reads as a clean "no matches").
+        ok = [(p, r) for p, r in profile_results_list if not isinstance(r, Exception)]
+        if not ok:
+            raise profile_results_list[0][1]
+
+        # Convert to dict (only legs that returned actual hits)
+        profile_results = {profile: results for profile, results in ok if results}
 
         if not profile_results:
             logger.warning("No results from any profile")
@@ -1641,7 +1646,7 @@ class SearchAgent(
                 return variant_name, results
             except Exception as e:
                 logger.error(f"Search failed for variant '{variant_name}': {e}")
-                return variant_name, []
+                return variant_name, e
 
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=len(query_variants)
@@ -1650,10 +1655,21 @@ class SearchAgent(
                 executor.submit(search_single_variant, v) for v in query_variants
             ]
             variant_results = {}
+            errors = []
+            ok_count = 0
             for future in concurrent.futures.as_completed(futures):
                 name, results = future.result()
+                if isinstance(results, Exception):
+                    errors.append(results)
+                    continue
+                ok_count += 1
                 if results:
                     variant_results[name] = results
+
+        # Every variant leg raised — a backend outage, not "no matches".
+        # Re-raise instead of flattening to [] (a clean-looking empty).
+        if ok_count == 0 and errors:
+            raise errors[0]
 
         if not variant_results:
             logger.warning("No results from any query variant")

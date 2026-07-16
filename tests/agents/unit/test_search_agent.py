@@ -1480,6 +1480,94 @@ class TestMultiQueryFusion:
         assert len(results) == 0
 
     @pytest.mark.ci_fast
+    def test_multi_query_fusion_raises_when_all_variants_fail(
+        self, agent_with_mock_backend
+    ):
+        """Every variant leg hitting a dead backend is an outage, not "no
+        matches" — it must raise, not flatten to [] (which reads as a clean
+        empty result to the caller)."""
+        agent = agent_with_mock_backend
+
+        def _dead(query_dict):
+            raise RuntimeError("backend connection refused")
+
+        mock_backend = Mock()
+        mock_backend.search = _dead
+        agent._shared_backend = mock_backend
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            agent._search_multi_query_fusion(
+                query_variants=[
+                    {"name": "original", "query": "robots"},
+                    {"name": "expansion", "query": "robots and machines"},
+                ],
+                tenant_id="test_tenant",
+                modality="video",
+                top_k=10,
+                rrf_k=60,
+                ranking_strategy="binary_binary",
+            )
+
+    @pytest.mark.ci_fast
+    def test_multi_query_fusion_partial_failure_returns_survivors(
+        self, agent_with_mock_backend
+    ):
+        """A partial failure (some variants error, at least one succeeds) is not
+        a total outage — surviving variants' results are returned."""
+        agent = agent_with_mock_backend
+
+        def _flaky(query_dict):
+            if "expansion" in query_dict["query"]:
+                raise RuntimeError("one leg down")
+            sr = Mock()
+            sr.document.id = "doc_ok"
+            sr.score = 0.9
+            sr.document.metadata = {"title": "ok"}
+            return [sr]
+
+        mock_backend = Mock()
+        mock_backend.search = _flaky
+        agent._shared_backend = mock_backend
+
+        results = agent._search_multi_query_fusion(
+            query_variants=[
+                {"name": "original", "query": "robots"},
+                {"name": "expansion", "query": "robots expansion"},
+            ],
+            tenant_id="test_tenant",
+            modality="video",
+            top_k=10,
+            rrf_k=60,
+            ranking_strategy="binary_binary",
+        )
+        assert [r["id"] for r in results] == ["doc_ok"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_ensemble_raises_when_all_profiles_fail(
+        self, agent_with_mock_backend
+    ):
+        """Ensemble mirrors the plain-text path: every profile leg failing is an
+        outage, so it raises instead of returning []."""
+        agent = agent_with_mock_backend
+
+        def _dead(query_dict):
+            raise RuntimeError("backend connection refused")
+
+        mock_backend = Mock()
+        mock_backend.search = _dead
+        agent._shared_backend = mock_backend
+
+        with pytest.raises(RuntimeError, match="connection refused"):
+            await agent._search_ensemble(
+                query="robots",
+                tenant_id="test_tenant",
+                profiles=[agent.active_profile],
+                modality="video",
+                top_k=10,
+            )
+
+    @pytest.mark.ci_fast
     def test_multi_query_fusion_variant_encoder_failure(self, agent_with_mock_backend):
         """Test _search_multi_query_fusion degrades gracefully when one variant's encoding fails."""
         agent = agent_with_mock_backend
