@@ -58,10 +58,18 @@ def test_get_topic_returns_404_when_missing(client: TestClient, fake_wm) -> None
 
 
 def test_lint_returns_manager_dict(client: TestClient, fake_wm) -> None:
-    fake_wm.lint.return_value = {"errors": 2, "warnings": 7, "issues": []}
+    # The route passes WikiManager.lint's real shape through unchanged.
+    report = {
+        "orphan_pages": ["a"],
+        "stale_pages": [],
+        "empty_pages": [],
+        "total_pages": 4,
+        "issues_found": 1,
+    }
+    fake_wm.lint.return_value = report
     r = client.get("/wiki/lint?tenant_id=acme")
     assert r.status_code == 200
-    assert r.json() == {"errors": 2, "warnings": 7, "issues": []}
+    assert r.json() == report
 
 
 def test_lint_requires_tenant_id(client: TestClient) -> None:
