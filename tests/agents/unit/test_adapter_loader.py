@@ -343,7 +343,6 @@ async def test_call_dspy_carries_adapter_lm_into_worker_thread():
             return dspy.context(lm=sentinel)
 
     agent = object.__new__(_Agent)
-    agent._progress_queue = None
 
     prediction = await agent.call_dspy(_Mod(), output_field="out")
 

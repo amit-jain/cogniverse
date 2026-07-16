@@ -864,10 +864,13 @@ class TestEmitProgressStreaming:
                 self.emit_progress("step1", "Working...")
                 return TOutput(result=input.value.upper())
 
+        from cogniverse_core.agents.base import _PROGRESS_QUEUE
+
         agent = TestAgent(deps=TDeps())
         result = await agent.process(TInput(value="hello"))
         assert result.result == "HELLO"
-        assert agent._progress_queue is None
+        # The per-invocation progress queue ContextVar is unset outside a stream.
+        assert _PROGRESS_QUEUE.get() is None
 
 
 @pytest.mark.unit
@@ -999,7 +1002,7 @@ class TestEmitProgressGenericAgents:
 
     @pytest.mark.asyncio
     async def test_progress_queue_cleaned_up_after_streaming(self):
-        """_progress_queue is None after streaming completes."""
+        """The progress-queue ContextVar is reset after streaming completes."""
         from cogniverse_core.agents.base import (
             AgentBase,
             AgentDeps,
@@ -1021,13 +1024,16 @@ class TestEmitProgressGenericAgents:
                 self.emit_progress("work", "Working...")
                 return COutput(val=input.val)
 
+        from cogniverse_core.agents.base import _PROGRESS_QUEUE
+
         agent = CleanAgent(deps=CDeps())
-        assert agent._progress_queue is None
+        assert _PROGRESS_QUEUE.get() is None
 
         async for _ in await agent.process(CInput(val="x"), stream=True):
             pass
 
-        assert agent._progress_queue is None
+        # The queue ContextVar is reset after the stream completes.
+        assert _PROGRESS_QUEUE.get() is None
 
 
 @pytest.mark.unit
