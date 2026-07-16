@@ -183,7 +183,9 @@ class CodingAgent(
         # tenant memories) before planning. No-ops when memory isn't
         # initialized.
         self.set_tenant_for_context(input.tenant_id)
-        enriched_task = self.inject_context_into_prompt(input.task, input.task)
+        enriched_task = await self.inject_context_into_prompt_async(
+            input.task, input.task
+        )
 
         # 1. Search for relevant code context
         self.emit_progress("search", "Searching for relevant code context...")

@@ -934,7 +934,9 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         if input.enhanced_query:
             report_query = input.enhanced_query
         elif input.tenant_id is not None:
-            report_query = self.inject_context_into_prompt(input.query, input.query)
+            report_query = await self.inject_context_into_prompt_async(
+                input.query, input.query
+            )
         else:
             report_query = input.query
 

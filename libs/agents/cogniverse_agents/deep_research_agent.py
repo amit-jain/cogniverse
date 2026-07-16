@@ -186,7 +186,9 @@ class DeepResearchAgent(
         # by SearchAgent and CodingAgent. No-ops gracefully when memory
         # isn't initialized.
         self.set_tenant_for_context(input.tenant_id)
-        enriched_query = self.inject_context_into_prompt(input.query, input.query)
+        enriched_query = await self.inject_context_into_prompt_async(
+            input.query, input.query
+        )
 
         self.emit_progress("decompose", "Decomposing research query...")
 
