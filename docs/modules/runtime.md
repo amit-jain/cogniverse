@@ -528,7 +528,9 @@ curl -X POST http://localhost:8000/search/rerank \
 
 ### Ingestion Endpoints
 
-**POST /ingestion/start** - Start batch video ingestion
+**POST /ingestion/start** - Start batch content ingestion. Files in `video_dir`
+are discovered by the profile's content type (video/document/audio/image);
+pass `content_type` to override the profile-derived default.
 ```bash
 curl -X POST http://localhost:8000/ingestion/start \
   -H "Content-Type: application/json" \
