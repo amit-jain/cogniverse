@@ -973,34 +973,9 @@ class AgentDispatcher:
                 sandbox_manager=self._sandbox_manager,
             )
 
-            async def search_fn(q: str, tid: str):
-                from cogniverse_agents.search.service import SearchService
-
-                try:
-                    cfg = get_config(tenant_id=tid, config_manager=self._config_manager)
-                    svc = SearchService(
-                        config=cfg,
-                        config_manager=self._config_manager,
-                        schema_loader=self._schema_loader,
-                    )
-                    return [
-                        r.to_dict()
-                        for r in svc.search(
-                            query=q,
-                            profile="code_lateon_mv",
-                            tenant_id=tid,
-                            top_k=10,
-                        )
-                    ]
-                except Exception as exc:
-                    logger.info(
-                        "Code search unavailable, proceeding without context: %s", exc
-                    )
-                    return []
-
             agent = CodingAgent(
                 deps=deps,
-                search_fn=search_fn,
+                search_fn=self._code_search,
                 sandbox_manager=self._sandbox_manager,
                 config_manager=self._config_manager,
             )
@@ -1316,6 +1291,40 @@ class AgentDispatcher:
             )
             cache[profile] = agent
         return agent
+
+    async def _code_search(self, query: str, tenant_id: str) -> List[Dict[str, Any]]:
+        """Code-context search for the coding agent via ``code_lateon_mv``.
+
+        Returns ``[]`` when code search is unavailable (encoder not registered,
+        Vespa down) so coding tasks proceed without indexed context. The
+        SearchService build + search (encoder inference + Vespa HTTP) run off
+        the event loop.
+        """
+        from cogniverse_agents.search.service import SearchService
+        from cogniverse_foundation.config.utils import get_config
+
+        def _run() -> List[Dict[str, Any]]:
+            cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+            svc = SearchService(
+                config=cfg,
+                config_manager=self._config_manager,
+                schema_loader=self._schema_loader,
+            )
+            return [
+                r.to_dict()
+                for r in svc.search(
+                    query=query,
+                    profile="code_lateon_mv",
+                    tenant_id=tenant_id,
+                    top_k=10,
+                )
+            ]
+
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception as exc:
+            logger.info("Code search unavailable, proceeding without context: %s", exc)
+            return []
 
     async def _rewrite_query_with_history(
         self, query: str, conversation_history: List[Dict[str, str]]
@@ -1907,40 +1916,9 @@ class AgentDispatcher:
             sandbox_manager=self._sandbox_manager,
         )
 
-        async def search_fn(query: str, tenant_id: str):
-            """Search code using the code_lateon_mv profile.
-
-            Returns empty list if code search is unavailable (e.g. encoder
-            not yet registered for the code model), so coding tasks can
-            proceed without indexed context.
-            """
-            from cogniverse_agents.search.service import SearchService
-
-            try:
-                search_config = get_config(
-                    tenant_id=tenant_id, config_manager=self._config_manager
-                )
-                search_service = SearchService(
-                    config=search_config,
-                    config_manager=self._config_manager,
-                    schema_loader=self._schema_loader,
-                )
-                results = search_service.search(
-                    query=query,
-                    profile="code_lateon_mv",
-                    tenant_id=tenant_id,
-                    top_k=10,
-                )
-                return [r.to_dict() for r in results]
-            except Exception as exc:
-                logger.info(
-                    "Code search unavailable, proceeding without context: %s", exc
-                )
-                return []
-
         agent = CodingAgent(
             deps=deps,
-            search_fn=search_fn,
+            search_fn=self._code_search,
             sandbox_manager=self._sandbox_manager,
             config_manager=self._config_manager,
         )

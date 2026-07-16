@@ -359,3 +359,32 @@ async def test_search_route_offloads_config_resolution(monkeypatch):
         f"only {ticks} ticks during a 0.3s config resolution — the ConfigUtils "
         "ensure-chain ran on the event loop"
     )
+
+
+@pytest.mark.asyncio
+async def test_coding_code_search_offloaded(monkeypatch):
+    """The coding agent's code-context search (SearchService build + encoder
+    inference + Vespa HTTP) runs off the loop — inline it froze every request
+    while the coding agent fetched context."""
+    from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+    d = object.__new__(AgentDispatcher)
+    d._config_manager = MagicMock()
+    d._schema_loader = MagicMock()
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config", lambda **k: MagicMock()
+    )
+
+    class _SlowService:
+        def __init__(self, **k):
+            pass
+
+        def search(self, **k):
+            time.sleep(0.3)  # encoder inference + Vespa HTTP
+            return []
+
+    monkeypatch.setattr("cogniverse_agents.search.service.SearchService", _SlowService)
+
+    ticks = await _ticks_during(lambda: d._code_search("q", "acme:acme"))
+    assert ticks >= 10, f"only {ticks} ticks — code search ran on the event loop"
