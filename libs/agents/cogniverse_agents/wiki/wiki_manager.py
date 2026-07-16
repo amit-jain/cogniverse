@@ -342,7 +342,15 @@ class WikiManager:
         if existing is not None:
             # Merge: use RLM for large content, otherwise simple append.
             old_content = existing.text_content or existing.metadata.get("content", "")
-            if self._should_use_rlm_for_merge(old_content, new_content):
+            # Idempotency: save_session runs the whole topic merge again on a
+            # client retry (natural after a partial-save 500), which appended the
+            # SAME response a second time — the topic body duplicated and
+            # update_count double-incremented. If this content is already merged,
+            # re-feed the existing doc unchanged instead of re-appending.
+            already_merged = bool(new_content) and new_content in old_content
+            if already_merged:
+                merged_content = old_content
+            elif self._should_use_rlm_for_merge(old_content, new_content):
                 merged_content = self._merge_with_rlm(old_content, new_content, entity)
             else:
                 merged_content = old_content + _CONTENT_SEPARATOR + new_content
@@ -358,7 +366,8 @@ class WikiManager:
             except Exception:
                 existing_sources = []
             merged_sources = list(dict.fromkeys(existing_sources + sources))
-            update_count = int(existing.metadata.get("update_count", 1)) + 1
+            base_count = int(existing.metadata.get("update_count", 1))
+            update_count = base_count if already_merged else base_count + 1
 
             page = WikiPage(
                 tenant_id=self._tenant_id,
@@ -552,5 +561,8 @@ class WikiManager:
             vec = embedder.encode(text, is_query=is_query)
             return vec.tolist() if hasattr(vec, "tolist") else list(vec)
         except Exception as exc:
-            logger.warning("Embedding generation failed (%s); using zero vector", exc)
-            return [0.0] * 768
+            # Do NOT persist a zero vector: it poisons the stored page's hybrid
+            # ranking permanently (never heals after the embedder recovers) and
+            # silently degrades a search to lexical-only. Raise so the save/search
+            # surfaces the embedder outage instead of masking it.
+            raise RuntimeError(f"Wiki embedding generation failed: {exc}") from exc
