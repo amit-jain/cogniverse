@@ -9,6 +9,7 @@ Tiered extraction:
 - Fallback: DSPy ChainOfThought (requires LLM)
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -297,7 +298,12 @@ class EntityExtractionAgent(
 
         if self._gliner_extractor is not None:
             try:
-                entities, relationships, path_used = self._extract_fast_path(query)
+                # GLiNER inference + spaCy is sync and CPU-heavy (~200-500ms);
+                # offload it so it doesn't stall the event loop, like the
+                # gateway agent's entity extraction.
+                entities, relationships, path_used = await asyncio.to_thread(
+                    self._extract_fast_path, query
+                )
             except Exception as e:
                 logger.warning(
                     "Fast path extraction failed, falling back to DSPy: %s", e
