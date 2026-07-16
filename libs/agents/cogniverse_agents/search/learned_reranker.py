@@ -25,6 +25,17 @@ from cogniverse_foundation.config.utils import get_config_value
 logger = logging.getLogger(__name__)
 
 
+def _rerank_index_score(result_item: Any) -> tuple[int, float]:
+    """Read (index, relevance_score) from a litellm rerank result.
+
+    litellm's ``RerankResponseResult`` is a ``TypedDict``, so ``.results`` items
+    are plain dicts at runtime -- attribute access (``result_item.index``) raised
+    ``AttributeError`` on the first item of every real response, killing learned
+    reranking on first use.
+    """
+    return result_item["index"], result_item.get("relevance_score", 0.0)
+
+
 class LearnedReranker:
     """
     Unified learned reranker using LiteLLM
@@ -151,12 +162,11 @@ class LearnedReranker:
             # Map LiteLLM response back to RerankerSearchResult objects
             reranked = []
             for result_item in response.results:
-                original_result = results[result_item.index]
-                original_result.metadata["reranking_score"] = (
-                    result_item.relevance_score
-                )
+                idx, score = _rerank_index_score(result_item)
+                original_result = results[idx]
+                original_result.metadata["reranking_score"] = score
                 original_result.metadata["reranker_model"] = self.model
-                original_result.metadata["original_rank"] = result_item.index
+                original_result.metadata["original_rank"] = idx
                 reranked.append(original_result)
 
             return reranked
@@ -215,12 +225,11 @@ class LearnedReranker:
             # Map response back to RerankerSearchResult objects
             reranked = []
             for result_item in response.results:
-                original_result = results[result_item.index]
-                original_result.metadata["reranking_score"] = (
-                    result_item.relevance_score
-                )
+                idx, score = _rerank_index_score(result_item)
+                original_result = results[idx]
+                original_result.metadata["reranking_score"] = score
                 original_result.metadata["reranker_model"] = self.model
-                original_result.metadata["original_rank"] = result_item.index
+                original_result.metadata["original_rank"] = idx
                 reranked.append(original_result)
 
             return reranked
