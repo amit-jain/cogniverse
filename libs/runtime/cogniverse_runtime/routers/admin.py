@@ -1,5 +1,6 @@
 """Admin endpoints - system administration and profile management."""
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -259,7 +260,11 @@ async def create_profile(
                     detail="Backend not available for schema deployment",
                 )
 
-            backend.schema_registry.deploy_schema(
+            # deploy_schema blocks through Vespa prepareandactivate +
+            # convergence sleeps — run it off the loop (matches the
+            # tenant-manager's offload of the same call).
+            await asyncio.to_thread(
+                backend.schema_registry.deploy_schema,
                 tenant_id=request.tenant_id,
                 base_schema_name=request.schema_name,
             )
@@ -731,7 +736,9 @@ async def deploy_profile_schema(
             )
 
         try:
-            backend.schema_registry.deploy_schema(
+            # Blocking deploy + convergence sleeps — off the loop.
+            await asyncio.to_thread(
+                backend.schema_registry.deploy_schema,
                 tenant_id=request.tenant_id,
                 base_schema_name=profile.schema_name,
                 force=request.force,

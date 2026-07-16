@@ -172,3 +172,48 @@ class TestCleanup:
             loop.remove_signal_handler(signal.SIGUSR1)
         except (NotImplementedError, ValueError):
             pytest.skip("add_signal_handler unavailable in this env")
+
+
+class TestLoopNotBlocked:
+    @pytest.mark.asyncio
+    async def test_slow_reload_does_not_starve_the_loop(
+        self, lifespan_env, monkeypatch
+    ):
+        """The handler's own contract is 'return immediately' — a slow reload
+        (Vespa round-trip) must run off the loop, not freeze every request
+        until it finishes."""
+        import time as _time
+
+        from cogniverse_runtime.config_loader import ConfigLoader
+
+        monkeypatch.setattr(
+            ConfigLoader, "reload_config", lambda self: _time.sleep(0.5)
+        )
+
+        from cogniverse_runtime.main import lifespan
+
+        app = FastAPI()
+        async with lifespan(app):
+            if not app.state.sigusr1_registered:
+                pytest.skip("SIGUSR1 handler not registered in this env")
+
+            ticks = 0
+            stop = asyncio.Event()
+
+            async def ticker():
+                nonlocal ticks
+                while not stop.is_set():
+                    await asyncio.sleep(0.01)
+                    ticks += 1
+
+            t = asyncio.create_task(ticker())
+            os.kill(os.getpid(), signal.SIGUSR1)
+            await asyncio.sleep(0.6)  # cover the full slow reload
+            stop.set()
+            await t
+
+            assert app.state.hot_reload_count["n"] == 1
+            assert ticks >= 30, (
+                f"event loop starved during hot-reload: only {ticks} ticks — "
+                "the reload ran inline on the loop"
+            )

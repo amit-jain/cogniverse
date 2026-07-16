@@ -666,7 +666,11 @@ async def _extract_graph_per_segment_inner(
         else type(processing_results.get("keyframes")).__name__,
     )
     for record in segments_list:
-        result = doc_ext.extract_from_text(
+        # GLiNER HTTP (up to 240s/call) + the DSPy claim LLM are blocking —
+        # run each segment's extraction in a worker thread so the loop (and
+        # the worker's SIGTERM handling / Redis claim) keeps breathing.
+        result = await asyncio.to_thread(
+            doc_ext.extract_from_text,
             text=record.text,
             tenant_id=tenant_id,
             source_doc_id=source_doc_id,
@@ -718,8 +722,10 @@ async def _extract_graph_per_segment_inner(
     if face_embed_url:
         # Face enrichment is additive — an unreachable face-embed sidecar
         # must not discard the entity/claim extraction already computed.
+        # Blocking per-keyframe HTTP + CPU clustering run off the loop.
         try:
-            face_edges, face_nodes = _run_face_pipeline(
+            face_edges, face_nodes = await asyncio.to_thread(
+                _run_face_pipeline,
                 processing_results=processing_results,
                 linked_extraction=linked,
                 source_doc_id=source_doc_id,

@@ -84,3 +84,130 @@ async def test_lifecycle_pin_lookup_offloaded(monkeypatch):
     assert ticks >= 10, (
         f"only {ticks} ticks during a 0.3s pin lookup — it ran on the loop"
     )
+
+
+@pytest.mark.asyncio
+async def test_kg_extraction_and_face_pipeline_offloaded(monkeypatch):
+    """Per-segment GLiNER/claim extraction (240s HTTP timeouts) and the face
+    pipeline (per-keyframe HTTP + CPU clustering) dwarf the already-offloaded
+    graph upsert — inline they froze the worker loop for minutes, deferring
+    SIGTERM until k8s SIGKILLed the pod mid-extraction."""
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.routers import ingestion
+
+    records = [
+        SimpleNamespace(
+            text="seg text", segment_anchor=SimpleNamespace(segment_id=f"s{i}")
+        )
+        for i in range(2)
+    ]
+    monkeypatch.setattr(
+        ingestion, "_iter_segments_for_graph", lambda pr, sdid: iter(records)
+    )
+    monkeypatch.setattr(
+        ingestion, "_lookup_artifact_manager", lambda t, cm: MagicMock()
+    )
+    monkeypatch.setattr(
+        ingestion, "_resolve_tenant_llm_config", lambda t, cm: MagicMock()
+    )
+    monkeypatch.setattr(
+        ingestion, "_lookup_face_embed_endpoint", lambda cm: "http://face:1"
+    )
+
+    face_calls = []
+
+    def blocking_face(**kwargs):
+        face_calls.append(kwargs["source_doc_id"])
+        time.sleep(0.25)
+        return [], []
+
+    monkeypatch.setattr(ingestion, "_run_face_pipeline", blocking_face)
+
+    async def fake_backrefs(**kwargs):
+        return None
+
+    monkeypatch.setattr(ingestion, "_write_backrefs_to_content", fake_backrefs)
+
+    extract_calls = []
+
+    class StubDocExtractor:
+        def __init__(self, **kwargs):
+            pass
+
+        def extract_from_text(self, **kwargs):
+            extract_calls.append(kwargs["segment_anchor"].segment_id)
+            time.sleep(0.25)
+            return SimpleNamespace(nodes=[], edges=[])
+
+    class StubResult:
+        def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
+            self.source_doc_id = source_doc_id
+            self.nodes = list(nodes)
+            self.edges = list(edges)
+            self.file_sha256 = file_sha256
+
+    class StubLinker:
+        def link(self, combined):
+            return combined
+
+    mgr = MagicMock()
+    mgr.upsert.return_value = {"nodes_upserted": 0, "edges_upserted": 0}
+    mgr._backend = MagicMock()
+    graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
+
+    ticks = await _ticks_during(
+        lambda: ingestion._extract_graph_per_segment_inner(
+            processing_results={},
+            source_doc_id="doc1",
+            tenant_id="acme:acme",
+            config_manager=MagicMock(),
+            DocExtractor=StubDocExtractor,
+            ClaimExtractor=MagicMock,
+            CrossModalLinker=StubLinker,
+            ExtractionResult=StubResult,
+            graph_router=graph_router,
+        )
+    )
+
+    assert extract_calls == ["s0", "s1"]
+    assert face_calls == ["doc1"]
+    assert ticks >= 30, (
+        f"event loop starved during KG extraction: only {ticks} ticks — "
+        "the extractor/face calls ran inline on the loop"
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_schema_deploy_offloaded(monkeypatch):
+    """schema_registry.deploy_schema blocks through prepareandactivate +
+    convergence sleeps; called inline it froze every request on the API loop
+    (the tenant-manager already offloads the same call)."""
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.admin.profile_models import SchemaDeploymentRequest
+    from cogniverse_runtime.routers import admin
+
+    cm = MagicMock()
+    cm.get_backend_profile.return_value = SimpleNamespace(schema_name="wiki_pages")
+
+    backend = MagicMock()
+    backend.schema_exists.return_value = False
+    backend.schema_registry.deploy_schema = _blocking(0.3)
+    backend.get_tenant_schema_name.return_value = "wiki_pages_acme_acme"
+    monkeypatch.setattr(
+        admin.BackendRegistry,
+        "get_instance",
+        classmethod(
+            lambda cls: SimpleNamespace(get_ingestion_backend=lambda *a, **k: backend)
+        ),
+    )
+
+    req = SchemaDeploymentRequest(tenant_id="acme:acme")
+    ticks = await _ticks_during(
+        lambda: admin.deploy_profile_schema(
+            "wiki_semantic", req, config_manager=cm, schema_loader=MagicMock()
+        )
+    )
+
+    assert ticks >= 15, f"event loop starved during schema deploy: only {ticks} ticks"

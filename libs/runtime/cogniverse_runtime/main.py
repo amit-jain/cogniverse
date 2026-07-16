@@ -1105,15 +1105,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import signal as _signal
 
     _reload_count = {"n": 0}
+    _reload_tasks: set = set()
 
-    def _on_sigusr1():
-        # Defer to a task — the signal handler must return immediately;
-        # the reload itself can be slow (Vespa round-trip for config).
-        _reload_count["n"] += 1
-        logger.info(
-            "SIGUSR1 received — hot-reloading configuration (count=%d)",
-            _reload_count["n"],
-        )
+    def _do_hot_reload():
         try:
             config_loader.reload_config()
         except Exception as exc:
@@ -1124,6 +1118,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except Exception as exc:
                 logger.warning("Sandbox policy hot-reload failed: %s", exc)
         logger.info("Hot-reload complete")
+
+    def _on_sigusr1():
+        # The signal callback runs ON the loop and must return immediately —
+        # the reload does blocking Vespa round-trips, so run it in a worker
+        # thread. The task ref is held until done so it can't be GC'd.
+        _reload_count["n"] += 1
+        logger.info(
+            "SIGUSR1 received — hot-reloading configuration (count=%d)",
+            _reload_count["n"],
+        )
+        task = asyncio.get_running_loop().create_task(asyncio.to_thread(_do_hot_reload))
+        _reload_tasks.add(task)
+        task.add_done_callback(_reload_tasks.discard)
 
     try:
         asyncio.get_running_loop().add_signal_handler(_signal.SIGUSR1, _on_sigusr1)
