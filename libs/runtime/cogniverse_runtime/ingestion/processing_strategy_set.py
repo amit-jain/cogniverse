@@ -217,6 +217,10 @@ class ProcessingStrategySet:
         requirements = strategy.get_required_processors()
 
         if "keyframe" in requirements:
+            # extract_keyframes gates keyframe extraction like transcribe_audio /
+            # generate_descriptions / generate_embeddings gate their steps.
+            if not pipeline_context.config.extract_keyframes:
+                return {}
             processor = processor_manager.get_processor("keyframe")
             if processor:
                 cached = await pipeline_context.get_cached_keyframes(video_path)

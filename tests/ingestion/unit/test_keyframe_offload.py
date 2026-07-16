@@ -102,6 +102,7 @@ async def test_segmentation_offloads_keyframe_upload(monkeypatch):
     )
     processor_manager = SimpleNamespace(get_processor=lambda name: processor)
     pipeline_context = SimpleNamespace(
+        config=SimpleNamespace(extract_keyframes=True),
         get_cached_keyframes=_get_cached,
         set_cached_keyframes=_set_cached,
         upload_keyframes_to_object_store=_blocking_upload,
@@ -116,3 +117,48 @@ async def test_segmentation_offloads_keyframe_upload(monkeypatch):
         )
     )
     assert ticks >= 10, f"only {ticks} ticks — MinIO keyframe upload ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_segmentation_skips_keyframes_when_disabled():
+    """extract_keyframes=False in pipeline_config skips keyframe extraction,
+    matching the transcribe_audio/generate_descriptions/generate_embeddings
+    gates — the flag was silently ignored, extracting frames regardless."""
+    from cogniverse_runtime.ingestion.processing_strategy_set import (
+        ProcessingStrategySet,
+    )
+
+    pss = object.__new__(ProcessingStrategySet)
+
+    extracted = []
+
+    def _extract(video_path, out_dir):
+        extracted.append(video_path)
+        return {"keyframes": [{"frame_id": 0}]}
+
+    async def _get_cached(video_path):
+        return None
+
+    async def _set_cached(video_path, result):
+        return None
+
+    def _upload(video_path, result):
+        return None
+
+    processor = SimpleNamespace(extract_keyframes=_extract)
+    processor_manager = SimpleNamespace(get_processor=lambda name: processor)
+    pipeline_context = SimpleNamespace(
+        config=SimpleNamespace(extract_keyframes=False),
+        get_cached_keyframes=_get_cached,
+        set_cached_keyframes=_set_cached,
+        upload_keyframes_to_object_store=_upload,
+        profile_output_dir=Path("/tmp"),
+        logger=SimpleNamespace(info=lambda *a, **k: None),
+    )
+    strategy = SimpleNamespace(get_required_processors=lambda: ["keyframe"])
+
+    result = await pss._process_segmentation(
+        strategy, Path("/v.mp4"), processor_manager, pipeline_context
+    )
+    assert result == {}, f"expected no keyframes when disabled, got {result}"
+    assert extracted == [], "keyframe extraction ran despite extract_keyframes=False"
