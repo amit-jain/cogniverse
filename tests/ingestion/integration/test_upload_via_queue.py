@@ -814,13 +814,11 @@ class TestUploadRealStack:
         assert done == ingest_id
         assert await real_stack["redis"].get(f"ingest:by_sha:{sha}") is None
 
-        # 6. Re-upload the same bytes via /upload. The /upload path keys
-        # MinIO objects by uuid4, so the second call lands at a different
-        # s3:// URL → different idempotency sha → fresh pipeline run.
-        # video_id is derived from the localized cache filename (stem),
-        # which is keyed by the source_url's sha256, so the second run
-        # produces *different* docids and adds chunks rather than
-        # overwriting. (Source-URL idempotency is exercised separately by
+        # 6. Re-upload the same bytes via /upload. Content-addressable keying
+        # maps the identical bytes to the SAME s3:// URL → the same idempotency
+        # sha → a cache hit on the completed run. No second pipeline runs, so
+        # the index is not doubled. (A uuid key defeated this and re-ran every
+        # upload; source-URL idempotency is also exercised directly by
         # ``test_resubmit_same_source_url_hits_idempotency``.)
         files2 = {"file": (VIDEO_PATH.name, io.BytesIO(video_bytes), "video/mp4")}
         resp2 = await http_client.post(
@@ -831,16 +829,18 @@ class TestUploadRealStack:
         )
         assert resp2.status_code == 200, resp2.text
         body2 = resp2.json()
-        assert body2["state"] == "complete"
-        assert body2["sha"] != sha, "second upload should have a fresh sha"
+        assert body2["existing"] is True, (
+            f"re-upload of identical bytes must hit idempotency, got {body2!r}"
+        )
+        assert body2["sha"] == sha, "identical bytes must produce the same sha"
+        assert body2["ingest_id"] == ingest_id, "re-upload returns the original id"
         vespa_doc_count_2 = _vespa_visit_count(
             real_stack["vespa_http_port"], PROFILE, TENANT_ID
         )
-        # Two distinct pipeline runs over the same video → same chunk
-        # count each, doubled overall.
-        assert vespa_doc_count_2 == 2 * vespa_doc_count, (
-            f"Second upload should double Vespa count: was {vespa_doc_count}, "
-            f"now {vespa_doc_count_2}"
+        # The cache hit skipped the pipeline entirely — count unchanged.
+        assert vespa_doc_count_2 == vespa_doc_count, (
+            f"Re-upload of identical bytes must not double the index: was "
+            f"{vespa_doc_count}, now {vespa_doc_count_2}"
         )
 
     @_skip_no_videoprism
@@ -848,11 +848,10 @@ class TestUploadRealStack:
     async def test_resubmit_same_source_url_hits_idempotency(
         self, real_stack, worker_task, http_client
     ):
-        """The /upload path computes the idempotency sha on the
-        s3:// URL it writes — each multipart call gets a unique uuid
-        key, so two uploads have different shas. Verify idempotency
-        explicitly by calling enqueue_ingestion with the SAME
-        source_url twice."""
+        """The /upload path computes the idempotency sha on the s3:// URL it
+        writes. Verify idempotency explicitly by calling enqueue_ingestion
+        with the SAME source_url twice — the second call must return the first
+        run's ingest_id instead of enqueuing a new one."""
         from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
 
         # First, upload once via /upload to get a real source_url.
