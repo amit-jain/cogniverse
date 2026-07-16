@@ -243,6 +243,21 @@ async def upload_video(
     await assert_tenant_exists(upload_tenant_id)
 
     sys_cfg = config_manager.get_system_config()
+
+    # The queue worker ingests to the deployment's single configured backend
+    # (bootstrap.backend_type). Honor the request's ``backend`` by rejecting one
+    # this deployment doesn't serve, instead of silently ignoring it and letting
+    # the client believe it ingested somewhere it didn't.
+    configured_backend = sys_cfg.search_backend or "vespa"
+    if backend != configured_backend:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"/ingestion/upload ingests to the '{configured_backend}' backend; "
+                f"requested backend '{backend}' is not served by this deployment."
+            ),
+        )
+
     redis_url = sys_cfg.redis_url
     minio_endpoint = sys_cfg.minio_endpoint
     if not redis_url or not minio_endpoint:

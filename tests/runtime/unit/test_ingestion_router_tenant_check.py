@@ -18,7 +18,8 @@ correctly.
 from __future__ import annotations
 
 import os
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -171,6 +172,74 @@ class TestStartIngestionBodyContract:
             },
         )
         assert resp.status_code == 422
+
+
+@pytest.fixture
+def upload_client_backend_check():
+    """Client whose tenant check passes and whose system config declares the
+    ``vespa`` backend with redis/minio intentionally unset — so a matching
+    backend falls through to the 503 infra check while a mismatched backend is
+    rejected earlier by the backend validation under test."""
+    app = FastAPI()
+    app.include_router(ingestion_router.router, prefix="/ingestion")
+
+    cm = MagicMock()
+    cm.get_system_config.return_value = SimpleNamespace(
+        search_backend="vespa", redis_url="", minio_endpoint=""
+    )
+    app.dependency_overrides[ingestion_router.get_config_manager_dependency] = lambda: (
+        cm
+    )
+    app.dependency_overrides[ingestion_router.get_schema_loader_dependency] = lambda: (
+        MagicMock()
+    )
+
+    async def _ok(tenant_id: str) -> None:
+        return None
+
+    with patch.object(ingestion_router, "assert_tenant_exists", new=_ok):
+        with TestClient(app) as client:
+            yield client
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestUploadBackendHonored:
+    def test_upload_rejects_backend_not_served_here(self, upload_client_backend_check):
+        """A ``backend`` this deployment doesn't serve is a 400 — the field was
+        silently ignored, so a client believed it ingested to a backend that
+        the single-backend queue worker never uses."""
+        resp = upload_client_backend_check.post(
+            "/ingestion/upload",
+            files={"file": ("v.mp4", b"FAKE", "video/mp4")},
+            data={
+                "tenant_id": "acme:acme",
+                "profile": "video_colpali",
+                "backend": "qdrant",
+            },
+        )
+        assert resp.status_code == 400, (
+            f"mismatched backend must 400; got {resp.status_code}: {resp.text}"
+        )
+        assert "qdrant" in resp.text.lower() or "backend" in resp.text.lower()
+
+    def test_upload_accepts_configured_backend(self, upload_client_backend_check):
+        """The configured backend passes validation and reaches the infra
+        check (503 here, since redis/minio are deliberately unset) — proof the
+        guard doesn't over-reject the valid backend."""
+        resp = upload_client_backend_check.post(
+            "/ingestion/upload",
+            files={"file": ("v.mp4", b"FAKE", "video/mp4")},
+            data={
+                "tenant_id": "acme:acme",
+                "profile": "video_colpali",
+                "backend": "vespa",
+            },
+        )
+        assert resp.status_code == 503, (
+            f"configured backend must pass validation; got {resp.status_code}: "
+            f"{resp.text}"
+        )
 
 
 @pytest.mark.unit
