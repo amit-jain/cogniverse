@@ -106,9 +106,12 @@ class TestReconcileOrphansDryRun:
             "config_metadata",
             "organization_metadata",
             "adapter_registry",
+            "knowledge_graph_legit",
             "weird_custom_schema_acme",
         ]
-        schema_registry._get_all_schemas.return_value = []
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        schema_registry._get_all_schemas.return_value = [legit]
 
         resp = client.post("/admin/reconcile-orphans?dry_run=true")
         assert resp.status_code == 200
@@ -131,8 +134,14 @@ class TestReconcileOrphansConfirm:
             "adapter_registry",
             "knowledge_graph_alpha",
             "video_colpali_smol500_mv_frame_beta",
+            "knowledge_graph_legit",
         ]
-        schema_registry._get_all_schemas.return_value = []
+        # A realistic orphan scenario: the registry HAS active schemas; alpha
+        # and beta are the ones missing from it. (An empty registry with
+        # deployed schemas is the failed-load case the safety guard blocks.)
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        schema_registry._get_all_schemas.return_value = [legit]
         schema_manager.delete_tenant_schemas_bulk.return_value = [
             "knowledge_graph_alpha",
             "video_colpali_smol500_mv_frame_beta",
@@ -166,4 +175,31 @@ class TestReconcileOrphansConfirm:
         assert resp.status_code == 200
         data = resp.json()
         assert data["deleted"] == []
+        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestReconcileOrphansSafetyGuard:
+    def test_empty_registry_with_deployed_schemas_refuses_reconcile(self, admin_client):
+        """A cold pod whose registry failed to load from storage reads as an
+        EMPTY registry — every deployed schema then looks orphaned. Reconciling
+        would bulk-delete every tenant's schema, so it must refuse (503) rather
+        than mass-delete on an unconfirmed registry."""
+        client, _, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+            "knowledge_graph_alpha",
+            "video_colpali_smol500_mv_frame_beta",
+        ]
+        # Registry loaded empty (storage read failed) while Vespa has schemas.
+        schema_registry._get_all_schemas.return_value = []
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=false")
+        assert resp.status_code == 503
+        # And crucially, nothing was deleted.
         schema_manager.delete_tenant_schemas_bulk.assert_not_called()

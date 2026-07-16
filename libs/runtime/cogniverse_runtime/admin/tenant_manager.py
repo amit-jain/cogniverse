@@ -890,6 +890,25 @@ def _list_orphan_schemas() -> Dict[str, list]:
     registered = {
         info.full_schema_name for info in (schema_registry._get_all_schemas() or [])
     }
+
+    # Safety guard: if the registry loaded EMPTY while Vespa has non-protected
+    # schemas deployed, the registry almost certainly failed to load from
+    # storage (a cold pod whose data-plane read failed while the config server
+    # answered). Reconciling here would report EVERY tenant's schema as an
+    # orphan and the dry_run=false path would bulk-delete them all. Refuse
+    # loudly instead of mass-deleting on an unconfirmed registry.
+    non_protected_deployed = deployed - schema_manager._PROTECTED_SCHEMAS
+    if not registered and non_protected_deployed:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Schema registry is empty while Vespa has deployed schemas — "
+                "refusing to reconcile orphans (this would delete every tenant's "
+                "schema). The registry likely failed to load from storage; retry "
+                "once it is reachable."
+            ),
+        )
+
     orphans = sorted(deployed - registered - schema_manager._PROTECTED_SCHEMAS)
 
     # Recover tenant_id from the orphan name by stripping a known base
