@@ -1044,7 +1044,13 @@ class SearchAgent(
 
         def _epoch_ms(v: Any) -> int:
             if isinstance(v, (int, float)):
-                return int(v)
+                v = int(v)
+                # Coerce an epoch-SECONDS value to milliseconds. Stored
+                # creation_timestamp is epoch-ms (~1.7e12); a seconds value
+                # (~1.7e9) treated as ms lands the bound near 1970 and silently
+                # empties (lte) or matches everything (gte). Anything below 1e11
+                # (year ~1973 in ms) is seconds in any realistic content window.
+                return v * 1000 if v < 100_000_000_000 else v
             dt = datetime.fromisoformat(str(v))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
