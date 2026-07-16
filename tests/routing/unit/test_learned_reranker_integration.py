@@ -99,9 +99,9 @@ class TestLearnedRerankingIntegration:
             # Mock LiteLLM response
             mock_response = Mock()
             mock_items = [
-                Mock(index=1, relevance_score=0.95),  # doc-2 first
-                Mock(index=0, relevance_score=0.85),  # doc-1 second
-                Mock(index=2, relevance_score=0.75),  # doc-3 third
+                {"index": 1, "relevance_score": 0.95},  # doc-2 first
+                {"index": 0, "relevance_score": 0.85},  # doc-1 second
+                {"index": 2, "relevance_score": 0.75},  # doc-3 third
             ]
             mock_response.results = mock_items
             mock_arerank.return_value = mock_response
@@ -136,8 +136,8 @@ class TestLearnedRerankingIntegration:
         with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_response = Mock()
             mock_response.results = [
-                Mock(index=1, relevance_score=0.95),
-                Mock(index=0, relevance_score=0.85),
+                {"index": 1, "relevance_score": 0.95},
+                {"index": 0, "relevance_score": 0.85},
             ]
             mock_arerank.return_value = mock_response
 
@@ -173,7 +173,7 @@ class TestHybridRerankingIntegration:
         with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_response = Mock()
             mock_response.results = [
-                Mock(index=i, relevance_score=0.9 - i * 0.1)
+                {"index": i, "relevance_score": 0.9 - i * 0.1}
                 for i in range(len(sample_results))
             ]
             mock_arerank.return_value = mock_response
@@ -216,7 +216,7 @@ class TestHybridRerankingIntegration:
 
         with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_response = Mock()
-            mock_response.results = [Mock(index=0, relevance_score=0.95)]
+            mock_response.results = [{"index": 0, "relevance_score": 0.95}]
             mock_arerank.return_value = mock_response
 
             heuristic = MultiModalReranker()
@@ -250,7 +250,7 @@ class TestHybridRerankingIntegration:
         with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_response = Mock()
             mock_response.results = [
-                Mock(index=i, relevance_score=0.9 - i * 0.1)
+                {"index": i, "relevance_score": 0.9 - i * 0.1}
                 for i in range(len(sample_results))
             ]
             mock_arerank.return_value = mock_response
@@ -296,8 +296,8 @@ class TestRerankingOAICompat:
             # Mock LiteLLM response with the configured model
             mock_response = Mock()
             mock_items = [
-                Mock(index=1, relevance_score=0.92),  # doc-2 first
-                Mock(index=0, relevance_score=0.88),  # doc-1 second
+                {"index": 1, "relevance_score": 0.92},  # doc-2 first
+                {"index": 0, "relevance_score": 0.88},  # doc-1 second
             ]
             mock_response.results = mock_items
             mock_arerank.return_value = mock_response
@@ -384,9 +384,9 @@ class TestRerankingCorrectsRetrievalOrder:
             # back to the input list [microwave=0, recipe=1, coldwater=2].
             mock_response = Mock()
             mock_response.results = [
-                Mock(index=2, relevance_score=0.94),  # doc-coldwater
-                Mock(index=1, relevance_score=0.38),  # doc-recipe
-                Mock(index=0, relevance_score=0.05),  # doc-microwave
+                {"index": 2, "relevance_score": 0.94},  # doc-coldwater
+                {"index": 1, "relevance_score": 0.38},  # doc-recipe
+                {"index": 0, "relevance_score": 0.05},  # doc-microwave
             ]
             mock_arerank.return_value = mock_response
 

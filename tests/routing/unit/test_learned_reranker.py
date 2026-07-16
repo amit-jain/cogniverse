@@ -127,13 +127,13 @@ class TestLearnedReranker:
     async def test_rerank_calls_litellm(self, sample_results, mock_config_manager):
         """Test rerank calls LiteLLM arerank"""
         with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
-            # Mock LiteLLM response
-            mock_response = Mock()
-            mock_result_item = Mock()
-            mock_result_item.index = 1  # Second doc ranked first
-            mock_result_item.relevance_score = 0.95
-            mock_response.results = [mock_result_item]
-            mock_arerank.return_value = mock_response
+            # litellm RerankResponseResult is a TypedDict — .results items are
+            # plain dicts at runtime, not attribute-bearing objects.
+            from litellm.types.rerank import RerankResponse
+
+            mock_arerank.return_value = RerankResponse(
+                id="rr", results=[{"index": 1, "relevance_score": 0.95}]
+            )
 
             with patch(
                 "cogniverse_agents.search.learned_reranker.get_config_value"
@@ -215,12 +215,11 @@ class TestLearnedReranker:
     def test_rerank_sync_version(self, sample_results, mock_config_manager):
         """Test synchronous rerank_sync method"""
         with patch("cogniverse_agents.search.learned_reranker.rerank") as mock_rerank:
-            mock_response = Mock()
-            mock_result_item = Mock()
-            mock_result_item.index = 0
-            mock_result_item.relevance_score = 0.9
-            mock_response.results = [mock_result_item]
-            mock_rerank.return_value = mock_response
+            from litellm.types.rerank import RerankResponse
+
+            mock_rerank.return_value = RerankResponse(
+                id="rr", results=[{"index": 0, "relevance_score": 0.9}]
+            )
 
             with patch(
                 "cogniverse_agents.search.learned_reranker.get_config_value"
