@@ -142,7 +142,7 @@ The wiki knowledge base uses a dedicated Vespa schema (`wiki_pages`) per tenant.
 # URL uses ':' as a path delimiter — via backend.get_tenant_schema_name())
 ```
 
-The cluster-wide `wiki_pages` backend profile (type `"wiki"`, embedding model `google/embeddinggemma-300m`) is registered once under the system tenant at startup so `WikiManager.search` can resolve it through the shared profile registry.
+The cluster-wide `wiki_semantic` backend profile (type `"wiki"`, schema `wiki_pages`, embedding model `lightonai/DenseOn` — 768-dim, served by the `denseon` sidecar) lives in `config.json` and is re-affirmed under the system tenant at startup so `WikiManager.search` can resolve it through the shared profile registry.
 
 **Schema file**: `configs/schemas/wiki_pages_schema.json`
 
