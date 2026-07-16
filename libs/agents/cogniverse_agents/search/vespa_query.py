@@ -39,7 +39,10 @@ def vespa_search_children(data: dict, correlation_id: str = "") -> list:
     if errors:
         tag = f" [{correlation_id}]" if correlation_id else ""
         raise VespaSearchDegraded(f"Vespa query returned errors{tag}: {errors}")
-    coverage = root.get("coverage", {}) or {}
+    coverage = root.get("coverage", {})
+    if not isinstance(coverage, dict):
+        # A non-object coverage shape must not crash result parsing.
+        coverage = {}
     if coverage.get("degraded"):
         logger.warning("Vespa coverage degraded: %s", coverage.get("degraded"))
     return root.get("children", []) or []

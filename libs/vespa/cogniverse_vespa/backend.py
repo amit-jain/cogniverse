@@ -1338,19 +1338,28 @@ class VespaBackend(Backend):
 
     @staticmethod
     def _coerce_field_values(fields: Dict[str, Any]) -> Dict[str, Any]:
-        """Coerce numpy scalars to native Python so the JSON step can't choke.
+        """Coerce numpy values to native Python so the JSON step can't choke.
 
-        np.int64 is NOT an int subclass — ``json.dumps`` raises TypeError on it
-        (np.float64 slips through as a float subclass). One shallow pass over
-        the field dict via ``.item()`` mirrors the coercion the timestamp /
-        embedding paths already do.
+        np.int64 is NOT an int subclass — ``json.dumps`` raises TypeError on
+        it (np.float64 slips through as a float subclass). Recurses into
+        lists/dicts and converts ndarrays via ``.tolist()``: the shallow pass
+        handled only top-level scalars, so nested numpy values still reached
+        pyvespa un-serializable.
         """
         import numpy as np
 
-        out = {}
-        for k, v in fields.items():
-            out[k] = v.item() if isinstance(v, np.generic) else v
-        return out
+        def coerce(v):
+            if isinstance(v, np.generic):
+                return v.item()
+            if isinstance(v, np.ndarray):
+                return v.tolist()
+            if isinstance(v, dict):
+                return {k: coerce(x) for k, x in v.items()}
+            if isinstance(v, (list, tuple)):
+                return [coerce(x) for x in v]
+            return v
+
+        return {k: coerce(v) for k, v in fields.items()}
 
     @staticmethod
     def _check_document_response(resp, op: str, document_id: str):

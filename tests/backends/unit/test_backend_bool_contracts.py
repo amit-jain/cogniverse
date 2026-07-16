@@ -251,3 +251,34 @@ def test_document_field_numpy_scalars_are_coerced():
     assert coerced == {"count": 7, "score": 0.5, "name": "x", "ids": ["a"]}
     assert type(coerced["count"]) is int
     json.dumps(coerced)  # must not raise
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_document_field_nested_numpy_values_are_coerced():
+    """The shallow pass coerced only TOP-LEVEL numpy scalars — an ndarray
+    value or numpy scalars nested in a list/dict reached pyvespa's json.dumps
+    un-serializable. The coercion must recurse into containers."""
+    import json
+
+    import numpy as np
+
+    from cogniverse_vespa.backend import VespaBackend
+
+    fields = {
+        "vec": np.asarray([0.25, 0.5], dtype=np.float32),
+        "scores": [np.float32(0.1), np.int64(7)],
+        "meta": {"count": np.int64(3), "flags": [np.bool_(True)]},
+        "plain": "text",
+        "n": np.int64(42),
+    }
+
+    out = VespaBackend._coerce_field_values(fields)
+
+    # Exact native shapes — and the whole dict must be JSON-serializable.
+    assert out["vec"] == [0.25, 0.5]
+    assert out["scores"] == [pytest.approx(0.1), 7]
+    assert out["meta"] == {"count": 3, "flags": [True]}
+    assert out["plain"] == "text"
+    assert out["n"] == 42
+    json.dumps(out)
