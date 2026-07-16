@@ -32,6 +32,11 @@ class FakeStore:
             raise KeyError(name)
         return self.created[name]
 
+    async def delete_dataset(self, name: str) -> bool:
+        # Blob saves delete-then-create for last-write-wins (the real
+        # provider contract) — absent names are a no-op False.
+        return self.created.pop(name, None) is not None
+
     async def append_to_dataset(
         self, name: str, data: pd.DataFrame, metadata: dict | None = None
     ) -> None:

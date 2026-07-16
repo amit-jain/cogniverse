@@ -452,8 +452,9 @@ class TestGLiNERFastPath:
         mock_result = MagicMock()
         mock_result.entities = "Python|TECHNOLOGY|0.8"
         mock_result.entity_types = "TECHNOLOGY"
-        agent.dspy_module = MagicMock()
-        agent.dspy_module.forward.return_value = mock_result
+        # call_dspy invokes module(**kwargs) (__call__), not .forward —
+        # forward bypasses DSPy's instrumentation.
+        agent.dspy_module = MagicMock(return_value=mock_result)
 
         input_data = EntityExtractionInput(
             query="Python programming", tenant_id=TEST_TENANT_ID

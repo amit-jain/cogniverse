@@ -419,7 +419,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
     ):
         """Call a DSPy module, streaming tokens via emit_progress when active.
 
-        When not streaming, calls module.forward(**kwargs) directly.
+        When not streaming, calls module(**kwargs) in a worker thread.
         When streaming, wraps with dspy.streamify() to emit token-by-token
         progress events for the specified output_field.
 
@@ -433,7 +433,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         Args:
             module: DSPy module (must have forward() method)
             output_field: Name of the output field to stream tokens for
-            **kwargs: Arguments to pass to module.forward()
+            **kwargs: Arguments to pass to the module call
 
         Returns:
             DSPy Prediction from the module
