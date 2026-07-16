@@ -423,6 +423,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
     Raises:
         HTTPException 400: Invalid tenant_id format
         HTTPException 409: Tenant already exists
+        HTTPException 502: A requested schema failed to deploy (no tenant created)
         HTTPException 500: Creation failed
 
     Example:
@@ -493,6 +494,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         ]
 
         deployed_schemas = []
+        failed_schemas = []
         for base_schema in base_schemas:
             try:
                 await asyncio.to_thread(
@@ -505,6 +507,21 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                 logger.error(
                     f"Failed to deploy schema {base_schema} for {tenant_full_id}: {e}"
                 )
+                failed_schemas.append(base_schema)
+
+        if failed_schemas:
+            # Do not create an active tenant whose schemas didn't deploy. Such a
+            # tenant silently accepts writes that then hit an undeployed doc type
+            # — every ingest/search fails or grinds in the feed-retry loop, and
+            # graph upsert reports success having persisted nothing. Fail loud so
+            # the operator can fix the Vespa config server and retry.
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Tenant {tenant_full_id} not created: schema deploy failed for "
+                    f"{failed_schemas}. Check the Vespa config server and retry."
+                ),
+            )
 
         # Create tenant
         tenant = Tenant(
