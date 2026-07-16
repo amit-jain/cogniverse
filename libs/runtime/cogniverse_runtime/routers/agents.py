@@ -1,6 +1,7 @@
 """Agent endpoints - unified interface for all agent operations."""
 
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -104,10 +105,21 @@ def _build_artifact_manager_factory():
     if tm is None:
         return None
 
-    def factory(tenant_id: str):
-        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
-        return ArtifactManager(tm.get_provider(tenant_id=tenant_id), tenant_id)
+    # Reuse one ArtifactManager per tenant so its 5s-TTL request cache (artefact
+    # state + prompts, invalidated on promote/retire) spans dispatches. A fresh
+    # manager per request discarded that cache, re-reading Phoenix every time.
+    cache: dict[str, ArtifactManager] = {}
+    lock = threading.Lock()
+
+    def factory(tenant_id: str):
+        with lock:
+            am = cache.get(tenant_id)
+            if am is None:
+                am = ArtifactManager(tm.get_provider(tenant_id=tenant_id), tenant_id)
+                cache[tenant_id] = am
+            return am
 
     return factory
 
