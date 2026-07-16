@@ -1390,7 +1390,11 @@ def _compute_gateway_thresholds(spans_df) -> dict:
     if simple_error_rate > 0.2:
         optimized_threshold = min(current + 0.1, 0.95)
     elif complex_error_rate < 0.05 and mean_confidence > 0.8:
-        optimized_threshold = max(current - 0.05, 0.5)
+        # Lower the threshold so more queries stay on the fast path. The floor
+        # must sit BELOW the default (0.4) — a 0.5 floor raised the threshold
+        # instead, pushing every query with confidence in [0.4, 0.5) to the
+        # orchestrator, the opposite of the intended calibration.
+        optimized_threshold = max(current - 0.05, 0.3)
     else:
         optimized_threshold = current
 
