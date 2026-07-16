@@ -247,3 +247,38 @@ async def test_coding_sandbox_exec_offloaded():
         f"event loop starved during sandbox exec: only {ticks} ticks — the sync "
         "gRPC exec/probe ran on the loop"
     )
+
+
+@pytest.mark.asyncio
+async def test_graph_read_route_offloads_factory_resolution(monkeypatch):
+    """A read route's manager-factory resolution runs off the loop. On a cold
+    tenant the resolution does a blocking config read (and on the write path a
+    seconds-long schema deploy); run inline it froze the whole API loop."""
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.routers import graph as graph_router
+
+    def _blocking_factory(tenant_id, deploy=True):
+        time.sleep(0.3)  # blocking config read / schema deploy
+        return SimpleNamespace(search_nodes=lambda q, top_k=10: [])
+
+    saved = graph_router._graph_manager_factory
+    graph_router.set_graph_manager_factory(_blocking_factory)
+
+    async def _noop(tenant_id):
+        return None
+
+    monkeypatch.setattr(
+        "cogniverse_core.common.tenant_utils.assert_tenant_exists", _noop
+    )
+    try:
+        ticks = await _ticks_during(
+            lambda: graph_router.search_nodes(tenant_id="acme:acme", q="x", top_k=5)
+        )
+    finally:
+        graph_router._graph_manager_factory = saved
+
+    assert ticks >= 10, (
+        f"only {ticks} ticks during a 0.3s graph-manager resolution — it ran on "
+        "the event loop"
+    )
