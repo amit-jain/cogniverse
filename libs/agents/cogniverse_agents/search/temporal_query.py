@@ -23,6 +23,19 @@ _TODAY = re.compile(r"\btoday\b", re.I)
 _YEAR = re.compile(r"\b(?:in|from|since|during)\s+((?:19|20)\d{2})\b", re.I)
 
 
+def _bounded_start(now: datetime, days: int) -> datetime:
+    """``now - days`` clamped to the earliest representable instant.
+
+    A huge "last N years" / "last N days" window (e.g. 3000 years, or
+    9999999999 days) otherwise overflows ``timedelta`` (max 999999999 days) or
+    underflows past ``datetime.min`` — an uncaught OverflowError the search
+    route surfaces as a 500. Clamp to datetime.min instead so the query still
+    reranks over the widest valid window.
+    """
+    max_days = (now - datetime.min.replace(tzinfo=now.tzinfo)).days
+    return now - timedelta(days=min(days, max_days))
+
+
 def extract_time_range(
     query: str, *, now: Optional[datetime] = None
 ) -> Optional[Tuple[datetime, datetime]]:
@@ -39,7 +52,7 @@ def extract_time_range(
     m = _REL_N.search(q)
     if m:
         days = int(m.group(1)) * _UNIT_DAYS[m.group(2)]
-        return (now - timedelta(days=days), now)
+        return (_bounded_start(now, days), now)
 
     m = _REL_1.search(q)
     if m:
