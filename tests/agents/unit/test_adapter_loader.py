@@ -390,8 +390,11 @@ def test_text_analysis_picks_up_adapter_activated_after_construction(monkeypatch
 
     rebuilt = []
 
-    def fake_configure(config):
-        rebuilt.append(agent._active_adapter_model())
+    def fake_configure(config, adapter_model=TextAnalysisAgent._UNSET_ADAPTER):
+        # The refresh threads the resolved adapter in; record what it rebuilt to.
+        if adapter_model is TextAnalysisAgent._UNSET_ADAPTER:
+            adapter_model = agent._active_adapter_model()
+        rebuilt.append(adapter_model)
 
     agent._configure_dspy_lm = fake_configure
     agent._active_adapter_model_name = None  # what construction resolved
@@ -411,3 +414,39 @@ def test_text_analysis_picks_up_adapter_activated_after_construction(monkeypatch
     active["name"] = "entity_sft_v10"
     agent._refresh_adapter_lm_if_changed()
     assert rebuilt == ["entity_sft_v9"]
+
+
+@pytest.mark.unit
+def test_adapter_refresh_does_not_double_query_the_registry(monkeypatch):
+    """On an adapter change the refresh resolves the active adapter ONCE and
+    threads it into the LM rebuild — not a second registry lookup."""
+    from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
+
+    agent = object.__new__(TextAnalysisAgent)
+    agent.tenant_id = "acme:acme"
+    agent.config = Mock()
+    agent._active_adapter_model_name = None  # what construction resolved
+    agent._adapter_checked_at = 0.0  # interval elapsed
+
+    lookups = []
+
+    def counting_lookup(self):
+        lookups.append(1)
+        return "entity_sft_v9"
+
+    rebuilt_with = {}
+
+    def fake_configure(config, adapter_model=TextAnalysisAgent._UNSET_ADAPTER):
+        rebuilt_with["adapter_model"] = adapter_model
+
+    monkeypatch.setattr(
+        TextAnalysisAgent, "_active_adapter_model", counting_lookup, raising=True
+    )
+    agent._configure_dspy_lm = fake_configure
+
+    agent._refresh_adapter_lm_if_changed()
+
+    assert len(lookups) == 1, f"registry queried {len(lookups)}x, expected 1"
+    assert rebuilt_with["adapter_model"] == "entity_sft_v9", (
+        "the resolved adapter must be threaded into the rebuild, not re-looked-up"
+    )

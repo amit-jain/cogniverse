@@ -213,7 +213,9 @@ class TextAnalysisAgent(
                 getattr(self, "_active_adapter_model_name", None),
                 current,
             )
-            self._configure_dspy_lm(self.config)
+            # Reuse the already-resolved value so the rebuild doesn't hit the
+            # adapter registry a second time for the same refresh.
+            self._configure_dspy_lm(self.config, adapter_model=current)
 
     def analyze_text(self, text: str, analysis_type: str = "summary") -> Dict[str, Any]:
         """
