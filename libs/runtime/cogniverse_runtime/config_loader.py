@@ -10,6 +10,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.common.agent_models import DEFAULT_AGENT_CALL_TIMEOUT_SECONDS
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.utils import get_config
@@ -226,7 +227,9 @@ class ConfigLoader:
                             "capabilities": capabilities,
                             "health_endpoint": "/health",
                             "process_endpoint": f"/agents/{agent_name}/process",
-                            "timeout": agent_config.get("timeout", 30),
+                            "timeout": agent_config.get(
+                                "timeout", DEFAULT_AGENT_CALL_TIMEOUT_SECONDS
+                            ),
                         }
                     )
 

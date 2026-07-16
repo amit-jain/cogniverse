@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
 
-from cogniverse_core.common.agent_models import AgentEndpoint
+from cogniverse_core.common.agent_models import (
+    DEFAULT_AGENT_CALL_TIMEOUT_SECONDS,
+    AgentEndpoint,
+)
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
@@ -374,7 +377,7 @@ class AgentRegistry:
             capabilities=card_data.get("capabilities", []),
             health_endpoint="/health",
             process_endpoint=card_data.get("process_endpoint", "/tasks/send"),
-            timeout=30,
+            timeout=DEFAULT_AGENT_CALL_TIMEOUT_SECONDS,
         )
 
         logger.info(f"Discovered agent: {agent_endpoint.name} at {agent_url}")
@@ -423,7 +426,9 @@ class AgentRegistry:
                 process_endpoint=registration_data.get(
                     "process_endpoint", "/tasks/send"
                 ),
-                timeout=registration_data.get("timeout", 30),
+                timeout=registration_data.get(
+                    "timeout", DEFAULT_AGENT_CALL_TIMEOUT_SECONDS
+                ),
             )
 
             return self.register_agent(agent_endpoint)

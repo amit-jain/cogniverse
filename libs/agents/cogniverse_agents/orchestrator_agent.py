@@ -1522,6 +1522,7 @@ class OrchestratorAgent(
                     response = await http_client.post(
                         f"{agent_endpoint.url}{agent_endpoint.process_endpoint}",
                         json=payload,
+                        timeout=httpx.Timeout(agent_endpoint.timeout, connect=10.0),
                     )
                     response.raise_for_status()
                     result = response.json()
@@ -2005,6 +2006,7 @@ class OrchestratorAgent(
             response = await client.post(
                 f"{endpoint.url}{endpoint.process_endpoint}",
                 json=payload,
+                timeout=httpx.Timeout(endpoint.timeout, connect=10.0),
             )
             response.raise_for_status()
             result = response.json()
