@@ -361,9 +361,10 @@ class DetailedReportAgent(
                 self.emit_progress(
                     "executive_summary", "Generating executive summary..."
                 )
-                executive_summary = await self._generate_executive_summary(
-                    request, thinking_phase
-                )
+                (
+                    executive_summary,
+                    lm_recommendations,
+                ) = await self._generate_executive_summary(request, thinking_phase)
                 executive_summary = self._enforce_max_length(
                     executive_summary, self.max_report_length
                 )
@@ -382,11 +383,16 @@ class DetailedReportAgent(
                     request, thinking_phase
                 )
 
-                # Recommendations
+                # Recommendations: prefer the LM's actionable list; fall back to
+                # the derived template when the LM produced none. The canned
+                # method already honors request.include_recommendations, so gate
+                # the LM override on it too.
                 self.emit_progress("recommendations", "Generating recommendations...")
                 recommendations = self._generate_recommendations(
                     request, thinking_phase
                 )
+                if request.include_recommendations and lm_recommendations:
+                    recommendations = lm_recommendations
 
                 # Confidence assessment
                 self.emit_progress("confidence", "Calculating confidence assessment...")
@@ -720,10 +726,34 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
         return visual_analysis
 
+    @staticmethod
+    def _parse_llm_list(raw: Any) -> List[str]:
+        """Parse a DSPy list output (declared comma-separated, but LMs often
+        emit one item per line and/or bullet/number prefixes) into a clean
+        list. A non-string (e.g. an unset field) yields no items."""
+        if not isinstance(raw, str) or not raw.strip():
+            return []
+        lines = [ln for ln in raw.replace("\r", "").split("\n") if ln.strip()]
+        if len(lines) <= 1:
+            lines = raw.split(",")
+        items: List[str] = []
+        for ln in lines:
+            cleaned = ln.strip().lstrip("-*•").strip()
+            head, sep, tail = cleaned.partition(" ")
+            if sep and head.rstrip(".)").isdigit():
+                cleaned = tail.strip()
+            if cleaned:
+                items.append(cleaned)
+        return items
+
     async def _generate_executive_summary(
         self, request: ReportRequest, thinking_phase: ThinkingPhase
-    ) -> str:
-        """Generate executive summary using DSPy"""
+    ) -> tuple[str, List[str]]:
+        """Generate the executive summary and the LM's recommendations via DSPy.
+
+        The report signature produces both; returning the recommendations here
+        lets the report use the LM's actionable list instead of the canned
+        template (with a fallback to the template when the LM produced none)."""
         total_results = thinking_phase.content_analysis.get(
             "total_results", len(request.search_results)
         )
@@ -761,11 +791,18 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                 keyframes=keyframe_images,
             )
 
-            return dspy_result.executive_summary
+            return dspy_result.executive_summary, self._parse_llm_list(
+                getattr(dspy_result, "recommendations", "")
+            )
         except Exception as e:
             logger.error(f"DSPy summary generation failed: {e}")
-            # Fallback summary
-            return f"Analysis of {len(request.search_results)} results for '{request.query}' with average relevance of {thinking_phase.content_analysis['avg_relevance']:.2f}."
+            # Fallback summary; no LM recommendations on this path.
+            return (
+                f"Analysis of {len(request.search_results)} results for "
+                f"'{request.query}' with average relevance of "
+                f"{thinking_phase.content_analysis['avg_relevance']:.2f}.",
+                [],
+            )
 
     def _generate_detailed_findings(
         self, request: ReportRequest, thinking_phase: ThinkingPhase
