@@ -818,6 +818,10 @@ class TestForceOptimizationCycle:
             "summary",
             "report",
             "gateway",
+            "routing",
+            "query_enhancement",
+            "entity_extraction",
+            "profile_selection",
         }
 
     @pytest.mark.asyncio
@@ -898,21 +902,26 @@ class TestSpanNameByAgent:
     a CI failure instead of silently breaking the monitoring loop.
     """
 
-    def test_span_names_match_class_name_dot_process_format(self):
-        """Every entry must be of the form ``<ClassName>.process`` so it
-        matches what AgentBase._process_span() emits."""
+    def test_span_names_match_emitters(self):
+        """The four answer agents are scored on their AgentBase
+        ``<ClassName>.process`` spans; routing / query_enhancement /
+        entity_extraction / profile_selection are scored on the richer
+        ``cogniverse.*`` domain spans their agents emit."""
         from cogniverse_evaluation.quality_monitor import SPAN_NAME_BY_AGENT
 
-        for agent_type, span_name in SPAN_NAME_BY_AGENT.items():
-            assert span_name.endswith(".process"), (
-                f"{agent_type.value} span name '{span_name}' must end in "
-                f"'.process' to match AgentBase._process_span() convention"
-            )
-            class_name = span_name.removesuffix(".process")
-            assert class_name and class_name[0].isupper(), (
-                f"{agent_type.value} span name '{span_name}' must start "
-                f"with a capitalized class name (got '{class_name}')"
-            )
+        process_span_types = {
+            AgentType.SEARCH: "SearchAgent.process",
+            AgentType.SUMMARY: "SummarizerAgent.process",
+            AgentType.REPORT: "DetailedReportAgent.process",
+            AgentType.GATEWAY: "GatewayAgent.process",
+        }
+        domain_span_types = {
+            AgentType.ROUTING: "cogniverse.routing",
+            AgentType.QUERY_ENHANCEMENT: "cogniverse.query_enhancement",
+            AgentType.ENTITY_EXTRACTION: "cogniverse.entity_extraction",
+            AgentType.PROFILE_SELECTION: "cogniverse.profile_selection",
+        }
+        assert SPAN_NAME_BY_AGENT == {**process_span_types, **domain_span_types}
 
     def test_span_names_cover_all_agent_types(self):
         """Every AgentType in the enum must have an entry."""
