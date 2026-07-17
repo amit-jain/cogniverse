@@ -27,7 +27,7 @@ libs/agents/cogniverse_agents/routing/
 libs/runtime/cogniverse_runtime/
 ├── optimization_cli.py             # CLI for all optimization/maintenance modes:
 │                                    # cleanup | triggered | simba | workflow | gateway-thresholds |
-│                                    # online-routing-eval | profile | entity-extraction | synthetic |
+│                                    # online-routing-eval | online-eval | profile | entity-extraction | synthetic |
 │                                    # rollback | ab-compare | egress-netpol | monthly-reports
 ├── quality_monitor_cli.py          # QualityMonitor driver — submits `--mode triggered` Argo Workflows
 │                                    #   on quality drops; `--once` forces a distillation pass
@@ -139,7 +139,7 @@ flowchart TB
     QM --> OptCLI
     Cron --> OptCLI
 
-    OptCLI["<span style='color:#000'>optimization_cli<br/>cogniverse_runtime<br/>13 modes: cleanup, triggered, simba, workflow,<br/>gateway-thresholds, online-routing-eval, profile,<br/>entity-extraction, synthetic, rollback, ab-compare,<br/>egress-netpol, monthly-reports</span>"]
+    OptCLI["<span style='color:#000'>optimization_cli<br/>cogniverse_runtime<br/>14 modes: cleanup, triggered, simba, workflow,<br/>gateway-thresholds, online-routing-eval, online-eval,<br/>profile, entity-extraction, synthetic, rollback,<br/>ab-compare, egress-netpol, monthly-reports</span>"]
 
     OptCLI --> GatewayOpt["<span style='color:#000'>Gateway Threshold Optimizer<br/>_compute_gateway_thresholds(spans_df)</span>"]
     OptCLI --> DSPyModes["<span style='color:#000'>DSPy compile modes<br/>profile / entity-extraction / simba / workflow / triggered<br/>all use BootstrapFewShot</span>"]

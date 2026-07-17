@@ -134,8 +134,9 @@ class OnlineEvaluationConfig(BaseModel):
 class AutomationRulesConfig(BaseModel):
     """Declarative automation rules for the optimization pipeline.
 
-    Thresholds, intervals, and trigger conditions consumed by
-    OptimizationOrchestrator and AnnotationAgent.
+    Consumed by the scheduled cycles in ``quality_monitor_cli``
+    (annotation identification / annotation feedback), the online span-eval
+    run in ``optimization_cli``, and ``AnnotationAgent``.
     """
 
     annotation_thresholds: AnnotationThresholdsConfig = Field(

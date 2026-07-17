@@ -487,6 +487,174 @@ spec:
           type: Directory
       {{- end }}
 {{- end }}
+{{- if .Values.argo.optimization.annotationCycle.enabled }}
+---
+# Annotation-identification cron: flags spans needing human review across
+# every agent type (annotation thresholds from automation_rules) and feeds
+# the runtime's review worklist. The schedule mirrors
+# automation_rules.intervals.annotation_interval_minutes (identity-tested).
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-annotation-cycle
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: optimization
+spec:
+  schedule: {{ .Values.argo.optimization.annotationCycle.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: annotation-cycle
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    templates:
+    - name: annotation-cycle
+      container:
+        image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+        imagePullPolicy: {{ $workflowImage.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.quality_monitor_cli"]
+        args:
+          - "--annotation-cycle"
+          - "--tenant-id"
+          - "default"
+          - "--runtime-url"
+          - "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
+          - "--phoenix-url"
+          - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+          - "--llm-model"
+          - {{ include "cogniverse.primaryLLMModelBare" . | quote }}
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+        {{- if .Values.devMode.enabled }}
+        - name: src-libs
+          mountPath: /app/libs
+        - name: src-scripts
+          mountPath: /app/scripts
+        {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+      {{- if .Values.devMode.enabled }}
+      - name: src-libs
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/libs
+          type: Directory
+      - name: src-scripts
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/scripts
+          type: Directory
+      {{- end }}
+{{- end }}
+{{- if .Values.argo.optimization.annotationFeedback.enabled }}
+---
+# Annotation-feedback cron: counts accumulated human annotations per agent
+# type and submits the agent's compile workflow when the volume gates and
+# cooldowns in automation_rules.optimization_triggers allow. The schedule
+# mirrors automation_rules.intervals.feedback_interval_minutes
+# (identity-tested); the cycle additionally self-gates on
+# feedback.poll_interval_minutes via config-store state.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-annotation-feedback
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: optimization
+spec:
+  schedule: {{ .Values.argo.optimization.annotationFeedback.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: annotation-feedback
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    templates:
+    - name: annotation-feedback
+      container:
+        image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+        imagePullPolicy: {{ $workflowImage.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.quality_monitor_cli"]
+        args:
+          - "--annotation-feedback"
+          - "--tenant-id"
+          - "default"
+          - "--runtime-url"
+          - "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
+          - "--phoenix-url"
+          - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+          - "--llm-model"
+          - {{ include "cogniverse.primaryLLMModelBare" . | quote }}
+          - "--argo-url"
+          - "http://argo-server.argo.svc.cluster.local:2746"
+          - "--argo-namespace"
+          - {{ .Release.Namespace | quote }}
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+        {{- if .Values.devMode.enabled }}
+        - name: src-libs
+          mountPath: /app/libs
+        - name: src-scripts
+          mountPath: /app/scripts
+        {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+      {{- if .Values.devMode.enabled }}
+      - name: src-libs
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/libs
+          type: Directory
+      - name: src-scripts
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/scripts
+          type: Directory
+      {{- end }}
+{{- end }}
 {{- if .Values.argo.optimization.monthlyReports.enabled }}
 ---
 # Monthly usage + performance reports — generated JSON is uploaded
