@@ -820,3 +820,151 @@ class TestAnnotationQueueEndpoints:
         assert len(data["assigned"]) == 0
         assert data["statistics"]["total"] == 1
         assert data["statistics"]["by_status"]["completed"] == 1
+
+
+class _StubAnnotationStorage:
+    """Captures persistence calls the complete endpoint makes."""
+
+    instances: list = []
+
+    def __init__(self, tenant_id, agent_type="routing"):
+        self.tenant_id = tenant_id
+        self.agent_type = agent_type
+        self.stored: list = []
+        _StubAnnotationStorage.instances.append(self)
+
+    async def store_human_annotation(
+        self, span_id, label, reasoning, suggested_agent=None, annotator_id="human"
+    ):
+        self.stored.append((span_id, label, reasoning, annotator_id))
+        return True
+
+
+class _FailingAnnotationStorage(_StubAnnotationStorage):
+    async def store_human_annotation(self, *args, **kwargs):
+        raise RuntimeError("telemetry backend down")
+
+
+class TestAnnotationEnqueueAndPersist:
+    """The queue has an ingress endpoint and completion persists durably.
+
+    Before this, nothing could enqueue over HTTP (the queue was always empty
+    in production) and a completed label lived only in process memory — a
+    restart lost every human annotation.
+    """
+
+    def _payload(self, span_id, tenant_id="acme:acme", agent_type="routing"):
+        return {
+            "span_id": span_id,
+            "timestamp": "2026-07-17T10:00:00+00:00",
+            "query": "find robot videos",
+            "chosen_agent": "video_search",
+            "routing_confidence": 0.4,
+            "outcome": "ambiguous",
+            "priority": "medium",
+            "reason": "low confidence",
+            "context": {},
+            "agent_type": agent_type,
+            "tenant_id": tenant_id,
+        }
+
+    def test_enqueue_batch_dedupes_by_span_id(self, annotation_client):
+        client, queue = annotation_client
+        resp = client.post(
+            "/agents/annotations/queue/enqueue",
+            json={
+                "requests": [
+                    self._payload("span-e1"),
+                    self._payload("span-e2"),
+                    self._payload("span-e1"),
+                ]
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["enqueued"] == 2
+        assert data["skipped"] == 1
+        assert queue.get("span-e1") is not None
+        assert queue.get("span-e2") is not None
+        assert queue.get("span-e1").tenant_id == "acme:acme"
+        assert queue.get("span-e1").agent_type == "routing"
+
+    def test_complete_persists_label_durably(self, annotation_client, monkeypatch):
+        client, queue = annotation_client
+        _StubAnnotationStorage.instances = []
+        monkeypatch.setattr(
+            "cogniverse_agents.routing.annotation_storage.AnnotationStorage",
+            _StubAnnotationStorage,
+        )
+
+        client.post(
+            "/agents/annotations/queue/enqueue",
+            json={"requests": [self._payload("span-p1", agent_type="summary")]},
+        )
+        resp = client.post(
+            "/agents/annotations/queue/span-p1/complete",
+            json={"label": "correct", "reasoning": "matches the meeting notes"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["persisted"] is True
+        assert data["annotation"]["label"] == "correct"
+        assert data["annotation"]["status"] == "completed"
+
+        storage = _StubAnnotationStorage.instances[-1]
+        assert storage.tenant_id == "acme:acme"
+        assert storage.agent_type == "summary"
+        assert len(storage.stored) == 1
+        span_id, label, reasoning, annotator = storage.stored[0]
+        assert span_id == "span-p1"
+        assert label.value == "correct"
+        assert reasoning == "matches the meeting notes"
+
+    def test_complete_without_tenant_completes_but_flags_unpersisted(
+        self, annotation_client
+    ):
+        client, queue = annotation_client
+        queue.enqueue(_make_annotation_request("span-nt"))
+
+        resp = client.post(
+            "/agents/annotations/queue/span-nt/complete",
+            json={"label": "correct_routing"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["persisted"] is False
+        assert queue.get("span-nt").status == AnnotationStatus.COMPLETED
+
+    def test_complete_persist_failure_is_502_and_item_retryable(
+        self, annotation_client, monkeypatch
+    ):
+        client, queue = annotation_client
+        monkeypatch.setattr(
+            "cogniverse_agents.routing.annotation_storage.AnnotationStorage",
+            _FailingAnnotationStorage,
+        )
+        client.post(
+            "/agents/annotations/queue/enqueue",
+            json={"requests": [self._payload("span-f1")]},
+        )
+
+        resp = client.post(
+            "/agents/annotations/queue/span-f1/complete",
+            json={"label": "correct"},
+        )
+        assert resp.status_code == 502
+        # The label was NOT silently dropped: the item stays open for retry.
+        assert queue.get("span-f1").status == AnnotationStatus.PENDING
+
+    def test_complete_unknown_label_is_400(self, annotation_client):
+        client, queue = annotation_client
+        client.post(
+            "/agents/annotations/queue/enqueue",
+            json={"requests": [self._payload("span-b1")]},
+        )
+        resp = client.post(
+            "/agents/annotations/queue/span-b1/complete",
+            json={"label": "bogus_label"},
+        )
+        assert resp.status_code == 400
+        assert queue.get("span-b1").status == AnnotationStatus.PENDING

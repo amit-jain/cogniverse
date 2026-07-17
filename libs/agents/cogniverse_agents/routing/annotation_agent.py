@@ -70,6 +70,8 @@ class AnnotationRequest:
     label: Optional[str] = None
     # Which agent's decision this request reviews.
     agent_type: str = "routing"
+    # Tenant whose telemetry the span (and the persisted annotation) belong to.
+    tenant_id: Optional[str] = None
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for storage"""
@@ -94,7 +96,29 @@ class AnnotationRequest:
             ),
             "label": self.label,
             "agent_type": self.agent_type,
+            "tenant_id": self.tenant_id,
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "AnnotationRequest":
+        """Rebuild a request from its ``to_dict`` shape (REST enqueue payload)."""
+        timestamp = data.get("timestamp")
+        if isinstance(timestamp, str):
+            timestamp = pd.to_datetime(timestamp)
+        return cls(
+            span_id=data["span_id"],
+            timestamp=timestamp or datetime.now(timezone.utc),
+            query=data.get("query", ""),
+            chosen_agent=data.get("chosen_agent", ""),
+            routing_confidence=float(data.get("routing_confidence", 0.0)),
+            outcome=RoutingOutcome(data.get("outcome", "ambiguous")),
+            priority=AnnotationPriority(data.get("priority", "medium")),
+            reason=data.get("reason", ""),
+            context=data.get("context") or {},
+            label=data.get("label"),
+            agent_type=data.get("agent_type", "routing"),
+            tenant_id=data.get("tenant_id"),
+        )
 
 
 class AnnotationAgent:
