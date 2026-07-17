@@ -53,8 +53,17 @@ def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
 
 
 @pytest.fixture(scope="module")
-def vllm_colpali_url(vllm_sidecar):
-    return vllm_sidecar.spawn(
+def vllm_colpali_url(vllm_sidecar, config_manager):
+    """Spawn the ColPali vLLM sidecar and register its URL under the
+    ``vllm_colpali`` service name. The /search/ route resolves the query
+    encoder through QueryEncoderFactory → SystemConfig.inference_service_urls
+    (the tenant's ``video_colpali_smol500_mv_frame`` profile declares
+    ``inference_services.embedding='vllm_colpali'``), so without this
+    registration every golden query 400s. Mirrors the ``tomoro_search_url``
+    wiring in conftest.py; the module-scoped ``config_manager`` re-seeds
+    SystemConfig per module, so the URL does not leak past this module.
+    """
+    url = vllm_sidecar.spawn(
         model=COLPALI_MODEL_NAME,
         extra_args=[
             "--runner",
@@ -65,6 +74,14 @@ def vllm_colpali_url(vllm_sidecar):
             "4096",
         ],
     )
+    sys_cfg = config_manager.get_system_config()
+    sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
+    sys_cfg.inference_service_urls["vllm_colpali"] = url
+    config_manager.set_system_config(sys_cfg)
+    # Drop any encoder cached before the URL existed (would be a local encoder).
+    QueryEncoderFactory._encoder_cache.clear()
+    yield url
+    QueryEncoderFactory._encoder_cache.clear()
 
 
 @pytest.fixture(scope="module")
