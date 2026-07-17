@@ -21,6 +21,8 @@ this test catches it.
 """
 
 import asyncio
+import inspect
+import re
 import time
 from unittest.mock import MagicMock, patch
 
@@ -155,17 +157,38 @@ class TestAgentTelemetrySpansRealPhoenix:
     async def test_span_name_matches_lookup_table_for_each_agent_type(
         self, real_telemetry
     ):
-        """For every AgentType in SPAN_NAME_BY_AGENT, instantiate the
-        matching agent class, emit a span, and verify Phoenix returns
-        a match for the lookup table's name. This is the integration
-        test that would have caught (wrong span names)
-        AND fix #10 (no spans emitted) at the same time."""
+        """Every AgentType in SPAN_NAME_BY_AGENT must map to a span name
+        its agent really emits. The four process-convention types are
+        exercised end-to-end: emit via AgentBase.process() and verify the
+        lookup table's name is queryable in real Phoenix. The four domain
+        span types are pinned to their emission sites: the lookup table's
+        name must be the literal each agent passes to
+        telemetry_manager.span(), so a rename on either side fails here."""
+        from cogniverse_agents.entity_extraction_agent import EntityExtractionAgent
+        from cogniverse_agents.gateway_agent import GatewayAgent as A2AGatewayAgent
+        from cogniverse_agents.profile_selection_agent import ProfileSelectionAgent
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementAgent
+
         agent_classes = {
             AgentType.SEARCH: SearchAgent,
             AgentType.SUMMARY: SummarizerAgent,
             AgentType.REPORT: DetailedReportAgent,
             AgentType.GATEWAY: GatewayAgent,
         }
+        domain_span_emitters = {
+            AgentType.ROUTING: A2AGatewayAgent._emit_routing_span,
+            AgentType.QUERY_ENHANCEMENT: QueryEnhancementAgent._emit_enhancement_span,
+            AgentType.ENTITY_EXTRACTION: EntityExtractionAgent._emit_extraction_span,
+            AgentType.PROFILE_SELECTION: ProfileSelectionAgent._emit_profile_span,
+        }
+        assert set(agent_classes).isdisjoint(domain_span_emitters)
+        assert set(agent_classes) | set(domain_span_emitters) == set(
+            SPAN_NAME_BY_AGENT
+        ), (
+            "SPAN_NAME_BY_AGENT has an AgentType this test does not map to "
+            "an agent class or an emitting method; add it to agent_classes "
+            "or domain_span_emitters."
+        )
 
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
@@ -175,8 +198,7 @@ class TestAgentTelemetrySpansRealPhoenix:
             canonical_tenant_id("telemetry_real_test")
         )
 
-        for agent_type, expected_span_name in SPAN_NAME_BY_AGENT.items():
-            agent_cls = agent_classes[agent_type]
+        for agent_type, agent_cls in agent_classes.items():
             agent = agent_cls(deps=_TelemetryTestDeps())
             agent.set_telemetry_manager(real_telemetry)
 
@@ -190,7 +212,8 @@ class TestAgentTelemetrySpansRealPhoenix:
         await asyncio.sleep(3)
 
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
-        for agent_type, expected_span_name in SPAN_NAME_BY_AGENT.items():
+        for agent_type in agent_classes:
+            expected_span_name = SPAN_NAME_BY_AGENT[agent_type]
             span = _query_phoenix_for_span(
                 expected_span_name, project_name, phoenix_url, max_wait=15
             )
@@ -199,6 +222,16 @@ class TestAgentTelemetrySpansRealPhoenix:
                 f"{expected_span_name!r} but Phoenix returned no spans "
                 f"with that name. The lookup table is out of sync with "
                 f"what AgentBase actually emits."
+            )
+
+        for agent_type, emitter in domain_span_emitters.items():
+            expected_span_name = SPAN_NAME_BY_AGENT[agent_type]
+            emitter_source = re.sub(r"\s+", "", inspect.getsource(emitter))
+            assert f'.span("{expected_span_name}"' in emitter_source, (
+                f"SPAN_NAME_BY_AGENT[{agent_type.value}] = "
+                f"{expected_span_name!r} but {emitter.__qualname__} does not "
+                f"pass that literal to telemetry_manager.span(). The lookup "
+                f"table is out of sync with the emitting site."
             )
 
 
