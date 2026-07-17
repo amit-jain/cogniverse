@@ -51,6 +51,39 @@ def _span_success(span_row) -> bool:
     return str(span_row.get("status_code", "OK")).upper() != "ERROR"
 
 
+# The annotation APIs are async; Streamlit callbacks are sync. Calling them
+# bare returned an un-executed coroutine (truthy!), so the UI reported
+# "Annotation saved" while nothing ran or persisted. These helpers actually
+# drive the coroutine to completion.
+
+
+def identify_annotation_spans_sync(annotation_agent, lookback_hours):
+    return run_async_in_streamlit(
+        annotation_agent.identify_spans_needing_annotation(
+            lookback_hours=lookback_hours
+        )
+    )
+
+
+def submit_human_annotation_sync(
+    annotation_storage, span_id, label, reasoning, suggested_agent=None
+):
+    return run_async_in_streamlit(
+        annotation_storage.store_human_annotation(
+            span_id=span_id,
+            label=label,
+            reasoning=reasoning,
+            suggested_agent=suggested_agent,
+        )
+    )
+
+
+def approve_llm_annotation_sync(annotation_storage, span_id):
+    return run_async_in_streamlit(
+        annotation_storage.approve_llm_annotation(span_id=span_id)
+    )
+
+
 def render_routing_evaluation_tab():
     """Render the routing evaluation tab with metrics and visualizations"""
     st.subheader("🎯 Routing Evaluation Dashboard")
@@ -492,8 +525,8 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                 try:
                     annotation_agent.confidence_threshold = confidence_threshold
                     annotation_agent.max_annotations_per_run = max_annotations
-                    requests = annotation_agent.identify_spans_needing_annotation(
-                        lookback_hours=lookback_hours
+                    requests = identify_annotation_spans_sync(
+                        annotation_agent, lookback_hours
                     )
                     st.session_state["annotation_requests"] = requests
                     st.success(f"✅ Found {len(requests)} spans needing annotation")
@@ -674,7 +707,8 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
 
                     if submit_button:
                         try:
-                            success = annotation_storage.store_human_annotation(
+                            success = submit_human_annotation_sync(
+                                annotation_storage,
                                 span_id=request.span_id,
                                 label=AnnotationLabel(human_label),
                                 reasoning=reasoning,
@@ -691,8 +725,8 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
 
                     if approve_button:
                         try:
-                            success = annotation_storage.approve_llm_annotation(
-                                span_id=request.span_id
+                            success = approve_llm_annotation_sync(
+                                annotation_storage, span_id=request.span_id
                             )
                             if success:
                                 st.success("✅ LLM annotation approved!")

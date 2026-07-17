@@ -50,35 +50,43 @@ def _routing_get(span_row: "pd.Series", field: str, default: Any = None) -> Any:
     return default
 
 
-class RoutingAnnotationStorage:
+class AnnotationStorage:
     """
-    Stores and retrieves routing annotations in telemetry backend
+    Stores and retrieves per-agent-type annotations in the telemetry backend.
+
+    Each agent type persists under its own Phoenix annotation name
+    (``{agent_type}_annotation``); ``routing`` keeps the historical
+    ``routing_annotation`` name so stored data stays readable.
 
     Annotations are stored using the telemetry provider's annotation API with the following metadata:
-    - label: The annotation label (correct_routing, wrong_routing, etc.)
+    - label: The annotation label (correct, wrong, correct_routing, etc.)
     - score: Confidence score (0-1)
     - metadata.reasoning: Human or LLM reasoning
     - metadata.annotator: Who provided the annotation (human or llm)
     - metadata.timestamp: When annotation was created
-    - metadata.suggested_agent: Suggested correct agent (if wrong_routing)
+    - metadata.suggested_agent: Suggested correct agent (if wrong)
     - metadata.human_reviewed: Whether human has reviewed this
     """
 
     def __init__(
         self,
         tenant_id: str,
+        agent_type: str = "routing",
     ):
         """
         Initialize annotation storage
 
         Args:
             tenant_id: Tenant identifier
+            agent_type: Which agent's decisions this storage annotates
         """
         # Get telemetry manager and use its config (shared singleton config)
         telemetry_manager = get_telemetry_manager()
         self.telemetry_config = telemetry_manager.config
+        self.agent_type = agent_type
+        self.annotation_name = f"{agent_type}_annotation"
 
-        # Get unified tenant project name for routing annotations
+        # Get unified tenant project name for annotations
         self.project_name = self.telemetry_config.get_project_name(tenant_id)
 
         # Get telemetry provider for annotations
@@ -87,7 +95,8 @@ class RoutingAnnotationStorage:
         )
 
         logger.info(
-            f"💾 Initialized RoutingAnnotationStorage for tenant '{tenant_id}' (project: {self.project_name})"
+            f"💾 Initialized AnnotationStorage for tenant '{tenant_id}' "
+            f"(agent_type: {agent_type}, project: {self.project_name})"
         )
 
     async def store_llm_annotation(
@@ -211,14 +220,14 @@ class RoutingAnnotationStorage:
             # Use provider's annotation API
             await self.provider.annotations.add_annotation(
                 span_id=span_id,
-                name="routing_annotation",
+                name=self.annotation_name,
                 label=label,
                 score=score,
                 metadata=metadata,
                 project=self.project_name,
             )
 
-            logger.info(f"✅ Stored routing annotation for span {span_id}")
+            logger.info(f"✅ Stored {self.annotation_name} for span {span_id}")
             return True
 
         except Exception as e:
@@ -270,14 +279,16 @@ class RoutingAnnotationStorage:
         annotations_df = await self.provider.annotations.get_annotations(
             spans_df=spans_df,
             project=self.project_name,
-            annotation_names=["routing_annotation"],
+            annotation_names=[self.annotation_name],
         )
         if annotations_df is None or annotations_df.empty:
-            logger.info("📭 No routing annotations found in time range")
+            logger.info(f"📭 No {self.annotation_name} found in time range")
             return []
 
         # annotations_df is indexed by span_id (no span_id column).
         annotations_by_span = {sid: row for sid, row in annotations_df.iterrows()}
+
+        from cogniverse_foundation.telemetry.span_contract import read_span_io
 
         annotated_spans = []
         for _, span_row in spans_df.iterrows():
@@ -290,12 +301,29 @@ class RoutingAnnotationStorage:
             if only_human_reviewed and not human_reviewed:
                 continue
 
+            # Span fields come from the canonical input.value/output.value
+            # slots the emitters write; the legacy attributes.routing dict is
+            # a fallback for pre-migration spans (the emitter never set it, so
+            # reading only the legacy attribute returned empty fields for
+            # every real span).
+            io = read_span_io(span_row)
+            output = io["output"] if isinstance(io.get("output"), dict) else {}
             annotated_spans.append(
                 {
                     "span_id": span_id,
-                    "query": _routing_get(span_row, "query"),
-                    "chosen_agent": _routing_get(span_row, "chosen_agent"),
-                    "routing_confidence": _routing_get(span_row, "confidence"),
+                    "agent_type": self.agent_type,
+                    "query": io.get("input") or _routing_get(span_row, "query"),
+                    "chosen_agent": (
+                        output.get("chosen_agent")
+                        or output.get("selected_profile")
+                        or _routing_get(span_row, "chosen_agent")
+                    ),
+                    "routing_confidence": (
+                        output.get("confidence")
+                        if output.get("confidence") is not None
+                        else _routing_get(span_row, "confidence")
+                    ),
+                    "output": output,
                     "annotation_label": ann_row.get("result.label"),
                     "annotation_confidence": ann_row.get("result.score", 1.0),
                     "annotation_reasoning": _meta_get(ann_row, "reasoning", ""),
@@ -357,3 +385,7 @@ class RoutingAnnotationStorage:
             "pending_review": len(annotated_spans) - human_reviewed,
             "by_label": by_label,
         }
+
+
+# Back-compat alias from when the storage was routing-only.
+RoutingAnnotationStorage = AnnotationStorage

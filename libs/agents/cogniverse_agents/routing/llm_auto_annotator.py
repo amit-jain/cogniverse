@@ -24,11 +24,18 @@ logger = logging.getLogger(__name__)
 
 
 class AnnotationLabel(Enum):
-    """Labels for routing decisions"""
+    """Labels a reviewer (human or LLM) can attach to an agent's decision.
 
-    CORRECT_ROUTING = "correct_routing"  # Right agent chosen
-    WRONG_ROUTING = "wrong_routing"  # Wrong agent chosen
-    AMBIGUOUS = "ambiguous"  # Multiple agents could work
+    ``CORRECT``/``WRONG`` are the agent-generic labels; the ``*_ROUTING``
+    values predate per-agent annotation and stay so stored routing
+    annotations remain readable.
+    """
+
+    CORRECT = "correct"  # The agent's output was right
+    WRONG = "wrong"  # The agent's output was wrong
+    CORRECT_ROUTING = "correct_routing"  # Right agent chosen (legacy routing)
+    WRONG_ROUTING = "wrong_routing"  # Wrong agent chosen (legacy routing)
+    AMBIGUOUS = "ambiguous"  # Multiple outputs could work
     INSUFFICIENT_INFO = "insufficient_info"  # Cannot determine
 
 

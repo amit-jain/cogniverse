@@ -82,6 +82,10 @@ class FeedbackConfig(BaseModel):
     )
     quality_map: dict[str, float] = Field(
         default_factory=lambda: {
+            # Agent-generic labels.
+            "correct": 0.9,
+            "wrong": 0.3,
+            # Legacy routing labels, kept so stored annotations keep scoring.
             "correct_routing": 0.9,
             "wrong_routing": 0.3,
             "ambiguous": 0.6,
