@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -158,6 +159,254 @@ async def _annotation_loop(tenant_id: str, runtime_url: str) -> None:
         await asyncio.sleep(rules.intervals.annotation_interval_minutes * 60)
 
 
+# Which optimization_cli mode recompiles each agent type. search/summary/
+# report consume the scored trigger dataset; the rest have dedicated modes
+# whose trainsets come from their own spans, so human-annotation volume is
+# the WHEN signal for them. The gateway is heuristic by design (no LLM to
+# compile) — routing feedback refreshes its threshold calibration instead.
+AGENT_COMPILE_MODE = {
+    "search": "triggered",
+    "summary": "triggered",
+    "report": "triggered",
+    "query_enhancement": "simba",
+    "entity_extraction": "entity-extraction",
+    "profile_selection": "profile",
+    "gateway": "gateway-thresholds",
+    "routing": "gateway-thresholds",
+}
+
+_LOOP_STATE_SERVICE = "optimization_loop"
+_LOOP_STATE_KEY = "state"
+
+
+def _load_loop_state(config_manager, tenant_id: str) -> dict:
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    try:
+        entry = config_manager.store.get_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.AGENT,
+            service=_LOOP_STATE_SERVICE,
+            config_key=_LOOP_STATE_KEY,
+        )
+        return dict(entry.config_value) if entry is not None else {}
+    except Exception as e:
+        logger.warning("optimization loop state read failed (%r); empty state", e)
+        return {}
+
+
+def _save_loop_state(config_manager, tenant_id: str, state: dict) -> None:
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    config_manager.store.set_config(
+        tenant_id=tenant_id,
+        scope=ConfigScope.AGENT,
+        service=_LOOP_STATE_SERVICE,
+        config_key=_LOOP_STATE_KEY,
+        config_value=state,
+    )
+
+
+async def run_annotation_feedback_cycle(
+    tenant_id: str,
+    argo_url: str,
+    argo_namespace: str = "cogniverse",
+    automation_rules=None,
+    config_manager=None,
+    http_client=None,
+    dataset_store=None,
+    now=None,
+    force: bool = False,
+) -> dict:
+    """Turn accumulated human annotations into optimization submissions.
+
+    Per agent type over ``annotation_lookback_hours``: count human-reviewed
+    annotations; at ``min_annotations_for_optimization`` submit the agent's
+    compile mode (search/summary/report additionally get a trigger dataset
+    scored via ``quality_map``); gateway/routing get a cheaper
+    ``gateway-thresholds`` refresh at ``min_annotations_for_update``. A
+    per-agent ``min_days_between_optimizations`` cooldown and a
+    ``poll_interval_minutes`` self-gate (both persisted in the config store)
+    make the stateless cron safe to schedule densely.
+    """
+    import httpx
+    import pandas as pd
+
+    import cogniverse_agents.routing.annotation_storage as annotation_storage_mod
+    from cogniverse_evaluation.quality_monitor import (
+        submit_argo_optimization_workflow,
+    )
+
+    rules = automation_rules or _load_automation_rules(tenant_id)
+    triggers = rules.optimization_triggers
+    feedback = rules.feedback
+    quality_map = feedback.quality_map
+    now = now or datetime.now(timezone.utc)
+
+    if config_manager is None:
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
+        config_manager = create_default_config_manager()
+
+    state = _load_loop_state(config_manager, tenant_id)
+
+    last_poll = state.get("last_feedback_run_at")
+    if last_poll and not force:
+        elapsed = now - datetime.fromisoformat(last_poll)
+        if elapsed < timedelta(minutes=feedback.poll_interval_minutes):
+            logger.info(
+                "Feedback cycle polled %.0fs ago (< poll_interval_minutes=%d) "
+                "— skipping",
+                elapsed.total_seconds(),
+                feedback.poll_interval_minutes,
+            )
+            return {"status": "skipped_recent_poll"}
+
+    owns_client = http_client is None
+    client = http_client or httpx.AsyncClient(timeout=30.0)
+    if dataset_store is None:
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        telemetry_manager = get_telemetry_manager()
+        dataset_store = telemetry_manager.get_provider(tenant_id=tenant_id).datasets
+
+    end_time = now
+    start_time = now - timedelta(hours=triggers.annotation_lookback_hours)
+    last_optimization = dict(state.get("last_optimization_at") or {})
+    per_agent: dict = {}
+    thresholds_refresh_submitted = False
+
+    try:
+        for agent_type, mode in AGENT_COMPILE_MODE.items():
+            storage = annotation_storage_mod.AnnotationStorage(
+                tenant_id=tenant_id, agent_type=agent_type
+            )
+            rows = await storage.query_annotated_spans(
+                start_time=start_time, end_time=end_time, only_human_reviewed=True
+            )
+            count = len(rows)
+            outcome = {"annotations": count, "action": "none"}
+            per_agent[agent_type] = outcome
+            if count == 0:
+                continue
+
+            recompile = count >= triggers.min_annotations_for_optimization
+            refresh = (
+                mode == "gateway-thresholds"
+                and count >= feedback.min_annotations_for_update
+            )
+            if not recompile and not refresh:
+                continue
+
+            last = last_optimization.get(agent_type)
+            if last is not None:
+                since = now - datetime.fromisoformat(last)
+                if since < timedelta(days=triggers.min_days_between_optimizations):
+                    outcome["action"] = "cooldown"
+                    continue
+
+            if mode == "gateway-thresholds" and thresholds_refresh_submitted:
+                # gateway + routing share one threshold recalibration.
+                outcome["action"] = "thresholds_refresh"
+                last_optimization[agent_type] = now.isoformat()
+                continue
+
+            parameters = [{"name": "tenant-id", "value": tenant_id}]
+            container_args = [
+                "--mode",
+                mode,
+                "--tenant-id",
+                "{{workflow.parameters.tenant-id}}",
+                "--lookback-hours",
+                str(float(triggers.annotation_lookback_hours)),
+            ]
+
+            if mode == "triggered":
+                records = []
+                for row in rows:
+                    label = row.get("annotation_label")
+                    score = quality_map.get(label)
+                    if score is None:
+                        logger.warning(
+                            "Unmapped annotation label %r on span %s — skipped",
+                            label,
+                            row.get("span_id"),
+                        )
+                        continue
+                    records.append(
+                        {
+                            "agent": agent_type,
+                            "category": (
+                                "high_scoring" if score >= 0.8 else "low_scoring"
+                            ),
+                            "query": row.get("query") or "",
+                            "score": score,
+                            "output": json.dumps(row.get("output") or {}, default=str),
+                        }
+                    )
+                if not records:
+                    outcome["action"] = "no_mapped_labels"
+                    continue
+                dataset_name = (
+                    f"optimization-trigger-{tenant_id}-{now.strftime('%Y%m%d_%H%M%S')}"
+                )
+                await dataset_store.create_dataset(
+                    name=dataset_name,
+                    data=pd.DataFrame(records),
+                    metadata={
+                        "description": (
+                            f"Annotation-feedback trigger for {tenant_id}: {agent_type}"
+                        ),
+                        "input_keys": ["agent", "category", "query"],
+                        "output_keys": ["score", "output"],
+                    },
+                )
+                parameters.append({"name": "agents", "value": agent_type})
+                parameters.append({"name": "trigger-dataset", "value": dataset_name})
+                container_args = [
+                    "--mode",
+                    "triggered",
+                    "--tenant-id",
+                    "{{workflow.parameters.tenant-id}}",
+                    "--agents",
+                    "{{workflow.parameters.agents}}",
+                    "--trigger-dataset",
+                    "{{workflow.parameters.trigger-dataset}}",
+                ]
+
+            submitted = await submit_argo_optimization_workflow(
+                http_client=client,
+                argo_api_url=argo_url,
+                argo_namespace=argo_namespace,
+                tenant_id=tenant_id,
+                name_prefix=(
+                    f"annotation-feedback-{agent_type.replace('_', '-')}-"
+                    f"{now.strftime('%Y%m%d-%H%M%S')}"
+                ),
+                trigger_label="annotation-feedback",
+                parameters=parameters,
+                container_args=container_args,
+            )
+            if submitted:
+                outcome["action"] = "recompile" if recompile else "thresholds_refresh"
+                last_optimization[agent_type] = now.isoformat()
+                if mode == "gateway-thresholds":
+                    thresholds_refresh_submitted = True
+            else:
+                outcome["action"] = "submit_failed"
+    finally:
+        if owns_client:
+            await client.aclose()
+
+    state["last_feedback_run_at"] = now.isoformat()
+    state["last_optimization_at"] = last_optimization
+    _save_loop_state(config_manager, tenant_id, state)
+
+    result = {"status": "success", "agents": per_agent}
+    logger.info("Annotation feedback cycle complete: %s", result)
+    return result
+
+
 def _build_phoenix_provider(tenant_id: str, http_endpoint: str) -> Optional[object]:
     """Construct a PhoenixProvider for the QualityMonitor's XGBoost gate.
 
@@ -279,6 +528,15 @@ def main():
             "human review and enqueue them on the runtime worklist) and exit."
         ),
     )
+    parser.add_argument(
+        "--annotation-feedback",
+        action="store_true",
+        help=(
+            "Run a single annotation-feedback cycle (count accumulated human "
+            "annotations per agent and submit compile workflows when the "
+            "volume gates and cooldowns allow) and exit."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -320,6 +578,23 @@ def main():
             run_annotation_cycle(tenant_id=args.tenant_id, runtime_url=args.runtime_url)
         )
         logger.info(f"Annotation cycle result: {result}")
+        sys.exit(0)
+
+    if args.annotation_feedback:
+        # One-shot feedback pass for Argo CronWorkflows: accumulated human
+        # annotations become compile submissions when gates + cooldowns allow.
+        if not args.argo_url:
+            logger.error("--annotation-feedback requires --argo-url")
+            sys.exit(2)
+        logger.info(f"Running annotation feedback cycle for tenant={args.tenant_id}")
+        result = asyncio.run(
+            run_annotation_feedback_cycle(
+                tenant_id=args.tenant_id,
+                argo_url=args.argo_url,
+                argo_namespace=args.argo_namespace,
+            )
+        )
+        logger.info(f"Annotation feedback result: {result}")
         sys.exit(0)
 
     if args.once:

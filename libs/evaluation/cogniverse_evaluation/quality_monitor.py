@@ -127,6 +127,72 @@ class QualityThresholds:
     min_samples_for_verdict: int = 10
 
 
+async def submit_argo_optimization_workflow(
+    http_client,
+    argo_api_url: str,
+    argo_namespace: str,
+    tenant_id: str,
+    name_prefix: str,
+    trigger_label: str,
+    parameters: List[Dict[str, str]],
+    container_args: List[str],
+) -> bool:
+    """Submit one optimization workflow to Argo.
+
+    Shared by the quality-drop trigger (``--mode triggered``) and the
+    annotation-feedback trigger (per-agent dedicated modes) so both paths
+    produce the same workflow shape. Returns True when Argo accepted it.
+    """
+    workflow_manifest = {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+            "generateName": f"{name_prefix}-",
+            "namespace": argo_namespace,
+            "labels": {
+                "app": "cogniverse",
+                "trigger": trigger_label,
+                "tenant": tenant_id,
+            },
+        },
+        "spec": {
+            "entrypoint": "optimize",
+            "arguments": {"parameters": parameters},
+            "templates": [
+                {
+                    "name": "optimize",
+                    "container": {
+                        "image": "cogniverse-runtime:latest",
+                        "command": [
+                            "python",
+                            "-m",
+                            "cogniverse_runtime.optimization_cli",
+                        ],
+                        "args": container_args,
+                    },
+                }
+            ],
+        },
+    }
+
+    try:
+        response = await http_client.post(
+            f"{argo_api_url}/api/v1/workflows/{argo_namespace}",
+            json={"workflow": workflow_manifest},
+        )
+        if response.status_code in (200, 201):
+            workflow_name = response.json().get("metadata", {}).get("name", "")
+            logger.info(f"Submitted optimization workflow: {workflow_name}")
+            return True
+        logger.error(
+            f"Argo submit failed ({response.status_code}): {response.text[:500]}"
+        )
+        return False
+    except Exception as e:
+        logger.error(f"Failed to submit Argo workflow: {e}")
+        return False
+
+
 class QualityMonitor:
     """
     Continuous quality monitor for all agents.
@@ -1050,77 +1116,35 @@ class QualityMonitor:
         agents_csv = ",".join(a.value for a in trigger.agents_to_optimize)
         timestamp = trigger.timestamp.strftime("%Y%m%d-%H%M%S")
 
-        workflow_manifest = {
-            "apiVersion": "argoproj.io/v1alpha1",
-            "kind": "Workflow",
-            "metadata": {
-                "generateName": f"quality-triggered-optimization-{timestamp}-",
-                "namespace": self.argo_namespace,
-                "labels": {
-                    "app": "cogniverse",
-                    "trigger": "quality-monitor",
-                    "tenant": self.tenant_id,
+        await submit_argo_optimization_workflow(
+            http_client=client,
+            argo_api_url=self.argo_api_url,
+            argo_namespace=self.argo_namespace,
+            tenant_id=self.tenant_id,
+            name_prefix=f"quality-triggered-optimization-{timestamp}",
+            trigger_label="quality-monitor",
+            parameters=[
+                {"name": "tenant-id", "value": self.tenant_id},
+                {"name": "agents", "value": agents_csv},
+                {
+                    "name": "trigger-dataset",
+                    "value": (
+                        f"optimization-trigger-{self.tenant_id}-"
+                        f"{trigger.timestamp.strftime('%Y%m%d_%H%M%S')}"
+                    ),
                 },
-            },
-            "spec": {
-                "entrypoint": "optimize",
-                "arguments": {
-                    "parameters": [
-                        {"name": "tenant-id", "value": self.tenant_id},
-                        {"name": "agents", "value": agents_csv},
-                        {
-                            "name": "trigger-dataset",
-                            "value": (
-                                f"optimization-trigger-{self.tenant_id}-"
-                                f"{trigger.timestamp.strftime('%Y%m%d_%H%M%S')}"
-                            ),
-                        },
-                    ]
-                },
-                "templates": [
-                    {
-                        "name": "optimize",
-                        "container": {
-                            "image": "cogniverse-runtime:latest",
-                            "command": [
-                                "python",
-                                "-m",
-                                "cogniverse_runtime.optimization_cli",
-                            ],
-                            "args": [
-                                "--mode",
-                                "triggered",
-                                "--tenant-id",
-                                "{{workflow.parameters.tenant-id}}",
-                                "--agents",
-                                "{{workflow.parameters.agents}}",
-                                "--trigger-dataset",
-                                "{{workflow.parameters.trigger-dataset}}",
-                            ],
-                        },
-                    }
-                ],
-            },
-        }
-
-        try:
-            response = await client.post(
-                f"{self.argo_api_url}/api/v1/workflows/{self.argo_namespace}",
-                json={"workflow": workflow_manifest},
-            )
-            if response.status_code in (200, 201):
-                workflow_name = response.json().get("metadata", {}).get("name", "")
-                logger.info(
-                    f"Submitted optimization workflow: {workflow_name} "
-                    f"for agents={agents_csv}"
-                )
-            else:
-                logger.error(
-                    f"Argo submit failed ({response.status_code}): "
-                    f"{response.text[:500]}"
-                )
-        except Exception as e:
-            logger.error(f"Failed to submit Argo workflow: {e}")
+            ],
+            container_args=[
+                "--mode",
+                "triggered",
+                "--tenant-id",
+                "{{workflow.parameters.tenant-id}}",
+                "--agents",
+                "{{workflow.parameters.agents}}",
+                "--trigger-dataset",
+                "{{workflow.parameters.trigger-dataset}}",
+            ],
+        )
 
     async def update_baseline(
         self,
