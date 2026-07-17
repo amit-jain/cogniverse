@@ -24,7 +24,10 @@ dependencies:
   - name: argo-workflows
     version: "0.45.x"
     repository: "https://argoproj.github.io/argo-helm"
-    condition: argo.enabled
+    # Separate gate from argo.enabled: that flag renders the CronWorkflows,
+    # which submit to the standalone Argo install (argo-server.argo.svc) —
+    # the in-release subchart is a redundant second install.
+    condition: argo.subchart.enabled
   # openshell is vendored as an unpacked subchart at charts/openshell — Helm
   # picks it up automatically without a repository URL. Gated on the
   # `runtime.sandbox.inCluster.enabled` value at the parent level.

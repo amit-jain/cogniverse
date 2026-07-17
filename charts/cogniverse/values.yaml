@@ -20,6 +20,11 @@ devMode:
 # ===========================================
 argo:
   enabled: true
+  # The in-release argo-workflows subchart is off by default: workflows are
+  # submitted to the standalone Argo install in the ``argo`` namespace
+  # (argo-server.argo.svc), which ``cogniverse up`` manages.
+  subchart:
+    enabled: false
   # Subchart values for argo-workflows
   argo-workflows:
     controller:
