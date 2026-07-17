@@ -21,6 +21,10 @@ from typing import Any, Dict, List, Optional
 import httpx
 import pandas as pd
 
+from cogniverse_evaluation.evaluators.agent_evaluators import (
+    AGENT_EVALUATORS,
+    get_agent_evaluator,
+)
 from cogniverse_evaluation.metrics.custom import calculate_metrics_suite
 
 logger = logging.getLogger(__name__)
@@ -31,6 +35,10 @@ class AgentType(str, Enum):
     SUMMARY = "summary"
     REPORT = "report"
     GATEWAY = "gateway"
+    ROUTING = "routing"
+    QUERY_ENHANCEMENT = "query_enhancement"
+    ENTITY_EXTRACTION = "entity_extraction"
+    PROFILE_SELECTION = "profile_selection"
 
 
 class Verdict(int, Enum):
@@ -39,15 +47,11 @@ class Verdict(int, Enum):
     FULL = 2
 
 
-# Span names match the convention emitted by AgentBase._process_span():
-#   f"{ClassName}.process"
-# Every AgentBase subclass is wrapped in a span with this name, so these
-# values are discoverable from the agent class name alone.
+# The first four use the AgentBase._process_span() convention
+# (f"{ClassName}.process"); the rest score the richer cogniverse.* domain
+# spans their agents emit. The registry is the single source of truth.
 SPAN_NAME_BY_AGENT = {
-    AgentType.SEARCH: "SearchAgent.process",
-    AgentType.SUMMARY: "SummarizerAgent.process",
-    AgentType.REPORT: "DetailedReportAgent.process",
-    AgentType.GATEWAY: "GatewayAgent.process",
+    agent_type: AGENT_EVALUATORS[agent_type.value].span_name for agent_type in AgentType
 }
 
 
@@ -497,6 +501,8 @@ class QualityMonitor:
         low_scoring = []
         high_scoring = []
 
+        evaluator = get_agent_evaluator(agent_type.value)
+
         async def _score_span(span) -> Optional[tuple]:
             attributes = span.get("attributes", {})
             outputs = span.get("outputs", {})
@@ -504,24 +510,12 @@ class QualityMonitor:
 
             # get_recent_spans(require_search_shape=False) exposes the raw span
             # output under "value": a results list (search), a string
-            # (summary/report), or a routing dict (gateway).
-            value = outputs.get("value")
-            if agent_type == AgentType.SEARCH:
-                results = outputs.get("results", [])
-                prompt = self._build_search_judge_prompt(query, results)
-            elif agent_type == AgentType.SUMMARY:
-                summary = value if isinstance(value, str) else str(value or "")
-                prompt = self._build_summary_judge_prompt(query, summary)
-            elif agent_type == AgentType.REPORT:
-                report = value if isinstance(value, str) else str(value or "")
-                prompt = self._build_report_judge_prompt(query, report)
-            elif agent_type == AgentType.GATEWAY:
-                # Routing already has its own feedback loop via OptimizationOrchestrator.
-                # Still score here for unified visibility.
-                routing = value if isinstance(value, dict) else {}
-                prompt = self._build_routing_judge_prompt(query, routing)
-            else:
+            # (summary/report), or a domain dict (gateway/routing/enhancement/
+            # extraction/profile). The registry entry knows its agent's shape.
+            if evaluator is None:
                 return None
+            payload = evaluator.extract_judge_payload(attributes, outputs)
+            prompt = evaluator.judge_prompt(query, payload)
 
             try:
                 response = await judge._call_llm(
@@ -622,52 +616,39 @@ class QualityMonitor:
 
         return error_rate, latency_p95
 
+    # The judge prompts live in the per-agent evaluator registry
+    # (evaluators/agent_evaluators.py); these delegates keep the old call
+    # surface for existing callers.
+
     def _build_search_judge_prompt(
         self, query: str, results: List[Dict[str, Any]]
     ) -> str:
-        top_results = results[:5]
-        results_text = "\n".join(
-            f"  {i + 1}. {r.get('video_id', r.get('source_id', 'unknown'))} "
-            f"(score: {r.get('score', 'N/A')})"
-            for i, r in enumerate(top_results)
+        from cogniverse_evaluation.evaluators.agent_evaluators import (
+            build_search_judge_prompt,
         )
-        return (
-            f"Query: {query}\n\n"
-            f"Search Results:\n{results_text}\n\n"
-            f"Rate the relevance of these search results to the query. "
-            f"Consider: Are the results topically relevant? Is the ranking order "
-            f"sensible? Would a user find these results helpful?\n"
-            f"Score: X/10"
-        )
+
+        return build_search_judge_prompt(query, results)
 
     def _build_summary_judge_prompt(self, query: str, summary: str) -> str:
-        return (
-            f"Original Query: {query}\n\n"
-            f"Generated Summary:\n{summary}\n\n"
-            f"Rate the quality of this summary. Consider: Is it accurate? "
-            f"Is it concise? Does it address the query? Is it coherent?\n"
-            f"Score: X/10"
+        from cogniverse_evaluation.evaluators.agent_evaluators import (
+            build_summary_judge_prompt,
         )
+
+        return build_summary_judge_prompt(query, summary)
 
     def _build_report_judge_prompt(self, query: str, report: str) -> str:
-        return (
-            f"Original Query: {query}\n\n"
-            f"Generated Report:\n{report[:2000]}\n\n"
-            f"Rate the quality of this report. Consider: Is it comprehensive? "
-            f"Are the findings well-supported? Are recommendations actionable? "
-            f"Is the structure logical?\n"
-            f"Score: X/10"
+        from cogniverse_evaluation.evaluators.agent_evaluators import (
+            build_report_judge_prompt,
         )
 
+        return build_report_judge_prompt(query, report)
+
     def _build_routing_judge_prompt(self, query: str, routing: Dict[str, Any]) -> str:
-        return (
-            f"Query: {query}\n\n"
-            f"Routing Decision: {json.dumps(routing, default=str)}\n\n"
-            f"Rate the routing decision. Consider: Was the right agent selected? "
-            f"Is the confidence calibrated? Does the workflow make sense for "
-            f"this query type?\n"
-            f"Score: X/10"
+        from cogniverse_evaluation.evaluators.agent_evaluators import (
+            build_routing_judge_prompt,
         )
+
+        return build_routing_judge_prompt(query, routing)
 
     def check_thresholds(
         self,

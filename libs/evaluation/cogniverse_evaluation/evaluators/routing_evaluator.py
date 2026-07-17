@@ -28,6 +28,41 @@ class RoutingOutcome(Enum):
     AMBIGUOUS = "ambiguous"  # Needs human annotation
 
 
+def classify_routing_outcome(
+    span_data: Dict[str, Any],
+) -> Tuple[RoutingOutcome, str]:
+    """Classify a routing span's outcome from its own data.
+
+    Pure function (no provider access) so structural evaluators can share it
+    without constructing a ``RoutingEvaluator``.
+    """
+    parent_span_id = span_data.get("parent_id")
+    if not parent_span_id:
+        return RoutingOutcome.AMBIGUOUS, "no_parent_span"
+
+    status_code = span_data.get("status_code", "OK")
+    if status_code == "ERROR":
+        return RoutingOutcome.FAILURE, "routing_error"
+
+    # Look for downstream agent execution indicators. The routing decision
+    # is on the canonical output.value; fall back to the legacy attribute.
+    from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+    output = read_span_io(span_data)["output"]
+    attributes = span_data.get("attributes", {})
+    chosen_agent = (
+        output.get("chosen_agent") if isinstance(output, dict) else None
+    ) or attributes.get("routing.chosen_agent")
+
+    if "error" in span_data.get("events", []):
+        return RoutingOutcome.FAILURE, "downstream_error"
+
+    if status_code == "OK" and chosen_agent:
+        return RoutingOutcome.SUCCESS, "completed_successfully"
+
+    return RoutingOutcome.AMBIGUOUS, "unclear_outcome"
+
+
 @dataclass
 class RoutingMetrics:
     """Container for routing evaluation metrics"""
@@ -160,45 +195,13 @@ class RoutingEvaluator:
         """
         Classify routing outcome based on downstream agent execution.
 
-        Examines the parent span (cogniverse.request) to find downstream agent
-        spans and determine if the routed agent succeeded.
-
         Args:
             span_data: Routing span data
 
         Returns:
             Tuple of (RoutingOutcome, status_description)
         """
-        # Get parent span context to access downstream agent spans
-        parent_span_id = span_data.get("parent_id")
-        if not parent_span_id:
-            return RoutingOutcome.AMBIGUOUS, "no_parent_span"
-
-        # Check span status
-        status_code = span_data.get("status_code", "OK")
-        if status_code == "ERROR":
-            return RoutingOutcome.FAILURE, "routing_error"
-
-        # Look for downstream agent execution indicators. The routing decision
-        # is on the canonical output.value; fall back to the legacy attribute.
-        from cogniverse_foundation.telemetry.span_contract import read_span_io
-
-        output = read_span_io(span_data)["output"]
-        attributes = span_data.get("attributes", {})
-        chosen_agent = (
-            output.get("chosen_agent") if isinstance(output, dict) else None
-        ) or attributes.get("routing.chosen_agent")
-
-        # Check if there are any error indicators
-        if "error" in span_data.get("events", []):
-            return RoutingOutcome.FAILURE, "downstream_error"
-
-        # If routing completed and no errors, consider it successful
-        # More sophisticated logic can be added to check actual agent results
-        if status_code == "OK" and chosen_agent:
-            return RoutingOutcome.SUCCESS, "completed_successfully"
-
-        return RoutingOutcome.AMBIGUOUS, "unclear_outcome"
+        return classify_routing_outcome(span_data)
 
     def calculate_metrics(self, routing_spans: List[Dict[str, Any]]) -> RoutingMetrics:
         """

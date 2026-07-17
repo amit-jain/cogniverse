@@ -25,6 +25,7 @@ libs/evaluation/cogniverse_evaluation/
 │   ├── reranking.py                     # Reranking logic
 │   └── solver_output.py                 # Solver output formatting
 ├── evaluators/                          # Evaluator implementations
+│   ├── agent_evaluators.py              # Per-agent-type evaluator registry (judge prompts + structural evals)
 │   ├── routing_evaluator.py             # Routing decision evaluator
 │   ├── reference_free.py                # Reference-free evaluators
 │   ├── golden_dataset.py                # Golden dataset evaluator
@@ -116,24 +117,31 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
    - Session-level outcome classification (Success/Partial/Failure)
    - Integration with Phoenix session tracking
 
-7. **OnlineEvaluator**
-   - Real-time scoring of `cogniverse.routing` spans as they are produced
-   - Configurable sampling rate to bound evaluation overhead
-   - Dispatches `routing_outcome` and `confidence_calibration` evaluators
-   - Persists scores as telemetry annotations for drift detection
+7. **Per-Agent Evaluator Registry** (`evaluators/agent_evaluators.py`)
+   - One `AgentEvaluator` entry per agent type: search, summary, report, gateway, routing, query_enhancement, entity_extraction, profile_selection
+   - Each entry carries the agent's LLM-judge prompt builder, its judge-payload extraction (search-result list vs summary/report string vs domain dict), and named no-LLM structural evaluators (e.g. `routing_outcome`, `confidence_calibration`, `enhancement_effect`, `extraction_yield`, `profile_confidence_calibration`)
+   - `QualityMonitor` and `OnlineEvaluator` both dispatch through the registry — adding an agent type to the optimization loop is one registry entry plus an `AgentType` member
+   - Structural evaluators read the canonical `output.value` span JSON (`read_span_io`), with legacy attribute fallbacks
 
-8. **QualityMonitor**
-   - Continuous, scheduled quality monitoring across all agents (search, summary, report, gateway)
-   - Dual strategy: golden-set evaluation (MRR/nDCG/P@5) + live-traffic LLM-judge sampling
+8. **OnlineEvaluator**
+   - Real-time scoring of spans as they are produced, via the per-agent registry (`agent_type` selects the entry; defaults to routing)
+   - Configurable sampling rate to bound evaluation overhead
+   - Dispatches the configured structural evaluators (routing: `routing_outcome` and `confidence_calibration`)
+   - Persists scores as `online_eval.<evaluator>` telemetry annotations for drift detection
+
+9. **QualityMonitor**
+   - Continuous, scheduled quality monitoring across all agent types (search, summary, report, gateway, routing, query_enhancement, entity_extraction, profile_selection)
+   - Dual strategy: golden-set evaluation (MRR/nDCG/P@5) + live-traffic LLM-judge sampling; the judge prompt per agent type comes from the evaluator registry
+   - The answer agents are scored on their `<ClassName>.process` spans; routing/query_enhancement/entity_extraction/profile_selection on their `cogniverse.*` domain spans
    - Threshold-based verdicts (`SKIP` / `OPTIMIZE` / `FULL`) that trigger Argo optimization workflows
    - Composes `SpanEvaluator`, `GoldenDatasetEvaluator`, `LLMJudgeCore`, and `PhoenixDatasetStore` rather than reimplementing them
 
-9. **Evaluation Provider System**
-   - Provider-agnostic abstraction (`EvaluationProvider`, `AnalyticsProvider`, `MonitoringProvider`) for experiment tracking, dataset management, and analytics
-   - Entry-point based discovery (`cogniverse.evaluation.providers`) with tenant-scoped caching, mirroring the telemetry provider registry
-   - Phoenix is the only concrete implementation shipped today (`PhoenixEvaluationProvider`)
+10. **Evaluation Provider System**
+    - Provider-agnostic abstraction (`EvaluationProvider`, `AnalyticsProvider`, `MonitoringProvider`) for experiment tracking, dataset management, and analytics
+    - Entry-point based discovery (`cogniverse.evaluation.providers`) with tenant-scoped caching, mirroring the telemetry provider registry
+    - Phoenix is the only concrete implementation shipped today (`PhoenixEvaluationProvider`)
 
-10. **CLI**
+11. **CLI**
     - `cogniverse-eval` unified command group (`evaluate`, `create-dataset`, `list-traces`, `test`) for running evaluations and managing datasets from the shell
 
 ### Dependencies

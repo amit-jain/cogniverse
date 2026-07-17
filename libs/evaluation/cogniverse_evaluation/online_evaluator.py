@@ -13,11 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from cogniverse_evaluation.evaluators.routing_evaluator import (
-    RoutingEvaluator,
-    RoutingOutcome,
-)
-from cogniverse_foundation.confidence import parse_confidence
+from cogniverse_evaluation.evaluators.agent_evaluators import get_agent_evaluator
+from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
 
 if TYPE_CHECKING:
     from cogniverse_agents.routing.config import OnlineEvaluationConfig
@@ -63,9 +60,12 @@ class OnlineEvaluator:
         provider: TelemetryProvider,
         project_name: str,
         config: OnlineEvaluationConfig | None = None,
+        agent_type: str = "routing",
     ):
         self.provider = provider
         self.project_name = project_name
+        # Which per-agent evaluator registry entry this instance scores with.
+        self.agent_type = agent_type
 
         if config is not None:
             self.enabled = config.enabled
@@ -131,75 +131,32 @@ class OnlineEvaluator:
     def _run_evaluator(
         self, evaluator_name: str, span_data: Dict[str, Any], span_id: str
     ) -> Optional[OnlineEvalResult]:
-        """Run a single named evaluator against span data."""
-        if evaluator_name == "routing_outcome":
-            return self._eval_routing_outcome(span_data, span_id)
-        elif evaluator_name == "confidence_calibration":
-            return self._eval_confidence_calibration(span_data, span_id)
-        else:
+        """Run a single named evaluator from the per-agent registry."""
+        entry = get_agent_evaluator(self.agent_type)
+        result = entry.run_structural(evaluator_name, span_data) if entry else None
+        if result is None:
             logger.warning(f"Unknown evaluator: {evaluator_name}")
             return None
+        return OnlineEvalResult(
+            span_id=span_id,
+            evaluator_name=result.evaluator_name,
+            score=result.score,
+            label=result.label,
+            explanation=result.explanation,
+            timestamp=datetime.now(),
+        )
 
     def _eval_routing_outcome(
         self, span_data: Dict[str, Any], span_id: str
     ) -> OnlineEvalResult:
         """Classify routing outcome (success/failure/ambiguous) and score."""
-        outcome, status_description = self.routing_evaluator._classify_routing_outcome(
-            span_data
-        )
-
-        score_map = {
-            RoutingOutcome.SUCCESS: 1.0,
-            RoutingOutcome.FAILURE: 0.0,
-            RoutingOutcome.AMBIGUOUS: 0.5,
-        }
-
-        return OnlineEvalResult(
-            span_id=span_id,
-            evaluator_name="routing_outcome",
-            score=score_map.get(outcome, 0.5),
-            label=outcome.value,
-            explanation=status_description,
-            timestamp=datetime.now(),
-        )
+        return self._run_evaluator("routing_outcome", span_data, span_id)
 
     def _eval_confidence_calibration(
         self, span_data: Dict[str, Any], span_id: str
     ) -> OnlineEvalResult:
         """Score how well confidence predicts actual success."""
-        routing_attrs = span_data.get("attributes.routing")
-        if not routing_attrs or not isinstance(routing_attrs, dict):
-            routing_attrs = {}
-
-        confidence = parse_confidence(routing_attrs.get("confidence"), default=0.5)
-
-        status = span_data.get("status_code", span_data.get("status", ""))
-        actual_success = status == "OK" if status else True
-
-        if actual_success:
-            calibration_score = confidence
-        else:
-            calibration_score = 1.0 - confidence
-
-        if calibration_score >= 0.8:
-            label = "well_calibrated"
-        elif calibration_score >= 0.5:
-            label = "moderately_calibrated"
-        else:
-            label = "poorly_calibrated"
-
-        return OnlineEvalResult(
-            span_id=span_id,
-            evaluator_name="confidence_calibration",
-            score=calibration_score,
-            label=label,
-            explanation=(
-                f"confidence={confidence:.2f}, "
-                f"actual_success={actual_success}, "
-                f"calibration={calibration_score:.2f}"
-            ),
-            timestamp=datetime.now(),
-        )
+        return self._run_evaluator("confidence_calibration", span_data, span_id)
 
     async def _persist_results(self, results: List[OnlineEvalResult]) -> None:
         """Write evaluation results as telemetry annotations."""
