@@ -449,3 +449,155 @@ class TestOnlineEvaluationAllAgentTypes:
         row = annotations.iloc[0]
         assert row["result.label"] == "no_enhancement"
         assert float(row["result.score"]) == 0.0
+
+
+class TestAnnotationFeedbackCycleRealServices:
+    """The feedback cycle against real services: real human annotations in
+    Phoenix, a real trigger dataset written to Phoenix, and cooldown state
+    persisted in the real Vespa config store — only Argo is a capture client
+    (it is an external cluster API)."""
+
+    @pytest.mark.asyncio
+    async def test_annotations_produce_trigger_dataset_and_cooldown(
+        self,
+        vespa_instance,
+        telemetry_manager_with_phoenix,
+        real_provider,
+        project_name,
+        test_tenant_id,
+    ):
+        from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+        from cogniverse_agents.routing.config import (
+            AutomationRulesConfig,
+            OptimizationTriggersConfig,
+        )
+        from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_foundation.telemetry.span_contract import record_span_io
+        from cogniverse_runtime.quality_monitor_cli import (
+            run_annotation_feedback_cycle,
+        )
+
+        tm = telemetry_manager_with_phoenix
+
+        # Three real search spans, human-annotated correct/wrong/correct.
+        span_ids = []
+        for i, query in enumerate(["find cats", "find dogs", "find birds"]):
+            with tm.span(name="SearchAgent.process", tenant_id=test_tenant_id) as span:
+                record_span_io(
+                    span,
+                    input_value=query,
+                    output=[{"video_id": f"v{i}", "score": 0.9}],
+                    operation="search",
+                )
+                span_ids.append(format(span.get_span_context().span_id, "016x"))
+        tm.force_flush(timeout_millis=10000)
+        wait_for_phoenix_processing(delay=2)
+
+        storage = AnnotationStorage(tenant_id=test_tenant_id, agent_type="search")
+        labels = [
+            AnnotationLabel.CORRECT,
+            AnnotationLabel.WRONG,
+            AnnotationLabel.CORRECT,
+        ]
+        for span_id, label in zip(span_ids, labels):
+            assert await storage.store_human_annotation(span_id, label, "reviewed")
+
+        # Wait until all three annotations are joined back.
+        rows = []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            end = datetime.now(timezone.utc)
+            rows = await storage.query_annotated_spans(
+                start_time=end - timedelta(hours=1),
+                end_time=end,
+                only_human_reviewed=True,
+            )
+            if len(rows) >= 3:
+                break
+            await asyncio.sleep(2)
+        assert len(rows) == 3
+
+        rules = AutomationRulesConfig(
+            optimization_triggers=OptimizationTriggersConfig(
+                min_annotations_for_optimization=3,
+                min_days_between_optimizations=1,
+            )
+        )
+
+        class _ArgoCapture:
+            def __init__(self):
+                self.posts = []
+
+            async def post(self, url, json=None):
+                self.posts.append((url, json))
+
+                class _Resp:
+                    status_code = 201
+                    text = ""
+
+                    @staticmethod
+                    def json():
+                        return {"metadata": {"name": "wf-real"}}
+
+                return _Resp()
+
+        argo = _ArgoCapture()
+        config_manager = create_default_config_manager()  # real Vespa store
+
+        result = await run_annotation_feedback_cycle(
+            tenant_id=test_tenant_id,
+            argo_url="http://argo:2746",
+            automation_rules=rules,
+            config_manager=config_manager,
+            http_client=argo,
+            dataset_store=real_provider.datasets,
+        )
+
+        assert result["agents"]["search"]["action"] == "recompile"
+        assert result["agents"]["search"]["annotations"] == 3
+        assert len(argo.posts) == 1
+        params = {
+            p["name"]: p["value"]
+            for p in argo.posts[0][1]["workflow"]["spec"]["arguments"]["parameters"]
+        }
+        assert params["agents"] == "search"
+        dataset_name = params["trigger-dataset"]
+
+        # The trigger dataset is REAL: read it back from Phoenix with the
+        # exact quality_map-scored rows.
+        df = await real_provider.datasets.get_dataset(name=dataset_name)
+        assert len(df) == 3
+        flat = df.to_dict("records")
+
+        def _field(row, key):
+            if key in row:
+                return row[key]
+            for container in ("input", "output"):
+                value = row.get(container)
+                if isinstance(value, dict) and key in value:
+                    return value[key]
+            raise KeyError(key)
+
+        scores = sorted(float(_field(r, "score")) for r in flat)
+        assert scores == [0.3, 0.9, 0.9]
+        assert {_field(r, "agent") for r in flat} == {"search"}
+        assert {_field(r, "query") for r in flat} == {
+            "find cats",
+            "find dogs",
+            "find birds",
+        }
+
+        # Cooldown state survived in the REAL config store: an immediate
+        # second run (force past the poll gate) must not resubmit.
+        rerun = await run_annotation_feedback_cycle(
+            tenant_id=test_tenant_id,
+            argo_url="http://argo:2746",
+            automation_rules=rules,
+            config_manager=create_default_config_manager(),  # fresh manager, same store
+            http_client=argo,
+            dataset_store=real_provider.datasets,
+            force=True,
+        )
+        assert rerun["agents"]["search"]["action"] == "cooldown"
+        assert len(argo.posts) == 1
