@@ -409,6 +409,28 @@ class TestRerankEndpoint:
         assert resp.status_code == 400
         assert "tenant_id" in resp.json()["detail"]
 
+    def test_rerank_non_scalar_score_returns_400(self, search_client):
+        """A non-scalar score is bad input — float() coercion raises TypeError,
+        which must surface as 400, not a 500."""
+        resp = search_client.post(
+            "/search/rerank",
+            json={
+                "tenant_id": "test_tenant",
+                "query": "cat",
+                "results": [
+                    {
+                        "id": "a",
+                        "title": "x",
+                        "content": "y",
+                        "modality": "video",
+                        "score": [1, 2],
+                    }
+                ],
+                "strategy": "multi_modal",
+            },
+        )
+        assert resp.status_code == 400, resp.text
+
     def test_rerank_multi_modal_happy_path(self, search_client):
         """POST /search/rerank actually reranks (multi_modal is pure-heuristic,
         no external model). Guards the regression where the endpoint called a
