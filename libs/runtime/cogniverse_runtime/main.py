@@ -664,13 +664,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("REDIS_URL"):
         system_config.redis_url = os.environ["REDIS_URL"]
         updated = True
-    # COGNIVERSE_ADAPTER_CACHE: local download dir for the finetuning
-    # adapter resolver. resolve_adapter_path() now REQUIRES a
-    # non-empty cache_dir from the caller (no hardcoded fallback),
-    # so production must set this if any agent loads adapters.
-    if os.environ.get("COGNIVERSE_ADAPTER_CACHE"):
-        system_config.adapter_cache_dir = os.environ["COGNIVERSE_ADAPTER_CACHE"]
-        updated = True
     # MINIO_ENDPOINT: object-store target for the ingestion-upload
     # route. The route reads from SystemConfig (no env access).
     if os.environ.get("MINIO_ENDPOINT"):
