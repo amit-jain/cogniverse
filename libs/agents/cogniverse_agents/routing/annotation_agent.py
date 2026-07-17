@@ -66,6 +66,8 @@ class AnnotationRequest:
     assigned_at: Optional[datetime] = None
     sla_deadline: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    # The human reviewer's annotation label, captured on completion.
+    label: Optional[str] = None
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for storage"""
@@ -88,6 +90,7 @@ class AnnotationRequest:
             "completed_at": (
                 self.completed_at.isoformat() if self.completed_at else None
             ),
+            "label": self.label,
         }
 
 

@@ -127,6 +127,7 @@ class AnnotationQueue:
 
         request.status = AnnotationStatus.COMPLETED
         request.completed_at = datetime.now()
+        request.label = label
         return request
 
     def get_pending(self) -> List[AnnotationRequest]:
