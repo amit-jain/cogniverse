@@ -16,10 +16,146 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+def _load_automation_rules(tenant_id: str):
+    """automation_rules from the tenant config, defaults on any failure.
+
+    The sidecar must keep monitoring even when the config store is
+    unreachable, so a read failure degrades to the declared defaults
+    (with a warning) instead of killing the loop.
+    """
+    from cogniverse_agents.routing.config import AutomationRulesConfig
+
+    try:
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
+
+        cfg = get_config(
+            tenant_id=tenant_id, config_manager=create_default_config_manager()
+        )
+        section = cfg.get_all().get("automation_rules") or {}
+        return AutomationRulesConfig.from_dict(section)
+    except Exception as e:
+        logger.warning("automation_rules config read failed (%r); using defaults", e)
+        return AutomationRulesConfig()
+
+
+async def run_annotation_cycle(
+    tenant_id: str,
+    runtime_url: str,
+    lookback_hours: Optional[int] = None,
+    agent_types: Optional[list] = None,
+    http_client=None,
+    automation_rules=None,
+) -> dict:
+    """Identify spans needing human review and enqueue them on the runtime.
+
+    One stateless pass: for each agent type, ``AnnotationAgent`` flags spans
+    per the annotation thresholds, spans already carrying an annotation are
+    dropped, the batch is capped at
+    ``optimization_triggers.max_annotations_per_cycle``, and the remainder is
+    POSTed to the runtime's ``/agents/annotations/queue/enqueue`` worklist.
+    The in-memory queue is re-derivable: a runtime restart just means the next
+    cycle repopulates it.
+    """
+    import httpx
+
+    import cogniverse_agents.routing.annotation_agent as annotation_agent_mod
+    import cogniverse_agents.routing.annotation_storage as annotation_storage_mod
+
+    rules = automation_rules or _load_automation_rules(tenant_id)
+    triggers = rules.optimization_triggers
+    if lookback_hours is None:
+        lookback_hours = triggers.annotation_lookback_hours
+    if agent_types is None:
+        from cogniverse_evaluation.evaluators.agent_evaluators import AGENT_EVALUATORS
+
+        agent_types = list(AGENT_EVALUATORS)
+
+    identified = 0
+    already_annotated = 0
+    to_enqueue: list = []
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(hours=lookback_hours)
+
+    for agent_type in agent_types:
+        agent = annotation_agent_mod.AnnotationAgent(
+            tenant_id=tenant_id, automation_rules=rules
+        )
+        requests = await agent.identify_spans_needing_annotation(
+            lookback_hours=lookback_hours, agent_type=agent_type
+        )
+        identified += len(requests)
+        if not requests:
+            continue
+
+        storage = annotation_storage_mod.AnnotationStorage(
+            tenant_id=tenant_id, agent_type=agent_type
+        )
+        annotated_rows = await storage.query_annotated_spans(
+            start_time=start_time, end_time=end_time, only_human_reviewed=False
+        )
+        annotated_ids = {row.get("span_id") for row in annotated_rows}
+
+        for request in requests:
+            if request.span_id in annotated_ids:
+                already_annotated += 1
+                continue
+            request.tenant_id = tenant_id
+            to_enqueue.append(request)
+
+    if len(to_enqueue) > triggers.max_annotations_per_cycle:
+        logger.info(
+            "Capping %d annotation requests to max_annotations_per_cycle=%d",
+            len(to_enqueue),
+            triggers.max_annotations_per_cycle,
+        )
+        to_enqueue = to_enqueue[: triggers.max_annotations_per_cycle]
+
+    enqueued = 0
+    if to_enqueue:
+        payload = {"requests": [r.to_dict() for r in to_enqueue]}
+        owns_client = http_client is None
+        client = http_client or httpx.AsyncClient(timeout=30.0)
+        try:
+            response = await client.post(
+                f"{runtime_url.rstrip('/')}/agents/annotations/queue/enqueue",
+                json=payload,
+            )
+            response.raise_for_status()
+            enqueued = response.json().get("enqueued", 0)
+        finally:
+            if owns_client:
+                await client.aclose()
+
+    result = {
+        "identified": identified,
+        "already_annotated": already_annotated,
+        "enqueued": enqueued,
+    }
+    logger.info("Annotation cycle complete: %s", result)
+    return result
+
+
+async def _annotation_loop(tenant_id: str, runtime_url: str) -> None:
+    """Sidecar loop: run the annotation cycle on the configured interval."""
+    while True:
+        rules = _load_automation_rules(tenant_id)
+        try:
+            await run_annotation_cycle(
+                tenant_id=tenant_id, runtime_url=runtime_url, automation_rules=rules
+            )
+        except Exception as e:
+            logger.error("Annotation cycle failed: %r", e)
+        await asyncio.sleep(rules.intervals.annotation_interval_minutes * 60)
 
 
 def _build_phoenix_provider(tenant_id: str, http_endpoint: str) -> Optional[object]:
@@ -135,6 +271,14 @@ def main():
             "check so distillation runs even when quality is stable."
         ),
     )
+    parser.add_argument(
+        "--annotation-cycle",
+        action="store_true",
+        help=(
+            "Run a single annotation-identification cycle (flag spans needing "
+            "human review and enqueue them on the runtime worklist) and exit."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -168,6 +312,16 @@ def main():
         telemetry_provider=telemetry_provider,
     )
 
+    if args.annotation_cycle:
+        # One-shot annotation-identification pass for Argo CronWorkflows:
+        # flag spans needing human review and feed the runtime worklist.
+        logger.info(f"Running annotation cycle for tenant={args.tenant_id}")
+        result = asyncio.run(
+            run_annotation_cycle(tenant_id=args.tenant_id, runtime_url=args.runtime_url)
+        )
+        logger.info(f"Annotation cycle result: {result}")
+        sys.exit(0)
+
     if args.once:
         # One-shot scheduled distillation for Argo CronWorkflows: force-build
         # a trigger from the current eval and submit it regardless of
@@ -193,9 +347,16 @@ def main():
     )
 
     async def _run_and_close():
+        # The annotation-identification loop rides in the sidecar next to the
+        # quality-drop loop: detection belongs in the long-lived service, and
+        # the runtime's in-memory worklist needs a feeder in the same pod.
+        annotation_task = asyncio.create_task(
+            _annotation_loop(args.tenant_id, args.runtime_url)
+        )
         try:
             await monitor.run()
         finally:
+            annotation_task.cancel()
             await monitor.close()
 
     try:

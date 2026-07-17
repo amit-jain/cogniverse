@@ -1556,6 +1556,130 @@ async def run_online_routing_evaluation(
     }
 
 
+def _online_eval_agent_types() -> list[str]:
+    """Agent types the online span-eval cycle scores: registry entries with
+    structural evaluators over their own ``cogniverse.*`` domain spans. The
+    ``<ClassName>.process`` base spans carry no canonical payload, so
+    structural scoring of them would only produce defaults."""
+    from cogniverse_evaluation.evaluators.agent_evaluators import AGENT_EVALUATORS
+
+    return [
+        agent_type
+        for agent_type, entry in AGENT_EVALUATORS.items()
+        if entry.structural and entry.span_name.startswith("cogniverse.")
+    ]
+
+
+async def run_online_evaluation(
+    tenant_id: str,
+    lookback_hours: float | None = None,
+    agent_types: list[str] | None = None,
+) -> dict:
+    """Online span scoring for every domain-span agent type.
+
+    Generalizes the routing-only cycle: each agent type's spans are scored by
+    its registry entry's structural evaluators and persisted as
+    ``online_eval.<evaluator>`` annotations. Lookback and per-type batch size
+    default from ``automation_rules.optimization_triggers``
+    (``span_eval_lookback_hours`` / ``span_eval_batch_size``).
+    """
+    from cogniverse_agents.routing.config import (
+        OnlineEvaluationConfig,
+        OptimizationTriggersConfig,
+    )
+    from cogniverse_evaluation.evaluators.agent_evaluators import get_agent_evaluator
+    from cogniverse_evaluation.online_evaluator import OnlineEvaluator
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    config_manager = create_default_config_manager()
+    cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    automation_rules = cfg.get_all().get("automation_rules") or {}
+    online_cfg = OnlineEvaluationConfig(
+        **(automation_rules.get("online_evaluation") or {})
+    )
+    triggers_cfg = OptimizationTriggersConfig(
+        **(automation_rules.get("optimization_triggers") or {})
+    )
+
+    if not online_cfg.enabled:
+        logger.info("Online evaluation disabled in config")
+        return {"status": "disabled"}
+
+    if lookback_hours is None:
+        lookback_hours = float(triggers_cfg.span_eval_lookback_hours)
+    if agent_types is None:
+        agent_types = _online_eval_agent_types()
+
+    telemetry_manager = get_telemetry_manager()
+    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+    project_name = telemetry_manager.config.get_project_name(tenant_id)
+
+    per_agent: dict = {}
+    total_spans = 0
+    total_persisted = 0
+    for agent_type in agent_types:
+        entry = get_agent_evaluator(agent_type)
+        if entry is None or not entry.structural:
+            logger.warning("No structural evaluators for %s — skipping", agent_type)
+            continue
+
+        spans_df = await _query_spans_by_name(
+            telemetry_provider, tenant_id, entry.span_name, lookback_hours
+        )
+        if spans_df.empty:
+            per_agent[agent_type] = {"spans_found": 0, "scores_persisted": 0}
+            continue
+        if len(spans_df) > triggers_cfg.span_eval_batch_size:
+            logger.info(
+                "%s: capping %d spans to span_eval_batch_size=%d",
+                agent_type,
+                len(spans_df),
+                triggers_cfg.span_eval_batch_size,
+            )
+            spans_df = spans_df.head(triggers_cfg.span_eval_batch_size)
+
+        evaluator = OnlineEvaluator(
+            provider=telemetry_provider,
+            project_name=project_name,
+            config=online_cfg,
+            agent_type=agent_type,
+        )
+        if agent_type != "routing":
+            # config.evaluators names the routing evaluators; every other
+            # agent type runs its own registry-defined structural set.
+            evaluator.evaluator_names = list(entry.structural.keys())
+
+        scores_persisted = 0
+        for _, row in spans_df.iterrows():
+            results = await evaluator.evaluate_span(row.to_dict())
+            scores_persisted += len(results)
+
+        per_agent[agent_type] = {
+            "spans_found": len(spans_df),
+            "scores_persisted": scores_persisted,
+            "statistics": evaluator.get_statistics(),
+        }
+        total_spans += len(spans_df)
+        total_persisted += scores_persisted
+        logger.info(
+            "%s: evaluated %d spans, persisted %d scores",
+            agent_type,
+            len(spans_df),
+            scores_persisted,
+        )
+
+    return {
+        "status": "success",
+        "spans_found": total_spans,
+        "scores_persisted": total_persisted,
+        "agents": per_agent,
+    }
+
+
 async def run_profile_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
@@ -2465,6 +2589,7 @@ def build_parser() -> argparse.ArgumentParser:
             "workflow",
             "gateway-thresholds",
             "online-routing-eval",
+            "online-eval",
             "profile",
             "entity-extraction",
             "synthetic",
@@ -2683,6 +2808,13 @@ def main():
     elif args.mode == "online-routing-eval":
         result = asyncio.run(
             run_online_routing_evaluation(
+                tenant_id=args.tenant_id,
+                lookback_hours=args.lookback_hours,
+            )
+        )
+    elif args.mode == "online-eval":
+        result = asyncio.run(
+            run_online_evaluation(
                 tenant_id=args.tenant_id,
                 lookback_hours=args.lookback_hours,
             )
