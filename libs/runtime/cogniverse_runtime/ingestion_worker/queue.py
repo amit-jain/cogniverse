@@ -12,12 +12,32 @@ Producer-consumer split:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import List, Optional
 
 import redis.asyncio as aioredis
 from redis.exceptions import ResponseError
+
+logger = logging.getLogger(__name__)
+
+
+def _int_env(name: str, default: int) -> int:
+    """Parse an int env var, falling back to ``default`` on a malformed value.
+
+    A bad value (e.g. a typo'd number) would otherwise raise at import and
+    crash-loop the worker instead of degrading to the default with a warning.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using default %d", name, raw, default)
+        return default
+
 
 QUEUE_STREAM = "ingest:queue"
 ACTIVE_KEY_PREFIX = "ingest:active:"
@@ -28,17 +48,15 @@ ACTIVE_KEY_PREFIX = "ingest:active:"
 # backpressure. Each increment refreshes the TTL, so a continuously-ingesting
 # tenant keeps the key alive while a stale leaked counter expires on its own.
 # Must exceed the longest expected ingestion job.
-ACTIVE_TTL_SECONDS = int(os.environ.get("INGEST_ACTIVE_TTL_SECONDS", "3600"))
+ACTIVE_TTL_SECONDS = _int_env("INGEST_ACTIVE_TTL_SECONDS", 3600)
 
 # Per-job status stream bounds. Without them each ingest left an immortal
 # ``ingest:status:<id>`` stream in Redis: no length cap (a chatty job grew it
 # unbounded) and no TTL (it lived forever after the job finished). The cap
 # keeps the most recent events; the sliding TTL reclaims a finished job's
 # stream while a still-active job keeps refreshing it.
-STATUS_STREAM_MAXLEN = int(os.environ.get("INGEST_STATUS_STREAM_MAXLEN", "1000"))
-STATUS_STREAM_TTL_SECONDS = int(
-    os.environ.get("INGEST_STATUS_STREAM_TTL_SECONDS", str(6 * 60 * 60))
-)
+STATUS_STREAM_MAXLEN = _int_env("INGEST_STATUS_STREAM_MAXLEN", 1000)
+STATUS_STREAM_TTL_SECONDS = _int_env("INGEST_STATUS_STREAM_TTL_SECONDS", 6 * 60 * 60)
 
 
 @dataclass(frozen=True)
