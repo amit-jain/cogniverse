@@ -302,10 +302,11 @@ def up(
             )
 
     dev_image_overrides: dict[str, str] = {}
+    image_version: str | None = None
     if project_root and has_workspace_source(project_root):
         console.print("[cyan]Building container images...[/cyan]")
-        # Derive the git version once so the built image tag and the deployed
-        # --set override are guaranteed identical.
+        # Derive the git version once so the built image tag, the deployed
+        # --set override, and the stamped chart version are all identical.
         image_version = dev_version(project_root)
         tags = build_images(
             project_root, values_files=values_files, version=image_version
@@ -429,7 +430,12 @@ def up(
         set_values["runtime.backend"] = host_backend
         set_values["dashboard.backend"] = host_backend
     console.print("[cyan]Deploying Helm release...[/cyan]")
-    helm_install(chart_path, values_files, set_values=set_values or None)
+    helm_install(
+        chart_path,
+        values_files,
+        set_values=set_values or None,
+        chart_version=image_version,
+    )
     console.print("[green]Helm release deployed[/green]")
 
     # 8. Deploy workflow templates
