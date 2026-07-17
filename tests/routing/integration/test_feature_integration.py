@@ -360,3 +360,92 @@ class TestDatasetVersioningIntegration:
             assert entry["row_count"] > 0, (
                 f"Version {entry['version']} has 0 rows — data not persisted"
             )
+
+
+def _write_domain_span(tm, tenant_id, span_name, input_value, output):
+    """Write a domain span the way the agents actually emit them."""
+    from cogniverse_foundation.telemetry.span_contract import record_span_io
+
+    with tm.span(name=span_name, tenant_id=tenant_id) as span:
+        record_span_io(span, input_value=input_value, output=output)
+    tm.force_flush(timeout_millis=5000)
+
+
+class TestOnlineEvaluationAllAgentTypes:
+    """run_online_evaluation scores every domain-span agent type through the
+    per-agent evaluator registry and persists ``online_eval.<name>``
+    annotations — routing is no longer the only agent with live scoring."""
+
+    @pytest.mark.asyncio
+    async def test_scores_each_domain_agent_type(
+        self,
+        vespa_instance,
+        telemetry_manager_with_phoenix,
+        real_provider,
+        project_name,
+        test_tenant_id,
+    ):
+        from cogniverse_runtime.optimization_cli import run_online_evaluation
+
+        tm = telemetry_manager_with_phoenix
+        _write_domain_span(
+            tm,
+            test_tenant_id,
+            "cogniverse.query_enhancement",
+            "find cats",
+            {"enhanced_query": "find cats", "variant_count": 1, "confidence": 0.7},
+        )
+        _write_domain_span(
+            tm,
+            test_tenant_id,
+            "cogniverse.profile_selection",
+            "find cat videos",
+            {
+                "selected_profile": "video_colpali_smol500_mv_frame",
+                "modality": "video",
+                "intent": "search",
+                "confidence": 0.9,
+            },
+        )
+        _write_routing_spans(
+            tm, test_tenant_id, [("find cat videos", "search_agent", 0.9)]
+        )
+        wait_for_phoenix_processing(delay=2)
+
+        result = await run_online_evaluation(
+            tenant_id=test_tenant_id, lookback_hours=1.0
+        )
+
+        assert result["status"] == "success"
+        agents = result["agents"]
+        assert agents["query_enhancement"]["spans_found"] == 1
+        assert agents["query_enhancement"]["scores_persisted"] == 1
+        assert agents["profile_selection"]["spans_found"] == 1
+        assert agents["profile_selection"]["scores_persisted"] == 1
+        assert agents["routing"]["spans_found"] == 1
+        assert agents["routing"]["scores_persisted"] == 2
+
+        # The persisted annotations carry the registry-exact scores: an
+        # identity enhancement scores 0.0/no_enhancement.
+        end = datetime.now(timezone.utc)
+        spans = await real_provider.traces.get_spans(
+            project=project_name,
+            start_time=end - timedelta(hours=1),
+            end_time=end,
+            filters={"name": "cogniverse.query_enhancement"},
+            limit=100,
+        )
+        annotations = None
+        for _ in range(15):  # annotation indexing is eventually consistent
+            annotations = await real_provider.annotations.get_annotations(
+                spans_df=spans,
+                project=project_name,
+                annotation_names=["online_eval.enhancement_effect"],
+            )
+            if annotations is not None and not annotations.empty:
+                break
+            await asyncio.sleep(1)
+        assert annotations is not None and not annotations.empty
+        row = annotations.iloc[0]
+        assert row["result.label"] == "no_enhancement"
+        assert float(row["result.score"]) == 0.0
