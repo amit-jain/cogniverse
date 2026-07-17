@@ -133,6 +133,9 @@ class TestAnnotationQueueStateTransitions:
         result = queue.complete("span-1", label="correct_routing")
         assert result.status == AnnotationStatus.COMPLETED
         assert result.completed_at is not None
+        # The reviewer's label is captured, not silently dropped.
+        assert result.label == "correct_routing"
+        assert result.to_dict()["label"] == "correct_routing"
 
     def test_complete_from_pending(self):
         queue = AnnotationQueue()
