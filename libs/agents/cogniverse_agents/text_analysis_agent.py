@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 import dspy
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from cogniverse_agents._confidence import parse_confidence
@@ -397,9 +397,15 @@ async def analyze_text_endpoint(request: AnalyzeRequest):
             agent.analyze_text, request.text, request.analysis_type
         )
         return {"status": "success", "analysis": result}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        # Bad client input (e.g. an empty tenant_id) — a 400, not a 500.
+        logger.info(f"Text analysis rejected invalid input: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Text analysis failed: {e}")
-        raise
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

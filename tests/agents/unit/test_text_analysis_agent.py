@@ -406,6 +406,38 @@ class TestTextAnalysisEndpoints:
                 # Should return 500 error
                 assert response.status_code == 500
 
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
+    @patch("cogniverse_foundation.config.utils.get_config")
+    def test_analyze_endpoint_bad_input_returns_400(
+        self,
+        mock_get_config,
+        mock_initialize_dspy,
+        mock_register_signature,
+    ):
+        """A ValueError (bad client input, e.g. an empty tenant) is a 400, not
+        the 500 the endpoint used to re-raise for every error."""
+        mock_get_config.return_value = {
+            "text_analysis_port": 8005,
+            "llm_model": "gpt-4",
+            "llm_base_url": "http://localhost:11434",
+        }
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            with patch.object(TextAnalysisAgent, "analyze_text") as mock_analyze:
+                mock_analyze.side_effect = ValueError("bad analysis_type")
+                response = client.post(
+                    "/analyze",
+                    json={
+                        "text": "Test text",
+                        "tenant_id": "test_tenant",
+                        "analysis_type": "summary",
+                    },
+                )
+                assert response.status_code == 400
+
     def test_health_endpoint(self):
         """GET /health reports agent status and capabilities (A2A probe)."""
         import cogniverse_agents.text_analysis_agent as ta_module
