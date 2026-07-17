@@ -674,6 +674,12 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
     auto-installs / auto-starts Ollama and pulls the test model so
     ``http://localhost:11434`` actually answers.
 
+    When the production primary IS live, the config is kept with one
+    exception: ``llm_config.teacher`` is probed separately and rewritten to
+    the verified primary when its own server is down or lacks its model —
+    every endpoint in the materialised config must answer, or real DSPy
+    compiles (which call the teacher) fail with connection errors.
+
     Defaults are overridable via env vars ``TEST_LLM_MODEL`` /
     ``TEST_LLM_API_BASE`` for operators who want a different LM target.
 
@@ -709,7 +715,7 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
         and _probe_openai_compat(cfg_api_base)
         and _openai_compat_has_model(cfg_api_base, cfg_model)
     ):
-        # Keep the production config verbatim — the OAI-compat path in
+        # Keep the production primary verbatim — the OAI-compat path in
         # ``ensure_host_ollama`` will export TEST_LLM_API_BASE / _MODEL
         # to match so ``tests/fixtures/llm.py`` resolves the same target.
         test_model = (
@@ -718,6 +724,24 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
             else cfg_model
         )
         test_api_base = cfg_api_base
+
+        # The probes above verified only the primary. The teacher
+        # (``BootstrapFewShot`` demo generation in real DSPy compiles) is
+        # a separate server that is often not deployed locally; a dead
+        # teacher endpoint fails every real compile with a connection
+        # error. Point it at the verified primary unless it is itself
+        # live and serving its configured model.
+        teacher = blob["llm_config"].setdefault("teacher", {})
+        teacher_base = teacher.get("api_base")
+        teacher_model = teacher.get("model")
+        if not (
+            teacher_base
+            and teacher_model
+            and _probe_openai_compat(teacher_base)
+            and _openai_compat_has_model(teacher_base, teacher_model)
+        ):
+            teacher["api_base"] = cfg_api_base
+            teacher["model"] = cfg_model
     else:
         test_model = env_model or "qwen2.5:7b"
         test_api_base = env_api_base or "http://localhost:11434"
