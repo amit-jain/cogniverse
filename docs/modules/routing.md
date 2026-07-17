@@ -45,7 +45,7 @@ libs/agents/cogniverse_agents/
 │   ├── __init__.py
 │   ├── annotation_agent.py                # AnnotationAgent (identifies routing spans needing human review)
 │   ├── annotation_queue.py                # AnnotationQueue (in-memory pending/assigned/completed queue)
-│   ├── annotation_storage.py              # RoutingAnnotationStorage (persists routing annotations)
+│   ├── annotation_storage.py              # AnnotationStorage (persists per-agent-type annotations; RoutingAnnotationStorage alias)
 │   ├── config.py                          # AutomationRulesConfig + annotation/optimization threshold schemas
 │   ├── dspy_relationship_router.py        # ComposableQueryAnalysisModule, DSPyBasicRoutingModule, DSPyAdvancedRoutingModule
 │   ├── dspy_routing_signatures.py         # DSPy signatures (BasicQueryAnalysis, QueryReformulation, AdvancedRouting, ...)
@@ -463,7 +463,9 @@ def predict_benefit(self, fusion_context: Dict[str, float]) -> float:
 **Key Method**:
 ```python
 async def identify_spans_needing_annotation(
-    self, lookback_hours: Optional[int] = None
+    self,
+    lookback_hours: Optional[int] = None,
+    agent_type: str = "routing",
 ) -> List[AnnotationRequest]:
     """
     Query cogniverse.routing spans from the telemetry provider, score each with
@@ -477,7 +479,9 @@ max_annotations_per_run=50, automation_rules=None)` — an `AutomationRulesConfi
 can override the individual threshold kwargs.
 
 `routing/annotation_queue.py`'s `AnnotationQueue` tracks requests through `pending -> assigned -> completed`
-states; `routing/annotation_storage.py`'s `RoutingAnnotationStorage` persists completed annotations;
+states; `routing/annotation_storage.py`'s `AnnotationStorage` persists completed annotations under a
+per-agent-type Phoenix annotation name (`{agent_type}_annotation`; routing keeps `routing_annotation`,
+and `RoutingAnnotationStorage` remains as an alias);
 `routing/orchestration_annotation_storage.py`'s `OrchestrationAnnotationStorage` does the same for
 orchestration-workflow-level annotations.
 

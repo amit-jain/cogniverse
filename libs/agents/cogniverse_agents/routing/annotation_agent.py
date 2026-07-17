@@ -68,6 +68,8 @@ class AnnotationRequest:
     completed_at: Optional[datetime] = None
     # The human reviewer's annotation label, captured on completion.
     label: Optional[str] = None
+    # Which agent's decision this request reviews.
+    agent_type: str = "routing"
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for storage"""
@@ -91,6 +93,7 @@ class AnnotationRequest:
                 self.completed_at.isoformat() if self.completed_at else None
             ),
             "label": self.label,
+            "agent_type": self.agent_type,
         }
 
 
@@ -157,25 +160,34 @@ class AnnotationAgent:
         )
 
     async def identify_spans_needing_annotation(
-        self, lookback_hours: Optional[int] = None
+        self,
+        lookback_hours: Optional[int] = None,
+        agent_type: str = "routing",
     ) -> List[AnnotationRequest]:
         """
-        Identify routing spans that need human annotation
+        Identify an agent type's spans that need human annotation
 
         Args:
             lookback_hours: How far back to look (defaults to failure_lookback_hours)
+            agent_type: Which agent's spans to review (evaluator-registry key)
 
         Returns:
             List of AnnotationRequest objects prioritized by importance
         """
+        from cogniverse_evaluation.evaluators.agent_evaluators import (
+            get_agent_evaluator,
+        )
+
         lookback_hours = lookback_hours or self.failure_lookback_hours
+        entry = get_agent_evaluator(agent_type)
+        span_name = entry.span_name if entry else SPAN_NAME_ROUTING
 
         logger.info(
-            f"🔍 Identifying spans needing annotation "
+            f"🔍 Identifying {agent_type} spans needing annotation "
             f"(lookback: {lookback_hours}h, max: {self.max_annotations_per_run})"
         )
 
-        # Query routing spans from telemetry provider
+        # Query the agent's spans from the telemetry provider
         # Use UTC timezone-aware datetime to avoid timezone confusion
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=lookback_hours)
@@ -184,7 +196,7 @@ class AnnotationAgent:
             project=self.project_name,
             start_time=start_time,
             end_time=end_time,
-            filters={"name": SPAN_NAME_ROUTING},
+            filters={"name": span_name},
             limit=10000,
         )
 
@@ -192,18 +204,20 @@ class AnnotationAgent:
             logger.info(f"📭 No spans found in project {self.project_name}")
             return []
 
-        routing_spans_df = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
+        agent_spans_df = spans_df[spans_df["name"] == span_name]
 
-        if routing_spans_df.empty:
-            logger.info("📭 No routing spans found")
+        if agent_spans_df.empty:
+            logger.info(f"📭 No {agent_type} spans found")
             return []
 
-        logger.info(f"📊 Found {len(routing_spans_df)} routing spans to analyze")
+        logger.info(f"📊 Found {len(agent_spans_df)} {agent_type} spans to analyze")
 
         annotation_requests = []
 
-        for _, span_row in routing_spans_df.iterrows():
-            annotation_request = self._analyze_span_for_annotation(span_row)
+        for _, span_row in agent_spans_df.iterrows():
+            annotation_request = self._analyze_span_for_annotation(
+                span_row, agent_type=agent_type
+            )
             if annotation_request:
                 annotation_requests.append(annotation_request)
 
@@ -219,26 +233,45 @@ class AnnotationAgent:
 
         return annotation_requests
 
-    def _analyze_span_for_annotation(self, span_row) -> Optional[AnnotationRequest]:
+    def _analyze_span_for_annotation(
+        self, span_row, agent_type: str = "routing"
+    ) -> Optional[AnnotationRequest]:
         """
         Analyze a single span to determine if it needs annotation
 
         Args:
             span_row: Pandas Series with span data
+            agent_type: Which agent's decision the span records
 
         Returns:
             AnnotationRequest if span needs annotation, None otherwise
         """
-        routing_attrs = span_row.get("attributes.routing")
-        if not routing_attrs or not isinstance(routing_attrs, dict):
-            return None
+        from cogniverse_foundation.telemetry.span_contract import read_span_io
 
-        chosen_agent = routing_attrs.get("chosen_agent")
-        confidence = routing_attrs.get("confidence")
-        query = routing_attrs.get("query")
+        # Canonical slots first (what the emitters actually write); the legacy
+        # attributes.routing dict is a fallback for pre-migration spans — the
+        # gateway never set it, so reading only the legacy attribute made this
+        # agent identify zero spans on real data.
+        io = read_span_io(span_row)
+        output = io["output"] if isinstance(io.get("output"), dict) else {}
+        routing_attrs = span_row.get("attributes.routing")
+        if not isinstance(routing_attrs, dict):
+            routing_attrs = {}
+
+        chosen_agent = (
+            output.get("chosen_agent")
+            or output.get("selected_profile")
+            or routing_attrs.get("chosen_agent")
+        )
+        confidence = output.get("confidence")
+        if confidence is None:
+            confidence = routing_attrs.get("confidence")
+        query = io.get("input") or routing_attrs.get("query")
         context = routing_attrs.get("context", {})
 
-        if not chosen_agent or confidence is None or not query:
+        if confidence is None or not query:
+            return None
+        if agent_type in ("routing", "gateway") and not chosen_agent:
             return None
 
         confidence = parse_confidence(confidence)
@@ -247,7 +280,23 @@ class AnnotationAgent:
         if isinstance(timestamp, str):
             timestamp = pd.to_datetime(timestamp)
 
-        outcome, outcome_details = self.evaluator._classify_routing_outcome(span_row)
+        if agent_type in ("routing", "gateway"):
+            outcome, outcome_details = self.evaluator._classify_routing_outcome(
+                span_row
+            )
+        else:
+            # Non-routing agents have no downstream-agent handoff to classify;
+            # the span's own status is the outcome signal.
+            status_code = span_row.get("status_code", "OK")
+            if status_code == "ERROR":
+                outcome, outcome_details = RoutingOutcome.FAILURE, "span_error"
+            elif status_code == "OK":
+                outcome, outcome_details = (
+                    RoutingOutcome.SUCCESS,
+                    "completed_successfully",
+                )
+            else:
+                outcome, outcome_details = RoutingOutcome.AMBIGUOUS, "unclear_outcome"
 
         # Determine if annotation needed and priority
         needs_annotation, priority, reason = self._needs_annotation(
@@ -264,7 +313,7 @@ class AnnotationAgent:
             span_id=span_id,
             timestamp=timestamp,
             query=query,
-            chosen_agent=chosen_agent,
+            chosen_agent=chosen_agent or "",
             routing_confidence=confidence,
             outcome=outcome,
             priority=priority,
@@ -275,6 +324,7 @@ class AnnotationAgent:
                 "span_status": span_row.get("status"),
                 "latency_ms": span_row.get("latency_ms", 0),
             },
+            agent_type=agent_type,
         )
 
     def _needs_annotation(
