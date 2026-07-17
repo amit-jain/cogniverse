@@ -119,6 +119,41 @@ class TestAnnotationRequestAgentType:
         assert request.agent_type == "routing"
         assert request.to_dict()["agent_type"] == "routing"
 
+    def test_to_dict_from_dict_round_trip(self):
+        from datetime import datetime, timezone
+
+        from cogniverse_agents.routing.annotation_agent import (
+            AnnotationPriority,
+            AnnotationRequest,
+        )
+        from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
+
+        original = AnnotationRequest(
+            span_id="s9",
+            timestamp=datetime(2026, 7, 17, 10, 0, tzinfo=timezone.utc),
+            query="find robot videos",
+            chosen_agent="video_search",
+            routing_confidence=0.4,
+            outcome=RoutingOutcome.AMBIGUOUS,
+            priority=AnnotationPriority.HIGH,
+            reason="low confidence",
+            context={"k": "v"},
+            agent_type="profile_selection",
+            tenant_id="acme:acme",
+        )
+
+        rebuilt = AnnotationRequest.from_dict(original.to_dict())
+
+        assert rebuilt.span_id == "s9"
+        assert rebuilt.query == "find robot videos"
+        assert rebuilt.chosen_agent == "video_search"
+        assert rebuilt.routing_confidence == 0.4
+        assert rebuilt.outcome == RoutingOutcome.AMBIGUOUS
+        assert rebuilt.priority == AnnotationPriority.HIGH
+        assert rebuilt.context == {"k": "v"}
+        assert rebuilt.agent_type == "profile_selection"
+        assert rebuilt.tenant_id == "acme:acme"
+
 
 class TestSpanAnalysisReadsCanonicalSlots:
     def _agent(self, **kwargs):

@@ -269,6 +269,14 @@ class AssignRequest(BaseModel):
 
 class CompleteRequest(BaseModel):
     label: Optional[str] = None
+    reasoning: str = ""
+    annotator: str = "human"
+
+
+class EnqueueBatchRequest(BaseModel):
+    """Batch of annotation requests in ``AnnotationRequest.to_dict`` shape."""
+
+    requests: List[Dict[str, Any]]
 
 
 @router.get("/annotations/queue")
@@ -301,13 +309,105 @@ async def assign_annotation(span_id: str, body: AssignRequest) -> Dict[str, Any]
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/annotations/queue/{span_id}/complete")
-async def complete_annotation(span_id: str, body: CompleteRequest) -> Dict[str, Any]:
-    """Mark an annotation as completed."""
+@router.post("/annotations/queue/enqueue")
+async def enqueue_annotations(body: EnqueueBatchRequest) -> Dict[str, Any]:
+    """Enqueue a batch of annotation requests (worklist ingress).
+
+    Called by the scheduled annotation-identification cycle; also usable by
+    external systems. Duplicated span_ids (already in the queue) are skipped.
+    """
+    from cogniverse_agents.routing.annotation_agent import AnnotationRequest
+
     queue = get_annotation_queue()
     try:
+        requests = [AnnotationRequest.from_dict(item) for item in body.requests]
+    except (KeyError, ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
+
+    enqueued = queue.enqueue_batch(requests)
+    return {
+        "enqueued": enqueued,
+        "skipped": len(requests) - enqueued,
+        "queue_total": queue.statistics()["total"],
+    }
+
+
+@router.post("/annotations/queue/{span_id}/complete")
+async def complete_annotation(span_id: str, body: CompleteRequest) -> Dict[str, Any]:
+    """Mark an annotation as completed, persisting the label durably.
+
+    The label is the whole value of the review — persistence happens BEFORE
+    the in-memory completion, so a telemetry outage leaves the item open for
+    retry (502) instead of silently discarding the reviewer's work. Items
+    enqueued without a tenant_id can't be persisted; they complete in-memory
+    with ``persisted: false``.
+    """
+    from cogniverse_agents.routing.annotation_agent import AnnotationStatus
+
+    queue = get_annotation_queue()
+    request = queue.get(span_id)
+    if request is None:
+        raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
+    # Guard status BEFORE persisting so a re-complete of a finished item can't
+    # write a duplicate annotation.
+    if request.status not in (AnnotationStatus.PENDING, AnnotationStatus.ASSIGNED):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot complete span {span_id}: status is {request.status.value}"
+            ),
+        )
+
+    persisted = False
+    if body.label is not None:
+        import cogniverse_agents.routing.annotation_storage as annotation_storage_mod
+        from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel
+
+        try:
+            label_enum = AnnotationLabel(body.label)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown annotation label '{body.label}'; expected one of "
+                    f"{sorted(m.value for m in AnnotationLabel)}"
+                ),
+            )
+        if request.tenant_id:
+            storage = annotation_storage_mod.AnnotationStorage(
+                tenant_id=request.tenant_id, agent_type=request.agent_type
+            )
+            try:
+                await storage.store_human_annotation(
+                    span_id=span_id,
+                    label=label_enum,
+                    reasoning=body.reasoning,
+                    annotator_id=body.annotator,
+                )
+                persisted = True
+            except Exception as e:
+                logger.error("Annotation persist failed for span %s: %r", span_id, e)
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Annotation could not be persisted to the telemetry "
+                        "backend; the item remains open for retry."
+                    ),
+                )
+        else:
+            logger.warning(
+                "Annotation for span %s completed without tenant_id — label "
+                "kept in-memory only",
+                span_id,
+            )
+
+    try:
         request = queue.complete(span_id=span_id, label=body.label)
-        return {"status": "completed", "annotation": request.to_dict()}
+        return {
+            "status": "completed",
+            "persisted": persisted,
+            "annotation": request.to_dict(),
+        }
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Span {span_id} not in queue")
     except ValueError as e:
