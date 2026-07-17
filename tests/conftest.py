@@ -33,7 +33,9 @@ def face_embed_container():
     import requests as _requests
 
     repo = Path(__file__).resolve().parents[1]
-    image = "cogniverse-face-embed:local"
+    # Same dev-tag scheme as the chart's sidecar builds (<appVersion>-dev),
+    # so the test image sits in the versioned family instead of an ad-hoc tag.
+    image = "cogniverse/face-embed:0.1.0-dev"
     have = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
     if have.returncode != 0:
         subprocess.run(
