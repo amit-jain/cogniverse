@@ -525,6 +525,8 @@ async def _optimize_agent(
 
     from dspy.teleprompt import BootstrapFewShot
 
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
     teleprompter = BootstrapFewShot(
         max_bootstrapped_demos=optimizer.optimization_settings[
             "max_bootstrapped_demos"
@@ -547,8 +549,6 @@ async def _optimize_agent(
         # Store compiled module via ArtifactManager (same path the other modes use)
         import json as _json
 
-        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-
         artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
         artifact_id = await artifact_manager.save_blob(
             kind="model",
@@ -556,15 +556,74 @@ async def _optimize_agent(
             content=_json.dumps(compiled.dump_state(), default=str),
         )
 
-        return {
+        # Route the compiled instructions into the SERVING path: a versioned
+        # prompts dataset promoted as a 10% canary, which the dispatcher's
+        # per-request overlay already applies. The blob above is not loaded by
+        # any agent, so without this the compile output never reached traffic.
+        served = await _serve_compiled_prompts(artifact_manager, agent_name, compiled)
+
+        result = {
             "status": "success",
             "artifact_id": artifact_id,
             "training_examples": len(trainset),
         }
+        if served:
+            result["served"] = served
+        return result
 
     except Exception as e:
         logger.error(f"DSPy compilation failed for {agent_name}: {e}")
         return {"status": "failed", "error": str(e)}
+
+
+# Where a triggered-mode compile is served from: the DISPATCH agent name the
+# overlay resolves artefacts under, and the predictor attribute on that
+# agent's DSPy module whose instructions the overlay swaps.
+_SERVE_TARGET = {
+    "search": ("search_agent", "search_optimizer"),
+    "summary": ("summarizer_agent", "summarizer"),
+    "report": ("detailed_report_agent", "report_generator"),
+}
+
+
+async def _serve_compiled_prompts(artifact_manager, agent_name: str, compiled):
+    """Publish a compiled module's instructions as a canaried prompt version.
+
+    Returns ``{"served_agent", "version", "traffic_pct"}`` or ``None`` when
+    the compile produced no instructions (nothing to serve). The canary path
+    (10% traffic) is the regression protection: promotion to active stays a
+    deliberate step (operator or quality monitor) judged against
+    ``optimization_triggers.optimization_improvement_threshold``.
+    """
+    target = _SERVE_TARGET.get(agent_name)
+    if target is None:
+        return None
+    served_agent, predictor_attr = target
+
+    instructions = None
+    named = getattr(compiled, "named_predictors", None)
+    for _, predictor in named() if callable(named) else []:
+        candidate = getattr(getattr(predictor, "signature", None), "instructions", None)
+        if candidate:
+            instructions = str(candidate)
+            break
+    if not instructions:
+        logger.warning(
+            "Compiled %s module has no instructions — nothing to serve", agent_name
+        )
+        return None
+
+    _, version = await artifact_manager.save_prompts_versioned(
+        served_agent, {predictor_attr: instructions}
+    )
+    await artifact_manager.promote_to_canary(served_agent, version, traffic_pct=10)
+    logger.info(
+        "Serving compiled %s prompts as %s v%d canary at 10%%",
+        agent_name,
+        served_agent,
+        version,
+    )
+    return {"served_agent": served_agent, "version": version, "traffic_pct": 10}
 
 
 def _prune_aged_files(root: str, *, older_than_days: float) -> dict:

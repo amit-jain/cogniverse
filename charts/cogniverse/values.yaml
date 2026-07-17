@@ -71,6 +71,16 @@ argo:
     scheduledDistillation:
       enabled: true
       schedule: "0 5 * * *"  # Daily 5 AM UTC (after the optimization cycle)
+    annotationCycle:
+      enabled: true
+      # Mirrors automation_rules.intervals.annotation_interval_minutes (30);
+      # tests/charts pins the identity.
+      schedule: "*/30 * * * *"
+    annotationFeedback:
+      enabled: true
+      # Mirrors automation_rules.intervals.feedback_interval_minutes (15);
+      # the cycle also self-gates on feedback.poll_interval_minutes.
+      schedule: "*/15 * * * *"
     # Monthly usage + performance reports. Replaces the standalone
     # kubectl-applied ``monthly-reports`` prototype that wrote empty
     # stub JSON. The chart version collects real metrics (per-org

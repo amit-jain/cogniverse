@@ -202,6 +202,7 @@ Every `--mode` value `python -m cogniverse_runtime.optimization_cli` accepts:
 | `workflow` | Compiles orchestration workflow strategies via `WorkflowIntelligence` |
 | `gateway-thresholds` | Recalibrates `fast_path_confidence_threshold` / `gliner_threshold` from routing spans |
 | `online-routing-eval` | Scores recent `cogniverse.routing` spans (routing outcome + confidence calibration) without compiling anything |
+| `online-eval` | Per-agent-type online span scoring: every domain-span agent (routing, query_enhancement, entity_extraction, profile_selection) scored by its evaluator-registry structural evaluators, persisted as `online_eval.*` annotations |
 | `profile` | Compiles the search-profile-selection module from spans |
 | `entity-extraction` | Compiles `EntityExtractionModule` from `cogniverse.entity_extraction` spans |
 | `rollback` | Restores a previously-snapshotted `--prompts-version`/`--demos-version` via `ArtifactManager.rollback_to_version` |
@@ -447,10 +448,10 @@ compiled module still runs on the agent's regular (smaller/faster) LM in product
 
 ### Optimization Trigger Conditions
 
-Trigger thresholds live in `AutomationRulesConfig` (`cogniverse_agents.routing.config`) and
+Trigger thresholds live in `AutomationRulesConfig` (`cogniverse_agents.routing.config`),
+consumed by the annotation cycles in `quality_monitor_cli`, and
 `QualityMonitor.QualityThresholds` (`cogniverse_evaluation.quality_monitor`), consumed by
-the annotation pipeline and the quality-monitor sidecar respectively — not by a live
-in-process RL loop:
+the quality-monitor sidecar — not by a live in-process RL loop:
 
 | Config | Field | Default | Meaning |
 |---|---|---|---|
@@ -462,10 +463,14 @@ in-process RL loop:
 | `QualityThresholds` | `live_score_floor` | 0.5 | Live-traffic LLM-judge score floor that flags `OPTIMIZE` |
 | `QualityThresholds` | `min_samples_for_verdict` | 10 | Minimum live samples before a verdict is issued for an agent |
 
-Each batch optimization run (see the diagram above): builds a `dspy.Example` trainset from
-approved synthetic data and/or scored spans, compiles with the selected teleprompter, then
-calls `ArtifactManager.promote_if_better()` — which only writes the new artefacts when the
-candidate beats the active baseline (see "Regression-reject gate" above).
+Each batch optimization run (see the diagram above) builds a `dspy.Example` trainset from
+approved synthetic data and/or scored spans and compiles with the selected teleprompter.
+`--mode triggered` then publishes the compiled instructions as a **versioned prompts
+dataset promoted to a 10% canary** (`save_prompts_versioned` + `promote_to_canary`), which
+the dispatcher's per-request overlay serves; promotion of the canary to active is a
+deliberate step (operator or quality monitor) judged against
+`optimization_improvement_threshold`. Callers that hold measured baseline/candidate scores
+use `ArtifactManager.promote_if_better()` — the regression-reject gate (see above).
 
 ---
 
@@ -551,12 +556,26 @@ Standard information retrieval metrics evaluated at multiple K values (1, 5, 10)
 
 ## Stage 5: Annotation Feedback Loop
 
-The annotation pipeline turns low-confidence or failed routing decisions into human- and
-LLM-reviewed labels, persisted back onto the originating telemetry span. It is implemented
-as a set of cooperating classes in `cogniverse_agents.routing` — `AnnotationAgent`,
-`LLMAutoAnnotator`, `AnnotationQueue`, and `RoutingAnnotationStorage` — invoked on a
-schedule (Argo Cron / `IntervalConfig`), consistent with the "batch CLI, not a daemon"
-principle above; there is no always-on in-process polling loop or RL replay buffer.
+The annotation pipeline turns low-confidence or failed agent decisions — for **every
+agent type** (search, summary, report, gateway, routing, query_enhancement,
+entity_extraction, profile_selection) — into human- and LLM-reviewed labels, persisted
+as per-agent Phoenix span annotations (`{agent_type}_annotation`; routing keeps the
+historical `routing_annotation`). It is implemented as cooperating classes in
+`cogniverse_agents.routing` — `AnnotationAgent`, `LLMAutoAnnotator`, `AnnotationQueue`,
+and `AnnotationStorage` — plus two scheduled cycles in
+`cogniverse_runtime.quality_monitor_cli`:
+
+- `run_annotation_cycle` (`--annotation-cycle`, the `annotation-cycle` CronWorkflow, and
+  a loop inside the quality-monitor sidecar): identifies spans needing review per agent
+  type, drops already-annotated spans, caps at
+  `optimization_triggers.max_annotations_per_cycle`, and POSTs the worklist to the
+  runtime's `POST /agents/annotations/queue/enqueue`.
+- Reviewers work the queue over REST (`assign` / `complete`) or the dashboard;
+  completion persists the label durably **before** the in-memory state flips, so a
+  telemetry outage leaves the item open for retry instead of losing the label.
+
+This stays consistent with the "batch CLI, not a daemon" principle above; the pending
+worklist is in-memory and re-derivable, the labels are durable.
 
 ### End-to-End Flow
 
@@ -594,14 +613,18 @@ sequenceDiagram
 
 ### Phoenix Telemetry Span Polling
 
-`AnnotationAgent.identify_spans_needing_annotation` queries Phoenix for `cogniverse.routing`
-spans over `failure_lookback_hours` (default 24h), caps output at `max_annotations_per_run`
+`AnnotationAgent.identify_spans_needing_annotation(agent_type=...)` queries Phoenix for
+the agent type's spans (the evaluator registry supplies the span name) over
+`failure_lookback_hours` (default 24h), reads the canonical `input.value`/`output.value`
+slots (legacy `attributes.routing` as fallback), caps output at `max_annotations_per_run`
 (default 50), and prioritizes by confidence and outcome. `IntervalConfig` declares the
-intended cadence for a scheduled runner (`span_eval_interval_minutes`=15,
-`annotation_interval_minutes`=30, `feedback_interval_minutes`=15) and `FeedbackConfig`
-declares `poll_interval_minutes`=15 — these are configuration knobs for whatever schedules
-the batch run (e.g. an Argo CronWorkflow), not a live `while True: sleep()` loop in the
-runtime process.
+cadences and the chart mirrors them (identity-tested in
+`tests/charts/test_annotation_cronworkflows.py`): `annotation_interval_minutes`=30 → the
+`annotation-cycle` CronWorkflow (and the sidecar's annotation loop),
+`feedback_interval_minutes`=15 → the `annotation-feedback` CronWorkflow, and
+`span_eval_interval_minutes` is the intended cadence for `--mode online-eval` runs.
+`FeedbackConfig.poll_interval_minutes` additionally self-gates the feedback cycle via
+config-store state, so scheduling it densely is safe.
 
 ### LLM Auto-Annotation
 
@@ -613,15 +636,18 @@ runtime process.
 
 ### Annotation Storage
 
-`RoutingAnnotationStorage` writes annotations back onto the span as attributes (see
-"What Gets Stored in Telemetry" below) rather than into a separate training-example object.
-`FeedbackConfig.quality_map` defines the label → quality-score mapping intended for
-downstream training signal:
+`AnnotationStorage` (per-agent-type; `RoutingAnnotationStorage` is a back-compat alias)
+persists labels into Phoenix's annotation store under `{agent_type}_annotation` and joins
+them back to spans in `query_annotated_spans`, reading span fields from the canonical
+`input.value`/`output.value` slots. `FeedbackConfig.quality_map` maps labels to the
+quality scores the feedback cycle writes into trigger datasets:
 
 | Annotation Label | Quality score (`FeedbackConfig.quality_map`) |
 |---|---|
-| `correct_routing` | 0.9 |
-| `wrong_routing` | 0.3 |
+| `correct` (generic) | 0.9 |
+| `wrong` (generic) | 0.3 |
+| `correct_routing` (legacy routing) | 0.9 |
+| `wrong_routing` (legacy routing) | 0.3 |
 | `ambiguous` | 0.6 |
 | `insufficient_info` | 0.5 |
 
@@ -637,12 +663,23 @@ sets it explicitly.
 
 ### Automatic Retraining Trigger
 
-`FeedbackConfig.min_annotations_for_update` (default 10) and
-`OptimizationTriggersConfig.min_annotations_for_optimization` (default 50) are the configured
-thresholds for triggering an optimizer run from accumulated annotations; consumption of these
-specific fields to auto-submit an Argo workflow is not wired in the current codebase — the
-`QualityMonitor` sidecar (see below) is the trigger path that is actually wired end-to-end
-today.
+`run_annotation_feedback_cycle` (`quality_monitor_cli --annotation-feedback`, scheduled
+by the `annotation-feedback` CronWorkflow) consumes these thresholds: per agent type it
+counts human-reviewed annotations over `annotation_lookback_hours` and
+
+- at `min_annotations_for_optimization` (default 50) submits the agent's compile
+  workflow — search/summary/report get a `quality_map`-scored trigger dataset plus
+  `--mode triggered`; query_enhancement→`simba`, entity_extraction→`entity-extraction`,
+  profile_selection→`profile`;
+- at `min_annotations_for_update` (default 10) gateway/routing get the cheaper
+  `gateway-thresholds` recalibration (one submit covers both);
+- `min_days_between_optimizations` is a per-agent cooldown and
+  `poll_interval_minutes` a self-gate, both persisted in the config store
+  (`optimization_loop` state), so the stateless cron is idempotent-safe.
+
+This is the annotation-volume twin of the `QualityMonitor` quality-drop trigger (see
+below); both submit Argo workflows through the same
+`submit_argo_optimization_workflow` helper.
 
 ---
 
