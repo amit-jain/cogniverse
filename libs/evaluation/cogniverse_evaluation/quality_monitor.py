@@ -127,6 +127,22 @@ class QualityThresholds:
     min_samples_for_verdict: int = 10
 
 
+@dataclass
+class OptimizationWorkflowPodSpec:
+    """Runtime wiring the spawned optimization pod inherits from its submitter.
+
+    Without it the spawned pod runs the fallback image with no backend
+    endpoints and no config mount — it can start, but never reach Vespa or
+    Phoenix. The submitting pod's chart-rendered values (image, env, config
+    map, devMode source mounts) are the source of truth.
+    """
+
+    image: str = "cogniverse-runtime:latest"
+    env: Dict[str, str] = field(default_factory=dict)
+    config_map: Optional[str] = None
+    dev_source_hostpath: Optional[str] = None
+
+
 async def submit_argo_optimization_workflow(
     http_client,
     argo_api_url: str,
@@ -136,13 +152,65 @@ async def submit_argo_optimization_workflow(
     trigger_label: str,
     parameters: List[Dict[str, str]],
     container_args: List[str],
+    pod_spec: Optional[OptimizationWorkflowPodSpec] = None,
 ) -> bool:
     """Submit one optimization workflow to Argo.
 
     Shared by the quality-drop trigger (``--mode triggered``) and the
     annotation-feedback trigger (per-agent dedicated modes) so both paths
     produce the same workflow shape. Returns True when Argo accepted it.
+
+    When ``http_client`` is None a dedicated client is created with TLS
+    verification disabled: argo-server runs secure mode with a self-signed
+    in-cluster certificate by default, so a default-verifying client (and a
+    plain-HTTP request — the server disconnects it) can never submit.
     """
+    owns_client = http_client is None
+    if owns_client:
+        http_client = httpx.AsyncClient(timeout=30.0, verify=False)
+    pod_spec = pod_spec or OptimizationWorkflowPodSpec()
+    container: Dict[str, Any] = {
+        "image": pod_spec.image,
+        "command": [
+            "python",
+            "-m",
+            "cogniverse_runtime.optimization_cli",
+        ],
+        "args": container_args,
+    }
+    if pod_spec.env:
+        container["env"] = [
+            {"name": name, "value": value} for name, value in pod_spec.env.items()
+        ]
+    volume_mounts: List[Dict[str, Any]] = []
+    volumes: List[Dict[str, Any]] = []
+    if pod_spec.config_map:
+        volume_mounts.append(
+            {
+                "name": "config",
+                "mountPath": "/app/configs/config.json",
+                "subPath": "config.json",
+                "readOnly": True,
+            }
+        )
+        volumes.append({"name": "config", "configMap": {"name": pod_spec.config_map}})
+    if pod_spec.dev_source_hostpath:
+        for name, subdir in (("src-libs", "libs"), ("src-scripts", "scripts")):
+            volume_mounts.append({"name": name, "mountPath": f"/app/{subdir}"})
+            volumes.append(
+                {
+                    "name": name,
+                    "hostPath": {
+                        "path": f"{pod_spec.dev_source_hostpath}/{subdir}",
+                        "type": "Directory",
+                    },
+                }
+            )
+    if volume_mounts:
+        container["volumeMounts"] = volume_mounts
+    template: Dict[str, Any] = {"name": "optimize", "container": container}
+    if volumes:
+        template["volumes"] = volumes
     workflow_manifest = {
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "Workflow",
@@ -152,26 +220,15 @@ async def submit_argo_optimization_workflow(
             "labels": {
                 "app": "cogniverse",
                 "trigger": trigger_label,
-                "tenant": tenant_id,
+                # Label values reject ':' — the canonical tenant form must
+                # be sanitized here; parameters keep the exact value.
+                "tenant": tenant_id.replace(":", "_"),
             },
         },
         "spec": {
             "entrypoint": "optimize",
             "arguments": {"parameters": parameters},
-            "templates": [
-                {
-                    "name": "optimize",
-                    "container": {
-                        "image": "cogniverse-runtime:latest",
-                        "command": [
-                            "python",
-                            "-m",
-                            "cogniverse_runtime.optimization_cli",
-                        ],
-                        "args": container_args,
-                    },
-                }
-            ],
+            "templates": [template],
         },
     }
 
@@ -191,6 +248,9 @@ async def submit_argo_optimization_workflow(
     except Exception as e:
         logger.error(f"Failed to submit Argo workflow: {e}")
         return False
+    finally:
+        if owns_client:
+            await http_client.aclose()
 
 
 class QualityMonitor:
@@ -223,6 +283,7 @@ class QualityMonitor:
         thresholds: Optional[QualityThresholds] = None,
         telemetry_provider=None,
         search_profile: str = "video_colpali_smol500_mv_frame",
+        workflow_pod_spec: Optional[OptimizationWorkflowPodSpec] = None,
     ):
         self.tenant_id = tenant_id
         self.runtime_url = runtime_url.rstrip("/")
@@ -237,6 +298,7 @@ class QualityMonitor:
         self.live_sample_count = live_sample_count
         self.thresholds = thresholds or QualityThresholds()
         self.search_profile = search_profile
+        self.workflow_pod_spec = workflow_pod_spec
         self._telemetry_provider = telemetry_provider
         self._training_decision_model = None
 
@@ -244,6 +306,7 @@ class QualityMonitor:
         self._dataset_store = None
         self._llm_judge = None
         self._http_client = None
+        self._argo_client = None
 
     def _get_dataset_store(self):
         """Lazy-load PhoenixDatasetStore."""
@@ -1112,7 +1175,10 @@ class QualityMonitor:
 
     async def submit_optimization(self, trigger: OptimizationTrigger):
         """Submit Argo optimization workflow via k8s API."""
-        client = self._get_http_client()
+        # Argo submissions use their own client (self-signed TLS tolerated by
+        # the helper when this is None) — NOT the verifying client the golden
+        # eval uses for /search. Tests inject a capture client here.
+        client = getattr(self, "_argo_client", None)
         agents_csv = ",".join(a.value for a in trigger.agents_to_optimize)
         timestamp = trigger.timestamp.strftime("%Y%m%d-%H%M%S")
 
@@ -1144,6 +1210,7 @@ class QualityMonitor:
                 "--trigger-dataset",
                 "{{workflow.parameters.trigger-dataset}}",
             ],
+            pod_spec=self.workflow_pod_spec,
         )
 
     async def update_baseline(

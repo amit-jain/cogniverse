@@ -81,6 +81,16 @@ async def test_real_gateway_and_routing_spans_read_by_consumers(real_telemetry):
     assert gw_out["modality"] == "video"
     assert isinstance(gw_out["confidence"], float)
 
+    # Every routing decision records the calibration it ran under, so
+    # serving state is assertable from telemetry alone (the runtime pod
+    # emits no INFO logs to scrape).
+    routing_out = read_span_io(routing_row)["output"]
+    assert (
+        routing_out["fast_path_confidence_threshold"]
+        == agent.deps.fast_path_confidence_threshold
+    )
+    assert routing_out["gliner_threshold"] == agent.deps.gliner_threshold
+
     # RoutingEvaluator reads the same decision from the routing span.
     outcome, metrics = RoutingEvaluator(provider).evaluate_routing_decision(
         routing_row.to_dict()

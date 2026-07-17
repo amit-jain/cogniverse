@@ -666,7 +666,9 @@ sets it explicitly.
 ### Automatic Retraining Trigger
 
 `run_annotation_feedback_cycle` (`quality_monitor_cli --annotation-feedback`, scheduled
-by the `annotation-feedback` CronWorkflow) consumes these thresholds: per agent type it
+by the `annotation-feedback` CronWorkflow; every tenant-scoped optimization cron takes
+its tenant from `runtime.qualityMonitor.tenantId`, except the daily gateway pipeline
+which deliberately runs against the `__system__` tenant) consumes these thresholds: per agent type it
 counts human-reviewed annotations over `annotation_lookback_hours` and
 
 - at `min_annotations_for_optimization` (default 50) submits the agent's compile
@@ -682,6 +684,41 @@ counts human-reviewed annotations over `annotation_lookback_hours` and
 This is the annotation-volume twin of the `QualityMonitor` quality-drop trigger (see
 below); both submit Argo workflows through the same
 `submit_argo_optimization_workflow` helper.
+
+**One canonical tenant everywhere.** The runtime canonicalizes tenant ids
+(`default` → `default:default`) before emitting spans and keying artifacts, so
+every loop component normalizes the same way or it reads a parallel world real
+traffic never touches: `AnnotationStorage` canonicalizes in its constructor,
+both CLI entrypoints (`quality_monitor_cli`, `optimization_cli`) canonicalize
+`--tenant-id`, and the cycle functions canonicalize at entry (loop state, Argo
+parameters, trigger datasets). Workflow *labels* sanitize the `:` to `_` —
+Kubernetes label values reject colons — while parameters keep the exact
+canonical value.
+
+### Spawned-Workflow Pod Wiring
+
+The workflows both triggers spawn run `optimization_cli` in their own pod, which
+needs the same runtime wiring as its submitter: the deployed image, the backend
+endpoints, the `config.json` mount, and (dev clusters) the devMode source mounts.
+`OptimizationWorkflowPodSpec` (`cogniverse_evaluation.quality_monitor`) carries
+that wiring into the manifest; without it the spawned pod runs a bare fallback
+(`cogniverse-runtime:latest`, no env, no config) that can start but never reach
+Vespa or Phoenix.
+
+The chart sets the contract on every submitting pod (the annotation-feedback
+CronWorkflow and the quality-monitor sidecar), and
+`quality_monitor_cli._workflow_pod_spec_from_env` reads it once at the
+entrypoint:
+
+| Env var | Value (chart-rendered) | Manifest effect |
+|---|---|---|
+| `OPTIMIZATION_WORKFLOW_IMAGE` | the submitter's own image | spawned container image |
+| `OPTIMIZATION_CONFIG_MAP` | `{release}-config` | `config.json` mount |
+| `OPTIMIZATION_DEV_HOSTPATH` | `devMode.hostPath` (devMode only) | `src-libs`/`src-scripts` hostPath mounts |
+| `BACKEND_URL`, `BACKEND_PORT`, `TELEMETRY_HTTP_ENDPOINT`, `TELEMETRY_OTLP_ENDPOINT` | already on both submitting pods | forwarded verbatim to the spawned pod |
+
+The spec flows explicitly: CLI entrypoint → `run_annotation_feedback_cycle(pod_spec=…)`
+/ `QualityMonitor(workflow_pod_spec=…)` → `submit_argo_optimization_workflow(pod_spec=…)`.
 
 ---
 
@@ -702,6 +739,8 @@ JSON object in `output.value` on every `cogniverse.routing` span, via `record_sp
 | `output.value.complexity` | string | Query complexity classification |
 | `output.value.modality` | string | Content modality (video, text, etc.) |
 | `output.value.generation_type` | string | Generation type (search, qa, synthesis, etc.) |
+| `output.value.fast_path_confidence_threshold` | float | Active gateway threshold this decision ran under (serving-state proof for the calibration loop) |
+| `output.value.gliner_threshold` | float | Active GLiNER gate this decision ran under |
 
 `RoutingEvaluator` and `AnnotationAgent` additionally read `processing_time` and `context`
 from the same `output.value` dict defensively (`.get(..., default)`) for forward

@@ -64,7 +64,7 @@ argo:
     syntheticGeneration:
       enabled: true
       schedule: "0 1 * * 6"  # Saturday 1 AM UTC
-    # Audit fix #7 — scheduled distillation runs ``quality_monitor_cli --once``
+    # Scheduled distillation runs ``quality_monitor_cli --once``
     # to force a strategy distillation pass independent of the quality-drop
     # threshold check. Without this cron, distillation only fired on
     # degradation, leaving long stable periods without learning.
@@ -329,9 +329,10 @@ runtime:
   # on gfx1151 it recovers large GEMM losses from the default hipBLASLt
   # kernel heuristic. Tuning results persist in the model-cache volume.
   tunableOp: false
-  # Fallback only — imagesByBackend below is what actually renders. Kept in
-  # sync with the tag the `cogniverse images` CLI builds (dev) so the fallback
-  # points at a real locally-built image if it is ever used.
+  # Fallback only — imagesByBackend below is what actually renders, and
+  # `cogniverse up` overrides the tag with the git-derived version the
+  # `cogniverse images` CLI stamps on each build (e.g. 0.1.dev2137-g<sha>),
+  # so these static tags are never what a real deploy runs.
   image:
     repository: cogniverse/runtime-cuda
     tag: "0.1.0"
@@ -454,7 +455,7 @@ runtime:
     goldenIntervalSeconds: 7200   # 2 hours
     liveIntervalSeconds: 14400    # 4 hours
     liveSampleCount: 20
-    # Audit fix #1 — absolute path inside the sidecar container. The dataset
+    # Absolute path inside the sidecar container. The dataset
     # is mounted from a ConfigMap built from
     # charts/cogniverse/files/quality-monitor/golden_dataset.json (a copy
     # of data/testset/evaluation/sample_videos_retrieval_queries.json).

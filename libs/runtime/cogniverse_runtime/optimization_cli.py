@@ -546,26 +546,14 @@ async def _optimize_agent(
         with dspy.context(lm=optimizer.lm):
             compiled = teleprompter.compile(module, trainset=trainset)
 
-        # Store compiled module via ArtifactManager (same path the other modes use)
-        import json as _json
-
-        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-        artifact_id = await artifact_manager.save_blob(
-            kind="model",
-            key=f"dspy_compiled_{agent_name}",
-            content=_json.dumps(compiled.dump_state(), default=str),
-        )
-
         # Route the compiled instructions into the SERVING path: a versioned
         # prompts dataset promoted to ACTIVE, which the dispatcher's
-        # per-request overlay applies on the next dispatch. The blob above is
-        # not loaded by any agent, so without this the compile output never
-        # reached traffic.
+        # per-request overlay applies on the next dispatch.
+        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
         served = await _serve_compiled_prompts(artifact_manager, agent_name, compiled)
 
         result = {
             "status": "success",
-            "artifact_id": artifact_id,
             "training_examples": len(trainset),
         }
         if served:
@@ -2819,6 +2807,13 @@ def main():
         and not args.tenant_id
     ):
         parser.error(f"--tenant-id is required for mode={args.mode!r}")
+    if args.tenant_id:
+        # One canonical tenant everywhere — span projects and artifacts are
+        # keyed by the canonical form, so the compile must read the same
+        # project the runtime writes.
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        args.tenant_id = canonical_tenant_id(args.tenant_id)
 
     if args.mode == "cleanup":
         result = asyncio.run(

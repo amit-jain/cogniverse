@@ -23,6 +23,7 @@ from cogniverse_agents.routing.annotation_agent import (
 )
 from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 from cogniverse_agents.routing.config import AutomationRulesConfig
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_evaluation.online_evaluator import OnlineEvaluator
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
 from tests.utils.async_polling import (
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture
 def test_tenant_id():
-    return f"test_feature_integ_{int(time.time())}"
+    return canonical_tenant_id(f"test_feature_integ_{int(time.time())}")
 
 
 @pytest.fixture

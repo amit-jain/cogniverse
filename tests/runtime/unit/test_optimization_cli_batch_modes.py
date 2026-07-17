@@ -975,11 +975,12 @@ class TestOptimizeAgentPersistence:
             )
 
         assert result["status"] == "success"
-        assert result["artifact_id"] == "artifact-xyz"
         assert result["training_examples"] == 1
-        assert captured["kind"] == "model"
-        assert captured["key"] == "dspy_compiled_search"
         assert captured["tenant_id"] == "acme:prod"
+        # The compile reaches traffic through the versioned-prompts serving
+        # path only; no side blob is written and no artifact id is reported.
+        assert "key" not in captured, captured
+        assert "artifact_id" not in result, result
 
     @pytest.mark.asyncio
     async def test_optimize_agent_threads_teacher_into_bootstrap(self):

@@ -10,9 +10,9 @@ data:
     {{ tpl (.Files.Get "files/config.json") . | nindent 4 }}
 {{- if .Values.runtime.qualityMonitor.enabled }}
 ---
-# Golden evaluation dataset for the QualityMonitor sidecar.
-# Audit fix #1 — sidecar previously crash-looped because data/testset/ was
-# never mounted. Bundling the dataset as a ConfigMap (sourced from
+# Golden evaluation dataset for the QualityMonitor sidecar. Without this
+# the sidecar crash-loops: data/testset/ is never mounted in the pod.
+# Bundling the dataset as a ConfigMap (sourced from
 # files/quality-monitor/golden_dataset.json, which is a copy of
 # data/testset/evaluation/sample_videos_retrieval_queries.json) makes the
 # sidecar self-contained in any environment, dev or production.
