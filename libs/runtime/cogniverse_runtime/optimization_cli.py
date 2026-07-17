@@ -557,9 +557,10 @@ async def _optimize_agent(
         )
 
         # Route the compiled instructions into the SERVING path: a versioned
-        # prompts dataset promoted as a 10% canary, which the dispatcher's
-        # per-request overlay already applies. The blob above is not loaded by
-        # any agent, so without this the compile output never reached traffic.
+        # prompts dataset promoted to ACTIVE, which the dispatcher's
+        # per-request overlay applies on the next dispatch. The blob above is
+        # not loaded by any agent, so without this the compile output never
+        # reached traffic.
         served = await _serve_compiled_prompts(artifact_manager, agent_name, compiled)
 
         result = {
@@ -587,13 +588,14 @@ _SERVE_TARGET = {
 
 
 async def _serve_compiled_prompts(artifact_manager, agent_name: str, compiled):
-    """Publish a compiled module's instructions as a canaried prompt version.
+    """Publish a compiled module's instructions as the ACTIVE prompt version.
 
-    Returns ``{"served_agent", "version", "traffic_pct"}`` or ``None`` when
-    the compile produced no instructions (nothing to serve). The canary path
-    (10% traffic) is the regression protection: promotion to active stays a
-    deliberate step (operator or quality monitor) judged against
-    ``optimization_triggers.optimization_improvement_threshold``.
+    Returns ``{"served_agent", "version", "active"}`` or ``None`` when the
+    compile produced no instructions (nothing to serve). The version goes
+    straight to active — agents serve the new prompts on the next dispatch
+    via the per-request overlay, matching the sibling modes where agents
+    simply load the freshly-saved artifact. Every version is snapshotted, so
+    ``--mode rollback`` restores a prior one if a compile regressed.
     """
     target = _SERVE_TARGET.get(agent_name)
     if target is None:
@@ -616,14 +618,15 @@ async def _serve_compiled_prompts(artifact_manager, agent_name: str, compiled):
     _, version = await artifact_manager.save_prompts_versioned(
         served_agent, {predictor_attr: instructions}
     )
-    await artifact_manager.promote_to_canary(served_agent, version, traffic_pct=10)
+    await artifact_manager.promote_to_canary(served_agent, version, traffic_pct=100)
+    await artifact_manager.promote_canary_to_active(served_agent)
     logger.info(
-        "Serving compiled %s prompts as %s v%d canary at 10%%",
+        "Serving compiled %s prompts as %s v%d (active)",
         agent_name,
         served_agent,
         version,
     )
-    return {"served_agent": served_agent, "version": version, "traffic_pct": 10}
+    return {"served_agent": served_agent, "version": version, "active": True}
 
 
 def _prune_aged_files(root: str, *, older_than_days: float) -> dict:

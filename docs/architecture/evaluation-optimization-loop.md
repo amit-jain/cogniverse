@@ -466,9 +466,11 @@ the quality-monitor sidecar — not by a live in-process RL loop:
 Each batch optimization run (see the diagram above) builds a `dspy.Example` trainset from
 approved synthetic data and/or scored spans and compiles with the selected teleprompter.
 `--mode triggered` then publishes the compiled instructions as a **versioned prompts
-dataset promoted to a 10% canary** (`save_prompts_versioned` + `promote_to_canary`), which
-the dispatcher's per-request overlay serves; promotion of the canary to active is a
-deliberate step (operator or quality monitor) judged against
+dataset promoted straight to active** (`save_prompts_versioned` + promotion), which the
+dispatcher's per-request overlay serves on the next dispatch — the same
+artifact-available-agents-pick-it-up behavior as the dedicated modes. Every version is
+snapshotted, so `--mode rollback` restores a prior one if a compile regressed; operators
+can still stage a manual canary via `promote_to_canary` and judge it against
 `optimization_improvement_threshold`. Callers that hold measured baseline/candidate scores
 use `ArtifactManager.promote_if_better()` — the regression-reject gate (see above).
 

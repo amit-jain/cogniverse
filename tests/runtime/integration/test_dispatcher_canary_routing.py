@@ -339,3 +339,57 @@ class TestStreamingCanaryRealPhoenix:
         assert agent.get_dispatched_artefact()["served_from"] == "canary"
         assert agent.get_dispatched_artefact()["version"] == 1
         assert agent.get_dispatched_prompts() == {"system": "CANARY_STREAM_V1"}
+
+
+class TestTriggeredCompileServesThroughOverlay:
+    """The compile→serve boundary against real Phoenix: a triggered-mode
+    compile's instructions land as the ACTIVE artefact and come back through
+    ``load_for_request`` — the exact call the dispatcher's overlay resolution
+    makes on every dispatch. Before this wiring the compile output was a blob
+    nothing loaded, so recompiles never changed served prompts."""
+
+    @pytest.mark.asyncio
+    async def test_compiled_prompts_become_active_and_served(
+        self, artifact_manager: ArtifactManager
+    ):
+        from types import SimpleNamespace
+
+        from cogniverse_runtime.optimization_cli import _serve_compiled_prompts
+
+        predictor = SimpleNamespace(
+            signature=SimpleNamespace(
+                instructions="Optimized: prioritize entity matches."
+            ),
+            demos=[],
+        )
+        compiled = SimpleNamespace(named_predictors=lambda: [("predict", predictor)])
+
+        served = await _serve_compiled_prompts(artifact_manager, "search", compiled)
+
+        assert served is not None
+        assert served["served_agent"] == "search_agent"
+        assert served["active"] is True
+
+        # The dispatcher-side read: any request seed now serves the compiled
+        # instructions from the ACTIVE artefact, keyed by the predictor
+        # attribute the overlay swaps on SearchOptimizationModule.
+        result = await artifact_manager.load_for_request(
+            "search_agent", request_seed="any-seed-1"
+        )
+        assert result["served_from"] == "active"
+        assert result["version"] == served["version"]
+        assert result["prompts"] == {
+            "search_optimizer": "Optimized: prioritize entity matches."
+        }
+
+        # A second compile supersedes the first: new version served, previous
+        # retired (rollback keeps every version restorable).
+        predictor.signature = SimpleNamespace(instructions="Optimized v2.")
+        served2 = await _serve_compiled_prompts(artifact_manager, "search", compiled)
+        assert served2["version"] > served["version"]
+
+        result2 = await artifact_manager.load_for_request(
+            "search_agent", request_seed="any-seed-2"
+        )
+        assert result2["served_from"] == "active"
+        assert result2["prompts"] == {"search_optimizer": "Optimized v2."}
