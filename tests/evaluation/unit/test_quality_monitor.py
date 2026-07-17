@@ -328,7 +328,7 @@ class TestArgoSubmission:
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
-        monitor._http_client = mock_client
+        monitor._argo_client = mock_client
 
         await monitor.submit_optimization(trigger)
 
@@ -341,6 +341,204 @@ class TestArgoSubmission:
         }
         assert params["agents"] == "search,summary"
         assert params["tenant-id"] == "test_tenant"
+
+    @pytest.mark.asyncio
+    async def test_submit_optimization_carries_pod_spec(self):
+        from cogniverse_evaluation.quality_monitor import (
+            OptimizationWorkflowPodSpec,
+            QualityMonitor,
+        )
+
+        monitor = QualityMonitor(
+            tenant_id="acme",
+            runtime_url="http://runtime:8000",
+            phoenix_http_endpoint="http://phoenix:6006",
+            llm_base_url="http://llm:11434/v1",
+            llm_model="qwen2.5:0.5b",
+            golden_dataset_path="/nonexistent.csv",
+            argo_api_url="https://argo:2746",
+            argo_namespace="test-ns",
+            workflow_pod_spec=OptimizationWorkflowPodSpec(
+                image="cogniverse/runtime-rocm:dev",
+                env={"BACKEND_URL": "http://vespa"},
+            ),
+        )
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"metadata": {"name": "wf-y"}}
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        monitor._argo_client = mock_client
+
+        trigger = OptimizationTrigger(
+            timestamp=datetime.utcnow(),
+            tenant_id="acme",
+            agents_to_optimize=[AgentType.SEARCH],
+            golden_eval=None,
+            live_eval=None,
+            low_scoring_examples={},
+            high_scoring_examples={},
+            misrouted_queries=[],
+        )
+        await monitor.submit_optimization(trigger)
+
+        template = mock_client.post.call_args[1]["json"]["workflow"]["spec"][
+            "templates"
+        ][0]
+        assert template["container"]["image"] == "cogniverse/runtime-rocm:dev"
+        assert template["container"]["env"] == [
+            {"name": "BACKEND_URL", "value": "http://vespa"}
+        ]
+
+
+class TestWorkflowPodSpec:
+    """Spawned optimization pods must carry the submitter's runtime wiring.
+
+    A bare manifest (default image, no env, no config mount) leaves the
+    spawned pod pointed at nothing: it runs a possibly stale baked image
+    and retries default backend addresses forever instead of completing.
+    """
+
+    def _submit_kwargs(self, mock_client):
+        return dict(
+            http_client=mock_client,
+            argo_api_url="https://argo:2746",
+            argo_namespace="test-ns",
+            tenant_id="acme",
+            name_prefix="annotation-feedback-routing",
+            trigger_label="annotation-feedback",
+            parameters=[{"name": "tenant-id", "value": "acme"}],
+            container_args=["--mode", "gateway-thresholds"],
+        )
+
+    def _mock_client(self):
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"metadata": {"name": "wf-x"}}
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        return mock_client
+
+    @pytest.mark.asyncio
+    async def test_canonical_tenant_label_is_sanitized(self):
+        """Kubernetes label values reject ':' — the canonical tenant form
+        must be sanitized in labels while the tenant-id parameter keeps the
+        exact canonical value."""
+        from cogniverse_evaluation.quality_monitor import (
+            submit_argo_optimization_workflow,
+        )
+
+        mock_client = self._mock_client()
+        kwargs = self._submit_kwargs(mock_client)
+        kwargs["tenant_id"] = "acme:acme"
+        kwargs["parameters"] = [{"name": "tenant-id", "value": "acme:acme"}]
+        ok = await submit_argo_optimization_workflow(**kwargs)
+        assert ok is True
+        workflow = mock_client.post.call_args[1]["json"]["workflow"]
+        assert workflow["metadata"]["labels"]["tenant"] == "acme_acme"
+        params = {
+            p["name"]: p["value"]
+            for p in workflow["spec"]["arguments"]["parameters"]
+        }
+        assert params["tenant-id"] == "acme:acme"
+
+    @pytest.mark.asyncio
+    async def test_pod_spec_flows_into_manifest(self):
+        from cogniverse_evaluation.quality_monitor import (
+            OptimizationWorkflowPodSpec,
+            submit_argo_optimization_workflow,
+        )
+
+        mock_client = self._mock_client()
+        pod_spec = OptimizationWorkflowPodSpec(
+            image="cogniverse/runtime-cpu:dev",
+            env={"BACKEND_URL": "http://cogniverse-vespa", "BACKEND_PORT": "8080"},
+            config_map="cogniverse-config",
+            dev_source_hostpath="/cogniverse-src",
+        )
+        ok = await submit_argo_optimization_workflow(
+            **self._submit_kwargs(mock_client), pod_spec=pod_spec
+        )
+        assert ok is True
+        template = mock_client.post.call_args[1]["json"]["workflow"]["spec"][
+            "templates"
+        ][0]
+        assert template["container"]["image"] == "cogniverse/runtime-cpu:dev"
+        assert template["container"]["env"] == [
+            {"name": "BACKEND_URL", "value": "http://cogniverse-vespa"},
+            {"name": "BACKEND_PORT", "value": "8080"},
+        ]
+        assert template["container"]["volumeMounts"] == [
+            {
+                "name": "config",
+                "mountPath": "/app/configs/config.json",
+                "subPath": "config.json",
+                "readOnly": True,
+            },
+            {"name": "src-libs", "mountPath": "/app/libs"},
+            {"name": "src-scripts", "mountPath": "/app/scripts"},
+        ]
+        assert template["volumes"] == [
+            {"name": "config", "configMap": {"name": "cogniverse-config"}},
+            {
+                "name": "src-libs",
+                "hostPath": {"path": "/cogniverse-src/libs", "type": "Directory"},
+            },
+            {
+                "name": "src-scripts",
+                "hostPath": {"path": "/cogniverse-src/scripts", "type": "Directory"},
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_default_pod_spec_keeps_bare_manifest(self):
+        from cogniverse_evaluation.quality_monitor import (
+            submit_argo_optimization_workflow,
+        )
+
+        mock_client = self._mock_client()
+        ok = await submit_argo_optimization_workflow(**self._submit_kwargs(mock_client))
+        assert ok is True
+        template = mock_client.post.call_args[1]["json"]["workflow"]["spec"][
+            "templates"
+        ][0]
+        assert template["container"]["image"] == "cogniverse-runtime:latest"
+        assert "env" not in template["container"]
+        assert "volumeMounts" not in template["container"]
+        assert "volumes" not in template
+
+    @pytest.mark.asyncio
+    async def test_pod_spec_config_only(self):
+        from cogniverse_evaluation.quality_monitor import (
+            OptimizationWorkflowPodSpec,
+            submit_argo_optimization_workflow,
+        )
+
+        mock_client = self._mock_client()
+        pod_spec = OptimizationWorkflowPodSpec(
+            image="cogniverse/runtime-cuda:0.1.0",
+            config_map="cogniverse-config",
+        )
+        ok = await submit_argo_optimization_workflow(
+            **self._submit_kwargs(mock_client), pod_spec=pod_spec
+        )
+        assert ok is True
+        template = mock_client.post.call_args[1]["json"]["workflow"]["spec"][
+            "templates"
+        ][0]
+        assert template["container"]["image"] == "cogniverse/runtime-cuda:0.1.0"
+        assert "env" not in template["container"]
+        assert template["container"]["volumeMounts"] == [
+            {
+                "name": "config",
+                "mountPath": "/app/configs/config.json",
+                "subPath": "config.json",
+                "readOnly": True,
+            }
+        ]
+        assert template["volumes"] == [
+            {"name": "config", "configMap": {"name": "cogniverse-config"}}
+        ]
 
 
 class TestGoldenEvaluation:

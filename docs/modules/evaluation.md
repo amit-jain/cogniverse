@@ -1657,6 +1657,7 @@ QualityMonitor(
     thresholds: QualityThresholds | None = None,
     telemetry_provider=None,
     search_profile: str = "video_colpali_smol500_mv_frame",
+    workflow_pod_spec: OptimizationWorkflowPodSpec | None = None,
 )
 ```
 
@@ -1676,6 +1677,16 @@ min_samples_for_verdict: int = 10
 `baseline_mrr` captured before the new result is stored), `LiveEvalResult`
 (per-`AgentType` `AgentEvalResult` map), `OptimizationTrigger` (payload
 submitted to the Argo optimization workflow).
+
+**`OptimizationWorkflowPodSpec` dataclass (defaults):** `image: str =
+"cogniverse-runtime:latest"`, `env: Dict[str, str] = {}`, `config_map:
+Optional[str] = None`, `dev_source_hostpath: Optional[str] = None`. Passed as
+`workflow_pod_spec`, it carries the submitting pod's own runtime wiring
+(image, backend/telemetry endpoints, config mount, devMode source mounts)
+into the Argo manifest for the `optimization_cli` pod it spawns; without it
+the spawned pod runs the fallback image with no env and no config mount. See
+[Spawned-Workflow Pod Wiring](../architecture/evaluation-optimization-loop.md#spawned-workflow-pod-wiring)
+for the chart-rendered env vars that populate it.
 
 **Key methods:** `check_thresholds(...)` decides the `Verdict` from golden/live
 results against `QualityThresholds`; `_build_trigger(...)` assembles an

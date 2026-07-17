@@ -107,7 +107,9 @@ class _DatasetStoreStub:
         self.created.append((name, data, metadata))
 
 
-async def _run(rules, rows_by_type, config_manager=None, now=NOW, force=False):
+async def _run(
+    rules, rows_by_type, config_manager=None, now=NOW, force=False, pod_spec=None
+):
     _StorageStub.rows_by_type = rows_by_type
     argo = _ArgoCapture()
     datasets = _DatasetStoreStub()
@@ -125,6 +127,7 @@ async def _run(rules, rows_by_type, config_manager=None, now=NOW, force=False):
             dataset_store=datasets,
             now=now,
             force=force,
+            pod_spec=pod_spec,
         )
     return result, argo, datasets
 
@@ -243,3 +246,89 @@ async def test_poll_interval_self_gate():
     )
     assert result["status"] == "skipped_recent_poll"
     assert argo.posts == []
+
+
+@pytest.mark.asyncio
+async def test_bare_tenant_id_is_canonicalized():
+    """A bare tenant id must resolve to the canonical form everywhere the
+    cycle touches — Argo parameters and the persisted loop state — so the
+    cron, the runtime, and the compile all agree on one tenant project."""
+    from cogniverse_runtime.quality_monitor_cli import _load_loop_state
+
+    cm = _config_manager()
+    _StorageStub.rows_by_type = {"routing": _annotated_rows(12)}
+    argo = _ArgoCapture()
+    with patch(
+        "cogniverse_agents.routing.annotation_storage.AnnotationStorage",
+        _StorageStub,
+    ):
+        result = await run_annotation_feedback_cycle(
+            tenant_id="acme",
+            argo_url="http://argo:2746",
+            argo_namespace="cogniverse",
+            automation_rules=_rules(),
+            config_manager=cm,
+            http_client=argo,
+            dataset_store=_DatasetStoreStub(),
+            now=NOW,
+        )
+
+    assert result["agents"]["routing"]["action"] == "thresholds_refresh"
+    params = {
+        p["name"]: p["value"]
+        for p in argo.posts[0][1]["workflow"]["spec"]["arguments"]["parameters"]
+    }
+    assert params["tenant-id"] == "acme:acme"
+    state = _load_loop_state(cm, "acme:acme")
+    assert "routing" in state.get("last_optimization_at", {}), state
+
+
+@pytest.mark.asyncio
+async def test_pod_spec_reaches_spawned_manifest():
+    from cogniverse_evaluation.quality_monitor import OptimizationWorkflowPodSpec
+
+    pod_spec = OptimizationWorkflowPodSpec(
+        image="cogniverse/runtime-rocm:dev",
+        env={"BACKEND_URL": "http://cogniverse-vespa"},
+        config_map="cogniverse-config",
+        dev_source_hostpath="/cogniverse-src",
+    )
+    _, argo, _ = await _run(
+        _rules(), {"routing": _annotated_rows(12)}, pod_spec=pod_spec
+    )
+
+    assert len(argo.posts) == 1
+    template = argo.posts[0][1]["workflow"]["spec"]["templates"][0]
+    assert template["container"]["image"] == "cogniverse/runtime-rocm:dev"
+    assert template["container"]["env"] == [
+        {"name": "BACKEND_URL", "value": "http://cogniverse-vespa"}
+    ]
+    assert {v["name"] for v in template["volumes"]} == {
+        "config",
+        "src-libs",
+        "src-scripts",
+    }
+
+
+def test_workflow_pod_spec_from_env(monkeypatch):
+    from cogniverse_runtime.quality_monitor_cli import _workflow_pod_spec_from_env
+
+    monkeypatch.delenv("OPTIMIZATION_WORKFLOW_IMAGE", raising=False)
+    assert _workflow_pod_spec_from_env() is None
+
+    monkeypatch.setenv("OPTIMIZATION_WORKFLOW_IMAGE", "cogniverse/runtime-rocm:dev")
+    monkeypatch.setenv("OPTIMIZATION_CONFIG_MAP", "cogniverse-config")
+    monkeypatch.setenv("OPTIMIZATION_DEV_HOSTPATH", "/cogniverse-src")
+    monkeypatch.setenv("BACKEND_URL", "http://cogniverse-vespa")
+    monkeypatch.setenv("BACKEND_PORT", "8080")
+    monkeypatch.delenv("TELEMETRY_HTTP_ENDPOINT", raising=False)
+    monkeypatch.delenv("TELEMETRY_OTLP_ENDPOINT", raising=False)
+
+    spec = _workflow_pod_spec_from_env()
+    assert spec.image == "cogniverse/runtime-rocm:dev"
+    assert spec.config_map == "cogniverse-config"
+    assert spec.dev_source_hostpath == "/cogniverse-src"
+    assert spec.env == {
+        "BACKEND_URL": "http://cogniverse-vespa",
+        "BACKEND_PORT": "8080",
+    }

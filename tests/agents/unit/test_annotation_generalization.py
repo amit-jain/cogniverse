@@ -51,6 +51,22 @@ class TestAnnotationStoragePerAgentType:
         storage = self._storage(agent_type="summary")
         assert storage.annotation_name == "summary_annotation"
 
+    def test_tenant_id_is_canonicalized(self):
+        """The runtime emits spans under the canonical tenant project; a
+        storage built from a bare tenant id must read the same project or
+        real-traffic spans become invisible to the annotation loop."""
+        from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+
+        tm = _stub_telemetry_manager()
+        with patch(
+            "cogniverse_agents.routing.annotation_storage.get_telemetry_manager",
+            return_value=tm,
+        ):
+            storage = AnnotationStorage(tenant_id="default")
+        assert storage.tenant_id == "default:default"
+        tm.config.get_project_name.assert_called_once_with("default:default")
+        tm.get_provider.assert_called_once_with(tenant_id="default:default")
+
     @pytest.mark.asyncio
     async def test_store_human_annotation_persists_under_agent_name(self):
         from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel

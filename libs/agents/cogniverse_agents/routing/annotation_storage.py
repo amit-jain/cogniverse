@@ -80,6 +80,14 @@ class AnnotationStorage:
             tenant_id: Tenant identifier
             agent_type: Which agent's decisions this storage annotates
         """
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # The runtime emits spans under the canonical tenant project; read
+        # and write the same one regardless of how the caller spelled the
+        # tenant, or real-traffic spans are invisible to the loop.
+        tenant_id = canonical_tenant_id(tenant_id)
+        self.tenant_id = tenant_id
+
         # Get telemetry manager and use its config (shared singleton config)
         telemetry_manager = get_telemetry_manager()
         self.telemetry_config = telemetry_manager.config

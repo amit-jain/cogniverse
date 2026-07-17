@@ -543,7 +543,7 @@ spec:
         - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
         {{- if .Values.argo.enabled }}
         - "--argo-url"
-        - "http://argo-server.argo.svc.cluster.local:2746"
+        - "https://argo-server.argo.svc.cluster.local:2746"
         - "--argo-namespace"
         - {{ .Release.Namespace | quote }}
         {{- end }}
@@ -554,12 +554,25 @@ spec:
           value: "{{ .Values.vespa.service.ports.query }}"
         - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
         - name: LLM_ENDPOINT
           value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
         - name: LLM_ENGINE
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
           value: {{ .Values.llm.model | quote }}
+        # Wiring the monitor mirrors onto the compile workflows it spawns —
+        # without it the spawned pod runs the bare fallback manifest
+        # (default image, no backend endpoints, no config mount).
+        - name: OPTIMIZATION_WORKFLOW_IMAGE
+          value: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
+        - name: OPTIMIZATION_CONFIG_MAP
+          value: {{ $fullName }}-config
+        {{- if .Values.devMode.enabled }}
+        - name: OPTIMIZATION_DEV_HOSTPATH
+          value: {{ .Values.devMode.hostPath | quote }}
+        {{- end }}
         resources:
           {{- toYaml .Values.runtime.qualityMonitor.resources | nindent 10 }}
         volumeMounts:
@@ -567,9 +580,9 @@ spec:
           mountPath: /app/configs/config.json
           subPath: config.json
           readOnly: true
-        # Audit fix #1 — mount the bundled golden dataset so the sidecar
-        # can find the path passed via --golden-dataset-path. Without this
-        # mount the sidecar crash-loops on startup with FileNotFoundError.
+        # Mount the bundled golden dataset so the sidecar can find the path
+        # passed via --golden-dataset-path. Without this mount the sidecar
+        # crash-loops on startup with FileNotFoundError.
         - name: quality-monitor-data
           mountPath: /app/data/quality-monitor/golden_dataset.json
           subPath: golden_dataset.json
@@ -615,7 +628,7 @@ spec:
           path: /dev/dri
       {{- end }}
       {{- if .Values.runtime.qualityMonitor.enabled }}
-      # Audit fix #1 — golden dataset for QualityMonitor sidecar.
+      # Golden dataset for the QualityMonitor sidecar.
       # ConfigMap is built by templates/configmap.yaml from
       # files/quality-monitor/golden_dataset.json.
       - name: quality-monitor-data

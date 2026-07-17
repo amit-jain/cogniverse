@@ -109,7 +109,7 @@ spec:
     arguments:
       parameters:
       - name: tenant-id
-        value: "default"
+        value: {{ .Values.runtime.qualityMonitor.tenantId | default "default" | quote }}
     serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
     volumes:
     - name: config
@@ -324,7 +324,7 @@ spec:
           - "--mode"
           - "synthetic"
           - "--tenant-id"
-          - "default"
+          - {{ .Values.runtime.qualityMonitor.tenantId | default "default" | quote }}
           # Synthetic-generator subset that runs WITHOUT extra config.
           # ``routing`` requires optimizer_configs['routing'] with
           # query_templates, which the chart does not currently
@@ -386,7 +386,7 @@ spec:
 {{- end }}
 {{- if .Values.argo.optimization.scheduledDistillation.enabled }}
 ---
-# Scheduled distillation cron — audit fix #7. Runs ``quality_monitor_cli
+# Scheduled distillation cron. Runs ``quality_monitor_cli
 # --once`` periodically to force a strategy distillation pass even when
 # quality is stable. Without this CronWorkflow, distillation only fired
 # when QualityMonitor detected a quality drop, leaving long stable
@@ -417,7 +417,7 @@ spec:
         args:
           - "--once"
           - "--tenant-id"
-          - "default"
+          - {{ .Values.runtime.qualityMonitor.tenantId | default "default" | quote }}
           - "--runtime-url"
           - "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
           - "--phoenix-url"
@@ -435,7 +435,7 @@ spec:
           - "--golden-dataset-path"
           - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
           - "--argo-url"
-          - "http://argo-server.argo.svc.cluster.local:2746"
+          - "https://argo-server.argo.svc.cluster.local:2746"
           - "--argo-namespace"
           - {{ .Release.Namespace | quote }}
         env:
@@ -519,7 +519,7 @@ spec:
         args:
           - "--annotation-cycle"
           - "--tenant-id"
-          - "default"
+          - {{ .Values.runtime.qualityMonitor.tenantId | quote }}
           - "--runtime-url"
           - "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
           - "--phoenix-url"
@@ -602,7 +602,7 @@ spec:
         args:
           - "--annotation-feedback"
           - "--tenant-id"
-          - "default"
+          - {{ .Values.runtime.qualityMonitor.tenantId | quote }}
           - "--runtime-url"
           - "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
           - "--phoenix-url"
@@ -610,7 +610,7 @@ spec:
           - "--llm-model"
           - {{ include "cogniverse.primaryLLMModelBare" . | quote }}
           - "--argo-url"
-          - "http://argo-server.argo.svc.cluster.local:2746"
+          - "https://argo-server.argo.svc.cluster.local:2746"
           - "--argo-namespace"
           - {{ .Release.Namespace | quote }}
         env:
@@ -622,6 +622,17 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        # Wiring the CLI mirrors onto the compile workflows it spawns —
+        # without it the spawned pod runs the bare fallback manifest
+        # (default image, no backend endpoints, no config mount).
+        - name: OPTIMIZATION_WORKFLOW_IMAGE
+          value: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+        - name: OPTIMIZATION_CONFIG_MAP
+          value: {{ $fullName }}-config
+        {{- if .Values.devMode.enabled }}
+        - name: OPTIMIZATION_DEV_HOSTPATH
+          value: {{ .Values.devMode.hostPath | quote }}
+        {{- end }}
         resources:
           requests:
             cpu: "500m"

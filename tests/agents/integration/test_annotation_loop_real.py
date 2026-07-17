@@ -28,6 +28,7 @@ from httpx import ASGITransport, AsyncClient
 
 from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_runtime.quality_monitor_cli import run_annotation_cycle
 from cogniverse_runtime.routers import agents as agents_router
 
@@ -59,7 +60,9 @@ async def _wait_for_span(storage, project, span_id):
 async def test_identify_enqueue_complete_persist_dedupe(real_telemetry):
     from cogniverse_foundation.telemetry.span_contract import record_span_io
 
-    tenant_id = f"annloop{uuid4().hex[:8]}"
+    # Two-part form up front: spans, storage, and enqueue must share the
+    # canonical tenant project exactly as real runtime traffic does.
+    tenant_id = canonical_tenant_id(f"annloop{uuid4().hex[:8]}")
     project = real_telemetry.config.get_project_name(tenant_id)
 
     # 1. A real low-confidence routing decision, canonical slots only.

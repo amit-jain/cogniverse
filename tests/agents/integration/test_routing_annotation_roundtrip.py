@@ -21,6 +21,7 @@ from cogniverse_agents.routing.annotation_storage import (
     RoutingAnnotationStorage,
 )
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
 pytestmark = pytest.mark.integration
 
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.integration
 async def test_human_annotation_round_trip(real_telemetry):
     # Unique tenant so the 30-day get_annotation_statistics window can't be
     # polluted by sibling modules sharing the session Phoenix container.
-    tenant_id = f"annrt{uuid4().hex[:8]}"
+    tenant_id = canonical_tenant_id(f"annrt{uuid4().hex[:8]}")
     project = real_telemetry.config.get_project_name(tenant_id)
 
     with real_telemetry.span(
@@ -158,7 +159,7 @@ async def test_canonical_routing_span_fields_extracted(real_telemetry):
     span's fields were empty in the feedback rows."""
     from cogniverse_foundation.telemetry.span_contract import record_span_io
 
-    tenant_id = f"anncanon{uuid4().hex[:8]}"
+    tenant_id = canonical_tenant_id(f"anncanon{uuid4().hex[:8]}")
     project = real_telemetry.config.get_project_name(tenant_id)
 
     with real_telemetry.span(
@@ -199,7 +200,7 @@ async def test_per_agent_annotations_isolated_by_name(real_telemetry):
     human feedback streams don't bleed into each other."""
     from cogniverse_foundation.telemetry.span_contract import record_span_io
 
-    tenant_id = f"annsumm{uuid4().hex[:8]}"
+    tenant_id = canonical_tenant_id(f"annsumm{uuid4().hex[:8]}")
     project = real_telemetry.config.get_project_name(tenant_id)
 
     with real_telemetry.span(

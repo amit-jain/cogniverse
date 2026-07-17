@@ -535,6 +535,13 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                         "complexity": complexity,
                         "modality": modality,
                         "generation_type": generation_type,
+                        # The calibration this decision ran under, so
+                        # telemetry consumers can verify which thresholds
+                        # production actually served.
+                        "fast_path_confidence_threshold": (
+                            self.deps.fast_path_confidence_threshold
+                        ),
+                        "gliner_threshold": self.deps.gliner_threshold,
                     },
                     operation=OP_ROUTING,
                 )
