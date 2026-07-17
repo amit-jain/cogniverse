@@ -129,6 +129,22 @@ def test_every_cron_processes_the_configured_tenant():
             assert value in ("test-tenant", "__system__"), f"{name}: {values}"
 
 
+def test_argo_subchart_disabled_while_crons_render():
+    """The in-release argo-workflows subchart duplicates the standalone Argo
+    install every workflow URL points at (argo-server.argo.svc); rendering
+    it just ships permanently-broken duplicate pods. argo.enabled must keep
+    gating the CronWorkflows without dragging the subchart in."""
+    manifests = _render_chart()
+    subchart_workloads = [
+        doc["metadata"]["name"]
+        for doc in manifests
+        if doc.get("kind") in ("Deployment", "StatefulSet")
+        and "argo-workflows" in doc.get("metadata", {}).get("name", "")
+    ]
+    assert subchart_workloads == [], subchart_workloads
+    _cronworkflow(manifests, "cogniverse-annotation-feedback")
+
+
 def test_schedules_mirror_interval_config_defaults():
     """The cron cadence and the IntervalConfig knob are one contract: a change
     to either without the other silently de-syncs the loop's documented
