@@ -266,7 +266,10 @@ class TestDetailedReportAgent:
         # output is carried verbatim into the result (was unstubbed, so the
         # old test silently exercised the fallback path).
         agent.call_dspy = AsyncMock(
-            return_value=Mock(executive_summary="report for test query")
+            return_value=Mock(
+                executive_summary="report for test query",
+                recommendations="deepen coverage, add benchmarks",
+            )
         )
 
         # Create report request
@@ -285,7 +288,8 @@ class TestDetailedReportAgent:
         assert ca["total_results"] == 1
         assert ca["avg_relevance"] == pytest.approx(0.8)
         assert isinstance(result.detailed_findings, list) and result.detailed_findings
-        assert isinstance(result.recommendations, list)
+        # The LM's recommendations reach the report — not the canned templates.
+        assert result.recommendations == ["deepen coverage", "add benchmarks"]
         assert isinstance(result.confidence_assessment, dict)
 
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
@@ -454,12 +458,12 @@ class TestDetailedReportAgentCoreFunctionality:
     async def test_visual_analysis_reads_relevance_score_as_confidence(self):
         """The VLM emits relevance_score, not confidence — the report used to read
         the absent 'confidence' key and reported 0.0 for every visual result."""
+        from types import SimpleNamespace
+
         from cogniverse_agents.detailed_report_agent import (
             DetailedReportAgent,
             ReportRequest,
         )
-
-        from types import SimpleNamespace
 
         agent = object.__new__(DetailedReportAgent)
         agent.visual_analysis_enabled = True
@@ -557,11 +561,12 @@ class TestDetailedReportAgentCoreFunctionality:
         # Mock DSPy module to return proper result instead of using fallback
         mock_dspy_result = Mock()
         mock_dspy_result.executive_summary = "Comprehensive analysis of 3 results for test query, covering key topics in HD quality with educational content"
+        mock_dspy_result.recommendations = "expand coverage, add benchmarks"
 
         with patch.object(
             agent.report_module, "forward", return_value=mock_dspy_result
         ):
-            summary = await agent._generate_executive_summary(
+            summary, recommendations = await agent._generate_executive_summary(
                 sample_report_request, thinking_phase
             )
 
@@ -570,6 +575,8 @@ class TestDetailedReportAgentCoreFunctionality:
         assert (
             "3" in summary or "three" in summary.lower()
         )  # Should mention result count
+        # The LM's recommendations come back parsed alongside the summary.
+        assert recommendations == ["expand coverage", "add benchmarks"]
 
     @pytest.mark.ci_fast
     def test_generate_detailed_findings_logic(
