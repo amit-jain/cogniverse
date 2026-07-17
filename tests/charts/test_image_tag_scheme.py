@@ -119,3 +119,49 @@ class TestFirstPartyTagScheme:
 
         prod = _first_party_images(_render("inference.face_embed.enabled=true"))
         assert (f"cogniverse/face-embed:{APP_VERSION}", "IfNotPresent") in prod
+
+
+class TestAppVersionLabelSanitation:
+    """Dev appVersions carry PEP 440 '+' local segments; every label the
+    chart stamps from them must stay a valid Kubernetes label value or the
+    first pre-upgrade hook rejects the whole release."""
+
+    def test_plus_in_app_version_renders_valid_labels(self, tmp_path) -> None:
+        import subprocess
+
+        packaged = subprocess.run(
+            [
+                "helm",
+                "package",
+                str(CHART_PATH),
+                "--version",
+                "0.1.0-dev.1+gabc123",
+                "--app-version",
+                "0.1.dev1+gabc123",
+                "-d",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert packaged.returncode == 0, packaged.stderr
+        tgz = packaged.stdout.strip().rsplit(": ", 1)[-1]
+        rendered = subprocess.run(
+            [
+                "helm",
+                "template",
+                "cogniverse",
+                tgz,
+                "--set",
+                "runtime.qualityMonitor.tenantId=test-tenant",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert rendered.returncode == 0, rendered.stderr
+        offending = [
+            line.strip()
+            for line in rendered.stdout.splitlines()
+            if "app.kubernetes.io/version" in line and "+" in line
+        ]
+        assert offending == [], offending[:3]
