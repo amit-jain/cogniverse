@@ -147,12 +147,17 @@ class TestOnlineRoutingEvaluationWiring:
     @pytest.mark.asyncio
     async def test_run_scores_every_routing_span_in_lookback(
         self,
+        vespa_instance,
         telemetry_manager_with_phoenix,
         real_provider,
         project_name,
         test_tenant_id,
     ):
         from cogniverse_runtime.optimization_cli import run_online_routing_evaluation
+
+        # ``vespa_instance`` provisions the real Vespa config store (and points
+        # BACKEND_URL/PORT at it), so run_online_routing_evaluation's config read
+        # goes through the same VespaConfigStore path production uses.
 
         # Two routing spans under this test's unique tenant/project.
         _write_routing_spans(
@@ -165,7 +170,8 @@ class TestOnlineRoutingEvaluationWiring:
         )
 
         result = await run_online_routing_evaluation(
-            tenant_id=test_tenant_id, lookback_hours=1.0
+            tenant_id=test_tenant_id,
+            lookback_hours=1.0,
         )
 
         # Config default (automation_rules.online_evaluation) is enabled with
