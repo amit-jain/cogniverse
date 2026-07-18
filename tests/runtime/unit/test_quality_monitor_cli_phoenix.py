@@ -133,3 +133,59 @@ class TestBuildPhoenixProvider:
         config = mock_instance.initialize.call_args[0][0]
         # urlparse("not-a-url").hostname is None, so falls back to "localhost"
         assert config["grpc_endpoint"] == "localhost:4317"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestPhoenixUrlReachesTelemetryManager:
+    def test_annotation_cycle_gets_phoenix_url_override(self):
+        """--phoenix-url must reach the readers built via get_telemetry_manager
+        (AnnotationStorage/AnnotationAgent) — they otherwise derive the HTTP
+        endpoint from TELEMETRY_OTLP_ENDPOINT's host on the fixed :6006 port.
+        The override must land before the cycle constructs them."""
+        from cogniverse_runtime import quality_monitor_cli
+
+        fake_manager = MagicMock()
+        fake_manager.config.provider_config = {}
+
+        seen = {}
+
+        async def _fake_cycle(**kwargs):
+            seen["http_endpoint"] = fake_manager.config.provider_config.get(
+                "http_endpoint"
+            )
+            return {"identified": 0, "already_annotated": 0, "enqueued": 0}
+
+        argv = [
+            "quality_monitor_cli",
+            "--tenant-id",
+            "acme",
+            "--llm-model",
+            "test-model",
+            "--phoenix-url",
+            "http://example:26006",
+            "--annotation-cycle",
+        ]
+        with (
+            patch(
+                "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+                return_value=fake_manager,
+            ),
+            patch.object(
+                quality_monitor_cli, "_build_phoenix_provider", return_value=None
+            ),
+            patch.object(
+                quality_monitor_cli, "run_annotation_cycle", side_effect=_fake_cycle
+            ),
+            patch("cogniverse_evaluation.quality_monitor.QualityMonitor"),
+            patch("sys.argv", argv),
+        ):
+            with pytest.raises(SystemExit) as excinfo:
+                quality_monitor_cli.main()
+
+        assert excinfo.value.code == 0
+        assert seen["http_endpoint"] == "http://example:26006"
+        assert (
+            fake_manager.config.provider_config["http_endpoint"]
+            == "http://example:26006"
+        )

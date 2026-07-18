@@ -411,6 +411,38 @@ class TestGatewayThresholdAnalysis:
         threshold = result["thresholds"]["fast_path_confidence_threshold"]
         assert 0.3 <= threshold <= 0.5
 
+    @pytest.mark.asyncio
+    async def test_non_numeric_confidence_dropped_not_fatal(self):
+        """One span with a string confidence must not abort the recompute;
+        thresholds come from the numeric rows only."""
+        rows = [_gateway_row("simple", c, "OK") for c in (0.5, 0.6, 0.7, 0.8)]
+        rows.append(_gateway_row("simple", "high", "OK"))
+
+        spans_df = _make_spans_df("cogniverse.gateway", rows)
+        provider = FakeTelemetryProvider(spans_df)
+        mgr = FakeTelemetryManager(provider)
+
+        from cogniverse_runtime.optimization_cli import (
+            run_gateway_thresholds_optimization,
+        )
+
+        p1, p2 = _patch_infra(mgr)
+        with p1, p2:
+            result = await run_gateway_thresholds_optimization(
+                tenant_id="test:unit", lookback_hours=1
+            )
+
+        assert result["status"] == "success"
+        thresholds = result["thresholds"]
+        # Numeric rows [0.5, 0.6, 0.7, 0.8]: mean 0.65 keeps the default
+        # fast path; p25 0.575 -> gliner 0.575 * 0.8 = 0.46.
+        assert thresholds["fast_path_confidence_threshold"] == 0.4
+        assert thresholds["gliner_threshold"] == 0.46
+        analysis = thresholds["analysis"]
+        assert analysis["total_spans"] == 5
+        assert analysis["mean_confidence"] == 0.65
+        assert analysis["p25_confidence"] == 0.575
+
 
 # ---------------------------------------------------------------------------
 # Test: workflow optimization with mock orchestration spans
