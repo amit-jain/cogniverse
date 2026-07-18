@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
 pytestmark = pytest.mark.integration
@@ -88,7 +89,8 @@ def seeded_dataset(phoenix_container, tenant_id: str) -> str:
 def _backend_url_from_shared_vespa(shared_vespa, monkeypatch):
     """CLI subprocesses must hit the session Vespa container, never the
     k3d cluster — integration provisions its own infrastructure."""
-    monkeypatch.setenv("BACKEND_URL", f"http://localhost:{shared_vespa['http_port']}")
+    # BACKEND_URL is host-only; BACKEND_PORT carries the port separately.
+    monkeypatch.setenv("BACKEND_URL", "http://localhost")
     monkeypatch.setenv("BACKEND_PORT", str(shared_vespa["http_port"]))
 
 
@@ -215,7 +217,8 @@ class TestAbCompareRoundTrip:
         summary = json.loads(result.stdout)
         assert summary["status"] == "ok"
         assert summary["queries_dataset"] == seeded_dataset
-        assert summary["tenant_id"] == tenant_id
+        # main() canonicalizes args.tenant_id before dispatch.
+        assert summary["tenant_id"] == canonical_tenant_id(tenant_id)
         # Three rows in the seeded dataset → three runs.
         assert summary["rows_compared"] == 3
         # Stub fixed deltas → averages match exactly.
@@ -297,7 +300,8 @@ class TestAbCompareRoundTrip:
             ],
             phoenix_container,
         )
-        assert result.returncode == 0, result.stderr
+        # A reported "failed" status must exit non-zero.
+        assert result.returncode == 1, result.stderr
         summary = json.loads(result.stdout)
         assert summary["status"] == "failed"
         assert "query" in summary["error"].lower()
