@@ -242,8 +242,10 @@ async def test_resume_skips_a_real_dspy_compile(
         phoenix_endpoint=phoenix_container["http_endpoint"],
     )
     assert result1["search"]["status"] == "success", result1["search"]
-    real_artifact_id = result1["search"]["artifact_id"]
-    assert real_artifact_id, "run 1 did not persist a real compiled artifact"
+    real_served = result1["search"]["served"]
+    assert real_served["served_agent"] == "search_agent", (
+        "run 1 did not route the real compile through the serving gate"
+    )
 
     latest = await _await_checkpoint(
         tenant, workflow_id, lambda c: "search" in c.completed_unit_keys()
@@ -277,8 +279,8 @@ async def test_resume_skips_a_real_dspy_compile(
         f"resume re-ran search's real compile: {run2_calls}"
     )
     assert run2_calls == ["detailed_report"]
-    # search's result comes from the checkpoint — the real run-1 artifact.
-    assert result2["search"]["artifact_id"] == real_artifact_id
+    # search's result comes from the checkpoint — the real run-1 serve outcome.
+    assert result2["search"]["served"] == real_served
 
 
 @pytest.mark.unit

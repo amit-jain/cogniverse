@@ -785,9 +785,37 @@ class ArtifactManager:
         }
         state["canary"] = None
         # Active dataset content needs to land at the un-versioned name
-        # agents read at __init__. Copy from the versioned snapshot.
+        # agents read at __init__. Copy from the versioned snapshot. Pre-read
+        # the current content first: if the state save below fails after the
+        # copy, the previous active is restored so the un-versioned datasets
+        # and the state blob never disagree about which version is live.
+        previous_prompts = await self.load_prompts(agent_type)
+        previous_demos = await self.load_demonstrations(agent_type)
         await self._restore_active_from_version(agent_type, canary_version)
-        await self._save_artefact_state(agent_type, state)
+        try:
+            await self._save_artefact_state(agent_type, state)
+        except Exception:
+            try:
+                if previous_prompts is not None:
+                    await self.save_prompts(agent_type, previous_prompts)
+                if previous_demos is not None:
+                    await self.save_demonstrations(agent_type, previous_demos)
+                logger.warning(
+                    "Canary promotion state save failed for %s/%s; previous "
+                    "active artefacts restored",
+                    self._tenant_id,
+                    agent_type,
+                )
+            except Exception:
+                logger.exception(
+                    "Canary promotion state save failed for %s/%s and the "
+                    "active restore also failed; active content is v%d but "
+                    "the state blob still points at the previous version",
+                    self._tenant_id,
+                    agent_type,
+                    canary_version,
+                )
+            raise
         return state
 
     async def retire_canary(
@@ -1040,6 +1068,8 @@ class ArtifactManager:
         candidate_score: float,
         *,
         tolerance: float = 0.0,
+        min_improvement: float = 0.0,
+        serve_versioned: bool = False,
         optimizer: str = "unknown",
         train_examples: Optional[int] = None,
         run_id: Optional[str] = None,
@@ -1068,6 +1098,17 @@ class ArtifactManager:
             candidate_score: Score of the candidate on the same eval set.
             tolerance: Allowed regression band; defaults to 0 (strict win).
                 Pass a small positive value (e.g. 0.005) to tolerate noise.
+            min_improvement: Required margin over the baseline; the candidate
+                must score at least ``baseline + min_improvement - tolerance``
+                to promote. Wire ``optimization_improvement_threshold`` here.
+            serve_versioned: When True, a winning candidate is served through
+                the canary state machine (``save_prompts_versioned`` →
+                ``promote_to_canary`` → ``promote_canary_to_active``) so both
+                read seams — the init-time un-versioned active datasets and
+                the request-time overlay keyed off the state blob — pick up
+                the new version. The served version lands in
+                ``extra_metrics["served_version"]``. When False (default),
+                the win overwrites the un-versioned active artefacts only.
             optimizer: Name of the optimizer that produced the candidate.
             train_examples: Number of examples the optimizer compiled against.
             run_id: Caller-supplied id; auto-generated when omitted.
@@ -1079,14 +1120,17 @@ class ArtifactManager:
         """
         if tolerance < 0:
             raise ValueError(f"tolerance must be >= 0; got {tolerance}")
+        if min_improvement < 0:
+            raise ValueError(f"min_improvement must be >= 0; got {min_improvement}")
 
         improvement = candidate_score - baseline_score
-        threshold = baseline_score - tolerance
+        threshold = baseline_score + min_improvement - tolerance
         promoted = candidate_score >= threshold
 
         rid = run_id or _generate_run_id()
         extras: Dict[str, Any] = dict(extra_metrics or {})
         extras["tolerance"] = tolerance
+        extras["min_improvement"] = min_improvement
 
         if promoted:
             # Snapshot the about-to-be-overwritten active artefacts as
@@ -1106,24 +1150,44 @@ class ArtifactManager:
                         agent_type,
                         exc,
                     )
-            await self.save_prompts(agent_type, candidate_prompts)
-            if candidate_demos is not None:
-                await self.save_demonstrations(agent_type, candidate_demos)
+            if serve_versioned:
+                _, version = await self.save_prompts_versioned(
+                    agent_type, candidate_prompts
+                )
+                if candidate_demos is not None:
+                    _, demos_version = await self.save_demonstrations_versioned(
+                        agent_type, candidate_demos
+                    )
+                    if demos_version != version:
+                        # The state blob tracks one version number; the
+                        # restore-from-version copy would miss demos at a
+                        # different counter, so land them directly too.
+                        await self.save_demonstrations(agent_type, candidate_demos)
+                await self.promote_to_canary(agent_type, version, traffic_pct=100)
+                await self.promote_canary_to_active(agent_type)
+                extras["served_version"] = version
+            else:
+                await self.save_prompts(agent_type, candidate_prompts)
+                if candidate_demos is not None:
+                    await self.save_demonstrations(agent_type, candidate_demos)
             logger.info(
                 "Promoted candidate for %s/%s: candidate=%.4f baseline=%.4f "
-                "(improvement=%.4f, tolerance=%.4f)",
+                "(improvement=%.4f, min_improvement=%.4f, tolerance=%.4f)",
                 self._tenant_id,
                 agent_type,
                 candidate_score,
                 baseline_score,
                 improvement,
+                min_improvement,
                 tolerance,
             )
         else:
             extras["rejection_reason"] = (
-                f"candidate_score={candidate_score:.4f} < "
-                f"baseline_score - tolerance ({threshold:.4f}); "
-                f"regression of {-improvement:.4f}"
+                f"candidate_score={candidate_score:.4f} < required "
+                f"{threshold:.4f} (baseline {baseline_score:.4f} + "
+                f"min_improvement {min_improvement:.4f} - tolerance "
+                f"{tolerance:.4f}); improvement={improvement:.4f} — "
+                "regression-rejected"
             )
             logger.warning(
                 "Rejected candidate for %s/%s: candidate=%.4f baseline=%.4f "

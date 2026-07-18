@@ -33,6 +33,9 @@ class FakeDatasetStore:
             raise KeyError(name)
         return self.created[name]
 
+    async def delete_dataset(self, name: str) -> bool:
+        return self.created.pop(name, None) is not None
+
     async def append_to_dataset(
         self, name: str, data: pd.DataFrame, metadata: dict | None = None
     ) -> None:
@@ -231,3 +234,105 @@ class TestInputValidation:
                 candidate_score=0.4,
                 tolerance=-0.1,
             )
+
+    @pytest.mark.asyncio
+    async def test_negative_min_improvement_rejected(self, manager_and_provider):
+        mgr, _ = manager_and_provider
+        with pytest.raises(ValueError, match="min_improvement"):
+            await mgr.promote_if_better(
+                agent_type="x",
+                candidate_prompts={},
+                candidate_demos=None,
+                baseline_score=0.5,
+                candidate_score=0.6,
+                min_improvement=-0.01,
+            )
+
+
+class TestMinImprovement:
+    """``min_improvement`` demands a real win, not just parity."""
+
+    @pytest.mark.asyncio
+    async def test_below_min_improvement_rejected(self, manager_and_provider):
+        mgr, provider = manager_and_provider
+
+        record = await mgr.promote_if_better(
+            agent_type="search_agent",
+            candidate_prompts=CANDIDATE_PROMPTS,
+            candidate_demos=None,
+            baseline_score=0.50,
+            candidate_score=0.52,
+            min_improvement=0.05,
+        )
+
+        assert record.promoted is False
+        assert record.extra_metrics["min_improvement"] == 0.05
+        assert "min_improvement" in record.extra_metrics["rejection_reason"]
+        assert _ds_name_prompts("search_agent") not in provider.datasets.created
+
+    @pytest.mark.asyncio
+    async def test_meeting_min_improvement_promoted(self, manager_and_provider):
+        mgr, provider = manager_and_provider
+
+        record = await mgr.promote_if_better(
+            agent_type="search_agent",
+            candidate_prompts=CANDIDATE_PROMPTS,
+            candidate_demos=None,
+            baseline_score=0.50,
+            candidate_score=0.55,
+            min_improvement=0.05,
+        )
+
+        assert record.promoted is True
+        assert _ds_name_prompts("search_agent") in provider.datasets.created
+
+
+class TestServeVersioned:
+    """``serve_versioned=True`` routes a win through the canary state machine
+    so BOTH read seams (init-time un-versioned active + request-time overlay
+    keyed off the state blob) serve the winning candidate."""
+
+    @pytest.mark.asyncio
+    async def test_winning_candidate_lands_versioned_canary_then_active(
+        self, manager_and_provider
+    ):
+        mgr, provider = manager_and_provider
+
+        record = await mgr.promote_if_better(
+            agent_type="search_agent",
+            candidate_prompts=CANDIDATE_PROMPTS,
+            candidate_demos=CANDIDATE_DEMOS,
+            baseline_score=0.50,
+            candidate_score=0.60,
+            serve_versioned=True,
+        )
+
+        assert record.promoted is True
+        assert record.extra_metrics["served_version"] == 1
+        assert "dspy-prompts-acme:acme-search_agent-v1" in provider.datasets.created
+        assert "dspy-demos-acme:acme-search_agent-v1" in provider.datasets.created
+        state = await mgr.get_artefact_state("search_agent")
+        assert state["active"]["version"] == 1
+        assert state["canary"] is None
+        assert await mgr.load_prompts("search_agent") == CANDIDATE_PROMPTS
+
+    @pytest.mark.asyncio
+    async def test_losing_candidate_serve_versioned_writes_nothing(
+        self, manager_and_provider
+    ):
+        mgr, provider = manager_and_provider
+
+        record = await mgr.promote_if_better(
+            agent_type="search_agent",
+            candidate_prompts=CANDIDATE_PROMPTS,
+            candidate_demos=None,
+            baseline_score=0.80,
+            candidate_score=0.50,
+            serve_versioned=True,
+        )
+
+        assert record.promoted is False
+        assert "dspy-prompts-acme:acme-search_agent-v1" not in provider.datasets.created
+        assert await mgr.load_prompts("search_agent") is None
+        state = await mgr.get_artefact_state("search_agent")
+        assert state == {"active": None, "canary": None, "retired": []}

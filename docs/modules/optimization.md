@@ -384,15 +384,27 @@ uv run python -m cogniverse_runtime.optimization_cli \
 `run_triggered_optimization` loads the named Phoenix dataset (flattening `input`/`output` dict columns),
 splits each agent's rows into `low_scoring`/`high_scoring` by `category`, and for each agent in `--agents`:
 
-1. Builds a `dspy.Example` trainset from the high-scoring rows (agent-specific field mapping for
-   `search` / `summary` / `report`).
-2. Compiles a `dspy.ChainOfThought` over the matching signature with `BootstrapFewShot`, scoped inside
-   `dspy.context(lm=...)` (because `initialize_language_model` only sets `optimizer.lm`, it does not call
-   the global `dspy.configure`).
-3. Publishes the compiled instructions as the active prompt version via `_serve_compiled_prompts`
-   (`save_prompts_versioned`, promoted to active); the per-request prompt overlay serves them on
-   the next dispatch, `--mode rollback` restores a prior version, and the result reports the
-   served agent/version under `"served"`.
+1. Builds a labeled `dspy.Example` set from the high-scoring rows (agent-specific field mapping for
+   `search` / `summary` / `report`) and splits it deterministically into a trainset and a ~25% tail
+   holdout (`_split_train_holdout`). An agent whose rows are all failures returns
+   `{"status": "skipped", "reason": "no_positive_examples", "negative_examples": N}`.
+2. Compiles a `dspy.ChainOfThought` over the matching signature with `BootstrapFewShot` on the
+   trainset, scoped inside `dspy.context(lm=...)` (because `initialize_language_model` only sets
+   `optimizer.lm`, it does not call the global `dspy.configure`).
+3. Scores the compiled candidate against the currently-active baseline (`_holdout_scores` via
+   `_probe_score`): for `summary`/`report`, held-out positives contribute token-F1 to the labeled
+   output and the low-scoring rows become known-bad probes (`_negative_probes`) that reward NOT
+   reproducing the recorded failing output; for `search` (whose signature emits enum fields with no
+   free-text label), both held-out positives and negatives are scored label-free via `_search_validity`
+   — the fraction of `primary_intent`/`complexity_level`/`needs_video_search` that hold a well-formed
+   value.
+4. Publishes the compiled instructions via `_serve_compiled_prompts` **only if the candidate wins by
+   at least the tenant's `optimization_improvement_threshold`** — the call routes through
+   `ArtifactManager.promote_if_better(serve_versioned=True)` (versioned save → canary → active); the
+   per-request prompt overlay serves a winner on the next dispatch, a loser is recorded in the
+   experiments ledger with `promoted=False`, `--mode rollback` restores a prior version, and the
+   result reports the outcome under `"served"` (`served_agent`, `version`, `active`, `promoted`, plus
+   `baseline_score`/`candidate_score` when eval material was available or a `reason` when it wasn't).
 
 After the per-agent loop, it **also** runs strategy distillation: builds (or reuses) a
 `Mem0MemoryManager` for the tenant (requires `SystemConfig.backend_url`/`backend_port`, an `api_base` on
@@ -553,16 +565,24 @@ metrics = await am.promote_if_better(
     baseline_score=0.72,
     candidate_score=0.75,
     tolerance=0.0,                      # allowed regression band (0 = strict win)
+    min_improvement=0.05,               # required margin over baseline
+    serve_versioned=True,               # winner goes versioned → canary → active
     optimizer="BootstrapFewShot",
     train_examples=64,
 )
 ```
 
-- Promoted when `candidate_score >= baseline_score - tolerance`: prompts/demos are saved and become
-  active (current active is snapshotted first via `snapshot_active` when `snapshot_before_promote=True`,
-  the default).
+- Promoted when `candidate_score >= baseline_score + min_improvement - tolerance`: prompts/demos are
+  saved and become active (current active is snapshotted first via `snapshot_active` when
+  `snapshot_before_promote=True`, the default). With `serve_versioned=True` the win lands through the
+  canary state machine (`save_prompts_versioned` → `promote_to_canary` → `promote_canary_to_active`)
+  so both read seams — init-time un-versioned datasets and the request-time overlay keyed off the
+  state blob — serve the new version; the version number is recorded in
+  `extra_metrics["served_version"]`. With the default `serve_versioned=False` the win overwrites the
+  un-versioned active artefacts only.
 - Rejected otherwise: prompts/demos are **not** saved; the run is recorded with `promoted=False` and a
-  `rejection_reason`.
+  `rejection_reason`. `--mode triggered` wires the tenant's `optimization_improvement_threshold`
+  config knob into `min_improvement`.
 
 Either outcome lands as a typed `ExperimentMetrics` row via `save_experiment` in the per-agent experiments
 dataset, so the promotion ledger is observable end-to-end — rejected runs stay visible with their scores
@@ -687,7 +707,7 @@ Result dict shape: `{log_retention_days, memory_retention_days, memory_cleanup: 
 ### 18. **`--mode synthetic` (Synthetic Data Generation)**
 
 `run_synthetic_generation(tenant_id, optimizer_types=None, count=50)` generates training data for one or
-more optimizer types (default `["simba", "profile", "workflow"]`) via `SyntheticDataService`, saving each
+more optimizer types (default `["query_enhancement", "profile", "workflow"]`) via `SyntheticDataService`, saving each
 type's output as demonstrations (`ArtifactManager.save_demonstrations(f"synthetic_{opt_type}", demos)`)
 tagged `metadata.approval_status: "pending"` for the approval workflow.
 
@@ -922,7 +942,7 @@ The optimization module includes production-ready deployment infrastructure with
 
 #### CLI: `cogniverse_runtime.optimization_cli`
 
-**Command-line interface for per-agent optimization** (13 modes total):
+**Command-line interface for per-agent optimization** (14 modes total):
 
 ```bash
 # Optimize query enhancement (mode named "simba"; runs BootstrapFewShot)
@@ -958,7 +978,7 @@ uv run python -m cogniverse_runtime.optimization_cli \
 
 **Available Options (subset — see `build_parser()` for the full set):**
 
-- `--mode`: `cleanup | triggered | simba | workflow | gateway-thresholds | online-routing-eval | profile | entity-extraction | synthetic | rollback | ab-compare | egress-netpol | monthly-reports`
+- `--mode`: `cleanup | triggered | simba | workflow | gateway-thresholds | online-routing-eval | online-eval | profile | entity-extraction | synthetic | rollback | ab-compare | egress-netpol | monthly-reports`
 
 - `--tenant-id`: required for every mode except `cleanup`, `egress-netpol`, and `monthly-reports`
 
@@ -1582,7 +1602,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 
 - `libs/agents/cogniverse_agents/optimizer/strategy_learner.py` - Trace distillation into reusable strategies
 
-- `libs/runtime/cogniverse_runtime/optimization_cli.py` - CLI entry point for all 13 optimization/maintenance modes
+- `libs/runtime/cogniverse_runtime/optimization_cli.py` - CLI entry point for all 14 optimization/maintenance modes
 
 - `libs/runtime/cogniverse_runtime/quality_monitor_cli.py` - Quality-triggered optimization driver
 

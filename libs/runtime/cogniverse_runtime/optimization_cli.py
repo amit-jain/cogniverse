@@ -451,19 +451,21 @@ async def _optimize_agent(
     tenant_id: str,
     teacher_endpoint=None,
 ) -> dict:
-    """Run DSPy optimization for a specific agent using scored examples."""
+    """Run DSPy optimization for a specific agent using scored examples.
+
+    The compile trains on the high-scoring rows; a held-out slice of them
+    plus the low-scoring rows (as known-bad probes) score the candidate
+    against the currently-active baseline, and only a win by at least
+    ``optimization_improvement_threshold`` is promoted to serving.
+    """
     import json as _json
 
-    from cogniverse_agents.optimizer.dspy_agent_optimizer import (
-        DSPyAgentPromptOptimizer,
-    )
+    if agent_name not in _SERVE_TARGET:
+        return {"status": "skipped", "reason": f"no_signature_for_{agent_name}"}
 
-    optimizer = DSPyAgentPromptOptimizer()
-    optimizer.initialize_language_model(
-        llm_endpoint, teacher_endpoint_config=teacher_endpoint
-    )
-
-    # Build DSPy training examples from scored data
+    # Build labeled examples from the positives FIRST — an all-failure agent
+    # has nothing to bootstrap from and must say so, including how many
+    # negatives were on the table, before any LM setup.
     import dspy
 
     trainset = []
@@ -475,6 +477,8 @@ async def _optimize_agent(
                 output = _json.loads(output)
             except Exception:
                 output = {}
+        if not isinstance(output, dict):
+            output = {}
 
         if agent_name == "search":
             example = dspy.Example(
@@ -482,7 +486,7 @@ async def _optimize_agent(
                 modality="video",
                 top_k=10,
                 search_strategy="colpali",
-                enhanced_query=query,
+                enhanced_query=str(output.get("enhanced_query") or query),
                 confidence=row.get("score", 0.8),
             ).with_inputs("query", "modality", "top_k")
         elif agent_name == "summary":
@@ -511,17 +515,31 @@ async def _optimize_agent(
         trainset.append(example)
 
     if not trainset:
-        return {"status": "skipped", "reason": "no_training_examples"}
+        return {
+            "status": "skipped",
+            "reason": "no_positive_examples",
+            "negative_examples": int(len(low_scoring_df)),
+        }
+
+    from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+        DSPyAgentPromptOptimizer,
+    )
+
+    optimizer = DSPyAgentPromptOptimizer()
+    optimizer.initialize_language_model(
+        llm_endpoint, teacher_endpoint_config=teacher_endpoint
+    )
 
     # Select and compile the right DSPy module
     if agent_name == "search":
         signature = optimizer.create_query_analysis_signature()
     elif agent_name == "summary":
         signature = optimizer.create_summary_generation_signature()
-    elif agent_name == "report":
-        signature = optimizer.create_detailed_report_signature()
     else:
-        return {"status": "skipped", "reason": f"no_signature_for_{agent_name}"}
+        signature = optimizer.create_detailed_report_signature()
+
+    train, holdout = _split_train_holdout(trainset)
+    negatives = _negative_probes(agent_name, low_scoring_df)
 
     from dspy.teleprompt import BootstrapFewShot
 
@@ -544,17 +562,45 @@ async def _optimize_agent(
         # only sets optimizer.lm, it does not configure DSPy's global LM (unlike
         # the sibling modes which call dspy.configure). Scope it to the compile.
         with dspy.context(lm=optimizer.lm):
-            compiled = teleprompter.compile(module, trainset=trainset)
+            compiled = teleprompter.compile(module, trainset=train)
 
-        # Route the compiled instructions into the SERVING path: a versioned
-        # prompts dataset promoted to ACTIVE, which the dispatcher's
-        # per-request overlay applies on the next dispatch.
         artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-        served = await _serve_compiled_prompts(artifact_manager, agent_name, compiled)
+        served_agent, predictor_attr = _SERVE_TARGET[agent_name]
+
+        # Baseline = the currently-active instructions (or the stock
+        # signature when the agent was never optimized), scored against the
+        # candidate on the held-out positives + known-bad probes.
+        baseline_score = candidate_score = None
+        if holdout or negatives:
+            baseline_module = dspy.ChainOfThought(signature)
+            active_prompts = await artifact_manager.load_prompts(served_agent)
+            if active_prompts and active_prompts.get(predictor_attr):
+                for _, predictor in baseline_module.named_predictors():
+                    predictor.signature = predictor.signature.with_instructions(
+                        active_prompts[predictor_attr]
+                    )
+                    break
+            with dspy.context(lm=optimizer.lm):
+                baseline_score, candidate_score = _holdout_scores(
+                    baseline_module, compiled, holdout, negatives, agent_name
+                )
+
+        min_improvement = _min_improvement_from_config(tenant_id, config_manager)
+        served = await _serve_compiled_prompts(
+            artifact_manager,
+            agent_name,
+            compiled,
+            baseline_score=baseline_score,
+            candidate_score=candidate_score,
+            min_improvement=min_improvement,
+            train_examples=len(train),
+        )
 
         result = {
             "status": "success",
-            "training_examples": len(trainset),
+            "training_examples": len(train),
+            "holdout_examples": len(holdout),
+            "negative_probes": len(negatives),
         }
         if served:
             result["served"] = served
@@ -563,6 +609,14 @@ async def _optimize_agent(
     except Exception as e:
         logger.error(f"DSPy compilation failed for {agent_name}: {e}")
         return {"status": "failed", "error": str(e)}
+
+
+def _min_improvement_from_config(tenant_id: str, config_manager=None) -> float:
+    """The tenant's ``optimization_improvement_threshold`` acceptance gate."""
+    from cogniverse_runtime.quality_monitor_cli import _load_automation_rules
+
+    rules = _load_automation_rules(tenant_id, config_manager=config_manager)
+    return float(rules.optimization_triggers.optimization_improvement_threshold)
 
 
 # Where a triggered-mode compile is served from: the DISPATCH agent name the
@@ -574,16 +628,218 @@ _SERVE_TARGET = {
     "report": ("detailed_report_agent", "report_generator"),
 }
 
+# Held-out eval wiring per agent, matching the REAL DSPy signatures
+# (create_query_analysis_signature etc.): required input kwargs taken from
+# each example, optional inputs blank-filled, and the primary output field
+# scored against the example's label. The search signature emits
+# intent/complexity/boolean enums with no free-text labeled output, so search
+# is scored label-free on output VALIDITY (are the enums well-formed values).
+_EVAL_FIELD = {
+    "summary": "summary",
+    "report": "executive_summary",
+}
+_EVAL_INPUTS = {
+    "search": ("query",),
+    "summary": ("content", "summary_type", "target_audience"),
+    "report": ("search_results", "query_context", "analysis_depth"),
+}
+_EVAL_OPTIONAL_INPUTS = {
+    "search": ("context",),
+    "summary": ("visual_insights",),
+    "report": ("visual_analysis",),
+}
+_SEARCH_INTENTS = {
+    "search",
+    "comparison",
+    "analysis",
+    "summarization",
+    "reporting",
+    "temporal_search",
+    "content_discovery",
+    "information_extraction",
+    "complex_analysis",
+    "meta_query",
+}
+_SEARCH_COMPLEXITIES = {"simple", "moderate", "complex"}
+_BOOL_WORDS = {"true", "false"}
 
-async def _serve_compiled_prompts(artifact_manager, agent_name: str, compiled):
-    """Publish a compiled module's instructions as the ACTIVE prompt version.
 
-    Returns ``{"served_agent", "version", "active"}`` or ``None`` when the
-    compile produced no instructions (nothing to serve). The version goes
-    straight to active — agents serve the new prompts on the next dispatch
-    via the per-request overlay, matching the sibling modes where agents
-    simply load the freshly-saved artifact. Every version is snapshotted, so
-    ``--mode rollback`` restores a prior one if a compile regressed.
+def _search_validity(pred) -> float:
+    """Label-free score for the query-analysis signature: fraction of the
+    enum-typed outputs that hold a well-formed value."""
+    intent = str(getattr(pred, "primary_intent", "") or "").strip().lower()
+    complexity = str(getattr(pred, "complexity_level", "") or "").strip().lower()
+    needs_video = str(getattr(pred, "needs_video_search", "") or "").strip().lower()
+    checks = [
+        intent in _SEARCH_INTENTS,
+        complexity in _SEARCH_COMPLEXITIES,
+        needs_video in _BOOL_WORDS,
+    ]
+    return sum(checks) / len(checks)
+
+
+def _probe_score(pred, label: str, agent_name: str) -> float:
+    """Score one prediction: search by validity, summary/report by token-F1
+    to the label (or plain non-emptiness when the label is empty)."""
+    if agent_name == "search":
+        return _search_validity(pred)
+    text = str(getattr(pred, _EVAL_FIELD[agent_name], "") or "")
+    if str(label or "").strip():
+        return _token_f1(text, label)
+    return 1.0 if text.strip() else 0.0
+
+
+def _token_f1(predicted: str, label: str) -> float:
+    """Whitespace-token set F1 between a predicted string and its label."""
+    pred = set(str(predicted or "").split())
+    lab = set(str(label or "").split())
+    if not pred or not lab:
+        return 0.0
+    overlap = len(pred & lab)
+    if overlap == 0:
+        return 0.0
+    precision = overlap / len(pred)
+    recall = overlap / len(lab)
+    return 2 * precision * recall / (precision + recall)
+
+
+def _split_train_holdout(examples: list) -> tuple[list, list]:
+    """Deterministic tail holdout: ~25% (min 1) once there are 2+ examples."""
+    n = len(examples)
+    if n <= 1:
+        return list(examples), []
+    k = max(1, n // 4)
+    return list(examples[:-k]), list(examples[-k:])
+
+
+def _negative_probes(agent_name: str, low_scoring_df, limit: int = 20) -> list:
+    """Known-bad probes from the human-flagged failures that triggered the
+    recompile: ``(inputs, failing_output)`` pairs. For summary/report a
+    candidate is rewarded for NOT reproducing the failing output on the same
+    inputs; for search (label-free) the candidate is scored on producing a
+    VALID analysis where the recorded one failed."""
+    import json as _json
+
+    field = _EVAL_FIELD.get(agent_name)
+    probes = []
+    for _, row in low_scoring_df.iterrows():
+        query = row.get("query", "")
+        output = row.get("output", "{}")
+        if isinstance(output, str):
+            try:
+                output = _json.loads(output)
+            except Exception:
+                output = {}
+        if not isinstance(output, dict):
+            output = {}
+        if agent_name == "search":
+            if not str(query).strip():
+                continue
+            probes.append(({"query": query}, ""))
+        elif agent_name == "summary":
+            bad = str(output.get(field, ""))
+            if not bad:
+                continue
+            probes.append(
+                (
+                    {
+                        "content": _json.dumps(output, default=str),
+                        "summary_type": "comprehensive",
+                        "target_audience": "general",
+                    },
+                    bad,
+                )
+            )
+        else:
+            bad = str(output.get(field, ""))
+            if not bad:
+                continue
+            probes.append(
+                (
+                    {
+                        "search_results": _json.dumps(output, default=str),
+                        "query_context": query,
+                        "analysis_depth": "detailed",
+                    },
+                    bad,
+                )
+            )
+        if len(probes) >= limit:
+            break
+    return probes
+
+
+def _holdout_scores(
+    baseline_module, candidate_module, holdout, negatives, agent_name: str
+) -> tuple[float, float]:
+    """Score both modules on the same probe set.
+
+    Held-out positives contribute ``_probe_score`` against the labeled
+    output (validity for search); summary/report negatives contribute
+    ``1 - F1`` against the recorded failing output, search negatives the
+    validity of the fresh analysis. Returns
+    ``(baseline_score, candidate_score)`` as means over the probe set.
+    """
+    input_keys = _EVAL_INPUTS[agent_name]
+    optional_keys = _EVAL_OPTIONAL_INPUTS[agent_name]
+    label_field = _EVAL_FIELD.get(agent_name)
+
+    def _kwargs(base: dict) -> dict:
+        kwargs = dict(base)
+        for k in optional_keys:
+            kwargs.setdefault(k, "")
+        return kwargs
+
+    def _run(module) -> list:
+        scores = []
+        for ex in holdout:
+            pred = module(**_kwargs({k: getattr(ex, k) for k in input_keys}))
+            label = getattr(ex, label_field) if label_field else ""
+            scores.append(_probe_score(pred, label, agent_name))
+        for inputs, bad_output in negatives:
+            pred = module(**_kwargs(inputs))
+            if agent_name == "search":
+                scores.append(_search_validity(pred))
+            else:
+                field = _EVAL_FIELD[agent_name]
+                scores.append(1.0 - _token_f1(getattr(pred, field, ""), bad_output))
+        return scores
+
+    baseline_scores = _run(baseline_module)
+    candidate_scores = _run(candidate_module)
+    if not baseline_scores:
+        return 0.0, 0.0
+    return (
+        sum(baseline_scores) / len(baseline_scores),
+        sum(candidate_scores) / len(candidate_scores),
+    )
+
+
+async def _serve_compiled_prompts(
+    artifact_manager,
+    agent_name: str,
+    compiled,
+    *,
+    baseline_score: Optional[float] = None,
+    candidate_score: Optional[float] = None,
+    min_improvement: float = 0.0,
+    train_examples: Optional[int] = None,
+):
+    """Publish a compiled module's instructions IF it beats the active baseline.
+
+    Serving goes through ``ArtifactManager.promote_if_better``: only a
+    candidate that scores at least ``baseline + min_improvement`` on the
+    held-out eval flips active (versioned save → canary → active, so the
+    per-request overlay serves it on the next dispatch). A losing candidate
+    is recorded in the experiments ledger and never touches live traffic;
+    ``--mode rollback`` still restores prior versions.
+
+    Without eval scores nothing is promoted — an ungated promote can regress
+    live traffic, which is exactly what the gate exists to prevent.
+
+    Returns ``None`` when the compile produced no instructions, otherwise a
+    dict with ``served_agent``/``version``/``active``/``promoted`` plus the
+    scores (or a ``reason`` when no eval material was available).
     """
     target = _SERVE_TARGET.get(agent_name)
     if target is None:
@@ -603,18 +859,49 @@ async def _serve_compiled_prompts(artifact_manager, agent_name: str, compiled):
         )
         return None
 
-    _, version = await artifact_manager.save_prompts_versioned(
-        served_agent, {predictor_attr: instructions}
+    if baseline_score is None or candidate_score is None:
+        logger.warning(
+            "No held-out eval material for %s — compiled prompts NOT promoted",
+            agent_name,
+        )
+        return {
+            "served_agent": served_agent,
+            "version": None,
+            "active": False,
+            "promoted": False,
+            "reason": "no_eval_material",
+        }
+
+    record = await artifact_manager.promote_if_better(
+        agent_type=served_agent,
+        candidate_prompts={predictor_attr: instructions},
+        candidate_demos=None,
+        baseline_score=baseline_score,
+        candidate_score=candidate_score,
+        min_improvement=min_improvement,
+        serve_versioned=True,
+        optimizer="BootstrapFewShot",
+        train_examples=train_examples,
     )
-    await artifact_manager.promote_to_canary(served_agent, version, traffic_pct=100)
-    await artifact_manager.promote_canary_to_active(served_agent)
+    promoted = bool(record.promoted)
+    version = record.extra_metrics.get("served_version") if promoted else None
     logger.info(
-        "Serving compiled %s prompts as %s v%d (active)",
+        "Compiled %s prompts %s (candidate=%.4f baseline=%.4f min_improvement=%.4f)%s",
         agent_name,
-        served_agent,
-        version,
+        "PROMOTED" if promoted else "rejected",
+        candidate_score,
+        baseline_score,
+        min_improvement,
+        f" — serving as {served_agent} v{version} (active)" if promoted else "",
     )
-    return {"served_agent": served_agent, "version": version, "active": True}
+    return {
+        "served_agent": served_agent,
+        "version": version,
+        "active": promoted,
+        "promoted": promoted,
+        "baseline_score": baseline_score,
+        "candidate_score": candidate_score,
+    }
 
 
 def _prune_aged_files(root: str, *, older_than_days: float) -> dict:
