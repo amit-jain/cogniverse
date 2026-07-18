@@ -42,3 +42,45 @@ async def test_save_blob_overwrites_instead_of_appending(manager):
     name = manager._blob_dataset_name("model", "k1")
     df = await manager._provider.datasets.get_dataset(name=name)
     assert len(df) == 1, f"blob dataset must hold exactly one row, got {len(df)}"
+
+
+@pytest.mark.asyncio
+async def test_gateway_reload_serves_rewritten_thresholds(manager):
+    """Re-running _load_artifact on an ALREADY-LOADED gateway agent must apply
+    a rewritten gateway_thresholds blob — the contract behind the dispatcher's
+    periodic re-load, which is how a warm pod starts serving a recalibration
+    without a restart."""
+    import asyncio
+    import json
+    from types import SimpleNamespace
+
+    from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
+
+    await manager.save_blob(
+        "config",
+        "gateway_thresholds",
+        json.dumps({"fast_path_confidence_threshold": 0.5, "gliner_threshold": 0.49}),
+    )
+
+    agent = GatewayAgent(deps=GatewayDeps())
+    agent.telemetry_manager = SimpleNamespace(
+        get_provider=lambda tenant_id: manager._provider
+    )
+    agent._artifact_tenant_id = manager._tenant_id
+
+    # Off-loop, exactly as the dispatcher runs it.
+    await asyncio.to_thread(agent._load_artifact)
+    assert agent.artifact_load_status == "loaded"
+    assert agent.deps.fast_path_confidence_threshold == 0.5
+    assert agent.deps.gliner_threshold == 0.49
+
+    await manager.save_blob(
+        "config",
+        "gateway_thresholds",
+        json.dumps({"fast_path_confidence_threshold": 0.35, "gliner_threshold": 0.2}),
+    )
+
+    await asyncio.to_thread(agent._load_artifact)
+    assert agent.artifact_load_status == "loaded"
+    assert agent.deps.fast_path_confidence_threshold == 0.35
+    assert agent.deps.gliner_threshold == 0.2

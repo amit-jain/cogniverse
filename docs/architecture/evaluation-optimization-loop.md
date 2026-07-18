@@ -111,10 +111,13 @@ applying the restore, so the rollback is itself reversible. Snapshots
 live as `dspy-prompts-{tenant}-{agent}-vN` (and `dspy-demos-…-vN`)
 datasets; `list_versions` enumerates them.
 
-Hot reload note: agents call `_load_artifact` per-request (the dispatcher
-runs it after telemetry/tenant injection), so a new artefact lands without
-restart automatically — the rollback only needs to flip the active dataset
-content; the next request picks it up.
+Hot reload note: the generic agents are rebuilt per request (the dispatcher
+runs `_load_artifact` after telemetry/tenant injection), so a new artefact
+lands without restart on the next request. The gateway agent is the
+exception — it is cached per tenant, and cache hits re-run `_load_artifact`
+once the reload interval elapses (`GATEWAY_ARTIFACT_TTL_S`, 5 minutes), so a
+recalibration starts serving on a warm pod within that interval. A rollback
+therefore only needs to flip the active dataset content.
 
 ## Regression-reject gate
 
@@ -181,9 +184,10 @@ mode currently defaults to it — see "Optimizer Selection" below.)
 - Do not add long-lived background recompile loops to the runtime pod.
 - New optimization triggers belong in `QualityMonitor` (live signal) or in a
   CronWorkflow (schedule). Both submit Argo workflows that invoke the CLI.
-- Hot reload of compiled artefacts (when added) belongs in the **runtime**,
-  not in the optimizer — the runtime polls/SIGUSR1's for new artefacts; the
-  optimizer's job ends when it has written the artefact.
+- Hot reload of compiled artefacts belongs in the **runtime**, not in the
+  optimizer — the dispatcher reloads artefacts per request (TTL-gated for
+  the cached gateway agent; see the Hot reload note above); the optimizer's
+  job ends when it has written the artefact.
 
 If you find yourself wanting a daemon, the actual gap is more likely
 *observability* (Phoenix tile, dashboard view) or *trigger latency* (poll
@@ -200,7 +204,7 @@ Every `--mode` value `python -m cogniverse_runtime.optimization_cli` accepts:
 | `triggered` | Compiles DSPy modules for `--agents` from a scored `--trigger-dataset`; runs `StrategyLearner` afterward |
 | `simba` | Compiles `QueryEnhancementAgent`'s module from a scored trigger dataset (name is historical — still uses `BootstrapFewShot`) |
 | `workflow` | Compiles orchestration workflow strategies via `WorkflowIntelligence` |
-| `gateway-thresholds` | Recalibrates `fast_path_confidence_threshold` / `gliner_threshold` from routing spans |
+| `gateway-thresholds` | Recalibrates `fast_path_confidence_threshold` / `gliner_threshold` from `cogniverse.gateway` spans |
 | `online-routing-eval` | Scores recent `cogniverse.routing` spans (routing outcome + confidence calibration) without compiling anything |
 | `online-eval` | Per-agent-type online span scoring: every domain-span agent (routing, query_enhancement, entity_extraction, profile_selection) scored by its evaluator-registry structural evaluators, persisted as `online_eval.*` annotations |
 | `profile` | Compiles the search-profile-selection module from spans |
