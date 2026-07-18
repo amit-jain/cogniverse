@@ -529,11 +529,15 @@ async def _optimize_agent(
         trainset.append(example)
 
     if not trainset:
-        return {
-            "status": "skipped",
-            "reason": "no_positive_examples",
-            "negative_examples": int(len(low_scoring_df)),
-        }
+        return await _reflect_or_skip(
+            agent_name=agent_name,
+            low_scoring_df=low_scoring_df,
+            llm_endpoint=llm_endpoint,
+            config_manager=config_manager,
+            telemetry_provider=telemetry_provider,
+            tenant_id=tenant_id,
+            teacher_endpoint=teacher_endpoint,
+        )
 
     from cogniverse_agents.optimizer.dspy_agent_optimizer import (
         DSPyAgentPromptOptimizer,
@@ -544,13 +548,7 @@ async def _optimize_agent(
         llm_endpoint, teacher_endpoint_config=teacher_endpoint
     )
 
-    # Select and compile the right DSPy module
-    if agent_name == "search":
-        signature = optimizer.create_query_analysis_signature()
-    elif agent_name == "summary":
-        signature = optimizer.create_summary_generation_signature()
-    else:
-        signature = optimizer.create_detailed_report_signature()
+    signature = _signature_for_agent(optimizer, agent_name)
 
     train, holdout = _split_train_holdout(trainset)
     negatives = _negative_probes(agent_name, low_scoring_df)
@@ -579,50 +577,99 @@ async def _optimize_agent(
             compiled = teleprompter.compile(module, trainset=train)
 
         artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-        served_agent, predictor_attr = _SERVE_TARGET[agent_name]
-
-        # Baseline = the currently-active instructions (or the stock
-        # signature when the agent was never optimized), scored against the
-        # candidate on the held-out positives + known-bad probes.
-        baseline_score = candidate_score = None
-        if holdout or negatives:
-            baseline_module = dspy.ChainOfThought(signature)
-            active_prompts = await artifact_manager.load_prompts(served_agent)
-            if active_prompts and active_prompts.get(predictor_attr):
-                for _, predictor in baseline_module.named_predictors():
-                    predictor.signature = predictor.signature.with_instructions(
-                        active_prompts[predictor_attr]
-                    )
-                    break
-            with dspy.context(lm=optimizer.lm):
-                baseline_score, candidate_score = _holdout_scores(
-                    baseline_module, compiled, holdout, negatives, agent_name
-                )
-
-        min_improvement = _min_improvement_from_config(tenant_id, config_manager)
-        served = await _serve_compiled_prompts(
+        return await _score_and_serve(
             artifact_manager,
             agent_name,
+            signature,
             compiled,
-            baseline_score=baseline_score,
-            candidate_score=candidate_score,
-            min_improvement=min_improvement,
-            train_examples=len(train),
+            holdout,
+            negatives,
+            optimizer.lm,
+            tenant_id,
+            config_manager,
+            len(train),
         )
-
-        result = {
-            "status": "success",
-            "training_examples": len(train),
-            "holdout_examples": len(holdout),
-            "negative_probes": len(negatives),
-        }
-        if served:
-            result["served"] = served
-        return result
 
     except Exception as e:
         logger.error(f"DSPy compilation failed for {agent_name}: {e}")
         return {"status": "failed", "error": str(e)}
+
+
+def _signature_for_agent(optimizer, agent_name: str):
+    """The DSPy signature the compile trains for a servable agent."""
+    if agent_name == "search":
+        return optimizer.create_query_analysis_signature()
+    if agent_name == "summary":
+        return optimizer.create_summary_generation_signature()
+    return optimizer.create_detailed_report_signature()
+
+
+async def _score_and_serve(
+    artifact_manager,
+    agent_name: str,
+    signature,
+    compiled,
+    holdout: list,
+    negatives: list,
+    optimizer_lm,
+    tenant_id: str,
+    config_manager,
+    train_examples: int,
+    extra_result: Optional[dict] = None,
+) -> dict:
+    """Score a compiled candidate against the active baseline and serve a winner.
+
+    Loads the currently-active instructions into a baseline module, scores
+    baseline vs candidate on the same ``(holdout, negatives)`` probe set, and
+    routes the candidate through ``_serve_compiled_prompts`` — promoted only
+    when it beats ``baseline + optimization_improvement_threshold``. Shared by
+    the positives-trained path and the reflective all-failure path;
+    ``extra_result`` is merged into the returned dict (e.g. ``reflective``).
+    """
+    import dspy
+
+    served_agent, predictor_attr = _SERVE_TARGET[agent_name]
+
+    # Baseline = the currently-active instructions (or the stock signature when
+    # the agent was never optimized), scored against the candidate on the
+    # held-out positives + known-bad probes.
+    baseline_score = candidate_score = None
+    if holdout or negatives:
+        baseline_module = dspy.ChainOfThought(signature)
+        active_prompts = await artifact_manager.load_prompts(served_agent)
+        if active_prompts and active_prompts.get(predictor_attr):
+            for _, predictor in baseline_module.named_predictors():
+                predictor.signature = predictor.signature.with_instructions(
+                    active_prompts[predictor_attr]
+                )
+                break
+        with dspy.context(lm=optimizer_lm):
+            baseline_score, candidate_score = _holdout_scores(
+                baseline_module, compiled, holdout, negatives, agent_name
+            )
+
+    min_improvement = _min_improvement_from_config(tenant_id, config_manager)
+    served = await _serve_compiled_prompts(
+        artifact_manager,
+        agent_name,
+        compiled,
+        baseline_score=baseline_score,
+        candidate_score=candidate_score,
+        min_improvement=min_improvement,
+        train_examples=train_examples,
+    )
+
+    result = {
+        "status": "success",
+        "training_examples": train_examples,
+        "holdout_examples": len(holdout),
+        "negative_probes": len(negatives),
+    }
+    if extra_result:
+        result.update(extra_result)
+    if served:
+        result["served"] = served
+    return result
 
 
 def _min_improvement_from_config(tenant_id: str, config_manager=None) -> float:
@@ -631,6 +678,215 @@ def _min_improvement_from_config(tenant_id: str, config_manager=None) -> float:
 
     rules = _load_automation_rules(tenant_id, config_manager=config_manager)
     return float(rules.optimization_triggers.optimization_improvement_threshold)
+
+
+def _reflective_settings_from_config(tenant_id: str, config_manager=None):
+    """The tenant's reflective-recompile toggles: (enable, min_failures, budget)."""
+    from cogniverse_runtime.quality_monitor_cli import _load_automation_rules
+
+    triggers = _load_automation_rules(
+        tenant_id, config_manager=config_manager
+    ).optimization_triggers
+    return (
+        bool(triggers.enable_reflective_recompile),
+        int(triggers.min_reflective_failures),
+        int(triggers.reflective_max_metric_calls),
+    )
+
+
+async def _reflect_or_skip(
+    *,
+    agent_name: str,
+    low_scoring_df,
+    llm_endpoint,
+    config_manager,
+    telemetry_provider,
+    tenant_id: str,
+    teacher_endpoint=None,
+) -> dict:
+    """All-failure fallback: reflective GEPA recompile, or the skip dict.
+
+    Reached when the positives trainset is empty. With reflective recompile
+    enabled and enough failing rows, the failing rows are split into a GEPA
+    trainset and a held-out negatives slice, GEPA proposes improved
+    instructions from the feedback metric, and the candidate goes through the
+    SAME ``_score_and_serve`` promotion gate (scored on the held-out negatives,
+    no positives). Otherwise the original skip dict is returned unchanged.
+    """
+    enable, min_failures, max_metric_calls = _reflective_settings_from_config(
+        tenant_id, config_manager
+    )
+    if not enable or agent_name not in _SERVE_TARGET:
+        return {
+            "status": "skipped",
+            "reason": "no_positive_examples",
+            "negative_examples": int(len(low_scoring_df)),
+        }
+
+    reflect_train_rows, reflect_eval_rows = _split_train_holdout(
+        list(low_scoring_df.to_dict("records"))
+    )
+    if len(reflect_train_rows) < min_failures:
+        return {
+            "status": "skipped",
+            "reason": "insufficient_failures_to_reflect",
+            "negative_examples": int(len(low_scoring_df)),
+        }
+
+    import pandas as _pd
+
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+        DSPyAgentPromptOptimizer,
+    )
+
+    optimizer = DSPyAgentPromptOptimizer()
+    optimizer.initialize_language_model(
+        llm_endpoint, teacher_endpoint_config=teacher_endpoint
+    )
+    signature = _signature_for_agent(optimizer, agent_name)
+
+    # Eval negatives are HELD OUT — GEPA compiles on reflect_train_rows only and
+    # never sees reflect_eval_rows, so the promotion gate scores against unseen
+    # failures.
+    eval_negatives = _negative_probes(agent_name, _pd.DataFrame(reflect_eval_rows))
+
+    try:
+        compiled = _reflective_compile(
+            agent_name,
+            reflect_train_rows,
+            signature,
+            optimizer.lm,
+            max_metric_calls,
+        )
+        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+        return await _score_and_serve(
+            artifact_manager,
+            agent_name,
+            signature,
+            compiled,
+            [],
+            eval_negatives,
+            optimizer.lm,
+            tenant_id,
+            config_manager,
+            len(reflect_train_rows),
+            extra_result={"reflective": True},
+        )
+    except Exception as e:
+        logger.error(f"Reflective compilation failed for {agent_name}: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
+def _build_gepa(metric, reflection_lm, max_metric_calls: int):
+    """Construct the GEPA reflective compiler (isolated seam for testing)."""
+    from dspy.teleprompt import GEPA
+
+    return GEPA(
+        metric=metric,
+        reflection_lm=reflection_lm,
+        max_metric_calls=max_metric_calls,
+        reflection_minibatch_size=3,
+        candidate_selection_strategy="pareto",
+    )
+
+
+def _reflective_metric(agent_name: str):
+    """A 5-arg GEPA feedback metric rewarding a candidate for NOT reproducing
+    the recorded failing output.
+
+    ``search`` has no free-text label, so it is scored on enum validity; the
+    text agents score ``1 - token_f1`` against the recorded failing output.
+    """
+    from dspy.teleprompt.gepa.gepa import ScoreWithFeedback
+
+    field = _EVAL_FIELD.get(agent_name)
+
+    def metric(gold, pred, trace, pred_name, pred_trace):
+        if agent_name == "search":
+            score = _search_validity(pred)
+            feedback = (
+                f"The recorded analysis for query {getattr(gold, 'query', '')!r} "
+                "was malformed. A valid analysis sets primary_intent, "
+                "complexity_level, and needs_video_search to well-formed enum "
+                "values."
+            )
+        else:
+            bad = str(getattr(gold, "_bad_output", "") or "")
+            produced = str(getattr(pred, field, "") or "")
+            score = 1.0 - _token_f1(produced, bad)
+            feedback = (
+                f"The recorded failing {field} was {bad!r}. Produce a distinct, "
+                f"accurate {field} that does not reproduce it."
+            )
+        return ScoreWithFeedback(score=float(score), feedback=feedback)
+
+    return metric
+
+
+def _reflective_compile(
+    agent_name: str,
+    reflect_train_rows: list,
+    signature,
+    reflection_lm,
+    max_metric_calls: int,
+):
+    """Recompile an all-failure agent's prompt with dspy.GEPA.
+
+    No positive demonstrations exist; GEPA's reflection LM reads the failing
+    rollouts plus ``_reflective_metric``'s feedback and proposes improved
+    instructions. Each failing row becomes a GEPA training example carrying the
+    signature's input fields plus a ``_bad_output`` attribute holding the
+    recorded failing output the candidate must avoid.
+    """
+    import dspy
+
+    input_keys = _EVAL_INPUTS[agent_name]
+    optional_keys = _EVAL_OPTIONAL_INPUTS[agent_name]
+    field = _EVAL_FIELD.get(agent_name)
+
+    trainset = []
+    for row in reflect_train_rows:
+        query = row.get("query", "")
+        output = row.get("output", "{}")
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except Exception:
+                output = {}
+        if not isinstance(output, dict):
+            output = {}
+
+        if agent_name == "search":
+            inputs = {"query": query}
+            bad_output = ""
+        elif agent_name == "summary":
+            inputs = {
+                "content": json.dumps(output, default=str),
+                "summary_type": "comprehensive",
+                "target_audience": "general",
+            }
+            bad_output = str(output.get(field, ""))
+        else:
+            inputs = {
+                "search_results": json.dumps(output, default=str),
+                "query_context": query,
+                "analysis_depth": "detailed",
+            }
+            bad_output = str(output.get(field, ""))
+        for key in optional_keys:
+            inputs.setdefault(key, "")
+
+        example = dspy.Example(**inputs, _bad_output=bad_output).with_inputs(
+            *input_keys
+        )
+        trainset.append(example)
+
+    metric = _reflective_metric(agent_name)
+    gepa = _build_gepa(metric, reflection_lm, max_metric_calls)
+    module = dspy.ChainOfThought(signature)
+    with dspy.context(lm=reflection_lm):
+        return gepa.compile(module, trainset=trainset)
 
 
 # Where a triggered-mode compile is served from: the DISPATCH agent name the

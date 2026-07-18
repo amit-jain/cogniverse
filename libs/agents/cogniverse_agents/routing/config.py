@@ -69,6 +69,22 @@ class OptimizationTriggersConfig(BaseModel):
     max_annotations_per_cycle: int = Field(
         100, description="Max annotations per orchestrator run"
     )
+    enable_reflective_recompile: bool = Field(
+        True,
+        description=(
+            "Recompile an all-failure agent (no positive examples) with "
+            "dspy.GEPA reflective prompt evolution instead of skipping"
+        ),
+    )
+    min_reflective_failures: int = Field(
+        10,
+        description=(
+            "Minimum failing rows required before a reflective recompile runs"
+        ),
+    )
+    reflective_max_metric_calls: int = Field(
+        60, description="GEPA metric-call budget cap for a reflective recompile"
+    )
 
 
 class FeedbackConfig(BaseModel):

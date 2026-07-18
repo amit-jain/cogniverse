@@ -285,7 +285,10 @@
       "span_eval_lookback_hours": 2,
       "annotation_lookback_hours": 24,
       "span_eval_batch_size": 100,
-      "max_annotations_per_cycle": 100
+      "max_annotations_per_cycle": 100,
+      "enable_reflective_recompile": true,
+      "min_reflective_failures": 10,
+      "reflective_max_metric_calls": 60
     },
     "feedback": {
       "poll_interval_minutes": 15,

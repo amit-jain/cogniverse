@@ -291,10 +291,26 @@ class TestGatedServing:
 
 class TestNoPositiveExamples:
     @pytest.mark.asyncio
-    async def test_skip_reports_the_discarded_negative_count(self):
+    async def test_too_few_failures_to_reflect_reports_negative_count(
+        self, monkeypatch
+    ):
         """An all-failure agent must say WHY it was skipped — the operator
-        needs to know negatives existed and were unusable as a trainset,
-        not a generic no-data shrug."""
+        needs the discarded negative count and that there was not enough signal
+        to reflect, not a generic no-data shrug. With reflective recompile on by
+        default, 3 failures fall below the reflect threshold."""
+        from cogniverse_agents.routing.config import (
+            AutomationRulesConfig,
+            OptimizationTriggersConfig,
+        )
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.quality_monitor_cli._load_automation_rules",
+            lambda tenant_id, config_manager=None: AutomationRulesConfig(
+                optimization_triggers=OptimizationTriggersConfig(
+                    min_reflective_failures=10
+                )
+            ),
+        )
         low = pd.DataFrame(
             [{"query": f"q{i}", "output": "{}", "score": 0.3} for i in range(3)]
         )
@@ -311,7 +327,7 @@ class TestNoPositiveExamples:
 
         assert result == {
             "status": "skipped",
-            "reason": "no_positive_examples",
+            "reason": "insufficient_failures_to_reflect",
             "negative_examples": 3,
         }
 
