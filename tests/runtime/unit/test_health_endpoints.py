@@ -191,6 +191,38 @@ class TestHealthCheckFull:
         assert mock_create_cm.call_count == 1
         assert mock_agent_cls.call_count == 1
 
+    @patch("cogniverse_runtime.routers.health.BackendRegistry")
+    def test_health_reports_runtime_injected_registry(
+        self, mock_backend_cls, health_client
+    ):
+        """/health must report the registry main.py injected into the agents
+        router — the same one /agents/ serves — not a parallel system-tenant
+        build that knows none of the runtime's agents."""
+        from cogniverse_runtime.routers import agents as agents_router
+
+        mock_backend_cls.get_instance.return_value.list_backends.return_value = [
+            "vespa"
+        ]
+
+        class _Registry:
+            def list_agents(self):
+                return ["search_agent", "summarizer_agent", "routing_agent"]
+
+        saved = (agents_router._agent_registry, agents_router._dispatcher)
+        agents_router.set_agent_registry(_Registry())
+        try:
+            resp = health_client.get("/health")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["agents"]["registered"] == 3
+            assert data["agents"]["agents"] == [
+                "search_agent",
+                "summarizer_agent",
+                "routing_agent",
+            ]
+        finally:
+            agents_router._agent_registry, agents_router._dispatcher = saved
+
     @patch("cogniverse_runtime.routers.health.create_default_config_manager")
     def test_health_returns_503_not_500_on_config_error(
         self, mock_create_cm, health_client
