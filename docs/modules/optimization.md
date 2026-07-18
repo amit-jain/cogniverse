@@ -1006,7 +1006,7 @@ enabled/scheduled via `values.yaml`'s `argo.optimization.*`):
 | CronWorkflow name | Schedule (default) | What it runs |
 |---|---|---|
 | `{fullname}-agent-optimization` | `0 3 * * 0` (Sunday 3 AM UTC) | Step 1 (parallel): `gateway-thresholds`, `entity-extraction`, `simba` (168h lookback), `profile` (48h lookback). Step 2: `workflow`. Step 3: rolling-restart the runtime Deployment to pick up new artifacts. |
-| `{fullname}-daily-gateway` | `0 4 * * *` (daily 4 AM UTC) | `gateway-thresholds`, then a rolling restart of the runtime Deployment (lightweight, tight feedback loop) |
+| `{fullname}-daily-gateway` | `0 4 * * *` (daily 4 AM UTC) | `gateway-thresholds` only — warm runtime pods pick up the recalibration via the dispatcher's gateway reload interval, no restart |
 | `{fullname}-daily-cleanup` | `0 4 * * *` (daily 4 AM UTC) | `cleanup` |
 | `{fullname}-synthetic-generation` | `0 1 * * 6` (Saturday 1 AM UTC) | `synthetic` |
 | `{fullname}-scheduled-distillation` | daily | `quality_monitor_cli --once` (forces a distillation pass even when quality is stable, so learning doesn't stall during long healthy periods) |
