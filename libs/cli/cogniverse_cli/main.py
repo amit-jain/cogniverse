@@ -44,6 +44,7 @@ from cogniverse_cli.images import (
     dev_version,
     has_workspace_source,
     import_images,
+    prune_superseded_images,
     pull_and_import_third_party,
 )
 
@@ -314,6 +315,16 @@ def up(
         if use_k3d:
             console.print("[cyan]Importing images into k3d...[/cyan]")
             import_images(CLUSTER_NAME, tags)
+        # Reclaim the superseded generation's ~25GB of images (host + k3d
+        # node) so repeated deploys don't fill the disk into Vespa's feed
+        # block; keeps the current build and one previous for rollback.
+        try:
+            prune_superseded_images(
+                image_version,
+                node_container=f"k3d-{CLUSTER_NAME}-server-0" if use_k3d else None,
+            )
+        except Exception as exc:
+            console.print(f"[yellow]Image prune skipped: {exc}[/yellow]")
         dev_image_overrides = dev_image_set_values(
             project_root, values_files=values_files, version=image_version
         )

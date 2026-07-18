@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 from cogniverse_cli.main import (
     SERVICE_ENDPOINTS,
@@ -66,6 +67,14 @@ class TestProbeHostLlm:
 
 class TestUpCommand:
     """Tests for the ``up`` command."""
+
+    @pytest.fixture(autouse=True)
+    def _no_live_secret_sync(self):
+        # up() imports sync_hf_token_to_cluster from cogniverse_cli.secrets and
+        # kubectl-applies the HF token; without this, the full-flow tests
+        # mutate a live k3d cluster's hf-token Secret on a dev box.
+        with patch("cogniverse_cli.secrets.sync_hf_token_to_cluster"):
+            yield
 
     @patch("cogniverse_cli.main.check_prerequisites", return_value=["docker"])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
@@ -240,6 +249,94 @@ class TestUpCommand:
         result = runner.invoke(cli, ["up", "--llm", "external"])
         assert result.exit_code != 0
         assert "--llm-url is required" in result.output
+
+
+class TestUpImagePrune:
+    """After building + importing images, `up` prunes the superseded
+    generation so repeated deploys don't fill the disk into Vespa's feed
+    block — best-effort, and never fatal to the deploy."""
+
+    def _patches(self, *, existing_k8s: bool):
+        return {
+            "has_existing_k8s": existing_k8s,
+            "cluster_exists": not existing_k8s,
+            "check_prerequisites": [],
+            "resolve_project_root": Path("/root"),
+            "has_workspace_source": True,
+            "dev_version": "0.1.dev99-gabc",
+            "build_images": ["cogniverse/runtime-rocm:0.1.dev99-gabc"],
+            "dev_image_set_values": {},
+            "_probe_host_llm": False,
+        }
+
+    def _run(self, *, existing_k8s: bool, prune_side_effect=None):
+        from contextlib import ExitStack
+
+        vals = self._patches(existing_k8s=existing_k8s)
+        returns = {
+            "has_existing_k8s": vals["has_existing_k8s"],
+            "cluster_exists": vals["cluster_exists"],
+            "check_prerequisites": vals["check_prerequisites"],
+            "resolve_project_root": vals["resolve_project_root"],
+            "has_workspace_source": vals["has_workspace_source"],
+            "dev_version": vals["dev_version"],
+            "build_images": vals["build_images"],
+            "dev_image_set_values": vals["dev_image_set_values"],
+            "_probe_host_llm": vals["_probe_host_llm"],
+            "get_values_file": Path("/v.yaml"),
+            "get_chart_path": Path("/chart"),
+            "get_workflows_path": Path("/wf"),
+            "wait_for_url": True,
+        }
+        no_return = (
+            "import_images",
+            "helm_install",
+            "pull_and_import_third_party",
+            "subprocess.run",
+            "install_argo_controller",
+            "deploy_workflow_templates",
+            "_print_status_table",
+        )
+        with ExitStack() as stack:
+            for name, ret in returns.items():
+                stack.enter_context(
+                    patch(f"cogniverse_cli.main.{name}", return_value=ret)
+                )
+            for name in no_return:
+                stack.enter_context(patch(f"cogniverse_cli.main.{name}"))
+            # Sourced from cogniverse_cli.secrets (local import in up()); patch
+            # it there so the test never kubectl-applies to a live cluster.
+            stack.enter_context(
+                patch("cogniverse_cli.secrets.sync_hf_token_to_cluster")
+            )
+            mock_prune = stack.enter_context(
+                patch(
+                    "cogniverse_cli.main.prune_superseded_images",
+                    side_effect=prune_side_effect,
+                )
+            )
+            result = CliRunner().invoke(cli, ["up"])
+        return result, mock_prune
+
+    def test_prunes_the_k3d_node_on_the_current_version(self):
+        result, mock_prune = self._run(existing_k8s=False)
+        assert result.exit_code == 0, result.output
+        mock_prune.assert_called_once_with(
+            "0.1.dev99-gabc", node_container="k3d-cogniverse-server-0"
+        )
+
+    def test_non_k3d_deploy_prunes_host_only(self):
+        result, mock_prune = self._run(existing_k8s=True)
+        assert result.exit_code == 0, result.output
+        mock_prune.assert_called_once_with("0.1.dev99-gabc", node_container=None)
+
+    def test_prune_failure_does_not_fail_the_deploy(self):
+        result, mock_prune = self._run(
+            existing_k8s=False, prune_side_effect=RuntimeError("docker gone")
+        )
+        assert result.exit_code == 0, result.output
+        assert "Image prune skipped" in result.output
+        mock_prune.assert_called_once()
 
 
 class TestDownCommand:
