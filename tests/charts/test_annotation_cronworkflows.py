@@ -194,6 +194,23 @@ def test_feedback_cron_dev_hostpath_follows_devmode():
     assert env["OPTIMIZATION_DEV_HOSTPATH"] == "/cogniverse-src"
 
 
+def test_annotation_crons_fall_back_to_default_tenant():
+    """With qualityMonitor.enabled=false its tenantId fail-guard never runs,
+    so an empty tenantId (the chart default) must fall back to "default"
+    like the sibling crons do — an empty --tenant-id makes both annotation
+    crons no-op against an empty-string tenant project."""
+    manifests = _render_chart(
+        [
+            "runtime.qualityMonitor.enabled=false",
+            "runtime.qualityMonitor.tenantId=",
+        ]
+    )
+    for name in ("cogniverse-annotation-cycle", "cogniverse-annotation-feedback"):
+        args = _container_args(_cronworkflow(manifests, name))
+        tenant = args[args.index("--tenant-id") + 1]
+        assert tenant == "default", f"{name}: --tenant-id {tenant!r}"
+
+
 def test_quality_monitor_sidecar_carries_workflow_pod_env():
     """The sidecar's quality-drop trigger submits workflows too — same env
     contract as the feedback cron."""

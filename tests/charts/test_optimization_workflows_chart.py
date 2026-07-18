@@ -91,11 +91,10 @@ class TestWorkflowSubmitterRoleGrantsEveryStepNeeds:
         )
 
     def test_role_grants_deployment_restart(self):
-        """daily-gateway's restart-deployment step runs ``kubectl rollout
-        restart deployment/cogniverse-runtime`` so freshly-trained DSPy
-        artifacts get picked up. Without get+patch on apps/deployments
-        the kubectl call exits 1 → step Failed → workflow Failed → next
-        day's run never benefits from the recomputed thresholds."""
+        """The weekly agent-optimization's restart-deployment step runs
+        ``kubectl rollout restart deployment/cogniverse-runtime`` after
+        full recompiles. Without get+patch on apps/deployments the
+        kubectl call exits 1 → step Failed → workflow Failed."""
         docs = _render()
         role = _find_role(docs, "cogniverse-workflow-submitter")
         for rule in role.get("rules", []):
@@ -107,6 +106,39 @@ class TestWorkflowSubmitterRoleGrantsEveryStepNeeds:
                 )
                 return
         raise AssertionError(
-            "Role does not grant apps/deployments verbs — daily-gateway's "
-            "restart-deployment step will fail with Forbidden"
+            "Role does not grant apps/deployments verbs — the weekly "
+            "agent-optimization's restart-deployment step will fail with "
+            "Forbidden"
         )
+
+
+def _find_cron_workflow(docs: list, name_suffix: str) -> dict:
+    for d in docs:
+        if d.get("kind") == "CronWorkflow" and d.get("metadata", {}).get(
+            "name", ""
+        ).endswith(name_suffix):
+            return d
+    raise AssertionError(f"No CronWorkflow ending in {name_suffix!r} rendered")
+
+
+class TestDailyGatewayHasNoRestartStep:
+    def test_daily_gateway_relies_on_the_reload_interval(self):
+        """The runtime picks up recalibrated gateway thresholds on warm pods
+        via the dispatcher's reload interval, so the daily cron must not
+        rolling-restart the deployment every morning; the weekly full
+        recompile keeps its restart step."""
+        docs = _render()
+        daily = _find_cron_workflow(docs, "-daily-gateway")
+        spec = daily["spec"]["workflowSpec"]
+
+        templates = {t["name"]: t for t in spec["templates"]}
+        assert "restart-deployment" not in templates
+        pipeline = templates["daily-gateway-pipeline"]
+        step_names = [s["name"] for group in pipeline["steps"] for s in group]
+        assert step_names == ["optimize-gateway"]
+
+        weekly = _find_cron_workflow(docs, "-agent-optimization")
+        weekly_templates = {
+            t["name"] for t in weekly["spec"]["workflowSpec"]["templates"]
+        }
+        assert "restart-deployment" in weekly_templates

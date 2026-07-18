@@ -266,6 +266,8 @@ spec:
         type: Directory
     {{- end }}
     templates:
+    # No restart step: warm runtime pods pick up the recalibrated
+    # thresholds via the dispatcher's gateway reload interval.
     - name: daily-gateway-pipeline
       steps:
       - - name: optimize-gateway
@@ -280,19 +282,6 @@ spec:
               value: "{{`{{workflow.parameters.tenant-id}}`}}"
             - name: lookback-hours
               value: "24"
-      - - name: restart-runtime
-          template: restart-deployment
-
-    - name: restart-deployment
-      container:
-        image: rancher/kubectl:v1.33.9
-        command: ["kubectl"]
-        args:
-          - "rollout"
-          - "restart"
-          - "deployment/{{ $fullName }}-runtime"
-          - "-n"
-          - "{{ .Release.Namespace }}"
 {{- end }}
 {{- if .Values.argo.optimization.syntheticGeneration.enabled }}
 ---
@@ -519,7 +508,7 @@ spec:
         args:
           - "--annotation-cycle"
           - "--tenant-id"
-          - {{ .Values.runtime.qualityMonitor.tenantId | quote }}
+          - {{ .Values.runtime.qualityMonitor.tenantId | default "default" | quote }}
           - "--runtime-url"
           - "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
           - "--phoenix-url"
@@ -602,7 +591,7 @@ spec:
         args:
           - "--annotation-feedback"
           - "--tenant-id"
-          - {{ .Values.runtime.qualityMonitor.tenantId | quote }}
+          - {{ .Values.runtime.qualityMonitor.tenantId | default "default" | quote }}
           - "--runtime-url"
           - "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
           - "--phoenix-url"
@@ -817,13 +806,12 @@ rules:
 - apiGroups: ["argoproj.io"]
   resources: ["workflowtaskresults"]
   verbs: ["create", "patch"]
-# daily-gateway's ``restart-deployment`` step runs ``kubectl rollout
-# restart deployment/<runtime>`` so freshly-trained DSPy artifacts get
-# picked up by the runtime pod. Without get/patch on deployments.apps
-# the kubectl call fails with Forbidden and the step exits 1 — even
-# though the optimize-gateway step that produced the artifacts
-# succeeded. The Workflow then surfaces as ``Failed`` and the next
-# day's run never benefits from the recomputed thresholds.
+# The weekly agent-optimization's ``restart-deployment`` step runs
+# ``kubectl rollout restart deployment/<runtime>`` after full recompiles.
+# Without get/patch on deployments.apps the kubectl call fails with
+# Forbidden and the step exits 1 — even though the optimize steps that
+# produced the artifacts succeeded — so the Workflow surfaces as
+# ``Failed``.
 - apiGroups: ["apps"]
   resources: ["deployments"]
   verbs: ["get", "patch"]
