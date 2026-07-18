@@ -59,6 +59,19 @@ def _get_agent_registry() -> AgentRegistry:
     return AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
 
 
+def _resolve_agent_registry() -> AgentRegistry:
+    """Prefer the registry main.py injected into the agents router — the one
+    /agents/ serves — so /health reports the runtime's live agents instead of
+    a parallel system-tenant build. Falls back to the cached build only when
+    startup hasn't wired the injection yet."""
+    from cogniverse_runtime.routers import agents as agents_router
+
+    try:
+        return agents_router.get_registry()
+    except RuntimeError:
+        return _get_agent_registry()
+
+
 @router.get("/health")
 async def health_check(request: Request) -> Any:
     """Health check endpoint with system status.
@@ -71,7 +84,7 @@ async def health_check(request: Request) -> Any:
     """
     try:
         # Reused across probes; backends/agents are still queried live below.
-        agent_registry = _get_agent_registry()
+        agent_registry = _resolve_agent_registry()
         backend_registry = BackendRegistry.get_instance()
         backends = backend_registry.list_backends()
         agents = agent_registry.list_agents()
