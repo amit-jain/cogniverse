@@ -1273,20 +1273,6 @@ class VespaBackend(Backend):
             )
             return False
 
-    def _delete_tenant_schemas(self, tenant_id: str) -> List[str]:
-        """
-        Delete all schemas for a tenant.
-
-        Delegates to VespaSchemaManager.
-
-        Args:
-            tenant_id: Tenant identifier
-
-        Returns:
-            List of deleted schema names
-        """
-        return self.schema_manager.delete_tenant_schemas(tenant_id)
-
     def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
         """
         Get tenant-specific schema name.
