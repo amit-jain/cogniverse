@@ -799,11 +799,11 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     """Delete a tenant's schemas and metadata.
 
     Looks up tenant_metadata under the canonical form (POST stored it that
-    way) and discovers schemas from the registry (both id forms) plus a
-    canonical-suffix match against Vespa-deployed names. Every deploy path
-    canonicalizes the tenant id, so live schemas carry the canonical suffix;
-    the bare suffix is intentionally not matched because it over-deletes
-    across tenants (``base_a_pr`` ends in ``_pr``).
+    way) and drops every schema the tenant has in one atomic redeploy via
+    ``delete_tenant_schemas`` (registry-known names plus canonical-suffix
+    Vespa orphans; refuses when the redeploy would drop an unreconstructable
+    peer-tenant schema). Legacy registrations under the raw id form are
+    dropped per target afterward.
     """
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
@@ -815,48 +815,40 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     schema_manager = backend.schema_manager
     schema_registry = schema_manager._schema_registry
 
-    # (tenant_id, base_name) pairs — preserves which form to pass to
-    # delete_schema so it computes the correct full schema name.
-    targets: set[tuple[str, str]] = set()
+    # One atomic redeploy drops every schema the tenant has —
+    # delete_tenant_schemas unions registry-known names with canonical-suffix
+    # Vespa orphans itself. The per-schema loop this replaces did one
+    # multi-minute redeploy per schema. Off the loop: run inline it blocks
+    # every other request, /health included. Peer-orphan refusals and
+    # listing failures propagate — the tenant record stays and the delete
+    # is retryable.
+    deleted_schemas: list = list(
+        await asyncio.to_thread(schema_manager.delete_tenant_schemas, canonical_tid)
+    )
 
-    if schema_registry is not None:
-        for tid in {original_tid, canonical_tid}:
-            for info in schema_registry.get_tenant_schemas(tid):
-                targets.add((tid, info.base_schema_name))
-
-    try:
-        deployed_full_names = await asyncio.to_thread(
-            schema_manager.list_deployed_document_types
-        )
-    except Exception as e:
-        deployed_full_names = []
-        logger.warning(
-            f"Vespa-side schema discovery failed for tenant "
-            f"'{canonical_tid}' (continuing with registry-only set): {e}"
-        )
-
-    targets |= _discover_orphan_schema_targets(deployed_full_names, canonical_tid)
+    # Legacy registrations left under the raw id form carry the raw suffix
+    # the canonical pass doesn't match; drop those per target.
+    if original_tid != canonical_tid and schema_registry is not None:
+        for info in schema_registry.get_tenant_schemas(original_tid):
+            try:
+                deleted_schemas.append(
+                    await asyncio.to_thread(
+                        schema_manager.delete_schema,
+                        original_tid,
+                        info.base_schema_name,
+                    )
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to delete legacy schema "
+                    f"'{info.base_schema_name}' for tenant '{original_tid}': {e}"
+                )
 
     # Allow schema-only orphans (no tenant_metadata record) to be cleaned
     # up — they're created by /ingestion/upload auto-deploy bypassing
     # tenant create, and accumulate every test run without this branch.
-    if not tenant and not targets:
+    if not tenant and not deleted_schemas:
         raise HTTPException(status_code=404, detail=f"Tenant {canonical_tid} not found")
-
-    deleted_schemas: list = []
-    for tid, base_name in sorted(targets):
-        try:
-            # Off the loop: each schema removal redeploys the application
-            # package and waits for convergence (minutes) — run inline it
-            # blocks every other request, /health included.
-            full_name = await asyncio.to_thread(
-                schema_manager.delete_schema, tid, base_name
-            )
-            deleted_schemas.append(full_name)
-        except Exception as e:
-            logger.error(
-                f"Failed to delete schema '{base_name}' for tenant '{tid}': {e}"
-            )
 
     if tenant:
         await asyncio.to_thread(
