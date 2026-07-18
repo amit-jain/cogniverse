@@ -122,8 +122,7 @@ def _delete_seam(monkeypatch, *, remaining_tenants, org_exists=True):
     from cogniverse_runtime.admin import tenant_manager as tm
 
     backend = MagicMock()
-    backend.schema_manager._schema_registry = None
-    backend.schema_manager.list_deployed_document_types.return_value = []
+    backend.schema_manager.delete_tenant_schemas.return_value = []
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
     async def _tenant(_tid):
@@ -225,31 +224,25 @@ async def test_org_delete_reporting_failure_is_not_claimed_deleted(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_schema_delete_runs_off_the_event_loop(monkeypatch):
-    """Each schema-removal redeploy takes minutes of Vespa deploy +
-    convergence; run inline it blocks the whole runtime API (health
-    included) for the duration of a tenant delete."""
+async def test_tenant_schemas_dropped_in_one_offloaded_redeploy(monkeypatch):
+    """All of a tenant's schemas go in ONE redeploy (delete_tenant_schemas),
+    run off the event loop — the per-schema loop did one multi-minute
+    redeploy per schema, blocking the whole runtime API for each."""
     import threading
-    from types import SimpleNamespace
 
     from cogniverse_runtime.admin import tenant_manager as tm
 
     loop_thread = threading.get_ident()
-    delete_threads: list[int] = []
+    call_threads: list[int] = []
 
     backend = MagicMock()
-    registry = MagicMock()
-    registry.get_tenant_schemas.return_value = [
-        SimpleNamespace(base_schema_name="video_x")
-    ]
-    backend.schema_manager._schema_registry = registry
-    backend.schema_manager.list_deployed_document_types.return_value = []
 
-    def _record_delete(tid, base_name):
-        delete_threads.append(threading.get_ident())
-        return f"video_x_{tid.replace(':', '_')}"
+    def _record_bulk(tid):
+        call_threads.append(threading.get_ident())
+        assert tid == "acme:acme"
+        return ["video_x_acme_acme", "wiki_pages_acme_acme"]
 
-    backend.schema_manager.delete_schema.side_effect = _record_delete
+    backend.schema_manager.delete_tenant_schemas.side_effect = _record_bulk
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
     async def _tenant(_tid):
@@ -267,6 +260,75 @@ async def test_schema_delete_runs_off_the_event_loop(monkeypatch):
 
     result = await tm.delete_tenant_internal("acme:acme")
 
-    assert result["schemas_deleted"] >= 1
-    assert delete_threads, "delete_schema was never called"
-    assert all(t != loop_thread for t in delete_threads)
+    assert result["schemas_deleted"] == 2
+    assert result["deleted_schemas"] == [
+        "video_x_acme_acme",
+        "wiki_pages_acme_acme",
+    ]
+    backend.schema_manager.delete_tenant_schemas.assert_called_once_with("acme:acme")
+    backend.schema_manager.delete_schema.assert_not_called()
+    assert call_threads, "delete_tenant_schemas was never called"
+    assert all(t != loop_thread for t in call_threads)
+
+
+@pytest.mark.asyncio
+async def test_schema_drop_failure_keeps_the_tenant(monkeypatch):
+    """A refused or failed redeploy propagates: the tenant record stays and
+    the delete is retryable — schemas are never silently stranded behind a
+    deleted tenant record."""
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.schema_manager.delete_tenant_schemas.side_effect = RuntimeError(
+        "Cannot enumerate Vespa-deployed schemas"
+    )
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _tenant(_tid):
+        return MagicMock()
+
+    monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
+
+    with pytest.raises(RuntimeError, match="Cannot enumerate"):
+        await tm.delete_tenant_internal("acme:acme")
+
+    backend.delete_metadata_document.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_legacy_raw_form_registrations_also_deleted(monkeypatch):
+    """Registrations left under the raw id form carry the raw suffix the
+    canonical pass doesn't match; those are dropped per target afterward."""
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.schema_manager.delete_tenant_schemas.return_value = ["video_x_acme_acme"]
+    backend.schema_manager._schema_registry.get_tenant_schemas.return_value = [
+        SimpleNamespace(base_schema_name="video_legacy")
+    ]
+    backend.schema_manager.delete_schema.return_value = "video_legacy_acme"
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _tenant(_tid):
+        return MagicMock()
+
+    async def _org(_org_id):
+        return None
+
+    async def _remaining(_org_id):
+        return []
+
+    monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
+    monkeypatch.setattr(tm, "get_organization_internal", _org)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _remaining)
+
+    result = await tm.delete_tenant_internal("acme")
+
+    backend.schema_manager.delete_tenant_schemas.assert_called_once_with("acme:acme")
+    backend.schema_manager._schema_registry.get_tenant_schemas.assert_called_once_with(
+        "acme"
+    )
+    backend.schema_manager.delete_schema.assert_called_once_with("acme", "video_legacy")
+    assert result["deleted_schemas"] == ["video_x_acme_acme", "video_legacy_acme"]
