@@ -47,6 +47,58 @@ GATEWAY_ARTIFACT_TTL_S = 300.0
 # registered-cache hook.
 GATEWAY_AGENT_CACHE_CAPACITY = 64
 
+# Resolved (agent, deps, input) classes for generic A2A dispatch, keyed by the
+# ``module:Class`` path. Bounded by the fixed AGENT_CLASSES set — each dispatch
+# would otherwise re-scan dir(module) twice for the convention-named Deps/Input
+# classes. Keyed on the class path (not the bare agent_name) so a re-registered
+# mapping resolves to the new module instead of a stale entry.
+_GENERIC_AGENT_CLASSES: Dict[str, tuple] = {}
+
+
+def _scan_module_for_generic_classes(module: Any, class_name: str) -> tuple:
+    """Resolve the (agent, deps, input) classes from ``module`` by convention:
+    the agent class is ``class_name``; the Deps/Input classes are the module
+    attributes whose names end with ``Deps``/``Input`` (excluding the shared
+    ``AgentDeps``/``AgentInput`` bases). Either may be None if absent."""
+    agent_cls = getattr(module, class_name)
+
+    deps_cls = None
+    for attr_name in dir(module):
+        attr = getattr(module, attr_name)
+        if (
+            isinstance(attr, type)
+            and attr_name.endswith("Deps")
+            and attr_name != "AgentDeps"
+        ):
+            deps_cls = attr
+            break
+
+    input_cls = None
+    for attr_name in dir(module):
+        attr = getattr(module, attr_name)
+        if (
+            isinstance(attr, type)
+            and attr_name.endswith("Input")
+            and attr_name != "AgentInput"
+        ):
+            input_cls = attr
+            break
+
+    return agent_cls, deps_cls, input_cls
+
+
+def _resolve_generic_agent_classes(
+    class_path: str, module: Any, class_name: str
+) -> tuple:
+    """Return the memoized (agent, deps, input) classes for ``class_path``,
+    scanning the module once on the first request for that path."""
+    cached = _GENERIC_AGENT_CLASSES.get(class_path)
+    if cached is not None:
+        return cached
+    resolved = _scan_module_for_generic_classes(module, class_name)
+    _GENERIC_AGENT_CLASSES[class_path] = resolved
+    return resolved
+
 
 @dataclasses.dataclass
 class _GatewayAgentEntry:
@@ -802,24 +854,22 @@ class AgentDispatcher:
 
         module_path, class_name = class_path.split(":")
         module = importlib.import_module(module_path)
-        agent_cls = getattr(module, class_name)
 
-        # Find the Deps class — convention: same module, class name ends with "Deps"
-        deps_cls = None
-        for attr_name in dir(module):
-            attr = getattr(module, attr_name)
-            if (
-                isinstance(attr, type)
-                and attr_name.endswith("Deps")
-                and attr_name != "AgentDeps"
-            ):
-                deps_cls = attr
-                break
+        # Convention lookup of the (agent, Deps, Input) classes is memoized per
+        # class path — two dir(module) scans per dispatch otherwise.
+        agent_cls, deps_cls, input_cls = _resolve_generic_agent_classes(
+            class_path, module, class_name
+        )
 
         if deps_cls is None:
             raise ValueError(
                 f"Agent '{agent_name}' has no supported execution path "
                 f"(no Deps class in {module_path})"
+            )
+        if input_cls is None:
+            raise ValueError(
+                f"Agent '{agent_name}' has no supported execution path "
+                f"(no Input class in {module_path})"
             )
 
         # Instantiate with default deps. If the deps schema accepts a
@@ -854,24 +904,6 @@ class AgentDispatcher:
         # ``set_dispatched_artefact`` lives on MemoryAwareMixin; non-mixin
         # agents silently no-op (overlay dropped, falling back to defaults).
         self._apply_artefact_overlay(agent, context)
-
-        # Find the Input class — convention: same module, class name ends with "Input"
-        input_cls = None
-        for attr_name in dir(module):
-            attr = getattr(module, attr_name)
-            if (
-                isinstance(attr, type)
-                and attr_name.endswith("Input")
-                and attr_name != "AgentInput"
-            ):
-                input_cls = attr
-                break
-
-        if input_cls is None:
-            raise ValueError(
-                f"Agent '{agent_name}' has no supported execution path "
-                f"(no Input class in {module_path})"
-            )
 
         # Build input — pass query + tenant_id + any extra context fields
         input_kwargs = {"query": query}

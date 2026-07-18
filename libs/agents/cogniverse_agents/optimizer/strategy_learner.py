@@ -171,10 +171,12 @@ class StrategyLearner:
             if total < MIN_TRACES_FOR_PATTERN:
                 continue
 
-            # Strategy: overall quality assessment
-            if len(high) > 0 and len(low) > 0:
-                high_avg = high["score"].astype(float).mean()
-                low_avg = low["score"].astype(float).mean()
+            # Strategy: overall quality assessment (non-numeric scores dropped)
+            high_scores = pd.to_numeric(high["score"], errors="coerce").dropna()
+            low_scores = pd.to_numeric(low["score"], errors="coerce").dropna()
+            if len(high_scores) > 0 and len(low_scores) > 0:
+                high_avg = high_scores.mean()
+                low_avg = low_scores.mean()
                 score_delta = high_avg - low_avg
 
                 if score_delta > 0.3:

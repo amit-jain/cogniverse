@@ -296,8 +296,9 @@ class TestSaveSession:
         from cogniverse_agents.wiki.wiki_manager import WikiManager
 
         backend = MagicMock()
-        # get_document returns None (no existing topic pages)
-        backend.get_document.return_value = None
+        # No existing topic pages: the document read comes back empty, so
+        # every entity takes the create branch (fresh topic, update_count=1).
+        backend.get_document_fields.return_value = None
         mgr = WikiManager(
             backend=backend,
             tenant_id="acme:production",
@@ -321,11 +322,21 @@ class TestSaveSession:
                 sources=["doc1"],
             )
 
-        # 1 session + 2 topics = 3 feed calls
-        assert mock_feed.call_count >= 3
-        # rebuild called once
+        # 2 fresh topics + 1 session = exactly 3 feed calls
+        assert mock_feed.call_count == 3
+        fed_pages = [c.args[0] for c in mock_feed.call_args_list]
+        topic_pages = [p for p in fed_pages if p.page_type == "topic"]
+        assert {p.doc_id for p in topic_pages} == {
+            "wiki_topic_acme_production_machine_learning",
+            "wiki_topic_acme_production_ai",
+        }
+        for topic in topic_pages:
+            assert topic.content == "Machine learning is a subset of AI."
+            assert topic.sources == ["doc1"]
+            assert topic.update_count == 1
+        # The session page is fed after the topics.
+        assert fed_pages[-1] is session
         mock_rebuild.assert_called_once()
-        # returns a WikiPage
         assert isinstance(session, WikiPage)
         assert session.page_type == "session"
         assert session.query == "What is machine learning?"
@@ -345,8 +356,65 @@ class TestSaveSession:
                 agent_name="search_agent",
             )
 
-        # cross_references should contain the topic doc_ids
-        assert len(session.cross_references) == 2
+        # cross_references carry the topic doc_ids in entity order
+        assert session.cross_references == [
+            "wiki_topic_acme_production_neural_networks",
+            "wiki_topic_acme_production_deep_learning",
+        ]
+
+    def test_save_session_merges_existing_topic_document(self):
+        """An existing topic doc read via get_document_fields is merged:
+        content appended, sources deduped, update_count incremented,
+        created_at preserved, and the merged fields fed back."""
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        backend = MagicMock()
+        backend.get_document_fields.return_value = {
+            "doc_id": "wiki_topic_acme_production_machine_learning",
+            "tenant_id": "acme:production",
+            "page_type": "topic",
+            "title": "Machine Learning",
+            "content": "Older notes on ML.",
+            "sources": '["doc0"]',
+            "update_count": 2,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        mgr = WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+        with patch.object(mgr, "_generate_embedding", return_value=[0.2] * 768):
+            page = mgr._get_or_create_topic(
+                entity="Machine Learning",
+                new_content="Machine learning is a subset of AI.",
+                sources=["doc1"],
+            )
+
+        backend.get_document_fields.assert_called_once_with(
+            "wiki_topic_acme_production_machine_learning",
+            schema_name="wiki_pages_acme_production",
+            namespace="wiki_content",
+        )
+        backend.put_document_fields.assert_called_once()
+        (doc_id, fields), put_kwargs = backend.put_document_fields.call_args
+        assert doc_id == "wiki_topic_acme_production_machine_learning"
+        assert put_kwargs == {
+            "schema_name": "wiki_pages_acme_production",
+            "namespace": "wiki_content",
+        }
+        assert fields["content"] == (
+            "Older notes on ML.\n\n---\n\nMachine learning is a subset of AI."
+        )
+        assert fields["update_count"] == 3
+        assert json.loads(fields["sources"]) == ["doc0", "doc1"]
+        assert json.loads(fields["entities"]) == ["Machine Learning"]
+        assert fields["created_at"] == "2026-01-01T00:00:00+00:00"
+        assert fields["title"] == "Machine Learning"
+        assert fields["page_type"] == "topic"
+        assert fields["embedding"] == [0.2] * 768
+        assert page.update_count == 3
 
 
 @pytest.mark.unit

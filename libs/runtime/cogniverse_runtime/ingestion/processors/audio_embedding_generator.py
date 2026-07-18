@@ -8,6 +8,7 @@ Generates acoustic and semantic embeddings for audio content:
 """
 
 import logging
+import threading
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -52,6 +53,8 @@ class AudioEmbeddingGenerator:
         self._clap_model = None
         self._clap_processor = None
         self._semantic_model = None
+        self._http_client = None
+        self._http_client_lock = threading.Lock()
 
         logger.info("AudioEmbeddingGenerator initialized")
         logger.info(f"  Acoustic model: {clap_model}")
@@ -59,6 +62,24 @@ class AudioEmbeddingGenerator:
             "  Semantic model: %s",
             semantic_model if semantic_model else "(resolved lazily via env)",
         )
+
+    def _get_http_client(self):
+        """One pooled httpx.Client per generator — a bare httpx.post per
+        segment re-handshakes TCP/TLS for every call in a batch. The
+        generous timeout absorbs the sidecar's one-time model cold-load."""
+        with self._http_client_lock:
+            if self._http_client is None:
+                import httpx
+
+                self._http_client = httpx.Client(timeout=600.0)
+            return self._http_client
+
+    def close(self) -> None:
+        """Close the pooled sidecar client; the next remote call rebuilds it."""
+        with self._http_client_lock:
+            if self._http_client is not None:
+                self._http_client.close()
+                self._http_client = None
 
     @property
     def clap_model(self):
@@ -186,12 +207,9 @@ class AudioEmbeddingGenerator:
         """POST the audio to the clap_embed sidecar and return its vector.
 
         An array input is serialised to WAV first; a path is sent as raw
-        file bytes. The generous timeout absorbs the sidecar's one-time
-        model cold-load."""
+        file bytes."""
         import base64
         import io
-
-        import httpx
 
         if audio_path is not None:
             raw = Path(audio_path).read_bytes()
@@ -202,21 +220,17 @@ class AudioEmbeddingGenerator:
             sf.write(buf, audio_array, sample_rate, format="WAV")
             raw = buf.getvalue()
 
-        resp = httpx.post(
+        resp = self._get_http_client().post(
             f"{self._clap_endpoint_url}/embed/audio",
             json={"audio_b64": base64.b64encode(raw).decode()},
-            timeout=600.0,
         )
         resp.raise_for_status()
         return np.asarray(resp.json()["vec"], dtype=np.float32)
 
     def _remote_acoustic_text_embedding(self, text: str) -> np.ndarray:
-        import httpx
-
-        resp = httpx.post(
+        resp = self._get_http_client().post(
             f"{self._clap_endpoint_url}/embed/text",
             json={"text": text},
-            timeout=600.0,
         )
         resp.raise_for_status()
         return np.asarray(resp.json()["vec"], dtype=np.float32)

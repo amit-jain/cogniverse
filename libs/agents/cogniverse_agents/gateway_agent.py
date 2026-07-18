@@ -10,7 +10,7 @@ Extracted from ComprehensiveRouter's fast path in routing/router.py.
 
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Set, Tuple
 
 from pydantic import Field
 
@@ -174,6 +174,34 @@ class GatewayDeps(AgentDeps):
 
 
 # ---------------------------------------------------------------------------
+# Routing threshold snapshot
+# ---------------------------------------------------------------------------
+
+
+class _RoutingThresholds(NamedTuple):
+    """The two routing thresholds published together as one immutable value.
+
+    The TTL reload thread republishes this snapshot in a single attribute
+    assignment; a request captures it once so its decision never sees a
+    ``(new, old)`` pair torn between the two writes.
+    """
+
+    fast_path_confidence: float
+    gliner: float
+
+
+def _validate_threshold(value: Any) -> Optional[float]:
+    """Return ``value`` as a float in [0, 1], or None if it is not a usable
+    threshold (non-numeric, bool, NaN, or out of range)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    if not (0.0 <= v <= 1.0):
+        return None
+    return v
+
+
+# ---------------------------------------------------------------------------
 # Agent implementation
 # ---------------------------------------------------------------------------
 
@@ -200,6 +228,9 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         )
         super().__init__(deps=deps, config=config)
         self._gliner_model = None
+        self._thresholds = _RoutingThresholds(
+            deps.fast_path_confidence_threshold, deps.gliner_threshold
+        )
 
     def _load_artifact(self) -> None:
         """Load optimized thresholds from artifact store (if available).
@@ -211,11 +242,20 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         optimized" from "telemetry/load failed and we silently reverted to
         defaults". On error, surfaces a WARNING log; the prior implementation
         hid the failure at DEBUG level alongside the legitimate empty case.
+
+        Threshold values from the artifact are validated before they reach
+        ``deps`` (which has ``extra="allow"`` and no ``validate_assignment``):
+        a non-numeric or out-of-[0,1] value keeps the current thresholds and
+        records ``error`` instead of storing a value that would blow up at
+        request time. The two thresholds are published together via one
+        ``self._thresholds`` assignment so concurrent dispatches never read a
+        pair torn between the reload thread's two writes.
         """
-        self.artifact_load_status = "no_telemetry"
-        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
-            return
+        self.artifact_load_message = ""
         try:
+            self.artifact_load_status = "no_telemetry"
+            if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+                return
             import json
 
             from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
@@ -243,23 +283,62 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                 return
 
             config = json.loads(blob)
+            new_fast = self.deps.fast_path_confidence_threshold
+            new_gliner = self.deps.gliner_threshold
+            invalid: List[str] = []
             if "fast_path_confidence_threshold" in config:
-                self.deps.fast_path_confidence_threshold = config[
-                    "fast_path_confidence_threshold"
-                ]
+                v = _validate_threshold(config["fast_path_confidence_threshold"])
+                if v is None:
+                    invalid.append(
+                        f"fast_path_confidence_threshold="
+                        f"{config['fast_path_confidence_threshold']!r}"
+                    )
+                else:
+                    new_fast = v
             if "gliner_threshold" in config:
-                self.deps.gliner_threshold = config["gliner_threshold"]
+                v = _validate_threshold(config["gliner_threshold"])
+                if v is None:
+                    invalid.append(f"gliner_threshold={config['gliner_threshold']!r}")
+                else:
+                    new_gliner = v
+
+            if invalid:
+                # Keep the current thresholds — never store a bad value that
+                # would raise mid-request.
+                self.artifact_load_status = "error"
+                self.artifact_load_message = (
+                    "invalid threshold value(s) in artifact: " + ", ".join(invalid)
+                )
+                logger.warning(
+                    "GatewayAgent artifact has %s; keeping current thresholds",
+                    self.artifact_load_message,
+                )
+                return
+
+            self.deps.fast_path_confidence_threshold = new_fast
+            self.deps.gliner_threshold = new_gliner
             self.artifact_load_status = "loaded"
             logger.info(
                 "GatewayAgent loaded optimized thresholds: "
-                f"fast_path={self.deps.fast_path_confidence_threshold}, "
-                f"gliner={self.deps.gliner_threshold}"
+                f"fast_path={new_fast}, gliner={new_gliner}"
             )
         except Exception as e:
             self.artifact_load_status = "error"
+            self.artifact_load_message = str(e)
             # WARNING (not DEBUG) so a real telemetry outage isn't filed under
             # "no artifact persisted yet" in the operator's mental model.
             logger.warning("GatewayAgent artifact load failed; using defaults: %s", e)
+        finally:
+            # Single-assignment publish: readers capture this reference once and
+            # see a consistent (fast_path, gliner) pair. _load_artifact runs
+            # serialized per instance, so the two reads below never interleave
+            # with another writer.
+            deps = getattr(self, "deps", None)
+            if deps is not None:
+                self._thresholds = _RoutingThresholds(
+                    deps.fast_path_confidence_threshold,
+                    deps.gliner_threshold,
+                )
 
     # ------------------------------------------------------------------
     # Model loading
@@ -292,14 +371,25 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
     # Entity extraction and classification
     # ------------------------------------------------------------------
 
-    def _extract_entities(self, query: str) -> List[Dict[str, Any]]:
-        """Run GLiNER entity prediction on the query."""
+    def _extract_entities(
+        self, query: str, gliner_threshold: Optional[float] = None
+    ) -> List[Dict[str, Any]]:
+        """Run GLiNER entity prediction on the query.
+
+        ``gliner_threshold`` lets a request pass the value from its captured
+        threshold snapshot; when omitted it falls back to the live deps value.
+        """
         self._ensure_model_loaded()
         if self._gliner_model is None:
             return []
+        threshold = (
+            gliner_threshold
+            if gliner_threshold is not None
+            else self.deps.gliner_threshold
+        )
         try:
             entities = self._gliner_model.predict_entities(
-                query, ALL_LABELS, threshold=self.deps.gliner_threshold
+                query, ALL_LABELS, threshold=threshold
             )
         except Exception as e:
             logger.error("GLiNER prediction failed: %s", e)
@@ -415,6 +505,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         generation_type: str,
         entities: List[Dict[str, Any]],
         confidence: float,
+        fast_path_threshold: Optional[float] = None,
     ) -> bool:
         """Decide whether a query needs orchestration.
 
@@ -427,14 +518,22 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         - Query contains multi-step markers ("then", "after that", "first...next")
         - Query has multiple clauses (3+ commas or 2+ "and")
         - The fast path is disabled for this tenant (enable_fast_path=False)
+
+        ``fast_path_threshold`` lets a request pass the value from its captured
+        threshold snapshot; when omitted it falls back to the live deps value.
         """
+        threshold = (
+            fast_path_threshold
+            if fast_path_threshold is not None
+            else self.deps.fast_path_confidence_threshold
+        )
         # Fast path disabled for this tenant → orchestrate every query.
         if not self.deps.enable_fast_path:
             return True
         # No modality signal at all → can't fast-path → orchestrate. A query
         # GLiNER missed but a modality keyword caught arrives here with
         # KEYWORD_MODALITY_CONFIDENCE (>= threshold) and stays simple.
-        if confidence < self.deps.fast_path_confidence_threshold:
+        if confidence < threshold:
             return True
         if modality == "both":
             return True
@@ -509,16 +608,23 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         routed_to: str,
         confidence: float,
         reasoning: str,
+        thresholds: Optional["_RoutingThresholds"] = None,
     ) -> None:
         """Emit a cogniverse.routing span with the gateway's decision.
 
         Downstream telemetry consumers (RoutingEvaluator, AnnotationAgent)
         filter on the `cogniverse.routing` span name and read
         `routing.*` attributes.
+
+        ``thresholds`` records the exact snapshot the decision ran under; when
+        omitted it falls back to the live deps values.
         """
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
 
+        snap = thresholds or _RoutingThresholds(
+            self.deps.fast_path_confidence_threshold, self.deps.gliner_threshold
+        )
         try:
             with self.telemetry_manager.span(
                 "cogniverse.routing",
@@ -538,10 +644,8 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                         # The calibration this decision ran under, so
                         # telemetry consumers can verify which thresholds
                         # production actually served.
-                        "fast_path_confidence_threshold": (
-                            self.deps.fast_path_confidence_threshold
-                        ),
-                        "gliner_threshold": self.deps.gliner_threshold,
+                        "fast_path_confidence_threshold": snap.fast_path_confidence,
+                        "gliner_threshold": snap.gliner,
                     },
                     operation=OP_ROUTING,
                 )
@@ -558,11 +662,17 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
         self.emit_progress("classify", "Classifying query")
 
+        # Capture the threshold pair once so a mid-request TTL reload can't tear
+        # this decision across the reload thread's two writes.
+        thresholds = self._thresholds
+
         # GLiNER.predict_entities is sync, CPU-heavy (~200-500ms per call),
         # and would otherwise run on the event loop thread — starving every
         # other request including /health/live (readiness failure, pod
         # marked NotReady under concurrent orchestration load).
-        entities = await asyncio.to_thread(self._extract_entities, input.query)
+        entities = await asyncio.to_thread(
+            self._extract_entities, input.query, thresholds.gliner
+        )
         modality, modality_confidence = self._classify_modality(entities, input.query)
         generation_type, gen_confidence = self._classify_generation_type(entities)
 
@@ -570,14 +680,24 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         # to the orchestrator. This is safer for a gateway that should err on caution.
         overall_confidence = min(modality_confidence, gen_confidence)
         is_complex = self._is_complex(
-            input.query, modality, generation_type, entities, overall_confidence
+            input.query,
+            modality,
+            generation_type,
+            entities,
+            overall_confidence,
+            fast_path_threshold=thresholds.fast_path_confidence,
         )
 
         if is_complex:
             complexity = "complex"
             routed_to = "orchestrator_agent"
             reasoning = self._build_complex_reasoning(
-                input.query, modality, generation_type, entities, overall_confidence
+                input.query,
+                modality,
+                generation_type,
+                entities,
+                overall_confidence,
+                fast_path_threshold=thresholds.fast_path_confidence,
             )
         else:
             complexity = "simple"
@@ -612,6 +732,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             routed_to=routed_to,
             confidence=overall_confidence,
             reasoning=reasoning,
+            thresholds=thresholds,
         )
 
         return GatewayOutput(
@@ -631,13 +752,18 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         generation_type: str,
         entities: List[Dict[str, Any]],
         confidence: float,
+        fast_path_threshold: Optional[float] = None,
     ) -> str:
         reasons = []
         if not entities:
             reasons.append("no entities detected")
         if modality == "both":
             reasons.append("multiple modalities detected")
-        threshold = self.deps.fast_path_confidence_threshold
+        threshold = (
+            fast_path_threshold
+            if fast_path_threshold is not None
+            else self.deps.fast_path_confidence_threshold
+        )
         if confidence < threshold:
             reasons.append(f"low confidence ({confidence:.2f} < {threshold})")
         if generation_type == "detailed_report":

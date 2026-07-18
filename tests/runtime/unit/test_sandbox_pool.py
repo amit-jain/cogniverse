@@ -288,7 +288,7 @@ class TestCloseAll:
             def close(self):
                 closed["client"] = True
 
-        mgr = object.__new__(SandboxManager)
+        mgr = SandboxManager(policy="disabled")
         mgr._pool = pool
         mgr._client = _Client()
         mgr._available = True
@@ -476,6 +476,156 @@ class TestManagerPoolLifecycle:
         assert rebuilt is not stale
         assert rebuilt.client is mgr._client
         assert rebuilt.client is new_clients[-1]
+
+    def test_close_waits_for_in_flight_pool_build_and_reaps_it(self, monkeypatch):
+        """close() racing a cold pool build must block on the pool lock and
+        then reap the freshly built pool — an unlocked close slips past the
+        builder and leaves a live pool behind on a closed manager."""
+        import threading
+        from types import SimpleNamespace
+
+        from cogniverse_runtime import sandbox_pool as sp_mod
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        build_entered = threading.Event()
+        build_release = threading.Event()
+        close_all_calls: list = []
+
+        class _BlockingPool:
+            def __init__(self, client, config=None, gateway_breaker=None):
+                self.config = config
+                build_entered.set()
+                assert build_release.wait(5)
+
+            def close_all(self):
+                close_all_calls.append(self)
+
+        monkeypatch.setattr(sp_mod, "SandboxSessionPool", _BlockingPool)
+        mgr = SandboxManager(policy="disabled")
+        mgr._client = SimpleNamespace(close=lambda: None)
+        mgr._available = True
+
+        builder = threading.Thread(target=mgr._get_or_create_pool)
+        builder.start()
+        try:
+            assert build_entered.wait(5)
+
+            closer = threading.Thread(target=mgr.close)
+            closer.start()
+            closer.join(0.3)
+            assert closer.is_alive(), "close() must block until the pool build ends"
+        finally:
+            build_release.set()
+        builder.join(5)
+        closer.join(5)
+        assert not builder.is_alive()
+        assert not closer.is_alive()
+        assert mgr._pool is None
+        assert len(close_all_calls) == 1
+        assert mgr._client is None
+
+
+class TestManagerConnectSerialization:
+    """Concurrent _connect calls (cert-rotation tick vs exec-error trigger)
+    must serialize, and the client each reconnect displaces must be closed
+    exactly once — otherwise the loser's grpc channel leaks."""
+
+    @pytest.fixture
+    def gateway_env(self, monkeypatch, tmp_path):
+        import sys
+        from types import SimpleNamespace
+
+        from cogniverse_runtime import sandbox_manager as sm_mod
+
+        clients: list = []
+
+        class _FakeClient:
+            def __init__(self, endpoint=None, tls=None):
+                self.close_calls = 0
+                clients.append(self)
+
+            def close(self):
+                self.close_calls += 1
+
+        class _FakeTls:
+            def __init__(self, ca_path=None, cert_path=None, key_path=None):
+                pass
+
+        monkeypatch.setitem(
+            sys.modules,
+            "openshell",
+            SimpleNamespace(SandboxClient=_FakeClient, TlsConfig=_FakeTls),
+        )
+        monkeypatch.setenv("OPENSHELL_GATEWAY_ENDPOINT", "gw.invalid:19999")
+        monkeypatch.setenv("OPENSHELL_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(sm_mod, "_probe_gateway_endpoint", lambda ep: None)
+        return SimpleNamespace(clients=clients, client_cls=_FakeClient)
+
+    def test_reconnect_closes_displaced_client_exactly_once(self, gateway_env):
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        mgr = SandboxManager(policy="disabled")
+        mgr._connect()
+        mgr._connect()
+
+        clients = gateway_env.clients
+        assert len(clients) == 2
+        assert mgr._client is clients[1]
+        assert clients[0].close_calls == 1
+        assert clients[1].close_calls == 0
+        assert mgr._available is True
+
+    def test_concurrent_connects_serialize_and_close_the_loser(
+        self, gateway_env, monkeypatch
+    ):
+        import threading
+
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        first_entered = threading.Event()
+        second_entered = threading.Event()
+        release = threading.Event()
+        guard = threading.Lock()
+
+        orig_init = gateway_env.client_cls.__init__
+
+        def blocking_init(client_self, endpoint=None, tls=None):
+            orig_init(client_self, endpoint=endpoint, tls=tls)
+            with guard:
+                first = len(gateway_env.clients) == 1
+            if first:
+                first_entered.set()
+                assert release.wait(5)
+            else:
+                second_entered.set()
+
+        monkeypatch.setattr(gateway_env.client_cls, "__init__", blocking_init)
+
+        mgr = SandboxManager(policy="disabled")
+
+        t_rotation = threading.Thread(target=mgr._connect)
+        t_rotation.start()
+        try:
+            assert first_entered.wait(5)
+
+            t_exec_error = threading.Thread(target=mgr._connect)
+            t_exec_error.start()
+            assert not second_entered.wait(0.3), (
+                "second _connect must wait for the first, not dial concurrently"
+            )
+        finally:
+            release.set()
+        t_rotation.join(5)
+        t_exec_error.join(5)
+        assert not t_rotation.is_alive()
+        assert not t_exec_error.is_alive()
+
+        clients = gateway_env.clients
+        assert len(clients) == 2
+        assert mgr._client is clients[1]
+        assert clients[0].close_calls == 1
+        assert clients[1].close_calls == 0
+        assert mgr._available is True
 
 
 class TestResolveTlsConfig:

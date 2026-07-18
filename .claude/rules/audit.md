@@ -504,6 +504,39 @@ grep -rnP '"tenant[^"]*":\s*[a-z_]*tenant' libs/ --include="*.py" | grep -viE 'r
 grep -rnP '_request_cache|_invalidate_request_cache|_REQUEST_CACHE_TTL' libs/ --include="*.py"
 # then check every writer that must be visible to cached readers either goes
 # through the same instance or tolerates the TTL
+
+# Loop/cooldown STATE read flattened to {}/None that gates re-submission —
+# the 9th-audit backend-read-flatten hunt filters context on
+# spans|telemetry|provider|phoenix and MISSES this class when the backend is
+# the CONFIG store (17th audit: quality_monitor_cli._load_loop_state caught
+# all exceptions from store.get_config — which raises on outage, returns None
+# only when absent — and flattened the outage to {} = first-run, bypassing
+# the poll-interval guard and every per-agent optimization cooldown, then the
+# finally-save wiped cooldown history with just that cycle's agents).
+grep -rnPB1 -A3 'def _load\w*state|store\.get_config\(' libs/ --include="*.py" \
+  | grep -iP 'except|return \{\}|return \[\]|return None'
+# for each hit whose except wraps a store.get_config, the flatten makes an
+# outage indistinguishable from first-run — every guard keyed off the state
+# silently opens
+
+# Asymmetric read-vs-write fault contract within one module — a _load_X /
+# _read_X helper that `except -> return {}/[]/None` paired with a _save_X /
+# _write_X sibling in the SAME file that propagates. The asymmetry is the
+# tell that the read should also propagate (17th audit: _load_loop_state
+# flattened while _save_loop_state raised).
+grep -rlP 'def _(load|read)_\w+' libs/ --include="*.py" | while read f; do \
+  grep -qP 'def _(save|write)_\w+' "$f" && grep -qP 'except Exception' "$f" \
+  && grep -qP 'return \{\}$|return \[\]$|return None$' "$f" && echo "asym read/write fault: $f"; done
+
+# Route whose ONLY live-handler exerciser is skip-gated full-cluster e2e —
+# the in-process test posts json={} and asserts only the 422/404 guard, so
+# the handler body never executes in an ordinary pytest run and a regression
+# ships green (17th audit: ~16 surfaces — ingestion start success branch,
+# admin memory deletes, knowledge remaps, messaging invite, worker run(),
+# face_embed image_url — all e2e-only until in-proc live-body tests landed).
+grep -rln 'json={}' tests/*/integration/ tests/*/unit/ 2>/dev/null | xargs grep -l 'status_code == 422\|status_code == 404' 2>/dev/null
+# then for each route those files touch, confirm a NON-e2e test asserts a 2xx
+# success body; @skip_if_no_runtime-gated coverage does not count
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.

@@ -145,6 +145,86 @@ class TestDocumentAgent:
         assert "str(" not in str(sent["input.query(qt)"])
 
     @pytest.mark.asyncio
+    @patch.object(DocumentAgent, "query_encoder", new_callable=PropertyMock)
+    @patch("requests.post")
+    async def test_search_visual_flat_qt_for_single_vector(
+        self, mock_post, mock_query_encoder
+    ):
+        """A (dim,) query embedding must serialize as a flat list, not a
+        dict of scalars keyed by element index."""
+        emb = np.full(128, -1.0, dtype=np.float32)
+        emb[0] = 1.0
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = emb
+        mock_query_encoder.return_value = mock_encoder
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"root": {"children": []}}
+        mock_post.return_value = mock_response
+
+        await self.agent._search_visual("q", limit=5)
+
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["input.query(qt)"] == [1.0] + [-1.0] * 127
+        # Packed binary of [1, 0, ..., 0]: first byte 0b10000000 as int8.
+        assert sent["input.query(qtb)"] == [-128] + [0] * 15
+
+    @pytest.mark.asyncio
+    @patch.object(DocumentAgent, "query_encoder", new_callable=PropertyMock)
+    @patch("requests.post")
+    async def test_search_visual_dict_qt_for_multivector(
+        self, mock_post, mock_query_encoder
+    ):
+        """A (N, dim) query embedding serializes as {token_index: vector} with
+        one packed-binary row per token."""
+        emb = np.zeros((2, 128), dtype=np.float32)
+        emb[0, 0] = 1.0
+        emb[1, 8] = 1.0
+        mock_encoder = MagicMock()
+        mock_encoder.encode.return_value = emb
+        mock_query_encoder.return_value = mock_encoder
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"root": {"children": []}}
+        mock_post.return_value = mock_response
+
+        await self.agent._search_visual("q", limit=5)
+
+        sent = mock_post.call_args.kwargs["json"]
+        row0 = [1.0] + [0.0] * 127
+        row1 = [0.0] * 8 + [1.0] + [0.0] * 119
+        assert sent["input.query(qt)"] == {"0": row0, "1": row1}
+        assert sent["input.query(qtb)"] == {
+            "0": [-128] + [0] * 15,
+            "1": [0, -128] + [0] * 14,
+        }
+
+    @pytest.mark.asyncio
+    @patch.object(DocumentAgent, "text_query_encoder", new_callable=PropertyMock)
+    @patch("requests.post")
+    async def test_search_text_flat_qt_for_single_vector(self, mock_post, mock_encoder):
+        """A (dim,) text query embedding must serialize as a flat list."""
+        emb = np.full(128, 0.5, dtype=np.float32)
+        emb[3] = -0.5
+        enc = MagicMock()
+        enc.encode.return_value = emb
+        mock_encoder.return_value = enc
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"root": {"children": []}}
+        mock_post.return_value = mock_response
+
+        await self.agent._search_text("q", limit=5)
+
+        sent = mock_post.call_args.kwargs["json"]
+        expected = [0.5] * 128
+        expected[3] = -0.5
+        assert sent["input.query(qt)"] == expected
+
+    @pytest.mark.asyncio
     @patch.object(DocumentAgent, "text_query_encoder", new_callable=PropertyMock)
     @patch("requests.post")
     async def test_search_text(self, mock_post, mock_encoder):

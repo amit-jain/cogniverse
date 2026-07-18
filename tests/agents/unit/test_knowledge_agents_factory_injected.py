@@ -295,8 +295,30 @@ async def test_reconciles_real_conflict_set():
             conflict_member_ids=conflict.conflicting_memory_ids,
         )
     )
-    # The agent should produce SOME structured output for the conflict.
-    assert hasattr(out, "metadata")
+    # entity_fact resolves under the default registry's trust_ranked policy.
+    # Both members share subject_key france:capital with distinct content, so
+    # they conflict; equal trust/confidence makes the first member (mem_a) the
+    # canonical survivor and mem_b the disputed loser.
+    assert out.target_kind == "entity_fact"
+    assert out.policy_used == "trust_ranked"
+    assert out.survivors == ["mem_a"]
+    assert {r.memory_id: r.survived for r in out.resolved} == {
+        "mem_a": True,
+        "mem_b": False,
+    }
+    survivor = next(r for r in out.resolved if r.memory_id == "mem_a")
+    assert survivor.excerpt == "content for mem_a"
+    assert out.kg_conflict_entries == []
+    assert out.kg_policy is None
+    assert out.metadata == {
+        "input_count": 2,
+        "fetched_count": 2,
+        "missing_count": 0,
+        "missing": [],
+        "survivor_count": 1,
+        "policy_overridden": False,
+        "kg_conflict_count": 0,
+    }
 
 
 # ----- KnowledgeSummarizationAgent --------------------------------------

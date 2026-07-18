@@ -367,7 +367,7 @@ class MultiModalReranker:
         )
 
         # Calculate temporal coverage
-        timestamps = [r.timestamp for r in results if r.timestamp]
+        timestamps = [_as_utc_aware(r.timestamp) for r in results if r.timestamp]
         if len(timestamps) > 1:
             time_range = (max(timestamps) - min(timestamps)).days
             temporal_coverage = min(1.0, time_range / 365)  # Normalize to year
