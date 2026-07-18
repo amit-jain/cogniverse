@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from cogniverse_cli.deploy import helm_install
 
 
@@ -88,6 +90,45 @@ class TestSemverChartVersion:
         from cogniverse_cli.deploy import semver_chart_version
 
         assert semver_chart_version("0.1.dev5+gab_cd") == "0.1.0-dev.5+gab-cd"
+
+    def test_rc_prerelease(self) -> None:
+        from cogniverse_cli.deploy import semver_chart_version
+
+        assert semver_chart_version("1.0.0rc1") == "1.0.0-rc.1"
+
+    def test_alpha_prerelease(self) -> None:
+        from cogniverse_cli.deploy import semver_chart_version
+
+        assert semver_chart_version("1.0.0a2") == "1.0.0-alpha.2"
+
+    def test_beta_prerelease(self) -> None:
+        from cogniverse_cli.deploy import semver_chart_version
+
+        assert semver_chart_version("1.0.0b1") == "1.0.0-beta.1"
+
+    def test_rc_with_dev_and_local_segments(self) -> None:
+        from cogniverse_cli.deploy import semver_chart_version
+
+        out = semver_chart_version("0.2.0rc1.dev5+gabc")
+        assert out == "0.2.0-rc.1.dev.5+gabc"
+        assert re.fullmatch(
+            r"\d+\.\d+\.\d+"
+            r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+            r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
+            out,
+        ), f"not valid SemVer: {out}"
+
+    def test_post_release_refused(self) -> None:
+        from cogniverse_cli.deploy import semver_chart_version
+
+        with pytest.raises(ValueError, match="post-release"):
+            semver_chart_version("1.0.0.post1")
+
+    def test_epoch_refused(self) -> None:
+        from cogniverse_cli.deploy import semver_chart_version
+
+        with pytest.raises(ValueError, match="epoch"):
+            semver_chart_version("1!2.0.0")
 
 
 class TestChartVersionStamping:
