@@ -15,6 +15,7 @@ Supports two formats:
 - Org:tenant: "acme:production" → two-level directory (org/tenant)
 """
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -91,6 +92,20 @@ def canonical_tenant_id(tenant_id: str) -> str:
         return tenant_id
     org_id, tenant_name = parse_tenant_id(tenant_id)
     return f"{org_id}:{tenant_name}"
+
+
+_K8S_LABEL_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def sanitize_k8s_label_value(value: str) -> str:
+    """K8s label values must match ``([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]``
+    and be ≤63 chars. Tenant IDs like ``org:env`` contain colons that violate
+    this, so replace unsupported chars with ``-`` and trim edges. The raw
+    tenant_id still travels wherever the exact value matters (CLI args,
+    workflow parameters) — the sanitized form is for grouping/filtering only.
+    """
+    cleaned = _K8S_LABEL_SAFE_RE.sub("-", value).strip("-_.")[:63]
+    return cleaned or "unknown"
 
 
 def get_tenant_storage_path(base_dir: Path | str, tenant_id: str) -> Path:

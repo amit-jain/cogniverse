@@ -15,6 +15,7 @@ from cogniverse_core.common.tenant_utils import (
     get_tenant_storage_path,
     parse_tenant_id,
     require_tenant_id,
+    sanitize_k8s_label_value,
     validate_tenant_id,
 )
 
@@ -244,6 +245,38 @@ class TestReservedIdentities:
     @pytest.mark.ci_fast
     def test_identities_are_distinct(self):
         assert SYSTEM_TENANT_ID != TEST_TENANT_ID
+
+
+class TestSanitizeK8sLabelValue:
+    """K8s label values must match ([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]
+    and be ≤63 chars; unsupported chars become '-' with trimmed edges."""
+
+    @pytest.mark.ci_fast
+    def test_canonical_tenant_id_colon_becomes_hyphen(self):
+        assert sanitize_k8s_label_value("acme:acme") == "acme-acme"
+        assert sanitize_k8s_label_value("acme:prod") == "acme-prod"
+
+    @pytest.mark.ci_fast
+    def test_legal_value_unchanged(self):
+        assert sanitize_k8s_label_value("acme") == "acme"
+        assert sanitize_k8s_label_value("a_b.c-d") == "a_b.c-d"
+
+    @pytest.mark.ci_fast
+    def test_uppercase_kept_illegal_chars_replaced(self):
+        assert sanitize_k8s_label_value("Acme Corp:staging!") == "Acme-Corp-staging"
+
+    @pytest.mark.ci_fast
+    def test_edges_trimmed(self):
+        assert sanitize_k8s_label_value("_leading-trail.") == "leading-trail"
+
+    @pytest.mark.ci_fast
+    def test_all_illegal_falls_back_to_unknown(self):
+        assert sanitize_k8s_label_value(":::") == "unknown"
+        assert sanitize_k8s_label_value("") == "unknown"
+
+    @pytest.mark.ci_fast
+    def test_truncated_to_63_chars(self):
+        assert sanitize_k8s_label_value("x" * 100) == "x" * 63
 
 
 if __name__ == "__main__":

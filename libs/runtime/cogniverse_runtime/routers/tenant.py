@@ -17,6 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from cogniverse_core.common.tenant_utils import sanitize_k8s_label_value
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import get_workflow_settings
@@ -543,17 +544,11 @@ _MANUAL_OPTIMIZE_MODES = {
 }
 
 
-_LABEL_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]")
-
-
 def _sanitize_label_value(value: str) -> str:
-    """K8s label values must match ``([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]``
-    and be ≤63 chars. Tenant IDs like ``org:env`` contain colons that violate
-    this, so replace unsupported chars with ``-`` and trim edges. The raw
-    tenant_id is still passed through the ``--tenant-id`` CLI arg, so the
-    sanitized label is for grouping/filtering only."""
-    cleaned = _LABEL_SAFE_RE.sub("-", value).strip("-_.")[:63]
-    return cleaned or "unknown"
+    """Shared K8s label sanitizer. The raw tenant_id is still passed through
+    the ``--tenant-id`` CLI arg, so the sanitized label is for
+    grouping/filtering only."""
+    return sanitize_k8s_label_value(value)
 
 
 _NAME_SAFE_RE = re.compile(r"[^a-z0-9-]")
