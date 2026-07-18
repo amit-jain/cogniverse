@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -33,6 +34,12 @@ if TYPE_CHECKING:
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
 logger = logging.getLogger(__name__)
+
+# How long a cached GatewayAgent serves its loaded thresholds before a cache
+# hit re-reads the artifact. Bounds post-recalibration staleness on a warm pod
+# (the optimization crons run on 15-minute cadences) without putting the
+# artifact read on the per-request path.
+GATEWAY_ARTIFACT_TTL_S = 300.0
 
 
 def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
@@ -92,6 +99,9 @@ class AgentDispatcher:
         # When None, no canary routing — every request gets active artefacts.
         self._artifact_manager_factory = artifact_manager_factory
         self._query_rewriter = None
+        self._gateway_agents: Dict[str, Any] = {}
+        self._gateway_artifact_loaded_at: Dict[str, float] = {}
+        self._gateway_artifact_ttl_s: float = GATEWAY_ARTIFACT_TTL_S
         # Strong references to fire-and-forget tasks so CPython does not GC
         # the coroutine before it runs. asyncio.create_task() with the result
         # discarded is documented to allow that — keep the handles, discard
@@ -124,6 +134,10 @@ class AgentDispatcher:
         streaming path resolve their gateway through here so streaming also
         loads the tenant artifact (and telemetry) instead of running on
         defaults.
+
+        Cache hits re-run ``_load_artifact`` once the reload interval has
+        elapsed, so a warm pod starts serving recalibrated thresholds without
+        a restart while keeping the artifact read off the per-request path.
         """
         from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -132,8 +146,18 @@ class AgentDispatcher:
         if cache is None:
             cache = {}
             self._gateway_agents = cache
+        stamps = getattr(self, "_gateway_artifact_loaded_at", None)
+        if stamps is None:
+            stamps = {}
+            self._gateway_artifact_loaded_at = stamps
         agent = cache.get(tenant_id)
         if agent is not None:
+            ttl = getattr(self, "_gateway_artifact_ttl_s", GATEWAY_ARTIFACT_TTL_S)
+            if time.monotonic() - stamps.get(tenant_id, 0.0) >= ttl:
+                # Stamp before the await: concurrent dispatches serve the
+                # current values instead of stampeding duplicate reloads.
+                stamps[tenant_id] = time.monotonic()
+                await asyncio.to_thread(agent._load_artifact)
             return agent
 
         deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
@@ -150,6 +174,7 @@ class AgentDispatcher:
         agent.telemetry_manager = get_telemetry_manager()
         agent._artifact_tenant_id = tenant_id
         await asyncio.to_thread(agent._load_artifact)
+        stamps[tenant_id] = time.monotonic()
         cache[tenant_id] = agent
         return agent
 

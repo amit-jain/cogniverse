@@ -913,7 +913,12 @@ class TestDispatcherArtifactWiring:
         from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
-        tenant_id = "dispatcher_gateway_wiring_test"
+        # dispatch() canonicalizes tenant_id via require_tenant_id before it
+        # reaches _get_or_build_gateway_agent, so a simple (no-colon) id here
+        # would make the dispatcher save/cache under "x:x" while this test
+        # keeps reading/writing under the raw "x" — an already-canonical
+        # "org:tenant" id keeps every read/write on the same scope.
+        tenant_id = "dispatcher_gateway_wiring_test:dispatcher_gateway_wiring_test"
         mgr = ArtifactManager(real_provider, tenant_id)
 
         # Save a gateway threshold config with non-default values

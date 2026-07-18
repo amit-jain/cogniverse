@@ -72,7 +72,8 @@ libs/synthetic/cogniverse_synthetic/
 The Optimization Module provides on-demand, per-agent DSPy prompt/module compilation, gateway threshold
 calibration, workflow-template learning, XGBoost-based training-decision models, and Mem0-backed strategy
 distillation. It reads Phoenix telemetry spans as training signal and persists compiled artefacts (prompts,
-demos, and DSPy module state) via `ArtifactManager`, which agents reload at startup.
+demos, and DSPy module state) via `ArtifactManager`, which agents reload on each dispatch (the cached
+gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
 
 ### Key Features
 - **DSPy Prompt/Module Compilation**: every optimization mode compiles with `dspy.teleprompt.BootstrapFewShot`
@@ -173,7 +174,7 @@ flowchart TB
 
     Compute --> Thresholds["<span style='color:#000'>Optimized Thresholds<br/>fast_path_confidence_threshold, gliner_threshold<br/>saved via ArtifactManager.save_blob('config', 'gateway_thresholds')</span>"]
 
-    Thresholds --> Gateway["<span style='color:#000'>GatewayAgent<br/>am.load_blob('config', 'gateway_thresholds') at startup</span>"]
+    Thresholds --> Gateway["<span style='color:#000'>GatewayAgent<br/>am.load_blob('config', 'gateway_thresholds') at first build,<br/>refreshed every GATEWAY_ARTIFACT_TTL_S (5 min)</span>"]
 
     style Phoenix fill:#90caf9,stroke:#1565c0,color:#000
     style Compute fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -193,7 +194,7 @@ flowchart TB
 
     RunOpt --> Compile["<span style='color:#000'>BootstrapFewShot teleprompter<br/>• Compile ProfileSelectionModule<br/>• Save via ArtifactManager.save_blob 'model','profile_selection'</span>"]
 
-    Compile --> Reload["<span style='color:#000'>Next agent restart<br/>• ProfileSelectionAgent loads via am.load_blob 'model','profile_selection'<br/>• dspy_module.load_state applied to live module</span>"]
+    Compile --> Reload["<span style='color:#000'>Next agent dispatch<br/>• ProfileSelectionAgent loads via am.load_blob 'model','profile_selection'<br/>• dspy_module.load_state applied to live module</span>"]
 
     style Spans fill:#90caf9,stroke:#1565c0,color:#000
     style Synthetic fill:#90caf9,stroke:#1565c0,color:#000
@@ -272,7 +273,7 @@ async def run_profile_optimization(
        once >= 50 examples, else 4/8/1-round).
     4. Save compiled module as artifact ("model", "profile_selection").
 
-    The agent loads the artifact at startup via am.load_blob("model", "profile_selection").
+    The agent reloads the artifact on each dispatch via am.load_blob("model", "profile_selection").
 
     Returns: {"status": "success"|"no_data"|"failed", "spans_found": int,
               "training_examples": int, "artifact_id": str}
@@ -388,7 +389,10 @@ splits each agent's rows into `low_scoring`/`high_scoring` by `category`, and fo
 2. Compiles a `dspy.ChainOfThought` over the matching signature with `BootstrapFewShot`, scoped inside
    `dspy.context(lm=...)` (because `initialize_language_model` only sets `optimizer.lm`, it does not call
    the global `dspy.configure`).
-3. Saves the compiled module as `("model", f"dspy_compiled_{agent_name}")`.
+3. Publishes the compiled instructions as the active prompt version via `_serve_compiled_prompts`
+   (`save_prompts_versioned`, promoted to active); the per-request prompt overlay serves them on
+   the next dispatch, `--mode rollback` restores a prior version, and the result reports the
+   served agent/version under `"served"`.
 
 After the per-agent loop, it **also** runs strategy distillation: builds (or reuses) a
 `Mem0MemoryManager` for the tenant (requires `SystemConfig.backend_url`/`backend_port`, an `api_base` on
@@ -1002,7 +1006,7 @@ enabled/scheduled via `values.yaml`'s `argo.optimization.*`):
 | CronWorkflow name | Schedule (default) | What it runs |
 |---|---|---|
 | `{fullname}-agent-optimization` | `0 3 * * 0` (Sunday 3 AM UTC) | Step 1 (parallel): `gateway-thresholds`, `entity-extraction`, `simba` (168h lookback), `profile` (48h lookback). Step 2: `workflow`. Step 3: rolling-restart the runtime Deployment to pick up new artifacts. |
-| `{fullname}-daily-gateway` | `0 4 * * *` (daily 4 AM UTC) | `gateway-thresholds` only (lightweight, tight feedback loop) |
+| `{fullname}-daily-gateway` | `0 4 * * *` (daily 4 AM UTC) | `gateway-thresholds`, then a rolling restart of the runtime Deployment (lightweight, tight feedback loop) |
 | `{fullname}-daily-cleanup` | `0 4 * * *` (daily 4 AM UTC) | `cleanup` |
 | `{fullname}-synthetic-generation` | `0 1 * * 6` (Saturday 1 AM UTC) | `synthetic` |
 | `{fullname}-scheduled-distillation` | daily | `quality_monitor_cli --once` (forces a distillation pass even when quality is stable, so learning doesn't stall during long healthy periods) |
@@ -1064,7 +1068,7 @@ curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize/runs/<w
 
 **Artifact Persistence:**
 
-Optimization artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`. Every compile mode (`profile`, `entity-extraction`, `simba`, `triggered`) and `DSPyAgentPromptOptimizer` save compiled modules that agents reload at startup via `am.load_blob(...)`.
+Optimization artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`. The `profile`, `entity-extraction`, and `simba` compile modes (and `DSPyAgentPromptOptimizer`) save compiled modules that agents reload on each dispatch via `am.load_blob(...)`; `triggered` mode instead publishes versioned prompts served by the per-request overlay (`_serve_compiled_prompts`).
 
 ---
 
@@ -1509,7 +1513,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 - `dspy-prompts-{tenant_id}-{agent_type}` — Optimized system prompts for an agent
 - `dspy-demos-{tenant_id}-{agent_type}` — Few-shot demonstration examples
 - `dspy-experiments-{tenant_id}-{agent_type}` — Optimization run metrics as typed `ExperimentMetrics` rows (one per run via `save_experiment`; read the latest with `load_latest_experiment`)
-- `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement`, `dspy_compiled_{agent_name}` (triggered mode)
+- `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement` (triggered mode publishes compiled instructions as versioned prompts instead of a module-state blob)
 - `("config", "gateway_thresholds")` blob — calibrated gateway thresholds
 
 **Stored prompt artifact structure (retrieved from DatasetStore):**

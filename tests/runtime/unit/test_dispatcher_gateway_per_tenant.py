@@ -6,7 +6,9 @@ loaded per tenant from the artifact store into ``deps``. A single shared
 instance baked in whichever tenant hit it first and served every other
 tenant those thresholds; the streaming path built its own instance and never
 loaded the artifact at all. Both paths now resolve through
-``_get_or_build_gateway_agent`` which caches per tenant and always loads.
+``_get_or_build_gateway_agent`` which caches per tenant, loads on build, and
+re-loads the artifact on cache hits once the reload interval elapses so a
+warm pod serves recalibrated thresholds without a restart.
 """
 
 from __future__ import annotations
@@ -160,3 +162,46 @@ async def test_streaming_and_dispatch_share_the_same_per_tenant_instance(dispatc
     streamed, _ = await d.create_streaming_agent("gateway_agent", "q", "acme:acme")
 
     assert dispatched is streamed
+
+
+@pytest.mark.asyncio
+async def test_cached_gateway_reloads_artifact_after_reload_interval(dispatcher):
+    """A warm pod must pick up recalibrated thresholds without a restart.
+
+    Once the reload interval has elapsed, a cache hit re-runs _load_artifact
+    on the SAME instance, so values persisted by the optimization loop start
+    serving; previously the artifact was read only on the cache-miss build
+    and a warm pod kept the stale thresholds until restart."""
+    d, _ = dispatcher
+    d._gateway_artifact_ttl_s = 0.0
+
+    first = await d._get_or_build_gateway_agent("acme:acme")
+    assert first.deps.fast_path_confidence_threshold == 0.11
+
+    _TENANT_THRESHOLD["acme:acme"] = 0.44
+    try:
+        second = await d._get_or_build_gateway_agent("acme:acme")
+    finally:
+        _TENANT_THRESHOLD["acme:acme"] = 0.11
+
+    assert second is first
+    assert second.deps.fast_path_confidence_threshold == 0.44
+
+
+@pytest.mark.asyncio
+async def test_cached_gateway_does_not_reload_inside_the_interval(dispatcher):
+    """Within the reload interval a cache hit serves the loaded values with
+    no artifact re-read — the refresh is bounded, not per-request."""
+    d, _ = dispatcher
+
+    first = await d._get_or_build_gateway_agent("acme:acme")
+    assert first.deps.fast_path_confidence_threshold == 0.11
+
+    _TENANT_THRESHOLD["acme:acme"] = 0.44
+    try:
+        second = await d._get_or_build_gateway_agent("acme:acme")
+    finally:
+        _TENANT_THRESHOLD["acme:acme"] = 0.11
+
+    assert second is first
+    assert second.deps.fast_path_confidence_threshold == 0.11
