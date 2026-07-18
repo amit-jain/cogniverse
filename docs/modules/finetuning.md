@@ -711,7 +711,11 @@ routes its DSPy LM `model` to the active adapter's registry name instead:
   `ProfileSelectionAgent` → `profile_selection`). The dispatcher injects
   `_config_manager` onto generically-executed agents so the helper can resolve
   the tenant LM endpoint; with no manager it falls back to the process-default
-  one. No active adapter → base model.
+  one. No active adapter → base model. A registry OUTAGE is not treated as
+  absence: both `adapter_lm_context` and `_active_adapter_model()` remember the
+  last successful answer per `(tenant, agent)` and reuse it during a blip
+  (warning-level), so a finetuned tenant is not silently reverted to the base
+  model; only an outage with no prior answer degrades to base, at error level.
 
 ---
 

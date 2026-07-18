@@ -449,3 +449,130 @@ def test_adapter_refresh_does_not_double_query_the_registry(monkeypatch):
     assert rebuilt_with["adapter_model"] == "entity_sft_v9", (
         "the resolved adapter must be threaded into the rebuild, not re-looked-up"
     )
+
+
+@pytest.mark.unit
+def test_adapter_lm_context_outage_reuses_last_known_adapter():
+    """A registry outage must not silently revert a tenant with a known
+    active adapter to the base model — the last successful lookup is reused."""
+    import dspy
+
+    from cogniverse_agents import adapter_loader
+    from cogniverse_agents.adapter_loader import adapter_lm_context
+
+    adapter_loader._LAST_KNOWN_ADAPTERS.clear()
+    adapter = Mock()
+    adapter.name = "profile_sft_v2"
+    ok = Mock()
+    ok.get_active_adapter.return_value = adapter
+    cm = _real_config_manager()
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=ok):
+        with adapter_lm_context(
+            "outage:tenant", "profile_selection", config_manager=cm
+        ):
+            pass
+
+    dead = Mock()
+    dead.get_active_adapter.side_effect = ConnectionError("vespa down")
+    ambient = Mock()
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=dead):
+        with dspy.context(lm=ambient):
+            with adapter_lm_context(
+                "outage:tenant", "profile_selection", config_manager=cm
+            ):
+                bound = dspy.settings.lm
+
+    assert bound is not ambient, "outage reverted a known-adapter tenant to base"
+    assert bound.model == "openai/profile_sft_v2"
+
+
+@pytest.mark.unit
+def test_adapter_lm_context_outage_without_history_degrades_with_error(caplog):
+    """First-ever lookup failing → base model, but at ERROR level so the
+    degradation is operationally visible."""
+    import logging
+
+    import dspy
+
+    from cogniverse_agents import adapter_loader
+    from cogniverse_agents.adapter_loader import adapter_lm_context
+
+    adapter_loader._LAST_KNOWN_ADAPTERS.clear()
+    dead = Mock()
+    dead.get_active_adapter.side_effect = ConnectionError("vespa down")
+    ambient = Mock()
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=dead):
+        with dspy.context(lm=ambient):
+            with caplog.at_level(
+                logging.ERROR, logger="cogniverse_agents.adapter_loader"
+            ):
+                with adapter_lm_context("cold:tenant", "profile_selection"):
+                    assert dspy.settings.lm is ambient
+    assert any("vespa down" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.unit
+def test_adapter_lm_context_outage_after_known_absence_stays_base_quietly(caplog):
+    """A successful "no active adapter" answer is remembered: a later outage
+    keeps serving the base model without an error-level alarm."""
+    import logging
+
+    import dspy
+
+    from cogniverse_agents import adapter_loader
+    from cogniverse_agents.adapter_loader import adapter_lm_context
+
+    adapter_loader._LAST_KNOWN_ADAPTERS.clear()
+    none_reg = Mock()
+    none_reg.get_active_adapter.return_value = None
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=none_reg):
+        with adapter_lm_context("absent:tenant", "profile_selection"):
+            pass
+
+    dead = Mock()
+    dead.get_active_adapter.side_effect = ConnectionError("vespa down")
+    ambient = Mock()
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=dead):
+        with dspy.context(lm=ambient):
+            with caplog.at_level(
+                logging.ERROR, logger="cogniverse_agents.adapter_loader"
+            ):
+                with adapter_lm_context("absent:tenant", "profile_selection"):
+                    assert dspy.settings.lm is ambient
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@pytest.mark.unit
+def test_text_analysis_adapter_outage_reuses_last_known():
+    """A registry outage during the periodic adapter re-check must not flip a
+    finetuned tenant back to the base model — the last successful answer is
+    reused until the registry recovers."""
+    from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
+
+    agent = object.__new__(TextAnalysisAgent)
+    agent.tenant_id = "acme:acme"
+
+    adapter = Mock()
+    adapter.name = "entity_sft_v9"
+    ok = Mock()
+    ok.get_active_adapter.return_value = adapter
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=ok):
+        assert agent._active_adapter_model() == "entity_sft_v9"
+
+    dead = Mock()
+    dead.get_active_adapter.side_effect = ConnectionError("vespa down")
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=dead):
+        assert agent._active_adapter_model() == "entity_sft_v9"
+
+
+@pytest.mark.unit
+def test_text_analysis_adapter_outage_without_history_returns_none():
+    from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
+
+    agent = object.__new__(TextAnalysisAgent)
+    agent.tenant_id = "acme:acme"
+
+    dead = Mock()
+    dead.get_active_adapter.side_effect = ConnectionError("vespa down")
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=dead):
+        assert agent._active_adapter_model() is None

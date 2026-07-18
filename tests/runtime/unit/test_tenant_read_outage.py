@@ -212,7 +212,10 @@ async def test_org_delete_reporting_failure_is_not_claimed_deleted(monkeypatch, 
     import logging
 
     tm, backend = _delete_seam(monkeypatch, remaining_tenants=[])
-    backend.delete_metadata_document.return_value = False
+    # Tenant metadata delete confirms; only the ORG delete reports False.
+    backend.delete_metadata_document.side_effect = lambda *, schema, doc_id: (
+        schema != "organization_metadata"
+    )
 
     with caplog.at_level(logging.WARNING):
         result = await tm.delete_tenant_internal("acme:acme")
@@ -373,3 +376,56 @@ async def test_org_delete_continues_past_one_failing_tenant(monkeypatch):
     ]
     assert len(org_deletes) == 1
     assert org_deletes[0].kwargs["doc_id"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_delete_tenant_surfaces_failed_metadata_delete(monkeypatch):
+    """delete_metadata_document reports a non-200 as False without raising;
+    claiming "deleted" anyway leaves a routable ghost tenant with zero
+    schemas that is never retried. The delete must fail loud and stay
+    retryable (the metadata record survives, so a retry proceeds)."""
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.delete_metadata_document.return_value = False
+    schema_manager = MagicMock()
+    schema_manager.delete_tenant_schemas.return_value = ["video_colpali__acme_acme"]
+    backend.schema_manager = schema_manager
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _tenant(_tid):
+        return {"tenant_id": "acme:acme", "organization_id": "acme"}
+
+    monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
+
+    with pytest.raises(HTTPException) as exc:
+        await tm.delete_tenant_internal("acme:acme")
+    assert exc.value.status_code == 502
+    assert "tenant_metadata" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_delete_tenant_reports_deleted_when_metadata_delete_confirms(
+    monkeypatch,
+):
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.delete_metadata_document.return_value = True
+    schema_manager = MagicMock()
+    schema_manager.delete_tenant_schemas.return_value = ["video_colpali__acme_acme"]
+    backend.schema_manager = schema_manager
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _tenant(_tid):
+        return {"tenant_id": "acme:acme", "organization_id": "acme"}
+
+    async def _remaining(_org):
+        return ["acme:other"]
+
+    monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _remaining)
+
+    result = await tm.delete_tenant_internal("acme:acme")
+    assert result["status"] == "deleted"
+    assert result["schemas_deleted"] == 1

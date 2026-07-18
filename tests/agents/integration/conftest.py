@@ -23,7 +23,6 @@ import pytest
 from cogniverse_agents.inference.deno_check import is_deno_available
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 # Re-export the canonical shared_memory_vespa fixture so it's discoverable
 # by tests under tests/agents/integration/ (pytest only walks UP from a
@@ -139,28 +138,38 @@ def ensure_deno() -> Path:
 
 
 @pytest.fixture(scope="module")
-def _dspy_lm_instance():
-    """Module-scoped: create the LM once per module (expensive)."""
-    cm = create_default_config_manager()
-    config = get_config(tenant_id="test:unit", config_manager=cm)
-    llm_cfg = config.get("llm_config", {}).get("primary", {})
+def _dspy_lm_instance(ensure_host_ollama):
+    """Module-scoped: create the LM once per module (expensive).
+
+    Depends on ``ensure_host_ollama`` so every consumer — including the
+    re-exports under ``tests/memory/integration`` — gets a provisioned
+    endpoint plus the materialized test config, and resolves the target
+    via the canonical env-first helpers. A store-backed config read here
+    coupled LM setup to config-store reachability: with the dead-port
+    test default the fixture errored before any test body ran.
+    """
+    from tests.fixtures.llm import (
+        resolve_api_key,
+        resolve_base_url,
+        resolve_prefixed_model,
+    )
 
     # Disable qwen3 thinking mode — it puts output in a 'thinking' field
     # that DSPy can't read, leaving content empty.
+    model = resolve_prefixed_model()
     extra_body = None
-    model = llm_cfg["model"]
     if "qwen3" in model or "qwen-3" in model:
         extra_body = {"think": False}
 
     endpoint = LLMEndpointConfig(
         model=model,
-        api_base=llm_cfg.get("api_base"),
+        api_base=resolve_base_url(),
         # Local OAI-compat LM servers accept any bearer token but litellm
         # refuses to construct an OpenAI client without an api_key set, so
         # it falls back to OPENAI_API_KEY and raises AuthenticationError
         # when neither is present. Test endpoints don't validate the key —
-        # pass the cogniverse convention sentinel.
-        api_key=llm_cfg.get("api_key") or "not-required",
+        # resolve_api_key defaults to the cogniverse convention sentinel.
+        api_key=resolve_api_key(),
         temperature=0.1,
         # 200 tokens was too small: synthesis / summarisation tests
         # truncate mid-sentence, masking real failures behind a

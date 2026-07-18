@@ -93,7 +93,7 @@ class TestAudioChunkResilience:
         gen.profile_config = {}
         gen.colbert_model = _FakeColbert()
         fed = []
-        gen._feed_documents = lambda docs: (fed.extend(docs), len(docs))[1]
+        gen._feed_documents = lambda docs, errors=None: (fed.extend(docs), len(docs))[1]
 
         result = gen._process_audio_segments(
             video_data={

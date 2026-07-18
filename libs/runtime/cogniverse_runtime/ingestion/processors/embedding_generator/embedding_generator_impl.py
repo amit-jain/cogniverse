@@ -264,7 +264,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         def _flush_batch() -> None:
             nonlocal documents_fed
             if batch:
-                documents_fed += self._feed_documents(batch)
+                documents_fed += self._feed_documents(batch, errors=errors)
                 batch.clear()
 
         # Get additional data
@@ -483,7 +483,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 self.logger.error(f"Error processing document {idx}: {e}")
                 errors.append(f"Document {idx}: {str(e)}")
 
-        documents_fed += self._feed_documents(feed_batch)
+        documents_fed += self._feed_documents(feed_batch, errors=errors)
 
         return EmbeddingResult(
             video_id=content_id,
@@ -561,7 +561,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 self.logger.error(f"Error processing page {idx}: {e}")
                 errors.append(f"Page {idx}: {str(e)}")
 
-        documents_fed += self._feed_documents(feed_batch)
+        documents_fed += self._feed_documents(feed_batch, errors=errors)
 
         return EmbeddingResult(
             video_id=content_id,
@@ -646,7 +646,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 self.logger.error(f"Error processing code chunk {idx}: {e}")
                 errors.append(f"Code chunk {idx}: {str(e)}")
 
-        documents_fed += self._feed_documents(feed_batch)
+        documents_fed += self._feed_documents(feed_batch, errors=errors)
 
         return EmbeddingResult(
             video_id=content_id,
@@ -767,7 +767,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 self.logger.error(f"Error processing audio {idx}: {e}")
                 errors.append(f"Audio {idx}: {str(e)}")
 
-        documents_fed += self._feed_documents(feed_batch)
+        documents_fed += self._feed_documents(feed_batch, errors=errors)
 
         return EmbeddingResult(
             video_id=content_id,
@@ -1372,9 +1372,32 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             return result.get("success_count", 0) > 0
         return False
 
-    def _feed_documents(self, documents: list[Document]) -> int:
-        """Feed a batch of documents in one backend call; return fed count."""
+    def _feed_documents(
+        self, documents: list[Document], errors: list | None = None
+    ) -> int:
+        """Feed a batch in one backend call; return the fed count.
+
+        The backend names rejected documents in ``failed_documents`` —
+        recording them into the caller's ``errors`` list keeps a partial
+        feed from reporting as fully successful.
+        """
         if self.backend_client and documents:
             result = self.backend_client.ingest_documents(documents, self.schema_name)
+            failed = result.get("failed_documents") or []
+            if failed:
+                self.logger.error(
+                    "%d/%d documents rejected by the backend for schema %s",
+                    len(failed),
+                    len(documents),
+                    self.schema_name,
+                )
+                if errors is not None:
+                    for failed_doc in failed:
+                        if isinstance(failed_doc, dict):
+                            doc_id = failed_doc.get("id", "<unknown>")
+                            reason = failed_doc.get("error", "unknown error")
+                        else:
+                            doc_id, reason = failed_doc, "unknown error"
+                        errors.append(f"document {doc_id}: rejected at feed ({reason})")
             return int(result.get("success_count", 0))
         return 0

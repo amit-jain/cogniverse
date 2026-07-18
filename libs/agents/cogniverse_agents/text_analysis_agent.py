@@ -29,6 +29,10 @@ from cogniverse_foundation.config.utils import create_default_config_manager, ge
 
 logger = logging.getLogger(__name__)
 
+# Distinguishes "never successfully asked the registry" from a remembered
+# answer of None (no active adapter) in the outage-reuse path.
+_ADAPTER_UNKNOWN = object()
+
 # Default A2A metadata: seeds the persisted per-tenant AgentConfig on first
 # run and backs /health + /agent.json before any agent instance is warm.
 AGENT_NAME = "text_analysis_agent"
@@ -164,9 +168,10 @@ class TextAnalysisAgent(
         Closes the finetuning->inference loop: a LoRA adapter trained for this
         tenant's entity extraction is served by vLLM under its registry name, so
         returning that name makes analyze_text() run against the fine-tuned
-        model. No active adapter (the common case) → None → base model. Any
-        registry/import failure degrades to the base model rather than breaking
-        agent construction.
+        model. No active adapter (the common case) → None → base model. A
+        registry OUTAGE reuses the last successful answer for this agent; only
+        an outage with no prior answer degrades to the base model (import
+        failures always do) rather than breaking agent construction.
         """
         tenant_id = getattr(self, "tenant_id", None)
         if not tenant_id:
@@ -179,14 +184,27 @@ class TextAnalysisAgent(
             adapter = AdapterRegistry().get_active_adapter(
                 tenant_id, "entity_extraction"
             )
-        except Exception as exc:  # noqa: BLE001 — degrade to the base model
-            logger.warning(
-                "active-adapter lookup failed for %s/entity_extraction: %r — base model",
+        except Exception as exc:  # noqa: BLE001 — outage, not absence
+            last = getattr(self, "_last_known_adapter_name", _ADAPTER_UNKNOWN)
+            if last is not _ADAPTER_UNKNOWN:
+                logger.warning(
+                    "active-adapter lookup failed for %s/entity_extraction: %r "
+                    "— reusing last known answer %r",
+                    tenant_id,
+                    exc,
+                    last,
+                )
+                return last
+            logger.error(
+                "active-adapter lookup failed for %s/entity_extraction: %r — "
+                "no known prior state, base model",
                 tenant_id,
                 exc,
             )
             return None
-        return adapter.name if adapter else None
+        name = adapter.name if adapter else None
+        self._last_known_adapter_name = name
+        return name
 
     _ADAPTER_RECHECK_INTERVAL_S = 300.0
 

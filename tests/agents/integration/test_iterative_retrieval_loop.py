@@ -77,6 +77,46 @@ def assert_golden_json(actual, name: str) -> None:
     assert actual_json == expected, f"Golden mismatch for {name}"
 
 
+def assert_golden_gate(actual, name: str) -> None:
+    """Golden assertion for a sufficiency-gate output: ``sufficient`` and
+    ``missing_aspects`` are byte-locked; ``confidence`` is an LM-sampled
+    float compared as a tight band; the free-prose ``rationale`` re-words
+    across identical runs at temperature 0.1, so the contract is that it
+    GROUNDS the verdict — quoting the evidence fact — not its byte stream."""
+    path = GOLDEN_DIR / name
+    actual_json = json.dumps(actual, indent=2, sort_keys=True, default=str)
+    if RECORD_GOLDEN:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(actual_json + "\n")
+        return
+    expected = json.loads(path.read_text())
+    got = json.loads(actual_json)
+
+    exp_conf = float(expected.pop("confidence"))
+    got_conf = float(got.pop("confidence"))
+    assert abs(got_conf - exp_conf) <= 0.05, (
+        f"{name}: confidence {got_conf} vs {exp_conf} (band 0.05)"
+    )
+
+    expected.pop("rationale")
+    rationale = got.pop("rationale")
+    assert 50 <= len(rationale) <= 1000, (
+        f"{name}: rationale length {len(rationale)} outside bounds: {rationale[:200]!r}"
+    )
+    assert "Marie Curie discovered radium" in rationale, (
+        f"{name}: rationale never quotes the evidence fact:\n{rationale}"
+    )
+    assert "1898" in rationale, (
+        f"{name}: rationale never cites the year the question asks for:\n{rationale}"
+    )
+
+    assert got == expected, (
+        f"Golden mismatch for {name} (structural fields).\n"
+        f"--- expected ---\n{json.dumps(expected, indent=2)}\n"
+        f"--- actual ---\n{json.dumps(got, indent=2)}"
+    )
+
+
 def assert_golden_text(actual: str, name: str) -> None:
     path = GOLDEN_DIR / name
     if RECORD_GOLDEN:
@@ -425,11 +465,11 @@ async def test_iter2_evidence_byte_equal_golden(captured_spans, dspy_lm):
 
 
 @pytest.mark.asyncio
-async def test_gate2_output_byte_equal_golden(captured_spans, dspy_lm):
+async def test_gate2_output_locked_against_golden(captured_spans, dspy_lm):
     peer = _IterRetrievalPeer()
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
     loop_result, _ = await _run_loop(orchestrator)
-    assert_golden_json(loop_result.final_gate_output, "iter_loop_gate2.json")
+    assert_golden_gate(loop_result.final_gate_output, "iter_loop_gate2.json")
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +584,18 @@ async def test_token_budget_breach_exits_at_iter1(captured_spans, dspy_lm, monke
 
 
 @pytest.mark.asyncio
-async def test_rlm_promotion_emits_instrumented_rlm_child_span(captured_spans, dspy_lm):
+async def test_rlm_promotion_emits_instrumented_rlm_child_span(
+    captured_spans, dspy_lm, monkeypatch
+):
+    # Both gate iterations must run to completion regardless of LM latency:
+    # on a contended LM the capped RLM sub-loops outlast the default wall
+    # clock, iteration 2 is cut, and its span never exists. The subject
+    # here is span emission on promotion — wall-clock behavior has its own
+    # test below — so give the loop latency headroom.
+    monkeypatch.setattr(
+        "cogniverse_agents.orchestrator_agent._ITER_RETRIEVAL_WALL_CLOCK_MS",
+        30 * 60 * 1000,
+    )
     # 100 copies of the seg_3 snippet pushes the JSON serialization above
     # _ITER_GATE_RLM_PROMOTION_CHARS (6000 chars).
     preload = [_marie_curie_30s_seg3() for _ in range(100)]

@@ -112,7 +112,9 @@ batch = ApprovalBatch(
 )
 batch_id = await storage.save_batch(batch)
 
-# Retrieve batch with status from annotations
+# Retrieve batch with status from annotations. A backend outage raises;
+# one malformed item span is skipped (error-logged) instead of failing
+# the whole batch view.
 batch = await storage.get_batch("batch_001")
 
 # Update item status (creates telemetry annotation)

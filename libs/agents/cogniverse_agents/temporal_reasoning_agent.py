@@ -357,27 +357,21 @@ class TemporalReasoningAgent(
     def _fetch_subject_rows(
         self, tenant_id: str, agent_name: str, subject_key: str
     ) -> List[Dict[str, Any]]:
-        try:
-            mm = self._mm_factory(tenant_id)
-        except Exception as exc:
-            logger.warning("temporal: factory(%s) failed: %r", tenant_id, exc)
-            return []
+        # A backend outage is not "no memories in window" — factory and read
+        # failures propagate so callers can't mistake an outage for absence.
+        mm = self._mm_factory(tenant_id)
         if mm is None or not getattr(mm, "memory", None):
             return []
-        try:
-            # subject_key filters server-side (promoted Vespa field) — the
-            # get-all-then-filter form pulled the tenant's whole memory
-            # corpus per request.
-            rows = list(
-                mm.get_all_memories(
-                    tenant_id=tenant_id,
-                    agent_name=agent_name,
-                    filters={"subject_key": subject_key},
-                )
+        # subject_key filters server-side (promoted Vespa field) — the
+        # get-all-then-filter form pulled the tenant's whole memory
+        # corpus per request.
+        rows = list(
+            mm.get_all_memories(
+                tenant_id=tenant_id,
+                agent_name=agent_name,
+                filters={"subject_key": subject_key},
             )
-        except Exception as exc:
-            logger.warning("temporal: get_all_memories failed: %r", exc)
-            return []
+        )
         return [r for r in rows if _matches_subject(r, subject_key)]
 
     @staticmethod

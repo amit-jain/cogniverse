@@ -303,3 +303,72 @@ def test_agent_capabilities_advertised():
     assert agent.agent_name == "temporal_reasoning_agent"
     assert "temporal_reasoning" in agent.capabilities
     assert agent.port == 8025
+
+
+@pytest.mark.asyncio
+class TestMemoryOutage:
+    """A memory-backend outage must surface, never read as "no memories in
+    window" — the empty answer is indistinguishable from real absence."""
+
+    async def test_get_all_memories_outage_propagates(self):
+        def _factory(tenant_id):
+            mm = MagicMock()
+            mm.memory = MagicMock()
+
+            def _raise(**kwargs):
+                raise ConnectionError("vespa down")
+
+            mm.get_all_memories = _raise
+            return mm
+
+        agent = TemporalReasoningAgent(
+            deps=TemporalReasoningDeps(tenant_id="acme"),
+            memory_manager_factory=_factory,
+        )
+        with pytest.raises(ConnectionError, match="vespa down"):
+            await agent._process_impl(
+                TemporalReasoningInput(
+                    tenant_id="acme",
+                    subject_key="policy:refunds",
+                    windows=[
+                        TimeWindow(
+                            label="Q1",
+                            start="2026-01-01T00:00:00Z",
+                            end="2026-04-01T00:00:00Z",
+                        ),
+                        TimeWindow(
+                            label="Q2",
+                            start="2026-04-01T00:00:00Z",
+                            end="2026-07-01T00:00:00Z",
+                        ),
+                    ],
+                )
+            )
+
+    async def test_factory_outage_propagates(self):
+        def _factory(tenant_id):
+            raise ConnectionError("mem0 init failed")
+
+        agent = TemporalReasoningAgent(
+            deps=TemporalReasoningDeps(tenant_id="acme"),
+            memory_manager_factory=_factory,
+        )
+        with pytest.raises(ConnectionError, match="mem0 init failed"):
+            await agent._process_impl(
+                TemporalReasoningInput(
+                    tenant_id="acme",
+                    subject_key="policy:refunds",
+                    windows=[
+                        TimeWindow(
+                            label="Q1",
+                            start="2026-01-01T00:00:00Z",
+                            end="2026-04-01T00:00:00Z",
+                        ),
+                        TimeWindow(
+                            label="Q2",
+                            start="2026-04-01T00:00:00Z",
+                            end="2026-07-01T00:00:00Z",
+                        ),
+                    ],
+                )
+            )

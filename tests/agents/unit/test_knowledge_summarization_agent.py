@@ -25,10 +25,16 @@ def _row(
     subject_key: str = "policy:refunds",
     kind: str = "external_doc",
     written_at: str | None = "2026-01-15T00:00:00Z",
+    nested_provenance: bool = False,
 ):
     meta: Dict[str, Any] = {"kind": kind, "subject_key": subject_key}
     if written_at is not None:
-        meta["written_at"] = written_at
+        if nested_provenance:
+            # The shape attach_to_metadata writes for real memories:
+            # metadata["provenance"]["written_at"].
+            meta["provenance"] = {"written_at": written_at}
+        else:
+            meta["written_at"] = written_at
     return {"id": mid, "memory": content, "metadata": meta}
 
 
@@ -98,6 +104,27 @@ class TestMatchesFilters:
     def test_no_filters_passes_everything(self):
         r = _row("a", "x", written_at=None)
         assert _matches_filters(r, None, None, None, None) is True
+
+    def test_time_filter_reads_nested_provenance_written_at(self):
+        """attach_to_metadata nests written_at under metadata["provenance"];
+        a time window must match those rows, not silently drop them."""
+        r = _row("a", "x", written_at="2026-01-15T00:00:00Z", nested_provenance=True)
+        since = _parse_iso("2026-01-01T00:00:00Z")
+        until = _parse_iso("2026-02-01T00:00:00Z")
+        assert _matches_filters(r, None, None, since, until) is True
+
+    def test_nested_provenance_respects_window_bounds(self):
+        r = _row("a", "x", written_at="2026-04-15T00:00:00Z", nested_provenance=True)
+        until = _parse_iso("2026-04-01T00:00:00Z")
+        assert _matches_filters(r, None, None, None, until) is False
+
+    def test_top_level_written_at_wins_over_nested(self):
+        """Promoted summaries write top-level written_at; when both shapes are
+        present the top-level stamp is authoritative."""
+        r = _row("a", "x", written_at="2026-01-15T00:00:00Z")
+        r["metadata"]["provenance"] = {"written_at": "2020-01-01T00:00:00Z"}
+        since = _parse_iso("2026-01-01T00:00:00Z")
+        assert _matches_filters(r, None, None, since, None) is True
 
 
 @pytest.mark.asyncio
@@ -181,7 +208,12 @@ class TestSummarizationFlow:
         rows = [
             _row("a", "in", written_at="2026-02-01T00:00:00Z"),
             _row("b", "out_early", written_at="2025-12-01T00:00:00Z"),
-            _row("c", "out_late", written_at="2026-05-01T00:00:00Z"),
+            _row(
+                "c",
+                "out_late",
+                written_at="2026-05-01T00:00:00Z",
+                nested_provenance=True,
+            ),
         ]
         agent, _ = _build({"acme:production": rows})
         out = await agent._process_impl(
@@ -300,3 +332,58 @@ def test_agent_capabilities_advertised():
     assert agent.agent_name == "knowledge_summarization_agent"
     assert "knowledge_summarization" in agent.capabilities
     assert agent.port == 8026
+
+
+@pytest.mark.asyncio
+class TestMemoryOutage:
+    """A memory-backend outage is not "no memories" — it must surface, never
+    become a confident empty summary."""
+
+    async def test_get_all_memories_outage_propagates(self):
+        def _factory(tenant_id):
+            mm = MagicMock()
+            mm.memory = MagicMock()
+
+            def _raise(**kwargs):
+                raise ConnectionError("vespa down")
+
+            mm.get_all_memories = _raise
+            return mm
+
+        agent = KnowledgeSummarizationAgent(
+            deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
+            memory_manager_factory=_factory,
+            registry=build_default_registry(),
+        )
+        agent._dspy_module = MagicMock(return_value=MagicMock(summary="STUB"))
+        with pytest.raises(ConnectionError, match="vespa down"):
+            await agent._process_impl(
+                KnowledgeSummarizationInput(
+                    tenant_id="acme:production",
+                    subject_keys=["policy:refunds"],
+                    title="Refunds Q1",
+                    actor_role="user",
+                    actor_id="alice",
+                )
+            )
+
+    async def test_factory_outage_propagates(self):
+        def _factory(tenant_id):
+            raise ConnectionError("mem0 init failed")
+
+        agent = KnowledgeSummarizationAgent(
+            deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
+            memory_manager_factory=_factory,
+            registry=build_default_registry(),
+        )
+        agent._dspy_module = MagicMock(return_value=MagicMock(summary="STUB"))
+        with pytest.raises(ConnectionError, match="mem0 init failed"):
+            await agent._process_impl(
+                KnowledgeSummarizationInput(
+                    tenant_id="acme:production",
+                    subject_keys=["policy:refunds"],
+                    title="Refunds Q1",
+                    actor_role="user",
+                    actor_id="alice",
+                )
+            )
