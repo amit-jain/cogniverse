@@ -1384,6 +1384,8 @@ def _compute_gateway_thresholds(spans_df) -> dict:
     The ``ready`` status is not yet ``success`` because the artifact hasn't
     been persisted — the wrapper writes the dataset and converts.
     """
+    import pandas as _pd
+
     if spans_df.empty:
         return {"status": "no_data", "spans_found": 0}
 
@@ -1408,7 +1410,9 @@ def _compute_gateway_thresholds(spans_df) -> dict:
     simple_spans = df[df["_complexity"] == "simple"]
     complex_spans = df[df["_complexity"] == "complex"]
 
-    confidences = df["_confidence"].dropna().astype(float)
+    # Coerce, don't cast: one non-numeric confidence (e.g. an LM emitting
+    # "high") must drop that row, not abort the whole tenant recompute.
+    confidences = _pd.to_numeric(df["_confidence"], errors="coerce").dropna()
     if confidences.empty:
         return {
             "status": "no_data",

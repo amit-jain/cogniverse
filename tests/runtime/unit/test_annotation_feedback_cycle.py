@@ -80,6 +80,17 @@ class _StorageStub:
         return self.rows_by_type.get(self.agent_type, [])
 
 
+class _BlippingStorageStub(_StorageStub):
+    """Raises on the configured agent types, e.g. a Phoenix blip mid-cycle."""
+
+    fail_types: set = set()
+
+    async def query_annotated_spans(self, start_time, end_time, only_human_reviewed):
+        if self.agent_type in self.fail_types:
+            raise ConnectionError(f"phoenix unreachable for {self.agent_type}")
+        return self.rows_by_type.get(self.agent_type, [])
+
+
 class _ArgoCapture:
     def __init__(self):
         self.posts = []
@@ -108,14 +119,20 @@ class _DatasetStoreStub:
 
 
 async def _run(
-    rules, rows_by_type, config_manager=None, now=NOW, force=False, pod_spec=None
+    rules,
+    rows_by_type,
+    config_manager=None,
+    now=NOW,
+    force=False,
+    pod_spec=None,
+    storage_cls=_StorageStub,
 ):
-    _StorageStub.rows_by_type = rows_by_type
+    storage_cls.rows_by_type = rows_by_type
     argo = _ArgoCapture()
     datasets = _DatasetStoreStub()
     with patch(
         "cogniverse_agents.routing.annotation_storage.AnnotationStorage",
-        _StorageStub,
+        storage_cls,
     ):
         result = await run_annotation_feedback_cycle(
             tenant_id="acme:acme",
@@ -246,6 +263,44 @@ async def test_poll_interval_self_gate():
     )
     assert result["status"] == "skipped_recent_poll"
     assert argo.posts == []
+
+
+@pytest.mark.asyncio
+async def test_one_agent_fault_does_not_abort_the_cycle():
+    """summary's storage raising must not stop search (before it) from
+    submitting or routing (after it) from being processed."""
+    _BlippingStorageStub.fail_types = {"summary"}
+    result, argo, _ = await _run(
+        _rules(),
+        {"search": _annotated_rows(50), "routing": _annotated_rows(12)},
+        storage_cls=_BlippingStorageStub,
+    )
+
+    assert result["status"] == "success"
+    assert result["agents"]["summary"] == {"annotations": 0, "action": "error"}
+    assert result["agents"]["search"]["action"] == "recompile"
+    assert result["agents"]["routing"]["action"] == "thresholds_refresh"
+    assert len(argo.posts) == 2
+
+
+@pytest.mark.asyncio
+async def test_cooldowns_persist_past_a_mid_cycle_fault():
+    """search submits and records its cooldown before summary faults; the
+    loop state must still be saved or the next cron tick resubmits search."""
+    from cogniverse_runtime.quality_monitor_cli import _load_loop_state
+
+    cm = _config_manager()
+    _BlippingStorageStub.fail_types = {"summary"}
+    await _run(
+        _rules(),
+        {"search": _annotated_rows(50)},
+        config_manager=cm,
+        storage_cls=_BlippingStorageStub,
+    )
+
+    state = _load_loop_state(cm, "acme:acme")
+    assert state["last_optimization_at"]["search"] == NOW.isoformat()
+    assert state["last_feedback_run_at"] == NOW.isoformat()
 
 
 @pytest.mark.asyncio

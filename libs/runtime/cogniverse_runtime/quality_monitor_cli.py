@@ -311,126 +311,149 @@ async def run_annotation_feedback_cycle(
     per_agent: dict = {}
     thresholds_refresh_submitted = False
 
-    for agent_type, mode in AGENT_COMPILE_MODE.items():
-        storage = annotation_storage_mod.AnnotationStorage(
-            tenant_id=tenant_id, agent_type=agent_type
-        )
-        rows = await storage.query_annotated_spans(
-            start_time=start_time, end_time=end_time, only_human_reviewed=True
-        )
-        count = len(rows)
-        outcome = {"annotations": count, "action": "none"}
-        per_agent[agent_type] = outcome
-        if count == 0:
-            continue
-
-        recompile = count >= triggers.min_annotations_for_optimization
-        refresh = (
-            mode == "gateway-thresholds"
-            and count >= feedback.min_annotations_for_update
-        )
-        if not recompile and not refresh:
-            continue
-
-        last = last_optimization.get(agent_type)
-        if last is not None:
-            since = now - datetime.fromisoformat(last)
-            if since < timedelta(days=triggers.min_days_between_optimizations):
-                outcome["action"] = "cooldown"
-                continue
-
-        if mode == "gateway-thresholds" and thresholds_refresh_submitted:
-            # gateway + routing share one threshold recalibration.
-            outcome["action"] = "thresholds_refresh"
-            last_optimization[agent_type] = now.isoformat()
-            continue
-
-        parameters = [{"name": "tenant-id", "value": tenant_id}]
-        container_args = [
-            "--mode",
-            mode,
-            "--tenant-id",
-            "{{workflow.parameters.tenant-id}}",
-            "--lookback-hours",
-            str(float(triggers.annotation_lookback_hours)),
-        ]
-
-        if mode == "triggered":
-            records = []
-            for row in rows:
-                label = row.get("annotation_label")
-                score = quality_map.get(label)
-                if score is None:
-                    logger.warning(
-                        "Unmapped annotation label %r on span %s — skipped",
-                        label,
-                        row.get("span_id"),
-                    )
-                    continue
-                records.append(
-                    {
-                        "agent": agent_type,
-                        "category": ("high_scoring" if score >= 0.8 else "low_scoring"),
-                        "query": row.get("query") or "",
-                        "score": score,
-                        "output": json.dumps(row.get("output") or {}, default=str),
-                    }
+    # Per-agent isolation: one agent's fault (Phoenix blip, dataset write)
+    # must not abort the agents after it. The finally persists the poll stamp
+    # and any cooldowns recorded before a fault — without it, the next cron
+    # tick re-submits workflows agents already got this cycle.
+    try:
+        for agent_type, mode in AGENT_COMPILE_MODE.items():
+            try:
+                storage = annotation_storage_mod.AnnotationStorage(
+                    tenant_id=tenant_id, agent_type=agent_type
                 )
-            if not records:
-                outcome["action"] = "no_mapped_labels"
-                continue
-            dataset_name = (
-                f"optimization-trigger-{tenant_id}-{now.strftime('%Y%m%d_%H%M%S')}"
-            )
-            await dataset_store.create_dataset(
-                name=dataset_name,
-                data=pd.DataFrame(records),
-                metadata={
-                    "description": (
-                        f"Annotation-feedback trigger for {tenant_id}: {agent_type}"
+                rows = await storage.query_annotated_spans(
+                    start_time=start_time,
+                    end_time=end_time,
+                    only_human_reviewed=True,
+                )
+                count = len(rows)
+                outcome = {"annotations": count, "action": "none"}
+                per_agent[agent_type] = outcome
+                if count == 0:
+                    continue
+
+                recompile = count >= triggers.min_annotations_for_optimization
+                refresh = (
+                    mode == "gateway-thresholds"
+                    and count >= feedback.min_annotations_for_update
+                )
+                if not recompile and not refresh:
+                    continue
+
+                last = last_optimization.get(agent_type)
+                if last is not None:
+                    since = now - datetime.fromisoformat(last)
+                    if since < timedelta(days=triggers.min_days_between_optimizations):
+                        outcome["action"] = "cooldown"
+                        continue
+
+                if mode == "gateway-thresholds" and thresholds_refresh_submitted:
+                    # gateway + routing share one threshold recalibration.
+                    outcome["action"] = "thresholds_refresh"
+                    last_optimization[agent_type] = now.isoformat()
+                    continue
+
+                parameters = [{"name": "tenant-id", "value": tenant_id}]
+                container_args = [
+                    "--mode",
+                    mode,
+                    "--tenant-id",
+                    "{{workflow.parameters.tenant-id}}",
+                    "--lookback-hours",
+                    str(float(triggers.annotation_lookback_hours)),
+                ]
+
+                if mode == "triggered":
+                    records = []
+                    for row in rows:
+                        label = row.get("annotation_label")
+                        score = quality_map.get(label)
+                        if score is None:
+                            logger.warning(
+                                "Unmapped annotation label %r on span %s — skipped",
+                                label,
+                                row.get("span_id"),
+                            )
+                            continue
+                        records.append(
+                            {
+                                "agent": agent_type,
+                                "category": (
+                                    "high_scoring" if score >= 0.8 else "low_scoring"
+                                ),
+                                "query": row.get("query") or "",
+                                "score": score,
+                                "output": json.dumps(
+                                    row.get("output") or {}, default=str
+                                ),
+                            }
+                        )
+                    if not records:
+                        outcome["action"] = "no_mapped_labels"
+                        continue
+                    dataset_name = (
+                        f"optimization-trigger-{tenant_id}-"
+                        f"{now.strftime('%Y%m%d_%H%M%S')}"
+                    )
+                    await dataset_store.create_dataset(
+                        name=dataset_name,
+                        data=pd.DataFrame(records),
+                        metadata={
+                            "description": (
+                                f"Annotation-feedback trigger for {tenant_id}: "
+                                f"{agent_type}"
+                            ),
+                            "input_keys": ["agent", "category", "query"],
+                            "output_keys": ["score", "output"],
+                        },
+                    )
+                    parameters.append({"name": "agents", "value": agent_type})
+                    parameters.append(
+                        {"name": "trigger-dataset", "value": dataset_name}
+                    )
+                    container_args = [
+                        "--mode",
+                        "triggered",
+                        "--tenant-id",
+                        "{{workflow.parameters.tenant-id}}",
+                        "--agents",
+                        "{{workflow.parameters.agents}}",
+                        "--trigger-dataset",
+                        "{{workflow.parameters.trigger-dataset}}",
+                    ]
+
+                submitted = await submit_argo_optimization_workflow(
+                    http_client=client,
+                    argo_api_url=argo_url,
+                    argo_namespace=argo_namespace,
+                    tenant_id=tenant_id,
+                    name_prefix=(
+                        f"annotation-feedback-{agent_type.replace('_', '-')}-"
+                        f"{now.strftime('%Y%m%d-%H%M%S')}"
                     ),
-                    "input_keys": ["agent", "category", "query"],
-                    "output_keys": ["score", "output"],
-                },
-            )
-            parameters.append({"name": "agents", "value": agent_type})
-            parameters.append({"name": "trigger-dataset", "value": dataset_name})
-            container_args = [
-                "--mode",
-                "triggered",
-                "--tenant-id",
-                "{{workflow.parameters.tenant-id}}",
-                "--agents",
-                "{{workflow.parameters.agents}}",
-                "--trigger-dataset",
-                "{{workflow.parameters.trigger-dataset}}",
-            ]
-
-        submitted = await submit_argo_optimization_workflow(
-            http_client=client,
-            argo_api_url=argo_url,
-            argo_namespace=argo_namespace,
-            tenant_id=tenant_id,
-            name_prefix=(
-                f"annotation-feedback-{agent_type.replace('_', '-')}-"
-                f"{now.strftime('%Y%m%d-%H%M%S')}"
-            ),
-            trigger_label="annotation-feedback",
-            parameters=parameters,
-            container_args=container_args,
-            pod_spec=pod_spec,
-        )
-        if submitted:
-            outcome["action"] = "recompile" if recompile else "thresholds_refresh"
-            last_optimization[agent_type] = now.isoformat()
-            if mode == "gateway-thresholds":
-                thresholds_refresh_submitted = True
-        else:
-            outcome["action"] = "submit_failed"
-
-    state["last_feedback_run_at"] = now.isoformat()
-    state["last_optimization_at"] = last_optimization
-    _save_loop_state(config_manager, tenant_id, state)
+                    trigger_label="annotation-feedback",
+                    parameters=parameters,
+                    container_args=container_args,
+                    pod_spec=pod_spec,
+                )
+                if submitted:
+                    outcome["action"] = (
+                        "recompile" if recompile else "thresholds_refresh"
+                    )
+                    last_optimization[agent_type] = now.isoformat()
+                    if mode == "gateway-thresholds":
+                        thresholds_refresh_submitted = True
+                else:
+                    outcome["action"] = "submit_failed"
+            except Exception as e:
+                logger.error(
+                    "Annotation feedback step failed for %s: %r", agent_type, e
+                )
+                per_agent.setdefault(agent_type, {"annotations": 0})["action"] = "error"
+    finally:
+        state["last_feedback_run_at"] = now.isoformat()
+        state["last_optimization_at"] = last_optimization
+        _save_loop_state(config_manager, tenant_id, state)
 
     result = {"status": "success", "agents": per_agent}
     logger.info("Annotation feedback cycle complete: %s", result)
@@ -579,6 +602,14 @@ def main():
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+
+    # Readers built via the telemetry manager (AnnotationStorage,
+    # AnnotationAgent, dataset store) derive Phoenix's HTTP endpoint from
+    # TELEMETRY_OTLP_ENDPOINT's host on the fixed :6006 port; point them at
+    # --phoenix-url before any provider is constructed and cached.
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    get_telemetry_manager().config.provider_config["http_endpoint"] = args.phoenix_url
 
     from cogniverse_evaluation.quality_monitor import QualityMonitor
 
