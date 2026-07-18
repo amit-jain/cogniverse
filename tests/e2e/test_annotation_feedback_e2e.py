@@ -589,9 +589,10 @@ async def test_feedback_workflow_runs_and_spawns_real_recompile(cluster_telemetr
         _delete_workflow(feedback_wf)
         if spawned_wf:
             _delete_workflow(spawned_wf)
-        # Drop this run's schema so repeated runs don't accumulate content
-        # clusters in the shared Vespa (best-effort; the run is already
-        # judged by the assertions above).
+        # Drop this run's schema, tenant, and (auto-created) org so repeated
+        # runs don't accumulate content clusters in the shared Vespa or
+        # tenant/org records (best-effort; the run is already judged by the
+        # assertions above). Tenant delete removes the org once empty.
         import contextlib
 
         import httpx
@@ -600,5 +601,10 @@ async def test_feedback_workflow_runs_and_spawns_real_recompile(cluster_telemetr
             httpx.delete(
                 f"{RUNTIME_URL}/admin/profiles/{PROFILE_NAME}",
                 params={"tenant_id": CANONICAL_TENANT, "delete_schema": "true"},
+                timeout=180.0,
+            )
+        with contextlib.suppress(Exception):
+            httpx.delete(
+                f"{RUNTIME_URL}/admin/tenants/{CANONICAL_TENANT}",
                 timeout=180.0,
             )

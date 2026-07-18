@@ -270,3 +270,23 @@ class TestSpanAnalysisReadsCanonicalSlots:
         assert request.agent_type == "query_enhancement"
         assert request.query == "find cats"
         assert request.routing_confidence == pytest.approx(0.2)
+
+
+class TestAnnotationAgentCanonicalTenant:
+    def test_raw_tenant_scopes_to_the_canonical_project(self):
+        """The runtime writes routing spans under the canonical tenant
+        project; an AnnotationAgent built with a raw id (e.g. from a
+        dashboard tab) must read the SAME project or every identify run
+        sees an empty project on real traffic."""
+        from cogniverse_agents.routing.annotation_agent import AnnotationAgent
+
+        tm = _stub_telemetry_manager()
+        with patch(
+            "cogniverse_agents.routing.annotation_agent.get_telemetry_manager",
+            return_value=tm,
+        ):
+            agent = AnnotationAgent(tenant_id="acme")
+
+        assert agent.project_name == tm.config.get_project_name.return_value
+        tm.config.get_project_name.assert_called_with("acme:acme")
+        tm.get_provider.assert_called_with(tenant_id="acme:acme")

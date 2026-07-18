@@ -115,3 +115,110 @@ async def test_list_tenants_for_org_internal_returns_tenants_on_success(monkeypa
 
     tenants = await tm.list_tenants_for_org_internal("acme")
     assert [t.tenant_full_id for t in tenants] == ["acme:prod"]
+
+
+def _delete_seam(monkeypatch, *, remaining_tenants, org_exists=True):
+    """Wire delete_tenant_internal's collaborators for org-lifecycle tests."""
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.schema_manager._schema_registry = None
+    backend.schema_manager.list_deployed_document_types.return_value = []
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _tenant(_tid):
+        return MagicMock()
+
+    async def _org(_org_id):
+        return MagicMock() if org_exists else None
+
+    async def _remaining(_org_id):
+        return remaining_tenants
+
+    monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
+    monkeypatch.setattr(tm, "get_organization_internal", _org)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _remaining)
+    return tm, backend
+
+
+def _org_deletes(backend):
+    return [
+        c
+        for c in backend.delete_metadata_document.call_args_list
+        if c.kwargs.get("schema") == "organization_metadata"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deleting_last_tenant_deletes_the_auto_created_org(monkeypatch):
+    """Tenant create auto-creates the org; deleting the org's last tenant
+    must remove it again, or every provision/teardown cycle leaks an org."""
+    tm, backend = _delete_seam(monkeypatch, remaining_tenants=[])
+
+    result = await tm.delete_tenant_internal("acme:acme")
+
+    assert result["status"] == "deleted"
+    assert result["organization_deleted"] is True
+    org_calls = _org_deletes(backend)
+    assert len(org_calls) == 1
+    assert org_calls[0].kwargs["doc_id"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_org_with_remaining_tenants_is_kept(monkeypatch):
+    tm, backend = _delete_seam(monkeypatch, remaining_tenants=[MagicMock()])
+
+    result = await tm.delete_tenant_internal("acme:acme")
+
+    assert result["status"] == "deleted"
+    assert result["organization_deleted"] is False
+    assert _org_deletes(backend) == []
+
+
+@pytest.mark.asyncio
+async def test_org_cleanup_failure_keeps_tenant_delete_successful(monkeypatch, caplog):
+    """The tenant IS deleted by the time org cleanup runs; a backend blip
+    there must warn and report organization_deleted false, not turn the
+    whole delete into an error."""
+    import logging
+
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    backend.schema_manager._schema_registry = None
+    backend.schema_manager.list_deployed_document_types.return_value = []
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _tenant(_tid):
+        return MagicMock()
+
+    async def _boom(_org_id):
+        raise HTTPException(status_code=503, detail="registry unavailable")
+
+    monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _boom)
+
+    with caplog.at_level(logging.WARNING):
+        result = await tm.delete_tenant_internal("acme:acme")
+
+    assert result["status"] == "deleted"
+    assert result["organization_deleted"] is False
+    assert "Organization cleanup" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_org_delete_reporting_failure_is_not_claimed_deleted(monkeypatch, caplog):
+    """delete_metadata_document returns False on a non-200 without raising;
+    the response must not claim organization_deleted in that case."""
+    import logging
+
+    tm, backend = _delete_seam(monkeypatch, remaining_tenants=[])
+    backend.delete_metadata_document.return_value = False
+
+    with caplog.at_level(logging.WARNING):
+        result = await tm.delete_tenant_internal("acme:acme")
+
+    assert result["status"] == "deleted"
+    assert result["organization_deleted"] is False
+    assert len(_org_deletes(backend)) == 1
+    assert "may remain" in caplog.text
