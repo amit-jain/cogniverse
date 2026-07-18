@@ -273,6 +273,51 @@ uv pip list | grep cogniverse
 # Expected: 13 packages (sdk, foundation, core, evaluation, cli, etc.)
 ```
 
+### Development Workflow: Three Loops
+
+`cogniverse up` deploys in **dev mode**: the k3d cluster mounts your working
+tree (`libs/`, `scripts/`, `configs/schemas/`, `data/`) over the images, so
+pods run the code in your checkout — the image only provides the base
+environment. That splits day-to-day work into three loops, fastest first:
+
+**1. Inner loop — code changes (seconds).** Pods read your tree; a Python
+process picks up edits when it starts. Edit, then restart just the component
+you changed:
+
+```bash
+kubectl rollout restart deployment/cogniverse-runtime -n cogniverse
+```
+
+No build, no tag, no helm. Tests run straight off the tree too
+(`uv run pytest ...`). This covers most development.
+
+**2. Deploy loop — `cogniverse up` (minutes, occasional).** Required only
+when something *outside* the mounts changes: dependencies
+(`pyproject.toml` / `uv.lock` bake into image layers), Dockerfiles, chart
+templates or values, new sidecars — or when you want the artifact stamps to
+match HEAD again. It rebuilds the images (layer-cached), imports them into
+k3d, and helm-upgrades.
+
+Versioning is a **single train**: one git-derived version
+(`0.1.devN+g<sha>`, computed by hatch-vcs at build time) stamps every image,
+the packaged chart, and the wheels together — regardless of which files a
+commit touched. Committing moves nothing by itself; only a build re-stamps.
+A consequence worth knowing: because of the dev mounts, the image tag on a
+dev cluster records the *base image's* provenance, not the running code's —
+the running code is always your tree as of the last pod restart. (In dev
+mode this extends to Argo-spawned optimization pods too — they inherit the
+same source mounts.) Run `cogniverse up` when you need image content and
+tree to coincide — for workloads that run from the image alone (the
+inference sidecars, or any non-dev deployment where devMode is off).
+
+**3. Release loop — `make release VERSION=x.y.z` (rare, deliberate).** Cuts
+the `v<version>` tag; CI builds and publishes the wheels, images, and OCI
+chart from that tag. See docs/development/publishing-guide.md for the
+full release process.
+
+Rule of thumb: **code → restart; deps/chart/Dockerfile → `cogniverse up`;
+shipping → release tag.**
+
 ### IDE Setup
 
 #### VS Code Configuration
@@ -1085,8 +1130,11 @@ source .venv/bin/activate
 # Check services are running
 docker ps | grep -E "vespa|phoenix|ollama"
 
-# Restart services
-cogniverse up  # Restart services via k3d
+# Restart a single component (dev mounts serve your working tree)
+kubectl rollout restart deployment/cogniverse-runtime -n cogniverse
+
+# Full rebuild + redeploy (recreates anything missing)
+cogniverse up
 ```
 
 **Issue**: Out of memory
