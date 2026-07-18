@@ -432,6 +432,84 @@ class TestTenantManagerAPI:
             "schema still in Vespa after schema-only-tenant DELETE"
         )
 
+    def test_delete_refuses_when_peer_orphan_would_be_dropped(self, test_client):
+        """A tenant delete whose redeploy would drop ANOTHER tenant's
+        deployed-but-unregistered schema must surface the refusal over HTTP
+        and leave the tenant intact — never silently destroy peer data."""
+        from cogniverse_runtime.admin import tenant_manager
+
+        backend = tenant_manager.backend
+        victim = "orphanvictim:test"
+        target = "orphandeltgt:test"
+
+        create = test_client.post(
+            "/admin/tenants",
+            json={
+                "tenant_id": target,
+                "created_by": "test",
+                "base_schemas": ["video_colpali_smol500_mv_frame"],
+            },
+        )
+        assert create.status_code == 200, create.text
+        wait_for_vespa_indexing(delay=2, description="tenant indexing")
+
+        # Victim: deployed schema whose registry row is then removed —
+        # deployed-but-unregistered, unreconstructable by any redeploy.
+        backend.schema_registry.deploy_schema(victim, "video_colpali_smol500_mv_frame")
+        backend.schema_manager._schema_registry.unregister_schema(
+            victim, "video_colpali_smol500_mv_frame"
+        )
+        try:
+            resp = test_client.delete(f"/admin/tenants/{target}")
+            assert resp.status_code == 500, resp.text
+            assert "no registry entry" in resp.text
+
+            # The refusal keeps the tenant; the delete is retryable.
+            assert test_client.get(f"/admin/tenants/{target}").status_code == 200
+        finally:
+            # Recover the cluster: absorb the orphan in one bulk redeploy so
+            # later tests' deletes aren't poisoned by it.
+            backend.schema_manager.delete_tenant_schemas_bulk([victim])
+
+        retry = test_client.delete(f"/admin/tenants/{target}")
+        assert retry.status_code == 200, retry.text
+        assert test_client.get(f"/admin/tenants/{target}").status_code == 404
+
+    def test_raw_form_delete_covers_registry_and_vespa(self, test_client):
+        """DELETE with the raw id form removes everything: the registry APIs
+        canonicalize on reads and writes, so one canonical pass drains both
+        the registry rows and the deployed schema — no residue under either
+        key form."""
+        from cogniverse_runtime.admin import tenant_manager
+
+        backend = tenant_manager.backend
+        raw = "rawdel"
+        base = "video_colpali_smol500_mv_frame"
+
+        create = test_client.post(
+            "/admin/tenants",
+            json={
+                "tenant_id": f"{raw}:{raw}",
+                "created_by": "test",
+                "base_schemas": [base],
+            },
+        )
+        assert create.status_code == 200, create.text
+        wait_for_vespa_indexing(delay=2, description="tenant indexing")
+
+        registry = backend.schema_manager._schema_registry
+        full_name = backend.schema_manager.get_tenant_schema_name(raw, base)
+        assert registry.get_tenant_schemas(raw), "setup failure — no registry row"
+
+        resp = test_client.delete(f"/admin/tenants/{raw}")
+        assert resp.status_code == 200, resp.text
+        assert full_name in resp.json()["deleted_schemas"]
+
+        assert registry.get_tenant_schemas(raw) == []
+        assert registry.get_tenant_schemas(f"{raw}:{raw}") == []
+        deployed_after = backend.schema_manager.list_deployed_document_types()
+        assert full_name not in deployed_after
+
     def test_delete_organization(self, test_client):
         """Test deleting organization and all its tenants"""
         # Create org with tenants
@@ -475,31 +553,43 @@ class TestTenantManagerAPI:
         assert response.status_code == 400
 
 
-class TestDiscoverOrphanSchemaTargets:
+class TestDeleteMatchesCanonicalSuffixOnly:
     """A tenant delete must not match another tenant's schema by a short
     (bare) suffix. Every deploy canonicalizes, so only the canonical suffix
-    is matched."""
+    is matched — the same guarantee now lives in
+    VespaSchemaManager.delete_tenant_schemas' suffix filter."""
 
     def test_canonical_suffix_only_no_cross_tenant_over_delete(self):
-        from cogniverse_runtime.admin.tenant_manager import (
-            _discover_orphan_schema_targets,
-        )
+        from unittest.mock import MagicMock
 
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        mgr = object.__new__(VespaSchemaManager)
+        mgr._logger = MagicMock()
+        registry = MagicMock()
+        registry.get_tenant_schemas.return_value = []
+        mgr._schema_registry = registry
         deployed = [
             "video_colpali_pr_pr",  # tenant "pr" canonical → ours
             "agent_memories_pr_pr",  # tenant "pr" Mem0 (canonical) → ours
             "video_colpali_base_a_pr",  # tenant "a_pr" — ends in "_pr", NOT ours
             "agent_memories_a_pr_a_pr",  # tenant "a_pr" canonical → NOT ours
         ]
+        mgr.list_deployed_document_types = MagicMock(return_value=deployed)
+        dropped: dict = {}
 
-        targets = _discover_orphan_schema_targets(deployed, "pr:pr")
+        def _capture(targets, allow_absorb_unresolved=False):
+            dropped["targets"] = set(targets)
+            return sorted(targets)
 
-        assert ("pr:pr", "video_colpali") in targets
-        assert ("pr:pr", "agent_memories") in targets
-        # Neither of tenant a_pr's schemas may be attributed to pr.
-        assert ("pr:pr", "video_colpali_base_a") not in targets
-        assert all("a_pr" not in base for _, base in targets)
-        assert len(targets) == 2
+        mgr._redeploy_dropping = _capture
+
+        mgr.delete_tenant_schemas("pr:pr")
+
+        assert dropped["targets"] == {
+            "video_colpali_pr_pr",
+            "agent_memories_pr_pr",
+        }
 
 
 if __name__ == "__main__":

@@ -296,19 +296,14 @@ async def test_schema_drop_failure_keeps_the_tenant(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_legacy_raw_form_registrations_also_deleted(monkeypatch):
-    """Registrations left under the raw id form carry the raw suffix the
-    canonical pass doesn't match; those are dropped per target afterward."""
-    from types import SimpleNamespace
-
+async def test_raw_form_input_resolves_to_one_canonical_pass(monkeypatch):
+    """A raw-form tenant id goes through exactly one canonical
+    delete_tenant_schemas pass — the registry APIs canonicalize on both
+    reads and writes, so no raw-keyed follow-up work exists."""
     from cogniverse_runtime.admin import tenant_manager as tm
 
     backend = MagicMock()
     backend.schema_manager.delete_tenant_schemas.return_value = ["video_x_acme_acme"]
-    backend.schema_manager._schema_registry.get_tenant_schemas.return_value = [
-        SimpleNamespace(base_schema_name="video_legacy")
-    ]
-    backend.schema_manager.delete_schema.return_value = "video_legacy_acme"
     monkeypatch.setattr(tm, "get_backend", lambda: backend)
 
     async def _tenant(_tid):
@@ -327,8 +322,54 @@ async def test_legacy_raw_form_registrations_also_deleted(monkeypatch):
     result = await tm.delete_tenant_internal("acme")
 
     backend.schema_manager.delete_tenant_schemas.assert_called_once_with("acme:acme")
-    backend.schema_manager._schema_registry.get_tenant_schemas.assert_called_once_with(
-        "acme"
-    )
-    backend.schema_manager.delete_schema.assert_called_once_with("acme", "video_legacy")
-    assert result["deleted_schemas"] == ["video_x_acme_acme", "video_legacy_acme"]
+    backend.schema_manager.delete_schema.assert_not_called()
+    assert result["deleted_schemas"] == ["video_x_acme_acme"]
+    assert result["tenant_full_id"] == "acme:acme"
+
+
+@pytest.mark.asyncio
+async def test_org_delete_continues_past_one_failing_tenant(monkeypatch):
+    """delete_organization tolerates a single tenant's failed delete: the
+    remaining tenants and the org record still go, and the response names
+    exactly the tenants that were deleted."""
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    backend = MagicMock()
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _org(_org_id):
+        return MagicMock()
+
+    async def _tenants(_org_id):
+        return [
+            SimpleNamespace(tenant_full_id="acme:one"),
+            SimpleNamespace(tenant_full_id="acme:two"),
+        ]
+
+    deleted: list[str] = []
+
+    async def _delete_tenant(tid):
+        if tid == "acme:one":
+            raise RuntimeError("redeploy refused")
+        deleted.append(tid)
+        return {"status": "deleted"}
+
+    monkeypatch.setattr(tm, "get_organization_internal", _org)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _tenants)
+    monkeypatch.setattr(tm, "delete_tenant_internal", _delete_tenant)
+
+    result = await tm.delete_organization("acme")
+
+    assert result["status"] == "deleted"
+    assert result["tenants_deleted"] == 1
+    assert result["deleted_tenant_ids"] == ["acme:two"]
+    assert deleted == ["acme:two"]
+    org_deletes = [
+        c
+        for c in backend.delete_metadata_document.call_args_list
+        if c.kwargs.get("schema") == "organization_metadata"
+    ]
+    assert len(org_deletes) == 1
+    assert org_deletes[0].kwargs["doc_id"] == "acme"
