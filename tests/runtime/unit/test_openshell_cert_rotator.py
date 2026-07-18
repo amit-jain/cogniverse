@@ -358,3 +358,29 @@ class TestSandboxManagerWiring:
         # No attach_cert_rotator call — must not raise.
         result = mgr.exec_in_sandbox("test_agent", ["echo", "hi"])
         assert result["exit_code"] == -1
+
+
+class TestPooledExecTriggersRotator:
+    def test_pooled_auth_failure_triggers_rotator(self):
+        """An auth/TLS-shaped failure on the POOLED exec path must trigger
+        the cert rotator exactly like the non-pooled path does — otherwise
+        a rotation is only noticed by the rotator's polling tick while
+        every pooled exec keeps failing on the stale-cert session."""
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        mgr = SandboxManager(policy="disabled")
+        rotator = MagicMock()
+        mgr.attach_cert_rotator(rotator)
+
+        class _AuthFailPool:
+            def with_session(self, agent_type, fn):
+                raise RuntimeError("tls handshake failed: certificate expired")
+
+        out = mgr._exec_pooled(_AuthFailPool(), "coding_agent", ["echo", "hi"], 5)
+
+        assert out == {
+            "stdout": "",
+            "stderr": "tls handshake failed: certificate expired",
+            "exit_code": -1,
+        }
+        rotator.trigger_on_auth_failure.assert_called_once()
