@@ -25,6 +25,8 @@ from cogniverse_foundation.config.semantic_router import routed_lm_context_for
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_PORT = 8003
+
 
 class SummarizerInput(AgentInput):
     """Type-safe input for summarization"""
@@ -211,7 +213,9 @@ class SummarizerAgent(
     and thinking phase. Provides comprehensive analysis and summarization of search results.
     """
 
-    def __init__(self, deps: SummarizerDeps, config_manager=None, port: int = 8003):
+    def __init__(
+        self, deps: SummarizerDeps, config_manager=None, port: int = DEFAULT_PORT
+    ):
         """
         Initialize summarizer agent with typed dependencies.
 
@@ -1032,7 +1036,7 @@ async def get_agent_card():
     return {
         "name": "SummarizerAgent",
         "description": "Type-safe summarization with visual analysis and thinking phase",
-        "url": "/process",
+        "url": f"http://localhost:{DEFAULT_PORT}",
         "version": "2.0.0",
         "protocol": "a2a",
         "protocol_version": "0.2.1",
@@ -1125,7 +1129,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Summarizer Agent Server")
     parser.add_argument(
-        "--port", type=int, default=8003, help="Port to run the server on"
+        "--port", type=int, default=DEFAULT_PORT, help="Port to run the server on"
     )
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")

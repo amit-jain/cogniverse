@@ -157,6 +157,24 @@ def test_detailed_report_agent_card_skills_empty_when_no_singleton(
     assert body["skills"] == []
 
 
+def test_summarizer_agent_card_url_is_absolute(
+    summarizer_client: TestClient,
+) -> None:
+    """A2A clients resolve the card url — a bare path is unresolvable."""
+    r = summarizer_client.get("/agent.json")
+    assert r.status_code == 200
+    assert r.json()["url"] == "http://localhost:8003"
+
+
+def test_detailed_report_agent_card_url_is_absolute(
+    detailed_report_client: TestClient,
+) -> None:
+    """A2A clients resolve the card url — a bare path is unresolvable."""
+    r = detailed_report_client.get("/agent.json")
+    assert r.status_code == 200
+    assert r.json()["url"] == "http://localhost:8004"
+
+
 @pytest.fixture
 def search_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(sa_module, "search_agent", None)
