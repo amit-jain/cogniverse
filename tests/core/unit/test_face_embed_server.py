@@ -183,3 +183,102 @@ class TestInputValidation:
         resp = client.post("/embed", json={"image_b64": not_an_image})
         assert resp.status_code == 400
         assert "image decode failed" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# image_url branch — real HTTP fetch against a local ThreadingHTTPServer
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def png_server(sample_png_b64):
+    """Local HTTP server serving the same 200x200 PNG the b64 tests use,
+    plus a 404 path and a slow path for the timeout contract."""
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    png_bytes = base64.b64decode(sample_png_b64)
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/img.png":
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(png_bytes)))
+                self.end_headers()
+                self.wfile.write(png_bytes)
+            elif self.path == "/slow.png":
+                time.sleep(1.5)
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(png_bytes)))
+                self.end_headers()
+                self.wfile.write(png_bytes)
+            else:
+                self.send_error(404, "not here")
+
+        def log_message(self, fmt, *args):  # silence request logging
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+class TestImageUrlBranch:
+    @pytest.mark.unit
+    def test_image_url_returns_same_embedding_as_b64_path(
+        self, client, png_server, sample_png_b64
+    ):
+        """Fetching the identical PNG over HTTP must produce byte-for-byte
+        the same response as posting it base64-inline: two faces, 4-int
+        bboxes, 512-dim vectors."""
+        via_url = client.post("/embed", json={"image_url": f"{png_server}/img.png"})
+        assert via_url.status_code == 200, via_url.text
+        via_b64 = client.post("/embed", json={"image_b64": sample_png_b64})
+        assert via_b64.status_code == 200, via_b64.text
+
+        assert via_url.json() == via_b64.json()
+        body = via_url.json()
+        assert body["n"] == 2
+        assert body["faces"][0]["bbox"] == [10, 10, 110, 110]
+        assert body["faces"][1]["bbox"] == [100, 100, 190, 190]
+        assert len(body["faces"][0]["vec"]) == 512
+        assert len(body["faces"][1]["vec"]) == 512
+
+    @pytest.mark.unit
+    def test_url_fetch_honours_url_timeout_config(self, server_module, png_server):
+        """A server slower than url_timeout_s is a 400 fetch failure; the
+        same URL succeeds when the configured timeout exceeds the delay —
+        the config value, not a hardcoded timeout, governs the fetch."""
+        slow_url = f"{png_server}/slow.png"
+
+        tight = TestClient(
+            server_module.build_app(server_module.FaceEmbedConfig(url_timeout_s=0.3))
+        )
+        resp = tight.post("/embed", json={"image_url": slow_url})
+        assert resp.status_code == 400
+        assert resp.json()["detail"].startswith("image_url fetch failed")
+
+        generous = TestClient(
+            server_module.build_app(server_module.FaceEmbedConfig(url_timeout_s=5.0))
+        )
+        resp_ok = generous.post("/embed", json={"image_url": slow_url})
+        assert resp_ok.status_code == 200, resp_ok.text
+        assert resp_ok.json()["n"] == 2
+
+    @pytest.mark.unit
+    @pytest.mark.ci_fast
+    def test_404_url_returns_400_fetch_failed(self, client, png_server):
+        resp = client.post("/embed", json={"image_url": f"{png_server}/missing.png"})
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail.startswith("image_url fetch failed")
+        assert "404" in detail

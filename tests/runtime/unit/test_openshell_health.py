@@ -12,6 +12,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
+from openshell._proto import openshell_pb2
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -43,7 +44,9 @@ class TestProbeOnce:
     async def test_records_available_when_health_ok(self, captured_spans):
         tracer, exporter = captured_spans
         client = MagicMock()
-        client.health.return_value = MagicMock(name="HealthResponse")
+        client.health.return_value = openshell_pb2.HealthResponse(
+            status=openshell_pb2.SERVICE_STATUS_HEALTHY, version="0.0.13"
+        )
 
         probe = GatewayHealthProbe(
             sandbox_manager=_manager_with_client(client),
@@ -62,6 +65,90 @@ class TestProbeOnce:
         attrs = dict(spans[0].attributes)
         assert attrs["openshell.gateway_available"] == 1
         assert attrs["openshell.gateway_latency_ms"] == latency
+        assert "openshell.gateway_error" not in attrs
+
+    @pytest.mark.asyncio
+    async def test_unhealthy_status_records_unavailable(self, captured_spans):
+        tracer, exporter = captured_spans
+        client = MagicMock()
+        client.health.return_value = openshell_pb2.HealthResponse(
+            status=openshell_pb2.SERVICE_STATUS_UNHEALTHY, version="0.0.13"
+        )
+
+        probe = GatewayHealthProbe(
+            sandbox_manager=_manager_with_client(client),
+            interval_seconds=30.0,
+            tracer=tracer,
+        )
+        available, latency = await probe.probe_once()
+
+        assert available is False
+        assert probe.last_available is False
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 1
+        attrs = dict(spans[0].attributes)
+        assert attrs["openshell.gateway_available"] == 0
+        assert attrs["openshell.gateway_error"] == "SERVICE_STATUS_UNHEALTHY"
+
+    @pytest.mark.asyncio
+    async def test_degraded_status_records_unavailable(self, captured_spans):
+        tracer, exporter = captured_spans
+        client = MagicMock()
+        client.health.return_value = openshell_pb2.HealthResponse(
+            status=openshell_pb2.SERVICE_STATUS_DEGRADED
+        )
+
+        probe = GatewayHealthProbe(
+            sandbox_manager=_manager_with_client(client),
+            interval_seconds=30.0,
+            tracer=tracer,
+        )
+        available, _ = await probe.probe_once()
+
+        assert available is False
+        attrs = dict(exporter.get_finished_spans()[0].attributes)
+        assert attrs["openshell.gateway_available"] == 0
+        assert attrs["openshell.gateway_error"] == "SERVICE_STATUS_DEGRADED"
+
+    @pytest.mark.asyncio
+    async def test_empty_response_message_records_available(self, captured_spans):
+        """Some gateways answer health with an empty message (status left at
+        the proto3 default SERVICE_STATUS_UNSPECIFIED); that still counts as
+        available — the gateway answered and did not report itself sick."""
+        tracer, exporter = captured_spans
+        client = MagicMock()
+        client.health.return_value = openshell_pb2.HealthResponse()
+
+        probe = GatewayHealthProbe(
+            sandbox_manager=_manager_with_client(client),
+            interval_seconds=30.0,
+            tracer=tracer,
+        )
+        available, _ = await probe.probe_once()
+
+        assert available is True
+        attrs = dict(exporter.get_finished_spans()[0].attributes)
+        assert attrs["openshell.gateway_available"] == 1
+        assert "openshell.gateway_error" not in attrs
+
+    @pytest.mark.asyncio
+    async def test_response_without_status_attribute_records_available(
+        self, captured_spans
+    ):
+        tracer, exporter = captured_spans
+        client = MagicMock()
+        client.health.return_value = object()
+
+        probe = GatewayHealthProbe(
+            sandbox_manager=_manager_with_client(client),
+            interval_seconds=30.0,
+            tracer=tracer,
+        )
+        available, _ = await probe.probe_once()
+
+        assert available is True
+        attrs = dict(exporter.get_finished_spans()[0].attributes)
+        assert attrs["openshell.gateway_available"] == 1
         assert "openshell.gateway_error" not in attrs
 
     @pytest.mark.asyncio
@@ -106,7 +193,9 @@ class TestStartStopLifecycle:
     async def test_start_runs_periodic_probes_and_stop_clean(self, captured_spans):
         tracer, exporter = captured_spans
         client = MagicMock()
-        client.health.return_value = MagicMock()
+        client.health.return_value = openshell_pb2.HealthResponse(
+            status=openshell_pb2.SERVICE_STATUS_HEALTHY
+        )
 
         probe = GatewayHealthProbe(
             sandbox_manager=_manager_with_client(client),
@@ -140,7 +229,9 @@ class TestStartStopLifecycle:
     @pytest.mark.asyncio
     async def test_double_start_is_idempotent(self):
         client = MagicMock()
-        client.health.return_value = MagicMock()
+        client.health.return_value = openshell_pb2.HealthResponse(
+            status=openshell_pb2.SERVICE_STATUS_HEALTHY
+        )
         probe = GatewayHealthProbe(
             sandbox_manager=_manager_with_client(client),
             interval_seconds=0.05,

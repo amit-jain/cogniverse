@@ -146,3 +146,125 @@ class TestConfigureDspyLm:
         assert "config" not in factory_capture
         assert "configured_lm" not in factory_capture
         assert "No LM is loaded" in caplog.text
+
+
+class TestRunEntrypointWiring:
+    """run() must parse WorkerConfig from env, install SIGTERM/SIGINT
+    handlers that set the stop event, hand the redis client + processor to
+    the claim loop, and close the redis client on the way out — including
+    when the claim loop dies."""
+
+    def _set_env(self, monkeypatch):
+        monkeypatch.setenv("REDIS_URL", "redis://testhost:6379/3")
+        monkeypatch.setenv("INGEST_CONSUMER_GROUP", "cg-test")
+        monkeypatch.setenv("INGEST_CONSUMER_ID", "worker-abc")
+        monkeypatch.setenv("INGEST_IDEMPOTENCY_TTL_SECONDS", "123")
+        monkeypatch.setenv("INGEST_CLAIM_BLOCK_MS", "777")
+
+    def _wire(self, monkeypatch, claim_loop):
+        from cogniverse_runtime.ingestion_worker import worker
+
+        recorded = {"closed": 0}
+        fake_redis = object()
+
+        async def _fake_get_redis(url):
+            recorded["get_redis_url"] = url
+            return fake_redis
+
+        async def _fake_close_redis():
+            recorded["closed"] += 1
+
+        monkeypatch.setattr(worker, "get_redis", _fake_get_redis)
+        monkeypatch.setattr(worker, "close_redis", _fake_close_redis)
+        monkeypatch.setattr(worker, "_claim_loop", claim_loop)
+        return worker, recorded, fake_redis
+
+    @pytest.mark.asyncio
+    async def test_run_wires_config_signals_loop_and_closes_redis(self, monkeypatch):
+        import asyncio
+        import signal as signal_module
+
+        self._set_env(monkeypatch)
+        claim_call = {}
+
+        async def _claim_loop(redis, config, stop, processor=None):
+            claim_call.update(
+                redis=redis, config=config, stop=stop, processor=processor
+            )
+
+        worker, recorded, fake_redis = self._wire(monkeypatch, _claim_loop)
+
+        loop = asyncio.get_running_loop()
+        installed = []
+        monkeypatch.setattr(
+            loop,
+            "add_signal_handler",
+            lambda sig, cb, *args: installed.append((sig, cb)),
+        )
+
+        sentinel_processor = object()
+        await worker.run(processor=sentinel_processor)
+
+        cfg = claim_call["config"]
+        assert (
+            cfg.redis_url,
+            cfg.consumer_group,
+            cfg.consumer_id,
+            cfg.idempotency_ttl,
+            cfg.claim_block_ms,
+        ) == ("redis://testhost:6379/3", "cg-test", "worker-abc", 123, 777)
+
+        assert recorded["get_redis_url"] == "redis://testhost:6379/3"
+        assert claim_call["redis"] is fake_redis
+        assert claim_call["processor"] is sentinel_processor
+
+        stop_event = claim_call["stop"]
+        assert isinstance(stop_event, asyncio.Event)
+        assert [sig for sig, _ in installed] == [
+            signal_module.SIGTERM,
+            signal_module.SIGINT,
+        ]
+        for _sig, callback in installed:
+            assert callback.__self__ is stop_event
+            assert callback.__name__ == "set"
+        assert not stop_event.is_set()
+        installed[0][1]()  # delivering SIGTERM sets the stop event
+        assert stop_event.is_set()
+
+        assert recorded["closed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_run_closes_redis_when_claim_loop_dies(self, monkeypatch):
+        import asyncio
+
+        self._set_env(monkeypatch)
+
+        async def _boom(redis, config, stop, processor=None):
+            raise RuntimeError("redis stream gone")
+
+        worker, recorded, _ = self._wire(monkeypatch, _boom)
+
+        loop = asyncio.get_running_loop()
+        installed = []
+        monkeypatch.setattr(
+            loop,
+            "add_signal_handler",
+            lambda sig, cb, *args: installed.append((sig, cb)),
+        )
+
+        with pytest.raises(RuntimeError, match="redis stream gone"):
+            await worker.run(stop=asyncio.Event(), processor=object())
+
+        # Caller-supplied stop event → no signal handlers installed.
+        assert installed == []
+        assert recorded["closed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_run_without_redis_url_raises(self, monkeypatch):
+        from cogniverse_runtime.ingestion_worker import worker
+
+        monkeypatch.delenv("REDIS_URL", raising=False)
+        with pytest.raises(
+            RuntimeError, match="REDIS_URL must be set for the ingestion worker"
+        ):
+            await worker.run(processor=object())
