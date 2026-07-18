@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -261,6 +263,101 @@ def import_images(cluster_name: str, tags: list[str]) -> None:
         check=True,
         timeout=1800,
     )
+
+
+_DEV_NUM_RE = re.compile(r"dev(\d+)")
+
+
+def _dev_number(tag: str) -> int | None:
+    m = _DEV_NUM_RE.search(tag)
+    return int(m.group(1)) if m else None
+
+
+def prune_superseded_images(
+    version: str,
+    *,
+    node_container: str | None = None,
+    runner=subprocess.run,
+) -> list[str]:
+    """Remove ``cogniverse/*`` image generations older than the current build.
+
+    Keeps the current build and the one generation immediately preceding it
+    (so a quick ``helm rollback`` to the prior image needs no rebuild) and
+    drops everything older — otherwise each ``cogniverse up`` leaves ~25GB of
+    superseded tags on the host and inside the k3d node's containerd.
+
+    On the host, superseded tags are untagged with ``docker rmi`` (which only
+    frees the image when its last tag goes). When ``node_container`` is set,
+    the node's containerd is pruned via ``crictl rmi <id>`` — but only for IDs
+    whose every tag is superseded, because crictl removes all of an ID's tags
+    at once (the gliner image reuses one ID across builds).
+
+    ``runner`` is injectable for tests. Returns the removed host tags.
+    """
+    current_tag = _docker_tag(version)
+    current_num = _dev_number(current_tag)
+
+    result = runner(
+        ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}\t{{.ID}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    host_tags: list[str] = []
+    for line in (result.stdout or "").splitlines():
+        if "\t" not in line:
+            continue
+        tag = line.rsplit("\t", 1)[0].strip()
+        if tag.startswith("cogniverse/"):
+            host_tags.append(tag)
+
+    numbers = {n for t in host_tags if (n := _dev_number(t)) is not None}
+    kept_nums: set[int] = {current_num} if current_num is not None else set()
+    below = [n for n in numbers if current_num is not None and n < current_num]
+    if below:
+        kept_nums.add(max(below))
+
+    def _superseded(tag: str) -> bool:
+        n = _dev_number(tag)
+        return n is not None and n not in kept_nums
+
+    removed: list[str] = []
+    for tag in host_tags:
+        if _superseded(tag):
+            runner(
+                ["docker", "rmi", tag],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            removed.append(tag)
+
+    if node_container:
+        node = runner(
+            ["docker", "exec", node_container, "crictl", "images", "-o", "json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        try:
+            images = json.loads(node.stdout or "{}").get("images", [])
+        except (ValueError, TypeError):
+            images = []
+        for img in images:
+            repo_tags = [
+                t.split("docker.io/", 1)[-1]
+                for t in img.get("repoTags", [])
+                if "cogniverse/" in t
+            ]
+            if repo_tags and all(_superseded(t) for t in repo_tags):
+                runner(
+                    ["docker", "exec", node_container, "crictl", "rmi", img["id"]],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+    return removed
 
 
 def _read_third_party_images(values_file: Path, skip_llm: bool = False) -> list[str]:

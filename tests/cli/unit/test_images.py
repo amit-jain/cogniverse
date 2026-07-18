@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -284,3 +285,105 @@ class TestImportImages:
         assert "img:b" in cmd
         assert "-c" in cmd
         assert "cogniverse" in cmd
+
+
+class TestPruneSupersededImages:
+    """After a deploy, image generations older than current + one previous
+    are removed on the host and inside the k3d node — each `cogniverse up`
+    otherwise leaves ~25GB of superseded tags behind. Node removal goes by
+    image ID and only for IDs whose every tag is superseded: crictl rmi
+    drops all of an ID's tags at once, and e.g. the gliner image shares one
+    ID across every generation."""
+
+    HOST_LISTING = "\n".join(
+        [
+            "cogniverse/runtime-rocm:0.1.dev2420-g813e8e5c8\taaa1",
+            "cogniverse/runtime-rocm:0.1.dev2418-g999492e27\taaa2",
+            "cogniverse/runtime-rocm:0.1.dev2397-g0f2366466\taaa3",
+            "cogniverse/dashboard-rocm:0.1.dev2420-g813e8e5c8\tbbb1",
+            "cogniverse/dashboard-rocm:0.1.dev2397-g0f2366466\tbbb3",
+            "cogniverse/gliner:0.1.dev2420-g813e8e5c8\tccc1",
+            "vespaengine/vespa:8.668.5\tddd1",
+        ]
+    )
+
+    NODE_JSON = json.dumps(
+        {
+            "images": [
+                {
+                    "id": "sha-runtime-new",
+                    "repoTags": [
+                        "docker.io/cogniverse/runtime-rocm:0.1.dev2420-g813e8e5c8"
+                    ],
+                },
+                {
+                    "id": "sha-runtime-old",
+                    "repoTags": [
+                        "docker.io/cogniverse/runtime-rocm:0.1.dev2397-g0f2366466"
+                    ],
+                },
+                {
+                    "id": "sha-gliner-shared",
+                    "repoTags": [
+                        "docker.io/cogniverse/gliner:0.1.dev2397-g0f2366466",
+                        "docker.io/cogniverse/gliner:0.1.dev2420-g813e8e5c8",
+                    ],
+                },
+                {
+                    "id": "sha-vespa",
+                    "repoTags": ["docker.io/vespaengine/vespa:8.668.5"],
+                },
+            ]
+        }
+    )
+
+    def _runner(self, calls):
+        host_listing = self.HOST_LISTING
+        node_json = self.NODE_JSON
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            out = ""
+            if cmd[:2] == ["docker", "images"]:
+                out = host_listing
+            elif "crictl" in cmd and "images" in cmd:
+                out = node_json
+            return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+        return run
+
+    def test_removes_only_generations_older_than_current_plus_one(self):
+        from cogniverse_cli.images import prune_superseded_images
+
+        calls: list = []
+        removed = prune_superseded_images(
+            "0.1.dev2420+g813e8e5c8", runner=self._runner(calls)
+        )
+
+        rmi_cmds = [c for c in calls if c[:2] == ["docker", "rmi"]]
+        removed_tags = {tag for c in rmi_cmds for tag in c[2:]}
+        assert removed_tags == {
+            "cogniverse/runtime-rocm:0.1.dev2397-g0f2366466",
+            "cogniverse/dashboard-rocm:0.1.dev2397-g0f2366466",
+        }
+        assert set(removed) == removed_tags
+
+    def test_node_prune_skips_ids_with_a_kept_tag(self):
+        from cogniverse_cli.images import prune_superseded_images
+
+        calls: list = []
+        prune_superseded_images(
+            "0.1.dev2420+g813e8e5c8",
+            node_container="k3d-cogniverse-server-0",
+            runner=self._runner(calls),
+        )
+
+        crictl_rmi = [c for c in calls if "crictl" in c and "rmi" in c]
+        removed_ids = {arg for c in crictl_rmi for arg in c[c.index("rmi") + 1 :]}
+        # runtime-old is superseded and uniquely tagged -> removed; the
+        # gliner ID carries the CURRENT tag too -> untouchable; vespa is
+        # not a cogniverse image.
+        assert "sha-runtime-old" in removed_ids
+        assert "sha-gliner-shared" not in removed_ids
+        assert "sha-vespa" not in removed_ids
+        assert "sha-runtime-new" not in removed_ids
