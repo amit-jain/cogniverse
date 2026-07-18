@@ -773,28 +773,6 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _discover_orphan_schema_targets(
-    deployed_full_names: List[str], canonical_tid: str
-) -> set:
-    """Attribute deployed Vespa schemas to (canonical_tid, base) for deletion.
-
-    Matches the canonical (doubled) tenant suffix only. Every deploy path
-    canonicalizes the tenant id (schema_registry.deploy_schema /
-    backend.get_tenant_schema_name), so a tenant's live schemas always carry
-    the canonical suffix. The bare tenant suffix is deliberately NOT matched:
-    it is short enough to be a false suffix of another tenant's schema
-    (``base_a_pr`` ends in ``_pr``), which would over-delete across tenants.
-    Registered bare-form schemas are still covered by the registry
-    lookup above; unregistered orphans are handled by /admin/reconcile-orphans.
-    """
-    canonical_suffix = "_" + canonical_tid.replace(":", "_")
-    targets: set[tuple[str, str]] = set()
-    for full_name in deployed_full_names:
-        if full_name.endswith(canonical_suffix):
-            targets.add((canonical_tid, full_name[: -len(canonical_suffix)]))
-    return targets
-
-
 async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     """Delete a tenant's schemas and metadata.
 
@@ -802,18 +780,17 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     way) and drops every schema the tenant has in one atomic redeploy via
     ``delete_tenant_schemas`` (registry-known names plus canonical-suffix
     Vespa orphans; refuses when the redeploy would drop an unreconstructable
-    peer-tenant schema). Legacy registrations under the raw id form are
-    dropped per target afterward.
+    peer-tenant schema). The registry APIs canonicalize tenant ids on both
+    reads and writes, so the single canonical pass is complete for any input
+    form.
     """
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
-    original_tid = tenant_full_id
     canonical_tid = canonical_tenant_id(tenant_full_id)
     tenant = await get_tenant_internal(canonical_tid)
 
     backend = get_backend()
     schema_manager = backend.schema_manager
-    schema_registry = schema_manager._schema_registry
 
     # One atomic redeploy drops every schema the tenant has —
     # delete_tenant_schemas unions registry-known names with canonical-suffix
@@ -825,24 +802,6 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     deleted_schemas: list = list(
         await asyncio.to_thread(schema_manager.delete_tenant_schemas, canonical_tid)
     )
-
-    # Legacy registrations left under the raw id form carry the raw suffix
-    # the canonical pass doesn't match; drop those per target.
-    if original_tid != canonical_tid and schema_registry is not None:
-        for info in schema_registry.get_tenant_schemas(original_tid):
-            try:
-                deleted_schemas.append(
-                    await asyncio.to_thread(
-                        schema_manager.delete_schema,
-                        original_tid,
-                        info.base_schema_name,
-                    )
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to delete legacy schema "
-                    f"'{info.base_schema_name}' for tenant '{original_tid}': {e}"
-                )
 
     # Allow schema-only orphans (no tenant_metadata record) to be cleaned
     # up — they're created by /ingestion/upload auto-deploy bypassing
