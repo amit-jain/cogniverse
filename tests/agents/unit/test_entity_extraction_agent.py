@@ -640,6 +640,7 @@ class TestEntityExtractionArtifactLoading:
             entity_agent._load_artifact()
 
         entity_agent.dspy_module.load_state.assert_called_once_with(fake_state)
+        assert entity_agent.artifact_load_status == "loaded"
 
     def test_defaults_without_artifact(self, entity_agent):
         """Agent uses default module when no artifact exists."""
@@ -650,10 +651,36 @@ class TestEntityExtractionArtifactLoading:
         """_load_artifact is a no-op when telemetry_manager is not set."""
         entity_agent.telemetry_manager = None
         entity_agent._load_artifact()
+        assert entity_agent.artifact_load_status == "no_telemetry"
 
     @pytest.mark.asyncio
-    async def test_artifact_load_failure_uses_defaults(self, entity_agent):
-        """_load_artifact falls back to defaults when artifact load fails."""
+    async def test_absent_artifact_records_no_artifact(self, entity_agent):
+        """An absent blob is 'tenant never optimized' — distinct from an
+        outage, and serves defaults without noise."""
+        from unittest.mock import AsyncMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=None)
+            entity_agent.telemetry_manager = mock_tm
+            entity_agent._artifact_tenant_id = "test:unit"
+            entity_agent._load_artifact()
+
+        assert entity_agent.artifact_load_status == "no_artifact"
+
+    @pytest.mark.asyncio
+    async def test_artifact_load_failure_surfaces_error_status(
+        self, entity_agent, caplog
+    ):
+        """An artifact-store OUTAGE must not read as 'never optimized': the
+        agent keeps serving on defaults but records status 'error' and logs
+        at WARNING instead of swallowing the failure at DEBUG."""
+        import logging
         from unittest.mock import AsyncMock
 
         mock_tm = MagicMock()
@@ -668,7 +695,13 @@ class TestEntityExtractionArtifactLoading:
             )
             entity_agent.telemetry_manager = mock_tm
             entity_agent._artifact_tenant_id = "test:unit"
-            entity_agent._load_artifact()
+            with caplog.at_level(logging.WARNING):
+                entity_agent._load_artifact()
+
+        assert entity_agent.artifact_load_status == "error"
+        assert (
+            "EntityExtractionAgent artifact load failed; using defaults" in caplog.text
+        )
 
 
 @pytest.mark.asyncio

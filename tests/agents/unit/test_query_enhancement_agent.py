@@ -277,3 +277,85 @@ class TestQueryEnhancementAgent:
         assert "enhanced_query" in skills[0]["output_schema"]
         assert "expansion_terms" in skills[0]["output_schema"]
         assert len(skills[0]["examples"]) > 0
+
+
+class TestQueryEnhancementArtifactLoading:
+    @pytest.mark.asyncio
+    async def test_loads_dspy_artifact(self, query_agent):
+        """QueryEnhancementAgent should load optimized DSPy module state."""
+        import json
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+        fake_state = {"enhancer.predict": {"signature": {"fields": []}, "demos": []}}
+
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
+
+            query_agent.telemetry_manager = mock_tm
+            query_agent._artifact_tenant_id = "test:unit"
+            query_agent.dspy_module = MagicMock()
+            query_agent._load_artifact()
+
+        query_agent.dspy_module.load_state.assert_called_once_with(fake_state)
+        assert query_agent.artifact_load_status == "loaded"
+
+    def test_no_telemetry_skips_loading(self, query_agent):
+        """_load_artifact is a no-op when telemetry_manager is not set."""
+        query_agent.telemetry_manager = None
+        query_agent._load_artifact()
+        assert query_agent.artifact_load_status == "no_telemetry"
+
+    @pytest.mark.asyncio
+    async def test_absent_artifact_records_no_artifact(self, query_agent):
+        """An absent blob is 'tenant never optimized' — distinct from an
+        outage, and serves defaults without noise."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(return_value=None)
+            query_agent.telemetry_manager = mock_tm
+            query_agent._artifact_tenant_id = "test:unit"
+            query_agent._load_artifact()
+
+        assert query_agent.artifact_load_status == "no_artifact"
+
+    @pytest.mark.asyncio
+    async def test_artifact_load_failure_surfaces_error_status(
+        self, query_agent, caplog
+    ):
+        """An artifact-store OUTAGE must not read as 'never optimized': the
+        agent keeps serving on defaults but records status 'error' and logs
+        at WARNING instead of swallowing the failure at DEBUG."""
+        import logging
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_tm = MagicMock()
+        mock_tm.get_provider.return_value = MagicMock()
+
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
+            mock_am = MockAM.return_value
+            mock_am.load_blob = AsyncMock(
+                side_effect=RuntimeError("connection refused")
+            )
+            query_agent.telemetry_manager = mock_tm
+            query_agent._artifact_tenant_id = "test:unit"
+            with caplog.at_level(logging.WARNING):
+                query_agent._load_artifact()
+
+        assert query_agent.artifact_load_status == "error"
+        assert (
+            "QueryEnhancementAgent artifact load failed; using defaults" in caplog.text
+        )

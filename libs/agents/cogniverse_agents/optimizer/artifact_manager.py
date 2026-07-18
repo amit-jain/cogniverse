@@ -453,23 +453,51 @@ class ArtifactManager:
         """
         df = pd.DataFrame([{"content": content}])
         dataset_name = self._blob_dataset_name(kind, key)
+        metadata = {
+            "artifact_type": f"blob_{kind}",
+            "key": key,
+            "tenant_id": self._tenant_id,
+            "created_at": datetime.now().isoformat(),
+            "input_keys": ["content"],
+            "output_keys": [],
+        }
         # Blobs are last-write-wins. Delete any existing dataset so the store
         # holds exactly one row — create_dataset on an existing name appends a
         # new version, growing the dataset (and load's full-history download)
-        # unboundedly across saves.
+        # unboundedly across saves. The pre-read makes the delete recoverable:
+        # a create failure after the committed delete would otherwise destroy
+        # the previous blob and read back as "never optimized".
+        previous = await self.load_blob(kind, key)
         await self._provider.datasets.delete_dataset(dataset_name)
-        dataset_id = await self._provider.datasets.create_dataset(
-            name=dataset_name,
-            data=df,
-            metadata={
-                "artifact_type": f"blob_{kind}",
-                "key": key,
-                "tenant_id": self._tenant_id,
-                "created_at": datetime.now().isoformat(),
-                "input_keys": ["content"],
-                "output_keys": [],
-            },
-        )
+        try:
+            dataset_id = await self._provider.datasets.create_dataset(
+                name=dataset_name,
+                data=df,
+                metadata=metadata,
+            )
+        except Exception:
+            if previous is not None:
+                try:
+                    await self._provider.datasets.create_dataset(
+                        name=dataset_name,
+                        data=pd.DataFrame([{"content": previous}]),
+                        metadata=metadata,
+                    )
+                    logger.warning(
+                        "Blob %s/%s overwrite failed for %s; previous content restored",
+                        kind,
+                        key,
+                        self._tenant_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Blob %s/%s overwrite failed for %s and the restore "
+                        "also failed; previous content lost",
+                        kind,
+                        key,
+                        self._tenant_id,
+                    )
+            raise
         logger.info(
             "Saved blob %s/%s for %s → dataset %s",
             kind,
@@ -1240,3 +1268,53 @@ def _generate_run_id() -> str:
     import uuid
 
     return uuid.uuid4().hex
+
+
+def load_optimized_module(agent: Any, blob_key: str) -> None:
+    """Load a compiled DSPy module blob into ``agent.dspy_module``.
+
+    Shared ``_load_artifact`` body for the dispatcher-served DSPy agents.
+    Records ``agent.artifact_load_status`` ∈ {``no_telemetry``,
+    ``no_artifact``, ``loaded``, ``error``} so a telemetry outage (silent
+    reversion to the base module) is distinguishable from "tenant never
+    optimized". Failures log at WARNING and never raise — the agent keeps
+    serving on defaults.
+    """
+    agent.artifact_load_status = "no_telemetry"
+    if not getattr(agent, "telemetry_manager", None):
+        return
+    try:
+        from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+
+        tenant_id = getattr(agent, "_artifact_tenant_id", None)
+        if not tenant_id:
+            raise RuntimeError(
+                f"{type(agent).__name__}._load_artifact called before the "
+                f"dispatcher injected _artifact_tenant_id"
+            )
+        provider = agent.telemetry_manager.get_provider(tenant_id=tenant_id)
+        am = ArtifactManager(provider, tenant_id)
+
+        async def _load() -> Optional[str]:
+            return await am.load_blob("model", blob_key)
+
+        blob = run_coro_blocking(_load())
+        if not blob:
+            agent.artifact_load_status = "no_artifact"
+            logger.info(
+                "%s: no persisted %s artifact for tenant %s; using defaults",
+                type(agent).__name__,
+                blob_key,
+                tenant_id,
+            )
+            return
+        agent.dspy_module.load_state(json.loads(blob))
+        agent.artifact_load_status = "loaded"
+        logger.info(
+            "%s loaded optimized DSPy module from artifact", type(agent).__name__
+        )
+    except Exception as e:
+        agent.artifact_load_status = "error"
+        logger.warning(
+            "%s artifact load failed; using defaults: %s", type(agent).__name__, e
+        )
