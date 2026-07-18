@@ -101,6 +101,7 @@ def _make_pipeline(
         keyframe_threshold=0.999,
         max_frames_per_video=3000,
         vlm_batch_size=500,
+        extract_keyframes=True,
         transcribe_audio=True,
         generate_descriptions=True,
     )

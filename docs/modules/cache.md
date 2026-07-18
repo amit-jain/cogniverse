@@ -27,7 +27,7 @@ The Cache Module provides a **comprehensive caching infrastructure** for the Cog
 - **Tiered Caching Architecture**: Multi-level cache hierarchy support with automatic tier population
 - **Backend Abstraction**: Pluggable backend architecture via registry pattern
 - **Current Implementation**: Structured filesystem (L1) and S3/MinIO (L2) backends with TTL support
-- **Specialized Caches**: `PipelineArtifactCache` for video processing artifacts (keyframes, transcripts, descriptions, segments)
+- **Specialized Caches**: `PipelineArtifactCache` for video processing artifacts (keyframes, transcripts, descriptions, segment frames, segmentation results)
 - **Efficient Storage**: Binary format support, smart serialization
 - **Cache Invalidation**: Pattern-based clearing, TTL expiration, manual invalidation
 - **Performance Tracking**: Hit/miss statistics, size monitoring, eviction tracking
@@ -1069,7 +1069,7 @@ change until then.
 
 ## Specialized Caches
 
-### 1. PipelineArtifactCache (pipeline_cache.py:46-422)
+### 1. PipelineArtifactCache (pipeline_cache.py:19-432)
 
 **Purpose:** Comprehensive caching for video processing pipeline artifacts.
 
@@ -1082,6 +1082,8 @@ change until then.
 - Frame descriptions (VLM outputs)
 
 - Temporal segment frames
+
+- Single-vector segmentation results (boundary math + transcript alignment)
 
 **Live-path integration:** The ingestion pipeline exposes per-artifact wrappers
 (`get_cached_keyframes`/`set_cached_keyframes`, `..._transcript`,
@@ -2554,7 +2556,7 @@ The Cache Module provides **production-ready caching infrastructure** for the Co
 
 **Integration Points:**
 
-- Ingestion pipeline processors use `PipelineArtifactCache` for keyframes, transcripts, descriptions, and segment frames
+- Ingestion pipeline processors use `PipelineArtifactCache` for keyframes, transcripts, descriptions, segment frames, and single-vector segmentation results
 
 - `VideoIngestionPipeline` wires a `CacheManager` + `PipelineArtifactCache` directly from `pipeline_cache` config (`libs/runtime/cogniverse_runtime/ingestion/pipeline.py`)
 

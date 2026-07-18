@@ -156,6 +156,11 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
                 "No single-vector processor available in processor_manager"
             )
 
+        # Hand the pipeline's artifact cache to the processor so repeated
+        # segmentation of the same video/params serves from cache.
+        if getattr(single_vector_processor, "cache", None) is None:
+            single_vector_processor.cache = getattr(pipeline_context, "cache", None)
+
         processed_data = await asyncio.to_thread(
             single_vector_processor.process_video,
             video_path=video_path,

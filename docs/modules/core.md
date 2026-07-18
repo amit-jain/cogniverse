@@ -1470,6 +1470,15 @@ metadata = await cache.get_keyframes(
 )
 ```
 
+Artifact families: keyframes (`get/set_keyframes`), audio transcripts
+(`get/set_transcript`), frame descriptions (`get/set_descriptions`),
+per-segment frames (`get/set_segment_frames`), and single-vector
+segmentation results (`get/set_segmentation` — boundary math + transcript
+alignment keyed by strategy params and a transcript fingerprint; the
+single-vector segmentation strategy hands the pipeline cache to
+`SingleVectorVideoProcessor` so repeated segmentation of the same
+video/params serves from cache).
+
 ### CacheBackendRegistry (registry.py)
 
 Plugin registry for cache backends:

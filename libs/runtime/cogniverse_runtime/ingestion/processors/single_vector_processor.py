@@ -15,6 +15,8 @@ The same processor can be used for:
 - single__video_anymodel_anystrategy (any future approach)
 """
 
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -23,6 +25,8 @@ from typing import Any, Literal
 
 import cv2
 import numpy as np
+
+from cogniverse_core.common.utils.async_bridge import run_coro_blocking
 
 from ..processor_base import BaseProcessor
 
@@ -52,6 +56,46 @@ class VideoSegment:
             "transcript_text": self.transcript_text,
             "metadata": self.metadata or {},
         }
+
+
+def _transcript_fingerprint(transcript_data: dict[str, Any] | None) -> str:
+    """Stable digest of the transcript a segmentation was aligned against —
+    part of the cache key so a re-transcription invalidates cached results."""
+    if not transcript_data:
+        return "none"
+    digest = hashlib.sha256(
+        json.dumps(transcript_data, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    return digest[:16]
+
+
+def _segment_cache_payload(segment: VideoSegment) -> dict[str, Any]:
+    """Full-fidelity serialization for the segmentation cache — unlike
+    ``to_dict``, keeps frame_timestamps and transcript_segments so a cache
+    hit reconstructs the exact VideoSegment. Copies every mutable field so
+    later caller mutation can't reach the stored entry."""
+    return {
+        "segment_id": segment.segment_id,
+        "start_time": segment.start_time,
+        "end_time": segment.end_time,
+        "frame_timestamps": list(segment.frame_timestamps),
+        "transcript_segments": [dict(s) for s in segment.transcript_segments],
+        "transcript_text": segment.transcript_text,
+        "metadata": dict(segment.metadata or {}),
+    }
+
+
+def _segment_from_cache(data: dict[str, Any]) -> VideoSegment:
+    return VideoSegment(
+        segment_id=data["segment_id"],
+        start_time=data["start_time"],
+        end_time=data["end_time"],
+        frames=[],
+        frame_timestamps=list(data["frame_timestamps"]),
+        transcript_segments=[dict(s) for s in data["transcript_segments"]],
+        transcript_text=data["transcript_text"],
+        metadata=dict(data["metadata"]),
+    )
 
 
 class SingleVectorVideoProcessor(BaseProcessor):
@@ -128,6 +172,31 @@ class SingleVectorVideoProcessor(BaseProcessor):
             f"Processing video: {video_path.name} with strategy: {self.strategy}"
         )
 
+        cache_params = {
+            "strategy": self.strategy,
+            "segment_duration": self.segment_duration,
+            "segment_overlap": self.segment_overlap,
+            "sampling_fps": self.sampling_fps,
+            "max_frames": self.max_frames_per_segment,
+            "transcript_fingerprint": _transcript_fingerprint(transcript_data),
+        }
+        if self.cache is not None:
+            cached = run_coro_blocking(
+                self.cache.get_segmentation(str(video_path), **cache_params)
+            )
+            if cached is not None:
+                result = {
+                    "segments": [_segment_from_cache(d) for d in cached["segments"]],
+                    # Copy: the caller-metadata merge below must not poison
+                    # the cached payload for later hits.
+                    "metadata": dict(cached["metadata"]),
+                    "full_transcript": cached["full_transcript"],
+                    "document_structure": cached["document_structure"],
+                }
+                if metadata:
+                    result["metadata"].update(metadata)
+                return result
+
         # Get video info
         video_info = self._get_video_info(video_path)
         duration = video_info["duration"]
@@ -172,6 +241,19 @@ class SingleVectorVideoProcessor(BaseProcessor):
             "full_transcript": full_transcript,
             "document_structure": self._get_document_structure(),
         }
+
+        if self.cache is not None:
+            # Own dicts for the payload: the caller-metadata merge below (and
+            # any caller mutation) must not reach the stored entry.
+            payload = {
+                "segments": [_segment_cache_payload(s) for s in segments],
+                "metadata": dict(result["metadata"]),
+                "full_transcript": full_transcript,
+                "document_structure": dict(result["document_structure"]),
+            }
+            run_coro_blocking(
+                self.cache.set_segmentation(str(video_path), payload, **cache_params)
+            )
 
         # Add any additional metadata
         if metadata:
