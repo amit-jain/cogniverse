@@ -1185,6 +1185,7 @@ class TestOrchestratorArtifactLoading:
         agent._load_artifact()
 
         mock_wi.load_historical_data.assert_called_once()
+        assert agent.artifact_load_status == "loaded"
 
     def test_no_workflow_intelligence_skips(self, orchestrator_agent):
         """_load_artifact returns without touching telemetry when there is no
@@ -1196,6 +1197,7 @@ class TestOrchestratorArtifactLoading:
         assert orchestrator_agent._load_artifact() is None
         # Returned before reaching telemetry — the wi guard short-circuits.
         recording_tm.span.assert_not_called()
+        assert orchestrator_agent.artifact_load_status == "disabled"
 
     def test_no_telemetry_skips(self, mock_agent_registry):
         """_load_artifact does not attempt a load when telemetry is unset."""
@@ -1214,10 +1216,17 @@ class TestOrchestratorArtifactLoading:
         agent._load_artifact()
 
         mock_wi.load_historical_data.assert_not_called()
+        assert agent.artifact_load_status == "no_telemetry"
 
     @pytest.mark.asyncio
-    async def test_artifact_load_failure_uses_defaults(self, mock_agent_registry):
-        """A load failure is attempted then swallowed (defaults retained)."""
+    async def test_artifact_load_failure_surfaces_error_status(
+        self, mock_agent_registry, caplog
+    ):
+        """A workflow-store OUTAGE must not read as 'no templates yet': the
+        agent keeps serving on defaults but records status 'error' and logs
+        at WARNING instead of swallowing the failure at DEBUG."""
+        import logging
+
         mock_wi = Mock()
         mock_wi.load_historical_data = AsyncMock(
             side_effect=RuntimeError("connection refused")
@@ -1233,11 +1242,17 @@ class TestOrchestratorArtifactLoading:
 
         mock_tm = Mock()
         agent.telemetry_manager = mock_tm
-        agent._load_artifact()
+        with caplog.at_level(logging.WARNING):
+            agent._load_artifact()
 
         # The load was attempted (failure path exercised), and the raise was
-        # swallowed rather than propagating.
+        # surfaced as a status + WARNING rather than propagating.
         mock_wi.load_historical_data.assert_awaited_once()
+        assert agent.artifact_load_status == "error"
+        assert (
+            "OrchestratorAgent workflow artifact load failed; using defaults"
+            in caplog.text
+        )
 
 
 class TestOrchestratorSemanticRouting:

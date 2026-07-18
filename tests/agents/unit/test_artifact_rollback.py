@@ -192,3 +192,93 @@ class TestRollback:
         mgr, _ = manager_provider
         with pytest.raises(ValueError, match="nothing to restore"):
             await mgr.rollback_to_version("agent_a")
+
+
+class _BlobStore:
+    """Blob-focused fake: delete commits immediately, create can be armed
+    to fail with specific exceptions (in order) to exercise torn writes."""
+
+    def __init__(self):
+        self.datasets: dict[str, pd.DataFrame] = {}
+        self.create_failures: list[Exception] = []
+
+    async def create_dataset(
+        self,
+        name: str,
+        data: pd.DataFrame,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        if self.create_failures:
+            raise self.create_failures.pop(0)
+        self.datasets[name] = data.copy()
+        return f"id::{name}"
+
+    async def delete_dataset(self, name: str) -> bool:
+        self.datasets.pop(name, None)
+        return True
+
+    async def get_dataset(self, name: str) -> pd.DataFrame:
+        if name not in self.datasets:
+            raise KeyError(name)
+        return self.datasets[name]
+
+
+class _BlobProvider:
+    def __init__(self):
+        self.datasets = _BlobStore()
+
+
+@pytest.mark.asyncio
+class TestSaveBlobCompensation:
+    """A failed overwrite must not destroy the previously-saved blob.
+
+    save_blob deletes the dataset before re-creating it (last-write-wins,
+    one row per blob); a create failure after the committed delete would
+    otherwise leave NO blob at all, and the next load would silently serve
+    defaults as if the tenant had never been optimized."""
+
+    async def test_create_failure_restores_previous_content(self):
+        provider = _BlobProvider()
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        await manager.save_blob("config", "gateway_thresholds", "OLD")
+        provider.datasets.create_failures = [ConnectionError("boom-new")]
+
+        with pytest.raises(ConnectionError, match="boom-new"):
+            await manager.save_blob("config", "gateway_thresholds", "NEW")
+
+        assert await manager.load_blob("config", "gateway_thresholds") == "OLD"
+
+    async def test_create_failure_with_no_previous_blob_re_raises(self):
+        provider = _BlobProvider()
+        manager = ArtifactManager(provider, tenant_id="acme")
+        provider.datasets.create_failures = [ConnectionError("boom-new")]
+
+        with pytest.raises(ConnectionError, match="boom-new"):
+            await manager.save_blob("config", "gateway_thresholds", "NEW")
+
+        assert await manager.load_blob("config", "gateway_thresholds") is None
+
+    async def test_restore_failure_still_raises_the_original_error(self):
+        provider = _BlobProvider()
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        await manager.save_blob("config", "gateway_thresholds", "OLD")
+        provider.datasets.create_failures = [
+            ConnectionError("boom-new"),
+            ConnectionError("boom-restore"),
+        ]
+
+        with pytest.raises(ConnectionError, match="boom-new"):
+            await manager.save_blob("config", "gateway_thresholds", "NEW")
+
+    async def test_happy_path_keeps_single_row_overwrite(self):
+        provider = _BlobProvider()
+        manager = ArtifactManager(provider, tenant_id="acme")
+
+        await manager.save_blob("config", "k", "v1")
+        await manager.save_blob("config", "k", "v2")
+
+        assert await manager.load_blob("config", "k") == "v2"
+        name = manager._blob_dataset_name("config", "k")
+        assert len(provider.datasets.datasets[name]) == 1

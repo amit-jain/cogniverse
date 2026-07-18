@@ -216,7 +216,16 @@ class TestTriggeredOptimization:
         assert result["search"]["status"] == "success", (
             f"search optimization failed: {result['search']}"
         )
-        assert result["search"]["artifact_id"], "no artifact persisted"
+        # _optimize_agent persists via _serve_compiled_prompts (versioned
+        # prompts promoted straight to ACTIVE), not a "model" save_blob, so
+        # the per-agent result carries "served", not "artifact_id".
+        served = result["search"].get("served")
+        assert served, (
+            f"no compiled prompts served to the dispatch overlay: {result['search']}"
+        )
+        assert served["served_agent"] == "search_agent"
+        assert served["active"] is True
+        assert isinstance(served["version"], int) and served["version"] >= 1
 
         # Strategy distillation should have run.
         assert "strategies_distilled" in result

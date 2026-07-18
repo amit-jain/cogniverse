@@ -658,9 +658,14 @@ class OrchestratorAgent(
 
         Delegates to WorkflowIntelligence.load_historical_data() which loads
         templates, agent profiles, and query patterns from the artifact store.
+        Records ``self.artifact_load_status`` ∈ {``disabled``, ``no_telemetry``,
+        ``loaded``, ``error``} and logs load failures at WARNING so a
+        workflow-store outage is distinguishable from "no templates yet".
         """
+        self.artifact_load_status = "disabled"
         if not self.workflow_intelligence:
             return
+        self.artifact_load_status = "no_telemetry"
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
         try:
@@ -670,12 +675,17 @@ class OrchestratorAgent(
 
             run_coro_blocking(_load())
 
+            self.artifact_load_status = "loaded"
             logger.info(
                 "OrchestratorAgent loaded %d workflow templates from artifact",
                 len(self.workflow_intelligence.workflow_templates),
             )
         except Exception as e:
-            logger.debug("No workflow artifact to load (using defaults): %s", e)
+            self.artifact_load_status = "error"
+            logger.warning(
+                "OrchestratorAgent workflow artifact load failed; using defaults: %s",
+                e,
+            )
 
     def _ensure_memory_for_tenant(self, tenant_id: str) -> None:
         """Lazily initialize memory for a tenant (first request only)."""

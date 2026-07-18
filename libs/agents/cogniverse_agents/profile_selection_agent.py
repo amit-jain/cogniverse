@@ -16,7 +16,6 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
-from cogniverse_core.common.utils.async_bridge import run_coro_blocking
 from cogniverse_foundation.telemetry.span_contract import (
     OP_PROFILE_SELECTION,
     record_span_io,
@@ -245,36 +244,14 @@ class ProfileSelectionAgent(
 
         Called by the dispatcher after telemetry_manager and _artifact_tenant_id
         are injected — not from __init__ (telemetry_manager is not yet available).
+        Records ``self.artifact_load_status`` and logs load failures at WARNING
+        so an artifact-store outage is distinguishable from "never optimized".
         """
-        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
-            return
-        try:
-            import json
+        from cogniverse_agents.optimizer.artifact_manager import (
+            load_optimized_module,
+        )
 
-            from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-
-            tenant_id = getattr(self, "_artifact_tenant_id", None)
-            if not tenant_id:
-                raise RuntimeError(
-                    f"{type(self).__name__}._load_artifact called before the "
-                    f"dispatcher injected _artifact_tenant_id"
-                )
-            provider = self.telemetry_manager.get_provider(tenant_id=tenant_id)
-            am = ArtifactManager(provider, tenant_id)
-
-            async def _load():
-                return await am.load_blob("model", "profile_selection")
-
-            blob = run_coro_blocking(_load())
-
-            if blob:
-                state = json.loads(blob)
-                self.dspy_module.load_state(state)
-                logger.warning(
-                    "ProfileSelectionAgent loaded optimized DSPy module from artifact"
-                )
-        except Exception as e:
-            logger.debug("No profile artifact to load (using defaults): %s", e)
+        load_optimized_module(self, "profile_selection")
 
     @property
     def available_profiles(self) -> List[str]:

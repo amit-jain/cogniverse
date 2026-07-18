@@ -1,6 +1,9 @@
 """ArtifactManager.save_experiment against real Phoenix (integration).
 
-Skip-guarded behind Phoenix availability. When Phoenix is up, this verifies:
+Runs against a docker-managed Phoenix container (see ``phoenix_container``
+in tests/conftest.py) rather than a fixed external endpoint, so the suite
+provides its own isolated infrastructure instead of skipping when nothing
+happens to be listening on the default Phoenix port. This verifies:
   * a typed ExperimentMetrics record persists as a row in the dedicated
     experiments dataset (no save_blob, no overwrite-per-run);
   * subsequent saves append rather than overwrite, so the full history
@@ -11,12 +14,9 @@ Skip-guarded behind Phoenix availability. When Phoenix is up, this verifies:
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import datetime, timezone
-from urllib.parse import urlparse
 
-import httpx
 import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import (
@@ -25,35 +25,24 @@ from cogniverse_agents.optimizer.artifact_manager import (
 )
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-PHOENIX_HTTP = os.environ.get("PHOENIX_ENDPOINT", "http://localhost:6006")
-
-
-def _phoenix_available() -> bool:
-    try:
-        return httpx.get(f"{PHOENIX_HTTP}/health", timeout=2.0).status_code == 200
-    except Exception:
-        return False
-
-
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not _phoenix_available(),
-        reason=f"Phoenix not running at {PHOENIX_HTTP}",
-    ),
-]
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def artifact_manager() -> ArtifactManager:
-    """Real PhoenixProvider against the locally-running Phoenix instance."""
+def artifact_manager(phoenix_container) -> ArtifactManager:
+    """ArtifactManager wired to the docker-managed Phoenix container.
+
+    `phoenix_container` is a session-scoped fixture in tests/conftest.py
+    that boots a Phoenix instance on a per-pid HTTP/gRPC port pair; if
+    Docker isn't available it raises rather than skipping silently.
+    """
     tenant_id = f"c1_int_{uuid.uuid4().hex[:8]}"
     provider = PhoenixProvider()
     provider.initialize(
         {
             "tenant_id": tenant_id,
-            "http_endpoint": PHOENIX_HTTP,
-            "grpc_endpoint": f"{urlparse(PHOENIX_HTTP).hostname or 'localhost'}:4317",
+            "http_endpoint": phoenix_container["http_endpoint"],
+            "grpc_endpoint": phoenix_container["otlp_endpoint"],
         }
     )
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
