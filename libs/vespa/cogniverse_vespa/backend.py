@@ -1214,14 +1214,21 @@ class VespaBackend(Backend):
         self, schema_name: str, tenant_id: Optional[str] = None
     ) -> List[str]:
         """
-        Delete tenant schema(s).
+        Delete one tenant-namespaced schema.
+
+        Routes through the guarded ``VespaSchemaManager.delete_schema`` and
+        raises on failure — including the refusal when the removal redeploy
+        would also drop deployed schemas the registry does not know. The
+        previous implementation ignored ``schema_name`` (it deleted every
+        schema the tenant had) and swallowed failures into an empty list,
+        which callers read as "nothing to delete".
 
         Args:
-            schema_name: Base schema name (if provided, deletes specific schema)
+            schema_name: Base schema name to delete.
             tenant_id: Tenant identifier (uses self._tenant_id if not provided)
 
         Returns:
-            List of deleted schema names
+            Single-element list with the full deleted schema name.
         """
         if not self.schema_manager:
             raise RuntimeError("Backend not initialized. Call initialize() first.")
@@ -1231,17 +1238,9 @@ class VespaBackend(Backend):
         if not effective_tenant_id:
             raise ValueError("tenant_id required for schema deletion")
 
-        try:
-            deleted_schemas = self._delete_tenant_schemas(effective_tenant_id)
-            logger.info(
-                f"Deleted {len(deleted_schemas)} schemas for tenant '{effective_tenant_id}'"
-            )
-            return deleted_schemas
-        except Exception as e:
-            logger.error(
-                f"Failed to delete schemas for tenant '{effective_tenant_id}': {e}"
-            )
-            return []
+        full_name = self.schema_manager.delete_schema(effective_tenant_id, schema_name)
+        logger.info(f"Deleted schema '{full_name}' for tenant '{effective_tenant_id}'")
+        return [full_name]
 
     def schema_exists(self, schema_name: str, tenant_id: Optional[str] = None) -> bool:
         """

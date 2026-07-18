@@ -448,6 +448,14 @@ curl -X DELETE "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tena
 }
 ```
 
+**Error Response:** `500` (only when `delete_schema=true` and the redeploy would also drop deployed schemas the schema registry does not know — e.g. a schema deployed without registration). The delete is refused instead of silently destroying the sibling schemas; register them or remove them explicitly first (`delete_tenant_schemas` / `POST /admin/reconcile-orphans`), then retry.
+
+```json
+{
+  "detail": "Refusing to delete 'video_colpali_smol500_mv_frame_acme_acme': redeploying without it would also drop ['knowledge_graph_acme_acme'] — deployed schemas the registry does not know and cannot reconstruct. Register them or remove them explicitly first (delete_tenant_schemas / POST /admin/reconcile-orphans)."
+}
+```
+
 **Notes:**
 
 - Deletion is permanent - no undo

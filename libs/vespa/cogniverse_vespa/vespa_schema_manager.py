@@ -719,6 +719,11 @@ class VespaSchemaManager:
         registry entry. Vespa is authoritative; registry write failures
         are logged but do not roll back the deploy.
 
+        Raises ValueError when the redeploy would also drop deployed
+        schemas the registry does not know (the package is rebuilt from
+        registry survivors, so those would silently vanish alongside the
+        target).
+
         Returns the full tenant-namespaced schema name that was removed.
         """
         if not tenant_id:
@@ -748,6 +753,30 @@ class VespaSchemaManager:
             )
 
         survivors = [s for s in self._get_existing_tenant_schemas() if s.name != target]
+
+        # The redeploy replaces the WHOLE application package with
+        # metadata + survivors, so any deployed schema the registry does not
+        # know would be silently dropped alongside the target — destroying
+        # sibling data (e.g. an auto-deployed knowledge_graph schema).
+        # Refuse instead; a failed enumeration propagates because guessing
+        # the survivor set is how the data loss happens.
+        try:
+            deployed = self.list_deployed_document_types()
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot enumerate Vespa-deployed schemas before deleting "
+                f"'{target}': {e}"
+            ) from e
+        survivor_names = {s.name for s in survivors}
+        would_drop = set(deployed) - self._PROTECTED_SCHEMAS - survivor_names - {target}
+        if would_drop:
+            raise ValueError(
+                f"Refusing to delete '{target}': redeploying without it would "
+                f"also drop {sorted(would_drop)} — deployed schemas the "
+                f"registry does not know and cannot reconstruct. Register "
+                f"them or remove them explicitly first (delete_tenant_schemas "
+                f"/ POST /admin/reconcile-orphans)."
+            )
 
         from vespa.package import ApplicationPackage
 
