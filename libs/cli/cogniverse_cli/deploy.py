@@ -28,15 +28,34 @@ def semver_chart_version(version: str) -> str:
     ``0.1.dev2395+g1998ce1b5`` becomes ``0.1.0-dev.2395+g1998ce1b5`` —
     Helm requires SemVer for the chart ``version`` field, while
     ``appVersion`` is free-form and keeps the exact git version.
+    Pre-releases map to SemVer prerelease segments (``1.0.0rc1`` →
+    ``1.0.0-rc.1``). Post-release and epoch versions have no SemVer
+    equivalent — refused here so the failure names the form instead of
+    surfacing as a cryptic ``helm package`` parse error.
     """
+    if re.match(r"\d+!", version):
+        raise ValueError(
+            f"unsupported epoch in version {version!r}: "
+            "no SemVer chart translation exists"
+        )
+    if re.search(r"post\d+", version.split("+", 1)[0]):
+        raise ValueError(
+            f"unsupported post-release in version {version!r}: "
+            "no SemVer chart translation exists"
+        )
     match = re.fullmatch(
-        r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.?dev(\d+))?(?:\+(.+))?", version
+        r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.?(a|b|rc)(\d+))?(?:\.?dev(\d+))?(?:\+(.+))?",
+        version,
     )
     if not match:
         return version
-    major, minor, patch, dev, local = match.groups()
+    major, minor, patch, pre, pre_n, dev, local = match.groups()
     out = f"{major}.{minor}.{patch or 0}"
-    if dev is not None:
+    if pre is not None:
+        out += "-" + {"a": "alpha", "b": "beta", "rc": "rc"}[pre] + f".{pre_n}"
+        if dev is not None:
+            out += f".dev.{dev}"
+    elif dev is not None:
         out += f"-dev.{dev}"
     if local:
         out += "+" + local.replace("_", "-")
