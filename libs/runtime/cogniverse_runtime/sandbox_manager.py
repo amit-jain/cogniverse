@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -182,8 +183,12 @@ class SandboxManager:
 
         # pooled sessions. Lazily created on first exec; uses
         # SandboxPoolConfig.from_environment() so operators can disable or
-        # tune via env vars without code changes.
+        # tune via env vars without code changes. The lock guards the
+        # build-once and drop-on-reconnect transitions — concurrent cold
+        # execs otherwise each build a pool and orphan the losers' live
+        # gateway sessions.
         self._pool: Optional[Any] = None
+        self._pool_lock = threading.Lock()
 
         # Gateway circuit breaker: after a few failed dials it trips open and
         # exec fails fast (CircuitOpenError) instead of every request eating the
@@ -311,12 +316,29 @@ class SandboxManager:
                     f"(cluster={self._cluster or 'active'})"
                 )
             self._available = True
+            self._drop_stale_pool()
         except Exception as e:
             logger.warning(
                 f"OpenShell gateway unavailable: {e}. "
                 "Agents will execute without sandbox isolation."
             )
             self._available = False
+
+    def _drop_stale_pool(self) -> None:
+        """Close and forget a pool built on a previous client.
+
+        A reconnect (cert rotation, gateway recovery) swaps ``self._client``;
+        sessions the pool creates on the old client keep failing auth while
+        the health probe reads the new client and reports green. Dropping the
+        pool makes the next exec rebuild it on the fresh client.
+        """
+        with self._pool_lock:
+            stale, self._pool = self._pool, None
+        if stale is not None:
+            try:
+                stale.close_all()
+            except Exception as e:
+                logger.debug("Stale sandbox pool close after reconnect: %s", e)
 
     @property
     def available(self) -> bool:
@@ -538,22 +560,25 @@ class SandboxManager:
             SandboxSessionPool,
         )
 
-        cfg = SandboxPoolConfig.from_environment()
-        if not cfg.enabled:
-            # Cache a disabled placeholder so we don't rebuild every call.
-            self._pool = SandboxSessionPool(
+        with self._pool_lock:
+            if self._pool is not None:
+                return self._pool
+            cfg = SandboxPoolConfig.from_environment()
+            if not cfg.enabled:
+                # Cache a disabled placeholder so we don't rebuild every call.
+                self._pool = SandboxSessionPool(
+                    self._client, config=cfg, gateway_breaker=self._gateway_breaker
+                )
+                return self._pool
+            pool = self._pool = SandboxSessionPool(
                 self._client, config=cfg, gateway_breaker=self._gateway_breaker
             )
-            return self._pool
-        self._pool = SandboxSessionPool(
-            self._client, config=cfg, gateway_breaker=self._gateway_breaker
-        )
         logger.info(
             "Sandbox session pool initialised (max_size=%d, idle_s=%.0f)",
             cfg.max_pool_size,
             cfg.max_idle_seconds,
         )
-        return self._pool
+        return pool
 
     def _exec_pooled(
         self,
@@ -601,6 +626,7 @@ class SandboxManager:
                 logger.warning(f"Pooled sandbox exec failed for {agent_type}: {e}")
                 parent_span.set_attribute("openshell.error", type(e).__name__)
                 parent_span.record_exception(e)
+                self._maybe_trigger_cert_rotator(e)
                 return {"stdout": "", "stderr": str(e), "exit_code": -1}
 
     def list_sandboxes(self) -> list:

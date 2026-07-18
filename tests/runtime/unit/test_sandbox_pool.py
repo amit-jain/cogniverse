@@ -321,3 +321,104 @@ class TestConcurrentCheckoutRace:
         # The over-provisioned loser's session is destroyed, not orphaned.
         destroyed = sum(s.delete_count for s in client.created)
         assert destroyed == 1
+
+
+class TestManagerPoolLifecycle:
+    """SandboxManager's lazy pool init and reconnect must keep exactly one
+    pool, bound to the CURRENT client — a pool built on a pre-reconnect
+    client keeps failing auth after a cert rotation while health looks
+    green, and racing cold inits orphan pools whose live gateway sessions
+    shutdown never reaps."""
+
+    def test_concurrent_cold_init_builds_exactly_one_pool(self, monkeypatch):
+        import threading
+        import time as _time
+
+        from cogniverse_runtime import sandbox_pool as sp_mod
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        built: list = []
+
+        class _SlowPool:
+            def __init__(self, client, config=None, gateway_breaker=None):
+                _time.sleep(0.02)
+                built.append(self)
+                self.client = client
+
+            def close_all(self):
+                pass
+
+        monkeypatch.setattr(sp_mod, "SandboxSessionPool", _SlowPool)
+        mgr = SandboxManager(policy="disabled")
+        mgr._client = object()
+        mgr._available = True
+
+        results: list = []
+
+        def grab():
+            results.append(mgr._get_or_create_pool())
+
+        threads = [threading.Thread(target=grab) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(built) == 1
+        assert len(results) == 16
+        assert all(r is results[0] for r in results)
+
+    def test_reconnect_rebuilds_pool_on_the_new_client(self, monkeypatch, tmp_path):
+        import sys
+        from types import SimpleNamespace
+
+        from cogniverse_runtime import sandbox_manager as sm_mod
+        from cogniverse_runtime import sandbox_pool as sp_mod
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        new_clients: list = []
+
+        class _FakeClient:
+            def __init__(self, endpoint=None, tls=None):
+                new_clients.append(self)
+
+        class _FakeTls:
+            def __init__(self, ca_path=None, cert_path=None, key_path=None):
+                pass
+
+        monkeypatch.setitem(
+            sys.modules,
+            "openshell",
+            SimpleNamespace(SandboxClient=_FakeClient, TlsConfig=_FakeTls),
+        )
+        monkeypatch.setenv("OPENSHELL_GATEWAY_ENDPOINT", "gw.invalid:19999")
+        monkeypatch.setenv("OPENSHELL_CONFIG_DIR", str(tmp_path))
+        monkeypatch.setattr(sm_mod, "_probe_gateway_endpoint", lambda ep: None)
+
+        class _Pool:
+            def __init__(self, client, config=None, gateway_breaker=None):
+                self.client = client
+                self.closed = False
+
+            def close_all(self):
+                self.closed = True
+
+        monkeypatch.setattr(sp_mod, "SandboxSessionPool", _Pool)
+
+        mgr = SandboxManager(policy="optional")
+        old_client = object()
+        mgr._client = old_client
+        mgr._available = True
+        stale = mgr._get_or_create_pool()
+        assert stale is not None
+        assert stale.client is old_client
+
+        assert mgr.reconnect() is True
+
+        assert stale.closed
+        assert mgr._pool is None
+
+        rebuilt = mgr._get_or_create_pool()
+        assert rebuilt is not stale
+        assert rebuilt.client is mgr._client
+        assert rebuilt.client is new_clients[-1]
