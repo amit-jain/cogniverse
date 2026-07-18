@@ -332,3 +332,69 @@ class TestTenantExistenceCache:
         with pytest.raises(HTTPException):
             await tenant_utils.assert_tenant_exists("acme:prod")
         assert lookups.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_partial_batch_failure_lands_in_job_status(monkeypatch, tmp_path):
+    """The background ingestion task reads the pipeline's per-video results:
+    a 2-of-3 batch must surface the failed video id + reason and the
+    completed_with_errors status — not report completed with no errors."""
+    from unittest.mock import MagicMock
+
+    from cogniverse_runtime.routers import ingestion as ing
+
+    class _StubPipeline:
+        def __init__(self, **kwargs):
+            pass
+
+        async def process_videos_concurrent(self, video_files, max_concurrent):
+            return {
+                "job_id": "j-partial",
+                "status": "completed_with_errors",
+                "total_videos": 3,
+                "successful": 2,
+                "failed": 1,
+                "cancelled": 0,
+                "execution_time_seconds": 1.0,
+                "results": [
+                    {"video_path": "a.mp4", "status": "success"},
+                    {
+                        "video_path": "bad.mp4",
+                        "status": "failed",
+                        "error": "schema mismatch",
+                        "error_type": "ContentError",
+                        "error_context": {},
+                    },
+                    {"video_path": "c.mp4", "status": "success"},
+                ],
+            }
+
+    monkeypatch.setattr(
+        "cogniverse_runtime.ingestion.pipeline.VideoIngestionPipeline",
+        _StubPipeline,
+    )
+    monkeypatch.setattr(
+        "cogniverse_runtime.ingestion.strategies.discover_ingestible_files",
+        lambda d, ct: ["a.mp4", "bad.mp4", "c.mp4"],
+    )
+
+    ing.ingestion_jobs["j-partial"] = ing.IngestionStatus(
+        job_id="j-partial", status="pending", videos_processed=0, videos_total=0
+    )
+    req = ing.IngestionRequest(
+        video_dir=str(tmp_path),
+        profile="video_colpali_smol500_mv_frame",
+        tenant_id="acme:acme",
+        content_type="video",
+    )
+    try:
+        await ing.run_ingestion(
+            "j-partial", req, config_manager=MagicMock(), schema_loader=MagicMock()
+        )
+        job = ing.ingestion_jobs["j-partial"]
+        assert job.status == "completed_with_errors"
+        assert job.errors == ["bad.mp4: schema mismatch"]
+        assert job.videos_processed == 2
+        assert job.videos_total == 3
+    finally:
+        ing.ingestion_jobs.pop("j-partial", None)

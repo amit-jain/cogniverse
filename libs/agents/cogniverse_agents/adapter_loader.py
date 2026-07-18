@@ -6,9 +6,14 @@ Agents can use this to dynamically load fine-tuned adapters.
 """
 
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Last successful registry answer per (tenant, agent) — including a
+# successful "no active adapter" (stored as None). A registry outage reuses
+# this instead of silently reverting a finetuned tenant to the base model.
+_LAST_KNOWN_ADAPTERS: Dict[Tuple[str, str], Any] = {}
 
 
 def get_active_adapter_path(
@@ -93,16 +98,40 @@ def adapter_lm_context(tenant_id: str, agent_type: str, config_manager=None):
     except ImportError:
         return nullcontext()
 
+    key = (tenant_id, agent_type)
     try:
         adapter = AdapterRegistry().get_active_adapter(tenant_id, agent_type)
-    except Exception as exc:  # noqa: BLE001 — degrade to the base model
-        logger.warning(
-            "active-adapter lookup failed for %s/%s: %r — base model",
-            tenant_id,
-            agent_type,
-            exc,
-        )
-        return nullcontext()
+    except Exception as exc:  # noqa: BLE001 — outage, not absence
+        if key in _LAST_KNOWN_ADAPTERS:
+            adapter = _LAST_KNOWN_ADAPTERS[key]
+            if adapter is None:
+                logger.warning(
+                    "active-adapter lookup failed for %s/%s: %r — last known "
+                    "state had no active adapter, base model",
+                    tenant_id,
+                    agent_type,
+                    exc,
+                )
+                return nullcontext()
+            logger.warning(
+                "active-adapter lookup failed for %s/%s: %r — reusing last "
+                "known adapter %s",
+                tenant_id,
+                agent_type,
+                exc,
+                adapter.name,
+            )
+        else:
+            logger.error(
+                "active-adapter lookup failed for %s/%s: %r — no known prior "
+                "state, serving the base model",
+                tenant_id,
+                agent_type,
+                exc,
+            )
+            return nullcontext()
+    else:
+        _LAST_KNOWN_ADAPTERS[key] = adapter
 
     if not adapter:
         return nullcontext()

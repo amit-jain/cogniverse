@@ -429,8 +429,8 @@ sequenceDiagram
     Generator->>Generator: batch.append(doc)
 
     opt batch reaches _FEED_BATCH_SIZE (50) or loop ends
-        Generator->>Backend: _feed_documents(batch) -> backend_client.ingest_documents(documents, schema_name)
-        Backend-->>Generator: success_count
+        Generator->>Backend: _feed_documents(batch, errors) -> backend_client.ingest_documents(documents, schema_name)
+        Backend-->>Generator: success_count + failed_documents (rejections recorded into errors)
     end
 
     Generator-->>Pipeline: EmbeddingResult(video_id, total_documents,<br/>documents_processed, documents_fed,<br/>processing_time, errors, metadata)

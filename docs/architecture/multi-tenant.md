@@ -261,6 +261,10 @@ Tested by `TestSchemaRegistryDeletion::test_delete_tenant_does_not_drop_peer_ten
   convergence budget, `deploy_schemas` fails instead of reporting success
   for a schema Vespa never activated.
 - After `delete_tenant_schemas` returns, the schemas are gone from Vespa; registry entries are tombstoned (best-effort).
+- `DELETE /admin/tenants/{id}` claims success only when the
+  `tenant_metadata` record is confirmed deleted; a data-plane failure after
+  the schema redeploy returns 502 with the record retained, so the delete
+  stays retryable instead of leaving a routable schema-less tenant.
 - After a crash mid-deploy, Vespa is the truth; on next startup the e2e
   fixture's `_reconcile_vespa_orphans` (test only) or
   `cogniverse admin reconcile-orphans` / `POST /admin/reconcile-orphans`

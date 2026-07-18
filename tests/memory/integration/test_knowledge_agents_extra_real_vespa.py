@@ -356,9 +356,9 @@ async def test_temporal_reasoning_real_vespa(primary_mm):
     ]
     seeded_ids: list[str] = []
     for i, when in enumerate(times):
-        # The temporal agent reads metadata.written_at directly to
-        # bucket per window — set the top-level field to the back-dated
-        # stamp so the test produces a deterministic distribution.
+        # The temporal agent buckets on metadata["provenance"]["written_at"]
+        # — the shape attach_to_metadata writes — so seed the back-dated
+        # stamp under the nested provenance payload.
         mid = mm.add_memory(
             content=f"Policy revision {i}",
             tenant_id=TENANT,
@@ -366,7 +366,7 @@ async def test_temporal_reasoning_real_vespa(primary_mm):
             metadata={
                 "kind": "tenant_instruction",
                 "subject_key": subject,
-                "written_at": when.isoformat(),
+                "provenance": {"written_at": when.isoformat()},
             },
             infer=False,
         )

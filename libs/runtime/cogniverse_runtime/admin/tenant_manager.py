@@ -810,11 +810,25 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
         raise HTTPException(status_code=404, detail=f"Tenant {canonical_tid} not found")
 
     if tenant:
-        await asyncio.to_thread(
-            backend.delete_metadata_document,
-            schema="tenant_metadata",
-            doc_id=canonical_tid,
+        # delete_metadata_document reports a non-200 as False without raising.
+        # Claiming "deleted" anyway leaves a routable ghost tenant with zero
+        # schemas that is never retried — fail loud instead; the surviving
+        # metadata record makes a retry proceed (schema drop is a no-op then).
+        metadata_deleted = bool(
+            await asyncio.to_thread(
+                backend.delete_metadata_document,
+                schema="tenant_metadata",
+                doc_id=canonical_tid,
+            )
         )
+        if not metadata_deleted:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"tenant_metadata delete for {canonical_tid} did not "
+                    "confirm — tenant record retained, retry the delete"
+                ),
+            )
 
     from cogniverse_core.common.tenant_utils import invalidate_tenant_exists
 

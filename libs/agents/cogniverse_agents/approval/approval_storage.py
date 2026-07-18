@@ -271,6 +271,97 @@ class ApprovalStorageImpl(ApprovalStorage):
 
         return project_spans
 
+    def _reconstruct_item(self, item_row, annotations_df) -> ReviewItem:
+        """Rebuild one ReviewItem from its flattened span row (+ latest
+        annotation). Raises on any malformed field — the caller isolates
+        the failure to this item."""
+        # In Phoenix 11.18.0, attributes are flattened as columns
+        item_id = item_row.get("attributes.item_id", "")
+
+        # Get initial status from span (default: pending_review)
+        status_value = item_row.get("attributes.status", "pending_review")
+        status = ApprovalStatus(status_value)
+
+        # Parse timestamps from span attributes first
+        created_at = item_row.get("attributes.created_at")
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+
+        reviewed_at = item_row.get("attributes.reviewed_at")
+        if isinstance(reviewed_at, str):
+            reviewed_at = datetime.fromisoformat(reviewed_at)
+
+        # Check for annotations (status updates) for this span
+        # Annotations take precedence over span attributes
+        # Match annotations by item_id in metadata (since annotations_df has no span_id column)
+        if not annotations_df.empty:
+            # Filter annotations for this specific item using metadata.item_id
+            item_annotations = annotations_df[
+                annotations_df["metadata"].apply(
+                    lambda x: isinstance(x, dict) and x.get("item_id") == item_id
+                )
+            ]
+
+            logger.debug(f"Item {item_id}: found {len(item_annotations)} annotations")
+
+            if not item_annotations.empty:
+                # Get latest annotation (most recent status)
+                # Sort by created_at if available
+                if "created_at" in item_annotations.columns:
+                    latest_annotation = item_annotations.sort_values(
+                        "created_at", ascending=False
+                    ).iloc[0]
+                else:
+                    latest_annotation = item_annotations.iloc[-1]
+
+                # Update status from annotation
+                # telemetry annotations API returns label in 'result.label' column
+                annotation_label = latest_annotation.get("result.label", "")
+                if annotation_label:
+                    try:
+                        status = ApprovalStatus(annotation_label)
+                        logger.debug(
+                            f"Item {item_id} status from annotation: {status.value}"
+                        )
+
+                        # Also extract reviewed_at from annotation metadata if available
+                        annotation_metadata = latest_annotation.get("metadata", {})
+                        if isinstance(annotation_metadata, dict):
+                            reviewed_at_str = annotation_metadata.get("reviewed_at")
+                            if reviewed_at_str:
+                                reviewed_at = datetime.fromisoformat(reviewed_at_str)
+
+                    except ValueError:
+                        logger.warning(
+                            f"Invalid status label in annotation: {annotation_label}"
+                        )
+            else:
+                logger.debug(
+                    f"Item {item_id}: no annotations matched, keeping span status {status.value}"
+                )
+
+        # Parse data and metadata from flattened attributes
+        data_raw = item_row.get("attributes.data", "{}")
+        data = json.loads(data_raw) if isinstance(data_raw, str) else data_raw
+
+        metadata_raw = item_row.get("attributes.metadata", "{}")
+        metadata = (
+            json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw
+        )
+
+        confidence = float(item_row.get("attributes.confidence", 0.0))
+
+        item = ReviewItem(
+            item_id=item_id,
+            data=data,
+            confidence=confidence,
+            status=status,
+            metadata=metadata,
+            created_at=created_at,
+            reviewed_at=reviewed_at,
+        )
+        return item
+
     async def get_batch(
         self, batch_id: str, spans_df: Optional["pd.DataFrame"] = None
     ) -> Optional[ApprovalBatch]:
@@ -350,107 +441,31 @@ class ApprovalStorageImpl(ApprovalStorage):
             except Exception as e:
                 logger.warning(f"Failed to query annotations: {e}", exc_info=True)
 
-            # Reconstruct items
+            # Reconstruct items — one malformed span (truncated data
+            # blob, junk confidence, unknown status) costs that item,
+            # not the whole pending-approvals view. The outage contract
+            # (raise) stays with the outer handler: backend failures
+            # surface, bad rows don't.
             items = []
+            skipped_malformed = 0
             for _, item_row in item_spans.iterrows():
-                # In Phoenix 11.18.0, attributes are flattened as columns
-                item_id = item_row.get("attributes.item_id", "")
-
-                # Get initial status from span (default: pending_review)
-                status_value = item_row.get("attributes.status", "pending_review")
-                status = ApprovalStatus(status_value)
-
-                # Parse timestamps from span attributes first
-                created_at = item_row.get("attributes.created_at")
-                if isinstance(created_at, str):
-                    created_at = datetime.fromisoformat(created_at)
-
-                reviewed_at = item_row.get("attributes.reviewed_at")
-                if isinstance(reviewed_at, str):
-                    reviewed_at = datetime.fromisoformat(reviewed_at)
-
-                # Check for annotations (status updates) for this span
-                # Annotations take precedence over span attributes
-                # Match annotations by item_id in metadata (since annotations_df has no span_id column)
-                if not annotations_df.empty:
-                    # Filter annotations for this specific item using metadata.item_id
-                    item_annotations = annotations_df[
-                        annotations_df["metadata"].apply(
-                            lambda x: (
-                                isinstance(x, dict) and x.get("item_id") == item_id
-                            )
-                        )
-                    ]
-
-                    logger.debug(
-                        f"Item {item_id}: found {len(item_annotations)} annotations"
+                try:
+                    items.append(self._reconstruct_item(item_row, annotations_df))
+                except Exception as item_exc:
+                    skipped_malformed += 1
+                    logger.error(
+                        "Skipping malformed approval item %r in batch %s: %r",
+                        item_row.get("attributes.item_id", "<unknown>"),
+                        batch_id,
+                        item_exc,
                     )
-
-                    if not item_annotations.empty:
-                        # Get latest annotation (most recent status)
-                        # Sort by created_at if available
-                        if "created_at" in item_annotations.columns:
-                            latest_annotation = item_annotations.sort_values(
-                                "created_at", ascending=False
-                            ).iloc[0]
-                        else:
-                            latest_annotation = item_annotations.iloc[-1]
-
-                        # Update status from annotation
-                        # telemetry annotations API returns label in 'result.label' column
-                        annotation_label = latest_annotation.get("result.label", "")
-                        if annotation_label:
-                            try:
-                                status = ApprovalStatus(annotation_label)
-                                logger.debug(
-                                    f"Item {item_id} status from annotation: {status.value}"
-                                )
-
-                                # Also extract reviewed_at from annotation metadata if available
-                                annotation_metadata = latest_annotation.get(
-                                    "metadata", {}
-                                )
-                                if isinstance(annotation_metadata, dict):
-                                    reviewed_at_str = annotation_metadata.get(
-                                        "reviewed_at"
-                                    )
-                                    if reviewed_at_str:
-                                        reviewed_at = datetime.fromisoformat(
-                                            reviewed_at_str
-                                        )
-
-                            except ValueError:
-                                logger.warning(
-                                    f"Invalid status label in annotation: {annotation_label}"
-                                )
-                    else:
-                        logger.debug(
-                            f"Item {item_id}: no annotations matched, keeping span status {status.value}"
-                        )
-
-                # Parse data and metadata from flattened attributes
-                data_raw = item_row.get("attributes.data", "{}")
-                data = json.loads(data_raw) if isinstance(data_raw, str) else data_raw
-
-                metadata_raw = item_row.get("attributes.metadata", "{}")
-                metadata = (
-                    json.loads(metadata_raw)
-                    if isinstance(metadata_raw, str)
-                    else metadata_raw
+            if skipped_malformed:
+                logger.error(
+                    "Batch %s: %d malformed item span(s) skipped — the batch "
+                    "view is partial",
+                    batch_id,
+                    skipped_malformed,
                 )
-
-                confidence = float(item_row.get("attributes.confidence", 0.0))
-
-                item = ReviewItem(
-                    item_id=item_id,
-                    data=data,
-                    confidence=confidence,
-                    status=status,
-                    metadata=metadata,
-                    created_at=created_at,
-                    reviewed_at=reviewed_at,
-                )
-                items.append(item)
 
             # Parse context from batch attributes
             context_raw = batch_row.get("attributes.context", "{}")
@@ -580,9 +595,11 @@ class ApprovalStorageImpl(ApprovalStorage):
                 return []
 
             # Filter batch spans with pending_review > 0, handling NA values
+            pending_counts = pd.to_numeric(
+                spans_df["attributes.pending_review"], errors="coerce"
+            ).fillna(0)
             batch_spans = spans_df[
-                (spans_df["name"] == "approval_batch")
-                & (spans_df["attributes.pending_review"].fillna(0).astype(int) > 0)
+                (spans_df["name"] == "approval_batch") & (pending_counts > 0)
             ]
 
             pending_batches = []
@@ -853,10 +870,16 @@ class ApprovalStorageImpl(ApprovalStorage):
             # Create DataFrame
             df = pd.DataFrame(dataset_records)
 
-            # Try to load existing dataset and append
+            # Absent dataset (KeyError/ValueError sentinel) -> create it;
+            # anything else -- including an outage mid-append -- propagates
+            # to the outer raise instead of masquerading as first-run
+            # creation against a live dataset.
             try:
                 await self.provider.datasets.get_dataset(name=dataset_name)
-                # Dataset exists, append to it
+                dataset_exists = True
+            except (KeyError, ValueError):
+                dataset_exists = False
+            if dataset_exists:
                 logger.info(
                     f"Appending {len(dataset_records)} items to existing dataset '{dataset_name}'"
                 )
@@ -866,8 +889,7 @@ class ApprovalStorageImpl(ApprovalStorage):
                 logger.info(
                     f"Appended to dataset '{dataset_name}' with {len(dataset_records)} items"
                 )
-            except Exception:
-                # Dataset doesn't exist, create new one
+            else:
                 logger.info(
                     f"Creating new dataset '{dataset_name}' with {len(dataset_records)} items"
                 )

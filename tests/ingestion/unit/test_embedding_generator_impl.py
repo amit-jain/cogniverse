@@ -388,7 +388,9 @@ class TestEmbeddingGeneratorImpl:
             ),
             patch.object(generator, "_create_segment_document", return_value=mock_doc),
             patch.object(
-                generator, "_feed_documents", side_effect=lambda docs: len(docs)
+                generator,
+                "_feed_documents",
+                side_effect=lambda docs, errors=None: len(docs),
             ),
         ):
             result = generator._process_multi_documents(video_data, segments)
@@ -1932,3 +1934,47 @@ class TestThreadLocalCapture:
         finally:
             cap_a.release()
             gen._release_video_capture()
+
+
+class TestFeedRejectionSurfacing:
+    """The backend names rejected docs in failed_documents; dropping them
+    reported a partial feed as fully successful."""
+
+    def _impl(self):
+        impl = object.__new__(EmbeddingGeneratorImpl)
+        impl.schema_name = "video_test"
+        impl.logger = Mock()
+        client = Mock()
+        client.ingest_documents.return_value = {
+            "success_count": 2,
+            "failed_count": 1,
+            "failed_documents": [{"id": "doc-bad", "error": "HTTP 400"}],
+            "total_documents": 3,
+        }
+        impl.backend_client = client
+        return impl
+
+    def test_feed_documents_records_rejections_into_errors(self):
+        impl = self._impl()
+        errors: list = []
+
+        fed = impl._feed_documents([Mock()] * 3, errors=errors)
+
+        assert fed == 2
+        assert errors == ["document doc-bad: rejected at feed (HTTP 400)"]
+
+    def test_feed_documents_without_errors_list_still_returns_count(self):
+        impl = self._impl()
+        assert impl._feed_documents([Mock()] * 3) == 2
+
+    def test_feed_documents_clean_batch_records_nothing(self):
+        impl = self._impl()
+        impl.backend_client.ingest_documents.return_value = {
+            "success_count": 3,
+            "failed_count": 0,
+            "failed_documents": [],
+            "total_documents": 3,
+        }
+        errors: list = []
+        assert impl._feed_documents([Mock()] * 3, errors=errors) == 3
+        assert errors == []

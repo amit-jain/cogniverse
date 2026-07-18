@@ -162,7 +162,15 @@ def _matches_filters(
     if kinds and meta.get("kind") not in kinds:
         return False
     if since_dt is not None or until_dt is not None:
-        ts = _parse_iso(meta.get("written_at"))
+        # Promoted summaries stamp written_at at the top level; real memories
+        # carry it under the provenance payload attach_to_metadata nests
+        # (metadata["provenance"]["written_at"]). Read both shapes.
+        written_at = meta.get("written_at")
+        if written_at is None:
+            prov = meta.get("provenance")
+            if isinstance(prov, dict):
+                written_at = prov.get("written_at")
+        ts = _parse_iso(written_at)
         if ts is None:
             return False
         if since_dt is not None and ts < since_dt:
@@ -426,18 +434,12 @@ class KnowledgeSummarizationAgent(
         since: Optional[str],
         until: Optional[str],
     ) -> List[Dict[str, Any]]:
-        try:
-            mm = self._mm_factory(tenant_id)
-        except Exception as exc:
-            logger.debug("ksum: factory(%s) failed: %s", tenant_id, exc)
-            return []
+        # A backend outage is not "no memories" — factory and read failures
+        # propagate so callers can't mistake an outage for an empty store.
+        mm = self._mm_factory(tenant_id)
         if mm is None or not getattr(mm, "memory", None):
             return []
-        try:
-            rows = list(mm.get_all_memories(tenant_id=tenant_id, agent_name=agent_name))
-        except Exception as exc:
-            logger.debug("ksum: get_all_memories failed: %s", exc)
-            return []
+        rows = list(mm.get_all_memories(tenant_id=tenant_id, agent_name=agent_name))
         since_dt = _parse_iso(since)
         until_dt = _parse_iso(until)
         return [

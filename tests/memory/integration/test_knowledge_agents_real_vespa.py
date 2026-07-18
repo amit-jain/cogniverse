@@ -28,6 +28,7 @@ agents whose value comes from real persistence round-trips.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Tuple
 
@@ -222,12 +223,18 @@ async def test_knowledge_summarises_real_subject_slice(
         memory_manager_factory=lambda _t: real_mm,
         registry=build_default_registry(),
     )
+    # The time window must MATCH the seeded rows: attach_to_metadata nests
+    # written_at under metadata["provenance"], and the filter reads that
+    # shape — a window spanning now must keep all 3 sources, not drop them.
+    now = datetime.now(timezone.utc)
     out = await agent._process_impl(
         KnowledgeSummarizationInput(
             tenant_id=TENANT,
             subject_keys=[subject],
             kinds=["external_doc"],
             agent_name_filter=AGENT,
+            since=(now - timedelta(days=1)).isoformat(),
+            until=(now + timedelta(days=1)).isoformat(),
             title="refunds policy summary",
             actor_role="user",
             actor_id="alice",

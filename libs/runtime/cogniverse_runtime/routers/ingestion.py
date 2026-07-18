@@ -1138,13 +1138,21 @@ async def run_ingestion(
             max_concurrent=request.batch_size,
         )
 
-        # Update job status from pipeline result
-        ingestion_jobs[job_id].videos_processed = result.get("successful", 0)
-        for error in result.get("errors", []):
-            ingestion_jobs[job_id].errors.append(str(error))
-
-        # Mark complete
-        ingestion_jobs[job_id].status = "completed"
+        # Update job status from the pipeline's per-video results — the
+        # pipeline reports failures as {"video_path", "error", "status":
+        # "failed"} rows plus a completed/completed_with_errors/cancelled
+        # status, not a top-level "errors" list.
+        job = ingestion_jobs[job_id]
+        job.videos_processed = result.get("successful", 0)
+        for video_result in result.get("results", []):
+            if not isinstance(video_result, dict):
+                continue
+            if video_result.get("status") == "failed" or video_result.get("error"):
+                job.errors.append(
+                    f"{video_result.get('video_path', '<unknown>')}: "
+                    f"{video_result.get('error', 'unknown error')}"
+                )
+        job.status = result.get("status", "completed")
 
     except Exception as e:
         logger.error(f"Ingestion job {job_id} failed: {e}")

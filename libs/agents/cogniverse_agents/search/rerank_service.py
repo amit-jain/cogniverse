@@ -28,8 +28,17 @@ def _parse_timestamp(d: Dict[str, Any]) -> Optional[datetime]:
     if raw is None:
         return None
     try:
-        return datetime.fromtimestamp(float(raw) / 1000.0, tz=timezone.utc)
-    except (TypeError, ValueError, OSError):
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value < 100_000_000_000:
+        # Caller-supplied results (POST /search/rerank) can carry a
+        # seconds epoch; without this guard it lands in 1970 and the doc
+        # scores as year-old. Same threshold as search_agent._epoch_ms.
+        value *= 1000.0
+    try:
+        return datetime.fromtimestamp(value / 1000.0, tz=timezone.utc)
+    except (ValueError, OSError):
         return None
 
 
