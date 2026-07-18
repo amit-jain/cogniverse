@@ -77,9 +77,11 @@ gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
 
 ### Key Features
 - **DSPy Prompt/Module Compilation**: every optimization mode compiles with `dspy.teleprompt.BootstrapFewShot`
-  (scaled to 8/16/2-round settings once ≥50 training examples are available, 4/8/1-round below that). No mode
-  in this codebase currently invokes MIPROv2, SIMBA, or GEPA — `ExperimentMetrics.optimizer` is a free-text
-  field intended to record whichever optimizer produced a run, but every call site passes `"BootstrapFewShot"`.
+  (scaled to 8/16/2-round settings once ≥50 training examples are available, 4/8/1-round below that). The one
+  exception is `--mode triggered`'s reflective recompile for an all-failure agent, which compiles with
+  `dspy.teleprompt.GEPA` (see [Triggered Optimization](#8-triggered-optimization-quality-monitor-driven)); no
+  mode invokes MIPROv2 or SIMBA. `ExperimentMetrics.optimizer` is a free-text field intended to record
+  whichever optimizer produced a run, but every serving call site passes `"BootstrapFewShot"`.
   The `--mode simba` name is historical (it optimizes `QueryEnhancementAgent`'s DSPy module); it does not run
   the SIMBA algorithm.
 - **Gateway Threshold Tuning**: `_compute_gateway_thresholds()` derives GLiNER/fast-path thresholds from
@@ -386,8 +388,14 @@ splits each agent's rows into `low_scoring`/`high_scoring` by `category`, and fo
 
 1. Builds a labeled `dspy.Example` set from the high-scoring rows (agent-specific field mapping for
    `search` / `summary` / `report`) and splits it deterministically into a trainset and a ~25% tail
-   holdout (`_split_train_holdout`). An agent whose rows are all failures returns
-   `{"status": "skipped", "reason": "no_positive_examples", "negative_examples": N}`.
+   holdout (`_split_train_holdout`). An agent whose rows are **all failures** (empty positives
+   trainset) falls back to a reflective recompile (see below) when `enable_reflective_recompile` is on
+   and, after the same ~25% tail split is applied to the low-scoring rows, the resulting GEPA trainset
+   has at least `min_reflective_failures` rows; otherwise it returns
+   `{"status": "skipped", "reason": "no_positive_examples", "negative_examples": N}` — or
+   `"insufficient_failures_to_reflect"` when reflection is on but that post-split trainset is smaller
+   than `min_reflective_failures` (the threshold checks the split trainset, not the raw failing-row
+   count).
 2. Compiles a `dspy.ChainOfThought` over the matching signature with `BootstrapFewShot` on the
    trainset, scoped inside `dspy.context(lm=...)` (because `initialize_language_model` only sets
    `optimizer.lm`, it does not call the global `dspy.configure`).
@@ -405,6 +413,30 @@ splits each agent's rows into `low_scoring`/`high_scoring` by `category`, and fo
    experiments ledger with `promoted=False`, `--mode rollback` restores a prior version, and the
    result reports the outcome under `"served"` (`served_agent`, `version`, `active`, `promoted`, plus
    `baseline_score`/`candidate_score` when eval material was available or a `reason` when it wasn't).
+
+**Reflective recompile (all-failure agents).** When an agent's rows are all failures there are no
+positives to bootstrap from, so `BootstrapFewShot` cannot run. With `enable_reflective_recompile`
+(**on by default** for the three servable agents `search` / `summary` / `report`), `_reflect_or_skip`
+first splits the failing rows into a GEPA trainset and a held-out negatives slice
+(`_split_train_holdout` over the failing rows — GEPA never sees the held-out slice, ~75%/25%); only
+when that trainset has at least `min_reflective_failures` rows does `_optimize_agent` recompile with
+`dspy.GEPA` (`_reflect_or_skip` → `_reflective_compile`) — the threshold is checked against the
+post-split trainset size, not the raw failing-row count, so it takes more raw failures than
+`min_reflective_failures` to clear it. Each GEPA training example carries the recorded failing output
+as a `_bad_output` attribute, and
+a 5-argument GEPA feedback metric `(gold, pred, trace, pred_name, pred_trace) -> ScoreWithFeedback`
+(`_reflective_metric`) rewards a candidate for **not** reproducing that failing output
+(`_search_validity` for `search`; `1 - token_f1(pred, _bad_output)` for `summary`/`report`) while its
+`feedback` string names the failing output and what a good one must avoid. GEPA's reflection LM (the
+resolved optimization LM) reads the failing rollouts plus that feedback and proposes improved
+instructions, capped at `reflective_max_metric_calls` metric calls (`_build_gepa` is the injectable GEPA
+seam). The GEPA candidate STILL flows through the same `_score_and_serve` →
+`promote_if_better(serve_versioned=True)` gate, scored on the **held-out** negatives — a reflective
+candidate that does not beat `baseline + optimization_improvement_threshold` is rejected and the base
+prompt is left byte-unchanged, so an all-failure agent that cannot be improved keeps its base prompt
+rather than a worse one. A successful run returns
+`{"status": "success", "reflective": True, ..., "served": {...}}`; too few failing rows to reflect
+returns `{"status": "skipped", "reason": "insufficient_failures_to_reflect", "negative_examples": N}`.
 
 After the per-agent loop, it **also** runs strategy distillation: builds (or reuses) a
 `Mem0MemoryManager` for the tenant (requires `SystemConfig.backend_url`/`backend_port`, an `api_base` on
@@ -1005,7 +1037,8 @@ scaled by trainset size), with the teacher threaded through
 `_optimize_agent(teacher_endpoint=llm_config.resolve_teacher())` →
 `initialize_language_model(teacher_endpoint_config=...)`.
 
-No mode in this CLI selects MIPROv2, SIMBA, or GEPA based on data size.
+No mode in this CLI selects MIPROv2 or SIMBA. GEPA is selected only for `--mode triggered`'s
+reflective recompile of an all-failure agent (not by data size), never for the positives-trained path.
 
 #### Argo Workflows Integration
 
@@ -1104,6 +1137,8 @@ Optimization artifacts are persisted to the telemetry store via `ArtifactManager
 | `run_cleanup` (memory/log/temp/config vacuum) | `tests/runtime/integration/test_optimization_cli_cleanup.py` |
 | `run_monthly_reports` | `tests/runtime/integration/test_optimization_cli_monthly_reports.py` |
 | `run_triggered_optimization` + strategy distillation wiring | `tests/runtime/integration/test_optimization_cli_triggered.py` |
+| Reflective GEPA recompile — config defaults, 5-arg feedback metric, GEPA trainset/gate wiring for all-failure agents | `tests/runtime/unit/test_reflective_recompile.py` |
+| Reflective GEPA recompile against a real Phoenix + real LM (`_optimize_agent` end-to-end) | `tests/runtime/integration/test_optimization_cli_reflective.py` |
 | `run_ab_compare` / `RLMABRunner` | `tests/runtime/integration/test_optimization_cli_ab_compare.py` |
 | `ArtifactManager` — canary FSM, `promote_if_better` | `tests/agents/integration/test_artifact_manager_experiments.py`, `tests/agents/integration/test_artifact_manager_variants.py` |
 | `SignatureVariantRegistry` | `tests/agents/unit/test_signature_variants.py`, `tests/runtime/integration/test_signature_variant_admin_consumption.py`, `tests/e2e/test_signature_variants_e2e.py` |
@@ -1580,7 +1615,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 
 **Next Steps:**
 
-1. Review the DSPy `BootstrapFewShot` teleprompter docs; MIPROv2/SIMBA/GEPA are not wired into any mode today
+1. Review the DSPy `BootstrapFewShot` teleprompter docs; MIPROv2/SIMBA are not wired into any mode today (GEPA is wired only for `--mode triggered`'s all-failure reflective recompile)
 
 2. Extend `_create_teleprompter` if a data-size-tiered optimizer switch (e.g. MIPROv2 above a higher example count) becomes worth the added compile cost
 

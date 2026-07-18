@@ -433,8 +433,10 @@ individual agent's `OptimizerConfig.optimizer_type` select a different DSPy opti
 `--mode simba` in `optimization_cli.py` is a *data-source* mode name (it compiles the
 `QueryEnhancementAgent`'s module from a scored trigger dataset) — it still compiles with
 the same `BootstrapFewShot`-based `_create_teleprompter()`, not a `dspy.SIMBA` optimizer.
-`GEPA`/`SIMBA` are reserved `OptimizerType` values for future work; selecting either today
-fails fast with a `ValueError` rather than silently falling back.
+`GEPA`/`SIMBA` are reserved `OptimizerType` values for future work; selecting either through
+this registry today fails fast with a `ValueError` rather than silently falling back. (GEPA is
+nonetheless invoked directly — bypassing this registry — by `--mode triggered`'s reflective
+recompile for all-failure agents; see the reflective-recompile note under Stage 3.)
 
 ### Teacher/Student Pattern
 
@@ -472,6 +474,9 @@ the quality-monitor sidecar — not by a live in-process RL loop:
 | `OptimizationTriggersConfig` | `min_annotations_for_optimization` | 50 | Minimum annotations before an optimization run is worth submitting |
 | `OptimizationTriggersConfig` | `optimization_improvement_threshold` | 0.05 | Minimum score improvement required to accept a candidate |
 | `OptimizationTriggersConfig` | `min_days_between_optimizations` | 1 | Cooldown between optimization runs |
+| `OptimizationTriggersConfig` | `enable_reflective_recompile` | True | Recompile an all-failure agent (empty positives trainset) with `dspy.GEPA` reflective prompt evolution instead of skipping; on for the three servable agents |
+| `OptimizationTriggersConfig` | `min_reflective_failures` | 10 | Minimum rows in the post-split GEPA trainset (not the raw failing-row count) before a reflective recompile runs |
+| `OptimizationTriggersConfig` | `reflective_max_metric_calls` | 60 | GEPA metric-call budget cap for a reflective recompile |
 | `FeedbackConfig` | `min_annotations_for_update` | 10 | Minimum new annotations in a polling cycle before triggering an optimizer update |
 | `QualityThresholds` | `golden_mrr_drop_pct` | 0.10 | Golden-set MRR drop that flags `OPTIMIZE` |
 | `QualityThresholds` | `live_score_floor` | 0.5 | Live-traffic LLM-judge score floor that flags `OPTIMIZE` |
@@ -491,6 +496,21 @@ per-request overlay serves it on the next dispatch. A losing candidate never tou
 traffic; it is recorded in the experiments ledger with `promoted=False` and a
 `rejection_reason`. Every version is snapshotted, so `--mode rollback` restores a prior
 one, and operators can still stage a manual canary via `promote_to_canary`.
+
+**Reflective recompile for all-failure agents.** An agent whose scored rows are all failures has an
+empty positives trainset, so `BootstrapFewShot` (which imitates good exemplars) has nothing to compile.
+With `enable_reflective_recompile` (**on by default** for `search`/`summary`/`report`), the failing rows
+are first split into a GEPA trainset and a held-out negatives slice (the same ~25% tail split used
+elsewhere); only if that trainset has at least `min_reflective_failures` rows does `--mode triggered`
+recompile the agent with `dspy.GEPA` (the threshold checks the post-split trainset, not the raw
+failing-row count). GEPA's reflection LM then reads the failing rollouts plus a 5-argument feedback
+metric that rewards a candidate for
+**not** reproducing the recorded failing output (returning `ScoreWithFeedback(score, feedback)`), and it
+proposes improved instructions within a `reflective_max_metric_calls` budget. The GEPA candidate goes
+through the **same** `promote_if_better(serve_versioned=True)` gate scored on the held-out failures — it
+must still beat `baseline + optimization_improvement_threshold` to serve, otherwise it is rejected and
+the base prompt is left byte-unchanged. An all-failure agent that cannot be improved keeps its base
+prompt rather than getting a worse one.
 
 ---
 
