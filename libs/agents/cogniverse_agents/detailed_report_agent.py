@@ -29,6 +29,8 @@ from cogniverse_foundation.config.semantic_router import routed_lm_context_for
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_PORT = 8004
+
 
 class DetailedReportInput(AgentInput):
     """Type-safe input for detailed report generation"""
@@ -229,7 +231,9 @@ class DetailedReportAgent(
     Provides visual analysis, technical insights, and actionable recommendations.
     """
 
-    def __init__(self, deps: DetailedReportDeps, config_manager=None, port: int = 8004):
+    def __init__(
+        self, deps: DetailedReportDeps, config_manager=None, port: int = DEFAULT_PORT
+    ):
         """
         Initialize detailed report agent with typed dependencies.
 
@@ -1119,7 +1123,7 @@ async def get_agent_card():
     return {
         "name": "DetailedReportAgent",
         "description": "Type-safe detailed reports with visual and technical analysis",
-        "url": "/process",
+        "url": f"http://localhost:{DEFAULT_PORT}",
         "version": "2.0.0",
         "protocol": "a2a",
         "protocol_version": "0.2.1",
@@ -1225,7 +1229,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Detailed Report Agent Server")
     parser.add_argument(
-        "--port", type=int, default=8004, help="Port to run the server on"
+        "--port", type=int, default=DEFAULT_PORT, help="Port to run the server on"
     )
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
