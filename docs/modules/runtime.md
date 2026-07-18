@@ -1439,7 +1439,7 @@ Every `exec_in_sandbox` call emits a `sandbox.exec_in_sandbox` OpenTelemetry spa
 
 **Location:** `libs/runtime/cogniverse_runtime/openshell_health.py`
 
-`GatewayHealthProbe` runs as a background asyncio task calling `SandboxClient.health()` every 30 s (configurable via `COGNIVERSE_SANDBOX_PROBE_INTERVAL`). Each probe emits an `openshell.gateway_health` span with `openshell.gateway_available` (0/1) and `openshell.gateway_latency_ms`. The Phoenix dashboard reads these spans for the gateway-status tile.
+`GatewayHealthProbe` runs as a background asyncio task calling `SandboxClient.health()` every 30 s (configurable via `COGNIVERSE_SANDBOX_PROBE_INTERVAL`). Each probe emits an `openshell.gateway_health` span with `openshell.gateway_available` (0/1) and `openshell.gateway_latency_ms`. Availability reads the `HealthResponse.status` field, not merely whether `health()` raised: `SERVICE_STATUS_HEALTHY`, an empty response left at `SERVICE_STATUS_UNSPECIFIED`, or a response with no `status` attribute at all count as available, while `SERVICE_STATUS_UNHEALTHY`/`SERVICE_STATUS_DEGRADED` records `available=0` with the status name in `openshell.gateway_error`. A raised exception (including a probe timeout) is also recorded as `available=0`, with the exception's class name in `openshell.gateway_error`. The Phoenix dashboard reads these spans for the gateway-status tile.
 
 ```python
 from cogniverse_runtime.openshell_health import GatewayHealthProbe

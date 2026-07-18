@@ -7,14 +7,26 @@ the HTTP boundary (``_submit_cron_workflow`` / ``_delete_cron_workflow``) is
 mocked.
 """
 
+import copy
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import jsonschema
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
 from cogniverse_runtime.routers import tenant
+
+_ARGO_SCHEMA_PATH = (
+    Path(__file__).parent / "schemas" / "argo_cronworkflow_min.schema.json"
+)
+
+
+def _argo_schema() -> dict:
+    return json.loads(_ARGO_SCHEMA_PATH.read_text())
 
 
 def _configure_workflow(api_url=None):
@@ -117,3 +129,100 @@ class TestWorkflowSubmissionRoundTrip:
 
         listed = tenant_client.get("/admin/tenant/test_argo_del/jobs").json()["jobs"]
         assert all(j["job_id"] != job_id for j in listed)
+
+
+@pytest.mark.integration
+class TestManifestMatchesArgoSchema:
+    """Every manifest the router hands to Argo must satisfy the vendored
+    minimal CronWorkflow/Workflow schema, so a field rename or misspelled key
+    fails here instead of being silently dropped by the Argo API server."""
+
+    def test_built_cron_workflow_validates_against_argo_schema(self):
+        _configure_workflow(api_url="http://argo-server:2746")
+        manifest = tenant._build_cron_workflow(
+            tenant_id="acme:prod",
+            job_id="ab12cd34",
+            schedule="0 9 * * 1",
+            namespace="cogniverse",
+        )
+        jsonschema.validate(instance=manifest, schema=_argo_schema())
+        assert manifest["metadata"]["name"] == "tenant-job-acme-prod-ab12cd34"
+        assert manifest["metadata"]["labels"] == {
+            "app": "cogniverse",
+            "tenant": "acme-prod",
+            "job-id": "ab12cd34",
+        }
+        assert manifest["spec"]["workflowSpec"]["workflowTemplateRef"] == {
+            "name": "cogniverse-job-runner"
+        }
+        assert manifest["spec"]["workflowSpec"]["arguments"]["parameters"] == [
+            {"name": "job-id", "value": "ab12cd34"},
+            {"name": "tenant-id", "value": "acme:prod"},
+        ]
+
+    def test_route_submitted_cron_manifest_validates(self, tenant_client):
+        _configure_workflow(api_url="http://argo-server:2746")
+        with patch(
+            "cogniverse_runtime.routers.tenant._submit_cron_workflow",
+            new_callable=AsyncMock,
+        ) as mock_submit:
+            resp = tenant_client.post(
+                "/admin/tenant/test_argo_schema/jobs",
+                json={
+                    "name": "nightly_digest",
+                    "schedule": "30 6 * * *",
+                    "query": "digest",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            job_id = resp.json()["job_id"]
+            manifest = mock_submit.call_args[0][0]
+        jsonschema.validate(instance=manifest, schema=_argo_schema())
+        assert manifest["metadata"]["name"] == f"tenant-job-test-argo-schema-{job_id}"
+        assert manifest["spec"]["schedule"] == "30 6 * * *"
+
+    def test_built_optimization_workflow_validates(self):
+        _configure_workflow(api_url="http://argo-server:2746")
+        manifest = tenant._build_optimization_workflow_manifest(
+            tenant_id="acme:prod", mode="simba", namespace="cogniverse"
+        )
+        jsonschema.validate(instance=manifest, schema=_argo_schema())
+        assert manifest["metadata"]["generateName"] == "manual-optimize-simba-"
+        assert manifest["spec"]["workflowTemplateRef"] == {
+            "name": "cogniverse-optimization-runner"
+        }
+        assert manifest["spec"]["arguments"]["parameters"] == [
+            {"name": "mode", "value": "simba"},
+            {"name": "tenant-id", "value": "acme:prod"},
+            {"name": "lookback-hours", "value": "48"},
+        ]
+
+    def test_misspelled_workflow_template_ref_fails_validation(self):
+        """Pin the schema's strictness: a manifest carrying
+        ``workflowTemplateReff`` (the field rename Argo would silently drop)
+        must be rejected."""
+        _configure_workflow(api_url="http://argo-server:2746")
+        manifest = tenant._build_cron_workflow(
+            tenant_id="acme:prod",
+            job_id="ab12cd34",
+            schedule="0 9 * * 1",
+            namespace="cogniverse",
+        )
+        broken = copy.deepcopy(manifest)
+        spec = broken["spec"]["workflowSpec"]
+        spec["workflowTemplateReff"] = spec.pop("workflowTemplateRef")
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance=broken, schema=_argo_schema())
+
+    def test_invalid_metadata_name_fails_validation(self):
+        _configure_workflow(api_url="http://argo-server:2746")
+        manifest = tenant._build_cron_workflow(
+            tenant_id="acme:prod",
+            job_id="ab12cd34",
+            schedule="0 9 * * 1",
+            namespace="cogniverse",
+        )
+        broken = copy.deepcopy(manifest)
+        broken["metadata"]["name"] = "Tenant_Job:Bad"
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(instance=broken, schema=_argo_schema())

@@ -32,6 +32,30 @@ _DEFAULT_INTERVAL_SECONDS = 30.0
 _PROBE_TIMEOUT_SECONDS = 5.0
 
 
+def _response_availability(response: object) -> tuple[bool, Optional[str]]:
+    """Map a gateway ``HealthResponse`` to ``(available, error_attr)``.
+
+    The gateway can answer without raising while reporting itself sick
+    (``status=SERVICE_STATUS_UNHEALTHY`` / ``DEGRADED``), so a non-raising
+    ``health()`` call alone does not mean available. A response lacking a
+    status — or an empty message left at the proto3 default
+    ``SERVICE_STATUS_UNSPECIFIED`` — counts as available: the gateway
+    answered and did not report a problem.
+    """
+    status = getattr(response, "status", None)
+    if status is None:
+        return True, None
+    from openshell._proto import openshell_pb2 as pb
+
+    if status in (pb.SERVICE_STATUS_UNSPECIFIED, pb.SERVICE_STATUS_HEALTHY):
+        return True, None
+    try:
+        name = pb.ServiceStatus.Name(status)
+    except (TypeError, ValueError):
+        name = f"status_{status}"
+    return False, name
+
+
 class GatewayHealthProbe:
     """Background probe that records gateway availability + latency to Phoenix.
 
@@ -88,12 +112,13 @@ class GatewayHealthProbe:
             # ``client.health()`` is sync (gRPC). Run on a thread to keep the
             # asyncio loop free; bound by _PROBE_TIMEOUT_SECONDS so a stuck
             # gateway can never block the probe forever.
-            await asyncio.wait_for(
+            response = await asyncio.wait_for(
                 asyncio.to_thread(client.health),
                 timeout=_PROBE_TIMEOUT_SECONDS,
             )
-            available = True
-            error_attr: Optional[str] = None
+            available, error_attr = _response_availability(response)
+            if not available:
+                logger.debug("OpenShell gateway reports sick status: %s", error_attr)
         except Exception as exc:  # connection refused, timeout, gRPC error
             error_attr = type(exc).__name__
             logger.debug("OpenShell gateway probe failed: %s", exc)

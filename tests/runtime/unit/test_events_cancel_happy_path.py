@@ -94,3 +94,62 @@ def test_get_queue_offset_for_populated_queue(client: TestClient) -> None:
     body = r.json()
     assert body["task_id"] == "wf-offset"
     assert body["offset"] == 0  # fresh queue starts at offset 0
+
+
+def test_list_active_queues_maps_every_queue_field(client: TestClient) -> None:
+    """GET /events/queues returns one QueueInfo per live queue of the tenant,
+    with every field mapped from the backend's stats — other tenants' queues
+    excluded, cancelled-but-open queues included with is_cancelled=True."""
+    import asyncio
+
+    from cogniverse_core.events import TaskState, create_status_event
+
+    async def _seed() -> dict:
+        qm = get_queue_manager()
+        q1 = await qm.create_queue(
+            task_id="wf-list-1", tenant_id="acme:list", ttl_minutes=10
+        )
+        await q1.enqueue(
+            create_status_event(
+                task_id="wf-list-1", tenant_id="acme:list", state=TaskState.WORKING
+            )
+        )
+        await qm.create_queue(
+            task_id="ing-list-2", tenant_id="acme:list", ttl_minutes=10
+        )
+        await qm.cancel_task("ing-list-2", "operator stop")
+        await qm.create_queue(
+            task_id="wf-other-tenant", tenant_id="globex:list", ttl_minutes=10
+        )
+        return {q["task_id"]: q for q in await qm.list_active_queues("acme:list")}
+
+    stats = asyncio.run(_seed())
+
+    r = client.get("/events/queues", params={"tenant_id": "acme:list"})
+    assert r.status_code == 200
+    body = sorted(r.json(), key=lambda q: q["task_id"])
+    assert body == [
+        {
+            "task_id": "ing-list-2",
+            "tenant_id": "acme:list",
+            "event_count": 0,
+            "subscriber_count": 0,
+            "is_closed": False,
+            "is_cancelled": True,
+            "created_at": stats["ing-list-2"]["created_at"],
+        },
+        {
+            "task_id": "wf-list-1",
+            "tenant_id": "acme:list",
+            "event_count": 1,
+            "subscriber_count": 0,
+            "is_closed": False,
+            "is_cancelled": False,
+            "created_at": stats["wf-list-1"]["created_at"],
+        },
+    ]
+
+
+def test_list_active_queues_requires_tenant_id(client: TestClient) -> None:
+    r = client.get("/events/queues")
+    assert r.status_code == 422

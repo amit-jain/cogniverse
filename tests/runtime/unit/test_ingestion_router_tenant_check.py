@@ -334,6 +334,178 @@ class TestTenantExistenceCache:
         assert lookups.await_count == 2
 
 
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestStartIngestionSuccess:
+    """POST /ingestion/start success branch: job registered, background task
+    scheduled and run to completion (TestClient executes BackgroundTasks
+    before returning), backend resolved through the registry."""
+
+    def _build_app(self, monkeypatch, tmp_path):
+        from unittest.mock import MagicMock
+
+        app = FastAPI()
+        app.include_router(ingestion_router.router, prefix="/ingestion")
+        cm = MagicMock(name="config_manager")
+        sl = MagicMock(name="schema_loader")
+        app.dependency_overrides[ingestion_router.get_config_manager_dependency] = (
+            lambda: cm
+        )
+        app.dependency_overrides[ingestion_router.get_schema_loader_dependency] = (
+            lambda: sl
+        )
+
+        async def _ok(tenant_id: str) -> None:
+            return None
+
+        monkeypatch.setattr(ingestion_router, "assert_tenant_exists", _ok)
+
+        registry = MagicMock(name="backend_registry")
+        registry.get_ingestion_backend.return_value = MagicMock(name="backend")
+        backend_registry_cls = MagicMock(name="BackendRegistry")
+        backend_registry_cls.get_instance.return_value = registry
+        monkeypatch.setattr(ingestion_router, "BackendRegistry", backend_registry_cls)
+
+        recorded: dict = {}
+
+        class _StubPipeline:
+            def __init__(self, **kwargs):
+                recorded["pipeline_init"] = kwargs
+
+            async def process_videos_concurrent(self, video_files, max_concurrent):
+                recorded["process_call"] = {
+                    "video_files": video_files,
+                    "max_concurrent": max_concurrent,
+                }
+                return {
+                    "status": "completed",
+                    "successful": 2,
+                    "failed": 0,
+                    "results": [
+                        {"video_path": "a.mp4", "status": "success"},
+                        {"video_path": "b.mp4", "status": "success"},
+                    ],
+                }
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.ingestion.pipeline.VideoIngestionPipeline",
+            _StubPipeline,
+        )
+
+        def _discover(video_dir, content_type):
+            recorded["discover_call"] = {
+                "video_dir": video_dir,
+                "content_type": content_type,
+            }
+            return [str(tmp_path / "a.mp4"), str(tmp_path / "b.mp4")]
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.ingestion.strategies.discover_ingestible_files",
+            _discover,
+        )
+        return app, cm, sl, registry, recorded
+
+    def test_start_registers_job_and_runs_background_task(self, monkeypatch, tmp_path):
+        import uuid
+
+        app, cm, sl, registry, recorded = self._build_app(monkeypatch, tmp_path)
+        job_id = None
+        try:
+            with TestClient(app) as client:
+                resp = client.post(
+                    "/ingestion/start",
+                    json={
+                        "video_dir": str(tmp_path),
+                        "profile": "video_colpali_smol500_mv_frame",
+                        "tenant_id": "acme:acme",
+                        "content_type": "video",
+                    },
+                )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            job_id = body["job_id"]
+            uuid.UUID(job_id)  # job_id is a real uuid4 string
+            assert body == {
+                "job_id": job_id,
+                "status": "started",
+                "message": "Ingestion job started successfully",
+            }
+
+            registry.get_ingestion_backend.assert_called_once_with(
+                name="vespa",
+                tenant_id="acme:acme",
+                config_manager=cm,
+                schema_loader=sl,
+            )
+
+            # TestClient ran the background task synchronously, so the job
+            # record has reached its terminal state.
+            job = ingestion_router.ingestion_jobs[job_id]
+            assert job.model_dump() == {
+                "job_id": job_id,
+                "status": "completed",
+                "videos_processed": 2,
+                "videos_total": 2,
+                "errors": [],
+            }
+
+            assert recorded["pipeline_init"] == {
+                "tenant_id": "acme:acme",
+                "config_manager": cm,
+                "schema_loader": sl,
+                "schema_name": "video_colpali_smol500_mv_frame",
+            }
+            assert recorded["process_call"] == {
+                "video_files": [str(tmp_path / "a.mp4"), str(tmp_path / "b.mp4")],
+                "max_concurrent": 10,
+            }
+            assert recorded["discover_call"] == {
+                "video_dir": tmp_path,
+                "content_type": "video",
+            }
+        finally:
+            if job_id is not None:
+                ingestion_router.ingestion_jobs.pop(job_id, None)
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestIngestionStatusEndpoint:
+    def test_unknown_job_returns_404(self):
+        app = FastAPI()
+        app.include_router(ingestion_router.router, prefix="/ingestion")
+        with TestClient(app) as client:
+            resp = client.get("/ingestion/status/nope")
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Job 'nope' not found"}
+
+    def test_registered_job_returns_exact_status_body(self):
+        app = FastAPI()
+        app.include_router(ingestion_router.router, prefix="/ingestion")
+        ingestion_router.ingestion_jobs["job-status-x"] = (
+            ingestion_router.IngestionStatus(
+                job_id="job-status-x",
+                status="processing",
+                videos_processed=1,
+                videos_total=3,
+                errors=["bad.mp4: schema mismatch"],
+            )
+        )
+        try:
+            with TestClient(app) as client:
+                resp = client.get("/ingestion/status/job-status-x")
+            assert resp.status_code == 200
+            assert resp.json() == {
+                "job_id": "job-status-x",
+                "status": "processing",
+                "videos_processed": 1,
+                "videos_total": 3,
+                "errors": ["bad.mp4: schema mismatch"],
+            }
+        finally:
+            ingestion_router.ingestion_jobs.pop("job-status-x", None)
+
+
 @pytest.mark.asyncio
 async def test_partial_batch_failure_lands_in_job_status(monkeypatch, tmp_path):
     """The background ingestion task reads the pipeline's per-video results:

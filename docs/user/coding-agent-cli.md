@@ -273,9 +273,9 @@ named `openshell.gateway_health` with attributes:
 
 | Attribute | Meaning |
 |---|---|
-| `openshell.gateway_available` | 1 when the gateway responded; 0 otherwise |
+| `openshell.gateway_available` | 1 when `health()` returns `SERVICE_STATUS_HEALTHY`/`SERVICE_STATUS_UNSPECIFIED` (or a response with no status at all); 0 when the gateway reports `SERVICE_STATUS_UNHEALTHY`/`SERVICE_STATUS_DEGRADED`, or `health()` raises (including a timeout) |
 | `openshell.gateway_latency_ms` | Round-trip probe latency |
-| `openshell.gateway_error` | Exception class name or `no_client` (only set on failure) |
+| `openshell.gateway_error` | Sick status name, exception class name, or `no_client` (only set when unavailable) |
 
 The Phoenix dashboard reads these spans for the gateway-status tile. The probe
 runs as part of the FastAPI lifespan; `stop()` is awaited at shutdown so the

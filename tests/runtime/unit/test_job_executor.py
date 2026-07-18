@@ -311,3 +311,52 @@ async def test_call_agent_unwraps_dict_result_response():
 async def test_call_agent_unwraps_dict_result_answer():
     out = await _call_agent_against({"result": {"answer": "The answer text"}})
     assert out == "The answer text"
+
+
+# ---- main() exit-code contract -------------------------------------------
+
+
+class TestMainExitCode:
+    """Argo reads the container exit code to decide retry/failure: run_job
+    raising must exit 1; a clean run must exit 0 (main returns, no
+    SystemExit). Argparse is driven through sys.argv exactly as the
+    CronWorkflow template invokes the module."""
+
+    _ARGV = [
+        "job_executor",
+        "--job-id",
+        "job-42",
+        "--tenant-id",
+        "acme:prod",
+        "--runtime-url",
+        "http://runtime.svc:28000",
+    ]
+
+    def test_success_returns_without_system_exit(self, monkeypatch):
+        calls = []
+
+        async def _ok(job_id, tenant_id, runtime_url):
+            calls.append((job_id, tenant_id, runtime_url))
+
+        monkeypatch.setattr(je, "run_job", _ok)
+        monkeypatch.setattr("sys.argv", list(self._ARGV))
+
+        assert je.main() is None  # returns normally → process exit code 0
+        assert calls == [("job-42", "acme:prod", "http://runtime.svc:28000")]
+
+    def test_run_job_failure_exits_1(self, monkeypatch):
+        async def _boom(job_id, tenant_id, runtime_url):
+            raise RuntimeError("config store unreachable")
+
+        monkeypatch.setattr(je, "run_job", _boom)
+        monkeypatch.setattr("sys.argv", list(self._ARGV))
+
+        with pytest.raises(SystemExit) as excinfo:
+            je.main()
+        assert excinfo.value.code == 1
+
+    def test_missing_required_args_exit_2(self, monkeypatch):
+        monkeypatch.setattr("sys.argv", ["job_executor"])
+        with pytest.raises(SystemExit) as excinfo:
+            je.main()
+        assert excinfo.value.code == 2  # argparse usage error

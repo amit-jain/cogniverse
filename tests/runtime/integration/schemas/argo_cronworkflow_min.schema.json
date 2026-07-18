@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "argo_cronworkflow_min.schema.json",
+  "$comment": "Minimal Argo Workflows manifest schema, hand-derived from the upstream definitions io.argoproj.workflow.v1alpha1.CronWorkflow / .Workflow / .WorkflowSpec / .WorkflowTemplateRef / .Arguments and io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta in argoproj/argo-workflows api/jsonschema/schema.json. Deliberately narrowed to the fields the tenant router emits, with additionalProperties:false so a misspelled key (e.g. workflowTemplateReff) fails validation instead of being silently dropped by Argo.",
+  "oneOf": [
+    { "$ref": "#/$defs/cronWorkflow" },
+    { "$ref": "#/$defs/workflow" }
+  ],
+  "$defs": {
+    "rfc1123Name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+    },
+    "labelValue": {
+      "type": "string",
+      "maxLength": 63,
+      "pattern": "^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$"
+    },
+    "objectMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/rfc1123Name" },
+        "generateName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([-a-z0-9.]*)?$"
+        },
+        "namespace": { "$ref": "#/$defs/rfc1123Name" },
+        "labels": {
+          "type": "object",
+          "propertyNames": {
+            "maxLength": 317,
+            "pattern": "^([a-z0-9A-Z]([-a-z0-9A-Z_.]*[a-z0-9A-Z])?/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$"
+          },
+          "additionalProperties": { "$ref": "#/$defs/labelValue" }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "value": { "type": "string" },
+        "valueFrom": { "type": "object" }
+      }
+    },
+    "arguments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "parameters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/parameter" }
+        },
+        "artifacts": { "type": "array" }
+      }
+    },
+    "workflowTemplateRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "clusterScope": { "type": "boolean" }
+      }
+    },
+    "workflowSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflowTemplateRef"],
+      "properties": {
+        "serviceAccountName": { "type": "string", "minLength": 1 },
+        "entrypoint": { "type": "string" },
+        "suspend": { "type": "boolean" },
+        "workflowTemplateRef": { "$ref": "#/$defs/workflowTemplateRef" },
+        "arguments": { "$ref": "#/$defs/arguments" },
+        "ttlStrategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secondsAfterCompletion": { "type": "integer", "minimum": 0 },
+            "secondsAfterSuccess": { "type": "integer", "minimum": 0 },
+            "secondsAfterFailure": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "cronWorkflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "properties": {
+        "apiVersion": { "const": "argoproj.io/v1alpha1" },
+        "kind": { "const": "CronWorkflow" },
+        "metadata": {
+          "$ref": "#/$defs/objectMeta",
+          "required": ["name", "namespace"]
+        },
+        "spec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schedule", "workflowSpec"],
+          "properties": {
+            "schedule": { "type": "string", "minLength": 1 },
+            "timezone": { "type": "string" },
+            "suspend": { "type": "boolean" },
+            "concurrencyPolicy": { "enum": ["Allow", "Forbid", "Replace"] },
+            "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
+            "successfulJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+            "failedJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+            "workflowSpec": { "$ref": "#/$defs/workflowSpec" }
+          }
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind", "metadata", "spec"],
+      "properties": {
+        "apiVersion": { "const": "argoproj.io/v1alpha1" },
+        "kind": { "const": "Workflow" },
+        "metadata": {
+          "$ref": "#/$defs/objectMeta",
+          "anyOf": [
+            { "required": ["name"] },
+            { "required": ["generateName"] }
+          ]
+        },
+        "spec": { "$ref": "#/$defs/workflowSpec" }
+      }
+    }
+  }
+}

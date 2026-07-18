@@ -968,3 +968,59 @@ class TestAnnotationEnqueueAndPersist:
         )
         assert resp.status_code == 400
         assert queue.get("span-b1").status == AnnotationStatus.PENDING
+
+
+@pytest.mark.unit
+class TestGetAgentCard:
+    """GET /agents/{name}/card builds the A2A card from the registry entry."""
+
+    @pytest.fixture
+    def card_client(self):
+        from cogniverse_core.common.agent_models import AgentEndpoint
+
+        entry = AgentEndpoint(
+            name="video_search_agent",
+            url="http://agents.svc:9001",
+            capabilities=["video_search", "summarization"],
+            health_endpoint="/healthz",
+            process_endpoint="/tasks/process",
+            health_status="healthy",
+        )
+        registry = MagicMock(name="agent_registry")
+        registry.get_agent.side_effect = lambda name: (
+            entry if name == "video_search_agent" else None
+        )
+
+        saved_registry = agents_router._agent_registry
+        agents_router.set_agent_registry(registry)
+        test_app = FastAPI()
+        test_app.include_router(agents_router.router, prefix="/agents")
+        try:
+            with TestClient(test_app) as client:
+                yield client, registry
+        finally:
+            agents_router._agent_registry = saved_registry
+            agents_router._dispatcher = None
+
+    def test_card_body_maps_registry_entry_exactly(self, card_client):
+        client, registry = card_client
+        resp = client.get("/agents/video_search_agent/card")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "name": "video_search_agent",
+            "url": "http://agents.svc:9001",
+            "version": "1.0",
+            "capabilities": ["video_search", "summarization"],
+            "endpoints": {
+                "health": "/healthz",
+                "process": "/tasks/process",
+                "info": "/agents/video_search_agent",
+            },
+        }
+        registry.get_agent.assert_called_once_with("video_search_agent")
+
+    def test_unknown_agent_card_returns_404(self, card_client):
+        client, _ = card_client
+        resp = client.get("/agents/ghost_agent/card")
+        assert resp.status_code == 404
+        assert resp.json() == {"detail": "Agent 'ghost_agent' not found"}
