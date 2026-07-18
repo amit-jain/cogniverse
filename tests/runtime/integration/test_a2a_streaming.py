@@ -691,17 +691,22 @@ class TestSearchAgentStreaming:
 class TestImageSearchAgentStreaming:
     """ImageSearchAgent streaming with real Vespa."""
 
-    def test_stream_phases_and_output(self, vespa_instance, config_manager, dspy_lm):
+    def test_stream_phases_and_output(
+        self, vespa_instance, config_manager, dspy_lm, tomoro_search_url
+    ):
         from cogniverse_agents.image_search_agent import (
             ImageSearchAgent,
             ImageSearchDeps,
             ImageSearchInput,
         )
+        from cogniverse_foundation.config.utils import get_config
 
         agent = ImageSearchAgent(
             deps=ImageSearchDeps(
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
                 tenant_id="test:unit",
+                encoder_config=get_config("test:unit", config_manager),
+                image_profile="test_colpali",
             )
         )
 
@@ -771,17 +776,22 @@ class TestAudioAnalysisAgentStreaming:
 class TestDocumentAgentStreaming:
     """DocumentAgent streaming with real Vespa."""
 
-    def test_stream_phases_and_output(self, vespa_instance, dspy_lm):
+    def test_stream_phases_and_output(
+        self, vespa_instance, config_manager, dspy_lm, tomoro_search_url
+    ):
         from cogniverse_agents.document_agent import (
             DocumentAgent,
             DocumentAgentDeps,
             DocumentSearchInput,
         )
+        from cogniverse_foundation.config.utils import get_config
 
         agent = DocumentAgent(
             deps=DocumentAgentDeps(
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
                 tenant_id="test:unit",
+                encoder_config=get_config("test:unit", config_manager),
+                visual_profile="test_colpali",
             )
         )
 
@@ -789,7 +799,7 @@ class TestDocumentAgentStreaming:
             agent,
             DocumentSearchInput(
                 query="quarterly earnings report",
-                strategy="semantic",
+                strategy="visual",
                 limit=5,
             ),
         )
