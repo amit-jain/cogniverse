@@ -15,9 +15,11 @@
 #   - vllm/vllm-openai              (CUDA vLLM image for embedding + chat)
 # Build recipes live under deploy/<component>/Dockerfile.cuda. Adjust
 # repository/tag to match your registry.
-
-devMode:
-  enabled: false
+#
+# No devMode key here: the base values.yaml already defaults it off, and
+# `cogniverse up` layers this file AFTER values.k3s.yaml — a devMode block
+# in a device overlay would silently disable the k3s dev-source mounts on
+# that device's hosts.
 
 # ---------------------------------------------------------------------------
 # Inference services — switch device to cuda; chart auto-injects

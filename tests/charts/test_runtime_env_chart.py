@@ -117,3 +117,56 @@ class TestRuntimeInstrumentationEnv:
             _render_chart("runtime.iterRetrieval.wallClockMs=45000")
         )
         assert env.get("ITER_RETRIEVAL_WALL_CLOCK_MS") == "45000"
+
+
+def _render_with_values(*values_files: str) -> list:
+    args = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+    ]
+    for f in values_files:
+        args += ["-f", str(CHART_PATH / f)]
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise AssertionError(
+            f"helm template failed (exit {result.returncode}):\n"
+            f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
+        )
+    return [doc for doc in yaml.safe_load_all(result.stdout) if doc]
+
+
+def _dev_mount_count(manifests: list) -> int:
+    count = 0
+    for m in manifests:
+        if m.get("kind") != "Deployment":
+            continue
+        for vol in (
+            m.get("spec", {}).get("template", {}).get("spec", {}).get("volumes", [])
+            or []
+        ):
+            if vol.get("name") == "src-libs":
+                count += 1
+    return count
+
+
+class TestDeviceOverlaysKeepDevMode:
+    """The device overlays layer on top of values.k3s.yaml in `cogniverse up`
+    (base first, device file second — later files win per key). A devMode
+    key in a device overlay silently disables the k3s dev-source mounts on
+    that device's hosts, killing the edit→restart loop."""
+
+    def test_k3s_plus_cuda_keeps_dev_mounts(self):
+        manifests = _render_with_values("values.k3s.yaml", "values.cuda.yaml")
+        assert _dev_mount_count(manifests) > 0
+
+    def test_base_plus_cuda_stays_non_dev(self):
+        manifests = _render_with_values("values.cuda.yaml")
+        assert _dev_mount_count(manifests) == 0
+
+    def test_k3s_plus_rocm_keeps_dev_mounts(self):
+        manifests = _render_with_values("values.k3s.yaml", "values.rocm.yaml")
+        assert _dev_mount_count(manifests) > 0
