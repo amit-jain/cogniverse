@@ -422,3 +422,53 @@ class TestManagerPoolLifecycle:
         assert rebuilt is not stale
         assert rebuilt.client is mgr._client
         assert rebuilt.client is new_clients[-1]
+
+
+class TestResolveTlsConfig:
+    """Client mTLS certs must be read from the same OPENSHELL_CONFIG_DIR tree
+    the cert rotator watches — a hardcoded home path makes connect read certs
+    rotation never refreshes."""
+
+    def test_certs_resolved_from_openshell_config_dir(self, monkeypatch, tmp_path):
+        import sys
+        from types import SimpleNamespace
+
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        class _RecordingTls:
+            def __init__(self, ca_path=None, cert_path=None, key_path=None):
+                self.ca_path = ca_path
+                self.cert_path = cert_path
+                self.key_path = key_path
+
+        monkeypatch.setitem(
+            sys.modules, "openshell", SimpleNamespace(TlsConfig=_RecordingTls)
+        )
+        mtls = tmp_path / "gateways" / "gw-a" / "mtls"
+        mtls.mkdir(parents=True)
+        for name in ("ca.crt", "tls.crt", "tls.key"):
+            (mtls / name).write_text("pem")
+        monkeypatch.setenv("OPENSHELL_CONFIG_DIR", str(tmp_path))
+
+        mgr = SandboxManager(policy="disabled")
+        tls = mgr._resolve_tls_config()
+
+        assert isinstance(tls, _RecordingTls)
+        assert tls.ca_path == mtls / "ca.crt"
+        assert tls.cert_path == mtls / "tls.crt"
+        assert tls.key_path == mtls / "tls.key"
+
+    def test_incomplete_cert_set_returns_none(self, monkeypatch, tmp_path):
+        import sys
+        from types import SimpleNamespace
+
+        from cogniverse_runtime.sandbox_manager import SandboxManager
+
+        monkeypatch.setitem(sys.modules, "openshell", SimpleNamespace(TlsConfig=object))
+        mtls = tmp_path / "gateways" / "gw-a" / "mtls"
+        mtls.mkdir(parents=True)
+        (mtls / "ca.crt").write_text("pem")  # tls.crt / tls.key missing
+        monkeypatch.setenv("OPENSHELL_CONFIG_DIR", str(tmp_path))
+
+        mgr = SandboxManager(policy="disabled")
+        assert mgr._resolve_tls_config() is None
