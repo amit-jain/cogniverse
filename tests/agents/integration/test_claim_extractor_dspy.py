@@ -111,26 +111,6 @@ def assert_golden_edges(sorted_edges: Any, name: str) -> None:
     )
 
 
-def assert_text_golden(actual: str, name: str) -> None:
-    """Byte-equal text assertion (no JSON wrap) against a golden file."""
-    path = _golden(name)
-    if RECORD_GOLDEN:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(actual + ("\n" if not actual.endswith("\n") else ""))
-        return
-    if not path.exists():
-        raise AssertionError(
-            f"Text golden missing: {path}\n"
-            f"To create it: RECORD_GOLDEN=1 uv run pytest <this test>"
-        )
-    expected = path.read_text().rstrip("\n")
-    assert actual.rstrip("\n") == expected, (
-        f"Text golden mismatch for {name}.\n"
-        f"To regenerate: RECORD_GOLDEN=1 uv run pytest <this test>\n"
-        f"--- expected ---\n{expected}\n--- actual ---\n{actual}"
-    )
-
-
 # --------------------------------------------------------------------------- #
 # Skip the entire file when the test LM is unreachable.                       #
 # --------------------------------------------------------------------------- #
