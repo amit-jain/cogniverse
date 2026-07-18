@@ -859,6 +859,37 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     invalidate_tenant_exists(canonical_tid)
     tenant_full_id = canonical_tid  # for the logger.info + return below
 
+    # Tenant create auto-creates the org; deleting the org's last tenant
+    # removes it again so provision/teardown cycles don't accumulate orgs.
+    # The tenant itself is already gone here, so a cleanup failure warns and
+    # reports organization_deleted false instead of failing the delete.
+    organization_deleted = False
+    if tenant:
+        org_id = canonical_tid.split(":", 1)[0]
+        try:
+            remaining = await list_tenants_for_org_internal(org_id)
+            if not remaining and await get_organization_internal(org_id):
+                # delete_metadata_document reports a non-200 as False without
+                # raising — only claim the deletion when it actually happened.
+                organization_deleted = bool(
+                    await asyncio.to_thread(
+                        backend.delete_metadata_document,
+                        schema="organization_metadata",
+                        doc_id=org_id,
+                    )
+                )
+                if organization_deleted:
+                    logger.info(f"Deleted organization {org_id} (no tenants remain)")
+                else:
+                    logger.warning(
+                        f"Organization {org_id} delete reported failure; it may remain"
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Organization cleanup after deleting tenant {canonical_tid} "
+                f"failed (organization {org_id} may remain): {e}"
+            )
+
     logger.info(f"Deleted tenant {tenant_full_id} with {len(deleted_schemas)} schemas")
 
     return {
@@ -866,6 +897,7 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
         "tenant_full_id": tenant_full_id,
         "schemas_deleted": len(deleted_schemas),
         "deleted_schemas": deleted_schemas,
+        "organization_deleted": organization_deleted,
     }
 
 

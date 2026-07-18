@@ -78,6 +78,11 @@ class ApprovalStorageImpl(ApprovalStorage):
             tenant_id: Tenant ID for multi-tenant project scoping
             telemetry_manager: TelemetryManager instance (if None, creates one)
         """
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # Runtime writers register approval spans under the canonical tenant;
+        # register, name, and query the same scope regardless of spelling.
+        tenant_id = canonical_tenant_id(tenant_id)
 
         self.grpc_endpoint = grpc_endpoint
         self.http_endpoint = http_endpoint

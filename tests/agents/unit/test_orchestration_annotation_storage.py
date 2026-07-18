@@ -75,3 +75,28 @@ async def test_query_annotated_spans_empty_when_no_annotations():
     now = datetime.now(timezone.utc)
     result = await storage.query_annotated_spans(start_time=now, end_time=now)
     assert result == []
+
+
+def test_ctor_canonicalizes_tenant_for_provider_scoping():
+    """The runtime persists orchestration annotations under the canonical
+    tenant provider; a storage built with a raw id (e.g. a dashboard tab's
+    current_tenant) must resolve the SAME provider scope."""
+    from unittest.mock import patch
+
+    provider = MagicMock()
+    mgr = MagicMock()
+    mgr.get_provider.return_value = provider
+
+    with patch(
+        "cogniverse_agents.routing.orchestration_annotation_storage.get_telemetry_manager",
+        return_value=mgr,
+    ):
+        from cogniverse_agents.routing.orchestration_annotation_storage import (
+            OrchestrationAnnotationStorage,
+        )
+
+        storage = OrchestrationAnnotationStorage(tenant_id="acme")
+
+    assert storage.tenant_id == "acme:acme"
+    mgr.get_provider.assert_called_once_with(tenant_id="acme:acme")
+    assert storage.provider is provider

@@ -83,6 +83,12 @@ class OrchestrationAnnotationStorage:
 
     def __init__(self, tenant_id: str, project_name: str = "cogniverse"):
         """Initialize annotation storage"""
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # The runtime persists annotations under the canonical tenant
+        # provider; resolve the same scope regardless of spelling.
+        tenant_id = canonical_tenant_id(tenant_id)
+        self.tenant_id = tenant_id
         self.project_name = project_name
 
         # Get telemetry provider for annotations

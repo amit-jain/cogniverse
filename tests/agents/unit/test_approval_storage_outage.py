@@ -60,3 +60,23 @@ async def test_append_to_training_dataset_raises_on_outage():
         await storage.append_to_training_dataset(
             dataset_name="approved_synthetic_data", items=[item]
         )
+
+
+def test_ctor_canonicalizes_tenant_for_project_and_provider():
+    """Runtime writers register approval spans under the canonical tenant;
+    a storage built with a raw id must register, name, and query the SAME
+    scope or the approval queue reads an empty project."""
+    mgr = MagicMock()
+    mgr.config.provider_config = {}
+
+    storage = ApprovalStorageImpl(
+        grpc_endpoint="http://localhost:4317",
+        http_endpoint="http://localhost:6006",
+        tenant_id="acme",
+        telemetry_manager=mgr,
+    )
+
+    assert storage.tenant_id == "acme:acme"
+    assert storage.full_project_name == "cogniverse-acme:acme-synthetic_data"
+    assert mgr.register_project.call_args.kwargs["tenant_id"] == "acme:acme"
+    assert mgr.get_provider.call_args.kwargs["tenant_id"] == "acme:acme"

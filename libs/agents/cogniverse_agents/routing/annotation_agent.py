@@ -151,6 +151,12 @@ class AnnotationAgent:
             max_annotations_per_run: Maximum annotations to request per run
             automation_rules: Optional declarative config (overrides individual kwargs)
         """
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # The runtime writes spans under the canonical tenant project; scope
+        # every read the same way regardless of how the caller spelled it.
+        tenant_id = canonical_tenant_id(tenant_id)
+
         if automation_rules is not None:
             thresholds = automation_rules.annotation_thresholds
             self.confidence_threshold = thresholds.confidence_threshold
