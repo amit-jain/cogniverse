@@ -80,7 +80,13 @@ All modules are flat files directly under `cogniverse_cli/` (no subpackages).
 ### Stack lifecycle
 
 ```bash
-# Deploy the full stack (creates a k3d cluster if none exists)
+# Deploy the full stack (creates a k3d cluster if none exists). Builds the
+# images at the git-derived dev version, imports them into k3d, and
+# helm-upgrades with the chart stamped to the same version. In dev mode the
+# pods mount the working tree over the images, so day-to-day code changes
+# only need a `kubectl rollout restart` of the affected deployment — rerun
+# `cogniverse up` when dependencies, Dockerfiles, or the chart change (see
+# "Development Workflow: Three Loops" in docs/DEVELOPER_GUIDE.md).
 cogniverse up
 cogniverse up --llm external --llm-url http://my-llm:8000/v1
 cogniverse up --messaging  # also enable the Telegram gateway (needs TELEGRAM_BOT_TOKEN)
