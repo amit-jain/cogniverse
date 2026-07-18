@@ -825,7 +825,9 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
                 targets.add((tid, info.base_schema_name))
 
     try:
-        deployed_full_names = schema_manager.list_deployed_document_types()
+        deployed_full_names = await asyncio.to_thread(
+            schema_manager.list_deployed_document_types
+        )
     except Exception as e:
         deployed_full_names = []
         logger.warning(
@@ -844,7 +846,12 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     deleted_schemas: list = []
     for tid, base_name in sorted(targets):
         try:
-            full_name = schema_manager.delete_schema(tid, base_name)
+            # Off the loop: each schema removal redeploys the application
+            # package and waits for convergence (minutes) — run inline it
+            # blocks every other request, /health included.
+            full_name = await asyncio.to_thread(
+                schema_manager.delete_schema, tid, base_name
+            )
             deleted_schemas.append(full_name)
         except Exception as e:
             logger.error(
@@ -852,7 +859,11 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
             )
 
     if tenant:
-        backend.delete_metadata_document(schema="tenant_metadata", doc_id=canonical_tid)
+        await asyncio.to_thread(
+            backend.delete_metadata_document,
+            schema="tenant_metadata",
+            doc_id=canonical_tid,
+        )
 
     from cogniverse_core.common.tenant_utils import invalidate_tenant_exists
 

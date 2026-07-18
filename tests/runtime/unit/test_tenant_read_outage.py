@@ -222,3 +222,51 @@ async def test_org_delete_reporting_failure_is_not_claimed_deleted(monkeypatch, 
     assert result["organization_deleted"] is False
     assert len(_org_deletes(backend)) == 1
     assert "may remain" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_schema_delete_runs_off_the_event_loop(monkeypatch):
+    """Each schema-removal redeploy takes minutes of Vespa deploy +
+    convergence; run inline it blocks the whole runtime API (health
+    included) for the duration of a tenant delete."""
+    import threading
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.admin import tenant_manager as tm
+
+    loop_thread = threading.get_ident()
+    delete_threads: list[int] = []
+
+    backend = MagicMock()
+    registry = MagicMock()
+    registry.get_tenant_schemas.return_value = [
+        SimpleNamespace(base_schema_name="video_x")
+    ]
+    backend.schema_manager._schema_registry = registry
+    backend.schema_manager.list_deployed_document_types.return_value = []
+
+    def _record_delete(tid, base_name):
+        delete_threads.append(threading.get_ident())
+        return f"video_x_{tid.replace(':', '_')}"
+
+    backend.schema_manager.delete_schema.side_effect = _record_delete
+    monkeypatch.setattr(tm, "get_backend", lambda: backend)
+
+    async def _tenant(_tid):
+        return MagicMock()
+
+    async def _org(_org_id):
+        return None
+
+    async def _remaining(_org_id):
+        return []
+
+    monkeypatch.setattr(tm, "get_tenant_internal", _tenant)
+    monkeypatch.setattr(tm, "get_organization_internal", _org)
+    monkeypatch.setattr(tm, "list_tenants_for_org_internal", _remaining)
+
+    result = await tm.delete_tenant_internal("acme:acme")
+
+    assert result["schemas_deleted"] >= 1
+    assert delete_threads, "delete_schema was never called"
+    assert all(t != loop_thread for t in delete_threads)
