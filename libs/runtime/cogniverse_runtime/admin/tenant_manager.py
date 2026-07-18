@@ -831,8 +831,13 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
             )
 
     from cogniverse_core.common.tenant_utils import invalidate_tenant_exists
+    from cogniverse_foundation.caching import evict_tenant_from_registered_caches
 
     invalidate_tenant_exists(canonical_tid)
+    # Drop the tenant's cached per-tenant state (gateway agents, graph
+    # managers, artifact managers) so a deleted tenant releases its memory
+    # now instead of lingering until LRU pressure evicts it.
+    evict_tenant_from_registered_caches(canonical_tid)
     tenant_full_id = canonical_tid  # for the logger.info + return below
 
     # Tenant create auto-creates the org; deleting the org's last tenant

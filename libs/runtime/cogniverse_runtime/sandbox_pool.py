@@ -59,12 +59,18 @@ class SandboxPoolConfig:
 
 @dataclass
 class _PoolEntry:
-    """One slot in the pool: a session plus its last-used timestamp."""
+    """One slot in the pool: a session plus its last-used timestamp.
+
+    ``drain`` is set by ``close_all`` on sessions that are checked out at
+    close time: the in-flight exec keeps the session until it returns, and
+    ``_release`` then destroys it instead of re-pooling.
+    """
 
     agent_type: str
     session: Any
     last_used_at: float
     in_use: bool = False
+    drain: bool = False
 
 
 class SandboxSessionPool:
@@ -99,6 +105,10 @@ class SandboxSessionPool:
         # needed later (e.g. multiple sessions per agent for parallelism),
         # extend the value to a list.
         self._entries: dict[str, _PoolEntry] = {}
+        # Set by close_all and never cleared: a closed pool is being
+        # discarded (shutdown or reconnect swap), so released sessions are
+        # destroyed instead of re-pooled.
+        self._draining = False
 
     # --- public API -------------------------------------------------------
 
@@ -179,11 +189,28 @@ class SandboxSessionPool:
         return evicted
 
     def close_all(self) -> None:
-        """Destroy every pooled session. Called from runtime shutdown."""
+        """Destroy idle sessions now; drain checked-out ones on release.
+
+        Called from runtime shutdown and from the reconnect path
+        (``_drop_stale_pool``), which can run while a coding exec still
+        holds a checked-out session — deleting that session here would tear
+        it out from under the exec mid-call. Instead, in-use sessions are
+        marked to drain and destroyed by ``_release`` when the exec
+        returns. The pool stays draining afterwards, so nothing is ever
+        re-pooled onto a closed pool.
+        """
         with self._lock:
-            entries = list(self._entries.values())
-            self._entries.clear()
-        for entry in entries:
+            self._draining = True
+            idle = [e for e in self._entries.values() if not e.in_use]
+            for entry in self._entries.values():
+                if entry.in_use:
+                    entry.drain = True
+            for entry in idle:
+                self._entries.pop(entry.agent_type, None)
+        # Destroy OUTSIDE the lock: session.delete() is an un-timed gateway
+        # RPC — holding self._lock across it would block every
+        # checkout/release behind a hung gateway.
+        for entry in idle:
             self._destroy_session_quiet(entry.session)
 
     # --- internals --------------------------------------------------------
@@ -228,13 +255,16 @@ class SandboxSessionPool:
 
     def _release(self, entry: _PoolEntry) -> None:
         with self._lock:
-            if self._entries.get(entry.agent_type) is entry:
+            pooled = self._entries.get(entry.agent_type) is entry
+            if pooled and not (self._draining or entry.drain):
                 entry.in_use = False
                 entry.last_used_at = time.monotonic()
                 return
-        # Not the pooled slot — an over-provisioned transient (or one
-        # replaced by a concurrent checkout). Destroy it so the live
-        # session isn't orphaned.
+            if pooled:
+                self._entries.pop(entry.agent_type, None)
+        # Draining (close_all ran while this session was checked out), an
+        # over-provisioned transient, or one replaced by a concurrent
+        # checkout — destroy instead of re-pooling, outside the lock.
         self._destroy_session_quiet(entry.session)
 
     def _discard(self, agent_type: str, entry: _PoolEntry, *, reason: str) -> None:

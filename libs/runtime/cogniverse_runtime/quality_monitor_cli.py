@@ -89,6 +89,9 @@ async def run_annotation_cycle(
     to_enqueue: list = []
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)
+    # Every agent type queries the same window, so one whole-project span
+    # pull feeds all the per-agent annotation joins.
+    project_spans = None
 
     for agent_type in agent_types:
         agent = annotation_agent_mod.AnnotationAgent(
@@ -104,8 +107,13 @@ async def run_annotation_cycle(
         storage = annotation_storage_mod.AnnotationStorage(
             tenant_id=tenant_id, agent_type=agent_type
         )
+        if project_spans is None:
+            project_spans = await storage.fetch_project_spans(start_time, end_time)
         annotated_rows = await storage.query_annotated_spans(
-            start_time=start_time, end_time=end_time, only_human_reviewed=False
+            start_time=start_time,
+            end_time=end_time,
+            only_human_reviewed=False,
+            spans_df=project_spans,
         )
         annotated_ids = {row.get("span_id") for row in annotated_rows}
 
@@ -315,6 +323,11 @@ async def run_annotation_feedback_cycle(
     last_optimization = dict(state.get("last_optimization_at") or {})
     per_agent: dict = {}
     thresholds_refresh_submitted = False
+    # Every agent type queries the same window, so one whole-project span
+    # pull feeds all the per-agent annotation joins. Fetched lazily inside
+    # the per-agent try: a Phoenix fault marks that agent errored and the
+    # next agent retries the fetch, preserving per-agent isolation.
+    project_spans = None
 
     # Per-agent isolation: one agent's fault (Phoenix blip, dataset write)
     # must not abort the agents after it. The finally persists the poll stamp
@@ -326,10 +339,15 @@ async def run_annotation_feedback_cycle(
                 storage = annotation_storage_mod.AnnotationStorage(
                     tenant_id=tenant_id, agent_type=agent_type
                 )
+                if project_spans is None:
+                    project_spans = await storage.fetch_project_spans(
+                        start_time, end_time
+                    )
                 rows = await storage.query_annotated_spans(
                     start_time=start_time,
                     end_time=end_time,
                     only_human_reviewed=True,
+                    spans_df=project_spans,
                 )
                 count = len(rows)
                 outcome = {"annotations": count, "action": "none"}

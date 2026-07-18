@@ -24,6 +24,11 @@ _VLM_DESCRIBE_PROMPT = (
     "scene setting, and any visible text. Be concise and factual."
 )
 
+# Persist progress every N batches (plus once after the loop). Each flush
+# re-serializes the ENTIRE growing descriptions dict, so a per-batch flush
+# was quadratic write amplification over a long video.
+_PROGRESS_FLUSH_EVERY = 10
+
 
 class VLMDescriptor:
     """Handles VLM description generation for keyframes"""
@@ -164,6 +169,11 @@ class VLMDescriptor:
         # Process in batches
         descriptions = {}
         total_batches = (len(keyframes) + self.batch_size - 1) // self.batch_size
+        descriptions_file.parent.mkdir(parents=True, exist_ok=True)
+
+        def _flush_progress():
+            with open(descriptions_file, "w") as f:
+                json.dump(descriptions, f, indent=2)
 
         for i in range(0, len(keyframes), self.batch_size):
             batch_num = i // self.batch_size + 1
@@ -175,10 +185,10 @@ class VLMDescriptor:
             batch_descriptions = self._process_vlm_batch(batch)
             descriptions.update(batch_descriptions)
 
-            # Save progress periodically
-            descriptions_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(descriptions_file, "w") as f:
-                json.dump(descriptions, f, indent=2)
+            if batch_num % _PROGRESS_FLUSH_EVERY == 0 and batch_num < total_batches:
+                _flush_progress()
+
+        _flush_progress()
 
         self.logger.info(
             f"Successfully generated {len(descriptions)} descriptions for video: {video_id}"

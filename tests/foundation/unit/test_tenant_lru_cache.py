@@ -224,3 +224,68 @@ def test_set_if_absent_evicts_over_capacity():
 
     assert evicted == ["a"]
     assert "b" in cache and "a" not in cache
+
+
+class TestTenantCacheRegistry:
+    """register_tenant_cache + evict_tenant_from_registered_caches let tenant
+    deletion drop a deleted tenant's entries from every per-tenant cache in
+    the process, instead of each cache growing until its LRU bound."""
+
+    def test_evict_drops_only_the_deleted_tenant_from_registered_caches(self):
+        from cogniverse_foundation.caching import (
+            evict_tenant_from_registered_caches,
+            register_tenant_cache,
+        )
+
+        cache_a: TenantLRUCache[int] = register_tenant_cache(TenantLRUCache(capacity=4))
+        cache_b: TenantLRUCache[int] = register_tenant_cache(TenantLRUCache(capacity=4))
+        cache_a.set("lrureg1:one", 1)
+        cache_a.set("lrureg1:two", 2)
+        cache_b.set("lrureg1:one", 3)
+
+        evicted = evict_tenant_from_registered_caches("lrureg1:one")
+
+        assert evicted == 2
+        assert "lrureg1:one" not in cache_a
+        assert "lrureg1:one" not in cache_b
+        assert cache_a.get("lrureg1:two") == 2
+
+    def test_evict_canonicalizes_the_tenant_id(self):
+        from cogniverse_foundation.caching import (
+            evict_tenant_from_registered_caches,
+            register_tenant_cache,
+        )
+
+        cache: TenantLRUCache[int] = register_tenant_cache(TenantLRUCache(capacity=4))
+        cache.set("lrureg2:lrureg2", 1)
+
+        assert evict_tenant_from_registered_caches("lrureg2") == 1
+        assert "lrureg2:lrureg2" not in cache
+
+    def test_unregistered_cache_is_untouched(self):
+        from cogniverse_foundation.caching import evict_tenant_from_registered_caches
+
+        cache: TenantLRUCache[int] = TenantLRUCache(capacity=4)
+        cache.set("lrureg3:one", 1)
+
+        evict_tenant_from_registered_caches("lrureg3:one")
+
+        assert cache.get("lrureg3:one") == 1
+
+    def test_registry_does_not_keep_caches_alive(self):
+        import gc
+        import weakref
+
+        from cogniverse_foundation.caching import (
+            evict_tenant_from_registered_caches,
+            register_tenant_cache,
+        )
+
+        cache: TenantLRUCache[int] = register_tenant_cache(TenantLRUCache(capacity=4))
+        cache.set("lrureg4:one", 1)
+        ref = weakref.ref(cache)
+        del cache
+        gc.collect()
+
+        assert ref() is None
+        assert evict_tenant_from_registered_caches("lrureg4:one") == 0

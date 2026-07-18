@@ -76,7 +76,12 @@ class _StorageStub:
     def __init__(self, tenant_id, agent_type="routing"):
         self.agent_type = agent_type
 
-    async def query_annotated_spans(self, start_time, end_time, only_human_reviewed):
+    async def fetch_project_spans(self, start_time, end_time):
+        return None
+
+    async def query_annotated_spans(
+        self, start_time, end_time, only_human_reviewed, spans_df=None
+    ):
         return self.rows_by_type.get(self.agent_type, [])
 
 
@@ -85,7 +90,9 @@ class _BlippingStorageStub(_StorageStub):
 
     fail_types: set = set()
 
-    async def query_annotated_spans(self, start_time, end_time, only_human_reviewed):
+    async def query_annotated_spans(
+        self, start_time, end_time, only_human_reviewed, spans_df=None
+    ):
         if self.agent_type in self.fail_types:
             raise ConnectionError(f"phoenix unreachable for {self.agent_type}")
         return self.rows_by_type.get(self.agent_type, [])
@@ -292,6 +299,76 @@ async def test_clean_cycle_reports_success():
 
     assert result["status"] == "success"
     assert "errored_agents" not in result
+
+
+class _CountingTraceStore:
+    """Counts whole-project span pulls and serves one span row."""
+
+    def __init__(self):
+        self.get_spans_calls = 0
+
+    async def get_spans(
+        self, project, start_time=None, end_time=None, filters=None, limit=1000
+    ):
+        import pandas as pd
+
+        self.get_spans_calls += 1
+        return pd.DataFrame([{"context.span_id": "s1", "name": "cogniverse.routing"}])
+
+
+class _EmptyAnnotationStore:
+    async def get_annotations(self, spans_df=None, project=None, annotation_names=None):
+        import pandas as pd
+
+        return pd.DataFrame()
+
+
+class _StubTelemetryManager:
+    """Hands the real AnnotationStorage a counting provider."""
+
+    def __init__(self, provider):
+        from types import SimpleNamespace
+
+        self._provider = provider
+        self.config = SimpleNamespace(get_project_name=lambda tid: f"cogniverse-{tid}")
+
+    def get_provider(self, tenant_id):
+        return self._provider
+
+
+@pytest.mark.asyncio
+async def test_feedback_cycle_pulls_project_spans_once_across_all_agents():
+    """The real AnnotationStorage shares ONE whole-project span pull across
+    every agent type in the cycle. The per-agent queries use an identical
+    time window, so re-pulling the project per agent multiplied the scan by
+    the number of agent types on every cron tick."""
+    from types import SimpleNamespace
+
+    trace_store = _CountingTraceStore()
+    provider = SimpleNamespace(traces=trace_store, annotations=_EmptyAnnotationStore())
+    argo = _ArgoCapture()
+
+    with patch(
+        "cogniverse_agents.routing.annotation_storage.get_telemetry_manager",
+        return_value=_StubTelemetryManager(provider),
+    ):
+        result = await run_annotation_feedback_cycle(
+            tenant_id="acme:acme",
+            argo_url="http://argo:2746",
+            argo_namespace="cogniverse",
+            automation_rules=_rules(),
+            config_manager=_config_manager(),
+            http_client=argo,
+            dataset_store=_DatasetStoreStub(),
+            now=NOW,
+        )
+
+    assert result["status"] == "success"
+    assert all(
+        v == {"annotations": 0, "action": "none"} for v in result["agents"].values()
+    )
+    assert len(result["agents"]) == 8
+    assert trace_store.get_spans_calls == 1
 
 
 class TestLoopStateFaultContract:

@@ -1,7 +1,6 @@
 """Agent endpoints - unified interface for all agent operations."""
 
 import logging
-import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -55,6 +54,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Bound on cached per-tenant ArtifactManagers. Least-recently-dispatched
+# tenants rebuild on their next request; tenant delete evicts eagerly via
+# the registered-cache hook.
+ARTIFACT_MANAGER_CACHE_CAPACITY = 64
+
 # Module-level dependencies (injected from main.py)
 _agent_registry: Optional[AgentRegistry] = None
 _config_manager: Optional[ConfigManager] = None
@@ -106,20 +110,21 @@ def _build_artifact_manager_factory():
         return None
 
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_foundation.caching import TenantLRUCache, register_tenant_cache
 
     # Reuse one ArtifactManager per tenant so its 5s-TTL request cache (artefact
     # state + prompts, invalidated on promote/retire) spans dispatches. A fresh
     # manager per request discarded that cache, re-reading Phoenix every time.
-    cache: dict[str, ArtifactManager] = {}
-    lock = threading.Lock()
+    # LRU-bounded; tenant delete evicts eagerly via the registered-cache hook.
+    cache: TenantLRUCache[ArtifactManager] = register_tenant_cache(
+        TenantLRUCache(capacity=ARTIFACT_MANAGER_CACHE_CAPACITY)
+    )
 
     def factory(tenant_id: str):
-        with lock:
-            am = cache.get(tenant_id)
-            if am is None:
-                am = ArtifactManager(tm.get_provider(tenant_id=tenant_id), tenant_id)
-                cache[tenant_id] = am
-            return am
+        return cache.get_or_set(
+            tenant_id,
+            lambda: ArtifactManager(tm.get_provider(tenant_id=tenant_id), tenant_id),
+        )
 
     return factory
 

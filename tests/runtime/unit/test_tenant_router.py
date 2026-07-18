@@ -508,8 +508,12 @@ class TestMemoryAwareMixinInstructions:
         assert result == "Base prompt"
         assert "Tenant Instructions" not in result
 
-    def test_get_tenant_instructions_returns_text_from_config(self):
+    @staticmethod
+    def _agent_with_stored_instructions(text):
         from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+        from tests.utils.memory_store import InMemoryConfigStore
 
         class FakeAgent(MemoryAwareMixin):
             def __init__(self):
@@ -519,58 +523,43 @@ class TestMemoryAwareMixinInstructions:
                 self._memory_initialized = False
 
         agent = FakeAgent()
-
-        mock_entry = MagicMock()
-        mock_entry.config_value = {
-            "text": "Always be helpful.",
-            "updated_at": "2024-01-01",
-        }
-        mock_cm = MagicMock()
-        mock_cm.store.get_config.return_value = mock_entry
+        store = InMemoryConfigStore()
+        store.initialize()
+        cm = ConfigManager(store=store)
+        if text is not None:
+            cm.set_config_value(
+                tenant_id="acme",
+                scope=ConfigScope.SYSTEM,
+                service="tenant_instructions",
+                config_key="system_prompt",
+                config_value={"text": text, "updated_at": "2024-01-01"},
+            )
         # The mixin reuses the dispatcher-injected config manager (or the process
         # singleton) rather than building a fresh one per call — inject it.
-        agent._config_manager = mock_cm
+        agent._config_manager = cm
+        return agent, store
+
+    def test_get_tenant_instructions_returns_text_from_config(self):
+        agent, _ = self._agent_with_stored_instructions("Always be helpful.")
 
         result = agent._get_tenant_instructions()
 
         assert result == "Always be helpful."
 
     def test_get_tenant_instructions_returns_none_on_error(self):
-        from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+        agent, store = self._agent_with_stored_instructions("Always be helpful.")
 
-        class FakeAgent(MemoryAwareMixin):
-            def __init__(self):
-                self.memory_manager = None
-                self._memory_agent_name = "a"
-                self._memory_tenant_id = "acme"
-                self._memory_initialized = False
+        def failing_get(*args, **kwargs):
+            raise RuntimeError("store unavailable")
 
-        agent = FakeAgent()
-        mock_cm = MagicMock()
-        mock_cm.store.get_config.side_effect = RuntimeError("store unavailable")
-        agent._config_manager = mock_cm
+        store.get_config = failing_get
 
         result = agent._get_tenant_instructions()
 
         assert result is None
 
     def test_get_tenant_instructions_returns_none_for_empty_text(self):
-        from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
-
-        class FakeAgent(MemoryAwareMixin):
-            def __init__(self):
-                self.memory_manager = None
-                self._memory_agent_name = "a"
-                self._memory_tenant_id = "acme"
-                self._memory_initialized = False
-
-        agent = FakeAgent()
-
-        mock_entry = MagicMock()
-        mock_entry.config_value = {"text": "", "updated_at": "2024-01-01"}
-        mock_cm = MagicMock()
-        mock_cm.store.get_config.return_value = mock_entry
-        agent._config_manager = mock_cm
+        agent, _ = self._agent_with_stored_instructions("")
 
         result = agent._get_tenant_instructions()
 

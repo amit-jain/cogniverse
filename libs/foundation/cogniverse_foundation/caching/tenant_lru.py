@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import logging
 import threading
+import weakref
 from collections import OrderedDict
-from typing import Callable, Generic, Optional, TypeVar
+from typing import Any, Callable, Generic, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -155,3 +156,39 @@ class TenantLRUCache(Generic[T]):
             self._on_evict(key, value)
         except Exception as exc:
             logger.warning("TenantLRUCache on_evict failed for %s: %s", key, exc)
+
+
+# Caches enrolled for tenant-delete eviction. Weak references: a registered
+# cache owned by a discarded consumer (e.g. a rebuilt dispatcher) drops out
+# on garbage collection instead of leaking through the registry.
+_REGISTERED_TENANT_CACHES: "weakref.WeakSet[TenantLRUCache[Any]]" = weakref.WeakSet()
+
+
+def register_tenant_cache(cache: TenantLRUCache[T]) -> TenantLRUCache[T]:
+    """Enroll a tenant-keyed cache for eviction on tenant delete.
+
+    Returns the cache so construction and registration compose:
+    ``cache = register_tenant_cache(TenantLRUCache(capacity=64))``.
+    """
+    _REGISTERED_TENANT_CACHES.add(cache)
+    return cache
+
+
+def evict_tenant_from_registered_caches(tenant_id: str) -> int:
+    """Drop ``tenant_id`` from every registered cache; returns entries dropped.
+
+    Called by the tenant-delete path so a deleted tenant's cached per-tenant
+    state (gateway agents, graph managers, artifact managers) is released
+    immediately instead of lingering until LRU pressure evicts it. Pops both
+    the given and the canonical ``org:tenant`` key so simple-form entries are
+    covered. ``on_evict`` does not fire — deletion is a hard drop.
+    """
+    from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+
+    keys = {tenant_id, canonical_tenant_id(tenant_id)}
+    evicted = 0
+    for cache in list(_REGISTERED_TENANT_CACHES):
+        for key in keys:
+            if cache.pop(key) is not None:
+                evicted += 1
+    return evicted

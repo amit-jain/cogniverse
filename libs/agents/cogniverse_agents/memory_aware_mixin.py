@@ -605,22 +605,18 @@ class MemoryAwareMixin:
             from cogniverse_foundation.config.utils import (
                 get_config_manager_singleton,
             )
-            from cogniverse_sdk.interfaces.config_store import ConfigScope
 
             # Reuse the dispatcher-injected manager (or the process singleton)
             # instead of building a fresh VespaConfigStore + TCP session on every
-            # dispatch — this runs per request on the enrichment path.
+            # dispatch — this runs per request on the enrichment path. The
+            # manager accessor serves the read from its scoped TTL cache; a
+            # direct cm.store.get_config here cost one synchronous store query
+            # per enriching dispatch.
             cm = (
                 getattr(self, "_config_manager", None) or get_config_manager_singleton()
             )
-            entry = cm.store.get_config(
-                tenant_id=tenant_id,
-                scope=ConfigScope.SYSTEM,
-                service="tenant_instructions",
-                config_key="system_prompt",
-            )
-            if entry and entry.config_value:
-                value = entry.config_value
+            value = cm.get_tenant_instructions_config(tenant_id)
+            if value:
                 if isinstance(value, dict):
                     return value.get("text", "") or None
                 if isinstance(value, str):

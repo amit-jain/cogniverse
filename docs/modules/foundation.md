@@ -206,6 +206,7 @@ config_manager.set_agent_config(
 | `set_telemetry_config(telemetry_config, tenant_id=None, service="telemetry")` | Set telemetry configuration |
 | `get_backend_config(tenant_id="your_org:production", service="backend")` | Get backend configuration |
 | `set_backend_config(backend_config, tenant_id=None, service="backend")` | Set backend configuration |
+| `get_tenant_instructions_config(tenant_id)` | Get raw tenant instructions value (TTL-cached; `{"text": ..., "updated_at": ...}` or `None`) |
 | `get_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Get specific backend profile |
 | `add_backend_profile(profile, tenant_id="your_org:production", service="backend")` | Add/update backend profile |
 | `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id` (defaults to `base_tenant_id`) |
@@ -766,6 +767,39 @@ client = cache.get_or_set("acme", lambda: MyClient(tenant_id="acme"))
 
 `COGNIVERSE_TENANT_CACHE_CAPACITY` (env var, default `16`) sizes the
 per-registry instance cache inside `EntryPointRegistry`.
+
+### Tenant-delete eviction
+
+`register_tenant_cache(cache)` and `evict_tenant_from_registered_caches(tenant_id)`
+(`cogniverse_foundation.caching`) let independently-owned `TenantLRUCache`
+instances release a deleted tenant's state immediately instead of waiting for
+LRU pressure. Registration holds only a weak reference (a `weakref.WeakSet`),
+so a cache owned by a discarded consumer drops out on garbage collection
+rather than leaking through the registry.
+
+```python
+from cogniverse_foundation.caching import (
+    TenantLRUCache,
+    register_tenant_cache,
+    evict_tenant_from_registered_caches,
+)
+
+cache = register_tenant_cache(TenantLRUCache[MyClient](capacity=64))
+
+# On tenant delete:
+evicted = evict_tenant_from_registered_caches("acme:production")
+```
+
+`evict_tenant_from_registered_caches` pops both the given key and its
+canonical `org:tenant` form from every registered cache, so simple-form
+entries are covered too; `on_evict` does not fire — deletion is a hard drop.
+It returns the number of entries dropped. The runtime registers three such
+caches — the per-tenant `GatewayAgent` cache and `GraphManager` cache
+(both capacity 64) in `agent_dispatcher.py`/`main.py`, and the per-tenant
+`ArtifactManager` cache (capacity 64) in `routers/agents.py` — and calls
+`evict_tenant_from_registered_caches` from `delete_tenant_internal` so a
+deleted tenant's cached state is released as part of the delete, not left
+to linger.
 
 ---
 

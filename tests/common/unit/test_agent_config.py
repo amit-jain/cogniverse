@@ -211,6 +211,78 @@ class TestAgentConfigManagerCaching:
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
+class TestTenantInstructionsCaching:
+    """get_tenant_instructions_config serves repeat reads from the manager's
+    scoped TTL cache. It sits on the per-dispatch enrichment path (every
+    memory-aware agent loads tenant instructions before its LLM call), so an
+    uncached read cost one synchronous store query per dispatch while the
+    sibling scopes were cached. set_config_value invalidates the cache so a
+    same-process instructions write is visible immediately."""
+
+    def _manager_with_counting_store(self):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        store.initialize()
+        calls = {"get": 0}
+        real_get = store.get_config
+
+        def counting_get(*args, **kwargs):
+            calls["get"] += 1
+            return real_get(*args, **kwargs)
+
+        store.get_config = counting_get
+        return ConfigManager(store=store), calls
+
+    @staticmethod
+    def _set_instructions(cm, text):
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        cm.set_config_value(
+            tenant_id="acme:acme",
+            scope=ConfigScope.SYSTEM,
+            service="tenant_instructions",
+            config_key="system_prompt",
+            config_value={"text": text, "updated_at": "2026-07-17T00:00:00+00:00"},
+        )
+
+    def test_repeat_reads_hit_the_scoped_cache(self):
+        cm, calls = self._manager_with_counting_store()
+        self._set_instructions(cm, "Always be helpful.")
+
+        first = cm.get_tenant_instructions_config("acme:acme")
+        second = cm.get_tenant_instructions_config("acme:acme")
+
+        assert first == {
+            "text": "Always be helpful.",
+            "updated_at": "2026-07-17T00:00:00+00:00",
+        }
+        assert second == first
+        assert calls["get"] == 1, "second read must be served by the TTL cache"
+
+    def test_absent_instructions_are_negative_cached(self):
+        cm, calls = self._manager_with_counting_store()
+
+        assert cm.get_tenant_instructions_config("acme:acme") is None
+        assert cm.get_tenant_instructions_config("acme:acme") is None
+
+        assert calls["get"] == 1, "the no-instructions case must be cached too"
+
+    def test_set_config_value_invalidates_the_cache(self):
+        cm, _ = self._manager_with_counting_store()
+        self._set_instructions(cm, "v1")
+        assert cm.get_tenant_instructions_config("acme:acme")["text"] == "v1"
+
+        self._set_instructions(cm, "v2")
+
+        assert cm.get_tenant_instructions_config("acme:acme")["text"] == "v2", (
+            "a write must invalidate the cached read"
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
 class TestConfigManagerReservedReads:
     """get_agent_config_history and get_config_value — reserved read surfaces
     with no production caller yet; pinned so they stay correct."""
