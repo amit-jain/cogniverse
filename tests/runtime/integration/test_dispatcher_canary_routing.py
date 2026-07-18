@@ -259,12 +259,21 @@ class TestProductionDispatcherWiring:
             assert pre is not None
             assert pre["served_from"] == "default"
 
-            # Seed a canary at 100% through the same provider the factory uses.
+            # Seed a canary at 100% through the same provider the factory
+            # uses — an out-of-band promoter (admin API / CLI), not the
+            # dispatcher's own per-tenant manager instance.
             tm = telemetry_manager_with_phoenix
             am = ArtifactManager(tm.get_provider(tenant_id=tenant_id), tenant_id)
             await am.save_prompts_versioned("search_agent", {"system": "CANARY_V1"})
             await am.save_prompts("search_agent", {"system": "ACTIVE_V1"})
             await am.promote_to_canary("search_agent", version=1, traffic_pct=100)
+
+            # The dispatcher's per-tenant manager amortizes reads through a
+            # short-TTL request cache, so an out-of-band promotion becomes
+            # visible once the TTL lapses (promotions through the SAME
+            # instance invalidate immediately). Expire it deterministically
+            # instead of sleeping out the TTL.
+            dispatcher._artifact_manager_factory(tenant_id)._request_cache.clear()
 
             out = await dispatcher.resolve_artefact_for_request(
                 "search_agent", tenant_id, request_seed="seed_canary"
