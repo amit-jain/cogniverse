@@ -227,6 +227,84 @@ class PipelineArtifactCache:
 
         return await self.cache.set(artifact_key, descriptions_data, self.ttl)
 
+    def _segmentation_key(
+        self,
+        video_path: str,
+        strategy: str,
+        segment_duration: float,
+        segment_overlap: float,
+        sampling_fps: float,
+        max_frames: int,
+        transcript_fingerprint: str,
+    ) -> str:
+        video_key = self._generate_video_key(video_path)
+        return self._generate_artifact_key(
+            video_key,
+            "segmentation",
+            strategy=strategy,
+            seg=segment_duration,
+            overlap=segment_overlap,
+            fps=sampling_fps,
+            max_frames=max_frames,
+            transcript=transcript_fingerprint,
+        )
+
+    async def get_segmentation(
+        self,
+        video_path: str,
+        *,
+        strategy: str,
+        segment_duration: float,
+        segment_overlap: float,
+        sampling_fps: float,
+        max_frames: int,
+        transcript_fingerprint: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a cached single-vector segmentation result (boundary math +
+        transcript alignment; no frames)."""
+        artifact_key = self._segmentation_key(
+            video_path,
+            strategy,
+            segment_duration,
+            segment_overlap,
+            sampling_fps,
+            max_frames,
+            transcript_fingerprint,
+        )
+
+        segmentation = await self.cache.get(artifact_key)
+        if segmentation:
+            logger.info(f"Cache hit for segmentation: {Path(video_path).name}")
+            return segmentation
+
+        logger.debug(f"Cache miss for segmentation: {Path(video_path).name}")
+        return None
+
+    async def set_segmentation(
+        self,
+        video_path: str,
+        result: Dict[str, Any],
+        *,
+        strategy: str,
+        segment_duration: float,
+        segment_overlap: float,
+        sampling_fps: float,
+        max_frames: int,
+        transcript_fingerprint: str,
+    ) -> bool:
+        """Cache a single-vector segmentation result."""
+        artifact_key = self._segmentation_key(
+            video_path,
+            strategy,
+            segment_duration,
+            segment_overlap,
+            sampling_fps,
+            max_frames,
+            transcript_fingerprint,
+        )
+
+        return await self.cache.set(artifact_key, result, self.ttl)
+
     async def get_segment_frames(
         self,
         video_path: str,

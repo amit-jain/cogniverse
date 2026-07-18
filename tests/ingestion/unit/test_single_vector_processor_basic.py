@@ -371,3 +371,125 @@ class TestSegmentationDoesNotDecodeFrames:
             assert len(seg.frame_timestamps) == seg.metadata["frame_count"]
             for ts in seg.frame_timestamps:
                 assert seg.start_time - 0.2 <= ts <= seg.end_time + 0.2
+
+
+@pytest.mark.unit
+@pytest.mark.ci_safe
+class TestSegmentationCache:
+    """When a pipeline artifact cache is wired in, re-segmenting the same
+    video with the same strategy params and transcript serves the cached
+    result (no container probe) and a transcript change misses."""
+
+    def _make_video(self, tmp_path):
+        import cv2
+
+        mp4 = tmp_path / "clip.mp4"
+        writer = cv2.VideoWriter(
+            str(mp4), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (64, 64)
+        )
+        try:
+            for _ in range(30):
+                writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
+        finally:
+            writer.release()
+        return mp4
+
+    class _RecordingCache:
+        def __init__(self, hit=None):
+            self.hit = hit
+            self.get_calls = []
+            self.set_calls = []
+
+        async def get_segmentation(self, video_path, **kwargs):
+            self.get_calls.append({"video_path": video_path, **kwargs})
+            return self.hit
+
+        async def set_segmentation(self, video_path, result, **kwargs):
+            self.set_calls.append(
+                {"video_path": video_path, "result": result, **kwargs}
+            )
+            return True
+
+    def _processor(self, cache):
+        import logging
+
+        return SingleVectorVideoProcessor(
+            logging.getLogger("test"),
+            strategy="chunks",
+            segment_duration=1.0,
+            segment_overlap=0.0,
+            sampling_fps=2.0,
+            cache=cache,
+        )
+
+    def test_miss_computes_and_stores_full_fidelity_segments(self, tmp_path):
+        mp4 = self._make_video(tmp_path)
+        cache = self._RecordingCache()
+        proc = self._processor(cache)
+
+        result = proc.process_video(video_path=mp4)
+
+        assert len(cache.get_calls) == 1
+        assert len(cache.set_calls) == 1
+        call = cache.set_calls[0]
+        assert call["video_path"] == str(mp4)
+        assert call["strategy"] == "chunks"
+        assert call["segment_duration"] == 1.0
+        assert call["segment_overlap"] == 0.0
+        assert call["sampling_fps"] == 2.0
+        assert call["max_frames"] == 12
+        assert call["transcript_fingerprint"] == "none"
+        payload_segments = call["result"]["segments"]
+        assert len(payload_segments) == len(result["segments"])
+        for d, seg in zip(payload_segments, result["segments"]):
+            assert d["segment_id"] == seg.segment_id
+            assert d["frame_timestamps"] == seg.frame_timestamps
+            assert d["transcript_segments"] == seg.transcript_segments
+            assert d["transcript_text"] == seg.transcript_text
+
+    def test_hit_serves_cached_segments_without_probing_the_video(self, tmp_path):
+        mp4 = self._make_video(tmp_path)
+        first = self._RecordingCache()
+        result = self._processor(first).process_video(
+            video_path=mp4, metadata={"run": "one"}
+        )
+        cached_payload = first.set_calls[0]["result"]
+
+        cache = self._RecordingCache(hit=cached_payload)
+        proc = self._processor(cache)
+        proc._get_video_info = Mock(
+            side_effect=AssertionError("cache hit must not probe the video")
+        )
+
+        out = proc.process_video(video_path=mp4, metadata={"run": "two"})
+
+        assert cache.set_calls == []
+        assert len(out["segments"]) == len(result["segments"])
+        for got, want in zip(out["segments"], result["segments"]):
+            assert isinstance(got, VideoSegment)
+            assert got.segment_id == want.segment_id
+            assert got.start_time == want.start_time
+            assert got.end_time == want.end_time
+            assert got.frame_timestamps == want.frame_timestamps
+            assert got.transcript_text == want.transcript_text
+            assert got.frames == []
+        assert out["metadata"]["run"] == "two"
+        assert out["metadata"]["num_segments"] == len(result["segments"])
+        # Serving from cache must not poison the cached payload for later hits.
+        assert "run" not in cached_payload["metadata"]
+
+    def test_transcript_changes_the_fingerprint(self, tmp_path):
+        mp4 = self._make_video(tmp_path)
+        cache = self._RecordingCache()
+        proc = self._processor(cache)
+
+        transcript_a = {"segments": [{"start": 0.0, "end": 1.0, "text": "a"}]}
+        transcript_b = {"segments": [{"start": 0.0, "end": 1.0, "text": "b"}]}
+        proc.process_video(video_path=mp4, transcript_data=transcript_a)
+        proc.process_video(video_path=mp4, transcript_data=transcript_b)
+
+        fp_a = cache.get_calls[0]["transcript_fingerprint"]
+        fp_b = cache.get_calls[1]["transcript_fingerprint"]
+        assert fp_a != fp_b
+        assert fp_a != "none"
+        assert fp_b != "none"

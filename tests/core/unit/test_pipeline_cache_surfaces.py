@@ -170,3 +170,79 @@ async def test_clear_star_wipes_all_and_nonwildcard_clears_one_key(tmp_path):
     # '*' clears everything that remains.
     await backend.clear("*")
     assert await backend.get("prof:video:v2:transcript") is None
+
+
+@pytest.mark.asyncio
+async def test_segmentation_round_trip(cache):
+    payload = {
+        "segments": [
+            {
+                "segment_id": 0,
+                "start_time": 0.0,
+                "end_time": 1.0,
+                "frame_timestamps": [0.0, 0.5],
+                "transcript_segments": [{"start": 0.0, "end": 1.0, "text": "hi"}],
+                "transcript_text": "hi",
+                "metadata": {"duration": 1.0, "frame_count": 2},
+            }
+        ],
+        "metadata": {"video_id": "clip", "num_segments": 1},
+        "full_transcript": "hi",
+        "document_structure": {"type": "single_doc"},
+    }
+    ok = await cache.set_segmentation(
+        "/videos/clip.mp4",
+        payload,
+        strategy="chunks",
+        segment_duration=6.0,
+        segment_overlap=1.0,
+        sampling_fps=2.0,
+        max_frames=12,
+        transcript_fingerprint="abc123",
+    )
+    assert ok is True
+
+    got = await cache.get_segmentation(
+        "/videos/clip.mp4",
+        strategy="chunks",
+        segment_duration=6.0,
+        segment_overlap=1.0,
+        sampling_fps=2.0,
+        max_frames=12,
+        transcript_fingerprint="abc123",
+    )
+    assert got == payload
+
+
+@pytest.mark.asyncio
+async def test_segmentation_misses_on_any_param_change(cache):
+    payload = {"segments": [], "metadata": {}, "full_transcript": ""}
+    await cache.set_segmentation(
+        "/videos/clip.mp4",
+        payload,
+        strategy="chunks",
+        segment_duration=6.0,
+        segment_overlap=1.0,
+        sampling_fps=2.0,
+        max_frames=12,
+        transcript_fingerprint="abc123",
+    )
+
+    for change in (
+        {"strategy": "windows"},
+        {"segment_duration": 30.0},
+        {"segment_overlap": 0.0},
+        {"sampling_fps": 1.0},
+        {"max_frames": 6},
+        {"transcript_fingerprint": "other"},
+    ):
+        params = {
+            "strategy": "chunks",
+            "segment_duration": 6.0,
+            "segment_overlap": 1.0,
+            "sampling_fps": 2.0,
+            "max_frames": 12,
+            "transcript_fingerprint": "abc123",
+            **change,
+        }
+        assert await cache.get_segmentation("/videos/clip.mp4", **params) is None
