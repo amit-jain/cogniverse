@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
-def _load_automation_rules(tenant_id: str):
+def _load_automation_rules(tenant_id: str, config_manager=None):
     """automation_rules from the tenant config, defaults on any failure.
 
     The sidecar must keep monitoring even when the config store is
@@ -40,7 +40,8 @@ def _load_automation_rules(tenant_id: str):
         )
 
         cfg = get_config(
-            tenant_id=tenant_id, config_manager=create_default_config_manager()
+            tenant_id=tenant_id,
+            config_manager=config_manager or create_default_config_manager(),
         )
         section = cfg.get_all().get("automation_rules") or {}
         return AutomationRulesConfig.from_dict(section)
@@ -182,19 +183,23 @@ _LOOP_STATE_KEY = "state"
 
 
 def _load_loop_state(config_manager, tenant_id: str) -> dict:
+    """Loop state gating re-submission; a store outage must RAISE.
+
+    ``get_config`` returns ``None`` only when the state was never written and
+    raises on a backend outage. Flattening the outage to ``{}`` would read as
+    first-run — bypassing the poll-interval guard and every per-agent
+    cooldown, mass-resubmitting Argo workflows, and (via the finally-save)
+    overwriting the cooldown history with just this cycle's agents.
+    """
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-    try:
-        entry = config_manager.store.get_config(
-            tenant_id=tenant_id,
-            scope=ConfigScope.AGENT,
-            service=_LOOP_STATE_SERVICE,
-            config_key=_LOOP_STATE_KEY,
-        )
-        return dict(entry.config_value) if entry is not None else {}
-    except Exception as e:
-        logger.warning("optimization loop state read failed (%r); empty state", e)
-        return {}
+    entry = config_manager.store.get_config(
+        tenant_id=tenant_id,
+        scope=ConfigScope.AGENT,
+        service=_LOOP_STATE_SERVICE,
+        config_key=_LOOP_STATE_KEY,
+    )
+    return dict(entry.config_value) if entry is not None else {}
 
 
 def _save_loop_state(config_manager, tenant_id: str, state: dict) -> None:
@@ -449,15 +454,30 @@ async def run_annotation_feedback_cycle(
                 logger.error(
                     "Annotation feedback step failed for %s: %r", agent_type, e
                 )
-                per_agent.setdefault(agent_type, {"annotations": 0})["action"] = "error"
+                outcome = per_agent.setdefault(agent_type, {"annotations": 0})
+                outcome["action"] = "error"
+                outcome["error"] = repr(e)
     finally:
         state["last_feedback_run_at"] = now.isoformat()
         state["last_optimization_at"] = last_optimization
         _save_loop_state(config_manager, tenant_id, state)
 
-    result = {"status": "success", "agents": per_agent}
+    errored = sorted(
+        agent for agent, v in per_agent.items() if v.get("action") == "error"
+    )
+    result = {
+        "status": "completed_with_errors" if errored else "success",
+        "agents": per_agent,
+    }
+    if errored:
+        result["errored_agents"] = errored
     logger.info("Annotation feedback cycle complete: %s", result)
     return result
+
+
+def _cycle_failed(result: dict) -> bool:
+    """Exit-code contract for the cron: any errored agent → non-zero."""
+    return bool(result.get("errored_agents"))
 
 
 def _build_phoenix_provider(tenant_id: str, http_endpoint: str) -> Optional[object]:
@@ -665,7 +685,7 @@ def main():
             )
         )
         logger.info(f"Annotation feedback result: {result}")
-        sys.exit(0)
+        sys.exit(1 if _cycle_failed(result) else 0)
 
     if args.once:
         # One-shot scheduled distillation for Argo CronWorkflows: force-build

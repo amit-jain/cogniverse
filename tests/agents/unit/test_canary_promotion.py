@@ -141,7 +141,6 @@ class TestCanaryToActivePromotion:
         assert active == {"system": "v3-prompts"}
 
 
-@pytest.mark.asyncio
 class TestRouteToCanary:
     def test_routing_in_band(self):
         # 100% traffic → every seed routes to canary.

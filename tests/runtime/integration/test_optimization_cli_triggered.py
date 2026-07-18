@@ -193,11 +193,21 @@ class TestTriggeredOptimization:
 
     @pytest.mark.asyncio
     async def test_run_triggered_optimization_end_to_end(
-        self, trigger_dataset_in_phoenix, config_manager, phoenix_container
+        self, trigger_dataset_in_phoenix, config_manager, phoenix_container, monkeypatch
     ):
         """Call run_triggered_optimization() with injected config_manager
-        and phoenix_endpoint. Verifies the full CLI orchestration path."""
+        and phoenix_endpoint. Verifies the full CLI orchestration path.
+
+        The held-out scores are pinned to a winning pair so the run is
+        deterministic against the tiny test LM — the scoring math itself is
+        unit-tested with exact values; this test proves the real compile →
+        gate → versioned serve → overlay pipeline against real Phoenix."""
+        from cogniverse_runtime import optimization_cli
         from cogniverse_runtime.optimization_cli import run_triggered_optimization
+
+        monkeypatch.setattr(
+            optimization_cli, "_holdout_scores", lambda *a, **k: (0.20, 0.90)
+        )
 
         result = await run_triggered_optimization(
             tenant_id="test:unit",
@@ -216,16 +226,20 @@ class TestTriggeredOptimization:
         assert result["search"]["status"] == "success", (
             f"search optimization failed: {result['search']}"
         )
-        # _optimize_agent persists via _serve_compiled_prompts (versioned
-        # prompts promoted straight to ACTIVE), not a "model" save_blob, so
-        # the per-agent result carries "served", not "artifact_id".
+        # _optimize_agent serves via _serve_compiled_prompts through the
+        # promote_if_better gate; a winning candidate lands versioned →
+        # canary → ACTIVE, so the per-agent result carries "served".
         served = result["search"].get("served")
         assert served, (
             f"no compiled prompts served to the dispatch overlay: {result['search']}"
         )
         assert served["served_agent"] == "search_agent"
+        assert served["promoted"] is True
         assert served["active"] is True
+        assert served["baseline_score"] == 0.20
+        assert served["candidate_score"] == 0.90
         assert isinstance(served["version"], int) and served["version"] >= 1
+        assert result["search"]["holdout_examples"] >= 1
 
         # Strategy distillation should have run.
         assert "strategies_distilled" in result

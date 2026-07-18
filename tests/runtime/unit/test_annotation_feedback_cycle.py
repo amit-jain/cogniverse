@@ -268,7 +268,8 @@ async def test_poll_interval_self_gate():
 @pytest.mark.asyncio
 async def test_one_agent_fault_does_not_abort_the_cycle():
     """summary's storage raising must not stop search (before it) from
-    submitting or routing (after it) from being processed."""
+    submitting or routing (after it) from being processed — but the cycle
+    result must SAY an agent errored, not report success."""
     _BlippingStorageStub.fail_types = {"summary"}
     result, argo, _ = await _run(
         _rules(),
@@ -276,11 +277,64 @@ async def test_one_agent_fault_does_not_abort_the_cycle():
         storage_cls=_BlippingStorageStub,
     )
 
-    assert result["status"] == "success"
-    assert result["agents"]["summary"] == {"annotations": 0, "action": "error"}
+    assert result["status"] == "completed_with_errors"
+    assert result["errored_agents"] == ["summary"]
+    assert result["agents"]["summary"]["action"] == "error"
+    assert "phoenix unreachable for summary" in result["agents"]["summary"]["error"]
     assert result["agents"]["search"]["action"] == "recompile"
     assert result["agents"]["routing"]["action"] == "thresholds_refresh"
     assert len(argo.posts) == 2
+
+
+@pytest.mark.asyncio
+async def test_clean_cycle_reports_success():
+    result, _, _ = await _run(_rules(), {"search": _annotated_rows(50)})
+
+    assert result["status"] == "success"
+    assert "errored_agents" not in result
+
+
+class TestLoopStateFaultContract:
+    """The loop state gates re-submission (poll interval + per-agent
+    cooldowns). A config-store outage must NOT read as first-run — that
+    bypasses every cooldown and mass-resubmits Argo workflows."""
+
+    def test_outage_raises_instead_of_flattening_to_first_run(self):
+        from cogniverse_runtime.quality_monitor_cli import _load_loop_state
+
+        class _DeadStore:
+            def get_config(self, **kwargs):
+                raise RuntimeError("vespa down")
+
+        cm = type("CM", (), {"store": _DeadStore()})()
+        with pytest.raises(RuntimeError, match="vespa down"):
+            _load_loop_state(cm, "acme:acme")
+
+    def test_absent_state_is_a_clean_first_run(self):
+        from cogniverse_runtime.quality_monitor_cli import _load_loop_state
+
+        assert _load_loop_state(_config_manager(), "acme:acme") == {}
+
+
+class TestCycleExitContract:
+    """The cron's exit code is Argo's only failure signal — a cycle with
+    errored agents must not exit 0."""
+
+    def test_cycle_failed_helper(self):
+        from cogniverse_runtime.quality_monitor_cli import _cycle_failed
+
+        assert _cycle_failed({"status": "success", "agents": {}}) is False
+        assert _cycle_failed({"status": "skipped_recent_poll"}) is False
+        assert (
+            _cycle_failed(
+                {
+                    "status": "completed_with_errors",
+                    "errored_agents": ["summary"],
+                    "agents": {},
+                }
+            )
+            is True
+        )
 
 
 @pytest.mark.asyncio

@@ -123,7 +123,11 @@ therefore only needs to flip the active dataset content.
 
 `ArtifactManager.promote_if_better` is the canonical write path for
 optimizer outputs. It compares the candidate against the active baseline
-and promotes the candidate only when `candidate_score >= baseline_score - tolerance`.
+and promotes only when
+`candidate_score >= baseline_score + min_improvement - tolerance`
+(`min_improvement` defaults to 0; `--mode triggered` wires the tenant's
+`optimization_improvement_threshold` into it, and passes
+`serve_versioned=True` so a win lands through the canary state machine).
 Failed promotions still land in the experiment ledger with `promoted=False`
 and a `rejection_reason`, so the loop is observable end-to-end:
 
@@ -469,14 +473,18 @@ the quality-monitor sidecar — not by a live in-process RL loop:
 
 Each batch optimization run (see the diagram above) builds a `dspy.Example` trainset from
 approved synthetic data and/or scored spans and compiles with the selected teleprompter.
-`--mode triggered` then publishes the compiled instructions as a **versioned prompts
-dataset promoted straight to active** (`save_prompts_versioned` + promotion), which the
-dispatcher's per-request overlay serves on the next dispatch — the same
-artifact-available-agents-pick-it-up behavior as the dedicated modes. Every version is
-snapshotted, so `--mode rollback` restores a prior one if a compile regressed; operators
-can still stage a manual canary via `promote_to_canary` and judge it against
-`optimization_improvement_threshold`. Callers that hold measured baseline/candidate scores
-use `ArtifactManager.promote_if_better()` — the regression-reject gate (see above).
+`--mode triggered` holds out a ~25% tail of the labeled positives and turns the
+human-flagged failures into known-bad probes, scores the compiled candidate against the
+currently-active baseline on that probe set (token-F1 to labels for `summary`/`report`,
+reward for not reproducing a failing output; a label-free enum-validity check for `search`,
+whose signature has no free-text label), and publishes **only a candidate that wins by at least the
+tenant's `optimization_improvement_threshold`** — via
+`ArtifactManager.promote_if_better(serve_versioned=True)`, which routes the win through
+the canary state machine (`save_prompts_versioned` → canary → active) so the dispatcher's
+per-request overlay serves it on the next dispatch. A losing candidate never touches live
+traffic; it is recorded in the experiments ledger with `promoted=False` and a
+`rejection_reason`. Every version is snapshotted, so `--mode rollback` restores a prior
+one, and operators can still stage a manual canary via `promote_to_canary`.
 
 ---
 
@@ -870,7 +878,7 @@ Agents retrieve strategies at inference time via `MemoryAwareMixin.get_strategie
 | **HITL Approval** | Data curation | Confidence-based auto-approval with rejection/regeneration cycle |
 | **BootstrapFewShot** | Few-shot learning | Batch CLI's default optimizer for all agent types; `simba`/`profile`/`entity-extraction` scale by trainset size (<50 vs >=50 examples), `triggered` uses fixed settings |
 | **DSPyOptimizerRegistry** | Optimizer selection | Per-agent `OptimizerConfig.optimizer_type`: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 wired; GEPA/SIMBA reserved (unmapped) |
-| **Regression-Reject Gate** | Promotion safety | `ArtifactManager.promote_if_better` only writes artefacts when candidate ≥ baseline − tolerance |
+| **Regression-Reject Gate** | Promotion safety | `ArtifactManager.promote_if_better` only writes artefacts when candidate ≥ baseline + min_improvement − tolerance; `--mode triggered` gates every compile through it with the tenant's `optimization_improvement_threshold` |
 | **Canary Promotion** | Rollout safety | Stable per-request-seed routing between active/canary versions at a configurable traffic % |
 | **Reference-Free Evaluation** | Quality assessment | Relevance, diversity, temporal coverage without ground truth |
 | **IR Metrics Suite** | Retrieval evaluation | MRR, NDCG@K, Precision@K, Recall@K, MAP |

@@ -62,6 +62,9 @@ class FaultInjectingStore:
             raise KeyError(name)
         return self.created[name]
 
+    async def delete_dataset(self, name: str) -> bool:
+        return self.created.pop(name, None) is not None
+
     async def append_to_dataset(
         self, name: str, data: pd.DataFrame, metadata: dict | None = None
     ) -> None:
@@ -235,3 +238,43 @@ class TestRetryCleanlinessOnSecondRun:
 
         history = await mgr.load_experiments("agent_a")
         assert [r.run_id for r in history] == ["r1", "r2"]
+
+
+@pytest.mark.asyncio
+class TestTornCanaryPromotion:
+    """``promote_canary_to_active`` overwrites the un-versioned active
+    artefacts BEFORE saving the state blob. If the state save fails, the
+    previously active content must be restored so the init-time read seam
+    (un-versioned datasets) and the request-time read seam (state blob)
+    stay consistent — otherwise a later ``retire_canary`` reverts traffic
+    to prompts that no longer match the active dataset."""
+
+    async def test_state_save_failure_restores_previous_active_prompts(self):
+        store = FaultInjectingStore(mode=_Mode.NORMAL)
+        mgr = ArtifactManager(FakeProvider(store), tenant_id="acme")
+
+        await mgr.save_prompts_versioned("search_agent", {"system": "V1"})
+        await mgr.promote_to_canary("search_agent", 1, traffic_pct=100)
+        await mgr.promote_canary_to_active("search_agent")
+        assert await mgr.load_prompts("search_agent") == {"system": "V1"}
+
+        await mgr.save_prompts_versioned("search_agent", {"system": "V2"})
+        await mgr.promote_to_canary("search_agent", 2, traffic_pct=100)
+
+        real_save = mgr._save_artefact_state
+
+        async def failing_save(agent_type, state):
+            raise ConnectionError("simulated Phoenix 503 on state save")
+
+        mgr._save_artefact_state = failing_save
+        try:
+            with pytest.raises(ConnectionError, match="state save"):
+                await mgr.promote_canary_to_active("search_agent")
+        finally:
+            mgr._save_artefact_state = real_save
+
+        # Active content restored; state blob still shows v1 active / v2 canary.
+        assert await mgr.load_prompts("search_agent") == {"system": "V1"}
+        state = await mgr.get_artefact_state("search_agent")
+        assert state["active"]["version"] == 1
+        assert state["canary"]["version"] == 2

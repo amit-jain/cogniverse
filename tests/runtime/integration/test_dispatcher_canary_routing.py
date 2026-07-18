@@ -373,11 +373,19 @@ class TestTriggeredCompileServesThroughOverlay:
         )
         compiled = SimpleNamespace(named_predictors=lambda: [("predict", predictor)])
 
-        served = await _serve_compiled_prompts(artifact_manager, "search", compiled)
+        served = await _serve_compiled_prompts(
+            artifact_manager,
+            "search",
+            compiled,
+            baseline_score=0.40,
+            candidate_score=0.60,
+            min_improvement=0.05,
+        )
 
         assert served is not None
         assert served["served_agent"] == "search_agent"
         assert served["active"] is True
+        assert served["promoted"] is True
 
         # The dispatcher-side read: any request seed now serves the compiled
         # instructions from the ACTIVE artefact, keyed by the predictor
@@ -394,7 +402,14 @@ class TestTriggeredCompileServesThroughOverlay:
         # A second compile supersedes the first: new version served, previous
         # retired (rollback keeps every version restorable).
         predictor.signature = SimpleNamespace(instructions="Optimized v2.")
-        served2 = await _serve_compiled_prompts(artifact_manager, "search", compiled)
+        served2 = await _serve_compiled_prompts(
+            artifact_manager,
+            "search",
+            compiled,
+            baseline_score=0.40,
+            candidate_score=0.90,
+            min_improvement=0.05,
+        )
         assert served2["version"] > served["version"]
 
         result2 = await artifact_manager.load_for_request(
@@ -402,3 +417,23 @@ class TestTriggeredCompileServesThroughOverlay:
         )
         assert result2["served_from"] == "active"
         assert result2["prompts"] == {"search_optimizer": "Optimized v2."}
+
+        # A LOSING compile must never touch what is served: the gate rejects
+        # it, no new version exists, and the overlay still serves v2.
+        predictor.signature = SimpleNamespace(instructions="Optimized v3 (worse).")
+        served3 = await _serve_compiled_prompts(
+            artifact_manager,
+            "search",
+            compiled,
+            baseline_score=0.90,
+            candidate_score=0.50,
+            min_improvement=0.05,
+        )
+        assert served3["promoted"] is False
+        assert served3["version"] is None
+
+        result3 = await artifact_manager.load_for_request(
+            "search_agent", request_seed="any-seed-3"
+        )
+        assert result3["served_from"] == "active"
+        assert result3["prompts"] == {"search_optimizer": "Optimized v2."}
