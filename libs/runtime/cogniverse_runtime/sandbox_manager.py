@@ -262,14 +262,24 @@ class SandboxManager:
 
     def _resolve_tls_config(self):
         """Build the client mTLS config from certs mounted at
-        ``~/.config/openshell/gateways/<name>/mtls/{ca,tls}.{crt,key}``.
-        Returns ``None`` (insecure channel) when no complete cert set is
-        present, so a plaintext gateway still works."""
-        from pathlib import Path
+        ``<config-dir>/gateways/<name>/mtls/{ca,tls}.{crt,key}``, where the
+        base honors ``OPENSHELL_CONFIG_DIR`` — the same resolution the cert
+        rotator watches, so connect and rotation read one tree. Returns
+        ``None`` (insecure channel) when no complete cert set is present, so
+        a plaintext gateway still works."""
+        import os
 
         from openshell import TlsConfig
 
-        base = Path.home() / ".config" / "openshell" / "gateways"
+        base = (
+            Path(
+                os.environ.get(
+                    "OPENSHELL_CONFIG_DIR",
+                    str(Path.home() / ".config" / "openshell"),
+                )
+            )
+            / "gateways"
+        )
         if not base.is_dir():
             return None
         for gw in sorted(base.iterdir()):
