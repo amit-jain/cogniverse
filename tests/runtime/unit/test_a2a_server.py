@@ -640,6 +640,41 @@ class TestTerminalEventFinalFlag:
         assert graph_calls == [(agent, "test:unit")]
         assert any(e.final for e in queue.events)
 
+    async def test_streaming_offloads_memory_and_graph_bind(self, mock_dispatcher):
+        """Memory init and the graph bind both do blocking backend I/O; the
+        streaming path must run them via to_thread like the non-streaming
+        dispatch path, not inline on the event loop."""
+        import threading
+
+        agent = _FakeStreamAgent([{"type": "final", "data": {"summary": "done"}}])
+        loop_thread = threading.get_ident()
+        mem_threads: list = []
+        bind_threads: list = []
+
+        mock_dispatcher.create_streaming_agent = AsyncMock(return_value=(agent, None))
+        mock_dispatcher._init_agent_memory = lambda a, n, t: mem_threads.append(
+            threading.get_ident()
+        )
+        mock_dispatcher._bind_graph_manager = lambda a, t: bind_threads.append(
+            threading.get_ident()
+        )
+
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+        queue = _CapturingQueue()
+
+        await executor._execute_streaming(
+            "summarizer_agent", "q", "test:unit", "task-1", "ctx-1", queue
+        )
+
+        assert len(queue.events) == 1
+        assert queue.events[0].final is True
+        payload = json.loads(queue.events[0].status.message.parts[0].root.text)
+        assert payload == {"type": "final", "data": {"summary": "done"}}
+        assert len(mem_threads) == 1
+        assert mem_threads[0] != loop_thread
+        assert len(bind_threads) == 1
+        assert bind_threads[0] != loop_thread
+
 
 class _MemoryStreamAgent(MemoryAwareMixin):
     """Memory-aware streaming agent stub — exposes set/get_dispatched_artefact

@@ -262,7 +262,9 @@ class CogniverseAgentExecutor(AgentExecutor):
             await asyncio.to_thread(
                 self._dispatcher._init_agent_memory, agent, agent_name, tenant_id
             )
-            self._dispatcher._bind_graph_manager(agent, tenant_id)
+            await asyncio.to_thread(
+                self._dispatcher._bind_graph_manager, agent, tenant_id
+            )
 
             # Streaming bypasses dispatch(), so resolve + inject the canary /
             # variant artefact overlay here too — otherwise streaming traffic
