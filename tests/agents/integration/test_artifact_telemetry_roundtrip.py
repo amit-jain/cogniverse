@@ -842,6 +842,7 @@ class TestDispatcherArtifactWiring:
         """Generic agent dispatch path should inject tenant and call _load_artifact."""
         import json
         from pathlib import Path
+        from unittest.mock import patch
 
         from cogniverse_core.common.agent_models import AgentEndpoint
         from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -849,21 +850,30 @@ class TestDispatcherArtifactWiring:
         from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
-        tenant_id = "dispatcher-wiring-test"
+        # dispatch() canonicalizes tenant_id via require_tenant_id before the
+        # generic path injects _artifact_tenant_id, so a simple (no-colon) id
+        # here would make the agent load under "x:x" while this test saves
+        # under the raw "x" — an already-canonical "org:tenant" id keeps the
+        # save and the dispatcher-constructed agent's load on one scope.
+        tenant_id = "dispatcher_wiring_test:dispatcher_wiring_test"
         mgr = ArtifactManager(real_provider, tenant_id)
 
         # Save a real artifact that the entity extraction agent will load
-        from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
+        from cogniverse_agents.entity_extraction_agent import (
+            EntityExtractionAgent,
+            EntityExtractionModule,
+        )
 
         module = EntityExtractionModule()
         state = json.loads(json.dumps(module.dump_state(), default=str))
-        state["extractor.predict"]["demos"] = [
+        demos = [
             {
                 "query": "dispatcher wiring test query",
                 "entities": "WIRING_TEST|CONCEPT|1.0",
                 "entity_types": "CONCEPT",
             },
         ]
+        state["extractor.predict"]["demos"] = demos
         await mgr.save_blob(
             "model", "entity_extraction", json.dumps(state, default=str)
         )
@@ -887,16 +897,36 @@ class TestDispatcherArtifactWiring:
             schema_loader=schema_loader,
         )
 
+        # The generic path builds the agent locally and drops it after
+        # process(), so capture it through a pass-through recorder around the
+        # real _load_artifact — the load itself still hits real Phoenix.
+        loaded_agents: list = []
+        real_load = EntityExtractionAgent._load_artifact
+
+        def _recording_load(agent_self):
+            real_load(agent_self)
+            loaded_agents.append(agent_self)
+
         # Dispatch — this should create the agent, inject telemetry +
         # _artifact_tenant_id, and call _load_artifact()
-        result = await dispatcher.dispatch(
-            agent_name="entity_extraction_agent",
-            query="test entity extraction",
-            context={"tenant_id": tenant_id},
-        )
+        with patch.object(EntityExtractionAgent, "_load_artifact", _recording_load):
+            result = await dispatcher.dispatch(
+                agent_name="entity_extraction_agent",
+                query="test entity extraction",
+                context={"tenant_id": tenant_id},
+            )
 
         assert result["status"] == "success", f"Dispatch failed: {result}"
         assert result["agent"] == "entity_extraction_agent"
+
+        # The persisted blob must actually reach the constructed agent — a
+        # not-found fallback would keep status "no_artifact" and 0 demos.
+        assert len(loaded_agents) == 1
+        agent = loaded_agents[0]
+        assert agent._artifact_tenant_id == tenant_id
+        assert agent.artifact_load_status == "loaded"
+        loaded_demos = agent.dspy_module.dump_state()["extractor.predict"]["demos"]
+        assert loaded_demos == demos
 
     @pytest.mark.asyncio
     @skip_if_no_lm
