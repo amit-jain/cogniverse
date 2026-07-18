@@ -25,6 +25,7 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 
 if TYPE_CHECKING:
     from cogniverse_runtime.sandbox_manager import SandboxManager
+from cogniverse_foundation.caching import TenantLRUCache, register_tenant_cache
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
@@ -40,6 +41,27 @@ logger = logging.getLogger(__name__)
 # (the optimization crons run on 15-minute cadences) without putting the
 # artifact read on the per-request path.
 GATEWAY_ARTIFACT_TTL_S = 300.0
+
+# Bound on cached per-tenant GatewayAgents. Least-recently-dispatched tenants
+# rebuild on their next request; tenant delete evicts eagerly via the
+# registered-cache hook.
+GATEWAY_AGENT_CACHE_CAPACITY = 64
+
+
+@dataclasses.dataclass
+class _GatewayAgentEntry:
+    """A cached per-tenant GatewayAgent with its artifact-load stamp.
+
+    One cache slot keeps the agent and its reload stamp moving together —
+    an agent can never outlive or lose its stamp.
+    """
+
+    agent: Any
+    loaded_at: float
+
+
+def _new_gateway_agent_cache() -> TenantLRUCache["_GatewayAgentEntry"]:
+    return register_tenant_cache(TenantLRUCache(capacity=GATEWAY_AGENT_CACHE_CAPACITY))
 
 
 def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,8 +121,9 @@ class AgentDispatcher:
         # When None, no canary routing — every request gets active artefacts.
         self._artifact_manager_factory = artifact_manager_factory
         self._query_rewriter = None
-        self._gateway_agents: Dict[str, Any] = {}
-        self._gateway_artifact_loaded_at: Dict[str, float] = {}
+        self._gateway_agents: TenantLRUCache[_GatewayAgentEntry] = (
+            _new_gateway_agent_cache()
+        )
         self._gateway_artifact_ttl_s: float = GATEWAY_ARTIFACT_TTL_S
         # Strong references to fire-and-forget tasks so CPython does not GC
         # the coroutine before it runs. asyncio.create_task() with the result
@@ -144,21 +167,17 @@ class AgentDispatcher:
 
         cache = getattr(self, "_gateway_agents", None)
         if cache is None:
-            cache = {}
+            cache = _new_gateway_agent_cache()
             self._gateway_agents = cache
-        stamps = getattr(self, "_gateway_artifact_loaded_at", None)
-        if stamps is None:
-            stamps = {}
-            self._gateway_artifact_loaded_at = stamps
-        agent = cache.get(tenant_id)
-        if agent is not None:
+        entry = cache.get(tenant_id)
+        if entry is not None:
             ttl = getattr(self, "_gateway_artifact_ttl_s", GATEWAY_ARTIFACT_TTL_S)
-            if time.monotonic() - stamps.get(tenant_id, 0.0) >= ttl:
+            if time.monotonic() - entry.loaded_at >= ttl:
                 # Stamp before the await: concurrent dispatches serve the
                 # current values instead of stampeding duplicate reloads.
-                stamps[tenant_id] = time.monotonic()
-                await asyncio.to_thread(agent._load_artifact)
-            return agent
+                entry.loaded_at = time.monotonic()
+                await asyncio.to_thread(entry.agent._load_artifact)
+            return entry.agent
 
         deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
         # Seed GLiNER config from the tenant's routing config (dashboard-editable
@@ -174,8 +193,9 @@ class AgentDispatcher:
         agent.telemetry_manager = get_telemetry_manager()
         agent._artifact_tenant_id = tenant_id
         await asyncio.to_thread(agent._load_artifact)
-        stamps[tenant_id] = time.monotonic()
-        cache[tenant_id] = agent
+        cache.set(
+            tenant_id, _GatewayAgentEntry(agent=agent, loaded_at=time.monotonic())
+        )
         return agent
 
     def _bind_graph_manager(self, agent: Any, tenant_id: str) -> None:

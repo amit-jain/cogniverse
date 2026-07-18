@@ -189,8 +189,15 @@ sessions that have been idle longer than `max_idle_seconds`. Behaviour:
 - **Subsequent calls for the same agent**: exec on the cached session (no create / no wait_ready).
 - **Different agent**: separate session.
 - **Pool full**: oldest idle session evicted before creating a new one.
-- **Idle eviction**: `pool.evict_idle()` (or runtime shutdown's `close_all`) destroys idle sessions.
+- **Idle eviction**: `pool.evict_idle()` destroys idle sessions.
 - **Callback exception**: the session is dropped from the pool; next checkout creates a fresh one.
+- **Teardown (`close_all`)**: called on runtime shutdown and on the mTLS
+  reconnect path (`SandboxManager._drop_stale_pool`). Idle sessions are
+  destroyed immediately; a session currently checked out for an in-flight
+  exec is instead marked to drain and destroyed once that exec releases it
+  — `close_all` never tears a session out from under a running call. Once a
+  pool has been closed it stays in a draining state: any later release goes
+  straight to session teardown instead of re-pooling.
 
 | Env var | Default | Effect |
 |---|---|---|

@@ -242,29 +242,18 @@ class AnnotationStorage:
             logger.error(f"❌ Failed to store annotation for span {span_id}: {e}")
             raise
 
-    async def query_annotated_spans(
-        self, start_time: datetime, end_time: datetime, only_human_reviewed: bool = True
-    ) -> List[Dict]:
+    async def fetch_project_spans(
+        self, start_time: datetime, end_time: datetime
+    ) -> "pd.DataFrame":
+        """Pull the tenant project's spans for a time window.
+
+        The annotation join needs every span name (annotations attach to
+        whichever span each agent emitted), so the pull is unfiltered.
+        Callers that query several agent types over one window fetch this
+        frame once and pass it to ``query_annotated_spans(spans_df=...)``.
         """
-        Query annotated spans for feedback loop
-
-        Args:
-            start_time: Start of time range
-            end_time: End of time range
-            only_human_reviewed: Only return human-reviewed annotations
-
-        Returns:
-            List of dictionaries containing span data + annotations
-        """
-        logger.info(
-            f"🔍 Querying annotated spans "
-            f"(time range: {start_time} to {end_time}, "
-            f"human_reviewed_only: {only_human_reviewed})"
-        )
-
         try:
-            # Get all spans in time range
-            spans_df = await self.provider.traces.get_spans(
+            return await self.provider.traces.get_spans(
                 project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
@@ -275,6 +264,36 @@ class AnnotationStorage:
             # into [] hid Phoenix outages from every caller.
             logger.error(f"❌ Error querying annotated spans: {e!r}")
             raise
+
+    async def query_annotated_spans(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        only_human_reviewed: bool = True,
+        spans_df: Optional["pd.DataFrame"] = None,
+    ) -> List[Dict]:
+        """
+        Query annotated spans for feedback loop
+
+        Args:
+            start_time: Start of time range
+            end_time: End of time range
+            only_human_reviewed: Only return human-reviewed annotations
+            spans_df: Optional pre-fetched project spans over the same
+                window (see ``fetch_project_spans``). When provided, the
+                per-call whole-project span pull is skipped.
+
+        Returns:
+            List of dictionaries containing span data + annotations
+        """
+        logger.info(
+            f"🔍 Querying annotated spans "
+            f"(time range: {start_time} to {end_time}, "
+            f"human_reviewed_only: {only_human_reviewed})"
+        )
+
+        if spans_df is None:
+            spans_df = await self.fetch_project_spans(start_time, end_time)
 
         if spans_df.empty:
             logger.info("📭 No spans found in time range")

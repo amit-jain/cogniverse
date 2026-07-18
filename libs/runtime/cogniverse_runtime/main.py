@@ -63,6 +63,89 @@ from cogniverse_synthetic.api import router as synthetic_router
 
 logger = logging.getLogger(__name__)
 
+# Bound on cached per-tenant GraphManagers. Least-recently-used tenants
+# rebuild on their next graph access; tenant delete evicts eagerly via the
+# registered-cache hook.
+GRAPH_MANAGER_CACHE_CAPACITY = 64
+
+
+def _build_graph_manager_factory(graph_backend, config_manager):
+    """Build the per-tenant GraphManager factory used by the graph router.
+
+    Extracted from the lifespan so the caching/eviction behavior is
+    unit-testable without booting the runtime.
+    """
+    from cogniverse_agents.graph.graph_manager import GraphManager
+    from cogniverse_foundation.caching import TenantLRUCache, register_tenant_cache
+
+    _graph_managers: TenantLRUCache[GraphManager] = register_tenant_cache(
+        TenantLRUCache(capacity=GRAPH_MANAGER_CACHE_CAPACITY)
+    )
+
+    def _graph_manager_factory(tenant_id: str, deploy: bool = True) -> GraphManager:
+        """Return a GraphManager for the given tenant, building on demand.
+
+        Each tenant gets a dedicated knowledge_graph_<tenant> schema.
+        The first access for a new tenant deploys the schema; subsequent
+        accesses reuse the cached manager. Errors during schema deploy
+        are non-fatal — the manager still constructs and the first
+        feed/query attempt surfaces the real error.
+
+        ``deploy`` MUST be False on read-only paths. deploy_schema
+        triggers a Vespa global app-redeploy that reconfigures the
+        content cluster and can drop rows another process just fed but
+        Vespa hasn't flushed — a read then loses the documents it was
+        meant to return. Read-built managers are not cached so the
+        first writer still deploys.
+
+        Canonicalizes the tenant_id so the schema name matches what
+        POST /admin/tenants stored it under. Without this, /graph/upsert
+        with a simple-form tenant_id ("acme") deploys
+        ``knowledge_graph_acme`` while the rest of the stack expects
+        ``knowledge_graph_acme_acme`` — and the simple-form schema
+        becomes an orphan the canonical-form DELETE cannot reap.
+        """
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        tenant_id = canonical_tenant_id(tenant_id)
+        cached = _graph_managers.get(tenant_id)
+        if cached is not None:
+            return cached
+
+        if deploy:
+            try:
+                graph_backend.schema_registry.deploy_schema(
+                    tenant_id=tenant_id, base_schema_name="knowledge_graph"
+                )
+            except Exception as schema_err:
+                logger.warning(
+                    f"Knowledge graph schema deploy for tenant {tenant_id} "
+                    f"skipped: {schema_err}"
+                )
+
+        sys_cfg = config_manager.get_system_config()
+        colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
+        if not colbert_url:
+            raise RuntimeError(
+                "knowledge_graph requires the colbert_pylate inference "
+                "service to be deployed and present in "
+                "INFERENCE_SERVICE_URLS. Available services: "
+                f"{sorted(sys_cfg.inference_service_urls)}"
+            )
+        mgr = GraphManager(
+            backend=graph_backend,
+            tenant_id=tenant_id,
+            schema_name=graph_backend.get_tenant_schema_name(
+                tenant_id, "knowledge_graph"
+            ),
+            colbert_endpoint_url=colbert_url,
+        )
+        if deploy:
+            _graph_managers.set(tenant_id, mgr)
+        return mgr
+
+    return _graph_manager_factory
+
 
 def _semantic_router_config_from_env():
     """Build a ``SemanticRouterConfig`` from deployment env vars, or ``None``.
@@ -794,7 +877,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The factory below deploys the per-tenant schema lazily on first
     # access; no startup pre-deploy.
     try:
-        from cogniverse_agents.graph.graph_manager import GraphManager
         from cogniverse_runtime.routers import graph as graph_router
 
         # Cluster-wide backend handle (one Vespa client shared by every
@@ -812,70 +894,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             schema_loader=schema_loader,
         )
 
-        _graph_managers: dict = {}
-
-        def _graph_manager_factory(tenant_id: str, deploy: bool = True) -> GraphManager:
-            """Return a GraphManager for the given tenant, building on demand.
-
-            Each tenant gets a dedicated knowledge_graph_<tenant> schema.
-            The first access for a new tenant deploys the schema; subsequent
-            accesses reuse the cached manager. Errors during schema deploy
-            are non-fatal — the manager still constructs and the first
-            feed/query attempt surfaces the real error.
-
-            ``deploy`` MUST be False on read-only paths. deploy_schema
-            triggers a Vespa global app-redeploy that reconfigures the
-            content cluster and can drop rows another process just fed but
-            Vespa hasn't flushed — a read then loses the documents it was
-            meant to return. Read-built managers are not cached so the
-            first writer still deploys.
-
-            Canonicalizes the tenant_id so the schema name matches what
-            POST /admin/tenants stored it under. Without this, /graph/upsert
-            with a simple-form tenant_id ("acme") deploys
-            ``knowledge_graph_acme`` while the rest of the stack expects
-            ``knowledge_graph_acme_acme`` — and the simple-form schema
-            becomes an orphan the canonical-form DELETE cannot reap.
-            """
-            from cogniverse_core.common.tenant_utils import canonical_tenant_id
-
-            tenant_id = canonical_tenant_id(tenant_id)
-            if tenant_id in _graph_managers:
-                return _graph_managers[tenant_id]
-
-            if deploy:
-                try:
-                    graph_backend.schema_registry.deploy_schema(
-                        tenant_id=tenant_id, base_schema_name="knowledge_graph"
-                    )
-                except Exception as schema_err:
-                    logger.warning(
-                        f"Knowledge graph schema deploy for tenant {tenant_id} "
-                        f"skipped: {schema_err}"
-                    )
-
-            sys_cfg = config_manager.get_system_config()
-            colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
-            if not colbert_url:
-                raise RuntimeError(
-                    "knowledge_graph requires the colbert_pylate inference "
-                    "service to be deployed and present in "
-                    "INFERENCE_SERVICE_URLS. Available services: "
-                    f"{sorted(sys_cfg.inference_service_urls)}"
-                )
-            mgr = GraphManager(
-                backend=graph_backend,
-                tenant_id=tenant_id,
-                schema_name=graph_backend.get_tenant_schema_name(
-                    tenant_id, "knowledge_graph"
-                ),
-                colbert_endpoint_url=colbert_url,
-            )
-            if deploy:
-                _graph_managers[tenant_id] = mgr
-            return mgr
-
-        graph_router.set_graph_manager_factory(_graph_manager_factory)
+        graph_router.set_graph_manager_factory(
+            _build_graph_manager_factory(graph_backend, config_manager)
+        )
         logger.info("GraphManager factory initialized (per-tenant)")
     except Exception as e:
         logger.warning(f"GraphManager init failed (non-fatal): {e}")

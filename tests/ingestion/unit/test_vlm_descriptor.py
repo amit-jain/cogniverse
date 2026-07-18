@@ -1018,6 +1018,109 @@ class TestVLMEndpointContract:
         assert "503" in result
 
 
+@pytest.mark.unit
+class TestProgressFlushCadence:
+    """Progress persistence is batched, not per-batch.
+
+    generate_descriptions used to re-serialize the ENTIRE growing
+    descriptions dict (and re-mkdir the output dir) after EVERY batch —
+    quadratic write amplification over a long video. It now creates the
+    directory once and flushes progress every _PROGRESS_FLUSH_EVERY batches
+    plus once after the loop."""
+
+    def test_25_batches_flush_at_10_20_and_final(self, tmp_path):
+        import pathlib
+
+        from cogniverse_runtime.ingestion.processors import vlm_descriptor as mod
+
+        assert mod._PROGRESS_FLUSH_EVERY == 10
+
+        descriptor = VLMDescriptor(
+            vlm_endpoint="http://test.com/generate-description",
+            batch_size=1,
+            timeout=30,
+            auto_start=False,
+        )
+        keyframes = []
+        for i in range(25):
+            p = tmp_path / f"frame_{i:03d}.jpg"
+            p.touch()
+            keyframes.append({"frame_id": f"f{i}", "path": str(p)})
+        metadata = {"video_id": "flush_video", "keyframes": keyframes}
+
+        dumped_sizes = []
+        real_dump = json.dump
+
+        def counting_dump(obj, fh, **kwargs):
+            dumped_sizes.append(len(obj))
+            return real_dump(obj, fh, **kwargs)
+
+        # Pre-create the parent so pathlib's recursive parents=True handling
+        # doesn't add nested mkdir calls — the counter then reflects exactly
+        # the SUT's own invocations (one, not one per batch).
+        (tmp_path / "out").mkdir()
+        mkdir_calls = {"n": 0}
+        real_mkdir = pathlib.Path.mkdir
+
+        def counting_mkdir(self, *args, **kwargs):
+            mkdir_calls["n"] += 1
+            return real_mkdir(self, *args, **kwargs)
+
+        def fake_batch(batch):
+            return {kf["frame_id"]: f"desc {kf['frame_id']}" for kf in batch}
+
+        with (
+            patch("json.dump", counting_dump),
+            patch("pathlib.Path.mkdir", counting_mkdir),
+            patch.object(descriptor, "_process_vlm_batch", side_effect=fake_batch),
+        ):
+            result = descriptor.generate_descriptions(metadata, tmp_path / "out")
+
+        # Flushes at batch 10, batch 20, and the final write after the loop.
+        assert dumped_sizes == [10, 20, 25]
+        assert mkdir_calls["n"] == 1
+        assert result["total_descriptions"] == 25
+        on_disk = json.loads(
+            (tmp_path / "out" / "descriptions" / "flush_video.json").read_text()
+        )
+        assert len(on_disk) == 25
+        assert on_disk["f0"] == "desc f0"
+        assert on_disk["f24"] == "desc f24"
+
+    def test_short_run_writes_once_after_the_loop(self, tmp_path):
+        descriptor = VLMDescriptor(
+            vlm_endpoint="http://test.com/generate-description",
+            batch_size=1,
+            timeout=30,
+            auto_start=False,
+        )
+        keyframes = []
+        for i in range(3):
+            p = tmp_path / f"frame_{i}.jpg"
+            p.touch()
+            keyframes.append({"frame_id": f"f{i}", "path": str(p)})
+        metadata = {"video_id": "short_video", "keyframes": keyframes}
+
+        dumped_sizes = []
+        real_dump = json.dump
+
+        def counting_dump(obj, fh, **kwargs):
+            dumped_sizes.append(len(obj))
+            return real_dump(obj, fh, **kwargs)
+
+        def fake_batch(batch):
+            return {kf["frame_id"]: "d" for kf in batch}
+
+        with (
+            patch("json.dump", counting_dump),
+            patch.object(descriptor, "_process_vlm_batch", side_effect=fake_batch),
+        ):
+            result = descriptor.generate_descriptions(metadata, tmp_path / "out")
+
+        assert dumped_sizes == [3]
+        assert result["total_descriptions"] == 3
+
+
 class _VLMServer(ThreadingHTTPServer):
     """Real vLLM /v1 stand-in that records peak in-flight concurrency."""
 

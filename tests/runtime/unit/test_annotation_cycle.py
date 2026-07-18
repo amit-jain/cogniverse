@@ -64,7 +64,12 @@ class _StubStorage:
     def __init__(self, tenant_id, agent_type="routing"):
         self.agent_type = agent_type
 
-    async def query_annotated_spans(self, start_time, end_time, only_human_reviewed):
+    async def fetch_project_spans(self, start_time, end_time):
+        return None
+
+    async def query_annotated_spans(
+        self, start_time, end_time, only_human_reviewed, spans_df=None
+    ):
         if self.agent_type == "routing":
             return [{"span_id": "r2"}]
         return []
@@ -161,3 +166,97 @@ async def test_cycle_caps_total_at_max_annotations_per_cycle():
 
         assert result["enqueued"] == 1
         assert agents_router.get_annotation_queue().statistics()["total"] == 1
+
+
+class _CountingTraceStore:
+    """Counts whole-project span pulls and serves one span row."""
+
+    def __init__(self):
+        self.get_spans_calls = 0
+
+    async def get_spans(
+        self, project, start_time=None, end_time=None, filters=None, limit=1000
+    ):
+        import pandas as pd
+
+        self.get_spans_calls += 1
+        return pd.DataFrame([{"context.span_id": "r1", "name": "cogniverse.routing"}])
+
+
+class _EmptyAnnotationStore:
+    async def get_annotations(self, spans_df=None, project=None, annotation_names=None):
+        import pandas as pd
+
+        return pd.DataFrame()
+
+
+class _StubTelemetryManager:
+    """Hands the real AnnotationStorage a counting provider."""
+
+    def __init__(self, provider):
+        from types import SimpleNamespace
+
+        self._provider = provider
+        self.config = SimpleNamespace(get_project_name=lambda tid: f"cogniverse-{tid}")
+
+    def get_provider(self, tenant_id):
+        return self._provider
+
+
+@pytest.mark.asyncio
+async def test_cycle_pulls_project_spans_once_for_all_agent_types():
+    """One whole-project span pull serves every agent type in a cycle.
+
+    The per-agent query_annotated_spans calls share an identical time window,
+    so the real AnnotationStorage must receive the pre-fetched frame instead
+    of re-pulling the project once per agent type."""
+    from types import SimpleNamespace
+
+    _StubAnnotationAgent.by_type = {
+        "routing": ["r1"],
+        "query_enhancement": ["q1"],
+        "search": ["s1"],
+    }
+    trace_store = _CountingTraceStore()
+    provider = SimpleNamespace(traces=trace_store, annotations=_EmptyAnnotationStore())
+
+    app = FastAPI()
+    app.include_router(agents_router.router, prefix="/agents")
+    try:
+        with (
+            patch.object(
+                agents_router,
+                "_annotation_queue",
+                __import__(
+                    "cogniverse_agents.routing.annotation_queue",
+                    fromlist=["AnnotationQueue"],
+                ).AnnotationQueue(),
+            ),
+            patch(
+                "cogniverse_agents.routing.annotation_agent.AnnotationAgent",
+                _StubAnnotationAgent,
+            ),
+            patch(
+                "cogniverse_agents.routing.annotation_storage.get_telemetry_manager",
+                return_value=_StubTelemetryManager(provider),
+            ),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://runtime"
+            ) as client:
+                result = await run_annotation_cycle(
+                    tenant_id="acme:acme",
+                    runtime_url="http://runtime",
+                    agent_types=["routing", "query_enhancement", "search"],
+                    http_client=client,
+                )
+    finally:
+        _StubAnnotationAgent.by_type = {
+            "routing": ["r1", "r2"],
+            "query_enhancement": ["q1"],
+        }
+
+    assert result["identified"] == 3
+    assert result["already_annotated"] == 0
+    assert result["enqueued"] == 3
+    assert trace_store.get_spans_calls == 1

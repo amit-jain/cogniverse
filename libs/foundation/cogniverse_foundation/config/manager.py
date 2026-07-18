@@ -319,6 +319,21 @@ class ConfigManager:
             ]:
                 del self._scoped_config_cache[key]
 
+    # ========== Tenant Instructions ==========
+
+    def get_tenant_instructions_config(self, tenant_id: str) -> Optional[Any]:
+        """Get the raw tenant-instructions value (the SOUL.md equivalent).
+
+        Served from the scoped TTL cache — every memory-aware agent reads
+        the instructions on the per-dispatch enrichment path, so an uncached
+        read cost one synchronous store query per dispatch while the sibling
+        scopes were cached. Returns the stored ``config_value`` (typically
+        ``{"text": ..., "updated_at": ...}``) or ``None`` when unset.
+        """
+        return self._cached_config_value(
+            ConfigScope.SYSTEM, tenant_id, "tenant_instructions", "system_prompt"
+        )
+
     # ========== Routing Configuration ==========
 
     def get_routing_config(
@@ -811,6 +826,10 @@ class ConfigManager:
             config_key=config_key,
             config_value=config_value,
         )
+        # Same-manager setters invalidate immediately (the TTL only bounds
+        # staleness for writes from other processes) — the typed setters all
+        # do this, and reads routed through the scoped cache rely on it.
+        self._invalidate_scoped_config(scope, tenant_id)
 
     # ========== Bulk Operations ==========
 

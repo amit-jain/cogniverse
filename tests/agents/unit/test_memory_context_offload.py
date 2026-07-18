@@ -62,6 +62,24 @@ async def test_inject_context_async_offloads_blocking_work(monkeypatch):
     )
 
 
+def _real_config_manager_with_instructions(text):
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    cm = ConfigManager(store=store)
+    cm.set_config_value(
+        tenant_id="acme:acme",
+        scope=ConfigScope.SYSTEM,
+        service="tenant_instructions",
+        config_key="system_prompt",
+        config_value={"text": text, "updated_at": "2026-07-17T00:00:00+00:00"},
+    )
+    return cm, store
+
+
 def test_get_tenant_instructions_reuses_injected_config_manager(monkeypatch):
     """_get_tenant_instructions must reuse the injected/singleton config manager,
     not build a fresh one per call."""
@@ -73,18 +91,33 @@ def test_get_tenant_instructions_reuses_injected_config_manager(monkeypatch):
 
     monkeypatch.setattr(cfg_utils, "create_default_config_manager", _boom)
 
-    class _Entry:
-        config_value = {"text": "be concise"}
+    cm, _ = _real_config_manager_with_instructions("be concise")
+    obj = _Mixin()
+    obj._memory_tenant_id = "acme:acme"
+    obj._config_manager = cm
 
-    class _Store:
-        def get_config(self, **kwargs):
-            return _Entry()
+    assert obj._get_tenant_instructions() == "be concise"
 
-    class _CM:
-        store = _Store()
+
+def test_get_tenant_instructions_served_from_manager_ttl_cache():
+    """Repeated enriching dispatches within the TTL must cost ONE store read.
+
+    The mixin previously called cm.store.get_config directly on every
+    dispatch, bypassing the manager's scoped TTL cache that sibling config
+    scopes (routing, telemetry, agent) already route through."""
+    cm, store = _real_config_manager_with_instructions("be concise")
+    calls = {"get": 0}
+    real_get = store.get_config
+
+    def counting_get(*args, **kwargs):
+        calls["get"] += 1
+        return real_get(*args, **kwargs)
+
+    store.get_config = counting_get
 
     obj = _Mixin()
     obj._memory_tenant_id = "acme:acme"
-    obj._config_manager = _CM()
+    obj._config_manager = cm
 
-    assert obj._get_tenant_instructions() == "be concise"
+    assert [obj._get_tenant_instructions() for _ in range(3)] == ["be concise"] * 3
+    assert calls["get"] == 1, "repeat reads within the TTL must hit the cache"

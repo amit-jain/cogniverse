@@ -1067,6 +1067,14 @@ async def run_cleanup(
     return results
 
 
+# Phoenix span-query retry budget. This helper runs in a per-agent loop, so
+# the worst case compounds: 2 attempts x 60s per-attempt timeout + one 5s
+# backoff = ~125s per call site on a down/hung Phoenix (3 x 120s + sleeps was
+# 370s per agent).
+_SPAN_QUERY_ATTEMPTS = 2
+_SPAN_QUERY_TIMEOUT_S = 60
+
+
 async def _query_spans_by_name(
     telemetry_provider,
     tenant_id: str,
@@ -1087,30 +1095,39 @@ async def _query_spans_by_name(
     start_time = end_time - timedelta(hours=lookback_hours)
 
     last_exc: Exception | None = None
-    for attempt in range(3):
+    for attempt in range(_SPAN_QUERY_ATTEMPTS):
         try:
-            spans_df = await telemetry_provider.traces.get_spans(
-                project=project_name,
-                start_time=start_time,
-                end_time=end_time,
-                # Server-side name predicate — pulling the whole project
-                # window and filtering client-side costs a full scan of a
-                # project that accumulates thousands of spans a day.
-                filters={"name": span_name},
-                limit=10000,
+            spans_df = await asyncio.wait_for(
+                telemetry_provider.traces.get_spans(
+                    project=project_name,
+                    start_time=start_time,
+                    end_time=end_time,
+                    # Server-side name predicate — pulling the whole project
+                    # window and filtering client-side costs a full scan of a
+                    # project that accumulates thousands of spans a day.
+                    filters={"name": span_name},
+                    limit=10000,
+                ),
+                timeout=_SPAN_QUERY_TIMEOUT_S,
             )
             break
         except Exception as e:
             last_exc = e
             logger.warning(
-                "Span query for %s failed (attempt %d/3): %s", span_name, attempt + 1, e
+                "Span query for %s failed (attempt %d/%d): %s",
+                span_name,
+                attempt + 1,
+                _SPAN_QUERY_ATTEMPTS,
+                e,
             )
-            await asyncio.sleep(5)
+            if attempt + 1 < _SPAN_QUERY_ATTEMPTS:
+                await asyncio.sleep(5)
     else:
         # A failed query is not "no spans" — reporting no_data here made a
         # Phoenix timeout look like an empty optimization window.
         raise RuntimeError(
-            f"Failed to query {span_name} spans from Phoenix after 3 attempts"
+            f"Failed to query {span_name} spans from Phoenix after "
+            f"{_SPAN_QUERY_ATTEMPTS} attempts"
         ) from last_exc
 
     if spans_df.empty:

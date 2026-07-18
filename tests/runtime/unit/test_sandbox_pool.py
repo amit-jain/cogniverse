@@ -217,6 +217,60 @@ class TestCloseAll:
             assert s.delete_count == 1
         assert pool.stats()["pool_size"] == 0
 
+    def test_close_all_leaves_checked_out_session_alive_until_release(self):
+        """close_all during an in-flight exec (cert-rotation reconnect calls
+        it via _drop_stale_pool) must not delete the session out from under
+        the exec — the session drains: it stays usable until the callback
+        returns, then is destroyed on release instead of re-pooled."""
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=4))
+        observed = {}
+
+        def callback(session):
+            pool.close_all()
+            # Still alive and usable mid-exec.
+            observed["deleted_during_exec"] = session.delete_count
+            observed["session"] = session
+            return "exec-result"
+
+        assert pool.with_session("coding_agent", callback) == "exec-result"
+
+        assert observed["deleted_during_exec"] == 0
+        # Destroyed exactly once on release, never re-pooled.
+        assert observed["session"].delete_count == 1
+        assert pool.stats()["pool_size"] == 0
+
+    def test_close_all_destroys_idle_now_and_defers_busy_to_release(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=4))
+        idle_seen = []
+        pool.with_session("idle_agent", lambda s: idle_seen.append(s))
+        busy_entry = pool._checkout("busy_agent")
+
+        pool.close_all()
+
+        assert idle_seen[0].delete_count == 1
+        assert busy_entry.session.delete_count == 0
+
+        pool._release(busy_entry)
+        assert busy_entry.session.delete_count == 1
+        assert pool.stats()["pool_size"] == 0
+
+    def test_closed_pool_stays_draining_and_never_repools(self):
+        """After close_all the pool object is being discarded (shutdown or
+        reconnect swap) — a later checkout must not park a fresh session in
+        it forever; the session serves its one call and is destroyed."""
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=4))
+        pool.close_all()
+
+        seen = []
+        pool.with_session("agent", lambda s: seen.append(s))
+
+        assert client.create_calls == 1
+        assert seen[0].delete_count == 1
+        assert pool.stats()["pool_size"] == 0
+
     def test_manager_close_tears_down_pool_and_client(self):
         """SandboxManager.close() (wired into the runtime lifespan shutdown so a
         restart doesn't orphan gateway containers) must destroy pooled sessions

@@ -1092,11 +1092,20 @@ class TestQuerySpansFailureIsNotNoData:
 
     Flattening the exception to an empty DataFrame made every batch mode
     report status=no_data during a Phoenix timeout — indistinguishable
-    from a genuinely empty optimization window.
+    from a genuinely empty optimization window. The retry budget is bounded:
+    2 attempts with a 60s per-attempt timeout, so a persistently down or
+    hung Phoenix costs at most ~125s per call site (this runs in a per-agent
+    loop; the previous 3x120s budget hung a cycle for 370s per agent).
     """
 
+    def test_retry_budget_constants(self):
+        from cogniverse_runtime import optimization_cli as cli
+
+        assert cli._SPAN_QUERY_ATTEMPTS == 2
+        assert cli._SPAN_QUERY_TIMEOUT_S == 60
+
     @pytest.mark.asyncio
-    async def test_query_failure_raises_after_retries(self, monkeypatch):
+    async def test_query_failure_raises_after_exactly_two_attempts(self, monkeypatch):
         import asyncio as _asyncio
 
         from cogniverse_runtime import optimization_cli as cli
@@ -1108,11 +1117,11 @@ class TestQuerySpansFailureIsNotNoData:
 
         monkeypatch.setattr(_asyncio, "sleep", _instant_sleep)
         with patch(_PATCH_TELEMETRY, return_value=manager):
-            with pytest.raises(RuntimeError, match="after 3 attempts"):
+            with pytest.raises(RuntimeError, match="after 2 attempts"):
                 await cli._query_spans_by_name(
                     provider, "acme:prod", "cogniverse.entity_extraction", 1.0
                 )
-        assert store.calls == 3
+        assert store.calls == 2
 
     @pytest.mark.asyncio
     async def test_transient_failure_recovers_on_retry(self, monkeypatch):

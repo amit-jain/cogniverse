@@ -114,10 +114,16 @@ datasets; `list_versions` enumerates them.
 Hot reload note: the generic agents are rebuilt per request (the dispatcher
 runs `_load_artifact` after telemetry/tenant injection), so a new artefact
 lands without restart on the next request. The gateway agent is the
-exception — it is cached per tenant, and cache hits re-run `_load_artifact`
-once the reload interval elapses (`GATEWAY_ARTIFACT_TTL_S`, 5 minutes), so a
-recalibration starts serving on a warm pod within that interval. A rollback
-therefore only needs to flip the active dataset content.
+exception — it is cached per tenant in a bounded `TenantLRUCache`
+(`GATEWAY_AGENT_CACHE_CAPACITY`, 64 tenants; least-recently-dispatched
+tenants rebuild on their next request), and cache hits re-run
+`_load_artifact` once the reload interval elapses (`GATEWAY_ARTIFACT_TTL_S`,
+5 minutes), so a recalibration starts serving on a warm pod within that
+interval. Deleting a tenant evicts its cached gateway agent immediately
+(`evict_tenant_from_registered_caches`, see
+[Foundation Module](../modules/foundation.md#tenant-scoped-caching)) rather
+than waiting for LRU pressure. A rollback therefore only needs to flip the
+active dataset content.
 
 ## Regression-reject gate
 
@@ -583,7 +589,13 @@ and `AnnotationStorage` — plus two scheduled cycles in
   a loop inside the quality-monitor sidecar): identifies spans needing review per agent
   type, drops already-annotated spans, caps at
   `optimization_triggers.max_annotations_per_cycle`, and POSTs the worklist to the
-  runtime's `POST /agents/annotations/queue/enqueue`.
+  runtime's `POST /agents/annotations/queue/enqueue`. The "already-annotated" check
+  (`AnnotationStorage.query_annotated_spans`) needs the tenant project's spans
+  regardless of agent type, so `run_annotation_cycle` fetches that window once via
+  `AnnotationStorage.fetch_project_spans` and passes the shared frame into every
+  per-agent-type `query_annotated_spans(spans_df=...)` call instead of re-pulling the
+  whole project per agent type; `run_annotation_feedback_cycle` does the same for its
+  per-agent human-reviewed-annotation counts.
 - Reviewers work the queue over REST (`assign` / `complete`) or the dashboard;
   completion persists the label durably **before** the in-memory state flips, so a
   telemetry outage leaves the item open for retry instead of losing the label.
