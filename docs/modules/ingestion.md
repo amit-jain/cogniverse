@@ -1535,7 +1535,7 @@ These plain classes back the processors above and are not auto-discovered by
 `ProcessorManager` themselves:
 
 - `AudioTranscriber` (`audio_transcriber.py`) — Whisper model loading and the core transcription call; used by `AudioProcessor`.
-- `AudioEmbeddingGenerator` (`audio_embedding_generator.py`) — lazy CLAP loading and acoustic embedding generation; used by `EmbeddingGeneratorImpl._process_audio_segments()`.
+- `AudioEmbeddingGenerator` (`audio_embedding_generator.py`) — lazy CLAP loading and acoustic embedding generation; used by `EmbeddingGeneratorImpl._process_audio_segments()`. Remote (`clap_endpoint_url`) calls reuse one pooled `httpx.Client` across the instance instead of opening a connection per segment; `close()` releases that pooled client.
 - `VLMDescriptor` (`vlm_descriptor.py`) — Modal VLM service HTTP client and auto-start logic; used by `VLMProcessor`.
 - `EmbeddingGeneratorFactory` (`embedding_generator/embedding_generator_factory.py`) — exposes `create_embedding_generator(...)`, the factory function used to construct `EmbeddingGeneratorImpl`.
 - `BackendFactory` (`embedding_generator/backend_factory.py`) — `BackendFactory.create(backend_type, tenant_id, config, ...)` builds the `IngestionBackend` (Vespa) client fed to `EmbeddingGeneratorImpl`.

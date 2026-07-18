@@ -91,17 +91,68 @@ async def test_phoenix_provider_spawn_background_tracks_and_releases() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_agent_registry_health_check_writes_aware_utc(monkeypatch) -> None:
-    """``last_health_check`` must be UTC-aware so cross-pod compares work."""
+@pytest.mark.asyncio
+async def test_agent_registry_health_check_writes_aware_utc() -> None:
+    """``AgentRegistry.health_check_agent`` must stamp the registered
+    endpoint's ``last_health_check`` as UTC-aware so cross-pod compares work."""
     from datetime import datetime, timezone
+    from unittest.mock import AsyncMock, MagicMock
 
     from cogniverse_core.common.agent_models import AgentEndpoint
+    from cogniverse_core.registries.agent_registry import AgentRegistry
 
-    ep = AgentEndpoint(name="x", url="http://x", capabilities=[])
-    # Simulate what the registry health check does.
-    ep.last_health_check = datetime.now(timezone.utc)
-    assert ep.last_health_check.tzinfo is not None
-    assert ep.last_health_check.tzinfo.utcoffset(None) == timezone.utc.utcoffset(None)
+    registry = AgentRegistry(tenant_id="acme:production", config_manager=MagicMock())
+    ep = AgentEndpoint(name="x", url="http://x", capabilities=["video_search"])
+    assert registry.register_agent(ep) is True
+    assert ep.last_health_check is None
+
+    response = MagicMock(status_code=200)
+    registry._http_client = MagicMock()
+    registry._http_client.get = AsyncMock(return_value=response)
+
+    before = datetime.now(timezone.utc)
+    healthy = await registry.health_check_agent("x")
+    after = datetime.now(timezone.utc)
+
+    assert healthy is True
+    registry._http_client.get.assert_awaited_once_with("http://x/health", timeout=5.0)
+    stored = registry.agents["x"]
+    assert stored is ep
+    assert stored.health_status == "healthy"
+    assert stored.last_health_check is not None
+    assert stored.last_health_check.tzinfo is timezone.utc
+    assert before <= stored.last_health_check <= after
+
+
+@pytest.mark.asyncio
+async def test_agent_registry_health_check_failure_writes_aware_utc() -> None:
+    """An unreachable agent still gets a UTC-aware ``last_health_check``."""
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock, MagicMock
+
+    import httpx
+
+    from cogniverse_core.common.agent_models import AgentEndpoint
+    from cogniverse_core.registries.agent_registry import AgentRegistry
+
+    registry = AgentRegistry(tenant_id="acme:production", config_manager=MagicMock())
+    ep = AgentEndpoint(name="x", url="http://x", capabilities=["video_search"])
+    assert registry.register_agent(ep) is True
+
+    registry._http_client = MagicMock()
+    registry._http_client.get = AsyncMock(
+        side_effect=httpx.TimeoutException("health probe timed out")
+    )
+
+    before = datetime.now(timezone.utc)
+    healthy = await registry.health_check_agent("x")
+    after = datetime.now(timezone.utc)
+
+    assert healthy is False
+    stored = registry.agents["x"]
+    assert stored.health_status == "unreachable"
+    assert stored.last_health_check.tzinfo is timezone.utc
+    assert before <= stored.last_health_check <= after
 
 
 def test_agent_endpoint_needs_health_check_tolerates_legacy_naive_stamp() -> None:

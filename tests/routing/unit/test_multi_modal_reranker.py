@@ -206,6 +206,33 @@ class TestMultiModalReranker:
         assert distribution["image"] == 1
         assert distribution["document"] == 1
 
+    def test_ranking_quality_temporal_coverage_mixed_tz(self, reranker):
+        """analyze_ranking_quality must not raise on a naive/aware timestamp
+        mix; naive datetimes read as UTC, so the span is exactly 30 days."""
+        from datetime import timezone
+
+        def _res(rid, ts):
+            return RerankerSearchResult(
+                id=rid,
+                title="t",
+                content="c",
+                modality="video",
+                score=1.0,
+                metadata={"reranking_score": 1.0},
+                timestamp=ts,
+            )
+
+        results = [
+            _res("a", datetime(2026, 1, 1)),
+            _res("b", datetime(2026, 1, 16, tzinfo=timezone.utc)),
+            _res("c", datetime(2026, 1, 31, tzinfo=timezone.utc)),
+        ]
+
+        quality = reranker.analyze_ranking_quality(results)
+
+        assert quality["temporal_coverage"] == pytest.approx(30 / 365)
+        assert quality["total_results"] == 3
+
     def test_ranking_quality_analysis(self, reranker, sample_results):
         """Test ranking quality metrics"""
         # Add reranking scores

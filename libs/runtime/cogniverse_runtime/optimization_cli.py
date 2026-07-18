@@ -409,19 +409,7 @@ async def run_triggered_optimization(
             results["baseline_updated"] = True
 
         # Grow golden set with high-scoring live queries
-        high_scoring = trigger_df[trigger_df["category"] == "high_scoring"]
-        new_golden_candidates = []
-        for _, row in high_scoring.iterrows():
-            if float(row.get("score", 0)) >= 0.8:
-                new_golden_candidates.append(
-                    {
-                        "query": row.get("query", ""),
-                        "expected_videos": [],
-                        "ground_truth": "",
-                        "query_type": "live_traffic",
-                        "source": "quality_monitor",
-                    }
-                )
+        new_golden_candidates = _golden_set_candidates(trigger_df)
         if new_golden_candidates:
             await monitor.grow_golden_set(new_golden_candidates)
             results["golden_set_growth"] = len(new_golden_candidates)
@@ -439,6 +427,32 @@ async def run_triggered_optimization(
         await checkpointer.finalize(had_failure)
 
     return results
+
+
+def _golden_set_candidates(trigger_df) -> list:
+    """High-scoring live queries eligible for golden-set growth."""
+    candidates = []
+    high_scoring = trigger_df[trigger_df["category"] == "high_scoring"]
+    for _, row in high_scoring.iterrows():
+        try:
+            score = float(row.get("score", 0))
+        except (TypeError, ValueError):
+            logger.warning(
+                "Skipping golden-set candidate with non-numeric score %r",
+                row.get("score"),
+            )
+            continue
+        if score >= 0.8:
+            candidates.append(
+                {
+                    "query": row.get("query", ""),
+                    "expected_videos": [],
+                    "ground_truth": "",
+                    "query_type": "live_traffic",
+                    "source": "quality_monitor",
+                }
+            )
+    return candidates
 
 
 async def _optimize_agent(

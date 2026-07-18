@@ -214,111 +214,94 @@ class TestDSPyOptimizerIntegration:
 
         assert mock_optimize.call_count == len(expected_modules)
 
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_module_optimization_with_training_data(
-        self, mock_openai_compatible_api
-    ):
-        """Test individual module optimization with training data."""
-
-        # Mock the entire optimization process to focus on integration without DSPy deep internals
-        with patch.object(
-            DSPyAgentOptimizerPipeline, "optimize_module"
-        ) as mock_optimize:
-            # Setup mock return
-            mock_compiled_module = Mock()
-            mock_optimize.return_value = mock_compiled_module
-
-            # Create optimizer and pipeline
-            optimizer = DSPyAgentPromptOptimizer()
-            pipeline = DSPyAgentOptimizerPipeline(optimizer)
-
-            # Initialize modules and load training data
-            pipeline.initialize_modules()
-            training_data = pipeline.load_training_data()
-
-            # Test optimization of query analysis module
-            query_examples = training_data["query_analysis"]
-            assert len(query_examples) > 0
-
-            optimized_module = pipeline.optimize_module(
-                "query_analysis",
-                query_examples[:3],  # Use first 3 as training
-                (
-                    query_examples[3:4] if len(query_examples) > 3 else None
-                ),  # Use 4th as validation
-            )
-
-            assert optimized_module is not None
-
-            # Verify optimize_module was called with correct parameters
-            mock_optimize.assert_called_once()
-            call_args = mock_optimize.call_args
-            assert call_args[0][0] == "query_analysis"  # module_name
-            assert len(call_args[0][1]) == 3  # training_examples
-
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_prompt_saving_and_loading(self):
-        """Test saving and loading optimized prompts via telemetry."""
+        """save_optimized_prompts writes one prompt dataset per module, and
+        ArtifactManager.load_prompts reads back the exact name→value rows for
+        each under the canonical tenant id."""
+        import pandas as pd
 
-        # Test that optimization pipeline can save prompts
         optimizer = DSPyAgentPromptOptimizer()
         pipeline = DSPyAgentOptimizerPipeline(optimizer)
 
-        # Mock compiled modules
+        # Each compiled module exposes exactly one generate_* component with a
+        # concrete signature string; _extract_artifacts_from_module lifts it
+        # into a {"signature": <str>} prompt blob.
+        signatures = {
+            "query_analysis": "QueryAnalysis(query -> intent)",
+            "agent_routing": "AgentRouting(query -> workflow)",
+            "summary_generation": "SummaryGeneration(docs -> summary)",
+            "detailed_report": "DetailedReport(findings -> report)",
+        }
+        component_attr = {
+            "query_analysis": "generate_analysis",
+            "agent_routing": "generate_routing",
+            "summary_generation": "generate_summary",
+            "detailed_report": "generate_report",
+        }
         mock_modules = {}
-        for module_name in [
-            "query_analysis",
-            "agent_routing",
-            "summary_generation",
-            "detailed_report",
-        ]:
-            mock_module = Mock(spec=[])
+        for module_name, sig in signatures.items():
+            attr = component_attr[module_name]
+            mock_module = Mock(spec=["demos", attr])
             mock_module.demos = []
-            mock_module.generate_analysis = (
-                Mock() if "analysis" in module_name else None
-            )
-            mock_module.generate_routing = Mock() if "routing" in module_name else None
-            mock_module.generate_summary = Mock() if "summary" in module_name else None
-            mock_module.generate_report = Mock() if "report" in module_name else None
-
-            if mock_module.generate_analysis:
-                mock_module.generate_analysis.signature = (
-                    f"Mock {module_name} signature"
-                )
-
+            component = Mock(spec=["signature"])
+            component.signature = sig
+            setattr(mock_module, attr, component)
             mock_modules[module_name] = mock_module
 
         pipeline.compiled_modules = mock_modules
 
-        # Mock telemetry provider: save_optimized_prompts goes through
-        # ArtifactManager which calls datasets.create_dataset for prompts
-        # and metrics blobs (one dataset.create_dataset per artifact type
-        # per module).
-        mock_provider = Mock()
-        mock_provider.datasets = Mock()
-        mock_provider.datasets.create_dataset = AsyncMock(return_value="ds-123")
-        mock_provider.datasets.get_dataset = AsyncMock(
-            side_effect=KeyError("not found")
-        )
-        # save_experiment now routes through append_to_dataset (creates the
-        # dataset on first call when get raises KeyError).
-        mock_provider.datasets.append_to_dataset = AsyncMock(return_value="ds-exp-123")
+        # Persisting fake telemetry store: create/append write DataFrames into
+        # an in-memory dict; get reads the latest snapshot back.
+        store: dict = {}
 
-        # Save prompts via telemetry
+        async def create_dataset(name, data, metadata=None):
+            store[name] = data.copy()
+            return f"ds-{name}"
+
+        async def append_to_dataset(name, data, metadata=None):
+            if name not in store:
+                raise KeyError(name)
+            store[name] = pd.concat([store[name], data], ignore_index=True)
+            return f"ds-{name}"
+
+        async def get_dataset(name):
+            if name not in store:
+                raise KeyError(name)
+            return store[name]
+
+        provider = Mock()
+        provider.datasets = Mock()
+        provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+        provider.datasets.append_to_dataset = AsyncMock(side_effect=append_to_dataset)
+        provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
+
         await pipeline.save_optimized_prompts(
-            tenant_id="test-tenant", telemetry_provider=mock_provider
+            tenant_id="test-tenant", telemetry_provider=provider
         )
 
-        # ArtifactManager routes every artifact through datasets.create_dataset
-        # (prompts blob + metrics blob = 2 calls per module, no demos since
-        # mock_module.demos is []).  At minimum one call per module for prompts.
-        assert mock_provider.datasets.create_dataset.call_count >= len(mock_modules), (
-            f"Expected at least {len(mock_modules)} datasets.create_dataset calls "
-            f"(one prompt-blob per module), got "
-            f"{mock_provider.datasets.create_dataset.call_count}"
-        )
+        # Read every prompt dataset back through the SAME store and assert the
+        # exact rows landed.
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+        reader = ArtifactManager(provider, "test-tenant")
+        for module_name, sig in signatures.items():
+            loaded = await reader.load_prompts(module_name)
+            assert loaded == {"signature": sig}
+
+        # Datasets are keyed by canonical tenant + module: one prompt dataset
+        # and one experiments dataset per module, no demo datasets (demos=[]).
+        assert set(store) == {
+            "dspy-prompts-test-tenant:test-tenant-query_analysis",
+            "dspy-prompts-test-tenant:test-tenant-agent_routing",
+            "dspy-prompts-test-tenant:test-tenant-summary_generation",
+            "dspy-prompts-test-tenant:test-tenant-detailed_report",
+            "dspy-experiments-test-tenant:test-tenant-query_analysis",
+            "dspy-experiments-test-tenant:test-tenant-agent_routing",
+            "dspy-experiments-test-tenant:test-tenant-summary_generation",
+            "dspy-experiments-test-tenant:test-tenant-detailed_report",
+        }
 
 
 class TestDSPyEndToEndOptimization:

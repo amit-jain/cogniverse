@@ -200,6 +200,96 @@ class TestPatternExtraction:
         if result_count:
             assert "search" == result_count[0].agent
 
+    def test_non_numeric_scores_dropped_from_quality_averages(self, learner):
+        """A junk score row is dropped; the averages come from the numeric rows."""
+        df = pd.DataFrame(
+            [
+                {
+                    "agent": "search",
+                    "category": "high_scoring",
+                    "query": "q one",
+                    "score": 0.9,
+                    "output": "{}",
+                },
+                {
+                    "agent": "search",
+                    "category": "high_scoring",
+                    "query": "q two",
+                    "score": 0.8,
+                    "output": "{}",
+                },
+                {
+                    "agent": "search",
+                    "category": "high_scoring",
+                    "query": "q three",
+                    "score": "corrupt",
+                    "output": "{}",
+                },
+                {
+                    "agent": "search",
+                    "category": "low_scoring",
+                    "query": "q four",
+                    "score": 0.2,
+                    "output": "{}",
+                },
+                {
+                    "agent": "search",
+                    "category": "low_scoring",
+                    "query": "q five",
+                    "score": 0.2,
+                    "output": "{}",
+                },
+                {
+                    "agent": "search",
+                    "category": "low_scoring",
+                    "query": "q six",
+                    "score": None,
+                    "output": "{}",
+                },
+            ]
+        )
+
+        strategies = learner._extract_patterns(df)
+
+        quality = [s for s in strategies if s.text.startswith("High-scoring")]
+        assert len(quality) == 1
+        assert quality[0].text == (
+            "High-scoring search queries average 0.85 while low-scoring "
+            "average 0.20. Focus on improving queries similar to the "
+            "low-scoring patterns."
+        )
+        assert quality[0].agent == "search"
+        assert quality[0].trace_count == 6
+        assert quality[0].confidence == 6 / 50
+
+    def test_all_junk_scores_in_category_skip_quality_strategy(self, learner):
+        """When one category has no numeric scores, no quality strategy emits."""
+        df = pd.DataFrame(
+            [
+                {
+                    "agent": "search",
+                    "category": "high_scoring",
+                    "query": f"q{i}",
+                    "score": "corrupt",
+                    "output": "{}",
+                }
+                for i in range(3)
+            ]
+            + [
+                {
+                    "agent": "search",
+                    "category": "low_scoring",
+                    "query": f"q{i + 3}",
+                    "score": 0.2,
+                    "output": "{}",
+                }
+                for i in range(3)
+            ]
+        )
+
+        strategies = learner._extract_patterns(df)
+        assert [s for s in strategies if s.text.startswith("High-scoring")] == []
+
 
 class TestStrategyDataclass:
     def test_to_memory_content(self):

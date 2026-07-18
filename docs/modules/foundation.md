@@ -843,19 +843,33 @@ ensure_provider_prefix("gemma3:4b")                       # "openai/gemma3:4b"
 
 `cogniverse_foundation.confidence.parse_confidence(raw, default=0.0) -> float`
 maps a DSPy module's LM-produced confidence/relevance output — a float, a
-percent string (`"85%"`), a label (`"high"`/`"medium"`/`"low"`), or an empty
-string — to a clamped `[0.0, 1.0]` float, falling back to `default` on any
-input it cannot interpret. Lives in foundation so core, agents, evaluation,
-and finetuning share one implementation instead of each doing a raw
-`float(result.confidence)` that crashes on a non-numeric shape.
+percent string (`"85%"`), a label (`"high"`/`"medium"`/`"low"`), a
+sentence-embedded number (`"0.9 (very confident)"`, `"confidence: 0.9"`,
+`"0.9/1.0"`), or an empty string — to a clamped `[0.0, 1.0]` float, falling
+back to `default` on any input it cannot interpret. Lives in foundation so
+core, agents, evaluation, and finetuning share one implementation instead of
+each doing a raw `float(result.confidence)` that crashes on a non-numeric
+shape.
+
+The sentence-embedded fallback only fires when the string isn't a bare
+number or exact label match. It first looks for an `x/y` ratio and accepts
+it only if `x/y` lands in `[0, 1]`; otherwise it takes the first free-standing
+float token that lands in `[0, 1]` (digits embedded in a larger token — hex
+reprs, versions like `"1.2.3"`, identifiers — are skipped). An out-of-range
+or absent number falls back to `default` rather than guessing, e.g.
+`"7 (very confident)"` stays uninterpretable.
 
 ```python
 from cogniverse_foundation.confidence import parse_confidence
 
-parse_confidence("85%")     # 0.85
-parse_confidence("high")    # 0.9
-parse_confidence(1.5)       # 1.0 (clamped)
-parse_confidence("")        # 0.0 (default)
+parse_confidence("85%")                    # 0.85
+parse_confidence("high")                   # 0.9
+parse_confidence(1.5)                      # 1.0 (clamped)
+parse_confidence("")                       # 0.0 (default)
+parse_confidence("0.9 (very confident)")   # 0.9 (numeric-extraction fallback)
+parse_confidence("confidence: 0.9")        # 0.9 (numeric-extraction fallback)
+parse_confidence("0.9/1.0")                # 0.9 (x/y ratio fallback)
+parse_confidence("7 (very confident)")     # 0.0 (default; 7 is out of [0, 1])
 ```
 
 ---

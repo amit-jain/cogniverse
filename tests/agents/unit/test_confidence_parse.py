@@ -27,6 +27,11 @@ from cogniverse_agents._confidence import parse_confidence
         # Bare-integer-in-string inputs above 1 — treated as percent.
         ("85", 0.85),
         ("50", 0.5),
+        ("7", 0.07),
+        # Sentence-embedded numeric forms real LMs return.
+        ("0.9 (very confident)", 0.9),
+        ("confidence: 0.9", 0.9),
+        ("0.9/1.0", 0.9),
         # Whitespace tolerant.
         ("  0.7  ", 0.7),
         # Label strings.
@@ -47,7 +52,19 @@ def test_recognised_inputs_map_to_unit_interval(raw, expected) -> None:
     assert parse_confidence(raw) == expected
 
 
-@pytest.mark.parametrize("raw", [None, "", "   ", "unknown", "n/a", object()])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        "",
+        "   ",
+        "unknown",
+        "n/a",
+        object(),
+        "no number here",
+        "7 (very confident)",
+    ],
+)
 def test_unrecognised_inputs_fall_back_to_default(raw) -> None:
     assert parse_confidence(raw, default=0.42) == 0.42
 

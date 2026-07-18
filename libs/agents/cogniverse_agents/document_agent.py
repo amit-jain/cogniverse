@@ -432,11 +432,19 @@ class DocumentAgent(
         # MaxSim rerank, so send both the float (qt) and binarized (qtb) query
         # tensors the schema declares.
         query_embedding = self.query_encoder.encode(query)
-        qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
+        # querytoken{} mapped tensor takes {token_index: vector}; a single
+        # (dim,) vector stays a flat list.
+        if query_embedding.ndim == 2:
+            qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
+        else:
+            qt_value = query_embedding.tolist()
         binary_query = np.packbits(
-            np.where(query_embedding > 0, 1, 0).astype(np.uint8), axis=1
+            np.where(query_embedding > 0, 1, 0).astype(np.uint8), axis=-1
         ).astype(np.int8)
-        qtb_value = {str(i): row.tolist() for i, row in enumerate(binary_query)}
+        if binary_query.ndim == 2:
+            qtb_value = {str(i): row.tolist() for i, row in enumerate(binary_query)}
+        else:
+            qtb_value = binary_query.tolist()
 
         safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
         schema = f"document_visual_{safe_tenant}"
@@ -509,7 +517,12 @@ class DocumentAgent(
 
         # ColBERT per-token query embedding (matches document_text ingestion).
         query_embedding = self.text_query_encoder.encode(query)
-        qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
+        # querytoken{} mapped tensor takes {token_index: vector}; a single
+        # (dim,) vector stays a flat list.
+        if query_embedding.ndim == 2:
+            qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
+        else:
+            qt_value = query_embedding.tolist()
 
         safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
         schema = f"document_text_{safe_tenant}"

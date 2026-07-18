@@ -189,6 +189,10 @@ class SandboxManager:
         # gateway sessions.
         self._pool: Optional[Any] = None
         self._pool_lock = threading.Lock()
+        # Serializes gateway dials: the cert-rotation tick and the exec-error
+        # trigger can both reconnect at once; without this the loser's client
+        # is overwritten and its channel never closed.
+        self._connect_lock = threading.Lock()
 
         # Gateway circuit breaker: after a few failed dials it trips open and
         # exec fails fast (CircuitOpenError) instead of every request eating the
@@ -299,40 +303,52 @@ class SandboxManager:
         """
         import os
 
-        try:
-            from openshell import SandboxClient
+        with self._connect_lock:
+            try:
+                from openshell import SandboxClient
 
-            override_endpoint = os.environ.get("OPENSHELL_GATEWAY_ENDPOINT")
-            if override_endpoint:
-                # ``SandboxClient(endpoint=...)`` only stores the endpoint
-                # and creates a lazy grpc channel — no eager dial. So a
-                # bogus endpoint produces a happy-looking client that
-                # only fails on first RPC. Probe the endpoint host:port
-                # with a short TCP connect so policy=REQUIRED actually
-                # refuses to boot when the gateway is unreachable.
-                _probe_gateway_endpoint(override_endpoint)
-                # The gateway serves mTLS; build the client TLS config from the
-                # certs mounted into the pod so the endpoint path isn't a
-                # plaintext channel talking to a TLS server. None => insecure
-                # (backward compatible when no certs are mounted).
-                self._client = SandboxClient(
-                    endpoint=override_endpoint, tls=self._resolve_tls_config()
+                override_endpoint = os.environ.get("OPENSHELL_GATEWAY_ENDPOINT")
+                if override_endpoint:
+                    # ``SandboxClient(endpoint=...)`` only stores the endpoint
+                    # and creates a lazy grpc channel — no eager dial. So a
+                    # bogus endpoint produces a happy-looking client that
+                    # only fails on first RPC. Probe the endpoint host:port
+                    # with a short TCP connect so policy=REQUIRED actually
+                    # refuses to boot when the gateway is unreachable.
+                    _probe_gateway_endpoint(override_endpoint)
+                    # The gateway serves mTLS; build the client TLS config from
+                    # the certs mounted into the pod so the endpoint path isn't
+                    # a plaintext channel talking to a TLS server. None =>
+                    # insecure (backward compatible when no certs are mounted).
+                    new_client = SandboxClient(
+                        endpoint=override_endpoint, tls=self._resolve_tls_config()
+                    )
+                    logger.info(
+                        f"Connected to OpenShell gateway at {override_endpoint}"
+                    )
+                else:
+                    new_client = SandboxClient.from_active_cluster(
+                        cluster=self._cluster
+                    )
+                    logger.info(
+                        f"Connected to OpenShell gateway "
+                        f"(cluster={self._cluster or 'active'})"
+                    )
+                displaced, self._client = self._client, new_client
+                self._available = True
+                self._drop_stale_pool()
+            except Exception as e:
+                logger.warning(
+                    f"OpenShell gateway unavailable: {e}. "
+                    "Agents will execute without sandbox isolation."
                 )
-                logger.info(f"Connected to OpenShell gateway at {override_endpoint}")
-            else:
-                self._client = SandboxClient.from_active_cluster(cluster=self._cluster)
-                logger.info(
-                    f"Connected to OpenShell gateway "
-                    f"(cluster={self._cluster or 'active'})"
-                )
-            self._available = True
-            self._drop_stale_pool()
-        except Exception as e:
-            logger.warning(
-                f"OpenShell gateway unavailable: {e}. "
-                "Agents will execute without sandbox isolation."
-            )
-            self._available = False
+                self._available = False
+                return
+        if displaced is not None:
+            try:
+                displaced.close()
+            except Exception as exc:
+                logger.debug("Displaced gateway client close: %s", exc)
 
     def _drop_stale_pool(self) -> None:
         """Close and forget a pool built on a previous client.
@@ -651,13 +667,15 @@ class SandboxManager:
 
     def close(self) -> None:
         """Close the gateway connection and tear down any pooled sessions."""
-        if self._pool is not None:
+        with self._pool_lock:
+            pool, self._pool = self._pool, None
+        if pool is not None:
             try:
-                self._pool.close_all()
+                pool.close_all()
             except Exception as exc:
                 logger.debug("Pool close_all failed (non-fatal): %s", exc)
-            self._pool = None
-        if self._client:
-            self._client.close()
-            self._client = None
+        with self._connect_lock:
+            client, self._client = self._client, None
             self._available = False
+        if client is not None:
+            client.close()

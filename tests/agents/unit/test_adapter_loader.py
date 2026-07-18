@@ -304,6 +304,77 @@ async def test_generic_dispatch_injects_config_manager(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_generic_dispatch_memoizes_class_resolution(monkeypatch):
+    """_execute_generic_agent resolves the (Deps, Input) classes by scanning
+    dir(module) twice; the resolution is memoized per class path so a second
+    dispatch of the same agent reuses it instead of re-scanning."""
+    import sys
+    import types
+    from typing import Optional
+
+    from pydantic import BaseModel
+
+    from cogniverse_runtime import agent_dispatcher as ad
+    from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+    from cogniverse_runtime.config_loader import ConfigLoader
+
+    class MemoDeps(BaseModel):
+        pass
+
+    class MemoInput(BaseModel):
+        query: str
+        tenant_id: Optional[str] = None
+
+    class MemoAgent:
+        def __init__(self, deps):
+            self.deps = deps
+
+        async def process(self, typed_input):
+            return types.SimpleNamespace()
+
+    mod = types.ModuleType("memo_generic_mod")
+    mod.MemoDeps = MemoDeps
+    mod.MemoInput = MemoInput
+    mod.MemoAgent = MemoAgent
+    monkeypatch.setitem(sys.modules, "memo_generic_mod", mod)
+    monkeypatch.setitem(
+        ConfigLoader.AGENT_CLASSES, "memo_generic", "memo_generic_mod:MemoAgent"
+    )
+
+    # Start from a cold cache and count how many times the module is scanned.
+    ad._GENERIC_AGENT_CLASSES.clear()
+    scans: list[str] = []
+    real_scan = ad._scan_module_for_generic_classes
+
+    def _counting_scan(module, class_name):
+        scans.append(class_name)
+        return real_scan(module, class_name)
+
+    monkeypatch.setattr(ad, "_scan_module_for_generic_classes", _counting_scan)
+
+    cm = _real_config_manager()
+    dispatcher = AgentDispatcher(
+        agent_registry=Mock(), config_manager=cm, schema_loader=Mock()
+    )
+    monkeypatch.setattr(dispatcher, "_resolve_gliner_url", lambda: None)
+    monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
+    monkeypatch.setattr(dispatcher, "_bind_graph_manager", lambda *a, **k: None)
+    monkeypatch.setattr(dispatcher, "_apply_artefact_overlay", lambda *a, **k: None)
+
+    r1 = await dispatcher._execute_generic_agent("memo_generic", "q1", {}, "acme:acme")
+    r2 = await dispatcher._execute_generic_agent("memo_generic", "q2", {}, "acme:acme")
+
+    assert r1["status"] == "success" and r2["status"] == "success"
+    # Two dispatches, one module scan.
+    assert scans == ["MemoAgent"]
+    # The memoized entry resolves to the real classes.
+    cached = ad._GENERIC_AGENT_CLASSES["memo_generic_mod:MemoAgent"]
+    assert cached == (MemoAgent, MemoDeps, MemoInput)
+    ad._GENERIC_AGENT_CLASSES.clear()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_call_dspy_carries_adapter_lm_into_worker_thread():
     """The adapter LM bound by _adapter_lm_context must reach module.forward
     inside call_dspy's asyncio.to_thread worker (dspy overrides are

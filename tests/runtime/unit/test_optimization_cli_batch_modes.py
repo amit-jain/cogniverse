@@ -1159,6 +1159,88 @@ async def _instant_sleep(_seconds):
     return None
 
 
+class TestQuerySpansHungPhoenixIsCancelled:
+    """A get_spans call that hangs forever must be cancelled per attempt.
+
+    A dead Phoenix raises promptly; a hung one never returns — only
+    asyncio.wait_for's cancellation bounds the retry budget. The wall-clock
+    band proves each attempt was cut at the per-attempt timeout instead of
+    hanging the cycle.
+    """
+
+    @pytest.mark.asyncio
+    async def test_hung_query_cancelled_each_attempt_then_raises(self, monkeypatch):
+        import asyncio as _asyncio
+        import time
+
+        from cogniverse_runtime import optimization_cli as cli
+
+        class HangingTraceStore:
+            def __init__(self):
+                self.calls = 0
+                self.cancelled = 0
+
+            async def get_spans(self, **kwargs):
+                self.calls += 1
+                try:
+                    await _asyncio.Event().wait()
+                except _asyncio.CancelledError:
+                    self.cancelled += 1
+                    raise
+
+        provider = FakeTelemetryProvider()
+        store = HangingTraceStore()
+        provider._trace_store = store
+        manager = FakeTelemetryManager(provider)
+
+        monkeypatch.setattr(cli, "_SPAN_QUERY_TIMEOUT_S", 0.2)
+        monkeypatch.setattr(cli, "_SPAN_QUERY_ATTEMPTS", 2)
+        monkeypatch.setattr(_asyncio, "sleep", _instant_sleep)
+
+        start = time.monotonic()
+        with patch(_PATCH_TELEMETRY, return_value=manager):
+            with pytest.raises(RuntimeError, match="after 2 attempts"):
+                await cli._query_spans_by_name(
+                    provider, "acme:prod", "cogniverse.entity_extraction", 1.0
+                )
+        elapsed = time.monotonic() - start
+
+        assert store.calls == 2
+        assert store.cancelled == 2
+        # Two 0.2s attempt timeouts must have elapsed; anything near 2s or
+        # beyond means a hung attempt was not cancelled.
+        assert 0.35 <= elapsed < 2.0, elapsed
+
+
+class TestGoldenSetCandidates:
+    """Golden-set growth skips rows whose score cannot coerce to float."""
+
+    def test_junk_score_row_skipped_valid_rows_survive(self):
+        from cogniverse_runtime.optimization_cli import _golden_set_candidates
+
+        df = pd.DataFrame(
+            [
+                {"category": "high_scoring", "query": "good one", "score": 0.9},
+                {"category": "high_scoring", "query": "junk score", "score": "great"},
+                {"category": "high_scoring", "query": "good two", "score": 0.85},
+                {"category": "high_scoring", "query": "none score", "score": None},
+                {"category": "high_scoring", "query": "below cut", "score": 0.5},
+                {"category": "low_scoring", "query": "wrong category", "score": 0.95},
+            ]
+        )
+
+        candidate = {
+            "expected_videos": [],
+            "ground_truth": "",
+            "query_type": "live_traffic",
+            "source": "quality_monitor",
+        }
+        assert _golden_set_candidates(df) == [
+            {"query": "good one", **candidate},
+            {"query": "good two", **candidate},
+        ]
+
+
 class TestRunFailed:
     """_run_failed maps a mode result to the failed/ok exit decision."""
 
