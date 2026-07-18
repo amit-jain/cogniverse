@@ -489,6 +489,61 @@ class TestProfileAPICRUD:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
+    def test_delete_schema_guard_refusal_surfaces_as_500(
+        self, test_client: TestClient, monkeypatch
+    ):
+        """A refused schema removal — dropping it would also destroy deployed
+        schemas the registry does not know — must reach the client as a 500
+        carrying the refusal message, not a 200 with schema_deleted false."""
+        from unittest.mock import MagicMock
+
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+
+        profile_data = {
+            "profile_name": "test_guarded_delete",
+            "tenant_id": "test_tenant",
+            "type": "video",
+            "schema_name": "video_test",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+            "embedding_type": "multi_vector",
+        }
+        create_response = test_client.post("/admin/profiles", json=profile_data)
+        assert create_response.status_code == 201
+
+        fake_backend = MagicMock()
+        fake_backend.delete_schema.side_effect = ValueError(
+            "Refusing to delete 'video_test_test_tenant_test_tenant': "
+            "redeploying without it would also drop "
+            "['knowledge_graph_test_tenant_test_tenant']"
+        )
+        fake_registry = MagicMock()
+        fake_registry.get_ingestion_backend.return_value = fake_backend
+        with monkeypatch.context() as patched:
+            patched.setattr(
+                BackendRegistry,
+                "get_instance",
+                classmethod(lambda cls: fake_registry),
+            )
+
+            response = test_client.delete(
+                "/admin/profiles/test_guarded_delete"
+                "?tenant_id=test_tenant&delete_schema=true"
+            )
+
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert "Refusing to delete" in detail
+        assert "knowledge_graph_test_tenant_test_tenant" in detail
+        fake_backend.delete_schema.assert_called_once_with(
+            schema_name="video_test", tenant_id="test_tenant"
+        )
+
+        # The profile itself must survive a refused schema delete.
+        get_response = test_client.get(
+            "/admin/profiles/test_guarded_delete?tenant_id=test_tenant"
+        )
+        assert get_response.status_code == 200
+
     def test_tenant_isolation(self, test_client: TestClient):
         """Test that profiles are isolated by tenant."""
         # Create profile for tenant1
