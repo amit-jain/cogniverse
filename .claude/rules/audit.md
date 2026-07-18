@@ -224,9 +224,15 @@ grep -rnP 'df\["name"\] ==|spans_df\["name"\] ==' libs/ --include="*.py"
 # Test-spawned docker containers without the owner-pid label (9th audit) —
 # unlabeled spawns escape reap_dead_owner_containers, so a SIGKILLed pytest
 # session orphans model-weight/JVM containers in host RAM indefinitely
-# (this starved a 126 GB host into a freeze once).
-grep -rnP '"docker",\s*$' tests/ --include="*.py" -A4 | grep -B1 '"run"' | grep -v OWNER_LABEL
-# then confirm each docker-run block includes --label {OWNER_LABEL}={pid}
+# (this starved a 126 GB host into a freeze once). NOTE (16th audit): the
+# label literal the tests actually use is `cogniverse-test-owner-pid` — an
+# earlier form of this hunt filtered on the constant name OWNER_LABEL, which
+# appears nowhere in the spawn sites, so every correctly-labeled spawn read
+# as unlabeled (6/6 false positives). Also pre-filter to real `docker run`
+# spawns: bare `"run",` matches ["uv","run",...] and kubectl argv too.
+grep -rnP '"docker",\s*$' tests/ --include="*.py" -A4 | grep -B1 '"run"' \
+  | grep -v -e 'OWNER_LABEL' -e 'cogniverse-test-owner-pid'
+# then confirm each docker-run block includes --label cogniverse-test-owner-pid={pid}
 
 # Deps/config attribute assigned in __init__ but never functionally read
 # (9th audit: summarizer/report max_*_length + thinking_enabled +
@@ -459,6 +465,45 @@ grep -rnP 'def \w+\([^)]*_contains[^)]*\)' libs/ --include="*.py"
 # allowlist killed semantic ranking for wiki/memory/audio profiles; replaced
 # by structural derivation from the rank profile's first-phase expression).
 grep -rnP 'profile_name in \[|profile_name in \(' libs/ --include="*.py"
+
+# Tenant→Phoenix-project reader that doesn't canonicalize (16th audit:
+# annotation_agent, approval_storage, orchestration_annotation_storage — the
+# runtime WRITES under canonical "org:tenant" projects; a reader deriving the
+# project/provider from a raw id queries an EMPTY project on real traffic.
+# get_project_name is a pure template and canonicalizes nothing; the fix is
+# canonical_tenant_id at the reader's constructor entry, as
+# routing/annotation_storage.py does).
+grep -rnP 'get_project_name\(|f"cogniverse-\{[^}]*tenant' libs/ --include="*.py"
+# then confirm canonical_tenant_id was applied to that tenant_id in the same
+# scope (constructor arg or immediate assignment)
+
+# Dashboard/CLI entrypoint feeding a raw tenant id into a per-tenant store
+# or provider (16th audit: libs/dashboard had ZERO canonical_tenant_id usage
+# and passed st.session_state["current_tenant"] straight into the reader
+# classes above — self-defending constructors close it, but new stores must
+# canonicalize too).
+grep -rnP 'session_state\[.?current_tenant|st\.session_state\.get\("current_tenant"' libs/ --include="*.py"
+# then confirm canonical_tenant_id() is applied before the value reaches
+# get_provider / get_project_name / *Storage(tenant_id=...)
+
+# k8s label value built from a tenant id without sanitizing (16th audit:
+# canonical ids contain ':', which k8s label values reject — the Argo submit
+# path sanitizes via replace(":", "_") while the tenant router uses a fuller
+# _sanitize_label_value; a NEW manifest-construction site that forgets either
+# form fails the whole submit).
+grep -rnP '"tenant[^"]*":\s*[a-z_]*tenant' libs/ --include="*.py" | grep -viE 'replace|sanitize|params|parameters'
+# then confirm the value is sanitized before landing in metadata.labels
+
+# Single-instance TTL/request cache invalidated only by same-instance writes
+# (16th audit: the dispatcher's per-tenant ArtifactManager amortizes reads via
+# a 5s request cache; promote_to_canary invalidates the SAME instance only, so
+# an out-of-band promoter — admin API, CLI pod — converges only when the TTL
+# lapses. Bounded staleness is the accepted contract; flag any NEW consumer
+# that assumes immediate cross-instance visibility, and any cache whose
+# staleness is UNBOUNDED).
+grep -rnP '_request_cache|_invalidate_request_cache|_REQUEST_CACHE_TTL' libs/ --include="*.py"
+# then check every writer that must be visible to cached readers either goes
+# through the same instance or tolerates the TTL
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
