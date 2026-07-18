@@ -18,6 +18,7 @@ from cogniverse_foundation.common.tenant_utils import (
     get_tenant_storage_path,
     parse_tenant_id,
     require_tenant_id,
+    sanitize_k8s_label_value,
     validate_tenant_id,
 )
 
@@ -29,6 +30,7 @@ __all__ = [
     "get_tenant_storage_path",
     "validate_tenant_id",
     "require_tenant_id",
+    "sanitize_k8s_label_value",
     "invalidate_tenant_exists",
     "assert_tenant_exists",
 ]

@@ -1010,7 +1010,7 @@ flowchart TB
 
 The shared, dependency-free helpers that the whole stack uses live here so foundation code (`config/manager.py`, `config/utils.py`, `config/unified_config.py`, `config/api_mixin.py`, `registry/entry_point_registry.py`) can use them without importing upward into `cogniverse-core`:
 
-- `common/tenant_utils.py` — tenant identity helpers (`SYSTEM_TENANT_ID`, `require_tenant_id`, `canonical_tenant_id`, `parse_tenant_id`, `validate_tenant_id`, `get_tenant_storage_path`). `cogniverse_core.common.tenant_utils` re-exports these, so existing `from cogniverse_core.common.tenant_utils import ...` call sites keep working; the runtime-coupled `assert_tenant_exists` stays in core.
+- `common/tenant_utils.py` — tenant identity helpers (`SYSTEM_TENANT_ID`, `require_tenant_id`, `canonical_tenant_id`, `parse_tenant_id`, `validate_tenant_id`, `get_tenant_storage_path`, `sanitize_k8s_label_value`). `cogniverse_core.common.tenant_utils` re-exports these, so existing `from cogniverse_core.common.tenant_utils import ...` call sites keep working; the runtime-coupled `assert_tenant_exists` stays in core.
 - `common/dspy_module_registry.py` — `DSPyModuleRegistry` / `DSPyOptimizerRegistry`, re-exported from `cogniverse_core.common.dspy_module_registry`.
 
 This keeps the Core → Foundation dependency direction one-way: `cogniverse-foundation` no longer imports `cogniverse-core` and is usable standalone.

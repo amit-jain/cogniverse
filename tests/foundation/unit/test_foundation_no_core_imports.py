@@ -54,6 +54,7 @@ def test_core_reexports_foundation_tenant_utils():
         "parse_tenant_id",
         "validate_tenant_id",
         "get_tenant_storage_path",
+        "sanitize_k8s_label_value",
     ):
         assert getattr(ct, name) is getattr(ft, name)
     assert ct.SYSTEM_TENANT_ID == ft.SYSTEM_TENANT_ID == "__system__"

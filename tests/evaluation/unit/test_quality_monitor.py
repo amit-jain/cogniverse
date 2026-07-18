@@ -435,7 +435,8 @@ class TestWorkflowPodSpec:
         ok = await submit_argo_optimization_workflow(**kwargs)
         assert ok is True
         workflow = mock_client.post.call_args[1]["json"]["workflow"]
-        assert workflow["metadata"]["labels"]["tenant"] == "acme_acme"
+        # Shared sanitizer (sanitize_k8s_label_value): illegal chars -> '-'.
+        assert workflow["metadata"]["labels"]["tenant"] == "acme-acme"
         params = {
             p["name"]: p["value"] for p in workflow["spec"]["arguments"]["parameters"]
         }

@@ -26,6 +26,7 @@ from cogniverse_evaluation.evaluators.agent_evaluators import (
     get_agent_evaluator,
 )
 from cogniverse_evaluation.metrics.custom import calculate_metrics_suite
+from cogniverse_foundation.common.tenant_utils import sanitize_k8s_label_value
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +223,7 @@ async def submit_argo_optimization_workflow(
                 "trigger": trigger_label,
                 # Label values reject ':' — the canonical tenant form must
                 # be sanitized here; parameters keep the exact value.
-                "tenant": tenant_id.replace(":", "_"),
+                "tenant": sanitize_k8s_label_value(tenant_id),
             },
         },
         "spec": {
