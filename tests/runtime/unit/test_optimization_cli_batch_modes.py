@@ -1116,3 +1116,107 @@ class TestQuerySpansFailureIsNotNoData:
 
 async def _instant_sleep(_seconds):
     return None
+
+
+class TestRunFailed:
+    """_run_failed maps a mode result to the failed/ok exit decision."""
+
+    def test_top_level_failed(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        assert _run_failed({"status": "failed", "error": "phoenix down"}) is True
+
+    def test_top_level_error(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        assert _run_failed({"status": "error"}) is True
+
+    def test_top_level_success_wins_over_nested(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        assert (
+            _run_failed({"status": "success", "results": {"a": {"status": "failed"}}})
+            is False
+        )
+
+    def test_batch_shape_nested_failure(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        assert (
+            _run_failed(
+                {
+                    "search": {"status": "failed", "error": "lm down"},
+                    "summary": {"status": "success"},
+                }
+            )
+            is True
+        )
+
+    def test_batch_shape_skips_and_nonfatal_eval_error_ok(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        assert (
+            _run_failed(
+                {
+                    "search": {"status": "skipped", "reason": "no_data"},
+                    "post_optimization_eval": {"error": "eval unavailable"},
+                    "baseline_updated": True,
+                }
+            )
+            is False
+        )
+
+    def test_no_data_is_ok(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        assert _run_failed({"status": "no_data"}) is False
+
+    def test_non_dict_is_ok(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        assert _run_failed(None) is False
+
+
+class TestMainExitCode:
+    """The exit code is the only success signal Argo sees for a workflow
+    step — a failed run must exit non-zero, not print-and-exit-0."""
+
+    def _run_main(self, monkeypatch, mode_result) -> int:
+        import sys
+
+        from cogniverse_runtime import optimization_cli as cli
+
+        async def fake_run(*args, **kwargs):
+            return mode_result
+
+        monkeypatch.setattr(cli, "run_triggered_optimization", fake_run)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "optimization_cli",
+                "--mode",
+                "triggered",
+                "--tenant-id",
+                "t1",
+                "--agents",
+                "search",
+                "--trigger-dataset",
+                "trigger-ds",
+            ],
+        )
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+        return exc.value.code
+
+    def test_failed_result_exits_nonzero(self, monkeypatch):
+        code = self._run_main(
+            monkeypatch, {"status": "failed", "error": "phoenix down"}
+        )
+        assert code == 1
+
+    def test_success_result_exits_zero(self, monkeypatch):
+        code = self._run_main(
+            monkeypatch, {"status": "success", "training_examples": 3}
+        )
+        assert code == 0

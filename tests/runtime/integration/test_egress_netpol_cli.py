@@ -38,7 +38,8 @@ pytestmark = pytest.mark.integration
 def _backend_url_from_shared_vespa(shared_vespa, monkeypatch):
     """CLI subprocesses must hit the session Vespa container, never the
     k3d cluster — integration provisions its own infrastructure."""
-    monkeypatch.setenv("BACKEND_URL", f"http://localhost:{shared_vespa['http_port']}")
+    # BACKEND_URL is host-only; BACKEND_PORT carries the port separately.
+    monkeypatch.setenv("BACKEND_URL", "http://localhost")
     monkeypatch.setenv("BACKEND_PORT", str(shared_vespa["http_port"]))
 
 

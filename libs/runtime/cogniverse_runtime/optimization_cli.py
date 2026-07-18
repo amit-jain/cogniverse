@@ -2793,6 +2793,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_failed(result: Any) -> bool:
+    """Whether a mode result reports failure — drives the exit code, which
+    is the only success signal Argo sees for a workflow step.
+
+    Modes with a top-level ``status`` own their aggregation (e.g. synthetic
+    reports success when any optimizer succeeded); batch-shaped results
+    without one fail when any per-agent entry failed.
+    """
+    if not isinstance(result, dict):
+        return False
+    if "status" in result:
+        return result["status"] in ("failed", "error")
+    return any(
+        isinstance(value, dict) and value.get("status") in ("failed", "error")
+        for value in result.values()
+    )
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -2965,7 +2983,7 @@ def main():
         raise ValueError(f"Unknown mode: {args.mode}")
 
     print(json.dumps(result, indent=2, default=str))
-    sys.exit(0)
+    sys.exit(1 if _run_failed(result) else 0)
 
 
 if __name__ == "__main__":

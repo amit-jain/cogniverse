@@ -437,8 +437,7 @@ class TestWorkflowPodSpec:
         workflow = mock_client.post.call_args[1]["json"]["workflow"]
         assert workflow["metadata"]["labels"]["tenant"] == "acme_acme"
         params = {
-            p["name"]: p["value"]
-            for p in workflow["spec"]["arguments"]["parameters"]
+            p["name"]: p["value"] for p in workflow["spec"]["arguments"]["parameters"]
         }
         assert params["tenant-id"] == "acme:acme"
 
@@ -998,6 +997,7 @@ class TestForceOptimizationCycle:
         ):
             mock_golden.return_value = golden_result
             mock_live.return_value = live_result
+            mock_submit.return_value = True
 
             result = await monitor.force_optimization_cycle()
 
@@ -1087,6 +1087,46 @@ class TestForceOptimizationCycle:
         assert result["submitted_to_argo"] is False
         mock_store.assert_not_awaited()
         mock_submit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_force_cycle_reports_submit_failed_when_argo_unreachable(
+        self, monitor
+    ):
+        """With argo-server down, the cycle must NOT report a green run.
+
+        The submit helper returns False on a connection failure; the cycle
+        must propagate that as status=submit_failed / submitted_to_argo=False
+        so the CLI's status-keyed exit code goes non-zero and the cron shows
+        red. Exercises the real submit path against a dead port."""
+        monitor.argo_api_url = "https://127.0.0.1:29071"
+
+        golden_result = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id="test_tenant",
+            mean_mrr=0.8,
+            mean_ndcg=0.75,
+            mean_precision_at_5=0.6,
+            query_count=10,
+        )
+
+        with (
+            patch.object(
+                monitor, "evaluate_golden_set", new_callable=AsyncMock
+            ) as mock_golden,
+            patch.object(
+                monitor, "evaluate_live_traffic", new_callable=AsyncMock
+            ) as mock_live,
+            patch.object(monitor, "_store_trigger_dataset", new_callable=AsyncMock),
+        ):
+            mock_golden.return_value = golden_result
+            mock_live.return_value = LiveEvalResult(
+                timestamp=datetime.utcnow(), tenant_id="test_tenant"
+            )
+
+            result = await monitor.force_optimization_cycle()
+
+        assert result["status"] == "submit_failed"
+        assert result["submitted_to_argo"] is False
 
 
 class TestSpanNameByAgent:

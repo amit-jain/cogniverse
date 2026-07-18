@@ -395,13 +395,12 @@ class QualityMonitor:
         submitted = False
         if self.argo_api_url:
             try:
-                await self.submit_optimization(trigger)
-                submitted = True
+                submitted = bool(await self.submit_optimization(trigger))
             except Exception as e:
                 logger.error(f"Force cycle: Argo submission failed: {e}")
 
         return {
-            "status": "ok",
+            "status": "ok" if (submitted or not self.argo_api_url) else "submit_failed",
             "agents_triggered": [a.value for a in all_agents],
             "submitted_to_argo": submitted,
         }
@@ -462,7 +461,11 @@ class QualityMonitor:
                     await self._store_trigger_dataset(trigger)
 
                     if self.argo_api_url:
-                        await self.submit_optimization(trigger)
+                        if not await self.submit_optimization(trigger):
+                            logger.error(
+                                f"Optimization needed for {agents_to_optimize} "
+                                f"but Argo submission failed; retrying next cycle"
+                            )
                     else:
                         logger.warning(
                             f"Optimization needed for {agents_to_optimize} "
@@ -1173,8 +1176,13 @@ class QualityMonitor:
             logger.debug(f"Failed to read agent baseline for {agent_type.value}: {e}")
             return None
 
-    async def submit_optimization(self, trigger: OptimizationTrigger):
-        """Submit Argo optimization workflow via k8s API."""
+    async def submit_optimization(self, trigger: OptimizationTrigger) -> bool:
+        """Submit Argo optimization workflow via k8s API.
+
+        Returns True when Argo accepted the workflow; the helper swallows
+        connection failures into False, so callers must check the result
+        rather than treat a clean return as success.
+        """
         # Argo submissions use their own client (self-signed TLS tolerated by
         # the helper when this is None) — NOT the verifying client the golden
         # eval uses for /search. Tests inject a capture client here.
@@ -1182,7 +1190,7 @@ class QualityMonitor:
         agents_csv = ",".join(a.value for a in trigger.agents_to_optimize)
         timestamp = trigger.timestamp.strftime("%Y%m%d-%H%M%S")
 
-        await submit_argo_optimization_workflow(
+        return await submit_argo_optimization_workflow(
             http_client=client,
             argo_api_url=self.argo_api_url,
             argo_namespace=self.argo_namespace,
