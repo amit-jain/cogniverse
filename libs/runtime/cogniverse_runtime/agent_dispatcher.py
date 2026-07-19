@@ -59,6 +59,13 @@ GENERIC_AGENT_TTL_S = 300.0
 # registered-cache hook.
 GENERIC_AGENT_CACHE_CAPACITY = 64
 
+# Orchestrator caching mirrors the gateway: build the per-tenant
+# OrchestratorAgent (+ its WorkflowIntelligence corpus and policy http client)
+# once and TTL-reload its artifact, instead of rebuilding the agent and
+# re-reading the workflow corpus (4+ Phoenix reads) on every complex query.
+ORCHESTRATOR_ARTIFACT_TTL_S = 300.0
+ORCHESTRATOR_AGENT_CACHE_CAPACITY = 64
+
 # When a TTL reload of a cached agent's artifact fails (transient artifact-store
 # blip on exactly the request that crosses the TTL boundary), keep serving the
 # still-valid cached agent and reschedule the reload this many seconds out —
@@ -152,6 +159,20 @@ def _new_generic_agent_cache() -> "TenantLRUCache[Dict[str, _GenericAgentEntry]]
     return register_tenant_cache(TenantLRUCache(capacity=GENERIC_AGENT_CACHE_CAPACITY))
 
 
+@dataclasses.dataclass
+class _OrchestratorAgentEntry:
+    """A cached per-tenant OrchestratorAgent with its artifact-load stamp."""
+
+    agent: Any
+    loaded_at: float
+
+
+def _new_orchestrator_agent_cache() -> "TenantLRUCache[_OrchestratorAgentEntry]":
+    return register_tenant_cache(
+        TenantLRUCache(capacity=ORCHESTRATOR_AGENT_CACHE_CAPACITY)
+    )
+
+
 def _retrieve_future_exc(fut: "asyncio.Future[Any]") -> None:
     """Consume a resolved build future's exception so a failed cold build with
     no concurrent waiter doesn't log ``Future exception was never retrieved``.
@@ -235,6 +256,14 @@ class AgentDispatcher:
         # removed in the build's finally, so the dict only holds active builds.
         self._gateway_build_inflight: Dict[str, "asyncio.Future[Any]"] = {}
         self._generic_build_inflight: Dict[Tuple[str, str], "asyncio.Future[Any]"] = {}
+        # Per-tenant OrchestratorAgent cache — the orchestration path (dispatch
+        # and streaming) resolves through it so the workflow corpus is read once
+        # per TTL, not per complex query.
+        self._orchestrator_agents: TenantLRUCache[_OrchestratorAgentEntry] = (
+            _new_orchestrator_agent_cache()
+        )
+        self._orchestrator_artifact_ttl_s: float = ORCHESTRATOR_ARTIFACT_TTL_S
+        self._orchestrator_build_inflight: Dict[str, "asyncio.Future[Any]"] = {}
         # Strong references to fire-and-forget tasks so CPython does not GC
         # the coroutine before it runs. asyncio.create_task() with the result
         # discarded is documented to allow that — keep the handles, discard
@@ -344,6 +373,108 @@ class AgentDispatcher:
             agent = await self._build_gateway_agent(tenant_id)
             cache.set(
                 tenant_id, _GatewayAgentEntry(agent=agent, loaded_at=time.monotonic())
+            )
+            fut.set_result(agent)
+            return agent
+        except Exception as exc:
+            fut.set_exception(exc)
+            raise
+        finally:
+            inflight.pop(tenant_id, None)
+
+    async def _build_orchestrator_agent(self, tenant_id: str):
+        """Construct the per-tenant OrchestratorAgent with its WorkflowIntelligence
+        corpus, policy-enforcing client, memory wiring, and first artifact read.
+        Cached once per tenant by :meth:`_get_or_build_orchestrator`; the workflow
+        corpus and templates then refresh on the TTL reload, not per request."""
+        from cogniverse_agents.orchestrator_agent import (
+            OrchestratorAgent,
+            OrchestratorDeps,
+        )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tm = get_telemetry_manager()
+        # WorkflowIntelligence lets the OrchestratorAgent load workflow templates
+        # from the artifact store; built per tenant and refreshed on TTL reload.
+        workflow_intelligence = None
+        if tm is not None:
+            try:
+                from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+
+                workflow_intelligence = WorkflowIntelligence(
+                    tm.get_provider(tenant_id=tenant_id), tenant_id
+                )
+            except Exception as exc:
+                logger.debug("WorkflowIntelligence init failed (non-fatal): %s", exc)
+
+        # Policy-enforcing client restricts outbound A2A calls to the endpoints in
+        # configs/agent_policies/orchestrator_agent.yaml. It lives with the cached
+        # agent (one pooled client per tenant) rather than being rebuilt and
+        # closed per request.
+        orch_http_client = None
+        if self._sandbox_manager is not None:
+            try:
+                orch_http_client = self._sandbox_manager.make_http_client(
+                    "orchestrator_agent"
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Could not build policy-enforcing client for orchestrator: %s",
+                    exc,
+                )
+
+        agent = OrchestratorAgent(
+            deps=OrchestratorDeps(),
+            registry=self._registry,
+            config_manager=self._config_manager,
+            workflow_intelligence=workflow_intelligence,
+            http_client=orch_http_client,
+        )
+        await asyncio.to_thread(
+            self._init_agent_memory, agent, "orchestrator_agent", tenant_id
+        )
+        agent.telemetry_manager = tm
+        agent._artifact_tenant_id = tenant_id
+        await asyncio.to_thread(agent._load_artifact)
+        return agent
+
+    async def _get_or_build_orchestrator(self, tenant_id: str):
+        """Return the OrchestratorAgent for ``tenant_id``, building it once per
+        tenant. Both the dispatch and the streaming path resolve through here, so
+        streaming also loads the workflow templates (it previously planned with
+        none) and a warm pod amortizes the workflow-corpus reads across the TTL
+        instead of paying 4+ Phoenix reads per complex query. Cache hits re-run
+        ``_load_artifact`` past the reload interval; concurrent first-touches for
+        a cold tenant funnel through a single in-flight build.
+        """
+        cache = getattr(self, "_orchestrator_agents", None)
+        if cache is None:
+            cache = _new_orchestrator_agent_cache()
+            self._orchestrator_agents = cache
+        entry = cache.get(tenant_id)
+        if entry is not None:
+            ttl = getattr(
+                self, "_orchestrator_artifact_ttl_s", ORCHESTRATOR_ARTIFACT_TTL_S
+            )
+            if time.monotonic() - entry.loaded_at >= ttl:
+                await self._reload_entry_artifact(entry, ttl)
+            return entry.agent
+
+        inflight = getattr(self, "_orchestrator_build_inflight", None)
+        if inflight is None:
+            inflight = {}
+            self._orchestrator_build_inflight = inflight
+        pending = inflight.get(tenant_id)
+        if pending is not None:
+            return await pending
+        fut: "asyncio.Future[Any]" = asyncio.get_event_loop().create_future()
+        fut.add_done_callback(_retrieve_future_exc)
+        inflight[tenant_id] = fut
+        try:
+            agent = await self._build_orchestrator_agent(tenant_id)
+            cache.set(
+                tenant_id,
+                _OrchestratorAgentEntry(agent=agent, loaded_at=time.monotonic()),
             )
             fut.set_result(agent)
             return agent
@@ -1252,32 +1383,12 @@ class AgentDispatcher:
             return agent, typed_input
 
         if capabilities & {"orchestration", "planning"}:
-            from cogniverse_agents.orchestrator_agent import (
-                OrchestratorAgent,
-                OrchestratorDeps,
-                OrchestratorInput,
-            )
-            from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+            from cogniverse_agents.orchestrator_agent import OrchestratorInput
 
-            workflow_intelligence = None
-            try:
-                tm = get_telemetry_manager()
-                if tm is not None:
-                    from cogniverse_agents.workflow.intelligence import (
-                        WorkflowIntelligence,
-                    )
-
-                    workflow_intelligence = WorkflowIntelligence(
-                        tm.get_provider(tenant_id=tenant_id), tenant_id
-                    )
-            except Exception as exc:
-                logger.debug("WorkflowIntelligence init failed (non-fatal): %s", exc)
-            agent = OrchestratorAgent(
-                deps=OrchestratorDeps(),
-                registry=self._registry,
-                config_manager=self._config_manager,
-                workflow_intelligence=workflow_intelligence,
-            )
+            # Resolve through the per-tenant cache so streaming also loads the
+            # workflow templates (it previously planned with none) and shares the
+            # dispatch path's cached instance instead of building a bare one.
+            agent = await self._get_or_build_orchestrator(tenant_id)
             return agent, OrchestratorInput(query=query, tenant_id=tenant_id)
 
         # Generic fallback: any registered agent that follows the
@@ -1768,111 +1879,57 @@ class AgentDispatcher:
         gateway_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute full orchestration pipeline via OrchestratorAgent."""
-        from cogniverse_agents.orchestrator_agent import (
-            OrchestratorAgent,
-            OrchestratorDeps,
-            OrchestratorInput,
+        from cogniverse_agents.orchestrator_agent import OrchestratorInput
+
+        # Cached per tenant: the agent, its WorkflowIntelligence corpus, and its
+        # policy http client are built once and TTL-reloaded, not rebuilt per
+        # complex query.
+        agent = await self._get_or_build_orchestrator(tenant_id)
+        # Apply per-request artefact overlay so OrchestratorAgent's planner DSPy
+        # module honors the canary/variant decision. Task-isolated ContextVar,
+        # never the shared cached instance, so concurrent requests don't bleed.
+        self._apply_artefact_overlay(agent, context)
+
+        gateway_ctx = gateway_context or {}
+        # Propagate the synthesis_depth opt-in from the caller's context.
+        # Three precedence levels, gateway-trust > admin override > none:
+        #   1. function-arg gateway_context (set by the dispatcher's own
+        #      gateway → orchestration handoff)
+        #   2. context["gateway_context"]["synthesis_depth"] (HTTP callers
+        #      that want to mimic the gateway-classified shape)
+        #   3. context["synthesis_depth"] (plain admin / direct callers)
+        nested_gateway = context.get("gateway_context") or {}
+        synthesis_depth = (
+            gateway_ctx.get("synthesis_depth")
+            or (
+                nested_gateway.get("synthesis_depth")
+                if isinstance(nested_gateway, dict)
+                else None
+            )
+            or context.get("synthesis_depth")
         )
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+        input_data = OrchestratorInput(
+            query=query,
+            tenant_id=tenant_id,
+            session_id=context.get("session_id"),
+            conversation_history=context.get("conversation_history"),
+            modality=gateway_ctx.get("modality"),
+            generation_type=gateway_ctx.get("generation_type"),
+            synthesis_depth=synthesis_depth,
+        )
 
-        deps = OrchestratorDeps()
-        tm = get_telemetry_manager()
+        with self._scoped_session(agent, context.get("session_id")):
+            result = await agent._process_impl(input_data)
 
-        # Create WorkflowIntelligence so OrchestratorAgent can load
-        # workflow templates from the artifact store at startup.
-        workflow_intelligence = None
-        if tm is not None:
-            try:
-                from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
-
-                provider = tm.get_provider(tenant_id=tenant_id)
-                workflow_intelligence = WorkflowIntelligence(provider, tenant_id)
-            except Exception as e:
-                logger.debug("WorkflowIntelligence init failed (non-fatal): %s", e)
-
-        # Policy-enforcing client restricts outbound A2A calls to endpoints in
-        # configs/agent_policies/orchestrator_agent.yaml; falls back to the
-        # loop-shared client when no sandbox manager / no policy is present.
-        orch_http_client = None
-        if self._sandbox_manager is not None:
-            try:
-                orch_http_client = self._sandbox_manager.make_http_client(
-                    "orchestrator_agent"
-                )
-            except Exception as exc:
-                logger.debug(
-                    "Could not build policy-enforcing client for orchestrator: %s",
-                    exc,
-                )
-
-        try:
-            agent = OrchestratorAgent(
-                deps=deps,
-                registry=self._registry,
-                config_manager=self._config_manager,
-                workflow_intelligence=workflow_intelligence,
-                http_client=orch_http_client,
-            )
-            await asyncio.to_thread(
-                self._init_agent_memory, agent, "orchestrator_agent", tenant_id
-            )
-            agent.telemetry_manager = tm
-            agent._artifact_tenant_id = tenant_id
-            await asyncio.to_thread(agent._load_artifact)
-            # Apply per-request artefact overlay so OrchestratorAgent's
-            # planner DSPy module honors the canary/variant decision.
-            self._apply_artefact_overlay(agent, context)
-
-            gateway_ctx = gateway_context or {}
-            # Propagate the synthesis_depth opt-in from the caller's context.
-            # Three precedence levels, gateway-trust > admin override > none:
-            #   1. function-arg gateway_context (set by the dispatcher's own
-            #      gateway → orchestration handoff)
-            #   2. context["gateway_context"]["synthesis_depth"] (HTTP callers
-            #      that want to mimic the gateway-classified shape)
-            #   3. context["synthesis_depth"] (plain admin / direct callers)
-            nested_gateway = context.get("gateway_context") or {}
-            synthesis_depth = (
-                gateway_ctx.get("synthesis_depth")
-                or (
-                    nested_gateway.get("synthesis_depth")
-                    if isinstance(nested_gateway, dict)
-                    else None
-                )
-                or context.get("synthesis_depth")
-            )
-            input_data = OrchestratorInput(
-                query=query,
-                tenant_id=tenant_id,
-                session_id=context.get("session_id"),
-                conversation_history=context.get("conversation_history"),
-                modality=gateway_ctx.get("modality"),
-                generation_type=gateway_ctx.get("generation_type"),
-                synthesis_depth=synthesis_depth,
-            )
-
-            with self._scoped_session(agent, context.get("session_id")):
-                result = await agent._process_impl(input_data)
-
-            return {
-                "status": "success",
-                "agent": "orchestrator_agent",
-                "message": f"Orchestrated '{query[:50]}' via A2A pipeline",
-                "orchestration_result": (
-                    result.model_dump()
-                    if hasattr(result, "model_dump")
-                    else vars(result)
-                ),
-                "gateway_context": gateway_context,
-            }
-        finally:
-            # Per-request policy-enforcing client owns its own connection pool;
-            # close it so orchestration requests don't leak sockets/transports.
-            if orch_http_client is not None:
-                try:
-                    await orch_http_client.aclose()
-                except Exception as exc:  # noqa: BLE001 — best-effort cleanup
-                    logger.debug("orchestrator http client close failed: %s", exc)
+        return {
+            "status": "success",
+            "agent": "orchestrator_agent",
+            "message": f"Orchestrated '{query[:50]}' via A2A pipeline",
+            "orchestration_result": (
+                result.model_dump() if hasattr(result, "model_dump") else vars(result)
+            ),
+            "gateway_context": gateway_context,
+        }
 
     async def _execute_downstream_agent(
         self,
