@@ -14,7 +14,10 @@ import numpy as np
 from PIL import Image
 from pydantic import Field
 
-from cogniverse_agents.search.vespa_query import vespa_search_children
+from cogniverse_agents.search.vespa_query import (
+    VespaSearchError,
+    vespa_search_children,
+)
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.models.model_loaders import get_or_load_model
@@ -372,10 +375,9 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         )
 
         if response.status_code != 200:
-            logger.error(
-                f"Vespa search failed: {response.status_code} - {response.text}"
+            raise VespaSearchError(
+                f"Vespa search returned {response.status_code}: {response.text[:200]}"
             )
-            return []
 
         # Parse results
         results = []
