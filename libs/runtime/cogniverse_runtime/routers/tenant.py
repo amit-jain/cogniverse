@@ -236,7 +236,7 @@ class MemoryCreateRequest(BaseModel):
 @router.post("/{tenant_id}/memories")
 async def create_memory(tenant_id: str, request: MemoryCreateRequest):
     """Save a user-defined memory with optional category, kind, metadata."""
-    mgr = _get_memory_manager(tenant_id)
+    mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
     metadata: Dict[str, Any] = {}
     if request.category:
         metadata["category"] = request.category
@@ -304,7 +304,7 @@ async def list_memories(
     Use ``type`` to restrict to a single memory type and ``category`` to
     filter user-created memories by their category tag.
     """
-    mgr = _get_memory_manager(tenant_id)
+    mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
     if agent_name:
         # Agents store their learned memories under agent_id=agent_name, so
@@ -351,7 +351,7 @@ async def delete_memory(tenant_id: str, memory_id: str):
 
     Returns 403 if the memory belongs to a system namespace.
     """
-    mgr = _get_memory_manager(tenant_id)
+    mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
     success = await asyncio.to_thread(
         mgr.delete_memory,
@@ -376,7 +376,7 @@ async def clear_memories(
 
     Optionally filter by category to only clear a subset.
     """
-    mgr = _get_memory_manager(tenant_id)
+    mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
     if category:
         # The get + per-memory deletes are N blocking Vespa round-trips — run

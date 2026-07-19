@@ -1191,7 +1191,7 @@ async def pin_memory(
     pinned_by = _parse_pinnable(body.pinned_by)
     if not body.actor_id.strip():
         raise HTTPException(400, "actor_id must be non-empty")
-    svc = _get_pin_service(tenant_id)
+    svc = await asyncio.to_thread(_get_pin_service, tenant_id)
     try:
         record = svc.pin(
             target_memory_id=memory_id,
@@ -1237,7 +1237,7 @@ async def unpin_memory(
     requester = _parse_pinnable(body.requester_role)
     if not body.actor_id.strip():
         raise HTTPException(400, "actor_id must be non-empty")
-    svc = _get_pin_service(tenant_id)
+    svc = await asyncio.to_thread(_get_pin_service, tenant_id)
     try:
         removed = svc.unpin(
             target_memory_id=memory_id,
@@ -1264,7 +1264,7 @@ async def unpin_memory(
 @router.get("/tenants/{tenant_id}/pins", response_model=PinListResponse)
 async def list_pins(tenant_id: str) -> PinListResponse:
     """list all pin records for a tenant (audit + UI)."""
-    svc = _get_pin_service(tenant_id)
+    svc = await asyncio.to_thread(_get_pin_service, tenant_id)
     records = svc.list_pins(tenant_id)
     return PinListResponse(
         tenant_id=tenant_id,
@@ -1329,7 +1329,9 @@ async def promote_to_org_trunk(
     # Locate the source memory in the tenant's store. We don't know
     # which agent_name owns it, so go through the tenant-wide get_all
     # (Mem0 doesn't require agent_id when user_id is given).
-    source_mm = _get_pin_service(tenant_id)._mm  # reuse the lazy-init path
+    source_mm = (
+        await asyncio.to_thread(_get_pin_service, tenant_id)
+    )._mm  # reuse the lazy-init path
     try:
         rows_blob = source_mm.memory.get_all(user_id=tenant_id)
     except Exception as exc:
@@ -1418,7 +1420,9 @@ async def endorse_memory(
             f"unknown endorser_role={body.endorser_role!r}; valid: {valid}",
         )
 
-    source_mm = _get_pin_service(tenant_id)._mm  # reuse the lazy-init path
+    source_mm = (
+        await asyncio.to_thread(_get_pin_service, tenant_id)
+    )._mm  # reuse the lazy-init path
     try:
         rows_blob = source_mm.memory.get_all(user_id=tenant_id)
     except Exception as exc:
@@ -1487,7 +1491,9 @@ class RestoreMemoryResponse(BaseModel):
 )
 async def restore_memory(tenant_id: str, memory_id: str) -> RestoreMemoryResponse:
     """clear the archived flag on a soft-deleted memory."""
-    source_mm = _get_pin_service(tenant_id)._mm  # reuse the lazy-init path
+    source_mm = (
+        await asyncio.to_thread(_get_pin_service, tenant_id)
+    )._mm  # reuse the lazy-init path
     ok = source_mm.restore_archived_memory(memory_id)
     if not ok:
         raise HTTPException(

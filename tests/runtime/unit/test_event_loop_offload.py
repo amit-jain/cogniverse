@@ -362,6 +362,59 @@ async def test_search_route_offloads_config_resolution(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tenant_get_memory_manager_init_offloaded(monkeypatch):
+    """First-touch _get_memory_manager (Memory.from_config + possible schema
+    deploy) runs off the loop; inline it stalled every concurrent request."""
+    from cogniverse_runtime.routers import tenant
+
+    monkeypatch.setattr(tenant, "_get_memory_manager", _blocking(0.3))
+    req = tenant.MemoryCreateRequest(text="remember this")
+    ticks = await _ticks_during(lambda: tenant.create_memory("acme:acme", req))
+    assert ticks >= 10, f"only {ticks} ticks — the mem0 lazy-init ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_admin_pin_service_init_offloaded(monkeypatch):
+    """_get_pin_service lazy-inits Mem0 (blocking Memory.from_config + schema
+    deploy on a cold tenant); offload it off the loop like the mem op after it."""
+    from cogniverse_runtime.routers import admin
+
+    def _blocking_svc(*a, **k):
+        time.sleep(0.3)
+        svc = MagicMock()
+        svc.list_pins.return_value = []
+        return svc
+
+    monkeypatch.setattr(admin, "_get_pin_service", _blocking_svc)
+    ticks = await _ticks_during(lambda: admin.list_pins("acme:acme"))
+    assert ticks >= 10, f"only {ticks} ticks — the pin-service init ran on the loop"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_bind_graph_and_inject_offloaded(monkeypatch):
+    """_inject_memory (Mem0 lazy-init) and _bind_graph (get_graph_manager — a
+    blocking config read / schema deploy on a cold tenant) run off the loop."""
+    from types import SimpleNamespace
+
+    from cogniverse_runtime.routers import knowledge
+
+    class _StubAgent:
+        async def _process_impl(self, inp):
+            return SimpleNamespace(model_dump=lambda: {"ok": True})
+
+    monkeypatch.setattr(
+        "cogniverse_agents.citation_tracing_agent.CitationTracingAgent",
+        lambda **k: _StubAgent(),
+    )
+    monkeypatch.setattr(knowledge, "_inject_memory", lambda *a, **k: None)
+    monkeypatch.setattr(knowledge, "_bind_graph", _blocking(0.3))
+
+    body = knowledge.CitationTraceRequest(memory_id="m1")
+    ticks = await _ticks_during(lambda: knowledge.citation_trace("acme:acme", body))
+    assert ticks >= 10, f"only {ticks} ticks — _bind_graph ran on the event loop"
+
+
+@pytest.mark.asyncio
 async def test_coding_code_search_offloaded(monkeypatch):
     """The coding agent's code-context search (SearchService build + encoder
     inference + Vespa HTTP) runs off the loop — inline it froze every request
