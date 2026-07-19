@@ -112,19 +112,20 @@ class FeedbackConfig(BaseModel):
 
 
 class IntervalConfig(BaseModel):
-    """Interval timings for the orchestrator loops."""
+    """Cadence for the annotation-identification sidecar loop and the
+    annotation CronWorkflows.
 
-    span_eval_interval_minutes: int = Field(
-        15, description="How often to evaluate spans"
-    )
+    ``annotation_interval_minutes`` drives the in-process annotation sidecar
+    loop (``quality_monitor_cli``) and mirrors the annotation-cycle cron
+    schedule; ``feedback_interval_minutes`` mirrors the annotation-feedback
+    cron schedule. Both are identity-tested against the chart schedules.
+    """
+
     annotation_interval_minutes: int = Field(
         30, description="How often to identify spans for annotation"
     )
     feedback_interval_minutes: int = Field(
         15, description="How often to process annotations"
-    )
-    metrics_report_interval_seconds: int = Field(
-        300, description="How often to report metrics (seconds)"
     )
 
 

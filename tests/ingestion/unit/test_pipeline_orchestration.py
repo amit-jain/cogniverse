@@ -12,8 +12,10 @@ import pytest
 from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
 from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 from cogniverse_runtime.ingestion.strategies import (
+    AudioEmbeddingStrategy,
     ChunkSegmentationStrategy,
     FrameSegmentationStrategy,
+    SingleVectorEmbeddingStrategy,
 )
 
 
@@ -355,3 +357,81 @@ class TestStrategySetIntegration:
         keyframe_config = requirements["keyframe"]
         assert keyframe_config["max_frames"] == 30
         assert keyframe_config["threshold"] == 0.9
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+class TestProcessEmbeddingWiring:
+    """``ProcessingStrategySet._process_embedding`` calls
+    ``strategy.generate_embeddings_with_processor(accumulated_results,
+    pipeline_context)`` — the caller no longer threads ``processor_manager``
+    through to any strategy override. Every embedding strategy dropped that
+    parameter in the same change; calling the real caller against a real
+    strategy instance is the only thing that would raise ``TypeError`` on a
+    signature drift between the two sides, since neither side is mocked."""
+
+    @staticmethod
+    def _pipeline_context(video_stem: str):
+        from pathlib import Path
+
+        captured: dict = {}
+
+        class _Config:
+            generate_embeddings = True
+
+        class _Context:
+            video_path = Path(f"/tmp/{video_stem}.mp4")
+            config = _Config()
+
+            class logger:
+                @staticmethod
+                def info(*args, **kwargs):
+                    pass
+
+            async def generate_embeddings(self, wrapped_results):
+                captured["wrapped_results"] = wrapped_results
+                return {"documents_fed": 3, "backend": "vespa"}
+
+        return _Context(), captured
+
+    async def test_single_vector_strategy_forwards_without_processor_manager(self):
+        context, captured = self._pipeline_context("clip1")
+        strategy = SingleVectorEmbeddingStrategy()
+        pss = ProcessingStrategySet(embedding=strategy)
+
+        out = await pss._process_embedding(
+            strategy,
+            context.video_path,
+            processor_manager=object(),
+            pipeline_context=context,
+            accumulated_results={"single_vector_processing": {"vectors": [1, 2, 3]}},
+        )
+
+        assert out == {"embeddings": {"documents_fed": 3, "backend": "vespa"}}
+        wrapped = captured["wrapped_results"]
+        assert wrapped["video_id"] == "clip1"
+        assert wrapped["video_path"] == str(context.video_path)
+        assert wrapped["results"]["single_vector_processing"] == {"vectors": [1, 2, 3]}
+
+    async def test_audio_strategy_forwards_without_processor_manager(self):
+        context, captured = self._pipeline_context("clip2")
+        strategy = AudioEmbeddingStrategy()
+        pss = ProcessingStrategySet(embedding=strategy)
+
+        out = await pss._process_embedding(
+            strategy,
+            context.video_path,
+            processor_manager=object(),
+            pipeline_context=context,
+            accumulated_results={
+                "audio_files": ["clip2.wav"],
+                "transcript": {"full_text": "hello"},
+            },
+        )
+
+        assert out == {"embeddings": {"documents_fed": 3, "backend": "vespa"}}
+        wrapped = captured["wrapped_results"]
+        assert wrapped["video_id"] == "clip2"
+        assert wrapped["audio_files"] == ["clip2.wav"]
+        assert wrapped["transcript"] == {"full_text": "hello"}

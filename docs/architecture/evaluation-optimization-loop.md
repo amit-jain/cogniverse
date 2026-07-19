@@ -666,9 +666,8 @@ slots (legacy `attributes.routing` as fallback), caps output at `max_annotations
 (default 50), and prioritizes by confidence and outcome. `IntervalConfig` declares the
 cadences and the chart mirrors them (identity-tested in
 `tests/charts/test_annotation_cronworkflows.py`): `annotation_interval_minutes`=30 → the
-`annotation-cycle` CronWorkflow (and the sidecar's annotation loop),
-`feedback_interval_minutes`=15 → the `annotation-feedback` CronWorkflow, and
-`span_eval_interval_minutes` is the intended cadence for `--mode online-eval` runs.
+`annotation-cycle` CronWorkflow (and the sidecar's annotation loop), and
+`feedback_interval_minutes`=15 → the `annotation-feedback` CronWorkflow.
 `FeedbackConfig.poll_interval_minutes` additionally self-gates the feedback cycle via
 config-store state, so scheduling it densely is safe.
 
