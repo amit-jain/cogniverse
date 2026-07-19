@@ -491,7 +491,8 @@ class KnowledgeSummarizationAgent(
             config_manager=getattr(self, "_config_manager", None),
             tenant_id=getattr(self, "_memory_tenant_id", None) or "",
         )
-        result = rlm.process(
+        result = await asyncio.to_thread(
+            rlm.process,
             query=f"Summarise the following knowledge under the title: {title}",
             context=block,
         )
