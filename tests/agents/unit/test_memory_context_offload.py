@@ -121,3 +121,69 @@ def test_get_tenant_instructions_served_from_manager_ttl_cache():
 
     assert [obj._get_tenant_instructions() for _ in range(3)] == ["be concise"] * 3
     assert calls["get"] == 1, "repeat reads within the TTL must hit the cache"
+
+
+def _config_manager_with_per_tenant_instructions(tenants):
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    cm = ConfigManager(store=store)
+    for t in tenants:
+        cm.set_config_value(
+            tenant_id=t,
+            scope=ConfigScope.SYSTEM,
+            service="tenant_instructions",
+            config_key="system_prompt",
+            config_value={
+                "text": f"instr::{t}",
+                "updated_at": "2026-07-17T00:00:00+00:00",
+            },
+        )
+    return cm, store
+
+
+@pytest.mark.asyncio
+async def test_shared_instance_tenant_instructions_do_not_bleed_across_requests():
+    """One dispatcher-shared agent, many tenants dispatched concurrently: each
+    request's offloaded ``_get_tenant_instructions`` must read ONLY its own
+    tenant.
+
+    SearchAgent is cached per profile and shared across all tenants; the
+    per-request tenant must live in a ContextVar (like the session id and the
+    dispatched-artefact overlay already do), not on the shared instance.
+    Otherwise the event loop runs every task's ``set_tenant_for_context`` before
+    the offloaded reads fire, so the query-rewrite prompt for tenant A is
+    enriched with tenant B's private tenant-instructions.
+    """
+    tenants = [f"t{i}:t{i}" for i in range(24)]
+    cm, _ = _config_manager_with_per_tenant_instructions(tenants)
+
+    shared = _Mixin()
+    shared._config_manager = cm
+
+    # A barrier forces every request's set_tenant_for_context() to land before
+    # any offloaded read fires — the interleaving _process_impl produces in
+    # production, where many awaits separate the tenant set from the enrichment
+    # read. With the tenant on the shared instance, all reads then see the
+    # last-set tenant; in a ContextVar each task reads only its own.
+    barrier = asyncio.Barrier(len(tenants))
+
+    async def _one_request(tenant):
+        shared.set_tenant_for_context(tenant)
+        await barrier.wait()
+        return await shared.inject_context_into_prompt_async("PROMPT", "q")
+
+    results = await asyncio.gather(*[_one_request(t) for t in tenants])
+
+    for tenant, enriched in zip(tenants, results):
+        assert f"instr::{tenant}" in enriched, (
+            f"request for {tenant} did not get its own instructions: {enriched!r}"
+        )
+        for other in tenants:
+            if other != tenant:
+                assert f"instr::{other}" not in enriched, (
+                    f"tenant {tenant} leaked tenant {other}'s instructions"
+                )
