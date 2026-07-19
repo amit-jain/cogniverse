@@ -222,13 +222,16 @@ class GoldenDatasetGenerator:
                 if not query:
                     continue
 
-                # Extract evaluation score
+                # Extract evaluation score. A how="left" evaluation merge yields
+                # NaN (a float, not None) for un-annotated spans; treat NaN like
+                # a missing score so it doesn't float()-append and poison the
+                # per-query average (NaN <= threshold then drops the query).
                 score = row.get("score")
-                if score is None:
+                if score is None or pd.isna(score):
                     # Try to get from evaluation columns
                     score = row.get("evaluation_score")
 
-                if score is not None:
+                if score is not None and pd.notna(score):
                     query_stats[query]["scores"].append(float(score))
 
                 # Extract results from the (flattened) output columns
