@@ -164,6 +164,13 @@ async def test_processing_action_routes_through_agent_then_delivers(monkeypatch)
     assert len(calls["agent"]) == 1
     assert calls["agent"][0]["query"].startswith("summarize and send on telegram")
     assert "PRIOR" in calls["agent"][0]["query"]
+    # tenant_id must travel INSIDE context — the /process route reads
+    # task.context["tenant_id"] and the dispatcher 400s on a missing one; a
+    # top-level tenant_id is silently dropped by AgentTask.
+    assert calls["agent"][0]["context"] == {"tenant_id": "acme:acme"}
+    assert "tenant_id" not in {
+        k for k in calls["agent"][0] if k not in ("agent_name", "query", "context")
+    }
     assert result.startswith("PROCESSED:")
     assert len(calls["telegram"]) == 1
     assert calls["telegram"][0]["message"] == result
@@ -311,6 +318,27 @@ async def test_call_agent_unwraps_dict_result_response():
 async def test_call_agent_unwraps_dict_result_answer():
     out = await _call_agent_against({"result": {"answer": "The answer text"}})
     assert out == "The answer text"
+
+
+async def test_call_agent_sends_tenant_id_nested_in_context():
+    """_call_agent must nest tenant_id inside context, not top-level — the
+    /process route reads task.context["tenant_id"] (the AgentTask model has no
+    top-level tenant_id field, and the dispatcher 400s without the nested one),
+    so a regression to a top-level tenant_id would silently drop it."""
+    captured: dict = {}
+    app = FastAPI()
+
+    @app.post("/agents/orchestrator_agent/process")
+    async def _proc(body: dict):
+        captured.update(body)
+        return {"message": "ok"}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await je._call_agent(client, "http://test", "acme:acme", "find papers")
+
+    assert captured["context"] == {"tenant_id": "acme:acme"}
+    assert "tenant_id" not in captured  # never sent top-level
 
 
 # ---- main() exit-code contract -------------------------------------------
