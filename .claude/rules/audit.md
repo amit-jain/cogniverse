@@ -599,6 +599,15 @@ grep -rnPA6 'cls\._instances\.get\(|self\._instances\.get\(' libs/ --include="*.
 grep -rnPA3 'if self\._\w*(app|client|session) is None' libs/ --include="*.py" | grep -P '= make_|\.syncio\(|Client\('
 # atomic-write cleanup blanket-skipping .tmp with no age gate
 grep -rnPA2 '\.suffix (in \([^)]*\.tmp|== "\.tmp")' libs/ --include="*.py" | grep -i continue | grep -v st_mtime
+# async cache COLD-BUILD with no in-flight guard — a cache miss that `await`s an
+# expensive build between the miss check and the cache write, with no per-key
+# Future/Lock, so N concurrent first-touches each run the full build and discard
+# N-1 (17th: agent_dispatcher _get_or_build_generic_agent + _get_or_build_gateway
+# ran N schema deploys + mem0 inits; the TTL-RELOAD path was stamp-before-await
+# guarded but the cold BUILD path was not). Confirm concurrent first-touches for
+# one key funnel through a single in-flight build (Future keyed by the cache key,
+# removed in finally).
+grep -rnPA8 'get_or_set\(|\.get\(\w+\)\s*$' libs/ --include="*.py" | grep -PB8 'await self\._build_\w+\(' | grep -v 'inflight\|_build_inflight\|pending'
 ```
 
 Class F is invisible to every isolation-based class: a passing single-thread test proves nothing about concurrent use. Run the hammer; read the whole async call chain.
@@ -639,6 +648,28 @@ grep -rnPB4 'os\.replace\(' libs/ --include="*.py" | grep -P '\.unlink\(|os\.uti
 # timeout x attempts, not timeout (15th: 15s x 3 = 45s per op, compounding
 # across multi-feed paths like save_session).
 grep -rnPA3 'num_retries\w*\s*=' libs/ --include="*.py" | grep -P 'timeout'
+
+# Adapter/registry read re-flattened to None where a SIBLING in the SAME file
+# reuses a last-known cache on outage (17th: adapter_loader
+# get_active_adapter_path + get_adapter_metadata did `except Exception: return
+# None` over AdapterRegistry.get_active_adapter — which RAISES on a Vespa outage
+# — silently reverting a finetuned tenant to the base model, while the sibling
+# adapter_lm_context kept the last successful answer per (tenant, agent). Fixed
+# by routing all three through one _resolve_active_adapter helper). For each hit,
+# check whether a same-file sibling distinguishes outage from absence.
+grep -rlP 'get_active_adapter|get_adapter\b' libs/agents --include="*.py" | while read f; do \
+  grep -qP 'except Exception' "$f" && grep -qP 'return None$' "$f" && echo "adapter read re-flatten: $f"; done
+
+# Multi-step RESTORE/copy helper called OUTSIDE the compensation try that wraps
+# the state save (17th: promote_canary_to_active ran _restore_active_from_version
+# — itself save_prompts THEN save_demonstrations — at a call site outside the
+# try/except that restored the previous active on a state-save failure, so a
+# demos-save failure mid-restore left active prompts advanced but demos+state
+# stale, uncompensated). For each restore/copy helper doing >=2 sequential
+# writes, confirm its call site is INSIDE the compensation scope.
+grep -rnPB2 '_restore_\w+\(|_copy_\w+_into_active' libs/ --include="*.py" | grep -P 'await|='
+# then read the enclosing method: the restore must sit inside the try whose
+# except restores the previous state
 ```
 
 ---
