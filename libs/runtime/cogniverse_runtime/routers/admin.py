@@ -819,6 +819,121 @@ async def create_messaging_invite(
     return {"token": token, "tenant_id": request.tenant_id}
 
 
+_MESSAGING_GATEWAY_AGENT = "_messaging_gateway"
+
+
+class SendMessageRequest(BaseModel):
+    tenant_id: str
+    message: str
+
+
+def _resolve_telegram_chat_ids(tenant_id: str) -> List[str]:
+    """Return the telegram chat ids linked to ``tenant_id``.
+
+    Reverses the user↔tenant mapping the gateway wrote into the SYSTEM mem0
+    partition (agent_name ``_messaging_gateway``). ``get_all_memories`` raises
+    on a backend outage, so an outage propagates (the route turns it into 503)
+    rather than being read as "no linked chats". A never-initialised store (the
+    gateway never ran) returns [] — a genuine no-mappings state.
+    """
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+
+    target = canonical_tenant_id(tenant_id)
+    mgr = Mem0MemoryManager(SYSTEM_TENANT_ID)
+    if not mgr.memory:
+        from cogniverse_runtime.memory_init import lazy_init_memory
+        from cogniverse_runtime.routers.tenant import _require_config_manager
+
+        lazy_init_memory(
+            mgr, SYSTEM_TENANT_ID, _require_config_manager(), auto_create_schema=False
+        )
+    if not mgr.memory:
+        return []
+
+    rows = mgr.get_all_memories(
+        tenant_id=SYSTEM_TENANT_ID, agent_name=_MESSAGING_GATEWAY_AGENT
+    )
+    chat_ids: List[str] = []
+    seen: set = set()
+    for row in rows:
+        meta = row.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except (ValueError, TypeError):
+                continue
+        if (
+            meta.get("type") == "user_mapping"
+            and meta.get("platform") == "telegram"
+            and canonical_tenant_id(str(meta.get("tenant_id") or "")) == target
+        ):
+            chat_id = str(meta.get("external_user_id") or "")
+            if chat_id and chat_id not in seen:
+                seen.add(chat_id)
+                chat_ids.append(chat_id)
+    return chat_ids
+
+
+@router.post("/messaging/send")
+async def send_message(request: SendMessageRequest) -> Dict[str, int]:
+    """Enqueue a message for delivery to the tenant's linked messaging chats.
+
+    Resolves the tenant's linked chats and enqueues one message per chat for
+    the gateway to drain and deliver. Returns the number enqueued (0 when the
+    tenant has no linked chats). A backend outage while resolving surfaces as
+    503 so callers can retry — it is never read as "no linked chats".
+    """
+    from cogniverse_runtime.messaging import OutboundMessage, get_outbound_queue
+
+    try:
+        chat_ids = await asyncio.to_thread(
+            _resolve_telegram_chat_ids, request.tenant_id
+        )
+    except Exception as exc:  # noqa: BLE001 — surface, never mask as enqueued: 0
+        logger.error("Could not resolve linked chats for send: %r", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "could not resolve linked chats; retry"},
+        )
+
+    if not chat_ids:
+        return {"enqueued": 0}
+
+    queue = get_outbound_queue()
+    now = datetime.now(timezone.utc).isoformat()
+    for chat_id in chat_ids:
+        await queue.enqueue(
+            OutboundMessage(
+                tenant_id=request.tenant_id,
+                chat_id=chat_id,
+                text=request.message,
+                created_at=now,
+            )
+        )
+    return {"enqueued": len(chat_ids)}
+
+
+@router.get("/messaging/outbound/drain")
+async def drain_outbound_messages() -> Dict[str, Any]:
+    """Return and clear the pending outbound messages (the gateway polls this)."""
+    from cogniverse_runtime.messaging import get_outbound_queue
+
+    batch = await get_outbound_queue().drain()
+    return {
+        "messages": [
+            {
+                "tenant_id": m.tenant_id,
+                "chat_id": m.chat_id,
+                "text": m.text,
+                "platform": m.platform,
+                "created_at": m.created_at,
+            }
+            for m in batch
+        ]
+    }
+
+
 _ADMIN_TYPE_TO_NAMESPACE: Dict[str, str] = {
     "preference": "_user_memories",
     "strategy": "_strategy_store",

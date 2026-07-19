@@ -215,6 +215,31 @@ async def test_deliver_to_telegram_success_posts_payload(caplog):
     assert "Delivered to Telegram" in caplog.text
 
 
+async def test_deliver_to_telegram_accepts_enqueued_envelope(caplog):
+    """The caller accepts the real /messaging/send response ({"enqueued": N})
+    as success — the route and job_executor agree on the 2xx shape."""
+    seen = []
+    app = FastAPI()
+
+    @app.post("/messaging/send")
+    async def _msg(body: dict):
+        seen.append(body)
+        return {"enqueued": 2}
+
+    transport = httpx.ASGITransport(app=app)
+    with caplog.at_level(logging.INFO, logger="cogniverse_runtime.job_executor"):
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            await je._deliver_to_telegram(
+                client, "http://test", "acme:acme", "hello world"
+            )
+
+    assert seen == [{"tenant_id": "acme:acme", "message": "hello world"}]
+    assert "Delivered to Telegram" in caplog.text
+    assert "Telegram delivery failed" not in caplog.text
+
+
 async def test_deliver_to_telegram_404_is_skipped_not_raised(caplog):
     seen = []
     with caplog.at_level(logging.INFO, logger="cogniverse_runtime.job_executor"):
