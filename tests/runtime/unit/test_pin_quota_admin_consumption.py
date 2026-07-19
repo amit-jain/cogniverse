@@ -1,15 +1,18 @@
 """admin PUT /pin_quotas actually changes the effective PinQuotas.
 
-The previous fix-up shipped the admin endpoint that wrote into
-``_pin_quota_overrides`` (a process-local module dict). The
-caught that **PinService never reads that dict** — the writes were
-black-holed. This test verifies the consumer wire:
+The admin endpoint writes overrides into ``_pin_quota_overrides`` (a
+process-local module dict) under the canonical tenant id; ``PinQuotas.for_tenant``
+must consult that same dict, canonicalizing the caller's id so a bare ``"acme"``
+resolves the override the endpoint wrote under ``"acme:acme"``. This test verifies
+the consumer wire end to end:
 
   * fresh process: ``PinQuotas.for_tenant(t)`` returns dataclass defaults;
   * admin endpoint PUT mutates the override dict;
-  * subsequent ``PinQuotas.for_tenant(t)`` reflects the PUT;
+  * subsequent ``PinQuotas.for_tenant(t)`` reflects the PUT (raw or canonical id);
   * the lifecycle scheduler's PinService construction (the one
     production caller) uses ``for_tenant`` so the override propagates.
+
+The blob boundary is an in-memory fake so the test is self-contained.
 """
 
 from __future__ import annotations
@@ -21,11 +24,31 @@ from fastapi.testclient import TestClient
 from cogniverse_core.memory.pinning import PinQuotas
 from cogniverse_runtime.routers import admin
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+# Per-(tenant, kind, key) in-memory blob store standing in for the Phoenix-backed
+# ArtifactManager. The pin-quota consumer wire under test is the admin PUT ->
+# _pin_quota_overrides -> PinQuotas.for_tenant path; the durable blob boundary is
+# incidental, and depending on an ambient localhost:6006 made this pass or fail
+# on whatever happened to be listening on the host.
+_FAKE_BLOBS: dict = {}
+
+
+def _fake_build_artifact_manager(tenant_id):
+    class _InMemoryAM:
+        async def save_blob(self, kind, key, data):
+            _FAKE_BLOBS[(tenant_id, kind, key)] = data
+
+        async def load_blob(self, kind, key):
+            return _FAKE_BLOBS.get((tenant_id, kind, key))
+
+    return _InMemoryAM()
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(monkeypatch) -> TestClient:
+    _FAKE_BLOBS.clear()
+    monkeypatch.setattr(admin, "_build_artifact_manager", _fake_build_artifact_manager)
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
     admin._reset_admin_overrides_for_tests()
@@ -54,12 +77,20 @@ class TestForTenantConsultsAdminOverrides:
         assert resolved.user == 7, (
             f"admin PUT set user=7 but PinQuotas.for_tenant returned "
             f"user={resolved.user}; the wire from admin dict to "
-            "PinService is dead — this is the original audit gap."
+            "PinService is dead."
         )
         assert resolved.tenant_admin == 99
         # Other tenants unaffected.
         unrelated = PinQuotas.for_tenant("globex")
         assert unrelated.user == baseline.user
+
+    def test_override_resolves_across_id_spellings(self, client: TestClient):
+        # PUT with a bare id (stored under the canonical "acme:acme"); reading
+        # back with either spelling must resolve the same override — for_tenant
+        # canonicalizes before the lookup, matching the endpoint.
+        client.put("/admin/tenants/acme/pin_quotas", json={"user": 8})
+        assert PinQuotas.for_tenant("acme").user == 8
+        assert PinQuotas.for_tenant("acme:acme").user == 8
 
     def test_org_admin_unlimited_sentinel_translates_to_none(self, client: TestClient):
         # The admin endpoint stores -1 as the unlimited sentinel because
