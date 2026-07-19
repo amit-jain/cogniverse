@@ -14,7 +14,10 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import Field as PydanticField
 
-from cogniverse_agents.search.vespa_query import vespa_search_children
+from cogniverse_agents.search.vespa_query import (
+    VespaSearchError,
+    vespa_search_children,
+)
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
@@ -370,10 +373,9 @@ class AudioAnalysisAgent(
             )
 
             if response.status_code != 200:
-                logger.error(
-                    f"Vespa search failed: {response.status_code} - {response.text}"
+                raise VespaSearchError(
+                    f"Vespa search returned {response.status_code}: {response.text[:200]}"
                 )
-                return []
 
             # Parse results
             results = []
@@ -445,10 +447,9 @@ class AudioAnalysisAgent(
             )
 
             if response.status_code != 200:
-                logger.error(
-                    f"Vespa search failed: {response.status_code} - {response.text}"
+                raise VespaSearchError(
+                    f"Vespa search returned {response.status_code}: {response.text[:200]}"
                 )
-                return []
 
             # Parse results
             results = []
@@ -513,10 +514,9 @@ class AudioAnalysisAgent(
             )
 
             if response.status_code != 200:
-                logger.error(
-                    f"Vespa search failed: {response.status_code} - {response.text}"
+                raise VespaSearchError(
+                    f"Vespa search returned {response.status_code}: {response.text[:200]}"
                 )
-                return []
 
             # Parse results
             results = []

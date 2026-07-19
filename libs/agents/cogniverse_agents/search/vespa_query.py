@@ -26,6 +26,15 @@ class VespaSearchDegraded(RuntimeError):
     """A Vespa query returned soft-timeout errors (HTTP 200 + root.errors)."""
 
 
+class VespaSearchError(RuntimeError):
+    """A Vespa ``/search/`` query returned a persistent non-2xx status.
+
+    ``vespa_search_post`` retries transient failures and raises on a persistent
+    5xx; a 4xx (a malformed query — schema/dim drift) comes back for the caller
+    to surface. Returning [] instead read a hard query error as "no results".
+    """
+
+
 def vespa_search_children(data: dict, correlation_id: str = "") -> list:
     """Return ``root.children``, raising when the query was degraded.
 
