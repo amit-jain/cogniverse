@@ -9,6 +9,7 @@ Usage:
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -53,6 +54,7 @@ class MessagingGateway:
         webhook_path: str = "",
         memory_manager=None,
         config_manager=None,
+        outbound_poll_seconds: float = 5.0,
     ):
         self.bot_token = bot_token
         self.mode = mode
@@ -61,6 +63,7 @@ class MessagingGateway:
         self.webhook_port = webhook_port
         self.webhook_path = webhook_path
         self.runtime_client = RuntimeClient(runtime_url)
+        self._outbound_poll_seconds = outbound_poll_seconds
 
         self._memory_manager = memory_manager
         self._config_manager = config_manager
@@ -473,6 +476,32 @@ class MessagingGateway:
 
         return self._app
 
+    async def _outbound_drain_loop(self) -> None:
+        """Deliver messages the runtime enqueued for this tenant's chats.
+
+        Every ``self._outbound_poll_seconds`` the loop drains the runtime's
+        outbound queue and sends each message via the bot. A drain failure
+        (runtime blip) is logged and retried next tick; a per-message send
+        failure is logged and skipped so one bad chat never stops the others
+        or the loop. Runs until cancelled on shutdown.
+        """
+        while True:
+            try:
+                messages = await self.runtime_client.drain_outbound()
+            except Exception as exc:  # noqa: BLE001 — retry next tick, never die
+                logger.error("Outbound drain failed: %s", exc)
+                messages = []
+            for msg in messages:
+                chat_id = msg.get("chat_id")
+                text = msg.get("text")
+                if not chat_id or not text:
+                    continue
+                try:
+                    await self._app.bot.send_message(chat_id=chat_id, text=text)
+                except Exception as exc:  # noqa: BLE001 — isolate one bad chat
+                    logger.error("Outbound send to chat %s failed: %s", chat_id, exc)
+            await asyncio.sleep(self._outbound_poll_seconds)
+
     async def run_polling(self) -> None:
         """Run in long-polling mode (development)."""
         app = self.build_app()
@@ -481,12 +510,16 @@ class MessagingGateway:
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
 
+        drain_task = asyncio.create_task(self._outbound_drain_loop())
         try:
             while True:
                 await asyncio.sleep(1)
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
+            drain_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drain_task
             await app.updater.stop()
             await app.stop()
             await app.shutdown()
@@ -509,12 +542,16 @@ class MessagingGateway:
             drop_pending_updates=True,
         )
 
+        drain_task = asyncio.create_task(self._outbound_drain_loop())
         try:
             while True:
                 await asyncio.sleep(1)
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
+            drain_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drain_task
             await app.updater.stop()
             await app.bot.delete_webhook()
             await app.stop()
@@ -553,6 +590,7 @@ def main():
     webhook_listen = os.environ.get("GATEWAY_WEBHOOK_LISTEN", "0.0.0.0")
     webhook_port = int(os.environ.get("GATEWAY_WEBHOOK_PORT", "8443"))
     webhook_path = os.environ.get("GATEWAY_WEBHOOK_PATH", "")
+    outbound_poll_seconds = float(os.environ.get("GATEWAY_OUTBOUND_POLL_SECONDS", "5"))
 
     if mode == "webhook" and not webhook_url:
         logger.error("TELEGRAM_WEBHOOK_URL required for webhook mode")
@@ -566,6 +604,7 @@ def main():
         webhook_listen=webhook_listen,
         webhook_port=webhook_port,
         webhook_path=webhook_path,
+        outbound_poll_seconds=outbound_poll_seconds,
     )
 
     asyncio.run(gateway.run())

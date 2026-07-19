@@ -99,7 +99,11 @@ gateway = MessagingGateway(
 await gateway.run()  # dispatches to run_polling() or run_webhook() based on mode
 ```
 
-Running the module directly (`python -m cogniverse_messaging.gateway`) reads `TELEGRAM_BOT_TOKEN` (required), `RUNTIME_URL` (default `http://localhost:28000`), `GATEWAY_MODE` (default `polling`), `TELEGRAM_WEBHOOK_URL` (required when `GATEWAY_MODE=webhook`), `GATEWAY_WEBHOOK_LISTEN` (default `0.0.0.0`), `GATEWAY_WEBHOOK_PORT` (default `8443`), and `GATEWAY_WEBHOOK_PATH` (default `""`) from the environment.
+Running the module directly (`python -m cogniverse_messaging.gateway`) reads `TELEGRAM_BOT_TOKEN` (required), `RUNTIME_URL` (default `http://localhost:28000`), `GATEWAY_MODE` (default `polling`), `TELEGRAM_WEBHOOK_URL` (required when `GATEWAY_MODE=webhook`), `GATEWAY_WEBHOOK_LISTEN` (default `0.0.0.0`), `GATEWAY_WEBHOOK_PORT` (default `8443`), `GATEWAY_WEBHOOK_PATH` (default `""`), and `GATEWAY_OUTBOUND_POLL_SECONDS` (default `5`) from the environment.
+
+### Outbound delivery
+
+Alongside inbound handling, the gateway runs a background `_outbound_drain_loop` — started in both `run_polling` and `run_webhook`, cancelled in their shutdown `finally`. Every `GATEWAY_OUTBOUND_POLL_SECONDS` (default 5) it calls `RuntimeClient.drain_outbound()` (`GET /admin/messaging/outbound/drain`) and sends each returned `{chat_id, text}` via the bot. A drain failure (runtime blip) is logged and retried next tick; a per-message send failure is logged and skipped so one bad chat never stops the others. This is the delivery side of the runtime's `POST /messaging/send` — the path job-completion notifications reach a tenant's linked chats.
 
 ---
 
@@ -204,6 +208,7 @@ Enable it at deploy time with `cogniverse up --messaging` (requires `TELEGRAM_BO
 | `GATEWAY_WEBHOOK_LISTEN` | Webhook server bind address (default `0.0.0.0`). |
 | `GATEWAY_WEBHOOK_PORT` | Webhook server bind port (default `8443`). |
 | `GATEWAY_WEBHOOK_PATH` | URL path Telegram POSTs updates to (default `""`). |
+| `GATEWAY_OUTBOUND_POLL_SECONDS` | Seconds between outbound-queue drains for delivery (default `5`). |
 
 ---
 
