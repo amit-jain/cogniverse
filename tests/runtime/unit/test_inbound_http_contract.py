@@ -26,7 +26,7 @@ from cogniverse_runtime.messaging import (
 )
 from cogniverse_runtime.routers import agents as agents_router
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 @pytest.fixture
