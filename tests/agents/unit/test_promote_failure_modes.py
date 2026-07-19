@@ -278,3 +278,62 @@ class TestTornCanaryPromotion:
         state = await mgr.get_artefact_state("search_agent")
         assert state["active"]["version"] == 1
         assert state["canary"]["version"] == 2
+
+    async def test_restore_demos_failure_restores_previous_active(self):
+        """A mid-restore demos-save failure (prompts already advanced) must be
+        compensated too — the restore is torn just like a state-save failure, so
+        the previous active prompts AND demos are put back, not left with prompts
+        at the canary version and demos/state stale."""
+        store = FaultInjectingStore(mode=_Mode.NORMAL)
+        mgr = ArtifactManager(FakeProvider(store), tenant_id="acme")
+
+        # Establish active v1 with both prompts and demos.
+        await mgr.save_prompts_versioned("search_agent", {"system": "V1"})
+        await mgr.save_demonstrations_versioned(
+            "search_agent", [{"input": "q1", "output": "a1"}]
+        )
+        await mgr.promote_to_canary("search_agent", 1, traffic_pct=100)
+        await mgr.promote_canary_to_active("search_agent")
+
+        def _io(demos):
+            return [{"input": d["input"], "output": d["output"]} for d in demos or []]
+
+        assert await mgr.load_prompts("search_agent") == {"system": "V1"}
+        assert _io(await mgr.load_demonstrations("search_agent")) == [
+            {"input": "q1", "output": "a1"}
+        ]
+
+        # Stage v2 as canary.
+        await mgr.save_prompts_versioned("search_agent", {"system": "V2"})
+        await mgr.save_demonstrations_versioned(
+            "search_agent", [{"input": "q2", "output": "a2"}]
+        )
+        await mgr.promote_to_canary("search_agent", 2, traffic_pct=100)
+
+        # Fail only the FIRST demos save (the one inside the restore, after the
+        # v2 prompts already landed); the compensation's demos restore succeeds.
+        real_save_demos = mgr.save_demonstrations
+        calls = {"n": 0}
+
+        async def failing_then_ok(agent_type, demos):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("simulated Phoenix 503 on demos save")
+            return await real_save_demos(agent_type, demos)
+
+        mgr.save_demonstrations = failing_then_ok
+        try:
+            with pytest.raises(ConnectionError):
+                await mgr.promote_canary_to_active("search_agent")
+        finally:
+            mgr.save_demonstrations = real_save_demos
+
+        # Torn restore healed: previous active prompts AND demos restored, and
+        # the state blob still shows v1 active / v2 canary (never advanced).
+        assert await mgr.load_prompts("search_agent") == {"system": "V1"}
+        assert _io(await mgr.load_demonstrations("search_agent")) == [
+            {"input": "q1", "output": "a1"}
+        ]
+        state = await mgr.get_artefact_state("search_agent")
+        assert state["active"]["version"] == 1
+        assert state["canary"]["version"] == 2
