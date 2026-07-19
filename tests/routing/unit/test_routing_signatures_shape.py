@@ -171,3 +171,46 @@ def test_meta_routing_signature_fields() -> None:
 def test_adaptive_threshold_signature_fields() -> None:
     names = _field_names(AdaptiveThresholdSignature)
     assert names  # at least one declared field
+
+
+def test_module_demo_reports_declared_fields_for_every_signature() -> None:
+    """The module ``__main__`` demo (now ``_demo()``) reports the declared
+    input/output fields of all seven routing signatures. Drive it directly so
+    the demo body is covered surface, not a script nothing imports; assert the
+    exact reported shape."""
+    from cogniverse_agents.routing.dspy_routing_signatures import _demo
+
+    fields_by_signature = _demo()
+
+    assert set(fields_by_signature) == {
+        "BasicQueryAnalysis",
+        "QueryReformulation",
+        "UnifiedExtractionReformulation",
+        "MultiAgentOrchestration",
+        "AdvancedRouting",
+        "MetaRouting",
+        "AdaptiveThreshold",
+    }
+    # Every signature reports a non-empty, sorted field list.
+    for name, names in fields_by_signature.items():
+        assert names, f"{name} reported no fields"
+        assert names == sorted(names)
+    # One full pin plus the required AdaptiveThreshold outputs that make a bare
+    # SignatureClass() raise (why the demo inspects model_fields, not instances).
+    assert fields_by_signature["BasicQueryAnalysis"] == [
+        "complexity_level",
+        "confidence_score",
+        "context",
+        "needs_multimodal",
+        "needs_text_search",
+        "needs_video_search",
+        "primary_intent",
+        "query",
+        "reasoning",
+        "recommended_agent",
+    ]
+    assert {
+        "fast_path_threshold",
+        "slow_path_threshold",
+        "escalation_threshold",
+    } <= set(fields_by_signature["AdaptiveThreshold"])
