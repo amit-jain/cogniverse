@@ -179,6 +179,35 @@ class TestProfileSelectionAgent:
         assert result.confidence == 0.9
 
     @pytest.mark.asyncio
+    async def test_process_none_output_fields_use_defaults(self, profile_agent):
+        """DSPy returns None for any output field when the LM response fails to
+        parse; None confidence / query_intent / complexity / modality / reasoning
+        must fall back to their defaults, not reach the output schema as None
+        (a bare attr use would surface None or AttributeError → 500)."""
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_colpali_base",
+                confidence=None,
+                reasoning=None,
+                query_intent=None,
+                modality=None,
+                complexity=None,
+            )
+        )
+
+        result = await profile_agent._process_impl(
+            ProfileSelectionInput(query="Show me videos")
+        )
+
+        assert result.confidence == 0.5  # parse_confidence(None) default
+        assert result.complexity == "medium"  # None -> "medium" default
+        # None query_intent -> "text_search" default, then derived from the
+        # video profile; modality likewise falls back then is profile-derived.
+        assert result.query_intent == "video_search"
+        assert result.modality == "video"
+        assert result.reasoning == ""
+
+    @pytest.mark.asyncio
     async def test_process_empty_query(self, profile_agent):
         """Test processing empty query"""
         result = await profile_agent._process_impl(ProfileSelectionInput(query=""))
