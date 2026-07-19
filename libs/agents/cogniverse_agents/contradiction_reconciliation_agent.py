@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
+from cogniverse_agents._coercion import coerce_float
 from cogniverse_agents.graph.graph_schema import normalize_name
 from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -212,10 +213,10 @@ class ContradictionReconciliationAgent(
                 {
                     "video_id": str(edge_fields.get("source_doc_id") or ""),
                     "segment_id": str(edge_fields.get("segment_id") or ""),
-                    "ts_start": float(edge_fields.get("ts_start") or 0.0),
-                    "ts_end": float(edge_fields.get("ts_end") or 0.0),
+                    "ts_start": coerce_float(edge_fields.get("ts_start")),
+                    "ts_end": coerce_float(edge_fields.get("ts_end")),
                     "value": str(edge_fields.get("target_node_id") or ""),
-                    "confidence": float(edge_fields.get("confidence") or 0.0),
+                    "confidence": coerce_float(edge_fields.get("confidence")),
                 }
             )
         entries.sort(key=lambda e: (e["video_id"], e["ts_start"]))
@@ -252,10 +253,10 @@ class ContradictionReconciliationAgent(
             KGConflictEntryOut(
                 video_id=str(e.get("video_id") or ""),
                 segment_id=str(e.get("segment_id") or ""),
-                ts_start=float(e.get("ts_start") or 0.0),
-                ts_end=float(e.get("ts_end") or 0.0),
+                ts_start=coerce_float(e.get("ts_start")),
+                ts_end=coerce_float(e.get("ts_end")),
                 value=str(e.get("value") or ""),
-                confidence=float(e.get("confidence") or 0.0),
+                confidence=coerce_float(e.get("confidence")),
             )
             for e in cset.get("entries", [])
         ]

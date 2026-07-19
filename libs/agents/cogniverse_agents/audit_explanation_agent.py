@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
+from cogniverse_agents._coercion import coerce_float
 from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -177,12 +178,12 @@ class AuditExplanationAgent(
         subject = str(edge_fields.get("source_node_id") or "")
         predicate = str(edge_fields.get("relation") or "")
         obj = str(edge_fields.get("target_node_id") or "")
-        ts_start = float(edge_fields.get("ts_start") or 0.0)
-        ts_end = float(edge_fields.get("ts_end") or 0.0)
+        ts_start = coerce_float(edge_fields.get("ts_start"))
+        ts_end = coerce_float(edge_fields.get("ts_end"))
         modality = str(edge_fields.get("modality") or "")
         source_doc = str(edge_fields.get("source_doc_id") or "")
         evidence = str(edge_fields.get("evidence_span") or "")
-        confidence = float(edge_fields.get("confidence") or 0.0)
+        confidence = coerce_float(edge_fields.get("confidence"))
         text = (
             f"Claim: {subject} {predicate} {obj}.\n"
             f"Source: {source_doc} [{ts_start}s-{ts_end}s] ({modality})\n"
