@@ -15,7 +15,7 @@ import dataclasses
 import logging
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
@@ -58,6 +58,13 @@ GENERIC_AGENT_TTL_S = 300.0
 # distinct agents; tenant delete evicts a tenant's whole dict via the
 # registered-cache hook.
 GENERIC_AGENT_CACHE_CAPACITY = 64
+
+# When a TTL reload of a cached agent's artifact fails (transient artifact-store
+# blip on exactly the request that crosses the TTL boundary), keep serving the
+# still-valid cached agent and reschedule the reload this many seconds out —
+# short enough to recover quickly, long enough not to hammer a down store on
+# every subsequent request.
+RELOAD_RETRY_COOLDOWN_S = 10.0
 
 # Resolved (agent, deps, input) classes for generic A2A dispatch, keyed by the
 # ``module:Class`` path. Bounded by the fixed AGENT_CLASSES set — each dispatch
@@ -145,6 +152,14 @@ def _new_generic_agent_cache() -> "TenantLRUCache[Dict[str, _GenericAgentEntry]]
     return register_tenant_cache(TenantLRUCache(capacity=GENERIC_AGENT_CACHE_CAPACITY))
 
 
+def _retrieve_future_exc(fut: "asyncio.Future[Any]") -> None:
+    """Consume a resolved build future's exception so a failed cold build with
+    no concurrent waiter doesn't log ``Future exception was never retrieved``.
+    Real waiters still receive it via ``await``."""
+    if not fut.cancelled():
+        fut.exception()
+
+
 def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
     """Lift a ``SearchResult``/gateway-shaped hit's ``metadata`` to the top level
     so the answer agents' text helpers see the retrieved content.
@@ -213,6 +228,13 @@ class AgentDispatcher:
             _new_generic_agent_cache()
         )
         self._generic_agent_ttl_s: float = GENERIC_AGENT_TTL_S
+        # In-flight cold-build guards: a cache miss serializes concurrent
+        # first-touches for the same key through one build so N first requests
+        # don't each run a full build (schema deploy, mem0 init) and discard
+        # N-1. Each maps key -> the Future of the build currently running;
+        # removed in the build's finally, so the dict only holds active builds.
+        self._gateway_build_inflight: Dict[str, "asyncio.Future[Any]"] = {}
+        self._generic_build_inflight: Dict[Tuple[str, str], "asyncio.Future[Any]"] = {}
         # Strong references to fire-and-forget tasks so CPython does not GC
         # the coroutine before it runs. asyncio.create_task() with the result
         # discarded is documented to allow that — keep the handles, discard
@@ -234,38 +256,34 @@ class AgentDispatcher:
             return None
         return (sys_cfg.inference_service_urls or {}).get("gliner")
 
-    async def _get_or_build_gateway_agent(self, tenant_id: str):
-        """Return the GatewayAgent for ``tenant_id``, building it once per tenant.
+    async def _reload_entry_artifact(self, entry: Any, ttl: float) -> None:
+        """Re-read a cached agent's artifact once its reload interval elapsed.
 
-        The gateway's routing thresholds (fast_path_confidence_threshold,
-        gliner_threshold) are loaded per tenant from the artifact store into
-        ``deps``, so the instance is tenant-specific. A single shared instance
-        would bake in whichever tenant constructed it first and serve every
-        other tenant that tenant's thresholds. Both the dispatch and the
-        streaming path resolve their gateway through here so streaming also
-        loads the tenant artifact (and telemetry) instead of running on
-        defaults.
-
-        Cache hits re-run ``_load_artifact`` once the reload interval has
-        elapsed, so a warm pod starts serving recalibrated thresholds without
-        a restart while keeping the artifact read off the per-request path.
+        Stamps ``loaded_at`` BEFORE the await so concurrent dispatches serve the
+        current instance instead of stampeding duplicate reloads. On a transient
+        artifact-store failure, keep serving the still-valid cached agent and
+        reschedule the reload ``RELOAD_RETRY_COOLDOWN_S`` out (not a full TTL, not
+        every request) — a blip on the boundary-crossing request must not 500 it.
         """
+        if not hasattr(entry.agent, "_load_artifact"):
+            return
+        entry.loaded_at = time.monotonic()
+        try:
+            await asyncio.to_thread(entry.agent._load_artifact)
+        except Exception as exc:  # noqa: BLE001 — serve cached, retry soon
+            entry.loaded_at = time.monotonic() - max(0.0, ttl - RELOAD_RETRY_COOLDOWN_S)
+            logger.warning(
+                "Artifact reload failed; serving cached agent, retry in ~%.0fs: %s",
+                RELOAD_RETRY_COOLDOWN_S,
+                exc,
+            )
+
+    async def _build_gateway_agent(self, tenant_id: str):
+        """Construct a GatewayAgent for ``tenant_id`` with its per-tenant wiring:
+        routing-config GLiNER seed, telemetry, and the first artifact read. Cached
+        once per tenant by :meth:`_get_or_build_gateway_agent`."""
         from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-        cache = getattr(self, "_gateway_agents", None)
-        if cache is None:
-            cache = _new_gateway_agent_cache()
-            self._gateway_agents = cache
-        entry = cache.get(tenant_id)
-        if entry is not None:
-            ttl = getattr(self, "_gateway_artifact_ttl_s", GATEWAY_ARTIFACT_TTL_S)
-            if time.monotonic() - entry.loaded_at >= ttl:
-                # Stamp before the await: concurrent dispatches serve the
-                # current values instead of stampeding duplicate reloads.
-                entry.loaded_at = time.monotonic()
-                await asyncio.to_thread(entry.agent._load_artifact)
-            return entry.agent
 
         deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
         # Seed GLiNER config from the tenant's routing config (dashboard-editable
@@ -281,10 +299,59 @@ class AgentDispatcher:
         agent.telemetry_manager = get_telemetry_manager()
         agent._artifact_tenant_id = tenant_id
         await asyncio.to_thread(agent._load_artifact)
-        cache.set(
-            tenant_id, _GatewayAgentEntry(agent=agent, loaded_at=time.monotonic())
-        )
         return agent
+
+    async def _get_or_build_gateway_agent(self, tenant_id: str):
+        """Return the GatewayAgent for ``tenant_id``, building it once per tenant.
+
+        The gateway's routing thresholds (fast_path_confidence_threshold,
+        gliner_threshold) are loaded per tenant from the artifact store into
+        ``deps``, so the instance is tenant-specific. A single shared instance
+        would bake in whichever tenant constructed it first and serve every
+        other tenant that tenant's thresholds. Both the dispatch and the
+        streaming path resolve their gateway through here so streaming also
+        loads the tenant artifact (and telemetry) instead of running on
+        defaults.
+
+        Cache hits re-run ``_load_artifact`` once the reload interval has
+        elapsed, so a warm pod starts serving recalibrated thresholds without
+        a restart while keeping the artifact read off the per-request path.
+        Concurrent first-touches for a cold tenant funnel through a single
+        in-flight build so they don't run duplicate GLiNER seeds + reads.
+        """
+        cache = getattr(self, "_gateway_agents", None)
+        if cache is None:
+            cache = _new_gateway_agent_cache()
+            self._gateway_agents = cache
+        entry = cache.get(tenant_id)
+        if entry is not None:
+            ttl = getattr(self, "_gateway_artifact_ttl_s", GATEWAY_ARTIFACT_TTL_S)
+            if time.monotonic() - entry.loaded_at >= ttl:
+                await self._reload_entry_artifact(entry, ttl)
+            return entry.agent
+
+        inflight = getattr(self, "_gateway_build_inflight", None)
+        if inflight is None:
+            inflight = {}
+            self._gateway_build_inflight = inflight
+        pending = inflight.get(tenant_id)
+        if pending is not None:
+            return await pending
+        fut: "asyncio.Future[Any]" = asyncio.get_event_loop().create_future()
+        fut.add_done_callback(_retrieve_future_exc)
+        inflight[tenant_id] = fut
+        try:
+            agent = await self._build_gateway_agent(tenant_id)
+            cache.set(
+                tenant_id, _GatewayAgentEntry(agent=agent, loaded_at=time.monotonic())
+            )
+            fut.set_result(agent)
+            return agent
+        except Exception as exc:
+            fut.set_exception(exc)
+            raise
+        finally:
+            inflight.pop(tenant_id, None)
 
     def _bind_graph_manager(self, agent: Any, tenant_id: str) -> None:
         """Bind the tenant's Vespa knowledge-graph manager to a graph-aware
@@ -928,23 +995,41 @@ class AgentDispatcher:
         entry = per_tenant.get(agent_name)
         if entry is not None:
             ttl = getattr(self, "_generic_agent_ttl_s", GENERIC_AGENT_TTL_S)
-            if (
-                hasattr(entry.agent, "_load_artifact")
-                and time.monotonic() - entry.loaded_at >= ttl
-            ):
-                # Stamp before the await: concurrent dispatches serve the
-                # current instance instead of stampeding duplicate reloads.
-                entry.loaded_at = time.monotonic()
-                await asyncio.to_thread(entry.agent._load_artifact)
+            if time.monotonic() - entry.loaded_at >= ttl:
+                await self._reload_entry_artifact(entry, ttl)
             return entry.agent
 
-        agent = await self._build_generic_agent(
-            agent_name, tenant_id, agent_cls, deps_cls
-        )
-        per_tenant[agent_name] = _GenericAgentEntry(
-            agent=agent, loaded_at=time.monotonic()
-        )
-        return agent
+        # Cache miss: funnel concurrent first-touches for this (tenant,
+        # agent_name) through a single in-flight build so they don't each run a
+        # full build (class wiring, memory init, graph bind, schema-deploying
+        # artifact read) and discard all but one.
+        key = (tenant_id, agent_name)
+        inflight = getattr(self, "_generic_build_inflight", None)
+        if inflight is None:
+            inflight = {}
+            self._generic_build_inflight = inflight
+        pending = inflight.get(key)
+        if pending is not None:
+            return await pending
+        fut: "asyncio.Future[Any]" = asyncio.get_event_loop().create_future()
+        fut.add_done_callback(_retrieve_future_exc)
+        inflight[key] = fut
+        try:
+            agent = await self._build_generic_agent(
+                agent_name, tenant_id, agent_cls, deps_cls
+            )
+            # Re-fetch the per-tenant dict in case the tenant was LRU-evicted
+            # during the build's awaits.
+            cache.get_or_set(tenant_id, dict)[agent_name] = _GenericAgentEntry(
+                agent=agent, loaded_at=time.monotonic()
+            )
+            fut.set_result(agent)
+            return agent
+        except Exception as exc:
+            fut.set_exception(exc)
+            raise
+        finally:
+            inflight.pop(key, None)
 
     async def _execute_generic_agent(
         self,
@@ -1140,8 +1225,10 @@ class AgentDispatcher:
             )
             from cogniverse_foundation.config.utils import get_config
 
-            config = get_config(
-                tenant_id=tenant_id, config_manager=self._config_manager
+            # Offload the config ensure-chain (cold-config Vespa read) so the
+            # streaming setup doesn't block the loop.
+            config = await asyncio.to_thread(
+                get_config, tenant_id=tenant_id, config_manager=self._config_manager
             )
             coding_lm = create_routed_lm(
                 config.get_llm_config().resolve("coding_agent"),
@@ -1294,13 +1381,21 @@ class AgentDispatcher:
             if resolved_query != query:
                 logger.info(f"Query rewritten: '{query}' -> '{resolved_query}'")
 
-        config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+        # get_config runs the ConfigUtils ensure-chain (a Vespa read on a cold
+        # or TTL-expired config) — offload it so it never stalls the API loop
+        # (mirrors _build_encoder_config).
+        config = await asyncio.to_thread(
+            get_config, tenant_id=tenant_id, config_manager=self._config_manager
+        )
         # ``active_video_profile`` is the tenant's configured default video
         # profile (config.json). A per-request ``profiles`` override still wins
         # inside the SearchAgent via SearchInput.profiles.
         profile = config.get("active_video_profile", "video_colpali_smol500_mv_frame")
 
-        search_agent = self._get_search_agent(profile)
+        # _get_search_agent builds SearchAgent on a cache miss — a synchronous
+        # get_system_config Vespa read + query-encoder init in __init__; offload
+        # the whole call so the first search per profile doesn't stall the loop.
+        search_agent = await asyncio.to_thread(self._get_search_agent, profile)
         # Apply the dispatcher's per-request artefact overlay so the
         # canary/variant prompts shape the SearchAgent's DSPy call. Without
         # this, the overlay sits in context unread.
@@ -1586,7 +1681,9 @@ class AgentDispatcher:
 
         from cogniverse_core.agents.rails import RailBlockedError
 
-        rail_chains = self._get_rail_chains(tenant_id)
+        # _get_rail_chains does a get_config Vespa read on its first call per
+        # tenant (then caches) — offload so the gateway path doesn't stall.
+        rail_chains = await asyncio.to_thread(self._get_rail_chains, tenant_id)
         if rail_chains is not None:
             try:
                 rail_chains[0].check({"query": query})
@@ -2085,7 +2182,11 @@ class AgentDispatcher:
         )
         from cogniverse_foundation.config.utils import get_config
 
-        config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+        # Offload the config ensure-chain (Vespa read on a cold/expired config)
+        # off the API loop, as the sibling search/encoder paths do.
+        config = await asyncio.to_thread(
+            get_config, tenant_id=tenant_id, config_manager=self._config_manager
+        )
         coding_lm = create_routed_lm(
             config.get_llm_config().resolve("coding_agent"),
             resolve_semantic_router_config(config),

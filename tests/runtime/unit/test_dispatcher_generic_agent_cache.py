@@ -223,6 +223,57 @@ async def test_concurrent_reload_is_stamped_before_await_no_double_reload(dispat
 
 
 @pytest.mark.asyncio
+async def test_concurrent_cold_dispatches_build_the_agent_once(dispatcher):
+    import asyncio
+
+    d = dispatcher
+    # Widen the build window so cold first-touches overlap on the event loop.
+    FakeAgentA.load_delay = 0.05
+
+    await asyncio.gather(
+        d._execute_generic_agent("fakea", "c1", {}, "acme:acme"),
+        d._execute_generic_agent("fakea", "c2", {}, "acme:acme"),
+        d._execute_generic_agent("fakea", "c3", {}, "acme:acme"),
+    )
+
+    # Without an in-flight guard, each concurrent first-touch runs a full build
+    # (class wiring, memory init, schema-deploying artifact read) and all but one
+    # are discarded. The guard funnels them onto a single build.
+    assert FakeAgentA.build_count == 1
+    assert FakeAgentA.load_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reload_failure_serves_cached_agent_and_reschedules_retry(dispatcher):
+    from cogniverse_runtime.agent_dispatcher import RELOAD_RETRY_COOLDOWN_S
+
+    d = dispatcher
+    d._generic_agent_ttl_s = 100.0
+
+    r1 = await d._execute_generic_agent("fakea", "q", {}, "acme:acme")
+    assert r1["echo"] == "q"
+    entry = d._generic_agents.get("acme:acme")["fakea"]
+
+    def _boom():
+        raise RuntimeError("artifact store down")
+
+    entry.agent._load_artifact = _boom
+    entry.loaded_at = time.monotonic() - (d._generic_agent_ttl_s + 1000.0)
+
+    # A transient reload failure must NOT fail the dispatch — the cached agent is
+    # still valid, so the request is served; the failed reload is retried a short
+    # cooldown out, not suppressed for a full TTL and not hammered every request.
+    r2 = await d._execute_generic_agent("fakea", "q2", {}, "acme:acme")
+    assert r2["echo"] == "q2"
+
+    age = time.monotonic() - entry.loaded_at
+    expected = d._generic_agent_ttl_s - RELOAD_RETRY_COOLDOWN_S
+    assert expected - 2.0 <= age <= expected + 2.0, (
+        f"reload failure should reschedule ~{expected}s in, got age {age}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_per_request_overlay_applied_on_cache_hit(dispatcher):
     d = dispatcher
 

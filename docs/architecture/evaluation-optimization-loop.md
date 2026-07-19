@@ -121,12 +121,17 @@ the cap bounds distinct tenants, not distinct agents). A cache hit re-runs
 5 minutes), so a new artefact lands on a warm pod within that interval
 rather than on every request; the reload stamps `loaded_at` before the
 `to_thread` await, so two concurrent dispatches for the same tenant/agent
-never stampede duplicate reloads. Per-request state (the artefact overlay,
-session id, and the request tenant used for memory + tenant-instruction reads)
-is not cached — it rides Task-isolated ContextVars, so `_apply_artefact_overlay`
-still runs on every dispatch, cache hit or miss, and a `SearchAgent` shared
-across tenants by profile never bleeds one request's tenant into another's
-offloaded reads.
+never stampede duplicate reloads. A cold cache miss is likewise funneled
+through a single in-flight build (concurrent first-touches for the same
+`(tenant, agent_name)` await one build instead of each running a full build +
+schema deploy), and a transient reload failure keeps serving the still-valid
+cached agent while rescheduling the retry `RELOAD_RETRY_COOLDOWN_S` out rather
+than failing the request or suppressing the reload for a full TTL. Per-request
+state (the artefact overlay, session id, and the request tenant used for memory
++ tenant-instruction reads) is not cached — it rides Task-isolated ContextVars,
+so `_apply_artefact_overlay` still runs on every dispatch, cache hit or miss,
+and a `SearchAgent` shared across tenants by profile never bleeds one request's
+tenant into another's offloaded reads.
 The gateway agent follows the same pattern in its own cache — it is cached
 per tenant in a bounded `TenantLRUCache` (`GATEWAY_AGENT_CACHE_CAPACITY`, 64
 tenants; least-recently-dispatched tenants rebuild on their next request),
