@@ -9,6 +9,7 @@ Each tenant gets dedicated Vespa schema for memory isolation.
 import json
 import logging
 import os
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -146,6 +147,11 @@ class Mem0MemoryManager:
         def _build() -> "Mem0MemoryManager":
             instance = super(Mem0MemoryManager, cls).__new__(cls)
             instance._initialized = False
+            # Created inside the atomic get_or_set builder so exactly one lock
+            # exists per tenant instance; initialize() serializes cold init on
+            # it (the manager is shared across every agent for the tenant and
+            # initialize runs per dispatch on worker threads).
+            instance._init_lock = threading.Lock()
             logger.info(
                 "Created new Mem0MemoryManager instance for tenant: %s",
                 tenant_id,
@@ -244,14 +250,57 @@ class Mem0MemoryManager:
             backend_config_port,
             base_schema_name,
         )
-        if (
-            self.memory is not None
-            and getattr(self, "_init_fingerprint", None) == fingerprint
-        ):
-            if knowledge_registry is not None:
-                self._knowledge_registry = knowledge_registry
-            return
+        with self._init_lock:
+            # Double-checked under the lock: another thread may have finished
+            # the build while this one waited. Without the lock two concurrent
+            # first requests (shared per-tenant manager, initialize per dispatch
+            # on worker threads) both see memory is None and both run
+            # Memory.from_config + redeploy the tenant schema.
+            if (
+                self.memory is not None
+                and getattr(self, "_init_fingerprint", None) == fingerprint
+            ):
+                if knowledge_registry is not None:
+                    self._knowledge_registry = knowledge_registry
+                return
+            self._build_and_store_memory(
+                backend_host=backend_host,
+                backend_port=backend_port,
+                llm_model=llm_model,
+                embedding_model=embedding_model,
+                llm_base_url=llm_base_url,
+                embedder_base_url=embedder_base_url,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+                llm_api_key=llm_api_key,
+                backend_config_port=backend_config_port,
+                base_schema_name=base_schema_name,
+                auto_create_schema=auto_create_schema,
+                embedding_dims=embedding_dims,
+                knowledge_registry=knowledge_registry,
+                fingerprint=fingerprint,
+            )
 
+    def _build_and_store_memory(
+        self,
+        *,
+        backend_host: str,
+        backend_port: int,
+        llm_model: str,
+        embedding_model: str,
+        llm_base_url: str,
+        embedder_base_url: str,
+        config_manager,
+        schema_loader,
+        llm_api_key: str,
+        backend_config_port: Optional[int],
+        base_schema_name: str,
+        auto_create_schema: bool,
+        embedding_dims: int,
+        knowledge_registry: Optional[object],
+        fingerprint: tuple,
+    ) -> None:
+        """Build the Mem0 stack and store it. Callers must hold ``_init_lock``."""
         # Get backend instance for memory operations
         from cogniverse_core.registries.backend_registry import get_backend_registry
         from cogniverse_foundation.config.utils import get_config
