@@ -168,6 +168,35 @@ class TestPerTenantWikiSearch:
         managers["tenant_a"].search.assert_called_once_with(query="alpha", top_k=3)
         managers["tenant_b"].search.assert_called_once_with(query="beta", top_k=5)
 
+    def test_search_returns_results_and_count_envelope(
+        self, wiki_client, factory_with_per_tenant_managers
+    ):
+        client, _managers = wiki_client
+        factory, _ = factory_with_per_tenant_managers
+        hits = [{"slug": "a", "title": "Alpha"}, {"slug": "b", "title": "Beta"}]
+        factory("tenant_a").search.return_value = hits
+
+        resp = client.post(
+            "/search", json={"query": "alpha", "tenant_id": "tenant_a", "top_k": 3}
+        )
+
+        assert resp.status_code == 200
+        # count must equal the number of results the manager returned.
+        assert resp.json() == {"results": hits, "count": 2}
+
+    def test_search_empty_results_count_zero(
+        self, wiki_client, factory_with_per_tenant_managers
+    ):
+        client, _managers = wiki_client
+        factory, _ = factory_with_per_tenant_managers
+        factory("tenant_a").search.return_value = []
+
+        resp = client.post(
+            "/search", json={"query": "nada", "tenant_id": "tenant_a", "top_k": 3}
+        )
+
+        assert resp.json() == {"results": [], "count": 0}
+
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
@@ -186,6 +215,30 @@ class TestPerTenantWikiGetEndpoints:
         client.get("/index?tenant_id=tenant_b")
         assert "tenant_b" in managers
         managers["tenant_b"].get_index.assert_called_once()
+
+    def test_index_returns_content_envelope(
+        self, wiki_client, factory_with_per_tenant_managers
+    ):
+        client, _managers = wiki_client
+        factory, _ = factory_with_per_tenant_managers
+        factory("tenant_b").get_index.return_value = "# Wiki Index\n- Alpha\n- Beta"
+
+        resp = client.get("/index?tenant_id=tenant_b")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"content": "# Wiki Index\n- Alpha\n- Beta"}
+
+    def test_index_none_coalesces_to_empty_string(
+        self, wiki_client, factory_with_per_tenant_managers
+    ):
+        client, _managers = wiki_client
+        factory, _ = factory_with_per_tenant_managers
+        factory("tenant_b").get_index.return_value = None
+
+        resp = client.get("/index?tenant_id=tenant_b")
+
+        # A manager returning None must serialize as "", not null.
+        assert resp.json() == {"content": ""}
 
     def test_lint_uses_query_param_tenant_id(self, wiki_client):
         client, managers = wiki_client
