@@ -163,6 +163,12 @@ Forbidden weak assertions: `assert x is not None`, `assert isinstance(out.summar
 
 This applies to every plan item, every audit-driven fix, every new test. The audit checklist in `docs/modules/agents.md` enumerates the failure patterns to design assertions against.
 
+**Assert Concurrency and Failure at Feature-Time, Not Audit-Time**: Audits are the backstop for what slipped, not the safety net. Every audit pass finds bugs the previous pass's fixes introduced — because the concurrency and failure-path invariants were only ever checked at audit time. Break that loop: any change that adds shared or cached state, an async path, or a call to a system boundary (Vespa / Phoenix / mem0 / LM / HTTP / Redis / disk) MUST, in the SAME commit, add two assertions beyond the happy path, as executable tests:
+- **Concurrency invariant** — what must hold under N concurrent requests/threads: single cold-build, no cross-request/tenant bleed, no use-after-close, event loop never blocked. Prove it by executing the interleaving (barrier + counter), never by reasoning.
+- **Fault contract** — what happens when the boundary is down / hung / failing mid-op: raise-with-context, never a silent `[]`/`None`/zero-count that reads as no-data, never a torn multi-step write.
+
+If you cannot name both for a change that has shared state, async, or a boundary call, the design is not finished — write them before the code. This binds remediation commits too: a fix ships its own concurrency + fault regression test in the same commit; deferring it to "the next audit" is the exact churn that makes audit N+1 necessary. When you write a plan, these two invariants go in the assertion list for every applicable item alongside the happy-path assertions.
+
 **Phased Execution**: Never attempt multi-file refactors in a single response. Break work into explicit phases. Complete Phase 1, run verification, wait for explicit approval before Phase 2. Each phase must touch no more than 5 files.
 
 **Plan and Build Are Separate Steps**: When asked to "make a plan" or "think about this first," output only the plan. No code until the user says go. If instructions are vague, outline what you'd build and where it goes. Get approval first.

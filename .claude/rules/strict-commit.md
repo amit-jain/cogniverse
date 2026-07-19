@@ -107,6 +107,11 @@ This check is mandatory. Skipping it is a violation, not a triage step.
 **Wiring coverage**: For changes that connect components (A writes, B reads), verify at least one test exercises the full round-trip (save → load → assert equality). Flag if only constructor-acceptance tests exist.
 **Reject if tests are missing**: If code changes wire components together but no round-trip integration test exists, quality-enforcer MUST fail the check — even if all existing tests pass. Missing tests = incomplete implementation.
 
+**Self-audit the diff (mandatory — moves audit findings to commit-time)**: Before approving, run these against `git diff HEAD` for the change, so a class of bug that a future audit would catch is caught here instead:
+- **Class C hunt-list** — run the relevant regexes from `.claude/rules/audit.md` (Class C hunt list) over the diff's added lines. Any new hit is a blocker, fixed in THIS commit — a syntactic footgun never ships to wait for an audit. (This is the local half of CI-gating the hunt-list; the CI job is the other half.)
+- **Concurrency + fault tests present** — if the diff adds shared/cached state, an async path, a new store/manager/backend read, or a boundary call, REJECT unless it ships a concurrency (F) and a fault-injection (G) regression test that executes the interleaving / failure path (per CLAUDE.md → "Assert Concurrency and Failure at Feature-Time"). Happy-path tests alone fail the check, even when green.
+- **Remediation is not exempt** — a fix commit self-audits its own diff by the same two rules. "The next audit will catch it" is a banned deferral.
+
 **Baseline-aware invocation**: When you have already run tests manually during implementation, pass a `BASELINE ALREADY VERIFIED:` block in the prompt with the specific test files you've verified. The agent runs only import-graph-reachable tests NOT in that list, then reports baseline vs delta. Skip the baseline directive and let it run the full scope when the diff touches cross-cutting concerns (config, backends, registries, telemetry, memory, schema) or is large (20+ files) — transitive regressions via those layers can invalidate the baseline.
 
 ---
@@ -164,9 +169,18 @@ Forbidden weak assertions: `assert x is not None`,
 strongest assertion you can write is "non-empty string," the contract
 is undefined — refine it before coding.
 
+For any feature with shared/cached state, an async path, or a boundary
+call, the assertion list MUST also name a **concurrency invariant** (what
+holds under N concurrent requests/threads) and a **fault contract** (what
+happens when the boundary is down/hung/failing mid-op), each shipped as an
+executable test in the same commit — see CLAUDE.md → "Assert Concurrency
+and Failure at Feature-Time, Not Audit-Time". These belong in the plan's
+assertion list next to the happy-path assertions.
+
 `quality-enforcer` REJECTS a change whose tests use only weak
-assertions, even when they pass. Audit checklist in
-`docs/modules/agents.md` enumerates the failure patterns assertions
+assertions, even when they pass, and a change that needed the concurrency
+/ fault tests above but shipped only happy-path coverage. Audit checklist
+in `docs/modules/agents.md` enumerates the failure patterns assertions
 must catch.
 
 ## Implementation Completeness
