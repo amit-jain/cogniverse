@@ -204,7 +204,14 @@ class TestRLMInferenceWithEventQueue:
         assert not isinstance(rlm, InstrumentedRLM)
 
     def test_get_rlm_with_event_queue(self):
-        """_get_rlm returns InstrumentedRLM with event_queue."""
+        """_get_rlm builds the LM via the real ``create_dspy_lm`` seam and wraps
+        it in an InstrumentedRLM when an event_queue is attached.
+
+        ``_get_rlm`` builds the LM through ``create_dspy_lm`` (imported into the
+        module), never ``dspy.LM`` — so patching ``rlm_inference.dspy`` was inert
+        and proved nothing. Patch the seam the code actually calls and assert the
+        built LM is retained on the wrapper for the later ``dspy.context(lm=...)``.
+        """
         mock_queue = MagicMock()
         rlm_inference = RLMInference(
             llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
@@ -213,17 +220,22 @@ class TestRLMInferenceWithEventQueue:
             tenant_id="tenant_1",
         )
 
-        with patch("cogniverse_agents.inference.rlm_inference.dspy") as mock_dspy:
-            mock_lm = MagicMock()
-            mock_dspy.LM.return_value = mock_lm
-
+        sentinel_lm = MagicMock(name="dspy_lm")
+        with patch(
+            "cogniverse_agents.inference.rlm_inference.create_dspy_lm",
+            return_value=sentinel_lm,
+        ) as mock_create_lm:
             rlm = rlm_inference._get_rlm()
 
-            # Should be InstrumentedRLM
-            assert isinstance(rlm, InstrumentedRLM)
-            assert rlm._event_queue is mock_queue
-            assert rlm._task_id == "task_123"
-            assert rlm._tenant_id == "tenant_1"
+        # The real construction seam was consulted exactly once with this
+        # inference's config, and the built LM is retained for execution.
+        mock_create_lm.assert_called_once_with(rlm_inference.llm_config)
+        assert rlm_inference._lm is sentinel_lm
+
+        assert isinstance(rlm, InstrumentedRLM)
+        assert rlm._event_queue is mock_queue
+        assert rlm._task_id == "task_123"
+        assert rlm._tenant_id == "tenant_1"
 
 
 class TestRLMAwareMixinWithEventQueue:
