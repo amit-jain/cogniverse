@@ -145,7 +145,6 @@ class RLMABRunner:
         self._rlm_max_llm_calls = rlm_max_llm_calls
         self._event_queue = event_queue
         self._tenant_id = tenant_id
-        self._config_manager = config_manager
         # Route once; both arms share the identical endpoint so the gateway
         # returns the same model for each — RLM-vs-no-RLM stays the only
         # variable. Direct path when routing is off/uninformed.
