@@ -17,7 +17,10 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from cogniverse_core.common.tenant_utils import sanitize_k8s_label_value
+from cogniverse_core.common.tenant_utils import (
+    canonical_tenant_id,
+    sanitize_k8s_label_value,
+)
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import get_workflow_settings
@@ -743,12 +746,49 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
     )
 
 
-@router.get(
-    "/{tenant_id}/optimize/runs/{workflow_name}",
-    response_model=OptimizeRunStatus,
-)
-async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
-    """Return current phase + timestamps for a dashboard-triggered run."""
+def _workflow_tenant_tag(data: Dict[str, Any]) -> Optional[str]:
+    """Return the tenant a Workflow was submitted for, or None if untagged.
+
+    The submit path tags each Workflow two ways: a ``tenant-id`` spec
+    argument carrying the raw tenant id, and a ``cogniverse.ai/tenant``
+    label carrying the colon-sanitized (lossy) form. Prefer the argument;
+    fall back to the label only when the argument is absent.
+    """
+    arguments = (data.get("spec") or {}).get("arguments") or {}
+    for param in arguments.get("parameters") or []:
+        if isinstance(param, dict) and param.get("name") == "tenant-id":
+            value = param.get("value")
+            if value:
+                return value
+    label = ((data.get("metadata") or {}).get("labels") or {}).get(
+        "cogniverse.ai/tenant"
+    )
+    return label or None
+
+
+def _assert_workflow_belongs_to_tenant(data: Dict[str, Any], tenant_id: str) -> None:
+    """Raise 404 unless the Workflow was submitted for ``tenant_id``.
+
+    Tenant isolation: an operation scoped to ``/{tenant_id}/...`` must only
+    touch that tenant's Workflows. A cross-tenant reference — or a Workflow
+    with no tenant tag at all — answers 404 (not 403) so a caller cannot
+    probe another tenant's run names.
+    """
+    workflow_tenant = _workflow_tenant_tag(data)
+    if workflow_tenant is None or canonical_tenant_id(
+        workflow_tenant
+    ) != canonical_tenant_id(tenant_id):
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+
+async def _argo_get_workflow_data(workflow_name: str, tenant_id: str) -> Dict[str, Any]:
+    """GET a Workflow from Argo and confirm it belongs to ``tenant_id``.
+
+    Shared by the status/cancel/retry endpoints so each per-tenant action
+    verifies ownership against the same Argo record before proceeding.
+    Raises 404 when the Workflow is missing or owned by another tenant,
+    502 on any other Argo error, 503 when Argo is not configured.
+    """
     if get_workflow_settings().api_url is None:
         raise HTTPException(
             status_code=503,
@@ -772,6 +812,17 @@ async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
             detail=f"Argo API error ({response.status_code}): {response.text[:500]}",
         )
     data = response.json()
+    _assert_workflow_belongs_to_tenant(data, tenant_id)
+    return data
+
+
+@router.get(
+    "/{tenant_id}/optimize/runs/{workflow_name}",
+    response_model=OptimizeRunStatus,
+)
+async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
+    """Return current phase + timestamps for a dashboard-triggered run."""
+    data = await _argo_get_workflow_data(workflow_name, tenant_id)
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
         workflow_name=workflow_name,
@@ -835,6 +886,7 @@ async def cancel_manual_optimization(tenant_id: str, workflow_name: str):
     configured grace window. Returns the post-terminate status block so
     the dashboard can surface the ``Failed`` phase without polling again.
     """
+    await _argo_get_workflow_data(workflow_name, tenant_id)
     data = await _argo_workflow_action("cancel", workflow_name, "terminate")
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
@@ -859,6 +911,7 @@ async def retry_manual_optimization(tenant_id: str, workflow_name: str):
     on the WorkflowTemplate still applies, so a retry that lands while
     another Workflow holds the mutex will queue behind it.
     """
+    await _argo_get_workflow_data(workflow_name, tenant_id)
     data = await _argo_workflow_action("retry", workflow_name, "retry")
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(

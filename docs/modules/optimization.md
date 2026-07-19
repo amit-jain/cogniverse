@@ -814,6 +814,14 @@ curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize/runs/op
 # Returns: {"phase": "Running", ...}
 ```
 
+The status, cancel, and retry endpoints scope each action to the path
+tenant. Before returning status or issuing the terminate/retry, the runtime
+reads the Workflow's `tenant-id` argument (falling back to the
+`cogniverse.ai/tenant` label) and compares its canonical form to the path
+tenant. A Workflow owned by another tenant — or carrying no tenant tag —
+returns `404 Workflow not found`, so one tenant cannot read or disrupt
+another tenant's optimization run by name.
+
 The runtime does not inline the container spec into each submitted
 Workflow. Instead it references a chart-installed ``WorkflowTemplate``
 (``cogniverse-optimization-runner``) via ``spec.workflowTemplateRef``:

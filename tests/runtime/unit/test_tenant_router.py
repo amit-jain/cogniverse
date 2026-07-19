@@ -1238,6 +1238,31 @@ class TestPostManualOptimize:
         assert resp.status_code == 502
 
 
+# Real Argo Workflows the submit path creates always carry the tenant as a
+# ``tenant-id`` spec argument; the status/cancel/retry endpoints read it to
+# confirm ownership before acting. The stubs below (path tenant "acme") must
+# reproduce that tag or the ownership guard 404s them.
+_ACME_SPEC = {
+    "spec": {"arguments": {"parameters": [{"name": "tenant-id", "value": "acme"}]}}
+}
+
+
+def _acme_get_stub(status_code=200, status=None):
+    """A fake ``httpx.AsyncClient.get`` returning an acme-owned Workflow so the
+    cancel/retry ownership guard passes (or a 4xx/5xx when status_code is set)."""
+
+    async def fake_get(self, url, **kwargs):
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.text = "not found"
+        resp.json = MagicMock(
+            return_value={**_ACME_SPEC, "status": status or {"phase": "Running"}}
+        )
+        return resp
+
+    return fake_get
+
+
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestGetManualOptimizeStatus:
@@ -1252,12 +1277,13 @@ class TestGetManualOptimizeStatus:
             resp.status_code = 200
             resp.json = MagicMock(
                 return_value={
+                    **_ACME_SPEC,
                     "status": {
                         "phase": "Succeeded",
                         "startedAt": "2025-01-01T12:00:00Z",
                         "finishedAt": "2025-01-01T12:04:00Z",
                         "message": "ok",
-                    }
+                    },
                 }
             )
             return resp
@@ -1280,7 +1306,7 @@ class TestGetManualOptimizeStatus:
             resp = MagicMock()
             resp.status_code = 200
             # Argo omits startedAt/finishedAt while pending; phase may also be missing.
-            resp.json = MagicMock(return_value={"status": {}})
+            resp.json = MagicMock(return_value={**_ACME_SPEC, "status": {}})
             return resp
 
         with patch("httpx.AsyncClient.get", new=fake_get):
@@ -1328,6 +1354,7 @@ class TestGetManualOptimizeStatus:
             resp.status_code = 200
             resp.json = MagicMock(
                 return_value={
+                    **_ACME_SPEC,
                     "status": {
                         "phase": "Pending",
                         "synchronization": {
@@ -1340,7 +1367,7 @@ class TestGetManualOptimizeStatus:
                                 ]
                             }
                         },
-                    }
+                    },
                 }
             )
             return resp
@@ -1366,7 +1393,9 @@ class TestGetManualOptimizeStatus:
         async def fake_get(self, url, **kwargs):
             resp = MagicMock()
             resp.status_code = 200
-            resp.json = MagicMock(return_value={"status": {"phase": "Pending"}})
+            resp.json = MagicMock(
+                return_value={**_ACME_SPEC, "status": {"phase": "Pending"}}
+            )
             return resp
 
         with patch("httpx.AsyncClient.get", new=fake_get):
@@ -1386,6 +1415,7 @@ class TestGetManualOptimizeStatus:
             resp.status_code = 200
             resp.json = MagicMock(
                 return_value={
+                    **_ACME_SPEC,
                     "status": {
                         "phase": "Running",
                         "synchronization": {
@@ -1395,7 +1425,7 @@ class TestGetManualOptimizeStatus:
                                 ]
                             }
                         },
-                    }
+                    },
                 }
             )
             return resp
@@ -1419,10 +1449,11 @@ class TestGetManualOptimizeStatus:
             resp.status_code = 200
             resp.json = MagicMock(
                 return_value={
+                    **_ACME_SPEC,
                     "status": {
                         "phase": "Pending",
                         "message": "Waiting for cogniverse/optimize-acme lock",
-                    }
+                    },
                 }
             )
             return resp
@@ -1462,7 +1493,10 @@ class TestCancelManualOptimize:
             )
             return resp
 
-        with patch("httpx.AsyncClient.put", new=fake_put):
+        with (
+            patch("httpx.AsyncClient.get", new=_acme_get_stub()),
+            patch("httpx.AsyncClient.put", new=fake_put),
+        ):
             resp = client.post("/acme/optimize/runs/wf-running/cancel")
 
         assert resp.status_code == 200, resp.text
@@ -1478,16 +1512,23 @@ class TestCancelManualOptimize:
 
     def test_404_when_workflow_missing(self, argo_configured_client):
         client = argo_configured_client
+        put_calls: List[str] = []
 
         async def fake_put(self, url, **kwargs):
+            put_calls.append(url)
             resp = MagicMock()
-            resp.status_code = 404
-            resp.text = "not found"
+            resp.status_code = 200
+            resp.json = MagicMock(return_value={"status": {}})
             return resp
 
-        with patch("httpx.AsyncClient.put", new=fake_put):
+        with (
+            patch("httpx.AsyncClient.get", new=_acme_get_stub(status_code=404)),
+            patch("httpx.AsyncClient.put", new=fake_put),
+        ):
             resp = client.post("/acme/optimize/runs/gone/cancel")
         assert resp.status_code == 404
+        # A missing Workflow must never reach the terminate action.
+        assert put_calls == []
 
     def test_502_when_argo_returns_error(self, argo_configured_client):
         client = argo_configured_client
@@ -1498,7 +1539,10 @@ class TestCancelManualOptimize:
             resp.text = "down"
             return resp
 
-        with patch("httpx.AsyncClient.put", new=fake_put):
+        with (
+            patch("httpx.AsyncClient.get", new=_acme_get_stub()),
+            patch("httpx.AsyncClient.put", new=fake_put),
+        ):
             resp = client.post("/acme/optimize/runs/wf1/cancel")
         assert resp.status_code == 502
 
@@ -1530,7 +1574,10 @@ class TestRetryManualOptimize:
             )
             return resp
 
-        with patch("httpx.AsyncClient.put", new=fake_put):
+        with (
+            patch("httpx.AsyncClient.get", new=_acme_get_stub()),
+            patch("httpx.AsyncClient.put", new=fake_put),
+        ):
             resp = client.post("/acme/optimize/runs/wf-failed/retry")
 
         assert resp.status_code == 200
@@ -1540,16 +1587,250 @@ class TestRetryManualOptimize:
 
     def test_404_when_workflow_missing(self, argo_configured_client):
         client = argo_configured_client
+        put_calls: List[str] = []
 
         async def fake_put(self, url, **kwargs):
+            put_calls.append(url)
             resp = MagicMock()
-            resp.status_code = 404
-            resp.text = "not found"
+            resp.status_code = 200
+            resp.json = MagicMock(return_value={"status": {}})
             return resp
 
-        with patch("httpx.AsyncClient.put", new=fake_put):
+        with (
+            patch("httpx.AsyncClient.get", new=_acme_get_stub(status_code=404)),
+            patch("httpx.AsyncClient.put", new=fake_put),
+        ):
             resp = client.post("/acme/optimize/runs/gone/retry")
         assert resp.status_code == 404
+        # A missing Workflow must never reach the retry action.
+        assert put_calls == []
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestOptimizeTenantIsolation:
+    """Tenant isolation for the optimize status/cancel/retry endpoints.
+
+    Each endpoint takes a ``{tenant_id}`` path param and acts on an Argo
+    Workflow by name. Without an ownership check, tenant B could read,
+    cancel, or retry tenant A's optimization run just by knowing its name.
+    The endpoints verify the Workflow was submitted for the path tenant
+    (via the raw ``tenant-id`` spec argument, falling back to the sanitized
+    ``cogniverse.ai/tenant`` label) and answer 404 otherwise — 404 rather
+    than 403 so a caller cannot probe another tenant's run names.
+    """
+
+    @staticmethod
+    def _workflow(*, tenant_param=None, tenant_label=None, status=None):
+        data = {
+            "metadata": {"name": "wf-abc"},
+            "status": status or {"phase": "Running"},
+        }
+        if tenant_param is not None:
+            data["spec"] = {
+                "arguments": {
+                    "parameters": [
+                        {"name": "mode", "value": "simba"},
+                        {"name": "tenant-id", "value": tenant_param},
+                    ]
+                }
+            }
+        if tenant_label is not None:
+            data["metadata"].setdefault("labels", {})["cogniverse.ai/tenant"] = (
+                tenant_label
+            )
+        return data
+
+    @staticmethod
+    def _get_stub(data, status_code=200):
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = status_code
+            resp.json = MagicMock(return_value=data)
+            resp.text = ""
+            return resp
+
+        return fake_get
+
+    @staticmethod
+    def _put_spy(calls, status=None):
+        async def fake_put(self, url, json=None, **kwargs):
+            calls.append(url)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(
+                return_value={
+                    "metadata": {"name": "wf-abc"},
+                    "status": status or {"phase": "Failed"},
+                }
+            )
+            return resp
+
+        return fake_put
+
+    # ---- status ------------------------------------------------------
+
+    def test_status_mismatched_tenant_returns_404(self, argo_configured_client):
+        client = argo_configured_client
+        wf = self._workflow(tenant_param="acme:acme")
+        with patch("httpx.AsyncClient.get", new=self._get_stub(wf)):
+            resp = client.get("/evil:evil/optimize/runs/wf-abc")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Workflow not found"
+
+    def test_status_matching_tenant_returns_status(self, argo_configured_client):
+        client = argo_configured_client
+        wf = self._workflow(
+            tenant_param="acme:acme",
+            status={
+                "phase": "Running",
+                "startedAt": "2025-01-01T12:00:00Z",
+                "message": "in progress",
+            },
+        )
+        with patch("httpx.AsyncClient.get", new=self._get_stub(wf)):
+            resp = client.get("/acme:acme/optimize/runs/wf-abc")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["workflow_name"] == "wf-abc"
+        assert data["phase"] == "Running"
+        assert data["started_at"] == "2025-01-01T12:00:00Z"
+        assert data["message"] == "in progress"
+
+    def test_status_simple_form_path_canonicalizes_to_match(
+        self, argo_configured_client
+    ):
+        client = argo_configured_client
+        wf = self._workflow(tenant_param="acme:acme", status={"phase": "Succeeded"})
+        with patch("httpx.AsyncClient.get", new=self._get_stub(wf)):
+            resp = client.get("/acme/optimize/runs/wf-abc")
+        assert resp.status_code == 200
+        assert resp.json()["phase"] == "Succeeded"
+
+    def test_status_no_tenant_tag_returns_404(self, argo_configured_client):
+        client = argo_configured_client
+        wf = self._workflow()  # neither param nor label
+        with patch("httpx.AsyncClient.get", new=self._get_stub(wf)):
+            resp = client.get("/acme:acme/optimize/runs/wf-abc")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Workflow not found"
+
+    def test_status_label_fallback_matches_when_param_absent(
+        self, argo_configured_client
+    ):
+        client = argo_configured_client
+        wf = self._workflow(tenant_label="acme", status={"phase": "Running"})
+        with patch("httpx.AsyncClient.get", new=self._get_stub(wf)):
+            resp = client.get("/acme/optimize/runs/wf-abc")
+        assert resp.status_code == 200
+        assert resp.json()["phase"] == "Running"
+
+    # ---- cancel ------------------------------------------------------
+
+    def test_cancel_mismatched_tenant_404_without_terminate(
+        self, argo_configured_client
+    ):
+        client = argo_configured_client
+        wf = self._workflow(tenant_param="acme:acme")
+        put_calls: List[str] = []
+        with (
+            patch("httpx.AsyncClient.get", new=self._get_stub(wf)),
+            patch("httpx.AsyncClient.put", new=self._put_spy(put_calls)),
+        ):
+            resp = client.post("/evil:evil/optimize/runs/wf-abc/cancel")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Workflow not found"
+        assert put_calls == []
+
+    def test_cancel_matching_tenant_terminates(self, argo_configured_client):
+        client = argo_configured_client
+        wf = self._workflow(tenant_param="acme:acme")
+        put_calls: List[str] = []
+        with (
+            patch("httpx.AsyncClient.get", new=self._get_stub(wf)),
+            patch("httpx.AsyncClient.put", new=self._put_spy(put_calls)),
+        ):
+            resp = client.post("/acme:acme/optimize/runs/wf-abc/cancel")
+        assert resp.status_code == 200
+        assert resp.json()["phase"] == "Failed"
+        assert len(put_calls) == 1
+        assert put_calls[0].endswith("/wf-abc/terminate")
+
+    def test_cancel_no_tenant_tag_404_without_terminate(self, argo_configured_client):
+        client = argo_configured_client
+        wf = self._workflow()
+        put_calls: List[str] = []
+        with (
+            patch("httpx.AsyncClient.get", new=self._get_stub(wf)),
+            patch("httpx.AsyncClient.put", new=self._put_spy(put_calls)),
+        ):
+            resp = client.post("/acme:acme/optimize/runs/wf-abc/cancel")
+        assert resp.status_code == 404
+        assert put_calls == []
+
+    # ---- retry -------------------------------------------------------
+
+    def test_retry_mismatched_tenant_404_without_retry(self, argo_configured_client):
+        client = argo_configured_client
+        wf = self._workflow(tenant_param="acme:acme")
+        put_calls: List[str] = []
+        with (
+            patch("httpx.AsyncClient.get", new=self._get_stub(wf)),
+            patch(
+                "httpx.AsyncClient.put",
+                new=self._put_spy(put_calls, status={"phase": "Running"}),
+            ),
+        ):
+            resp = client.post("/evil:evil/optimize/runs/wf-abc/retry")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Workflow not found"
+        assert put_calls == []
+
+    def test_retry_matching_tenant_retries(self, argo_configured_client):
+        client = argo_configured_client
+        wf = self._workflow(tenant_param="acme:acme")
+        put_calls: List[str] = []
+        with (
+            patch("httpx.AsyncClient.get", new=self._get_stub(wf)),
+            patch(
+                "httpx.AsyncClient.put",
+                new=self._put_spy(put_calls, status={"phase": "Running"}),
+            ),
+        ):
+            resp = client.post("/acme:acme/optimize/runs/wf-abc/retry")
+        assert resp.status_code == 200
+        assert resp.json()["phase"] == "Running"
+        assert len(put_calls) == 1
+        assert put_calls[0].endswith("/wf-abc/retry")
+
+    def test_retry_simple_form_path_canonicalizes_to_match(
+        self, argo_configured_client
+    ):
+        client = argo_configured_client
+        wf = self._workflow(tenant_param="acme:acme")
+        put_calls: List[str] = []
+        with (
+            patch("httpx.AsyncClient.get", new=self._get_stub(wf)),
+            patch(
+                "httpx.AsyncClient.put",
+                new=self._put_spy(put_calls, status={"phase": "Running"}),
+            ),
+        ):
+            resp = client.post("/acme/optimize/runs/wf-abc/retry")
+        assert resp.status_code == 200
+        assert len(put_calls) == 1
+
+    def test_retry_no_tenant_tag_404_without_retry(self, argo_configured_client):
+        client = argo_configured_client
+        wf = self._workflow()
+        put_calls: List[str] = []
+        with (
+            patch("httpx.AsyncClient.get", new=self._get_stub(wf)),
+            patch("httpx.AsyncClient.put", new=self._put_spy(put_calls)),
+        ):
+            resp = client.post("/acme:acme/optimize/runs/wf-abc/retry")
+        assert resp.status_code == 404
+        assert put_calls == []
 
 
 _RFC1123_NAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
