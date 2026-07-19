@@ -647,3 +647,79 @@ def test_text_analysis_adapter_outage_without_history_returns_none():
     dead.get_active_adapter.side_effect = ConnectionError("vespa down")
     with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=dead):
         assert agent._active_adapter_model() is None
+
+
+@pytest.mark.unit
+def test_get_active_adapter_path_outage_reuses_last_known():
+    """A registry outage must not silently revert a tenant with a known active
+    adapter to the base model — the last successful path resolution is reused
+    (mirrors adapter_lm_context), not flattened to None = 'no adapter'."""
+    from cogniverse_agents import adapter_loader
+
+    adapter_loader._LAST_KNOWN_ADAPTERS.clear()
+    ok = Mock()
+    ok.get_active_adapter.return_value = _adapter("file:///models/routing_lora")
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=ok):
+        first = get_active_adapter_path(
+            "outage:pathtenant", "routing", adapter_cache_dir="/cache"
+        )
+    assert first == "/models/routing_lora"
+
+    dead = Mock()
+    dead.get_active_adapter.side_effect = ConnectionError("vespa down")
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=dead):
+        during_outage = get_active_adapter_path(
+            "outage:pathtenant", "routing", adapter_cache_dir="/cache"
+        )
+    assert during_outage == "/models/routing_lora", (
+        "outage reverted a known-adapter tenant to the base model"
+    )
+
+
+@pytest.mark.unit
+def test_get_active_adapter_path_outage_without_history_returns_none():
+    """First-ever lookup during an outage has no prior state — degrade to the
+    base model (None), same graceful fallback as adapter_lm_context."""
+    from cogniverse_agents import adapter_loader
+
+    adapter_loader._LAST_KNOWN_ADAPTERS.clear()
+    dead = Mock()
+    dead.get_active_adapter.side_effect = ConnectionError("vespa down")
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=dead):
+        assert (
+            get_active_adapter_path(
+                "cold:pathtenant", "routing", adapter_cache_dir="/c"
+            )
+            is None
+        )
+
+
+@pytest.mark.unit
+def test_get_adapter_metadata_outage_reuses_last_known():
+    """A registry outage must not silently drop a known adapter's metadata to
+    None — the last successful lookup is reused."""
+    from cogniverse_agents import adapter_loader
+    from cogniverse_agents.adapter_loader import get_adapter_metadata
+
+    adapter_loader._LAST_KNOWN_ADAPTERS.clear()
+    adapter = Mock()
+    adapter.adapter_id = "ad-1"
+    adapter.name = "routing_sft_v3"
+    adapter.version = "3.0.0"
+    adapter.base_model = "qwen"
+    adapter.training_method = "lora"
+    adapter.adapter_path = "/models/routing_lora"
+    adapter.metrics = {"f1": 0.9}
+    ok = Mock()
+    ok.get_active_adapter.return_value = adapter
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=ok):
+        first = get_adapter_metadata("outage:metatenant", "routing")
+    assert first["name"] == "routing_sft_v3"
+
+    dead = Mock()
+    dead.get_active_adapter.side_effect = ConnectionError("vespa down")
+    with patch("cogniverse_finetuning.registry.AdapterRegistry", return_value=dead):
+        during_outage = get_adapter_metadata("outage:metatenant", "routing")
+    assert during_outage is not None and during_outage["name"] == "routing_sft_v3", (
+        "outage dropped a known adapter's metadata to None"
+    )
