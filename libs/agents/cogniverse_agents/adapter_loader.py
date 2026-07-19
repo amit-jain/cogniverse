@@ -16,6 +16,48 @@ logger = logging.getLogger(__name__)
 _LAST_KNOWN_ADAPTERS: Dict[Tuple[str, str], Any] = {}
 
 
+def _resolve_active_adapter(tenant_id: str, agent_type: str) -> Any:
+    """Return the active adapter object for ``(tenant, agent_type)``, or None
+    when there is genuinely no active adapter.
+
+    Outage-aware: ``AdapterRegistry.get_active_adapter`` RAISES on a Vespa /
+    registry outage (a successful "no adapter" returns None). Flattening that
+    raise to None silently reverts a finetuned tenant to the base model, so on
+    an outage this reuses the last successful answer for the key; only when
+    there is no prior state does it degrade to the base model (None) with an
+    error log. On success it records the answer for future outages. Raises
+    ``ImportError`` when cogniverse_finetuning isn't installed — callers treat
+    that as "no adapter".
+    """
+    from cogniverse_finetuning.registry import AdapterRegistry
+
+    key = (tenant_id, agent_type)
+    try:
+        adapter = AdapterRegistry().get_active_adapter(tenant_id, agent_type)
+    except Exception as exc:  # noqa: BLE001 — outage, not absence
+        if key in _LAST_KNOWN_ADAPTERS:
+            cached = _LAST_KNOWN_ADAPTERS[key]
+            logger.warning(
+                "active-adapter lookup failed for %s/%s: %r — reusing last "
+                "known state (%s)",
+                tenant_id,
+                agent_type,
+                exc,
+                cached.name if cached else "no active adapter",
+            )
+            return cached
+        logger.error(
+            "active-adapter lookup failed for %s/%s: %r — no known prior state, "
+            "serving the base model",
+            tenant_id,
+            agent_type,
+            exc,
+        )
+        return None
+    _LAST_KNOWN_ADAPTERS[key] = adapter
+    return adapter
+
+
 def get_active_adapter_path(
     tenant_id: str,
     agent_type: str,
@@ -47,29 +89,25 @@ def get_active_adapter_path(
         ...     model.load_adapter(adapter_path)
     """
     try:
-        from cogniverse_finetuning.registry import (
-            AdapterRegistry,
-            resolve_adapter_path,
-        )
-
-        registry = AdapterRegistry()
-        adapter = registry.get_active_adapter(tenant_id, agent_type)
-
-        if adapter:
-            logger.info(
-                f"Found active adapter for {tenant_id}/{agent_type}: "
-                f"{adapter.name} v{adapter.version}"
-            )
-            return resolve_adapter_path(adapter.get_effective_uri(), adapter_cache_dir)
-
-        logger.debug(f"No active adapter for {tenant_id}/{agent_type}")
-        return None
-
+        adapter = _resolve_active_adapter(tenant_id, agent_type)
     except ImportError:
         logger.debug("cogniverse_finetuning not available, skipping adapter lookup")
         return None
-    except Exception as e:
-        logger.warning(f"Failed to load adapter from registry: {e}")
+
+    if not adapter:
+        logger.debug(f"No active adapter for {tenant_id}/{agent_type}")
+        return None
+
+    try:
+        from cogniverse_finetuning.registry import resolve_adapter_path
+
+        logger.info(
+            f"Found active adapter for {tenant_id}/{agent_type}: "
+            f"{adapter.name} v{adapter.version}"
+        )
+        return resolve_adapter_path(adapter.get_effective_uri(), adapter_cache_dir)
+    except Exception as e:  # noqa: BLE001 — download/resolution failed, degrade
+        logger.warning(f"Failed to resolve adapter path for {adapter.name}: {e}")
         return None
 
 
@@ -94,44 +132,9 @@ def adapter_lm_context(tenant_id: str, agent_type: str, config_manager=None):
     from contextlib import nullcontext
 
     try:
-        from cogniverse_finetuning.registry import AdapterRegistry
+        adapter = _resolve_active_adapter(tenant_id, agent_type)
     except ImportError:
         return nullcontext()
-
-    key = (tenant_id, agent_type)
-    try:
-        adapter = AdapterRegistry().get_active_adapter(tenant_id, agent_type)
-    except Exception as exc:  # noqa: BLE001 — outage, not absence
-        if key in _LAST_KNOWN_ADAPTERS:
-            adapter = _LAST_KNOWN_ADAPTERS[key]
-            if adapter is None:
-                logger.warning(
-                    "active-adapter lookup failed for %s/%s: %r — last known "
-                    "state had no active adapter, base model",
-                    tenant_id,
-                    agent_type,
-                    exc,
-                )
-                return nullcontext()
-            logger.warning(
-                "active-adapter lookup failed for %s/%s: %r — reusing last "
-                "known adapter %s",
-                tenant_id,
-                agent_type,
-                exc,
-                adapter.name,
-            )
-        else:
-            logger.error(
-                "active-adapter lookup failed for %s/%s: %r — no known prior "
-                "state, serving the base model",
-                tenant_id,
-                agent_type,
-                exc,
-            )
-            return nullcontext()
-    else:
-        _LAST_KNOWN_ADAPTERS[key] = adapter
 
     if not adapter:
         return nullcontext()
@@ -194,30 +197,23 @@ def get_adapter_metadata(
         ...     print(f"Trained with: {metadata['training_method']}")
     """
     try:
-        from cogniverse_finetuning.registry import AdapterRegistry
-
-        registry = AdapterRegistry()
-        adapter = registry.get_active_adapter(tenant_id, agent_type)
-
-        if adapter:
-            return {
-                "adapter_id": adapter.adapter_id,
-                "name": adapter.name,
-                "version": adapter.version,
-                "base_model": adapter.base_model,
-                "training_method": adapter.training_method,
-                "adapter_path": adapter.adapter_path,
-                "metrics": adapter.metrics,
-            }
-
-        return None
-
+        adapter = _resolve_active_adapter(tenant_id, agent_type)
     except ImportError:
         logger.debug("cogniverse_finetuning not available, skipping adapter lookup")
         return None
-    except Exception as e:
-        logger.warning(f"Failed to get adapter metadata: {e}")
+
+    if not adapter:
         return None
+
+    return {
+        "adapter_id": adapter.adapter_id,
+        "name": adapter.name,
+        "version": adapter.version,
+        "base_model": adapter.base_model,
+        "training_method": adapter.training_method,
+        "adapter_path": adapter.adapter_path,
+        "metrics": adapter.metrics,
+    }
 
 
 class AdapterAwareMixin:

@@ -712,10 +712,13 @@ routes its DSPy LM `model` to the active adapter's registry name instead:
   `_config_manager` onto generically-executed agents so the helper can resolve
   the tenant LM endpoint; with no manager it falls back to the process-default
   one. No active adapter → base model. A registry OUTAGE is not treated as
-  absence: both `adapter_lm_context` and `_active_adapter_model()` remember the
-  last successful answer per `(tenant, agent)` and reuse it during a blip
-  (warning-level), so a finetuned tenant is not silently reverted to the base
-  model; only an outage with no prior answer degrades to base, at error level.
+  absence: every adapter read — `adapter_lm_context`, `_active_adapter_model()`,
+  and the `AdapterAwareMixin` path/metadata reads (`get_active_adapter_path`,
+  `get_adapter_metadata`) — resolves through the shared `_resolve_active_adapter`
+  helper, which remembers the last successful answer per `(tenant, agent)` and
+  reuses it during a blip (warning-level), so a finetuned tenant is not silently
+  reverted to the base model; only an outage with no prior answer degrades to
+  base, at error level.
 
 ---
 
