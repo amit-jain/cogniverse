@@ -717,21 +717,27 @@ class DocumentAgent(
         ]
 
 
-if __name__ == "__main__":
-    import asyncio
+async def _demo() -> List[DocumentResult]:
+    """Run the document-search demo and return the hits.
 
+    Kept as a function (not inline under ``__main__``) so a smoke test can drive
+    the demo body with the live Vespa search stubbed.
+    """
     from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 
-    async def test_agent():
-        deps = DocumentAgentDeps(tenant_id=TEST_TENANT_ID)
-        agent = DocumentAgent(deps=deps)
-        results = await agent.search_documents(
-            "machine learning algorithms", strategy="auto"
+    deps = DocumentAgentDeps(tenant_id=TEST_TENANT_ID)
+    agent = DocumentAgent(deps=deps)
+    results = await agent.search_documents(
+        "machine learning algorithms", strategy="auto"
+    )
+    print(f"Found {len(results)} results")
+    for r in results[:3]:
+        print(
+            f"  - {r.title} (strategy: {r.strategy_used}, "
+            f"score: {r.relevance_score:.3f})"
         )
-        print(f"Found {len(results)} results")
-        for r in results[:3]:
-            print(
-                f"  - {r.title} (strategy: {r.strategy_used}, score: {r.relevance_score:.3f})"
-            )
+    return results
 
-    asyncio.run(test_agent())
+
+if __name__ == "__main__":
+    asyncio.run(_demo())

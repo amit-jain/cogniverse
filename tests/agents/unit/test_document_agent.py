@@ -445,3 +445,34 @@ class TestSearchDocumentsEventLoop:
 
         assert results == []
         assert ticks >= 5, f"event loop starved during recall: {ticks} ticks"
+
+
+class TestModuleDemo:
+    """The module ``__main__`` demo (now ``_demo()``) constructs a DocumentAgent
+    and formats its hits. Drive it with the live Vespa search stubbed so the demo
+    body is covered surface — the search itself is exercised by the search
+    tests."""
+
+    async def test_demo_runs_and_returns_stubbed_hits(self):
+        from cogniverse_agents import document_agent as mod
+
+        hits = [
+            DocumentResult(
+                document_id="doc-1",
+                document_url="http://x/doc-1",
+                title="ML Paper",
+                strategy_used="text",
+                relevance_score=0.876,
+            )
+        ]
+
+        async def _fake_search(self, query, strategy="auto", limit=20):
+            return hits
+
+        with patch.object(mod.DocumentAgent, "search_documents", _fake_search):
+            result = await mod._demo()
+
+        assert result == hits
+        assert result[0].title == "ML Paper"
+        assert result[0].strategy_used == "text"
+        assert result[0].relevance_score == pytest.approx(0.876)

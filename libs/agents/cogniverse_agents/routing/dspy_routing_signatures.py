@@ -345,12 +345,19 @@ def validate_signature_output(
     return all(hasattr(signature_output, field) for field in required_fields)
 
 
-# Example signature usage for testing
-if __name__ == "__main__":
+def _demo() -> Dict[str, List[str]]:
+    """Report the declared input/output fields of each routing signature.
+
+    DSPy signatures are used as classes (passed to ``dspy.Predict`` /
+    ``ChainOfThought``), not instantiated directly — their fields carry no
+    defaults, so a bare ``SignatureClass()`` raises. This inspects the declared
+    fields via ``model_fields`` instead, which is what "the signatures are ready"
+    actually means. Returns ``{name: sorted_field_names}``. Kept as a function
+    (not inline under ``__main__``) so a smoke test can drive the demo body.
+    """
     print("DSPy 3.0 Routing Signatures")
     print("=" * 40)
 
-    # Test signature creation
     signatures = [
         ("BasicQueryAnalysis", BasicQueryAnalysisSignature),
         ("QueryReformulation", QueryReformulationSignature),
@@ -361,19 +368,15 @@ if __name__ == "__main__":
         ("AdaptiveThreshold", AdaptiveThresholdSignature),
     ]
 
+    fields_by_signature: Dict[str, List[str]] = {}
     for name, signature_class in signatures:
-        try:
-            # Test signature creation
-            signature_instance = signature_class()
-
-            # Check input and output fields
-            input_fields = signature_class.__annotations__.get("inputs", {})
-            output_fields = signature_class.__annotations__.get("outputs", {})
-
-            print(f"✅ {name}: Created successfully")
-            print(f"   Signature: {signature_class.__name__}")
-
-        except Exception as e:
-            print(f"❌ {name}: Failed - {e}")
+        field_names = sorted(getattr(signature_class, "model_fields", {}).keys())
+        fields_by_signature[name] = field_names
+        print(f"✅ {name}: {len(field_names)} fields -> {', '.join(field_names)}")
 
     print("\n🎉 All DSPy 3.0 routing signatures are ready!")
+    return fields_by_signature
+
+
+if __name__ == "__main__":
+    _demo()
