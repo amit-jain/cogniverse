@@ -84,8 +84,6 @@ class ApprovalStorageImpl(ApprovalStorage):
         # register, name, and query the same scope regardless of spelling.
         tenant_id = canonical_tenant_id(tenant_id)
 
-        self.grpc_endpoint = grpc_endpoint
-        self.http_endpoint = http_endpoint
         self.tenant_id = tenant_id
         self.project_name = "synthetic_data"
 

@@ -58,7 +58,6 @@ class WorkflowIntelligence:
             raise ValueError("tenant_id is required for WorkflowIntelligence")
         self.logger = logging.getLogger(__name__)
         self.tenant_id = tenant_id
-        self.max_history_size = max_history_size
         self.optimization_strategy = optimization_strategy
         # Persistence goes through the WorkflowStore abstraction, resolved via
         # the registry (same path the backend/adapter registries use). The

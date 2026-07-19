@@ -41,7 +41,8 @@ class TestWorkflowIntelligence:
         )
 
         assert intelligence._store is not None
-        assert intelligence.max_history_size == 1000
+        # max_history_size caps the workflow-history deque (the behavior it drives).
+        assert intelligence.workflow_history.maxlen == 1000
         assert intelligence.optimization_strategy == OptimizationStrategy.BALANCED
 
     def test_workflow_intelligence_requires_tenant_id(self):
