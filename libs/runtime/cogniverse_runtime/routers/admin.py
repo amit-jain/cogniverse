@@ -875,6 +875,27 @@ def _resolve_telegram_chat_ids(tenant_id: str) -> List[str]:
     return chat_ids
 
 
+async def _resolve_outbound_queue():
+    """Pick the in-pod or Redis-backed outbound queue from config.
+
+    Non-empty ``SystemConfig.redis_url`` → cross-pod Redis backend so the
+    gateway drains messages the runtime enqueued on any pod. Empty (or config
+    unwired, e.g. a router-only test harness) → the in-pod singleton. Both
+    expose ``enqueue``/``drain``. Env reads for ``REDIS_URL`` happen at the
+    runtime startup boundary (main.py); this never touches env directly.
+    """
+    from cogniverse_runtime.messaging import get_outbound_queue
+
+    redis_url = ""
+    if _config_manager is not None:
+        redis_url = _config_manager.get_system_config().redis_url
+    if redis_url:
+        from cogniverse_runtime.messaging_redis import get_redis_outbound_queue
+
+        return await get_redis_outbound_queue(redis_url)
+    return get_outbound_queue()
+
+
 @router.post("/messaging/send")
 async def send_message(request: SendMessageRequest) -> Dict[str, int]:
     """Enqueue a message for delivery to the tenant's linked messaging chats.
@@ -884,7 +905,7 @@ async def send_message(request: SendMessageRequest) -> Dict[str, int]:
     tenant has no linked chats). A backend outage while resolving surfaces as
     503 so callers can retry — it is never read as "no linked chats".
     """
-    from cogniverse_runtime.messaging import OutboundMessage, get_outbound_queue
+    from cogniverse_runtime.messaging import OutboundMessage
 
     try:
         chat_ids = await asyncio.to_thread(
@@ -900,7 +921,7 @@ async def send_message(request: SendMessageRequest) -> Dict[str, int]:
     if not chat_ids:
         return {"enqueued": 0}
 
-    queue = get_outbound_queue()
+    queue = await _resolve_outbound_queue()
     now = datetime.now(timezone.utc).isoformat()
     for chat_id in chat_ids:
         await queue.enqueue(
@@ -917,9 +938,8 @@ async def send_message(request: SendMessageRequest) -> Dict[str, int]:
 @router.get("/messaging/outbound/drain")
 async def drain_outbound_messages() -> Dict[str, Any]:
     """Return and clear the pending outbound messages (the gateway polls this)."""
-    from cogniverse_runtime.messaging import get_outbound_queue
-
-    batch = await get_outbound_queue().drain()
+    queue = await _resolve_outbound_queue()
+    batch = await queue.drain()
     return {
         "messages": [
             {

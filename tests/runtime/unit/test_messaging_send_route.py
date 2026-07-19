@@ -37,6 +37,9 @@ def _mapping(external_user_id, tenant_id, platform="telegram", type_="user_mappi
 @pytest.fixture
 def app(monkeypatch):
     messaging.reset_outbound_queue_for_testing()
+    # Force the in-pod queue: _resolve_outbound_queue reads the module-level
+    # _config_manager, and an empty/None one selects the in-memory singleton.
+    monkeypatch.setattr(admin, "_config_manager", None)
     application = FastAPI()
     application.include_router(admin.router, prefix="/admin")
     application.dependency_overrides[admin.get_config_manager_dependency] = lambda: (

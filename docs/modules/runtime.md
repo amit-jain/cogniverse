@@ -680,6 +680,8 @@ The inverse path — the runtime hands job-completion notifications to the gatew
 
 `POST /admin/messaging/send` resolves the tenant's linked chats — reversing the user↔tenant mapping the gateway wrote into the SYSTEM mem0 partition (`agent_name=_messaging_gateway`) — and enqueues one `OutboundMessage` per chat. The runtime owns the mapping read; the gateway owns the bot token and drains `GET /admin/messaging/outbound/drain` to deliver. A backend outage while resolving chats surfaces as 503, never read as "no linked chats".
 
+Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.redis_url` is set, `admin._resolve_outbound_queue` selects `messaging_redis.RedisOutboundQueue` (one shared `outbound:pending` list; LPUSH enqueue + the same atomic Lua drain), so a message the runtime enqueues on any pod is drained once by the gateway. Empty `redis_url` → the in-pod singleton.
+
 ### Admin Endpoints
 
 **GET /admin/system/stats** - Get system statistics
