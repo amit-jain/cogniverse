@@ -391,7 +391,7 @@ sequenceDiagram
     participant Model as Embedding Model / RemoteInferenceClient
     participant Backend as IngestionBackend (Vespa)
 
-    Strategy->>Pipeline: generate_embeddings_with_processor(results, pipeline_context, processor_manager)
+    Strategy->>Pipeline: generate_embeddings_with_processor(results, pipeline_context)
     Pipeline->>Generator: generate_embeddings(video_data, output_dir)
     activate Generator
 
@@ -1155,15 +1155,16 @@ strategy = MultiVectorEmbeddingStrategy(model_name="TomoroAI/tomoro-colqwen3-emb
 `SingleVectorEmbeddingStrategy`, `AudioEmbeddingStrategy`, `DocumentTextEmbeddingStrategy`,
 `DocumentVisualEmbeddingStrategy`, `CodeTextEmbeddingStrategy`):
 
-#### `async generate_embeddings_with_processor(results: dict, pipeline_context, processor_manager) -> dict`
+#### `async generate_embeddings_with_processor(results: dict, pipeline_context) -> dict`
 
 Wraps `results` with `video_id`/`video_path` and delegates to
-`pipeline_context.generate_embeddings()`, which routes through `EmbeddingGeneratorImpl`:
+`pipeline_context.generate_embeddings()`, which routes through `EmbeddingGeneratorImpl`.
+The processor manager is read off `pipeline_context.processor_manager` rather than
+passed in:
 ```python
 embeddings = await strategy.generate_embeddings_with_processor(
     results={"keyframes": [...]},
     pipeline_context=pipeline,
-    processor_manager=manager
 )
 ```
 

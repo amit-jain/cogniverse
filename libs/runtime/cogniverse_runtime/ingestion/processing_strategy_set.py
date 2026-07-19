@@ -649,7 +649,7 @@ class ProcessingStrategySet:
                 "generate_embeddings_with_processor()."
             )
         embeddings = await strategy.generate_embeddings_with_processor(
-            accumulated_results, pipeline_context, processor_manager
+            accumulated_results, pipeline_context
         )
         if isinstance(embeddings, dict):
             docs_fed = embeddings.get("documents_fed", 0)

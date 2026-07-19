@@ -333,7 +333,7 @@ class AudioEmbeddingStrategy(BaseStrategy):
         }
 
     async def generate_embeddings_with_processor(
-        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+        self, results: dict[str, Any], pipeline_context: Any
     ) -> dict[str, Any]:
         """Delegate to pipeline_context.generate_embeddings() which routes through EmbeddingGeneratorImpl."""
         if not hasattr(pipeline_context, "video_path"):
@@ -617,7 +617,7 @@ class DocumentTextEmbeddingStrategy(BaseStrategy):
         return {"embedding": config}
 
     async def generate_embeddings_with_processor(
-        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+        self, results: dict[str, Any], pipeline_context: Any
     ) -> dict[str, Any]:
         """Delegate to pipeline_context.generate_embeddings() which routes through EmbeddingGeneratorImpl."""
         if not hasattr(pipeline_context, "video_path"):
@@ -660,7 +660,7 @@ class DocumentVisualEmbeddingStrategy(BaseStrategy):
         return {"embedding": config}
 
     async def generate_embeddings_with_processor(
-        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+        self, results: dict[str, Any], pipeline_context: Any
     ) -> dict[str, Any]:
         """Delegate to pipeline_context.generate_embeddings() which routes through EmbeddingGeneratorImpl."""
         if not hasattr(pipeline_context, "video_path"):
@@ -699,7 +699,7 @@ class MultiVectorEmbeddingStrategy(BaseStrategy):
         return {"embedding": config}
 
     async def generate_embeddings_with_processor(
-        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+        self, results: dict[str, Any], pipeline_context: Any
     ) -> dict[str, Any]:
         """Generate embeddings using pipeline context."""
         if not hasattr(pipeline_context, "video_path"):
@@ -738,7 +738,7 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
         return {"embedding": config}
 
     async def generate_embeddings_with_processor(
-        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+        self, results: dict[str, Any], pipeline_context: Any
     ) -> dict[str, Any]:
         """Generate embeddings using pipeline context."""
         if not hasattr(pipeline_context, "video_path"):
@@ -785,7 +785,7 @@ class CodeTextEmbeddingStrategy(BaseStrategy):
         }
 
     async def generate_embeddings_with_processor(
-        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+        self, results: dict[str, Any], pipeline_context: Any
     ) -> dict[str, Any]:
         """Delegate to pipeline_context.generate_embeddings()."""
         if not hasattr(pipeline_context, "video_path"):

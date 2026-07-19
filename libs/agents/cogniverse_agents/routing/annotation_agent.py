@@ -332,8 +332,6 @@ class AnnotationAgent:
         needs_annotation, priority, reason = self._needs_annotation(
             confidence=confidence,
             outcome=outcome,
-            outcome_details=outcome_details,
-            span_row=span_row,
         )
 
         if not needs_annotation:
@@ -361,8 +359,6 @@ class AnnotationAgent:
         self,
         confidence: float,
         outcome: RoutingOutcome,
-        outcome_details: Dict,
-        span_row,
     ) -> Tuple[bool, AnnotationPriority, str]:
         """
         Determine if a span needs annotation and its priority

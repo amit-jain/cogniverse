@@ -301,10 +301,8 @@
       }
     },
     "intervals": {
-      "span_eval_interval_minutes": 15,
       "annotation_interval_minutes": 30,
-      "feedback_interval_minutes": 15,
-      "metrics_report_interval_seconds": 300
+      "feedback_interval_minutes": 15
     },
     "online_evaluation": {
       "enabled": true,
