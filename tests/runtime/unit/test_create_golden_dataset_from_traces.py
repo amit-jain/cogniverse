@@ -89,6 +89,29 @@ class TestAnalyzeQueryPerformance:
         )
         assert g.analyze_query_performance(df) == {}
 
+    def test_nan_score_is_skipped_not_averaged(self):
+        """A how='left' evaluation merge yields score=NaN (a float, not None)
+        for un-annotated spans. NaN must be skipped, not float()-appended — else
+        it poisons avg_score (NaN), and NaN <= threshold silently drops the
+        query from the challenging set."""
+        g = _bare_generator(min_occurrences=1)
+        df = pd.DataFrame(
+            [
+                _trace_row("barbell", 0.4, ["v1"]),
+                _trace_row("barbell", 0.6, ["v1"]),
+                _trace_row("barbell", float("nan"), ["v1"]),  # un-annotated span
+            ]
+        )
+
+        stats = g.analyze_query_performance(df)
+
+        assert "barbell" in stats
+        bar = stats["barbell"]
+        # avg/min/max come from the two real scores; NaN did not poison them.
+        assert bar["avg_score"] == pytest.approx(0.5)
+        assert bar["min_score"] == pytest.approx(0.4)
+        assert bar["max_score"] == pytest.approx(0.6)
+
 
 @pytest.mark.unit
 class TestChallengingQueriesAndDataset:
