@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 if TYPE_CHECKING:
@@ -186,11 +187,17 @@ class OrchestrationAnnotationStorage:
             List of annotated span data with annotations
         """
         try:
-            # Query telemetry provider for spans with orchestration_quality evaluations
+            # Query telemetry provider for spans with orchestration_quality
+            # evaluations. Only ``cogniverse.orchestration`` spans ever carry an
+            # orchestration_quality annotation (store_annotation writes it there),
+            # so push the name predicate server-side — the join below is unchanged
+            # but Phoenix returns just the orchestration spans instead of the
+            # whole project window.
             spans_df = await self.provider.traces.get_spans(
                 start_time=start_time,
                 end_time=end_time,
                 project=self.project_name,
+                filters={"name": SPAN_NAME_ORCHESTRATION},
             )
         except Exception as e:
             # A backend failure is not "no annotated spans" — swallowing it
