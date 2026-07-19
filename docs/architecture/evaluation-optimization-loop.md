@@ -87,7 +87,11 @@ operations (`promote_to_canary`, `promote_canary_to_active`,
 
 The active dataset (un-versioned) is what existing agents read at
 `__init__`; promote_canary_to_active copies the versioned snapshot into
-the active dataset name, so no agent code changes are required.
+the active dataset name, so no agent code changes are required. The copy
+(prompts then demos) and the state-blob save run inside one compensation
+scope: a failure mid-copy or mid-save restores the previous active prompts
+and demos, so the un-versioned datasets and the state blob never disagree
+about which version is live.
 
 ## Snapshot + rollback
 

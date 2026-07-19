@@ -784,15 +784,18 @@ class ArtifactManager:
             "promoted_at": datetime.now(timezone.utc).isoformat(),
         }
         state["canary"] = None
-        # Active dataset content needs to land at the un-versioned name
-        # agents read at __init__. Copy from the versioned snapshot. Pre-read
-        # the current content first: if the state save below fails after the
-        # copy, the previous active is restored so the un-versioned datasets
-        # and the state blob never disagree about which version is live.
+        # Active dataset content needs to land at the un-versioned name agents
+        # read at __init__. Copy from the versioned snapshot. Pre-read the
+        # current content first, then run the copy AND the state save inside one
+        # compensation scope: the copy is itself two sequential writes (prompts
+        # then demos), so a mid-copy failure (demos save fails after prompts
+        # landed) is as torn as a state-save failure. On any failure the previous
+        # active prompts + demos are restored so the un-versioned datasets and
+        # the state blob never disagree about which version is live.
         previous_prompts = await self.load_prompts(agent_type)
         previous_demos = await self.load_demonstrations(agent_type)
-        await self._restore_active_from_version(agent_type, canary_version)
         try:
+            await self._restore_active_from_version(agent_type, canary_version)
             await self._save_artefact_state(agent_type, state)
         except Exception:
             try:
@@ -801,16 +804,16 @@ class ArtifactManager:
                 if previous_demos is not None:
                     await self.save_demonstrations(agent_type, previous_demos)
                 logger.warning(
-                    "Canary promotion state save failed for %s/%s; previous "
-                    "active artefacts restored",
+                    "Canary promotion failed for %s/%s; previous active "
+                    "artefacts restored",
                     self._tenant_id,
                     agent_type,
                 )
             except Exception:
                 logger.exception(
-                    "Canary promotion state save failed for %s/%s and the "
-                    "active restore also failed; active content is v%d but "
-                    "the state blob still points at the previous version",
+                    "Canary promotion failed for %s/%s and the active restore "
+                    "also failed; active content may be v%d but the state blob "
+                    "still points at the previous version",
                     self._tenant_id,
                     agent_type,
                     canary_version,
