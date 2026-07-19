@@ -127,7 +127,13 @@ class PinQuotas:
         except Exception:
             _admin_overrides = {}
 
-        admin_blob = _admin_overrides.get(tenant_id)
+        # The admin PUT stores the override under the canonical tenant id;
+        # canonicalize here too so an override applies regardless of how the
+        # caller spells the id (a bare "acme" resolves to the same "acme:acme"
+        # blob the endpoint wrote).
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        admin_blob = _admin_overrides.get(canonical_tenant_id(tenant_id))
         if admin_blob:
             org_admin_raw = admin_blob.get("org_admin")
             return cls(
