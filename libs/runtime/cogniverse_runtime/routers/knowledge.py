@@ -18,6 +18,7 @@ shape can be filled from a generic query.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -184,8 +185,8 @@ async def citation_trace(tenant_id: str, body: CitationTraceRequest) -> Dict[str
     )
 
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id=tenant_id))
-    _inject_memory(agent, tenant_id, "citation_tracing_agent")
-    _bind_graph(agent, tenant_id)
+    await asyncio.to_thread(_inject_memory, agent, tenant_id, "citation_tracing_agent")
+    await asyncio.to_thread(_bind_graph, agent, tenant_id)
     out = await agent._process_impl(
         CitationTracingInput(tenant_id=tenant_id, **body.model_dump())
     )
@@ -226,7 +227,7 @@ async def knowledge_summarize(
         # directly bypasses app.dependency_overrides and always raises.
         config_manager=config_manager,
     )
-    _bind_graph(agent, tenant_id)
+    await asyncio.to_thread(_bind_graph, agent, tenant_id)
     out = await agent._process_impl(
         KnowledgeSummarizationInput(tenant_id=tenant_id, **body.model_dump())
     )
@@ -268,12 +269,12 @@ async def contradiction_reconcile(
     )
     # Inject the per-tenant manager via the mixin attribute path; this
     # agent's constructor doesn't take a factory.
-    mm = _build_factory(tenant_id)
+    mm = await asyncio.to_thread(_build_factory, tenant_id)
     agent.memory_manager = mm
     agent._memory_initialized = True
     agent._memory_tenant_id = tenant_id
     agent._memory_agent_name = "contradiction_reconciliation_agent"
-    _bind_graph(agent, tenant_id)
+    await asyncio.to_thread(_bind_graph, agent, tenant_id)
     out = await agent._process_impl(
         ContradictionReconciliationInput(tenant_id=tenant_id, **body.model_dump())
     )
@@ -316,8 +317,10 @@ async def multi_doc_synthesize(
         deps=MultiDocSynthesisDeps(tenant_id=tenant_id),
         llm_config=_runtime_primary_llm_config(config_manager),
     )
-    _inject_memory(agent, tenant_id, "multi_document_synthesis_agent")
-    _bind_graph(agent, tenant_id)
+    await asyncio.to_thread(
+        _inject_memory, agent, tenant_id, "multi_document_synthesis_agent"
+    )
+    await asyncio.to_thread(_bind_graph, agent, tenant_id)
     out = await agent._process_impl(
         MultiDocSynthesisInput(tenant_id=tenant_id, **body.model_dump())
     )
@@ -344,8 +347,8 @@ async def kg_traverse(tenant_id: str, body: KGTraverseRequest) -> Dict[str, Any]
     )
 
     agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id=tenant_id))
-    _inject_memory(agent, tenant_id, "kg_traversal_agent")
-    _bind_graph(agent, tenant_id)
+    await asyncio.to_thread(_inject_memory, agent, tenant_id, "kg_traversal_agent")
+    await asyncio.to_thread(_bind_graph, agent, tenant_id)
     # KGTraversalInput uses ``relation_allowlist`` / ``max_edges``; the
     # public route field names are ``relation_filter`` / ``max_nodes``
     # for symmetry with the citation-trace request shape. Translate
@@ -486,7 +489,7 @@ async def temporal_reason(
         deps=TemporalReasoningDeps(tenant_id=tenant_id),
         memory_manager_factory=_build_factory,
     )
-    _bind_graph(agent, tenant_id)
+    await asyncio.to_thread(_bind_graph, agent, tenant_id)
     out = await agent._process_impl(
         TemporalReasoningInput(tenant_id=tenant_id, **body.model_dump())
     )
