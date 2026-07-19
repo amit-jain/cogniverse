@@ -18,6 +18,9 @@ from types import SimpleNamespace
 import pytest
 
 from cogniverse_agents.federated_query_agent import FederatedQueryAgent
+from cogniverse_agents.knowledge_summarization_agent import (
+    KnowledgeSummarizationAgent,
+)
 from cogniverse_agents.multi_document_synthesis_agent import (
     MultiDocumentSynthesisAgent,
 )
@@ -28,6 +31,7 @@ _CASES = [
     (FederatedQueryAgent, "_summarise_with_rlm", ("q", "block")),
     (MultiDocumentSynthesisAgent, "_synthesise_with_rlm", ("q", "docs")),
     (TemporalReasoningAgent, "_summarise_with_rlm", ("subject", "block")),
+    (KnowledgeSummarizationAgent, "_summarise_with_rlm", ("title", "block")),
 ]
 
 
