@@ -468,17 +468,27 @@ class StrategyLearner:
         # prefix so they're easy to identify, but each agent gets its own suffix.
         agent_namespace = f"{STRATEGY_AGENT_NAME}_{strategy.agent}"
 
-        # Deduplication: search for similar existing strategies. On hit, bump
-        # the existing record's confirmation_count by replacing it with a
-        # fresh copy that carries the higher count.
+        # Deduplication read. Use get_all_memories (raises on a backend outage)
+        # rather than search_memory (which flattens an outage to []): a blind
+        # fresh write during an outage creates a duplicate whose
+        # confirmation_count resets to 1. On an outage skip the store; on
+        # genuine no-data fall through to the fresh write below.
         try:
-            existing = self.memory_manager.search_memory(
-                query=strategy.to_memory_content(),
+            existing = self.memory_manager.get_all_memories(
                 tenant_id=strategy.tenant_id,
                 agent_name=agent_namespace,
-                top_k=3,
             )
+        except Exception as exc:
+            logger.warning(
+                "Strategy dedup read failed (%r); skipping store to avoid a "
+                "duplicate with a reset confirmation_count",
+                exc,
+            )
+            return False
 
+        # On hit, bump the existing record's confirmation_count by replacing it
+        # with a fresh copy that carries the higher count.
+        try:
             for mem in existing:
                 mem_text = mem.get("memory", "")
                 if not mem_text:
@@ -556,7 +566,7 @@ class StrategyLearner:
                 )
                 return True
         except Exception as e:
-            logger.debug(f"Dedup search failed (non-fatal): {e}")
+            logger.debug(f"Dedup match failed (non-fatal): {e}")
 
         # No dedup hit — store as a fresh strategy.
         self.memory_manager.add_memory(

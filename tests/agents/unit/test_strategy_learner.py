@@ -18,7 +18,8 @@ def mock_memory_manager():
     mm = MagicMock()
     mm.memory = MagicMock()  # Non-None = initialized
     mm.add_memory.return_value = "mem_123"
-    mm.search_memory.return_value = []  # No existing strategies (no dedup)
+    mm.search_memory.return_value = []  # retrieval path (get_strategies_for_agent)
+    mm.get_all_memories.return_value = []  # dedup read: no existing strategies
     return mm
 
 
@@ -347,7 +348,7 @@ class TestDeduplication:
         self, learner, mock_memory_manager
     ):
         # Simulate existing strategy with high overlap and confirmation_count=1
-        mock_memory_manager.search_memory.return_value = [
+        mock_memory_manager.get_all_memories.return_value = [
             {
                 "id": "mem_existing",
                 "memory": "I prefer the following approach for search: New unique strategy here I use this when always.",
@@ -382,6 +383,31 @@ class TestDeduplication:
         assert readd_meta["trace_count"] == 15, readd_meta
         # confidence takes the max of the two
         assert readd_meta["confidence"] == 0.8, readd_meta
+
+    def test_outage_during_dedup_read_skips_store(self, learner, mock_memory_manager):
+        """A backend outage on the dedup read must NOT write a fresh strategy.
+
+        search_memory flattens an outage to []; the dedup read now uses
+        get_all_memories, which raises on an outage. On the raise the store is
+        skipped so an outage can't create a duplicate whose confirmation_count
+        resets to 1 (the existing record would then look brand-new).
+        """
+        mock_memory_manager.get_all_memories.side_effect = RuntimeError(
+            "vespa unreachable"
+        )
+        strategy = Strategy(
+            text="Strategy learned during an outage",
+            applies_when="always",
+            agent="search",
+            level="org",
+            confidence=0.8,
+            source="pattern_extraction",
+            tenant_id="acme",
+            trace_count=10,
+        )
+        stored = learner._store_strategy(strategy)
+        assert stored is False
+        mock_memory_manager.add_memory.assert_not_called()
 
     def test_text_overlap_identical(self):
         assert _text_overlap("hello world foo", "hello world foo") == 1.0
