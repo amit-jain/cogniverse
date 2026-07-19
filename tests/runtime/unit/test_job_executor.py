@@ -121,7 +121,7 @@ def _stub_app():
         calls["wiki"].append(body)
         return {"slug": "slug-1"}
 
-    @app.post("/messaging/send")
+    @app.post("/admin/messaging/send")
     async def _msg(body: dict):
         calls["telegram"].append(body)
         return {"status": "sent"}
@@ -194,7 +194,7 @@ async def test_agent_only_action_delivers_nowhere(monkeypatch):
 async def _deliver_telegram_against(status_code, seen):
     app = FastAPI()
 
-    @app.post("/messaging/send")
+    @app.post("/admin/messaging/send")
     async def _msg(body: dict):
         seen.append(body)
         if status_code != 200:
@@ -221,7 +221,7 @@ async def test_deliver_to_telegram_accepts_enqueued_envelope(caplog):
     seen = []
     app = FastAPI()
 
-    @app.post("/messaging/send")
+    @app.post("/admin/messaging/send")
     async def _msg(body: dict):
         seen.append(body)
         return {"enqueued": 2}
