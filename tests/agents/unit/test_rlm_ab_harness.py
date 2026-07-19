@@ -218,8 +218,13 @@ class TestRlmArmEventRouting:
         monkeypatch.setattr(ab_harness, "RLMInference", _FakeRLM)
 
         runner = object.__new__(RLMABRunner)
-        runner._llm_config = object()
-        runner._routed_llm_config = runner._llm_config
+        # Distinct sentinels: the RLM arm must consume the ROUTED config (which
+        # carries the tenant's semantic-router x-authz-* headers), not the base
+        # llm_config. Same-object fixtures couldn't tell the two apart.
+        base_config = object()
+        routed_config = object()
+        runner._llm_config = base_config
+        runner._routed_llm_config = routed_config
         runner._rlm_max_iterations = 10
         runner._rlm_max_llm_calls = 30
         runner._timeout_seconds = 300
@@ -231,6 +236,10 @@ class TestRlmArmEventRouting:
 
         assert captured["task_id"] == "task-xyz"
         assert captured["tenant_id"] == "acme:acme"
+        # The routed endpoint, not the base — a regression to self._llm_config
+        # would drop the tenant's tier-routing headers on the RLM arm.
+        assert captured["llm_config"] is routed_config
+        assert captured["llm_config"] is not base_config
 
 
 class TestABRunnerSemanticRouting:
