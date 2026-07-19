@@ -305,6 +305,16 @@ class TestDetailedReportAgent:
             )
             agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
+        # _generate_executive_summary calls call_dspy even for empty results, so
+        # pin it — else the assertion passed identically whether the DSPy path
+        # ran or connection-errored into the fabricated fallback string.
+        agent.call_dspy = AsyncMock(
+            return_value=Mock(
+                executive_summary="no results found for test query",
+                recommendations="broaden the query",
+            )
+        )
+
         # Empty search results should still generate a report
         request = ReportRequest(
             query="test query",
@@ -315,8 +325,9 @@ class TestDetailedReportAgent:
 
         result = await agent._generate_report(request)
 
-        # Should handle empty results gracefully
-        assert result.executive_summary is not None
+        # The mocked DSPy summary/recommendations are carried verbatim.
+        assert result.executive_summary == "no results found for test query"
+        assert result.recommendations == ["broaden the query"]
         assert result.thinking_phase.content_analysis["total_results"] == 0
 
 
@@ -337,6 +348,15 @@ class TestDetailedReportAgentEdgeCases:
             )
             agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
+        # Pin the exec-summary DSPy step so the assertion proves the DSPy output
+        # is carried through, not the fabricated LM-down fallback string.
+        agent.call_dspy = AsyncMock(
+            return_value=Mock(
+                executive_summary="empty report for test query",
+                recommendations="add more sources",
+            )
+        )
+
         request = ReportRequest(
             query="test query",
             search_results=[],  # Empty results
@@ -346,11 +366,11 @@ class TestDetailedReportAgentEdgeCases:
 
         result = await agent._generate_report(request)
 
-        # Empty input still produces a structured report.
+        # Empty input still produces a structured report with the DSPy summary.
         assert result.thinking_phase.content_analysis["total_results"] == 0
-        assert isinstance(result.executive_summary, str) and result.executive_summary
+        assert result.executive_summary == "empty report for test query"
+        assert result.recommendations == ["add more sources"]
         assert isinstance(result.detailed_findings, list)
-        assert isinstance(result.recommendations, list)
         assert isinstance(result.confidence_assessment, dict)
 
 
