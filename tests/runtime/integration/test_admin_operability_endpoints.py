@@ -103,44 +103,9 @@ class TestPinQuotaEndpoints:
 # ----- signature-variant endpoints ------------------------------------------
 
 
-class TestSignatureVariantEndpoints:
-    def test_get_empty_for_new_tenant(self, client: TestClient):
-        resp = client.get("/admin/tenants/acme/signature_variants")
-        assert resp.status_code == 200
-        assert resp.json()["selections"] == {}
-
-    def test_put_one_agent_persists_for_get(self, client: TestClient):
-        resp = client.put(
-            "/admin/tenants/acme/signature_variants/search_agent",
-            json={"variant_id": "with_jurisdiction"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["selections"] == {"search_agent": "with_jurisdiction"}
-        # GET reflects.
-        again = client.get("/admin/tenants/acme/signature_variants").json()
-        assert again["selections"] == {"search_agent": "with_jurisdiction"}
-
-    def test_put_multiple_agents_keeps_each(self, client: TestClient):
-        client.put(
-            "/admin/tenants/acme/signature_variants/search_agent",
-            json={"variant_id": "with_jurisdiction"},
-        )
-        client.put(
-            "/admin/tenants/acme/signature_variants/summarizer_agent",
-            json={"variant_id": "concise"},
-        )
-        body = client.get("/admin/tenants/acme/signature_variants").json()
-        assert body["selections"] == {
-            "search_agent": "with_jurisdiction",
-            "summarizer_agent": "concise",
-        }
-
-    def test_empty_variant_id_rejected(self, client: TestClient):
-        resp = client.put(
-            "/admin/tenants/acme/signature_variants/search_agent",
-            json={"variant_id": ""},
-        )
-        assert resp.status_code == 400
+# Signature-variant endpoints (in-memory override store, no Phoenix) moved to
+# tests/runtime/unit/test_admin_signature_variants.py so the fast gate covers
+# them; the pin-quota and canary endpoints below round-trip real Phoenix.
 
 
 # ----- canary endpoints (real Phoenix) --------------------------------------
