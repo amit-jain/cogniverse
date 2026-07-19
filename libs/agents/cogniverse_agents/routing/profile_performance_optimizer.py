@@ -21,6 +21,12 @@ from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 logger = logging.getLogger(__name__)
 
+# Bound the evaluation-span training pull. ``get_spans`` defaults to only 1000
+# rows, which silently caps the recommender's training window; set an explicit
+# generous limit and warn when it's hit so a truncated sample is visible rather
+# than silently shrinking the training set.
+SPAN_QUERY_LIMIT = 50000
+
 
 @dataclass
 class QueryFeatures:
@@ -186,13 +192,28 @@ class ProfilePerformanceOptimizer:
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-        # Get spans from provider
+        # Get spans from provider. The search|eval name filter below is a
+        # case-insensitive SUBSTRING match over an open set of span names, which
+        # get_spans's exact-name predicate can't express, so it stays
+        # client-side; but bound the pull with an explicit limit (the default is
+        # only 1000) and warn on truncation.
         spans_df = await provider.traces.get_spans(
-            project=project_name, start_time=start_time, end_time=end_time
+            project=project_name,
+            start_time=start_time,
+            end_time=end_time,
+            limit=SPAN_QUERY_LIMIT,
         )
 
         if spans_df is None or spans_df.empty:
             raise ValueError("No spans found in telemetry backend")
+        if len(spans_df) >= SPAN_QUERY_LIMIT:
+            logger.warning(
+                "Evaluation-span pull hit the %d-row cap for project %s; the "
+                "profile recommender may be training on a truncated window — "
+                "narrow the time range or raise SPAN_QUERY_LIMIT.",
+                SPAN_QUERY_LIMIT,
+                project_name,
+            )
 
         # Filter for search/evaluation spans with profile and quality info
         search_spans = (

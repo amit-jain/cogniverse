@@ -104,3 +104,44 @@ def test_two_profile_training_uses_binary_metric(tmp_path):
     assert metrics["n_profiles"] == 2
     profile, _ = opt.predict_best_profile("find the picture of the tower")
     assert profile in {"visual_profile", "text_profile"}
+
+
+@pytest.mark.asyncio
+async def test_extract_bounds_span_pull_and_warns_on_truncation(
+    monkeypatch, caplog, tmp_path
+):
+    """The evaluation-span pull must set an explicit limit (get_spans defaults to
+    only 1000, silently capping the training window) and warn when the window
+    fills that cap so a truncated training sample is visible, not silent."""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from cogniverse_agents.routing import profile_performance_optimizer as ppo
+
+    monkeypatch.setattr(ppo, "SPAN_QUERY_LIMIT", 3)
+
+    calls = {}
+
+    async def _get_spans(**kwargs):
+        calls.update(kwargs)
+        # A full-cap frame (== limit rows) whose names don't match search|eval,
+        # so the client filter empties it and the method raises after warning.
+        return pd.DataFrame({"name": ["misc", "misc", "misc"]})
+
+    provider = SimpleNamespace(traces=SimpleNamespace(get_spans=_get_spans))
+    mgr = SimpleNamespace(get_provider=lambda tenant_id: provider)
+    monkeypatch.setattr(ppo, "get_telemetry_manager", lambda: mgr)
+
+    opt = ProfilePerformanceOptimizer(model_dir=tmp_path)
+    with caplog.at_level("WARNING"):
+        with pytest.raises(ValueError):
+            await opt.extract_training_data_from_phoenix(
+                tenant_id="acme:acme",
+                project_name="cogniverse-acme:acme",
+            )
+
+    assert calls["limit"] == 3, "span pull must pass an explicit bounded limit"
+    assert any("cap" in r.getMessage().lower() for r in caplog.records), (
+        "a window that fills the cap must surface a truncation warning"
+    )
