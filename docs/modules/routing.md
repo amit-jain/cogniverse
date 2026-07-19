@@ -524,11 +524,19 @@ Invoked from `libs/runtime/cogniverse_runtime/optimization_cli.py` as part of th
 **Key Methods**:
 
 ```python
-def __init__(self, llm_config: LLMEndpointConfig):
+def __init__(
+    self,
+    llm_config: LLMEndpointConfig,
+    max_annotations_per_batch: Optional[int] = None,
+):
     """model/api_base/api_key come from the passed-in LLMEndpointConfig —
     there are no ANNOTATION_MODEL/ANNOTATION_API_BASE env vars. The dashboard's
     routing_evaluation tab lets an operator override model/api_base/api_key via
-    session state, falling back to the tenant's configured primary LLM."""
+    session state, falling back to the tenant's configured primary LLM.
+    max_annotations_per_batch (from AnnotationThresholdsConfig, default 10) caps
+    how many requests a single batch_annotate call sends to the LM; None
+    processes every request. The dashboard tab passes
+    automation_rules.annotation_thresholds.max_annotations_per_batch."""
 
 def annotate(self, annotation_request: AnnotationRequest) -> AutoAnnotation:
     """
@@ -549,6 +557,13 @@ def annotate(self, annotation_request: AnnotationRequest) -> AutoAnnotation:
             suggested_correct_agent: Optional[str],
             requires_human_review: bool
         }
+    """
+
+def batch_annotate(self, requests: List[AnnotationRequest]) -> List[AutoAnnotation]:
+    """
+    Annotate a batch of requests via annotate(). If max_annotations_per_batch
+    is set and requests exceeds it, the list is truncated to the cap before
+    any LM call and the truncation is logged.
     """
 ```
 

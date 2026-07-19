@@ -67,16 +67,21 @@ class LLMAutoAnnotator:
     def __init__(
         self,
         llm_config: LLMEndpointConfig,
+        max_annotations_per_batch: Optional[int] = None,
     ):
         """
         Initialize LLM auto-annotator
 
         Args:
             llm_config: LLM endpoint configuration from centralized llm_config.
+            max_annotations_per_batch: Cap on how many requests a single
+                ``batch_annotate`` call sends to the LM. ``None`` processes
+                every request.
         """
         self.model = llm_config.model
         self.api_base = llm_config.api_base
         self.api_key = llm_config.api_key
+        self.max_annotations_per_batch = max_annotations_per_batch
 
         logger.info(
             f"🤖 Initialized LLMAutoAnnotator with model: {self.model}"
@@ -278,6 +283,17 @@ Be conservative - if unsure, mark requires_human_review as true."""
         Returns:
             List of auto-annotations
         """
+        cap = self.max_annotations_per_batch
+        if cap is not None and len(requests) > cap:
+            logger.info(
+                "🔻 batch_annotate received %d requests; capping to "
+                "max_annotations_per_batch=%d (%d dropped)",
+                len(requests),
+                cap,
+                len(requests) - cap,
+            )
+            requests = requests[:cap]
+
         logger.info(f"🤖 Starting batch annotation of {len(requests)} spans")
 
         annotations = []
