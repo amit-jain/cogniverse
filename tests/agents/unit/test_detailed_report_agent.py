@@ -901,5 +901,22 @@ class TestDetailedReportDepsConfiguration:
         assert result.metadata["technical_analysis_enabled"] is True
 
 
+class TestEnforceMaxLength:
+    """_enforce_max_length must reject a non-positive bound like its summarizer
+    sibling, instead of returning a one-char "…" for max_length=0."""
+
+    def test_enforce_max_length_zero_raises(self):
+        with pytest.raises(ValueError, match=r"max_length must be positive, got 0"):
+            DetailedReportAgent._enforce_max_length("some text", 0)
+
+    def test_enforce_max_length_negative_raises(self):
+        with pytest.raises(ValueError, match=r"max_length must be positive, got -5"):
+            DetailedReportAgent._enforce_max_length("some text", -5)
+
+    def test_enforce_max_length_truncates_at_word_boundary(self):
+        out = DetailedReportAgent._enforce_max_length("alpha beta gamma", 9)
+        assert out == "alpha…"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
