@@ -116,6 +116,18 @@ class RuntimeClient:
             return resp.json().get("token")
         return None
 
+    async def drain_outbound(self) -> List[Dict[str, Any]]:
+        """Drain the runtime's pending outbound messages for delivery.
+
+        Returns the list of ``{tenant_id, chat_id, text, platform, created_at}``
+        the runtime enqueued via ``/messaging/send``; the runtime clears them on
+        this read, so each message is returned to exactly one drain.
+        """
+        client = await self._get_client()
+        resp = await client.get("/admin/messaging/outbound/drain")
+        resp.raise_for_status()
+        return resp.json().get("messages", [])
+
     # ------------------------------------------------------------------
     # wiki / instructions / memories / jobs CRUD methods
     # ------------------------------------------------------------------
