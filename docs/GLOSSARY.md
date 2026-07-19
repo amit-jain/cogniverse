@@ -13,7 +13,7 @@ Google's protocol for inter-agent communication. Defines a standard message form
 The abstract generic base class for all agents: `AgentBase[InputT, OutputT, DepsT]`. Provides type safety for inputs, outputs, and dependencies.
 
 ### AgentDispatcher
-Class (`cogniverse_runtime/agent_dispatcher.py`) that routes agent tasks to the correct in-process agent implementation. Each dispatch instantiates a fresh, stateless agent per request using `AgentRegistry`, `ConfigManager`, and `SchemaLoader`; invokes `OrchestratorAgent` when `GatewayAgent` classifies a query as complex.
+Class (`cogniverse_runtime/agent_dispatcher.py`) that routes agent tasks to the correct in-process agent implementation using `AgentRegistry`, `ConfigManager`, and `SchemaLoader`. Most agents are instantiated fresh, stateless, per request; `GatewayAgent`, `SearchAgent`, and the generic A2A agents (`entity_extraction`, `query_enhancement`, `profile_selection`, etc.) are instead cached per tenant (or per `(tenant, agent_name)`) in a TTL-gated `TenantLRUCache`, with cache hits re-reading only the artifact. Invokes `OrchestratorAgent` when `GatewayAgent` classifies a query as complex.
 
 ### AgentDeps
 Pydantic model for agent dependencies (LLMs, backends, other agents). Injected at runtime to enable testing and configuration.

@@ -92,6 +92,98 @@ class TestGatewayAgentCache:
         assert f"gwbound:t{GATEWAY_AGENT_CACHE_CAPACITY}" in d._gateway_agents
 
 
+class _StubGenericDeps:
+    """Minimal Deps stand-in: the dispatcher only reads ``model_fields``."""
+
+    model_fields: dict = {}
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class _StubGenericAgent:
+    def __init__(self, deps=None, **kwargs):
+        self.deps = deps
+        self.telemetry_manager = None
+        self._config_manager = None
+
+
+@pytest.fixture
+def generic_dispatcher(monkeypatch):
+    """AgentDispatcher whose generic-agent build path runs without infra."""
+    import cogniverse_foundation.telemetry.manager as tm_mod
+    from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+    monkeypatch.setattr(
+        tm_mod,
+        "get_telemetry_manager",
+        lambda *a, **k: SimpleNamespace(name="tm"),
+        raising=True,
+    )
+    d = AgentDispatcher(
+        agent_registry=SimpleNamespace(),
+        config_manager=SimpleNamespace(),
+        schema_loader=SimpleNamespace(),
+    )
+    monkeypatch.setattr(d, "_resolve_gliner_url", lambda: None)
+    return d
+
+
+class TestGenericAgentCache:
+    @pytest.mark.asyncio
+    async def test_tenant_delete_evicts_only_that_tenants_generic_agents(
+        self, generic_dispatcher
+    ):
+        d = generic_dispatcher
+        agent_a = await d._get_or_build_generic_agent(
+            "ent", "genevict:a", _StubGenericAgent, _StubGenericDeps
+        )
+        await d._get_or_build_generic_agent(
+            "qenh", "genevict:a", _StubGenericAgent, _StubGenericDeps
+        )
+        agent_b = await d._get_or_build_generic_agent(
+            "ent", "genevict:b", _StubGenericAgent, _StubGenericDeps
+        )
+
+        # Tenant a holds a two-agent dict; the delete drops the whole dict.
+        assert set(d._generic_agents.get("genevict:a").keys()) == {"ent", "qenh"}
+
+        evict_tenant_from_registered_caches("genevict:a")
+
+        assert "genevict:a" not in d._generic_agents
+        assert "genevict:b" in d._generic_agents
+        rebuilt = await d._get_or_build_generic_agent(
+            "ent", "genevict:a", _StubGenericAgent, _StubGenericDeps
+        )
+        assert rebuilt is not agent_a
+        assert (
+            await d._get_or_build_generic_agent(
+                "ent", "genevict:b", _StubGenericAgent, _StubGenericDeps
+            )
+            is agent_b
+        )
+
+    @pytest.mark.asyncio
+    async def test_generic_cache_is_lru_bounded_at_the_module_capacity(
+        self, generic_dispatcher
+    ):
+        from cogniverse_runtime.agent_dispatcher import GENERIC_AGENT_CACHE_CAPACITY
+
+        d = generic_dispatcher
+        assert GENERIC_AGENT_CACHE_CAPACITY == 64
+        assert d._generic_agents.capacity == GENERIC_AGENT_CACHE_CAPACITY
+
+        for i in range(GENERIC_AGENT_CACHE_CAPACITY + 1):
+            await d._get_or_build_generic_agent(
+                "ent", f"genbound:t{i}", _StubGenericAgent, _StubGenericDeps
+            )
+
+        assert len(d._generic_agents) == GENERIC_AGENT_CACHE_CAPACITY
+        assert "genbound:t0" not in d._generic_agents
+        assert "genbound:t1" in d._generic_agents
+        assert f"genbound:t{GENERIC_AGENT_CACHE_CAPACITY}" in d._generic_agents
+
+
 class _StubGraphManager:
     def __init__(self, backend=None, tenant_id=None, schema_name=None, **kwargs):
         self.tenant_id = tenant_id
