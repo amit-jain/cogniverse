@@ -159,6 +159,40 @@ class TestTextAnalysisAgent:
         "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
     )
     @patch("cogniverse_foundation.config.utils.get_config")
+    def test_analyze_text_coerces_non_numeric_confidence(
+        self,
+        mock_get_config,
+        mock_initialize_dspy,
+        mock_register_signature,
+        config_manager_memory,
+    ):
+        """A real LM can emit a word-y confidence ("high"); analyze_text must
+        route it through parse_confidence (→ default), not a bare float() that
+        would raise ValueError and 500 the /analyze route."""
+        mock_get_config.return_value = {"text_analysis_port": 8005}
+        agent = TextAnalysisAgent(
+            tenant_id="test_tenant", config_manager=config_manager_memory
+        )
+        agent._dspy_lm = MagicMock(name="stub_lm")
+
+        mock_module = MagicMock()
+        mock_result = MagicMock()
+        mock_result.result = "analysis"
+        mock_result.confidence = "high"  # non-numeric — float("high") would raise
+        mock_module.return_value = mock_result
+
+        with patch.object(agent, "get_or_create_module", return_value=mock_module):
+            result = agent.analyze_text("Test text", "summary")
+
+        # parse_confidence maps the label "high" to its 0.9 band — a bare
+        # float("high") would raise ValueError and 500 the /analyze route.
+        assert result["confidence"] == 0.9
+
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_analyze_text_uses_per_tenant_lm(
         self,
         mock_get_config,
