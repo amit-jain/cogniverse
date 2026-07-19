@@ -243,3 +243,54 @@ class TestLoadForRequest:
         # Canary dataset missing — fall back to active.
         assert out["served_from"] == "active"
         assert out["version"] == 1
+
+
+@pytest.mark.asyncio
+class TestRestoreAsymmetricSnapshot:
+    """_restore_active_from_version must treat a versioned prompts/demos pair
+    atomically: both present or both absent. An asymmetric snapshot (one half
+    lost) restored only the surviving half, leaving the active slot as a mix of
+    the old and new versions while the state blob claimed the new version."""
+
+    async def test_restore_raises_on_asymmetric_snapshot(self, manager_provider):
+        mgr, provider = manager_provider
+        # Only the versioned demos exist for v2; the prompts snapshot is absent.
+        demos_name = mgr._versioned_dataset_name("demos", "agent_a", 2)
+        provider.datasets.created[demos_name] = pd.DataFrame(
+            [{"input": "q", "output": "a"}]
+        )
+        with pytest.raises(ValueError, match="[Aa]symmetric"):
+            await mgr._restore_active_from_version("agent_a", 2)
+
+    async def test_restore_both_absent_leaves_active_untouched(self, manager_provider):
+        mgr, _ = manager_provider
+        await mgr.save_prompts("agent_a", {"system": "keep"})
+        # Neither half of v99 is seeded — nothing to restore, no raise.
+        await mgr._restore_active_from_version("agent_a", 99)
+        assert (await mgr.load_prompts("agent_a")) == {"system": "keep"}
+
+    async def test_restore_prompts_only_version_is_not_torn(self, manager_provider):
+        """A prompts-only version (no demos snapshot) is normal, not torn:
+        restore the prompts and leave the active demos as-is, no raise."""
+        mgr, _ = manager_provider
+        await mgr.save_prompts_versioned("agent_a", {"system": "v1-prompts"})
+        await mgr._restore_active_from_version("agent_a", 1)
+        assert (await mgr.load_prompts("agent_a")) == {"system": "v1-prompts"}
+
+    async def test_promote_canary_compensates_on_asymmetric_snapshot(
+        self, manager_provider
+    ):
+        mgr, provider = manager_provider
+        # Establish the previous active (un-versioned) content.
+        await mgr.save_prompts("agent_a", {"system": "PREV"})
+        await mgr.save_demonstrations("agent_a", [{"input": "p", "output": "prev"}])
+        await mgr.promote_to_canary("agent_a", version=2, traffic_pct=10)
+        # The canary demos snapshot exists but its prompts snapshot was lost.
+        demos_name = mgr._versioned_dataset_name("demos", "agent_a", 2)
+        provider.datasets.created[demos_name] = pd.DataFrame(
+            [{"input": "q", "output": "canary"}]
+        )
+        with pytest.raises(ValueError, match="[Aa]symmetric"):
+            await mgr.promote_canary_to_active("agent_a")
+        # The active prompts were NOT torn to a canary/mixed state.
+        assert (await mgr.load_prompts("agent_a")) == {"system": "PREV"}
