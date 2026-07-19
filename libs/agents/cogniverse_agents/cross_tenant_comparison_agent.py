@@ -235,17 +235,23 @@ class CrossTenantComparisonAgent(
                 "comparisons; tenant_admin or org_admin required"
             )
 
-        # ACL: every requested tenant must be in the caller's org.
-        if input.tenant_id:
-            caller_org, _ = parse_tenant_id(input.tenant_id)
-            for tid in input.tenant_ids:
-                org_id, _ = parse_tenant_id(tid)
-                if org_id != caller_org:
-                    raise ACLRejected(
-                        f"tenant_id={tid!r} belongs to org={org_id!r} but "
-                        f"caller is in org={caller_org!r}; cross-org "
-                        "comparison is forbidden"
-                    )
+        # ACL: every requested tenant must be in the caller's org. The caller
+        # must identify their own tenant — without it there is no org to scope
+        # to, so an omitted tenant_id must reject rather than read across orgs.
+        if not input.tenant_id:
+            raise ACLRejected(
+                "tenant_id is required for cross-tenant comparison; the "
+                "caller's org cannot be verified without it"
+            )
+        caller_org, _ = parse_tenant_id(input.tenant_id)
+        for tid in input.tenant_ids:
+            org_id, _ = parse_tenant_id(tid)
+            if org_id != caller_org:
+                raise ACLRejected(
+                    f"tenant_id={tid!r} belongs to org={org_id!r} but "
+                    f"caller is in org={caller_org!r}; cross-org "
+                    "comparison is forbidden"
+                )
 
         federation = FederationService(self._mm_factory, self._registry)
         agent_filter = input.agent_name_filter or "_promoted"

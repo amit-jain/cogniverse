@@ -161,6 +161,44 @@ class TestACLs:
                 )
             )
 
+    async def test_missing_tenant_id_rejected_before_any_read(self):
+        """An org_admin who omits ``tenant_id`` must not skip org-scoping.
+
+        Without the caller's tenant there is no org to prove the requested
+        tenants belong to, so the request has to be rejected rather than
+        silently reading across orgs. Regression for the bypass where the
+        org-membership loop sat entirely inside ``if input.tenant_id:``.
+        """
+        reads: List[str] = []
+
+        def _factory(tenant_id: str):
+            mm = MagicMock()
+            mm.memory = MagicMock()
+
+            def _get_all(*, tenant_id=tenant_id, agent_name):
+                reads.append(tenant_id)
+                return [_row("leak", "secret", subject_key="x")]
+
+            mm.get_all_memories = _get_all
+            return mm
+
+        agent = CrossTenantComparisonAgent(
+            deps=CrossTenantComparisonDeps(tenant_id="acme:production"),
+            memory_manager_factory=_factory,
+            registry=build_default_registry(),
+        )
+        with pytest.raises(ACLRejected, match="tenant_id is required"):
+            await agent._process_impl(
+                CrossTenantComparisonInput(
+                    subject_key="x",
+                    tenant_ids=["acme:alpha", "globex:production"],
+                    actor_role="org_admin",
+                    actor_id="oadm",
+                )
+            )
+        # The reject must fire before any federated read touches a tenant.
+        assert reads == []
+
 
 @pytest.mark.asyncio
 class TestMissingTenantData:
