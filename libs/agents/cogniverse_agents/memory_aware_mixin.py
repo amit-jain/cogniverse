@@ -15,9 +15,11 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 logger = logging.getLogger(__name__)
 
 # Per-request state lives in ContextVars, NOT instance attributes: the dispatcher
-# caches and SHARES one agent instance across requests (e.g. _get_search_agent,
-# _gateway_agent), so storing the per-request artefact overlay / session id on
-# the instance let concurrent requests overwrite each other (request bleed).
+# caches and SHARES one agent instance across requests (e.g. _get_search_agent
+# shares one SearchAgent per profile across ALL tenants), so storing the
+# per-request tenant / artefact overlay / session id on the instance let
+# concurrent requests overwrite each other (request bleed — one tenant's
+# query-rewrite prompt enriched with another tenant's private instructions).
 # ContextVars are isolated per asyncio task (and copied into asyncio.to_thread),
 # so each in-flight request sees only its own value on the shared agent.
 _DISPATCHED_ARTEFACT: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
@@ -25,6 +27,9 @@ _DISPATCHED_ARTEFACT: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
 )
 _MEMORY_SESSION_ID: ContextVar[Optional[str]] = ContextVar(
     "cogniverse_memory_session_id", default=None
+)
+_MEMORY_TENANT_ID: ContextVar[Optional[str]] = ContextVar(
+    "cogniverse_memory_tenant_id", default=None
 )
 
 
@@ -75,8 +80,26 @@ class MemoryAwareMixin:
         # ``set_session_id`` / ``set_dispatched_artefact``.
 
     def set_tenant_for_context(self, tenant_id: str) -> None:
-        """Set tenant_id for instruction injection without full memory init."""
+        """Set the per-request tenant for instruction injection + memory reads.
+
+        Writes a request-scoped ContextVar (isolated per asyncio task and copied
+        into ``asyncio.to_thread`` workers) so a dispatcher-shared agent instance
+        — one SearchAgent per profile serves every tenant — never bleeds one
+        request's tenant into a concurrent request's offloaded reads. The
+        instance attribute is kept in lock-step for non-request callers that read
+        it directly (the knowledge router, ``initialize_memory``, tests).
+        """
+        _MEMORY_TENANT_ID.set(tenant_id)
         self._memory_tenant_id = tenant_id
+
+    def _current_memory_tenant_id(self) -> Optional[str]:
+        """Resolve the tenant for a memory/instruction read.
+
+        Prefers the request-scoped ContextVar (set by ``set_tenant_for_context``
+        on the dispatch path); falls back to the instance attribute for callers
+        that set it directly without a request scope.
+        """
+        return _MEMORY_TENANT_ID.get() or getattr(self, "_memory_tenant_id", None)
 
     def set_session_id(self, session_id: Optional[str]) -> None:
         """Set or clear the per-request session id.
@@ -281,7 +304,7 @@ class MemoryAwareMixin:
         try:
             results = self.memory_manager.search_memory(
                 query=query,
-                tenant_id=self._memory_tenant_id,
+                tenant_id=self._current_memory_tenant_id(),
                 agent_name=self._memory_agent_name,
                 top_k=top_k,
             )
@@ -347,7 +370,7 @@ class MemoryAwareMixin:
         )
         from cogniverse_core.memory.manager import Mem0MemoryManager
 
-        trunk_tenant = org_trunk_tenant_id(self._memory_tenant_id)
+        trunk_tenant = org_trunk_tenant_id(self._current_memory_tenant_id())
         try:
             trunk_mm = Mem0MemoryManager(trunk_tenant)
         except Exception as exc:
@@ -492,7 +515,7 @@ class MemoryAwareMixin:
         try:
             memory_id = self.memory_manager.add_memory(
                 content=content,
-                tenant_id=self._memory_tenant_id,
+                tenant_id=self._current_memory_tenant_id(),
                 agent_name=self._memory_agent_name,
                 metadata=metadata,
                 infer=infer,
@@ -525,7 +548,8 @@ class MemoryAwareMixin:
 
         try:
             return self.memory_manager.get_memory_stats(
-                tenant_id=self._memory_tenant_id, agent_name=self._memory_agent_name
+                tenant_id=self._current_memory_tenant_id(),
+                agent_name=self._memory_agent_name,
             )
 
         except Exception as e:
@@ -551,7 +575,8 @@ class MemoryAwareMixin:
 
         try:
             success = self.memory_manager.clear_agent_memory(
-                tenant_id=self._memory_tenant_id, agent_name=self._memory_agent_name
+                tenant_id=self._current_memory_tenant_id(),
+                agent_name=self._memory_agent_name,
             )
 
             if success:
@@ -583,7 +608,7 @@ class MemoryAwareMixin:
 
         learner = StrategyLearner(
             memory_manager=self.memory_manager,
-            tenant_id=self._memory_tenant_id,
+            tenant_id=self._current_memory_tenant_id(),
         )
         strategies = learner.get_strategies_for_agent(
             query=query,
@@ -596,7 +621,7 @@ class MemoryAwareMixin:
 
     def _get_tenant_instructions(self) -> Optional[str]:
         """Load tenant instructions from ConfigStore."""
-        tenant_id = getattr(self, "_memory_tenant_id", None)
+        tenant_id = self._current_memory_tenant_id()
         if not tenant_id:
             return None
         try:
