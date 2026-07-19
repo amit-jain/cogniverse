@@ -366,6 +366,7 @@ async def _default_processor(job: IngestJob) -> dict:
         )
         processing_results["graph_nodes"] = graph_counts.get("nodes_upserted", 0)
         processing_results["graph_edges"] = graph_counts.get("edges_upserted", 0)
+        processing_results["graph_failed"] = graph_counts.get("graph_failed", 0)
     except Exception as exc:  # noqa: BLE001 — log + degrade, never fail ingest
         import logging
 
@@ -377,12 +378,14 @@ async def _default_processor(job: IngestJob) -> dict:
         )
         processing_results["graph_nodes"] = 0
         processing_results["graph_edges"] = 0
+        processing_results["graph_failed"] = 0
 
     # Re-attach graph counts onto the original envelope the caller's
     # _summarise reads from (so /ingestion/{id}/status surfaces them).
     if isinstance(pipeline_envelope, dict):
         pipeline_envelope["graph_nodes"] = processing_results.get("graph_nodes", 0)
         pipeline_envelope["graph_edges"] = processing_results.get("graph_edges", 0)
+        pipeline_envelope["graph_failed"] = processing_results.get("graph_failed", 0)
         return pipeline_envelope
     return processing_results
 

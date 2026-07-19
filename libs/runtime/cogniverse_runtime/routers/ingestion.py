@@ -548,6 +548,31 @@ def _iter_segments_for_graph(
             )
 
 
+def _prune_failed_backrefs(
+    backrefs_by_segment: Dict[str, Any],
+    linked,
+    failed_doc_ids: set,
+) -> set:
+    """Drop back-refs for node/edge ids the upsert failed to persist.
+
+    ``failed_doc_ids`` are node.doc_id / edge.doc_id (the upsert failure list),
+    while the back-ref buckets key on bare node_id / edge_id — map through the
+    linked extraction. Prunes in place; returns the pruned bare ids. Without
+    this, content docs carry provenance pointers to KG nodes that never landed.
+    """
+    if not failed_doc_ids:
+        return set()
+    failed_bare = {n.node_id for n in linked.nodes if n.doc_id in failed_doc_ids} | {
+        e.edge_id for e in linked.edges if e.doc_id in failed_doc_ids
+    }
+    if not failed_bare:
+        return set()
+    for bucket in backrefs_by_segment.values():
+        for key in ("entity_ids", "relation_ids", "claim_ids"):
+            bucket[key] = [i for i in bucket[key] if i not in failed_bare]
+    return failed_bare
+
+
 async def _extract_graph_per_segment(
     processing_results: Dict[str, Any],
     source_doc_id: str,
@@ -576,6 +601,7 @@ async def _extract_graph_per_segment(
     empty: Dict[str, Any] = {
         "nodes_upserted": 0,
         "edges_upserted": 0,
+        "graph_failed": 0,
         "backrefs_by_segment": {},
     }
 
@@ -615,6 +641,7 @@ async def _extract_graph_per_segment(
             # without them is indistinguishable from a broken emitter.
             kg_span.set_attribute("kg.nodes_count", result.get("nodes_upserted", 0))
             kg_span.set_attribute("kg.edges_count", result.get("edges_upserted", 0))
+            kg_span.set_attribute("kg.failed_count", result.get("graph_failed", 0))
             kg_span.set_attribute(
                 "kg.segments_count", len(result.get("backrefs_by_segment", {}))
             )
@@ -641,6 +668,7 @@ async def _extract_graph_per_segment_inner(
     empty: Dict[str, Any] = {
         "nodes_upserted": 0,
         "edges_upserted": 0,
+        "graph_failed": 0,
         "backrefs_by_segment": {},
     }
 
@@ -782,6 +810,12 @@ async def _extract_graph_per_segment_inner(
     # not block the worker's asyncio loop — that freezes shutdown + Redis claim.
     counts = await asyncio.to_thread(mgr.upsert, linked)
 
+    # Drop back-refs for ids the upsert failed to persist before PATCHing them
+    # onto content docs — otherwise a partial KG loss leaves content pointing at
+    # nodes/edges that never landed, and the loss reads as "no entities".
+    failed_doc_ids = set(counts.get("failed_ids", []))
+    _prune_failed_backrefs(backrefs_by_segment, linked, failed_doc_ids)
+
     await _write_backrefs_to_content(
         backrefs_by_segment=backrefs_by_segment,
         processing_results=processing_results,
@@ -794,6 +828,7 @@ async def _extract_graph_per_segment_inner(
     return {
         "nodes_upserted": counts.get("nodes_upserted", 0),
         "edges_upserted": counts.get("edges_upserted", 0),
+        "graph_failed": len(failed_doc_ids),
         "backrefs_by_segment": backrefs_by_segment,
     }
 
