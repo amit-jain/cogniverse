@@ -111,15 +111,25 @@ applying the restore, so the rollback is itself reversible. Snapshots
 live as `dspy-prompts-{tenant}-{agent}-vN` (and `dspy-demos-…-vN`)
 datasets; `list_versions` enumerates them.
 
-Hot reload note: the generic agents are rebuilt per request (the dispatcher
-runs `_load_artifact` after telemetry/tenant injection), so a new artefact
-lands without restart on the next request. The gateway agent is the
-exception — it is cached per tenant in a bounded `TenantLRUCache`
-(`GATEWAY_AGENT_CACHE_CAPACITY`, 64 tenants; least-recently-dispatched
-tenants rebuild on their next request), and cache hits re-run
-`_load_artifact` once the reload interval elapses (`GATEWAY_ARTIFACT_TTL_S`,
-5 minutes), so a recalibration starts serving on a warm pod within that
-interval. Deleting a tenant evicts its cached gateway agent immediately
+Hot reload note: generic agents dispatched through the catch-all path
+(`entity_extraction`, `query_enhancement`, `profile_selection`, and other
+agents with no dedicated dispatch branch) are cached per `(tenant,
+agent_name)` in a bounded `TenantLRUCache` (`GENERIC_AGENT_CACHE_CAPACITY`,
+64 tenants; each tenant's cache slot holds a `{agent_name: entry}` dict, so
+the cap bounds distinct tenants, not distinct agents). A cache hit re-runs
+`_load_artifact` once the reload interval elapses (`GENERIC_AGENT_TTL_S`,
+5 minutes), so a new artefact lands on a warm pod within that interval
+rather than on every request; the reload stamps `loaded_at` before the
+`to_thread` await, so two concurrent dispatches for the same tenant/agent
+never stampede duplicate reloads. Per-request state (the artefact overlay,
+session id) is not cached — it rides Task-isolated ContextVars, so
+`_apply_artefact_overlay` still runs on every dispatch, cache hit or miss.
+The gateway agent follows the same pattern in its own cache — it is cached
+per tenant in a bounded `TenantLRUCache` (`GATEWAY_AGENT_CACHE_CAPACITY`, 64
+tenants; least-recently-dispatched tenants rebuild on their next request),
+with cache hits re-running `_load_artifact` once `GATEWAY_ARTIFACT_TTL_S`
+(also 5 minutes) elapses. Deleting a tenant evicts both its cached gateway
+agent and its cached generic agents immediately
 (`evict_tenant_from_registered_caches`, see
 [Foundation Module](../modules/foundation.md#tenant-scoped-caching)) rather
 than waiting for LRU pressure. A rollback therefore only needs to flip the
@@ -195,9 +205,9 @@ mode currently defaults to it — see "Optimizer Selection" below.)
 - New optimization triggers belong in `QualityMonitor` (live signal) or in a
   CronWorkflow (schedule). Both submit Argo workflows that invoke the CLI.
 - Hot reload of compiled artefacts belongs in the **runtime**, not in the
-  optimizer — the dispatcher reloads artefacts per request (TTL-gated for
-  the cached gateway agent; see the Hot reload note above); the optimizer's
-  job ends when it has written the artefact.
+  optimizer — the dispatcher reloads artefacts on dispatch, TTL-gated for
+  the cached gateway and generic agents (see the Hot reload note above); the
+  optimizer's job ends when it has written the artefact.
 
 If you find yourself wanting a daemon, the actual gap is more likely
 *observability* (Phoenix tile, dashboard view) or *trigger latency* (poll

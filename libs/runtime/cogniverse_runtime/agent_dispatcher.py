@@ -47,6 +47,18 @@ GATEWAY_ARTIFACT_TTL_S = 300.0
 # registered-cache hook.
 GATEWAY_AGENT_CACHE_CAPACITY = 64
 
+# How long a cached generic A2A agent (entity_extraction, query_enhancement,
+# profile_selection, …) serves its loaded artifact before a cache hit re-reads
+# it. Same rationale + cadence as the gateway: keep the artifact read off the
+# per-request path while bounding post-recalibration staleness on a warm pod.
+GENERIC_AGENT_TTL_S = 300.0
+
+# Bound on cached tenants for the generic-agent cache. The per-tenant value is a
+# dict of {agent_name -> _GenericAgentEntry}, so this caps distinct tenants, not
+# distinct agents; tenant delete evicts a tenant's whole dict via the
+# registered-cache hook.
+GENERIC_AGENT_CACHE_CAPACITY = 64
+
 # Resolved (agent, deps, input) classes for generic A2A dispatch, keyed by the
 # ``module:Class`` path. Bounded by the fixed AGENT_CLASSES set — each dispatch
 # would otherwise re-scan dir(module) twice for the convention-named Deps/Input
@@ -116,6 +128,23 @@ def _new_gateway_agent_cache() -> TenantLRUCache["_GatewayAgentEntry"]:
     return register_tenant_cache(TenantLRUCache(capacity=GATEWAY_AGENT_CACHE_CAPACITY))
 
 
+@dataclasses.dataclass
+class _GenericAgentEntry:
+    """A cached generic A2A agent with its artifact-load stamp.
+
+    ``loaded_at`` is mutated in place on a TTL reload (stamp-before-await), so
+    the entry must stay mutable — the same agent instance keeps serving while
+    only its artifact is refreshed.
+    """
+
+    agent: Any
+    loaded_at: float
+
+
+def _new_generic_agent_cache() -> "TenantLRUCache[Dict[str, _GenericAgentEntry]]":
+    return register_tenant_cache(TenantLRUCache(capacity=GENERIC_AGENT_CACHE_CAPACITY))
+
+
 def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
     """Lift a ``SearchResult``/gateway-shaped hit's ``metadata`` to the top level
     so the answer agents' text helpers see the retrieved content.
@@ -177,6 +206,13 @@ class AgentDispatcher:
             _new_gateway_agent_cache()
         )
         self._gateway_artifact_ttl_s: float = GATEWAY_ARTIFACT_TTL_S
+        # Generic A2A agents cached per (tenant, agent_name): the per-tenant
+        # value is a dict keyed by agent_name, since a tenant runs several
+        # generic agents (entity_extraction, query_enhancement, …).
+        self._generic_agents: TenantLRUCache[Dict[str, _GenericAgentEntry]] = (
+            _new_generic_agent_cache()
+        )
+        self._generic_agent_ttl_s: float = GENERIC_AGENT_TTL_S
         # Strong references to fire-and-forget tasks so CPython does not GC
         # the coroutine before it runs. asyncio.create_task() with the result
         # discarded is documented to allow that — keep the handles, discard
@@ -819,6 +855,97 @@ class AgentDispatcher:
         except Exception:
             logger.warning("Wiki auto-filing failed (non-fatal)", exc_info=True)
 
+    async def _build_generic_agent(
+        self,
+        agent_name: str,
+        tenant_id: str,
+        agent_cls: Any,
+        deps_cls: Any,
+    ) -> Any:
+        """Construct a generic A2A agent with its per-tenant wiring.
+
+        Runs the expensive one-time setup: default deps (with the GLiNER
+        sidecar URL when the schema accepts it), ``_init_agent_memory`` and
+        ``_bind_graph_manager`` off the event loop, telemetry + config-manager
+        injection, and the first artifact read. The result is cached per
+        (tenant, agent_name) by :meth:`_get_or_build_generic_agent`.
+        """
+        # If the deps schema accepts a gliner_inference_url field
+        # (EntityExtractionAgent + any future gliner-using agent), inject the
+        # deployed sidecar URL so the agent doesn't fall back to in-process
+        # loading.
+        deps_kwargs: Dict[str, Any] = {}
+        gliner_url = self._resolve_gliner_url()
+        if gliner_url and "gliner_inference_url" in deps_cls.model_fields:
+            deps_kwargs["gliner_inference_url"] = gliner_url
+        deps = deps_cls(**deps_kwargs)
+        agent = agent_cls(deps=deps)
+        await asyncio.to_thread(self._init_agent_memory, agent, agent_name, tenant_id)
+        # Bind the per-tenant Vespa knowledge-graph manager so KG-aware agents
+        # can consult the shared graph (with cross-document Mention provenance)
+        # complementary to their own mem0 memory. Fail-safe: agents fall back to
+        # the mem0-only path when the graph backend isn't configured.
+        await asyncio.to_thread(self._bind_graph_manager, agent, tenant_id)
+
+        # Inject global TelemetryManager for span emission
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        agent.telemetry_manager = get_telemetry_manager()
+        agent._artifact_tenant_id = tenant_id
+        # Config access for per-tenant adapter/LM resolution (e.g. the
+        # profile_selection adapter context) — same injection pattern as
+        # telemetry_manager. Never clobber an agent-owned manager.
+        if getattr(agent, "_config_manager", None) is None:
+            agent._config_manager = self._config_manager
+        if hasattr(agent, "_load_artifact"):
+            await asyncio.to_thread(agent._load_artifact)
+        return agent
+
+    async def _get_or_build_generic_agent(
+        self,
+        agent_name: str,
+        tenant_id: str,
+        agent_cls: Any,
+        deps_cls: Any,
+    ) -> Any:
+        """Return the cached generic agent for (tenant, agent_name), building
+        it once per pair — mirroring :meth:`_get_or_build_gateway_agent`.
+
+        The build (class wiring, memory init, graph bind, telemetry inject,
+        first artifact read) ran on every dispatch before; it now runs once and
+        a cache hit past the reload interval re-reads only the artifact. The
+        reload stamps ``loaded_at`` before the ``to_thread`` await, so two
+        concurrent dispatches never stampede duplicate reloads. Per-request
+        state (artefact overlay, session id) is applied by the caller on every
+        dispatch — it lives in Task-isolated ContextVars, so a shared cached
+        instance is safe.
+        """
+        cache = getattr(self, "_generic_agents", None)
+        if cache is None:
+            cache = _new_generic_agent_cache()
+            self._generic_agents = cache
+        per_tenant = cache.get_or_set(tenant_id, dict)
+        entry = per_tenant.get(agent_name)
+        if entry is not None:
+            ttl = getattr(self, "_generic_agent_ttl_s", GENERIC_AGENT_TTL_S)
+            if (
+                hasattr(entry.agent, "_load_artifact")
+                and time.monotonic() - entry.loaded_at >= ttl
+            ):
+                # Stamp before the await: concurrent dispatches serve the
+                # current instance instead of stampeding duplicate reloads.
+                entry.loaded_at = time.monotonic()
+                await asyncio.to_thread(entry.agent._load_artifact)
+            return entry.agent
+
+        agent = await self._build_generic_agent(
+            agent_name, tenant_id, agent_cls, deps_cls
+        )
+        per_tenant[agent_name] = _GenericAgentEntry(
+            agent=agent, loaded_at=time.monotonic()
+        )
+        return agent
+
     async def _execute_generic_agent(
         self,
         agent_name: str,
@@ -872,37 +999,14 @@ class AgentDispatcher:
                 f"(no Input class in {module_path})"
             )
 
-        # Instantiate with default deps. If the deps schema accepts a
-        # gliner_inference_url field (EntityExtractionAgent + any future
-        # gliner-using agent), inject the deployed sidecar URL so the
-        # agent doesn't fall back to in-process loading.
-        deps_kwargs: Dict[str, Any] = {}
-        gliner_url = self._resolve_gliner_url()
-        if gliner_url and "gliner_inference_url" in deps_cls.model_fields:
-            deps_kwargs["gliner_inference_url"] = gliner_url
-        deps = deps_cls(**deps_kwargs)
-        agent = agent_cls(deps=deps)
-        await asyncio.to_thread(self._init_agent_memory, agent, agent_name, tenant_id)
-        # Bind the per-tenant Vespa knowledge-graph manager so KG-aware agents
-        # can consult the shared graph (with cross-document Mention provenance)
-        # complementary to their own mem0 memory. Fail-safe: agents fall back to
-        # the mem0-only path when the graph backend isn't configured.
-        await asyncio.to_thread(self._bind_graph_manager, agent, tenant_id)
-
-        # Inject global TelemetryManager for span emission
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-        agent.telemetry_manager = get_telemetry_manager()
-        agent._artifact_tenant_id = tenant_id
-        # Config access for per-tenant adapter/LM resolution (e.g. the
-        # profile_selection adapter context) — same injection pattern as
-        # telemetry_manager. Never clobber an agent-owned manager.
-        if getattr(agent, "_config_manager", None) is None:
-            agent._config_manager = self._config_manager
-        if hasattr(agent, "_load_artifact"):
-            await asyncio.to_thread(agent._load_artifact)
+        agent = await self._get_or_build_generic_agent(
+            agent_name, tenant_id, agent_cls, deps_cls
+        )
         # ``set_dispatched_artefact`` lives on MemoryAwareMixin; non-mixin
         # agents silently no-op (overlay dropped, falling back to defaults).
+        # Applied on EVERY dispatch, cache hit or miss: it writes a Task-isolated
+        # ContextVar, never the shared cached instance, so a warm agent never
+        # bleeds one request's canary/variant overlay into another.
         self._apply_artefact_overlay(agent, context)
 
         # Build input — pass query + tenant_id + any extra context fields
