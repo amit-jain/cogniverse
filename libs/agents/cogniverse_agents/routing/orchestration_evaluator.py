@@ -44,17 +44,23 @@ class OrchestrationEvaluator:
             workflow_intelligence: Workflow optimizer to feed experiences to
             tenant_id: Tenant identifier for multi-tenant projects
         """
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
         self.workflow_intelligence = workflow_intelligence
-        self.tenant_id = tenant_id
+        # The runtime writes orchestration spans under the canonical tenant
+        # project; a caller passing a raw id (e.g. a dashboard tab's
+        # current_tenant) must resolve the SAME provider + project scope, or the
+        # evaluator queries an empty project and reports no orchestration spans.
+        self.tenant_id = canonical_tenant_id(tenant_id)
 
         # Get telemetry manager and use its config (shared singleton config)
         telemetry_manager = get_telemetry_manager()
         self.telemetry_config = telemetry_manager.config
         self.provider: "TelemetryProvider" = telemetry_manager.get_provider(
-            tenant_id=tenant_id
+            tenant_id=self.tenant_id
         )
 
-        self.project_name = self.telemetry_config.get_project_name(tenant_id)
+        self.project_name = self.telemetry_config.get_project_name(self.tenant_id)
 
         # Track processed spans to avoid duplicates
         self._processed_span_ids = set()
@@ -62,7 +68,7 @@ class OrchestrationEvaluator:
         self._last_evaluation_time = None
 
         logger.info(
-            f"🔧 Initialized OrchestrationEvaluator for tenant '{tenant_id}' "
+            f"🔧 Initialized OrchestrationEvaluator for tenant '{self.tenant_id}' "
             f"(project: {self.project_name})"
         )
 

@@ -66,3 +66,24 @@ async def test_failed_query_does_not_advance_resume_point():
     await ev.evaluate_orchestration_spans(lookback_hours=2)
     # Failure must leave the resume point unset so the window is re-scanned.
     assert ev._last_evaluation_time is None
+
+
+def test_ctor_canonicalizes_tenant_for_provider_and_project_scoping():
+    """The runtime writes orchestration spans under the canonical tenant
+    project; an evaluator built with a raw id must resolve the SAME provider
+    scope and project name, not query an empty ``cogniverse-acme`` project."""
+    from unittest.mock import MagicMock, patch
+
+    mgr = MagicMock()
+    mgr.get_provider.return_value = MagicMock()
+    mgr.config.get_project_name.side_effect = lambda tid: f"cogniverse-{tid}"
+
+    with patch(
+        "cogniverse_agents.routing.orchestration_evaluator.get_telemetry_manager",
+        return_value=mgr,
+    ):
+        ev = OrchestrationEvaluator(MagicMock(), tenant_id="acme")
+
+    assert ev.tenant_id == "acme:acme"
+    mgr.get_provider.assert_called_once_with(tenant_id="acme:acme")
+    assert ev.project_name == "cogniverse-acme:acme"
