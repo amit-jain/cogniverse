@@ -605,10 +605,19 @@ class TestStreamingAgentConstruction:
     ):
         monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
         # Orchestration resolves WorkflowIntelligence from the telemetry manager;
-        # None keeps construction env-independent (workflow_intelligence=None).
+        # None keeps construction env-independent (workflow_intelligence=None). The
+        # orchestrator build also inits memory and loads its artifact (it routes
+        # through the per-tenant cache like dispatch) — stub both so construction
+        # stays env-independent while still building a real OrchestratorAgent.
         monkeypatch.setattr(
             "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
             lambda: None,
+        )
+        monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
+        monkeypatch.setattr(
+            "cogniverse_agents.orchestrator_agent.OrchestratorAgent._load_artifact",
+            lambda self: None,
+            raising=False,
         )
         entry = MagicMock()
         entry.capabilities = [capability]

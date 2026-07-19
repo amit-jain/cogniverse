@@ -1,14 +1,17 @@
-"""_execute_orchestration_task must close the per-request policy client.
+"""The orchestration policy http client lives with the cached agent.
 
-Regression (PERF/leak): the orchestration path built a fresh
-``httpx.AsyncClient`` (own connection pool + transport) via
-``sandbox_manager.make_http_client`` and never ``aclose()``d it, leaking a
-client per orchestration request. These assert it is closed on BOTH the
-success and the error path.
+The orchestration path used to build a fresh ``httpx.AsyncClient`` per request
+via ``sandbox_manager.make_http_client`` and ``aclose()`` it in a finally. The
+per-tenant OrchestratorAgent is now cached, so the policy client is built ONCE
+per tenant and reused across dispatches (one pooled client per tenant) instead
+of a build-and-teardown per complex query. These pin that contract:
+make_http_client runs once, the same client stays on the cached agent, and a
+failing request does not tear it down.
 """
 
 from __future__ import annotations
 
+import contextlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,7 +44,7 @@ def _dispatcher_with_spy_client():
         schema_loader=None,
         sandbox_manager=sandbox,
     )
-    return dispatcher, spy_client
+    return dispatcher, spy_client, sandbox
 
 
 def _patches(process_impl):
@@ -60,33 +63,38 @@ def _patches(process_impl):
 
 
 @pytest.mark.asyncio
-async def test_client_closed_on_success():
-    dispatcher, spy_client = _dispatcher_with_spy_client()
+async def test_policy_client_built_once_and_reused_across_requests():
+    dispatcher, spy_client, sandbox = _dispatcher_with_spy_client()
 
     async def ok(self, input_data):
         return SimpleNamespace(model_dump=lambda: {"result": "ok"})
 
-    import contextlib
-
     with contextlib.ExitStack() as stack:
         for p in _patches(ok):
             stack.enter_context(p)
-        result = await dispatcher._execute_orchestration_task(
-            query="q", context={"tenant_id": "acme:prod"}, tenant_id="acme:prod"
+        first = await dispatcher._execute_orchestration_task(
+            query="q1", context={"tenant_id": "acme:prod"}, tenant_id="acme:prod"
+        )
+        second = await dispatcher._execute_orchestration_task(
+            query="q2", context={"tenant_id": "acme:prod"}, tenant_id="acme:prod"
         )
 
-    assert result["status"] == "success"
-    spy_client.aclose.assert_awaited_once()
+    assert first["status"] == "success"
+    assert second["status"] == "success"
+    # One pooled client per tenant, built on the cache-miss build and reused.
+    sandbox.make_http_client.assert_called_once_with("orchestrator_agent")
+    # Reused across requests, never torn down per dispatch.
+    spy_client.aclose.assert_not_awaited()
+    cached = dispatcher._orchestrator_agents.get("acme:prod").agent
+    assert cached.http_client is spy_client
 
 
 @pytest.mark.asyncio
-async def test_client_closed_on_error():
-    dispatcher, spy_client = _dispatcher_with_spy_client()
+async def test_failing_request_does_not_tear_down_cached_client():
+    dispatcher, spy_client, sandbox = _dispatcher_with_spy_client()
 
     async def boom(self, input_data):
         raise RuntimeError("orchestration blew up")
-
-    import contextlib
 
     with contextlib.ExitStack() as stack:
         for p in _patches(boom):
@@ -96,5 +104,6 @@ async def test_client_closed_on_error():
                 query="q", context={"tenant_id": "acme:prod"}, tenant_id="acme:prod"
             )
 
-    # finally must still close the leaked client.
-    spy_client.aclose.assert_awaited_once()
+    # The cached client must survive a failed request for the next one to reuse.
+    spy_client.aclose.assert_not_awaited()
+    assert dispatcher._orchestrator_agents.get("acme:prod") is not None
