@@ -322,6 +322,46 @@ class TestA2AMessageSend:
         assert ctx["context_id"] == "conv-abc"
 
     @pytest.mark.ci_fast
+    def test_malformed_top_k_metadata_does_not_fail_execute(
+        self, client, mock_dispatcher
+    ):
+        """Untrusted top_k that isn't a clean int must default, not fail the task.
+
+        Regression: ``top_k = int(metadata.get("top_k", 10))`` raised TypeError
+        on ``top_k: null`` out of execute() before any dispatch ran. It now
+        coerces to the default and the request dispatches with top_k=10.
+        """
+        mock_dispatcher.dispatch = AsyncMock(
+            return_value={"status": "success", "agent": "search_agent"}
+        )
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "messageId": "msg-topk-1",
+                    "parts": [{"kind": "text", "text": "cat videos"}],
+                },
+                "metadata": {
+                    "agent_name": "search_agent",
+                    "tenant_id": "test_tenant",
+                    "top_k": None,  # JSON null — int(None) used to crash execute()
+                    "stream": "false",  # the string "false" is truthy to bool()
+                },
+            },
+        }
+
+        response = client.post("/", json=payload)
+        assert response.status_code == 200
+        mock_dispatcher.dispatch.assert_called_once()
+        # Bad top_k coerced to the default; the string "false" did not enable
+        # streaming (dispatch, not a streamed create_streaming_agent, ran).
+        assert mock_dispatcher.dispatch.call_args.kwargs["top_k"] == 10
+
+    @pytest.mark.ci_fast
     def test_first_turn_has_empty_history(self, client, mock_dispatcher):
         """First message in a conversation has empty conversation_history."""
         mock_dispatcher.dispatch = AsyncMock(

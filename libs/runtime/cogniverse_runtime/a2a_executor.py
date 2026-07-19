@@ -24,6 +24,7 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import Message, Task, TaskState, TaskStatus, TaskStatusUpdateEvent
 from a2a.utils import get_message_text, new_agent_text_message
 
+from cogniverse_agents._coercion import coerce_bool, coerce_int
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
@@ -149,8 +150,10 @@ class CogniverseAgentExecutor(AgentExecutor):
         tenant_id = require_tenant_id(
             metadata.get("tenant_id"), source="A2A request metadata"
         )
-        top_k = int(metadata.get("top_k", 10))
-        stream = metadata.get("stream", False)
+        # Untrusted request metadata: a peer sending top_k null/""/"many" or
+        # stream "false" must not crash execute() or silently flip streaming on.
+        top_k = coerce_int(metadata.get("top_k", 10), 10)
+        stream = coerce_bool(metadata.get("stream", False), False)
 
         if not agent_name:
             agent_name = self._infer_agent_from_text(user_text)
