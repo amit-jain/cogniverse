@@ -275,3 +275,73 @@ def reset_inbound_queue_registry_for_testing() -> None:
     """
     global _singleton_registry
     _singleton_registry = None
+
+
+# ── Outbound: runtime → gateway → Telegram ───────────────────────────────
+#
+# The inverse of the inbound path. A `/messaging/send` request fans out into
+# one OutboundMessage per linked chat and enqueues them; the gateway process
+# drains and delivers via its bot. Unlike the inbound queue this is a single
+# process-wide FIFO (not per-session) — the gateway drains everything.
+
+
+@dataclass(frozen=True)
+class OutboundMessage:
+    """A single message bound for a messaging platform chat.
+
+    Frozen so it is hashable + safe to hand across the async boundary between
+    the enqueueing route and the draining gateway. The runtime resolves
+    ``chat_id`` from the tenant↔chat mapping at enqueue time; the gateway owns
+    the bot token and does the actual send.
+    """
+
+    tenant_id: str
+    chat_id: str
+    text: str
+    created_at: str
+    platform: str = "telegram"
+
+
+class OutboundQueue:
+    """Process-wide async FIFO of :class:`OutboundMessage`.
+
+    ``enqueue`` appends under a lock; ``drain`` returns every buffered message
+    AND atomically clears the buffer, so a concurrent enqueue either lands
+    fully before the drain (returned) or fully after (kept for the next drain)
+    — never lost, never duplicated.
+    """
+
+    def __init__(self) -> None:
+        self._buffer: List[OutboundMessage] = []
+        self._lock = asyncio.Lock()
+
+    async def enqueue(self, msg: OutboundMessage) -> None:
+        async with self._lock:
+            self._buffer.append(msg)
+
+    async def drain(self) -> List[OutboundMessage]:
+        async with self._lock:
+            batch = self._buffer
+            self._buffer = []
+        return batch
+
+
+_singleton_outbound_queue: Optional[OutboundQueue] = None
+
+
+def get_outbound_queue() -> OutboundQueue:
+    """Return the process-wide in-pod :class:`OutboundQueue`.
+
+    Single-pod / no-Redis path. For multi-pod delivery, callers resolve the
+    Redis-backed queue via ``messaging_redis`` when ``REDIS_URL`` is set.
+    """
+    global _singleton_outbound_queue
+    if _singleton_outbound_queue is None:
+        _singleton_outbound_queue = OutboundQueue()
+    return _singleton_outbound_queue
+
+
+def reset_outbound_queue_for_testing() -> None:
+    """Test-only: drop the outbound singleton so each test starts clean."""
+    global _singleton_outbound_queue
+    _singleton_outbound_queue = None

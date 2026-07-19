@@ -671,6 +671,15 @@ Multi-pod + durability are shipped via `cogniverse_runtime.messaging_redis`. Whe
 
 Verified end-to-end against a live cluster with `kubectl delete pod --wait=true` mid-flight: enqueued constraints survive the pod kill and the new pod resumes from Redis state.
 
+#### Outbound messaging (delivery)
+
+The inverse path — the runtime hands job-completion notifications to the gateway for delivery — ships alongside the inbound primitive in `cogniverse_runtime.messaging`:
+
+- `OutboundMessage` — frozen dataclass: `tenant_id`, `chat_id`, `text`, `created_at`, `platform="telegram"`.
+- `OutboundQueue` — process-wide async FIFO. `enqueue()` appends under a lock; `drain()` returns every buffered message AND atomically clears the buffer, so a concurrent enqueue racing a drain is never lost or duplicated. Module-level singleton via `get_outbound_queue()`.
+
+`POST /admin/messaging/send` resolves the tenant's linked chats — reversing the user↔tenant mapping the gateway wrote into the SYSTEM mem0 partition (`agent_name=_messaging_gateway`) — and enqueues one `OutboundMessage` per chat. The runtime owns the mapping read; the gateway owns the bot token and drains `GET /admin/messaging/outbound/drain` to deliver. A backend outage while resolving chats surfaces as 503, never read as "no linked chats".
+
 ### Admin Endpoints
 
 **GET /admin/system/stats** - Get system statistics
@@ -696,6 +705,10 @@ Verified end-to-end against a live cluster with `kubectl delete pod --wait=true`
 **Messaging gateway and memory admin**
 
 **POST /admin/messaging/invite** — Generate an invite token for messaging-gateway registration. Body: `{"tenant_id": str, "expires_in_hours": int = 24}`. Response: `{token, tenant_id}`; the token is what a user sends to the gateway bot (e.g. `/start <token>`) to link an account to the tenant.
+
+**POST /admin/messaging/send** — Enqueue a message for delivery to a tenant's linked messaging chats. Body: `{"tenant_id": str, "message": str}`. Resolves the tenant's linked telegram chats from the SYSTEM mem0 mapping and enqueues one `OutboundMessage` per chat; response `{"enqueued": N}` (0 when the tenant has no linked chats). A backend outage while resolving surfaces as 503.
+
+**GET /admin/messaging/outbound/drain** — Return and clear the pending outbound messages for the gateway to deliver (it polls this). Response `{"messages": [{tenant_id, chat_id, text, platform, created_at}, ...]}`.
 
 **DELETE /admin/memories/{tenant_id}/{memory_id}** — Delete any memory by id regardless of namespace (tries `_user_memories` then `_strategy_store`). 404 if not found in either.
 
