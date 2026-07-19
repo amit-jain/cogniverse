@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import Field, field_validator
 
+from cogniverse_agents._coercion import coerce_float
 from cogniverse_agents.graph.graph_schema import normalize_name
 from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -249,8 +250,8 @@ class TemporalReasoningAgent(
                 continue
             timeline.append(
                 {
-                    "ts_start": float(edge_fields.get("ts_start") or 0.0),
-                    "ts_end": float(edge_fields.get("ts_end") or 0.0),
+                    "ts_start": coerce_float(edge_fields.get("ts_start")),
+                    "ts_end": coerce_float(edge_fields.get("ts_end")),
                     "video_id": video_id,
                     "segment_id": str(edge_fields.get("segment_id") or ""),
                     "claim": f"{relation}:{target}",
@@ -317,8 +318,8 @@ class TemporalReasoningAgent(
             if kg:
                 kg_timeline = [
                     KGTimelineEntryOut(
-                        ts_start=float(e.get("ts_start") or 0.0),
-                        ts_end=float(e.get("ts_end") or 0.0),
+                        ts_start=coerce_float(e.get("ts_start")),
+                        ts_end=coerce_float(e.get("ts_end")),
                         video_id=str(e.get("video_id") or ""),
                         segment_id=str(e.get("segment_id") or ""),
                         claim=str(e.get("claim") or ""),

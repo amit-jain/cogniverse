@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import Field
 
+from cogniverse_agents._coercion import coerce_float
 from cogniverse_agents.graph.graph_schema import normalize_name
 from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -258,8 +259,8 @@ class KnowledgeSummarizationAgent(
         for edge_fields in all_edges:
             subject = str(edge_fields.get("source_node_id") or "")
             segment_id = str(edge_fields.get("segment_id") or "")
-            ts_start = float(edge_fields.get("ts_start") or 0.0)
-            ts_end = float(edge_fields.get("ts_end") or 0.0)
+            ts_start = coerce_float(edge_fields.get("ts_start"))
+            ts_end = coerce_float(edge_fields.get("ts_end"))
             key = (subject, segment_id, ts_start, ts_end)
             grouped.setdefault(key, []).append(edge_fields)
 
