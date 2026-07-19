@@ -210,3 +210,108 @@ def test_routing_evaluation_tab_fetches_spans_once(tmp_path, monkeypatch):
     assert get_spans_calls["n"] == 1, (
         f"expected exactly one span fetch, got {get_spans_calls['n']}"
     )
+
+
+def test_annotation_section_wires_max_annotations_per_batch_from_config(
+    tmp_path, monkeypatch
+):
+    """The annotation section reads ``automation_rules.annotation_thresholds.
+    max_annotations_per_batch`` from the tenant config and passes it into
+    ``LLMAutoAnnotator``'s constructor. Round-trips a distinctive value
+    (7, matching no field default in AnnotationThresholdsConfig) through
+    ``get_config`` -> ``AutomationRulesConfig.from_dict`` -> the annotator
+    constructor kwarg, spying on the real constructor call rather than
+    asserting on an intermediate payload."""
+    from unittest.mock import AsyncMock
+
+    import pandas as pd
+
+    from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
+
+    monkeypatch.setattr(
+        RoutingAnnotationStorage,
+        "get_annotation_statistics",
+        AsyncMock(return_value={"total": 0, "pending_review": 0}),
+    )
+
+    spans_df = pd.DataFrame(
+        [
+            {
+                "name": "cogniverse.routing",
+                "attributes.routing": {
+                    "chosen_agent": "video_search",
+                    "confidence": 0.9,
+                    "processing_time": 12.0,
+                },
+                "attributes": {},
+                "status": "OK",
+                "status_code": "OK",
+                "parent_id": "p1",
+                "start_time": "2026-06-05T00:00:00+00:00",
+            }
+        ]
+    )
+
+    class _Traces:
+        async def get_spans(self, **kwargs):
+            return spans_df
+
+    class _Provider:
+        traces = _Traces()
+
+    class _Manager:
+        def get_provider(self, tenant_id=None):
+            return _Provider()
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda: _Manager(),
+    )
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config",
+        lambda tenant_id, config_manager: {
+            "llm_config": {
+                "primary": {
+                    "model": "openai/gpt-4o-mini",
+                    "api_base": "http://localhost:11434/v1",
+                    "api_key": None,
+                }
+            },
+            "automation_rules": {
+                "annotation_thresholds": {"max_annotations_per_batch": 7}
+            },
+        },
+    )
+
+    captured: dict = {}
+
+    class _SpyAnnotator:
+        def __init__(self, llm_config, max_annotations_per_batch=None):
+            captured["llm_config_model"] = llm_config.model
+            captured["max_annotations_per_batch"] = max_annotations_per_batch
+
+        def batch_annotate(self, requests):
+            return []
+
+    monkeypatch.setattr(
+        "cogniverse_dashboard.tabs.routing_evaluation.LLMAutoAnnotator",
+        _SpyAnnotator,
+    )
+
+    script_path = _build_app_script(
+        tmp_path,
+        "routing_evaluation",
+        "render_routing_evaluation_tab",
+        {"current_tenant": "acme"},
+    )
+    at = AppTest.from_file(script_path, default_timeout=30)
+    at.run()
+
+    assert at.exception == [], f"render raised: {[str(e.value) for e in at.exception]}"
+    assert captured["llm_config_model"] == "openai/gpt-4o-mini"
+    assert captured["max_annotations_per_batch"] == 7

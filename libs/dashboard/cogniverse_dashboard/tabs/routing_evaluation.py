@@ -469,19 +469,17 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
         annotation_agent = AnnotationAgent(
             tenant_id=tenant_id, confidence_threshold=0.6
         )
+        from cogniverse_agents.routing.config import AutomationRulesConfig
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
         from cogniverse_foundation.config.utils import (
             create_default_config_manager,
             get_config,
         )
 
-        _system_llm = (
-            get_config(
-                tenant_id=tenant_id, config_manager=create_default_config_manager()
-            )
-            .get("llm_config", {})
-            .get("primary", {})
+        _cfg = get_config(
+            tenant_id=tenant_id, config_manager=create_default_config_manager()
         )
+        _system_llm = _cfg.get("llm_config", {}).get("primary", {})
         _annotator_config = LLMEndpointConfig(
             model=st.session_state.get("annotation_model") or _system_llm.get("model"),
             api_base=st.session_state.get("annotation_api_base")
@@ -489,7 +487,15 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
             api_key=st.session_state.get("annotation_api_key")
             or _system_llm.get("api_key"),
         )
-        llm_annotator = LLMAutoAnnotator(llm_config=_annotator_config)
+        _automation_rules = AutomationRulesConfig.from_dict(
+            _cfg.get("automation_rules") or {}
+        )
+        llm_annotator = LLMAutoAnnotator(
+            llm_config=_annotator_config,
+            max_annotations_per_batch=(
+                _automation_rules.annotation_thresholds.max_annotations_per_batch
+            ),
+        )
         annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
     except Exception as e:
         st.error(f"❌ Failed to initialize annotation agents: {e}")
