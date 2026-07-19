@@ -41,6 +41,7 @@ import redis.asyncio as aioredis
 
 from cogniverse_runtime.messaging import (
     InboundMessage,
+    OutboundMessage,
     QueueClosedError,
 )
 
@@ -333,3 +334,71 @@ def reset_redis_inbound_queue_registry_for_testing() -> None:
     """
     global _redis_registry_singleton
     _redis_registry_singleton = None
+
+
+# --------------------------------------------------------------------- #
+# Outbound: Redis-backed cross-pod delivery queue                         #
+# --------------------------------------------------------------------- #
+
+
+_OUTBOUND_KEY = "outbound:pending"
+
+
+def _serialize_outbound(msg: OutboundMessage) -> str:
+    return json.dumps(asdict(msg), sort_keys=True)
+
+
+def _deserialize_outbound(s: str) -> OutboundMessage:
+    d = json.loads(s)
+    return OutboundMessage(
+        tenant_id=d["tenant_id"],
+        chat_id=d["chat_id"],
+        text=d["text"],
+        created_at=d["created_at"],
+        platform=d.get("platform", "telegram"),
+    )
+
+
+class RedisOutboundQueue:
+    """Redis-backed process-shared FIFO of :class:`OutboundMessage`.
+
+    All state lives in one Redis list (``outbound:pending``); Python instances
+    are stateless handles, so a runtime pod enqueues and the gateway process
+    drains from the same list. ``drain`` clears atomically via the shared Lua
+    script so a concurrent enqueue is never partially observed.
+    """
+
+    def __init__(self, redis: aioredis.Redis) -> None:
+        self._redis = redis
+
+    async def enqueue(self, msg: OutboundMessage) -> None:
+        await self._redis.lpush(_OUTBOUND_KEY, _serialize_outbound(msg))
+
+    async def drain(self) -> List[OutboundMessage]:
+        raw = await self._redis.eval(_DRAIN_LUA, 1, _OUTBOUND_KEY)
+        # LPUSH stores LIFO — reverse so consumers see submission order.
+        return [_deserialize_outbound(s) for s in reversed(raw or [])]
+
+
+_redis_outbound_singleton: Optional[RedisOutboundQueue] = None
+
+
+async def get_redis_outbound_queue(redis_url: str) -> RedisOutboundQueue:
+    """Process-wide singleton for the Redis-backed outbound queue.
+
+    All runtime pods and the gateway share one Redis list, so a message the
+    runtime enqueues on any pod is drained once by the gateway.
+    """
+    global _redis_outbound_singleton
+    if _redis_outbound_singleton is None:
+        from cogniverse_runtime.ingestion_worker.redis_client import get_redis
+
+        redis = await get_redis(redis_url)
+        _redis_outbound_singleton = RedisOutboundQueue(redis)
+    return _redis_outbound_singleton
+
+
+def reset_redis_outbound_queue_for_testing() -> None:
+    """Test-only: drop the Python-side outbound singleton (Redis state persists)."""
+    global _redis_outbound_singleton
+    _redis_outbound_singleton = None
