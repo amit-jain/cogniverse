@@ -205,3 +205,36 @@ async def test_cached_gateway_does_not_reload_inside_the_interval(dispatcher):
 
     assert second is first
     assert second.deps.fast_path_confidence_threshold == 0.11
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cold_dispatches_build_gateway_once(dispatcher):
+    """Concurrent first-touches for a cold tenant must run ONE build, not N.
+
+    Without an in-flight guard each concurrent dispatch runs a full gateway
+    build (routing-config seed + artifact read) and discards all but one; the
+    guard funnels them onto a single build and hands every caller that one
+    instance.
+    """
+    import asyncio
+
+    d, _ = dispatcher
+    calls = {"n": 0}
+    real_build = d._build_gateway_agent
+
+    async def _counting_build(tenant_id):
+        calls["n"] += 1
+        await asyncio.sleep(0.05)  # widen the window so first-touches overlap
+        return await real_build(tenant_id)
+
+    d._build_gateway_agent = _counting_build
+
+    results = await asyncio.gather(
+        d._get_or_build_gateway_agent("acme:acme"),
+        d._get_or_build_gateway_agent("acme:acme"),
+        d._get_or_build_gateway_agent("acme:acme"),
+    )
+
+    assert calls["n"] == 1, "concurrent cold dispatches ran duplicate gateway builds"
+    assert results[0] is results[1] is results[2]
+    assert results[0]._artifact_tenant_id == "acme:acme"
