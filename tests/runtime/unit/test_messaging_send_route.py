@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -107,3 +108,26 @@ def test_send_surfaces_backend_outage_as_503_not_zero(app, monkeypatch):
         assert resp.status_code == 503
         # The failure path enqueued nothing.
         assert c.get("/admin/messaging/outbound/drain").json()["messages"] == []
+
+
+@pytest.mark.asyncio
+async def test_job_executor_delivery_hits_the_real_mounted_send_route(app, monkeypatch):
+    """job_executor's delivery URL must match the real mounted route.
+
+    The admin router mounts at /admin, so the caller has to POST
+    /admin/messaging/send. A stub-path test would pass while production
+    404-skips; this drives the REAL route and asserts the message was
+    actually enqueued (not the 404-skip branch).
+    """
+    import cogniverse_runtime.job_executor as je
+
+    _patch_mapping(monkeypatch, rows=[_mapping("111", "acme:acme")])
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://rt") as client:
+        await je._deliver_to_telegram(client, "http://rt", "acme:acme", "job done")
+        drained = (await client.get("http://rt/admin/messaging/outbound/drain")).json()[
+            "messages"
+        ]
+
+    assert [m["chat_id"] for m in drained] == ["111"]
+    assert drained[0]["text"] == "job done"

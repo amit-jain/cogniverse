@@ -223,7 +223,7 @@ async def _deliver_to_telegram(
     payload = {"tenant_id": tenant_id, "message": content}
     try:
         response = await client.post(
-            f"{runtime_url}/messaging/send", json=payload, timeout=30.0
+            f"{runtime_url}/admin/messaging/send", json=payload, timeout=30.0
         )
         if response.status_code == 404:
             logger.warning("Messaging endpoint not available — skipping Telegram")
