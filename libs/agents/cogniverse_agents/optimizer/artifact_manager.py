@@ -840,31 +840,55 @@ class ArtifactManager:
         return state
 
     async def _restore_active_from_version(self, agent_type: str, version: int) -> None:
-        """Copy a versioned artefact pair (prompts + demos) into the active slot."""
+        """Copy a versioned artefact pair (prompts + demos) into the active slot.
+
+        A version may legitimately carry prompts without demos (a prompts-only
+        optimization never snapshots a demos dataset), so that shape restores the
+        prompts and leaves the active demos as-is. The torn case is the reverse:
+        the prompts snapshot lost while the demos survive — restoring only the
+        demos would leave the active slot as old prompts + new demos while the
+        state blob claims the new version. Refuse that with a raise so the
+        caller's compensation restores the previous active. Reads happen before
+        any write, so a refusal writes nothing; a real backend outage (any
+        non-KeyError/ValueError from get_dataset) propagates unchanged.
+        """
         prompts_name = self._versioned_dataset_name("prompts", agent_type, version)
         demos_name = self._versioned_dataset_name("demos", agent_type, version)
+
+        _absent = object()
+        prompts: Any = _absent
         try:
             df = await self._provider.datasets.get_dataset(name=prompts_name)
             prompts = self._extract_prompts_from_dataframe(df)
-            await self.save_prompts(agent_type, prompts)
         except (KeyError, ValueError):
-            logger.warning(
-                "No versioned prompts at v%d for %s/%s; active prompts left as-is",
-                version,
-                self._tenant_id,
-                agent_type,
-            )
+            pass
+        demos: Any = _absent
         try:
             df = await self._provider.datasets.get_dataset(name=demos_name)
             demos = df.to_dict(orient="records")
-            await self.save_demonstrations(agent_type, demos)
         except (KeyError, ValueError):
-            logger.debug(
-                "No versioned demos at v%d for %s/%s",
+            pass
+
+        prompts_present = prompts is not _absent
+        demos_present = demos is not _absent
+        if demos_present and not prompts_present:
+            raise ValueError(
+                f"Asymmetric versioned snapshot for {self._tenant_id}/{agent_type} "
+                f"v{version}: demos present but prompts absent; refusing to "
+                "restore a torn active slot (old prompts + new demos)"
+            )
+        if not prompts_present and not demos_present:
+            logger.warning(
+                "No versioned artefacts at v%d for %s/%s; active left as-is",
                 version,
                 self._tenant_id,
                 agent_type,
             )
+            return
+        if prompts_present:
+            await self.save_prompts(agent_type, prompts)
+        if demos_present:
+            await self.save_demonstrations(agent_type, demos)
 
     @staticmethod
     def _route_to_canary(request_seed: str, traffic_pct: int) -> bool:
