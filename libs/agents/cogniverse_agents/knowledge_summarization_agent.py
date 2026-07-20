@@ -370,12 +370,15 @@ class KnowledgeSummarizationAgent(
         used_rlm = False
         rlm_options = input.rlm
         if rlm_options is not None and rlm_options.should_use_rlm(len(block)):
+            # The RLM path raises on failure (no fallback), so a returned value
+            # is always a real synthesis.
             summary_text = await self._summarise_with_rlm(
                 input.title, block, rlm_options
             )
+            synthesis_ok = True
             used_rlm = True
         else:
-            summary_text = await asyncio.to_thread(
+            summary_text, synthesis_ok = await asyncio.to_thread(
                 self._summarise_without_rlm, input.title, block
             )
 
@@ -387,7 +390,10 @@ class KnowledgeSummarizationAgent(
 
         promoted = False
         promoted_id: Optional[str] = None
-        if input.promote:
+        # Never promote a failed synthesis: a fallback string would otherwise
+        # land in the shared org trunk and every tenant would federate against
+        # the polluted summary.
+        if input.promote and synthesis_ok:
             try:
                 promoted_id = self._promote_summary(
                     tenant_id=tenant_id,
@@ -423,6 +429,7 @@ class KnowledgeSummarizationAgent(
                 "actor_role": input.actor_role,
                 "actor_id": input.actor_id,
                 "kg_video_summary_count": len(kg_video_summaries),
+                "synthesis_ok": synthesis_ok,
             },
         )
 
@@ -449,7 +456,10 @@ class KnowledgeSummarizationAgent(
             if _matches_filters(r, subject_keys, kinds, since_dt, until_dt)
         ]
 
-    def _summarise_without_rlm(self, title: str, block: str) -> str:
+    def _summarise_without_rlm(self, title: str, block: str) -> tuple[str, bool]:
+        """Return ``(summary_text, synthesis_ok)``. On an LM failure the text is
+        a fallback so the read path is never a silent empty, but synthesis_ok is
+        False so the caller refuses to promote it to the shared org trunk."""
         try:
             # Bind the per-tenant LM the same way multi_document_synthesis does
             # (see multi_document_synthesis_agent._synthesise_without_rlm). Without
@@ -473,12 +483,13 @@ class KnowledgeSummarizationAgent(
             else:
                 # No per-agent LM override — use ambient dspy.settings.lm.
                 result = self._dspy_module(title=title, memories=block)
-            return getattr(result, "summary", "") or ""
+            return getattr(result, "summary", "") or "", True
         except Exception as exc:
             logger.warning("ksum: DSPy synth failed (%s); falling back to raw", exc)
             # Fallback: return the block itself, prefixed — caller still
-            # gets *some* artefact, never a silent empty.
-            return f"[FALLBACK: synthesis failed] {block[:1000]}"
+            # gets *some* artefact, never a silent empty — but flag the failure
+            # so it is NOT promoted to the org trunk.
+            return f"[FALLBACK: synthesis failed] {block[:1000]}", False
 
     async def _summarise_with_rlm(
         self, title: str, block: str, rlm_options: RLMOptions

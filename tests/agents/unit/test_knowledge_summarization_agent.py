@@ -269,6 +269,34 @@ class TestPromotion:
         assert out.promoted_memory_id is not None
         assert promoted["acme:_org_trunk"] == [out.promoted_memory_id]
 
+    async def test_failed_synthesis_not_promoted_to_org_trunk(self):
+        """An admin allowed to promote must NOT promote a failed synthesis: the
+        fallback text would otherwise pollute the shared org trunk that every
+        tenant federates against."""
+        rows = [_row("m1", "fact")]
+        agent, promoted = _build({"acme:production": rows})
+        # Synthesis fails — _summarise_without_rlm returns the fallback marker
+        # and flags synthesis_ok=False.
+        agent._dspy_module = MagicMock(side_effect=RuntimeError("LM down"))
+
+        out = await agent._process_impl(
+            KnowledgeSummarizationInput(
+                tenant_id="acme:production",
+                subject_keys=["policy:refunds"],
+                title="should_not_promote_fallback",
+                promote=True,
+                actor_role="tenant_admin",
+                actor_id="tadm",
+            )
+        )
+
+        assert out.summary.startswith("[FALLBACK: synthesis failed]")
+        assert out.metadata["synthesis_ok"] is False
+        assert out.promoted_to_org_trunk is False
+        assert out.promoted_memory_id is None
+        # The org trunk got nothing — no pollution.
+        assert promoted.get("acme:_org_trunk", []) == []
+
     async def test_promote_false_skips_promotion_entirely(self):
         rows = [_row("m1", "fact")]
         agent, promoted = _build({"acme:production": rows})
