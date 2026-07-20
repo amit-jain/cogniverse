@@ -15,10 +15,13 @@ trivial lifecycle/health methods stay sync.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -165,6 +168,51 @@ class WorkflowStore(ABC):
     @abstractmethod
     async def load_query_patterns(self, tenant_id: str) -> Dict[str, List[str]]:
         """Load the tenant's query-type → patterns mapping ({} if none)."""
+
+    # ==================== Atomic corpus write ====================
+
+    async def save_learning_corpus(
+        self,
+        tenant_id: str,
+        executions: List[WorkflowExecution],
+        profiles: List[AgentPerformance],
+        patterns: Dict[str, List[str]],
+    ) -> None:
+        """Write the three learning corpora as one unit.
+
+        The three saves share no transaction, so a mid-sequence outage would
+        otherwise leave, e.g., executions saved without matching profiles — and
+        the orchestrator reads back execution demos referencing agents whose
+        profiles are missing. Two guards: executions (the only corpus that
+        references agents) is written LAST, so a failure before it never
+        persists a dangling reference; and on any failure the previous corpus is
+        restored so a partial write is undone.
+        """
+        prev_profiles = await self.load_agent_profiles(tenant_id)
+        prev_patterns = await self.load_query_patterns(tenant_id)
+        prev_executions = await self.load_executions(tenant_id)
+        try:
+            await self.save_agent_profiles(tenant_id, profiles)
+            if patterns:
+                await self.save_query_patterns(tenant_id, patterns)
+            await self.save_executions(tenant_id, executions)
+        except Exception:
+            try:
+                await self.save_agent_profiles(tenant_id, prev_profiles)
+                if prev_patterns:
+                    await self.save_query_patterns(tenant_id, prev_patterns)
+                await self.save_executions(tenant_id, prev_executions)
+                logger.warning(
+                    "Learning-corpus save failed for %s; restored previous corpus",
+                    tenant_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Learning-corpus save failed for %s and the restore also "
+                    "failed; the corpus may be inconsistent",
+                    tenant_id,
+                )
+            raise
 
     # ==================== Workflow Templates ====================
 

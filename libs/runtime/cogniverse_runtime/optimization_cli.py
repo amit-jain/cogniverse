@@ -1921,15 +1921,16 @@ async def run_workflow_optimization(
         for execution in intelligence.workflow_history
         if _agents_live(execution.agent_sequence)
     ]
-    await store.save_executions(tenant_id, live_executions)
-
     profiles = list(intelligence.agent_performance.values())
-    await store.save_agent_profiles(tenant_id, profiles)
+    patterns = (
+        dict(intelligence.query_type_patterns)
+        if intelligence.query_type_patterns
+        else {}
+    )
 
-    if intelligence.query_type_patterns:
-        await store.save_query_patterns(
-            tenant_id, dict(intelligence.query_type_patterns)
-        )
+    # One unit: a mid-sequence outage otherwise persists executions without the
+    # matching profiles the orchestrator reads them against.
+    await store.save_learning_corpus(tenant_id, live_executions, profiles, patterns)
 
     logger.info("Workflow optimization complete")
     return {

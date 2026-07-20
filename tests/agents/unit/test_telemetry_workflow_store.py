@@ -174,3 +174,63 @@ async def test_health_and_stats(store):
     stats = store.get_stats()
     assert stats["backend"] == "telemetry"
     assert stats["tenants_cached"] == 0  # fixture overrides _am, never populating cache
+
+
+def _profile(name: str) -> AgentPerformance:
+    return AgentPerformance(
+        agent_name=name,
+        total_executions=5,
+        successful_executions=4,
+        average_execution_time=1.1,
+        average_confidence=0.8,
+        error_rate=0.2,
+        preferred_query_types=["search"],
+        performance_trend="stable",
+        last_updated=datetime(2026, 5, 26, 9, 30, 0),
+    )
+
+
+class TestSaveLearningCorpus:
+    """save_learning_corpus writes the three corpora as one unit: executions
+    (the only corpus referencing agents) go last, and any write failure restores
+    the previous corpus so the orchestrator never reads a torn learning set."""
+
+    async def test_write_failure_restores_previous_corpus(self, store):
+        tenant = "acme:prod"
+        # Seed a prior corpus.
+        await store.save_learning_corpus(
+            tenant,
+            [_execution(workflow_id="old")],
+            [_profile("agent_a")],
+            {"s": ["q0"]},
+        )
+
+        # Fail only the FORWARD executions save (the last write); the restore's
+        # executions save succeeds.
+        real_save_exec = store.save_executions
+        calls = {"n": 0}
+
+        async def failing_then_ok(tenant_id, executions):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("phoenix down on executions save")
+            return await real_save_exec(tenant_id, executions)
+
+        store.save_executions = failing_then_ok
+        try:
+            with pytest.raises(ConnectionError):
+                await store.save_learning_corpus(
+                    tenant,
+                    [_execution(workflow_id="new")],
+                    [_profile("agent_b")],
+                    {"s": ["q1"]},
+                )
+        finally:
+            store.save_executions = real_save_exec
+
+        # The whole corpus is back at the prior state — no torn write.
+        assert [e.workflow_id for e in await store.load_executions(tenant)] == ["old"]
+        assert [p.agent_name for p in await store.load_agent_profiles(tenant)] == [
+            "agent_a"
+        ]
+        assert await store.load_query_patterns(tenant) == {"s": ["q0"]}
