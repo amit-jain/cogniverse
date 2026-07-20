@@ -44,19 +44,30 @@ class _StubGraphManager:
 
     def get_neighbors(self, node, depth):
         self.calls["neighbors"] = {"node": node, "depth": depth}
+        # Real shape: out_edges/in_edges are raw _visit_edges rows keyed
+        # source_node_id/target_node_id/relation — the route passes them through
+        # unchanged, so a client reads those keys, never "target"/"relation".
         return {
             "node_id": "kg_node_robot",
             "name": node,
-            "out_edges": [{"target": "Arm", "relation": "has_part"}],
+            "out_edges": [
+                {
+                    "source_node_id": "kg_node_robot",
+                    "target_node_id": "kg_node_arm",
+                    "relation": "has_part",
+                }
+            ],
             "in_edges": [],
         }
 
     def get_stats(self):
         self.calls["stats"] = True
+        # Real shape: top_nodes entries are {"node_id", "degree"} (graph_manager
+        # get_stats), never {"name", "degree"}.
         return {
             "node_count": 12,
             "edge_count": 30,
-            "top_nodes": [{"name": "Robot", "degree": 5}],
+            "top_nodes": [{"node_id": "kg_node_robot", "degree": 5}],
         }
 
 
@@ -165,7 +176,13 @@ async def test_neighbors_serializes_response_model(graph_env):
     body = resp.json()
     assert body["node_id"] == "kg_node_robot"
     assert body["name"] == "Robot"
-    assert body["out_edges"] == [{"target": "Arm", "relation": "has_part"}]
+    assert body["out_edges"] == [
+        {
+            "source_node_id": "kg_node_robot",
+            "target_node_id": "kg_node_arm",
+            "relation": "has_part",
+        }
+    ]
     assert body["in_edges"] == []
     assert stub.calls["neighbors"] == {"node": "Robot", "depth": 2}
 
@@ -180,4 +197,4 @@ async def test_stats_echoes_canonical_tenant_and_counts(graph_env):
     assert body["tenant_id"] == "acme:acme"
     assert body["node_count"] == 12
     assert body["edge_count"] == 30
-    assert body["top_nodes"] == [{"name": "Robot", "degree": 5}]
+    assert body["top_nodes"] == [{"node_id": "kg_node_robot", "degree": 5}]
