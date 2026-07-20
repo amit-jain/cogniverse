@@ -487,6 +487,16 @@ class WorkflowStore(ABC):
     @abstractmethod
     async def load_query_patterns(self, tenant_id: str) -> Dict[str, List[str]]: ...
 
+    # Concrete template method (not abstract): writes the three corpora as one
+    # unit — executions last, previous corpus restored on any failure.
+    async def save_learning_corpus(
+        self,
+        tenant_id: str,
+        executions: List[WorkflowExecution],
+        profiles: List[AgentPerformance],
+        patterns: Dict[str, List[str]],
+    ) -> None: ...
+
     @abstractmethod
     async def save_template(self, tenant_id: str, template: WorkflowTemplate) -> str: ...
     @abstractmethod
@@ -767,6 +777,10 @@ cogniverse_sdk/
 - `save_executions(tenant_id, executions)` / `load_executions(tenant_id)`
 - `save_agent_profiles(tenant_id, profiles)` / `load_agent_profiles(tenant_id)`
 - `save_query_patterns(tenant_id, patterns)` / `load_query_patterns(tenant_id)`
+- `save_learning_corpus(tenant_id, executions, profiles, patterns)`: concrete
+  template method — writes all three corpora as one unit (executions last;
+  previous corpus restored on any failure) so a mid-sequence outage never
+  leaves executions referencing missing profiles
 - `save_template(tenant_id, template)`: Create or update a template
 - `load_templates(tenant_id)`: Load all templates for tenant
 - `delete_template(tenant_id, template_id)`: Delete a template by id
