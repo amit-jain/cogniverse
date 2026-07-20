@@ -428,3 +428,129 @@ class TestTemporalReason:
             },
         )
         assert resp.status_code == 422
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestAuditExplain:
+    def test_builds_input_and_threads_factory(self, harness, monkeypatch):
+        from cogniverse_agents.audit_explanation_agent import AuditExplanationInput
+
+        payload = {"explanation": "because X", "trust_score": 0.8}
+        recorded = _install_recorder(
+            monkeypatch,
+            "cogniverse_agents.audit_explanation_agent.AuditExplanationAgent",
+            payload,
+        )
+
+        resp = harness.client.post(
+            f"/admin/tenants/{TENANT}/knowledge/audit/explain",
+            json={
+                "answer_memory_id": "mem-answer-1",
+                "include_trust": True,
+                "include_contradictions": False,
+                "max_chain_depth": 7,
+                "max_chain_nodes": 40,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == payload
+
+        inp = recorded["input"]
+        assert isinstance(inp, AuditExplanationInput)
+        assert inp.tenant_id == TENANT
+        assert inp.answer_memory_id == "mem-answer-1"
+        assert inp.include_contradictions is False
+        assert inp.max_chain_depth == 7
+        assert inp.max_chain_nodes == 40
+
+        assert set(recorded["init"]) == {"deps", "memory_manager_factory"}
+        assert recorded["init"]["deps"].tenant_id == TENANT
+        assert recorded["init"]["memory_manager_factory"] is harness.factory
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestCitationTrace:
+    def test_builds_input_and_injects_namespace(self, harness, monkeypatch):
+        from cogniverse_agents.citation_tracing_agent import CitationTracingInput
+
+        payload = {"primary_sources": ["mem-src-1"], "kg_primary_sources": []}
+        recorded = _install_recorder(
+            monkeypatch,
+            "cogniverse_agents.citation_tracing_agent.CitationTracingAgent",
+            payload,
+        )
+
+        resp = harness.client.post(
+            f"/admin/tenants/{TENANT}/knowledge/citations/trace",
+            json={
+                "memory_id": "mem-claim-1",
+                "claim_id": "edge-9",
+                "max_depth": 6,
+                "max_nodes": 30,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == payload
+
+        inp = recorded["input"]
+        assert isinstance(inp, CitationTracingInput)
+        assert inp.tenant_id == TENANT
+        assert inp.memory_id == "mem-claim-1"
+        assert inp.claim_id == "edge-9"
+        assert inp.max_depth == 6
+
+        assert set(recorded["init"]) == {"deps"}
+        # Memory injected under the citation namespace; graph bound.
+        assert (recorded["agent"], TENANT, "citation_tracing_agent") in harness.calls[
+            "inject"
+        ]
+        assert (recorded["agent"], TENANT) in harness.calls["bind"]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestKnowledgeSummarize:
+    def test_builds_input_and_threads_deps(self, harness, monkeypatch):
+        from cogniverse_agents.knowledge_summarization_agent import (
+            KnowledgeSummarizationInput,
+        )
+
+        payload = {"summary": "distilled", "promoted_to_org_trunk": False}
+        recorded = _install_recorder(
+            monkeypatch,
+            "cogniverse_agents.knowledge_summarization_agent.KnowledgeSummarizationAgent",
+            payload,
+        )
+
+        resp = harness.client.post(
+            f"/admin/tenants/{TENANT}/knowledge/summarize",
+            json={
+                "subject_keys": ["policy:refunds"],
+                "kinds": ["external_doc"],
+                "title": "Refund policy",
+                "actor_role": "tenant_admin",
+                "actor_id": "tadm",
+                "promote": False,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == payload
+
+        inp = recorded["input"]
+        assert isinstance(inp, KnowledgeSummarizationInput)
+        assert inp.tenant_id == TENANT
+        assert inp.subject_keys == ["policy:refunds"]
+        assert inp.kinds == ["external_doc"]
+
+        assert set(recorded["init"]) == {
+            "deps",
+            "memory_manager_factory",
+            "registry",
+            "config_manager",
+        }
+        assert recorded["init"]["deps"].tenant_id == TENANT
+        assert recorded["init"]["registry"] is harness.registry
+        assert recorded["init"]["config_manager"] is harness.cm
+        assert (recorded["agent"], TENANT) in harness.calls["bind"]
