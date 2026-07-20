@@ -317,3 +317,45 @@ class TestEdgeFilterCrashSafety:
         # excluded from [50,100] so the edge drops without a ValueError.
         out = agent.traverse("s", filters={"video_id": "v1", "ts_range": (50.0, 100.0)})
         assert out == {"nodes": [], "edges": []}
+
+
+class TestGraphSoleSourceFaultContract:
+    """When memory is disabled, the bound GraphManager is the SOLE knowledge
+    source — a Vespa-KG outage must propagate, not be swallowed to an empty
+    graph reported as success ('this subject has no connected knowledge')."""
+
+    @pytest.mark.asyncio
+    async def test_kg_outage_propagates_when_graph_is_sole_source(self):
+        agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id="acme"))
+        agent.is_memory_enabled = lambda: False  # type: ignore[assignment]
+        agent.memory_manager = None
+        agent._graph_manager = MagicMock()  # graph bound = sole source
+
+        def _boom(seed):
+            raise ConnectionError("vespa KG down")
+
+        agent.traverse = _boom  # type: ignore[assignment]
+
+        with pytest.raises(ConnectionError, match="vespa KG down"):
+            await agent._process_impl(
+                KGTraversalInput(tenant_id="acme", start_subject_key="a")
+            )
+
+    @pytest.mark.asyncio
+    async def test_kg_outage_swallowed_when_memory_is_available(self):
+        # Memory available -> the KG is a COMPLEMENT; its outage degrades to the
+        # mem0 results, not a failure.
+        agent = _build_agent([_node("n1", "a", label="A")])
+        agent._graph_manager = MagicMock()
+
+        def _boom(seed):
+            raise ConnectionError("vespa KG down")
+
+        agent.traverse = _boom  # type: ignore[assignment]
+
+        out = await agent._process_impl(
+            KGTraversalInput(tenant_id="acme", start_subject_key="a")
+        )
+        assert any(n.subject_key == "a" for n in out.nodes), (
+            "mem0 result must survive a KG-complement outage"
+        )

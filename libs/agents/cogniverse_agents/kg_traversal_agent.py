@@ -407,6 +407,12 @@ class KnowledgeGraphTraversalAgent(
             try:
                 kg = await asyncio.to_thread(self.traverse, seed_subject)
             except Exception as exc:
+                if not memory_available:
+                    # The KG is the SOLE source here — swallowing its outage
+                    # would return an empty graph reported as success ("no
+                    # connected knowledge"), indistinguishable from a real
+                    # absence. Surface it so the caller sees the failure.
+                    raise
                 logger.debug(
                     "Vespa-KG complement skipped for %s: %s", seed_subject, exc
                 )
