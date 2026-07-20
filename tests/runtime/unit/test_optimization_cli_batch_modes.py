@@ -53,6 +53,9 @@ class FakeDatasetStore:
         self.created: List[Dict[str, Any]] = []
         self.deleted: List[str] = []
 
+    async def replace_dataset(self, name, data, metadata=None):
+        return await self.create_dataset(name=name, data=data, metadata=metadata)
+
     async def create_dataset(self, name, data, metadata=None):
         self.created.append({"name": name, "data": data, "metadata": metadata})
         return f"dataset-{len(self.created)}"

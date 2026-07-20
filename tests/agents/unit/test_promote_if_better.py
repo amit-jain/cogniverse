@@ -18,6 +18,9 @@ class FakeDatasetStore:
         self.append_calls: list[tuple[str, pd.DataFrame]] = []
         self.create_calls: list[str] = []  # ordered creation history
 
+    async def replace_dataset(self, name, data, metadata=None):
+        return await self.create_dataset(name=name, data=data, metadata=metadata)
+
     async def create_dataset(
         self,
         name: str,

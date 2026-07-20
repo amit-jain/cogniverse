@@ -18,6 +18,9 @@ class FakeStore:
         self.create_calls: list[str] = []
         self.append_calls: list[tuple[str, pd.DataFrame]] = []
 
+    async def replace_dataset(self, name, data, metadata=None):
+        return await self.create_dataset(name=name, data=data, metadata=metadata)
+
     async def create_dataset(
         self,
         name: str,
@@ -201,6 +204,9 @@ class _BlobStore:
     def __init__(self):
         self.datasets: dict[str, pd.DataFrame] = {}
         self.create_failures: list[Exception] = []
+
+    async def replace_dataset(self, name, data, metadata=None):
+        return await self.create_dataset(name=name, data=data, metadata=metadata)
 
     async def create_dataset(
         self,

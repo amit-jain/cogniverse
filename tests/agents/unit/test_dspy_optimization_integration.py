@@ -31,6 +31,9 @@ def _make_mock_telemetry_provider():
 
     provider.datasets = MagicMock()
     provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+    # save_prompts/save_demonstrations now replace (delete-then-create) on the
+    # stable name; the dict-backed fake overwrites on create, so reuse it.
+    provider.datasets.replace_dataset = provider.datasets.create_dataset
     provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
     return provider
 
@@ -274,6 +277,7 @@ class TestDSPyOptimizerIntegration:
         provider = Mock()
         provider.datasets = Mock()
         provider.datasets.create_dataset = AsyncMock(side_effect=create_dataset)
+        provider.datasets.replace_dataset = provider.datasets.create_dataset
         provider.datasets.append_to_dataset = AsyncMock(side_effect=append_to_dataset)
         provider.datasets.get_dataset = AsyncMock(side_effect=get_dataset)
 
