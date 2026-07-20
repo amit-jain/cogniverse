@@ -18,6 +18,7 @@ Enhanced with:
 import asyncio
 import logging
 import tempfile
+import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -733,6 +734,11 @@ class SearchAgent(
             "backend": backend_config_data,
         }
         self._shared_backend: Any = None
+        # SearchAgent is cross-tenant shared and _get_backend is reached from
+        # asyncio.to_thread OS threads; without this lock N concurrent
+        # first-touches each build a backend candidate via the registry and
+        # N-1 lose set_if_absent and are dropped with their Vespa session open.
+        self._shared_backend_lock = threading.Lock()
 
         logger.info(
             f"Search backend configured at {backend_url}:{backend_port} "
@@ -756,16 +762,21 @@ class SearchAgent(
 
     def _get_backend(self):
         """Get or create the shared search backend (lazy initialization)."""
-        if self._shared_backend is None:
-            registry = get_backend_registry()
-            self._shared_backend = registry.get_search_backend(
-                self._backend_type,
-                self._backend_config,
-                config_manager=self.config_manager,
-                schema_loader=self.schema_loader,
-            )
-            logger.info("Shared search backend initialized")
-        return self._shared_backend
+        if self._shared_backend is not None:
+            return self._shared_backend
+        with self._shared_backend_lock:
+            # Double-check: a concurrent thread may have built it while we
+            # waited, so only one registry build runs per instance.
+            if self._shared_backend is None:
+                registry = get_backend_registry()
+                self._shared_backend = registry.get_search_backend(
+                    self._backend_type,
+                    self._backend_config,
+                    config_manager=self.config_manager,
+                    schema_loader=self.schema_loader,
+                )
+                logger.info("Shared search backend initialized")
+            return self._shared_backend
 
     def _fuse_results_rrf(
         self,
