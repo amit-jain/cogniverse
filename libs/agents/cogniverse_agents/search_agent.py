@@ -1054,6 +1054,11 @@ class SearchAgent(
         from datetime import datetime, timezone
 
         def _epoch_ms(v: Any) -> int:
+            # bool is an int subclass — accepting it would coerce True/False to a
+            # 1970 epoch bound (gte matches everything, lte nothing) instead of
+            # failing loudly on a nonsensical date value.
+            if isinstance(v, bool):
+                raise ValueError(f"date filter value must not be a bool: {v!r}")
             if isinstance(v, (int, float)):
                 v = int(v)
                 # Coerce an epoch-SECONDS value to milliseconds. Stored
@@ -2160,8 +2165,10 @@ async def get_agent_card():
     """Agent card with enhanced capabilities"""
     return {
         "name": "SearchAgent",
+        # Absolute base URL (like the summarizer / detailed-report cards) so a
+        # remote A2A client can resolve it — a bare "/process" is unreachable.
         "description": "Type-safe multi-modal search with text, video, image, audio, and document support",
-        "url": "/process",
+        "url": "http://localhost:8002",
         "version": "4.0.0",
         "protocol": "a2a",
         "protocol_version": "0.2.1",
