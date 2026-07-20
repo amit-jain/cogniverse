@@ -167,6 +167,21 @@ async def test_one_malformed_item_does_not_poison_the_batch():
     assert batch.items[1].confidence == 0.7
 
 
+@pytest.mark.asyncio
+async def test_get_batch_raises_on_annotation_outage():
+    """Item approve/reject status lives ONLY in annotations. An annotation-
+    store outage must propagate (raise), not get swallowed — swallowing left
+    the frame empty and rebuilt every item at its span-time pending_review,
+    silently reverting all decisions so the workflow re-prompted resolved
+    items and sat in awaiting_approval."""
+    storage = _bare_storage()
+    storage.provider.annotations.get_annotations = AsyncMock(
+        side_effect=ConnectionError("annotations backend unreachable")
+    )
+    with pytest.raises(ConnectionError, match="annotations backend unreachable"):
+        await storage.get_batch("b1", spans_df=_batch_frame())
+
+
 def test_ctor_canonicalizes_tenant_for_project_and_provider():
     """Runtime writers register approval spans under the canonical tenant;
     a storage built with a raw id must register, name, and query the SAME
