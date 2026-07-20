@@ -252,16 +252,14 @@ async def test_deliver_to_telegram_404_is_skipped_not_raised(caplog):
     assert "Telegram delivery failed" not in caplog.text
 
 
-async def test_deliver_to_telegram_server_error_is_swallowed(caplog):
+async def test_deliver_to_telegram_server_error_raises(caplog):
     seen = []
-    with caplog.at_level(logging.INFO, logger="cogniverse_runtime.job_executor"):
-        # A 500 is swallowed (logged, not raised) so one failed delivery
-        # never aborts the surrounding job.
+    # A 500 is a real delivery failure: it must RAISE so run_job fails and Argo
+    # retries, not be swallowed so the job reports a message it never delivered.
+    with pytest.raises(httpx.HTTPStatusError):
         await _deliver_telegram_against(500, seen)
 
     assert seen == [{"tenant_id": "acme:acme", "message": "hello world"}]
-    assert "Telegram delivery failed" in caplog.text
-    assert "Messaging endpoint not available" not in caplog.text
 
 
 async def test_deliver_to_wiki_success_posts_answer_payload(caplog):
@@ -289,7 +287,7 @@ async def test_deliver_to_wiki_success_posts_answer_payload(caplog):
     assert "Delivered to wiki: slug=weekly-1" in caplog.text
 
 
-async def test_deliver_to_wiki_server_error_is_swallowed(caplog):
+async def test_deliver_to_wiki_server_error_raises():
     app = FastAPI()
 
     @app.post("/wiki/save")
@@ -297,16 +295,13 @@ async def test_deliver_to_wiki_server_error_is_swallowed(caplog):
         raise HTTPException(status_code=500)
 
     transport = httpx.ASGITransport(app=app)
-    with caplog.at_level(logging.INFO, logger="cogniverse_runtime.job_executor"):
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
-            # Swallowed — no raise.
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # A lost wiki save must raise so the job fails, not be swallowed so
+        # run_job reports "completed".
+        with pytest.raises(httpx.HTTPStatusError):
             await je._deliver_to_wiki(
                 client, "http://test", "acme:acme", "weekly news", "FINAL RESULT"
             )
-
-    assert "Wiki delivery failed" in caplog.text
 
 
 async def _call_agent_against(response_body: dict) -> str:

@@ -202,15 +202,12 @@ async def _deliver_to_wiki(
         "agent_name": "job_executor",
         "tenant_id": tenant_id,
     }
-    try:
-        response = await client.post(
-            f"{runtime_url}/wiki/save", json=payload, timeout=30.0
-        )
-        response.raise_for_status()
-        data = response.json()
-        logger.info("Delivered to wiki: slug=%s", data.get("slug"))
-    except Exception as exc:
-        logger.error("Wiki delivery failed: %s", exc)
+    response = await client.post(f"{runtime_url}/wiki/save", json=payload, timeout=30.0)
+    # A lost delivery must fail the job so Argo retries — not be swallowed so
+    # run_job reports "completed" for a save that never landed.
+    response.raise_for_status()
+    data = response.json()
+    logger.info("Delivered to wiki: slug=%s", data.get("slug"))
 
 
 async def _deliver_to_telegram(
@@ -221,17 +218,18 @@ async def _deliver_to_telegram(
 ) -> None:
     """Send content via the messaging gateway."""
     payload = {"tenant_id": tenant_id, "message": content}
-    try:
-        response = await client.post(
-            f"{runtime_url}/admin/messaging/send", json=payload, timeout=30.0
-        )
-        if response.status_code == 404:
-            logger.warning("Messaging endpoint not available — skipping Telegram")
-            return
-        response.raise_for_status()
-        logger.info("Delivered to Telegram")
-    except Exception as exc:
-        logger.error("Telegram delivery failed: %s", exc)
+    response = await client.post(
+        f"{runtime_url}/admin/messaging/send", json=payload, timeout=30.0
+    )
+    if response.status_code == 404:
+        # The messaging gateway isn't deployed — an intentional no-op skip,
+        # not a delivery failure.
+        logger.warning("Messaging endpoint not available — skipping Telegram")
+        return
+    # Any other non-2xx is a real delivery failure — raise so the job fails and
+    # Argo retries, rather than reporting success for a lost message.
+    response.raise_for_status()
+    logger.info("Delivered to Telegram")
 
 
 async def _execute_action(
