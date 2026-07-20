@@ -292,6 +292,13 @@ def test_search_agent_card(search_client: TestClient) -> None:
     assert "multi_modal_search" in body["capabilities"]
 
 
+def test_search_agent_card_url_is_absolute(search_client: TestClient) -> None:
+    # A remote A2A client cannot resolve a bare "/process"; the card must
+    # advertise an absolute base like its summarizer / detailed-report siblings.
+    r = search_client.get("/agent.json")
+    assert r.json()["url"] == "http://localhost:8002"
+
+
 def test_summarizer_summarize_happy_path_envelope(
     summarizer_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

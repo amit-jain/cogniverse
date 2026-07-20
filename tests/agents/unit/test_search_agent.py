@@ -2324,3 +2324,21 @@ class TestEnsembleEncodeDedupe:
         )
         assert created_encoders == ["m_shared"]
         assert sorted(searched_profiles) == ["p_active", "p_shared_1", "p_shared_2"]
+
+
+def test_build_date_filter_rejects_bool():
+    """A truthy bool is an int subclass; accepting it would coerce True into a
+    1970 epoch bound (gte=1000 matches everything) instead of failing loudly on
+    a nonsensical date value. (False is falsy and skipped as 'no filter'.)"""
+    import pytest as _pytest
+
+    from cogniverse_agents.search_agent import SearchAgent
+
+    with _pytest.raises(ValueError, match="must not be a bool"):
+        SearchAgent._build_date_filter(True, None)
+    with _pytest.raises(ValueError, match="must not be a bool"):
+        SearchAgent._build_date_filter(None, True)
+
+    # Sane epoch-seconds value still coerces to milliseconds.
+    out = SearchAgent._build_date_filter(1_700_000_000, None)
+    assert out == {"creation_timestamp": {"gte": 1_700_000_000_000}}
