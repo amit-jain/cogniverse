@@ -34,6 +34,7 @@ Usage:
 
 import asyncio
 import contextvars
+import copy
 import logging
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
@@ -139,87 +140,105 @@ class AgentValidationError(Exception):
         self.validation_error = validation_error
 
 
+def _signature_predictor(attr: Any) -> Any:
+    """Return the signature-bearing predictor for a module attribute.
+
+    A ``dspy.Predict`` exposes ``.signature`` directly; a
+    ``dspy.ChainOfThought`` (and other Predict wrappers) keep the
+    underlying ``Predict`` — and thus the signature — on ``.predict``.
+    The overlay must reach that inner predictor, otherwise a
+    ChainOfThought-based agent (which is every optimization-served agent:
+    search_optimizer / summarizer / report_generator) silently ignores
+    the dispatched prompt.
+    """
+    if attr is None:
+        return None
+    if hasattr(attr, "signature"):
+        return attr
+    inner = getattr(attr, "predict", None)
+    if inner is not None and hasattr(inner, "signature"):
+        return inner
+    return None
+
+
 class _DispatchedPromptOverlayContext:
-    """Context manager that swaps a DSPy module's predictor instructions
-    for the duration of a single ``call_dspy`` invocation, then restores.
+    """Yields the DSPy module to invoke for a single ``call_dspy`` call.
+
+    When a dispatched prompt overlay is in scope (a per-request canary /
+    signature-variant selection), ``__enter__`` returns a per-call DEEP
+    COPY of the module with the overlay's instructions applied to the
+    matching predictors. The shared, dispatcher-cached module is never
+    mutated — so a request running concurrently on the same cached
+    instance cannot observe another request's (or tenant's) prompt, and
+    no restore is needed. When no overlay is in scope (the common case)
+    the module is returned unchanged: no copy, no cost.
 
     The overlay's ``prompts`` is a dict keyed by predictor attribute name
     on the module (e.g. ``"search_optimizer"`` matches
-    ``module.search_optimizer``). Values replace the matching predictor's
+    ``module.search_optimizer``); the value replaces that predictor's
     ``signature.instructions``. Keys that don't match any predictor are
-    silently skipped — older overlays that ship extra keys are forward
-    compatible.
-
-    The whole class no-ops gracefully when:
-      * no overlay is in scope (most calls);
-      * the agent doesn't expose ``get_dispatched_prompts`` (no mixin);
-      * the module has no predictors with the named attributes;
-      * mutating ``signature.instructions`` raises (defensive — we'd
-        rather run with the original prompt than crash the request).
+    silently skipped. The whole thing degrades to the base module when
+    the agent exposes no ``get_dispatched_prompts`` hook, the getter
+    raises, no prompts are in scope, or the clone fails — always
+    preferring the active prompt over a crash.
     """
 
     def __init__(self, agent: Any, module: Any) -> None:
         self._agent = agent
         self._module = module
-        self._restore: Dict[str, Any] = {}
-        self._prompts: Dict[str, str] = {}
 
     def __enter__(self):
         getter = getattr(self._agent, "get_dispatched_prompts", None)
         if not callable(getter):
-            return self
+            return self._module
         try:
             prompts = getter()
         except Exception as exc:  # noqa: BLE001 — defensive
             logger.debug("get_dispatched_prompts raised; ignoring: %s", exc)
-            return self
+            return self._module
         if not isinstance(prompts, dict) or not prompts:
-            return self
+            return self._module
 
-        self._prompts = prompts
-        for name, value in prompts.items():
-            predictor = getattr(self._module, name, None)
-            if predictor is None or not hasattr(predictor, "signature"):
-                continue
-            sig = predictor.signature
-            try:
-                self._restore[name] = sig.instructions
-                # Newer DSPy returns a new Signature class from
-                # with_instructions; fall back to in-place mutation when
-                # the helper isn't available.
-                if hasattr(sig, "with_instructions"):
-                    predictor.signature = sig.with_instructions(value)
-                else:
-                    sig.instructions = value
-            except Exception as exc:  # noqa: BLE001 — defensive
-                logger.debug("Failed to apply prompt overlay for %s: %s", name, exc)
-                # Drop the half-applied entry so __exit__ doesn't try to
-                # restore something we never overwrote.
-                self._restore.pop(name, None)
-
-        if self._restore:
-            logger.debug(
-                "Applied dispatched prompt overlay to %d predictor(s): %s",
-                len(self._restore),
-                sorted(self._restore),
+        try:
+            local = (
+                self._module.deepcopy()
+                if hasattr(self._module, "deepcopy")
+                else copy.deepcopy(self._module)
             )
-        return self
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning(
+                "prompt overlay: module clone failed, serving active prompt: %s",
+                exc,
+            )
+            return self._module
 
-    def __exit__(self, exc_type, exc, tb):
-        for name, original in self._restore.items():
-            predictor = getattr(self._module, name, None)
+        applied = []
+        for name, value in prompts.items():
+            predictor = _signature_predictor(getattr(local, name, None))
             if predictor is None:
                 continue
             try:
                 sig = predictor.signature
+                # Newer DSPy returns a new Signature class from
+                # with_instructions; fall back to in-place mutation when
+                # the helper isn't available. Safe either way — we mutate
+                # the clone, never the shared module.
                 if hasattr(sig, "with_instructions"):
-                    predictor.signature = sig.with_instructions(original)
+                    predictor.signature = sig.with_instructions(value)
                 else:
-                    sig.instructions = original
+                    sig.instructions = value
+                applied.append(name)
             except Exception as exc:  # noqa: BLE001 — defensive
-                logger.warning(
-                    "Failed to restore predictor %s after overlay: %s", name, exc
-                )
+                logger.debug("Failed to apply prompt overlay for %s: %s", name, exc)
+
+        if applied:
+            logger.debug(
+                "Applied dispatched prompt overlay to predictor(s): %s",
+                sorted(applied),
+            )
+        return local
+
+    def __exit__(self, exc_type, exc, tb):
         return False
 
 
@@ -453,12 +472,15 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         """
         import asyncio
 
-        with self._adapter_lm_context(), _dispatched_prompt_overlay(self, module):
+        with (
+            self._adapter_lm_context(),
+            _dispatched_prompt_overlay(self, module) as call_module,
+        ):
             if _PROGRESS_QUEUE.get() is not None:
                 import dspy
 
                 streaming_fn = dspy.streamify(
-                    module,
+                    call_module,
                     stream_listeners=[
                         dspy.streaming.StreamListener(output_field),
                     ],
@@ -475,13 +497,13 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                             "token", str(chunk), data={"accumulated": accumulated}
                         )
                 if prediction is None:
-                    prediction = await asyncio.to_thread(module, **kwargs)
+                    prediction = await asyncio.to_thread(call_module, **kwargs)
                 return prediction
             else:
                 # module(...) not module.forward(...): forward bypasses DSPy's
                 # __call__ instrumentation (callbacks, usage tracking, history)
                 # and warns on every dispatch.
-                return await asyncio.to_thread(module, **kwargs)
+                return await asyncio.to_thread(call_module, **kwargs)
 
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:
         """
