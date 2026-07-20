@@ -95,3 +95,68 @@ async def test_all_targets_present_writes_all_without_warnings(caplog):
 
     backend.update_document_fields.assert_called_once()
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def _two_segment_results():
+    return {
+        "__schema_name__": "video_colpali_acme",
+        "video_id": "vid",
+        "fed_documents": [
+            {"schema": "video_colpali_acme", "doc_id": "vid_seg_0", "segment_id": "0"},
+            {"schema": "video_colpali_acme", "doc_id": "vid_seg_1", "segment_id": "1"},
+        ],
+    }
+
+
+_BACKREFS = {
+    "0": {"entity_ids": ["e1"], "relation_ids": [], "claim_ids": []},
+    "1": {"entity_ids": ["e2"], "relation_ids": ["r1"], "claim_ids": []},
+}
+
+
+@pytest.mark.asyncio
+async def test_total_backend_outage_raises_not_silent_success():
+    """When EVERY back-ref update fails (a Vespa outage during the back-ref
+    phase), the writer must raise — otherwise the KG nodes/edges persist while
+    no content doc receives its entity/relation/claim ids and the ingest is
+    recorded successful, indistinguishable from a clean run."""
+    backend = MagicMock()
+    backend.get_document_fields.side_effect = lambda doc_id, **k: {}  # target exists
+    backend.update_document_fields.side_effect = ConnectionError("vespa down")
+
+    with pytest.raises(RuntimeError, match="all 2 content back-ref updates failed"):
+        await _write_backrefs_to_content(
+            backrefs_by_segment=_BACKREFS,
+            processing_results=_two_segment_results(),
+            source_doc_id="vid",
+            tenant_id="acme:acme",
+            config_manager=_config_manager(),
+            backend=backend,
+        )
+
+
+@pytest.mark.asyncio
+async def test_partial_backend_failure_is_tolerated():
+    """One doc's failure must not abort the rest — a partial outage still
+    persists the back-refs it can and does NOT raise."""
+    backend = MagicMock()
+    backend.get_document_fields.side_effect = lambda doc_id, **k: {}
+
+    def _update(doc_id, *a, **k):
+        if doc_id.endswith("seg_1"):
+            raise ConnectionError("one target down")
+        return None
+
+    backend.update_document_fields.side_effect = _update
+
+    # Must NOT raise (only one of two failed).
+    await _write_backrefs_to_content(
+        backrefs_by_segment=_BACKREFS,
+        processing_results=_two_segment_results(),
+        source_doc_id="vid",
+        tenant_id="acme:acme",
+        config_manager=_config_manager(),
+        backend=backend,
+    )
+    updated = [c.args[0] for c in backend.update_document_fields.call_args_list]
+    assert "vid_seg_0" in updated, "the healthy doc must still get its back-refs"

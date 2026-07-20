@@ -1070,7 +1070,10 @@ async def _write_backrefs_to_content(
     backend._metadata_vespa_app()
     semaphore = asyncio.Semaphore(8)
 
-    async def _patch(segment_id: str, schema: str, doc_id: str) -> None:
+    async def _patch(segment_id: str, schema: str, doc_id: str) -> bool:
+        """Patch one content doc's back-refs. Returns True on a BACKEND failure
+        (so the caller can detect a total outage), False otherwise (patched, or
+        a legitimately-missing target)."""
         backrefs = backrefs_by_segment[segment_id]
         # Content schemas live under the ``content`` namespace (the embedding
         # feed writes ``id:content:<schema>::<id>``), not the schema name.
@@ -1100,7 +1103,7 @@ async def _write_backrefs_to_content(
                         doc_id,
                         segment_id,
                     )
-                    return
+                    return False
                 await asyncio.to_thread(
                     backend.update_document_fields,
                     doc_id,
@@ -1109,6 +1112,7 @@ async def _write_backrefs_to_content(
                     namespace="content",
                     create=False,
                 )
+                return False
             except Exception as exc:  # noqa: BLE001 — one doc's failure must
                 # not abort the rest of the ingest's back-refs.
                 logger.warning(
@@ -1117,14 +1121,25 @@ async def _write_backrefs_to_content(
                     doc_id,
                     exc,
                 )
+                return True
 
-    await asyncio.gather(
+    results = await asyncio.gather(
         *(
             _patch(segment_id, schema, doc_id)
             for segment_id in backrefs_by_segment
             for schema, doc_id in targets.get(segment_id, [])
         )
     )
+    # A single doc's failure is tolerated (partial back-refs), but a total
+    # outage — every patch failing — must surface: otherwise the KG nodes/edges
+    # persist while NO content doc receives its entity/relation/claim ids, and
+    # the ingest is recorded successful, indistinguishable from a clean run.
+    if results and all(results):
+        raise RuntimeError(
+            f"all {len(results)} content back-ref updates failed — the KG "
+            "nodes/edges were persisted but no segment received its "
+            "entity/relation/claim ids (backend outage during back-ref phase)"
+        )
 
 
 async def run_ingestion(
