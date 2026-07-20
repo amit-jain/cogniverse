@@ -43,8 +43,10 @@ async def test_query_annotated_spans_joins_annotations_without_crashing():
             {
                 "result.label": "good",
                 "result.score": 0.9,
-                "annotator_kind": "human",
-                "metadata": {"reviewer": "alice"},
+                # Phoenix stamps annotator_kind="HUMAN" (uppercase) on every
+                # add_annotation write — the real row shape, not "human".
+                "annotator_kind": "HUMAN",
+                "metadata": {"annotation_source": "human", "reviewer": "alice"},
             }
         ],
         index=["span-1"],  # only span-1 is annotated
@@ -60,7 +62,7 @@ async def test_query_annotated_spans_joins_annotations_without_crashing():
     assert len(result) == 1
     assert result[0]["span_id"] == "span-1"
     ann = result[0]["annotations"][0]
-    assert ann["annotator_kind"] == "human"
+    assert ann["annotator_kind"] == "HUMAN"
     assert ann["result"]["label"] == "good"
     assert ann["result"]["score"] == 0.9
 
@@ -84,8 +86,8 @@ async def test_query_annotated_spans_pushes_orchestration_name_filter_server_sid
             {
                 "result.label": "good",
                 "result.score": 0.9,
-                "annotator_kind": "human",
-                "metadata": {"reviewer": "alice"},
+                "annotator_kind": "HUMAN",
+                "metadata": {"annotation_source": "human", "reviewer": "alice"},
             }
         ],
         index=["span-1"],
@@ -119,15 +121,67 @@ async def test_query_annotated_spans_empty_when_no_annotations():
     assert result == []
 
 
-def test_ctor_canonicalizes_tenant_for_provider_scoping():
+@pytest.mark.asyncio
+async def test_only_human_reviewed_excludes_llm_auto_by_annotation_source():
+    """The human-vs-auto split rides annotation_source in metadata, NOT
+    annotator_kind (which add_annotation hardcodes "HUMAN" for both). A human
+    annotation must return under only_human_reviewed=True; an llm_auto one must
+    not — and both return when the flag is off. Under the old
+    ``annotator_kind == "human"`` filter the real-shape human row (uppercase
+    "HUMAN") matched nothing, so the read silently returned []."""
+    from datetime import datetime, timezone
+
+    spans_df = pd.DataFrame(
+        [
+            {"context.span_id": "span-h", "name": "orchestration"},
+            {"context.span_id": "span-a", "name": "orchestration"},
+        ]
+    )
+    annotations_df = pd.DataFrame(
+        [
+            {
+                "result.label": "good",
+                "result.score": 0.9,
+                "annotator_kind": "HUMAN",
+                "metadata": {"annotation_source": "human"},
+            },
+            {
+                "result.label": "ok",
+                "result.score": 0.7,
+                # add_annotation stamps "HUMAN" even for an auto annotation —
+                # only annotation_source separates them.
+                "annotator_kind": "HUMAN",
+                "metadata": {"annotation_source": "llm_auto"},
+            },
+        ],
+        index=["span-h", "span-a"],
+    )
+    storage = _bare_storage(spans_df, annotations_df)
+    now = datetime.now(timezone.utc)
+
+    human_only = await storage.query_annotated_spans(
+        start_time=now, end_time=now, only_human_reviewed=True
+    )
+    assert [r["span_id"] for r in human_only] == ["span-h"]
+
+    everything = await storage.query_annotated_spans(
+        start_time=now, end_time=now, only_human_reviewed=False
+    )
+    assert {r["span_id"] for r in everything} == {"span-h", "span-a"}
+
+
+def test_ctor_canonicalizes_tenant_and_resolves_canonical_project():
     """The runtime persists orchestration annotations under the canonical
-    tenant provider; a storage built with a raw id (e.g. a dashboard tab's
-    current_tenant) must resolve the SAME provider scope."""
+    tenant provider AND emits spans to the canonical per-tenant project; a
+    storage built with a raw id (e.g. a dashboard tab's current_tenant) must
+    resolve the SAME provider scope and query the canonical project, never a
+    literal "cogniverse"."""
     from unittest.mock import patch
 
     provider = MagicMock()
     mgr = MagicMock()
     mgr.get_provider.return_value = provider
+    mgr.config.get_project_name.return_value = "cogniverse-acme:acme"
 
     with patch(
         "cogniverse_agents.routing.orchestration_annotation_storage.get_telemetry_manager",
@@ -142,3 +196,5 @@ def test_ctor_canonicalizes_tenant_for_provider_scoping():
     assert storage.tenant_id == "acme:acme"
     mgr.get_provider.assert_called_once_with(tenant_id="acme:acme")
     assert storage.provider is provider
+    mgr.config.get_project_name.assert_called_once_with("acme:acme")
+    assert storage.project_name == "cogniverse-acme:acme"

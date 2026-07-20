@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
+from .annotation_storage import _meta_get
+
 if TYPE_CHECKING:
     from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
@@ -82,7 +84,7 @@ class OrchestrationAnnotationStorage:
     Stores annotations in telemetry backend using annotations API.
     """
 
-    def __init__(self, tenant_id: str, project_name: str = "cogniverse"):
+    def __init__(self, tenant_id: str, project_name: Optional[str] = None):
         """Initialize annotation storage"""
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
@@ -90,10 +92,15 @@ class OrchestrationAnnotationStorage:
         # provider; resolve the same scope regardless of spelling.
         tenant_id = canonical_tenant_id(tenant_id)
         self.tenant_id = tenant_id
-        self.project_name = project_name
 
         # Get telemetry provider for annotations
         telemetry_manager = get_telemetry_manager()
+        # Orchestration spans are emitted to the canonical per-tenant project;
+        # query that same project (never a literal "cogniverse") or real-traffic
+        # spans are invisible to the read path.
+        self.project_name = project_name or telemetry_manager.config.get_project_name(
+            tenant_id
+        )
         self.provider: "TelemetryProvider" = telemetry_manager.get_provider(
             tenant_id=tenant_id
         )
@@ -234,8 +241,13 @@ class OrchestrationAnnotationStorage:
 
             # Filter by annotation source
             if only_human_reviewed:
+                # add_annotation hardcodes Phoenix annotator_kind="HUMAN" on
+                # write, so it can't tell a human review from an llm_auto one;
+                # the real discriminator is annotation_source in the metadata.
                 evaluations = [
-                    e for e in evaluations if e.get("annotator_kind") == "human"
+                    e
+                    for e in evaluations
+                    if str(e.get("annotation_source", "")).lower() == "human"
                 ]
 
             # Filter by quality score
@@ -279,6 +291,10 @@ class OrchestrationAnnotationStorage:
         return [
             {
                 "annotator_kind": ann_row.get("annotator_kind", "unknown"),
+                # Phoenix returns metadata either nested or flattened to
+                # metadata.<key> columns — read the human/auto discriminator
+                # robustly via the sibling helper, same as routing storage.
+                "annotation_source": _meta_get(ann_row, "annotation_source", ""),
                 "result": {
                     "label": ann_row.get("result.label"),
                     "score": ann_row.get("result.score", 0.0),
