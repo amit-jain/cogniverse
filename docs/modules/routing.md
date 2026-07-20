@@ -267,7 +267,7 @@ config_dict = config.to_dict()
   deterministic fallback when GLiNER misses or is unavailable
 - Rule-based modality (`_classify_modality`) and generation-type (`_classify_generation_type`) classification
 - `SIMPLE_ROUTE_MAP[(modality, generation_type)]` direct dispatch for simple queries
-- Returns `GatewayOutput` with `complexity`, `modality`, `generation_type`, `routed_to`, `confidence`
+- Returns `GatewayOutput` with `complexity`, `modality`, `generation_type`, `routed_to`, `confidence`, `entity_extraction_failed` (True on a GLiNER outage)
 - No circuit breaker in this class — GLiNER failures are handled by falling through to the keyword classifier,
   not by a circuit-breaker/retry wrapper
 

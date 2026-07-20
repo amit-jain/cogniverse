@@ -434,6 +434,9 @@ class GatewayOutput(AgentOutput):
     routed_to: str      # Target agent name, or "orchestrator_agent"
     confidence: float   # min(modality_confidence, generation_confidence)
     reasoning: str      # Human-readable explanation of the routing decision
+    entity_extraction_failed: bool  # True on a GLiNER outage (keyword-only
+                                    # classification); distinguishes a sidecar
+                                    # outage from genuine low confidence
 ```
 
 #### 6 Complexity Signals

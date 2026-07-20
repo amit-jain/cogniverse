@@ -143,6 +143,15 @@ class GatewayOutput(AgentOutput):
         ..., ge=0.0, le=1.0, description="Classification confidence"
     )
     reasoning: str = Field(..., description="Brief explanation of routing decision")
+    entity_extraction_failed: bool = Field(
+        False,
+        description=(
+            "True when GLiNER entity extraction hit an outage; the query was "
+            "still routed (conservatively, to the orchestrator), but the "
+            "modality classification was keyword-only. Distinguishes a sidecar "
+            "outage from a genuinely low-confidence classification."
+        ),
+    )
 
 
 class GatewayDeps(AgentDeps):
@@ -373,15 +382,21 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
     def _extract_entities(
         self, query: str, gliner_threshold: Optional[float] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], bool]:
         """Run GLiNER entity prediction on the query.
+
+        Returns ``(entities, extraction_failed)``; ``extraction_failed`` is True
+        only on a prediction outage, so a sidecar failure is distinguishable
+        from a genuine no-entities result.
 
         ``gliner_threshold`` lets a request pass the value from its captured
         threshold snapshot; when omitted it falls back to the live deps value.
         """
         self._ensure_model_loaded()
+        # (entities, extraction_failed). A None model is a deliberate no-GLiNER
+        # config (keyword classification still applies), NOT an outage.
         if self._gliner_model is None:
-            return []
+            return [], False
         threshold = (
             gliner_threshold
             if gliner_threshold is not None
@@ -392,12 +407,14 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                 query, ALL_LABELS, threshold=threshold
             )
         except Exception as e:
+            # A prediction outage: surface it so the caller can flag the routing
+            # decision as sidecar-degraded rather than genuinely low-confidence.
             logger.error("GLiNER prediction failed: %s", e)
-            return []
+            return [], True
         return [
             {"text": e["text"], "label": e["label"], "score": e["score"]}
             for e in entities
-        ]
+        ], False
 
     def _keyword_modalities(self, query: str) -> Set[str]:
         """Modalities named by literal keyword in the query (model-independent)."""
@@ -670,7 +687,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         # and would otherwise run on the event loop thread — starving every
         # other request including /health/live (readiness failure, pod
         # marked NotReady under concurrent orchestration load).
-        entities = await asyncio.to_thread(
+        entities, entity_extraction_failed = await asyncio.to_thread(
             self._extract_entities, input.query, thresholds.gliner
         )
         modality, modality_confidence = self._classify_modality(entities, input.query)
@@ -743,6 +760,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             routed_to=routed_to,
             confidence=overall_confidence,
             reasoning=reasoning,
+            entity_extraction_failed=entity_extraction_failed,
         )
 
     def _build_complex_reasoning(
