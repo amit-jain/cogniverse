@@ -464,6 +464,13 @@ async def run_annotation_feedback_cycle(
                         "recompile" if recompile else "thresholds_refresh"
                     )
                     last_optimization[agent_type] = now.isoformat()
+                    # The Argo submit already spawned an optimization pod, so
+                    # persist this agent's cooldown NOW — not only in the
+                    # finally. If a later agent or the finally-save fails against
+                    # the config store, an already-submitted agent must not be
+                    # re-submitted (a duplicate pod) on the next tick.
+                    state["last_optimization_at"] = last_optimization
+                    _save_loop_state(config_manager, tenant_id, state)
                     if mode == "gateway-thresholds":
                         thresholds_refresh_submitted = True
                 else:

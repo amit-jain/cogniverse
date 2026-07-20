@@ -574,3 +574,50 @@ async def test_argo_submit_failure_counts_as_cycle_failure():
     assert result["agents"]["search"]["action"] == "submit_failed"
     assert result.get("errored_agents") == ["search"]
     assert _cycle_failed(result) is True
+
+
+@pytest.mark.asyncio
+async def test_cooldown_persists_when_final_save_fails():
+    """The Argo submit spawns an optimization pod; if the config store fails at
+    the FINAL (finally) save, the incremental per-submit save must already have
+    persisted the agent's cooldown so the next tick doesn't re-submit a
+    duplicate pod. Without the incremental save the only write is the finally
+    one, so a save-time outage loses every cooldown."""
+    from cogniverse_runtime.quality_monitor_cli import _load_loop_state
+
+    class _FailFinalSaveStore(InMemoryConfigStore):
+        def set_config(self, **kwargs):
+            # The finally-save is the only write carrying last_feedback_run_at;
+            # let the incremental cooldown saves through, fail the final one.
+            value = kwargs.get("config_value") or {}
+            if "last_feedback_run_at" in value:
+                raise ConnectionError("config store down at final save")
+            return super().set_config(**kwargs)
+
+    store = _FailFinalSaveStore()
+    store.initialize()
+    cm = ConfigManager(store=store)
+    _StorageStub.rows_by_type = {"search": _annotated_rows(50)}
+    argo = _ArgoCapture()
+    with patch(
+        "cogniverse_agents.routing.annotation_storage.AnnotationStorage",
+        _StorageStub,
+    ):
+        with pytest.raises(ConnectionError, match="down at final save"):
+            await run_annotation_feedback_cycle(
+                tenant_id="acme:acme",
+                argo_url="http://argo:2746",
+                argo_namespace="cogniverse",
+                automation_rules=_rules(),
+                config_manager=cm,
+                http_client=argo,
+                dataset_store=_DatasetStoreStub(),
+                now=NOW,
+            )
+
+    assert argo.posts, "the gate should have submitted before the save failed"
+    state = _load_loop_state(cm, "acme:acme")
+    assert state.get("last_optimization_at", {}).get("search") == NOW.isoformat(), (
+        "search's cooldown must survive a final-save outage via the incremental "
+        f"per-submit save; got {state!r}"
+    )
