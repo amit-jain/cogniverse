@@ -97,6 +97,11 @@ CANDIDATE_PROMPTS = {"system": "v1"}
 CANDIDATE_DEMOS = [{"input": "q", "output": "a"}]
 
 
+def _io(demos):
+    """Normalize loaded demonstrations to their input/output pairs."""
+    return [{"input": d["input"], "output": d["output"]} for d in demos or []]
+
+
 @pytest.mark.asyncio
 class TestPromptSaveFailure:
     async def test_no_demos_no_experiment_on_prompts_failure(self):
@@ -337,3 +342,147 @@ class TestTornCanaryPromotion:
         state = await mgr.get_artefact_state("search_agent")
         assert state["active"]["version"] == 1
         assert state["canary"]["version"] == 2
+
+
+@pytest.mark.asyncio
+class TestNonVersionedTornPromotion:
+    """The non-versioned promote path writes prompts then demos into the active
+    slot. A demos failure after prompts landed would leave new prompts + OLD
+    demos — a torn active. With a prior active, the pair must be restored."""
+
+    async def test_demos_failure_restores_previous_active_pair(self):
+        store = FaultInjectingStore(mode=_Mode.NORMAL)
+        mgr = ArtifactManager(FakeProvider(store), tenant_id="acme")
+
+        # Prior active: P0 + D0 at the un-versioned slot.
+        await mgr.save_prompts("x", {"system": "P0"})
+        await mgr.save_demonstrations("x", [{"input": "q0", "output": "a0"}])
+
+        # Fail only the FORWARD candidate demos save (first call); the
+        # compensation's demos restore (second call) succeeds.
+        real_save_demos = mgr.save_demonstrations
+        calls = {"n": 0}
+
+        async def failing_then_ok(agent_type, demos):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("simulated Phoenix 503 on demos save")
+            return await real_save_demos(agent_type, demos)
+
+        mgr.save_demonstrations = failing_then_ok
+        try:
+            with pytest.raises(ConnectionError):
+                await mgr.promote_if_better(
+                    agent_type="x",
+                    candidate_prompts={"system": "P_NEW"},
+                    candidate_demos=[{"input": "q1", "output": "a1"}],
+                    baseline_score=0.5,
+                    candidate_score=0.7,
+                    snapshot_before_promote=False,
+                )
+        finally:
+            mgr.save_demonstrations = real_save_demos
+
+        # Active restored to the previous pair — NOT P_NEW + D0.
+        assert await mgr.load_prompts("x") == {"system": "P0"}
+        assert _io(await mgr.load_demonstrations("x")) == [
+            {"input": "q0", "output": "a0"}
+        ]
+        # No experiment row for a rolled-back promotion.
+        assert _ds_experiments("x") not in store.created
+
+
+@pytest.mark.asyncio
+class TestFailedActivePromotionRetiresCanary:
+    """serve_versioned promotes a candidate to canary@100% then to active. If
+    the active promotion fails, the canary@100% must be retired — otherwise the
+    unpromoted candidate keeps serving ALL traffic via the canary overlay."""
+
+    async def test_failed_promote_canary_to_active_retires_canary(self):
+        store = FaultInjectingStore(mode=_Mode.NORMAL)
+        mgr = ArtifactManager(FakeProvider(store), tenant_id="acme")
+
+        # Prior active v1.
+        await mgr.save_prompts_versioned("x", {"system": "V1"})
+        await mgr.promote_to_canary("x", 1, traffic_pct=100)
+        await mgr.promote_canary_to_active("x")
+
+        async def failing_promote(agent_type):
+            raise ConnectionError("simulated Phoenix 503 on active promotion")
+
+        mgr.promote_canary_to_active = failing_promote
+
+        with pytest.raises(ConnectionError):
+            await mgr.promote_if_better(
+                agent_type="x",
+                candidate_prompts={"system": "V2"},
+                candidate_demos=None,
+                baseline_score=0.5,
+                candidate_score=0.7,
+                serve_versioned=True,
+                snapshot_before_promote=False,
+            )
+
+        # The canary@100% was retired — no unpromoted candidate serves all
+        # traffic via the overlay; active still points at the prior version.
+        state = await mgr.get_artefact_state("x")
+        assert state.get("canary") is None
+        assert state["active"]["version"] == 1
+
+
+@pytest.mark.asyncio
+class TestRollbackCompensation:
+    """rollback_to_version restores the active pair from a versioned snapshot;
+    a missing target version or a mid-rollback failure must never leave the
+    active slot torn (new prompts + old demos)."""
+
+    async def test_missing_target_version_leaves_active_untouched(self):
+        store = FaultInjectingStore(mode=_Mode.NORMAL)
+        mgr = ArtifactManager(FakeProvider(store), tenant_id="acme")
+
+        await mgr.save_prompts("x", {"system": "P0"})
+        await mgr.save_demonstrations("x", [{"input": "q0", "output": "a0"}])
+        await mgr.save_prompts_versioned("x", {"system": "P1"})  # -> v1, no demos v99
+
+        with pytest.raises(ValueError, match="demos version 99 not found"):
+            await mgr.rollback_to_version("x", prompts_version=1, demos_version=99)
+
+        # Both target datasets are resolved before ANY write, so the missing
+        # demos aborted before the prompts advanced.
+        assert await mgr.load_prompts("x") == {"system": "P0"}
+        assert _io(await mgr.load_demonstrations("x")) == [
+            {"input": "q0", "output": "a0"}
+        ]
+
+    async def test_demos_save_failure_restores_previous_active(self):
+        store = FaultInjectingStore(mode=_Mode.NORMAL)
+        mgr = ArtifactManager(FakeProvider(store), tenant_id="acme")
+
+        await mgr.save_prompts("x", {"system": "P0"})
+        await mgr.save_demonstrations("x", [{"input": "q0", "output": "a0"}])
+        await mgr.save_prompts_versioned("x", {"system": "P1"})  # -> v1
+        await mgr.save_demonstrations_versioned(
+            "x", [{"input": "q1", "output": "a1"}]
+        )  # -> v1
+
+        real_save_demos = mgr.save_demonstrations
+        calls = {"n": 0}
+
+        async def failing_then_ok(agent_type, demos):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("simulated 503 on demos save")
+            return await real_save_demos(agent_type, demos)
+
+        mgr.save_demonstrations = failing_then_ok
+        try:
+            with pytest.raises(ConnectionError):
+                await mgr.rollback_to_version("x", prompts_version=1, demos_version=1)
+        finally:
+            mgr.save_demonstrations = real_save_demos
+
+        # Restored to the previous active pair, not P1 + D0.
+        assert await mgr.load_prompts("x") == {"system": "P0"}
+        assert _io(await mgr.load_demonstrations("x")) == [
+            {"input": "q0", "output": "a0"}
+        ]
