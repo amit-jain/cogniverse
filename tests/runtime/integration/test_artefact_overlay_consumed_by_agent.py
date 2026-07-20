@@ -176,347 +176,89 @@ class TestEndToEndWire:
         assert agent.get_dispatched_prompts() == {"system": "FROM_RESOLVED_CANARY"}
 
 
-class TestPromptOverlayShapesDSPyCall:
-    """the overlay must change what the LM actually sees, not just
-    what's stored on the agent. Without this assertion, the entire
-    canary + variant pipeline is a write-only black hole even after
-    the wire reaches the agent.
+class TestOverlayIsolationOnRealModule:
+    """The overlay must run on a per-call COPY of the real served module and
+    never mutate the shared, dispatcher-cached instance — otherwise a canary
+    prompt bleeds across concurrent requests/tenants and pins the module.
 
-    Every optimization-served agent (search_optimizer / summarizer /
-    report_generator) is a ``dspy.ChainOfThought``, which keeps its
-    signature on ``.predict.signature`` — NOT ``.signature``. A test that
-    only exercised a bare ``dspy.Predict`` (which does expose
-    ``.signature``) would pass while the overlay silently no-ops for
-    every real agent, so the ChainOfThought shape is covered explicitly
-    below.
+    These drive the REAL ``SearchOptimizationModule`` (the exact object the
+    search agent hands to ``call_dspy``), not a stand-in: a fabricated module
+    can drift from production exactly the way the ChainOfThought bug did. The
+    end-to-end proof that a canary prompt reaches the served output lives in
+    ``tests/agents/integration/test_canary_overlay_e2e.py`` (real agent, real
+    dispatch, real LM); this pins the concurrency isolation that a sequential
+    e2e can't.
     """
 
-    @pytest.mark.asyncio
-    async def test_overlay_applies_to_chain_of_thought_predictor(self):
-        """Production shape: a ChainOfThought predictor. The overlay must
-        reach ``.predict.signature`` and land in the LM prompt, and the
-        SHARED module must never be mutated (a per-call clone carries the
-        overlay).
-        """
-        import dspy
-
-        from cogniverse_core.agents.base import (
-            AgentBase,
-            AgentDeps,
-            AgentInput,
-            AgentOutput,
-            _signature_predictor,
-        )
-
-        class _Sig(dspy.Signature):
-            """ORIGINAL_INSTRUCTIONS"""
-
-            query: str = dspy.InputField()
-            answer: str = dspy.OutputField()
-
-        class _Module(dspy.Module):
-            def __init__(self):
-                super().__init__()
-                # ChainOfThought — the shape every served agent uses.
-                self.search_optimizer = dspy.ChainOfThought(_Sig)
-
-            def forward(self, query: str):
-                return self.search_optimizer(query=query)
-
-        class _RecordingLM(dspy.LM):
-            def __init__(self):
-                super().__init__(model="stub/test", api_base="none", api_key="none")
-                self.captured_messages: list = []
-
-            def __call__(self, prompt=None, messages=None, **kwargs):
-                self.captured_messages.append(
-                    messages if messages is not None else prompt
-                )
-                return [
-                    "[[ ## reasoning ## ]]\nok\n[[ ## answer ## ]]\n"
-                    "stub_answer\n[[ ## completed ## ]]"
-                ]
-
-        class _NullDeps(AgentDeps):
-            pass
-
-        class _NullInput(AgentInput):
-            pass
-
-        class _NullOutput(AgentOutput):
-            pass
-
-        class _OverlayAgent(AgentBase[_NullInput, _NullOutput, _NullDeps]):
-            _input_type = _NullInput
-            _output_type = _NullOutput
-
-            async def _process_impl(self, input_data: _NullInput) -> _NullOutput:
-                raise NotImplementedError
-
-            def get_dispatched_prompts(self):
-                return self._overlay
-
-            def __init__(self, deps):
-                super().__init__(deps=deps)
-                self._overlay = None
-
-        agent = _OverlayAgent(deps=_NullDeps())
-        module = _Module()
-        lm = _RecordingLM()
-
-        # The ChainOfThought keeps instructions on .predict.signature.
-        assert (
-            _signature_predictor(module.search_optimizer).signature.instructions
-            == "ORIGINAL_INSTRUCTIONS"
-        )
-
-        agent._overlay = {"search_optimizer": "OVERLAY_INSTRUCTIONS_FOR_CANARY"}
-
-        with dspy.context(lm=lm, adapter=dspy.ChatAdapter()):
-            await agent.call_dspy(module, output_field="answer", query="hello")
-
-        assert lm.captured_messages, "fake LM was never called"
-        seen_text = ""
-        for msgs in lm.captured_messages:
-            if isinstance(msgs, list):
-                for m in msgs:
-                    seen_text += str(m.get("content", "") if isinstance(m, dict) else m)
-            else:
-                seen_text += str(msgs)
-        assert "OVERLAY_INSTRUCTIONS_FOR_CANARY" in seen_text, (
-            "overlay instructions did not reach the LM for a ChainOfThought "
-            "predictor — the overlay silently skipped it (the bug: it gated on "
-            f"hasattr(predictor, 'signature')). Captured head: {seen_text[:500]!r}"
-        )
-        assert "ORIGINAL_INSTRUCTIONS" not in seen_text
-
-        # The SHARED module must be untouched — the overlay ran on a clone,
-        # so there is nothing to "restore"; concurrent requests cannot leak.
-        assert (
-            _signature_predictor(module.search_optimizer).signature.instructions
-            == "ORIGINAL_INSTRUCTIONS"
-        ), "shared module was mutated by the overlay — cross-request bleed risk"
-
-    @pytest.mark.asyncio
-    async def test_overlay_applies_to_direct_predict(self):
-        """A bare dspy.Predict (has .signature directly) also works, on a
-        per-call clone that leaves the shared module untouched.
-        """
-        import dspy
-
-        from cogniverse_core.agents.base import (
-            AgentBase,
-            AgentDeps,
-            AgentInput,
-            AgentOutput,
-        )
-
-        class _Sig(dspy.Signature):
-            """ORIGINAL_INSTRUCTIONS"""
-
-            query: str = dspy.InputField()
-            answer: str = dspy.OutputField()
-
-        class _Module(dspy.Module):
-            def __init__(self):
-                super().__init__()
-                self.predictor = dspy.Predict(_Sig)
-
-            def forward(self, query: str):
-                return self.predictor(query=query)
-
-        class _RecordingLM(dspy.LM):
-            def __init__(self):
-                super().__init__(model="stub/test", api_base="none", api_key="none")
-                self.captured_messages: list = []
-
-            def __call__(self, prompt=None, messages=None, **kwargs):
-                self.captured_messages.append(
-                    messages if messages is not None else prompt
-                )
-                return ["[[ ## answer ## ]]\nstub_answer\n[[ ## completed ## ]]"]
-
-        class _D(AgentDeps):
-            pass
-
-        class _I(AgentInput):
-            pass
-
-        class _O(AgentOutput):
-            pass
-
-        class _A(AgentBase[_I, _O, _D]):
-            _input_type = _I
-            _output_type = _O
-
-            def __init__(self, deps):
-                super().__init__(deps=deps)
-                self._overlay = {"predictor": "OVERLAY_INSTRUCTIONS_FOR_CANARY"}
-
-            async def _process_impl(self, input_data):
-                raise NotImplementedError
-
-            def get_dispatched_prompts(self):
-                return self._overlay
-
-        agent = _A(deps=_D())
-        module = _Module()
-        lm = _RecordingLM()
-        with dspy.context(lm=lm, adapter=dspy.ChatAdapter()):
-            await agent.call_dspy(module, output_field="answer", query="hi")
-        seen = "".join(
-            str(m.get("content", "") if isinstance(m, dict) else m)
-            for msgs in lm.captured_messages
-            for m in (msgs if isinstance(msgs, list) else [msgs])
-        )
-        assert "OVERLAY_INSTRUCTIONS_FOR_CANARY" in seen
-        assert module.predictor.signature.instructions == "ORIGINAL_INSTRUCTIONS"
-
-    @pytest.mark.asyncio
-    async def test_concurrent_overlays_do_not_bleed_across_shared_module(self):
-        """Two requests running concurrently on ONE shared, dispatcher-cached
-        module — each with its own canary prompt — must each observe only its
-        own instructions, and the shared module's baseline must survive both.
-
-        A ``threading.Barrier(2)`` inside forward forces both worker threads to
-        be mid-invocation simultaneously, so a shared-state mutation would be
-        caught as cross-observation. On the pre-fix code the overlay both
-        no-ops for ChainOfThought AND mutates the shared module across the
-        await, so this assertion fails.
-        """
-        import asyncio
-        import contextvars
-        import threading
-
-        import dspy
-
-        from cogniverse_core.agents.base import (
-            AgentBase,
-            AgentDeps,
-            AgentInput,
-            AgentOutput,
-            _signature_predictor,
-        )
-
-        overlay_var = contextvars.ContextVar("test_overlay", default=None)
-        barrier = threading.Barrier(2)
-        sink: Dict[str, str] = {}
-
-        class _Sig(dspy.Signature):
-            """ORIGINAL"""
-
-            query: str = dspy.InputField()
-            answer: str = dspy.OutputField()
-
-        class _Module(dspy.Module):
-            def __init__(self):
-                super().__init__()
-                self.search_optimizer = dspy.ChainOfThought(_Sig)
-
-            def forward(self, query, tag):
-                # Runs in the to_thread worker. Both requests meet here, so a
-                # mutation of shared predictor state is observable as bleed.
-                barrier.wait(timeout=10)
-                sink[tag] = _signature_predictor(
-                    self.search_optimizer
-                ).signature.instructions
-                return dspy.Prediction(answer="stub")
-
-        class _D(AgentDeps):
-            pass
-
-        class _I(AgentInput):
-            pass
-
-        class _O(AgentOutput):
-            pass
-
-        class _A(AgentBase[_I, _O, _D]):
-            _input_type = _I
-            _output_type = _O
-
-            async def _process_impl(self, input_data):
-                raise NotImplementedError
-
-            def get_dispatched_prompts(self):
-                return overlay_var.get()
-
-        agent = _A(deps=_D())
-        module = _Module()  # ONE shared instance, as the dispatcher caches it
-
-        async def run(tag: str, prompt: str):
-            overlay_var.set({"search_optimizer": prompt})
-            await agent.call_dspy(module, output_field="answer", query="q", tag=tag)
-
-        await asyncio.gather(run("A", "PROMPT_ALPHA"), run("B", "PROMPT_BETA"))
-
-        assert sink["A"] == "PROMPT_ALPHA", f"request A saw {sink.get('A')!r}"
-        assert sink["B"] == "PROMPT_BETA", f"request B saw {sink.get('B')!r}"
-        assert (
-            _signature_predictor(module.search_optimizer).signature.instructions
-            == "ORIGINAL"
-        ), "shared module baseline was corrupted by a concurrent overlay call"
-
-    @pytest.mark.asyncio
-    async def test_no_overlay_leaves_predictor_untouched(self):
-        """When no overlay is in scope, call_dspy must not mutate anything."""
-        import dspy
-
-        from cogniverse_core.agents.base import (
-            AgentBase,
-            AgentDeps,
-            AgentInput,
-            AgentOutput,
-            _signature_predictor,
-        )
-
-        class _Sig(dspy.Signature):
-            """BASELINE"""
-
-            q: str = dspy.InputField()
-            a: str = dspy.OutputField()
-
-        class _Module(dspy.Module):
-            def __init__(self):
-                super().__init__()
-                self.p = dspy.ChainOfThought(_Sig)
-
-            def forward(self, q):
-                return self.p(q=q)
-
-        class _LM(dspy.LM):
-            def __init__(self):
-                super().__init__(model="stub/test", api_base="none", api_key="none")
-
-            def __call__(self, prompt=None, messages=None, **kwargs):
-                return [
-                    "[[ ## reasoning ## ]]\nok\n[[ ## a ## ]]\nx\n[[ ## completed ## ]]"
-                ]
-
-        class _D(AgentDeps):
-            pass
-
-        class _I(AgentInput):
-            pass
-
-        class _O(AgentOutput):
-            pass
-
-        class _A(AgentBase[_I, _O, _D]):
-            _input_type = _I
-            _output_type = _O
-
-            async def _process_impl(self, input_data):
-                raise NotImplementedError
-
+    def test_no_overlay_returns_the_shared_module_itself(self):
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import _dispatched_prompt_overlay
+
+        class _NoOverlayAgent:
             def get_dispatched_prompts(self):
                 return None
 
-        agent = _A(deps=_D())
-        module = _Module()
-        with dspy.context(lm=_LM(), adapter=dspy.ChatAdapter()):
-            await agent.call_dspy(module, output_field="a", q="x")
-        assert _signature_predictor(module.p).signature.instructions == "BASELINE"
+        module = SearchOptimizationModule()
+        with _dispatched_prompt_overlay(_NoOverlayAgent(), module) as call_module:
+            # No overlay in scope -> the shared module is used directly, no copy.
+            assert call_module is module
+
+    def test_concurrent_overlays_clone_and_leave_shared_module_untouched(self):
+        """Two requests, each with its own canary prompt, entering the overlay
+        on ONE shared real module simultaneously (a threading.Barrier forces
+        both inside their overlay at once, mirroring the two to_thread workers
+        call_dspy spawns) must each see ONLY their own prompt on their own
+        clone, and must leave the shared module's baseline intact.
+        """
+        import threading
+
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import (
+            _dispatched_prompt_overlay,
+            _signature_predictor,
+        )
+
+        module = SearchOptimizationModule()  # ONE shared instance
+        baseline = _signature_predictor(module.search_optimizer).signature.instructions
+
+        class _Agent:
+            def __init__(self, prompt):
+                self._prompt = prompt
+
+            def get_dispatched_prompts(self):
+                return {"search_optimizer": self._prompt}
+
+        barrier = threading.Barrier(2)
+        seen: Dict[str, str] = {}
+        errors: Dict[str, BaseException] = {}
+
+        def run(tag: str, prompt: str):
+            try:
+                with _dispatched_prompt_overlay(_Agent(prompt), module) as clone:
+                    # Both threads are inside their overlay at once here.
+                    barrier.wait(timeout=10)
+                    seen[tag] = _signature_predictor(
+                        clone.search_optimizer
+                    ).signature.instructions
+            except BaseException as exc:  # noqa: BLE001 — surface in the assert
+                errors[tag] = exc
+
+        threads = [
+            threading.Thread(target=run, args=("A", "PROMPT_ALPHA")),
+            threading.Thread(target=run, args=("B", "PROMPT_BETA")),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        assert not errors, f"overlay raised under concurrency: {errors}"
+        assert seen["A"] == "PROMPT_ALPHA", f"request A saw {seen.get('A')!r}"
+        assert seen["B"] == "PROMPT_BETA", f"request B saw {seen.get('B')!r}"
+        assert (
+            _signature_predictor(module.search_optimizer).signature.instructions
+            == baseline
+        ), "the shared real module was mutated by a concurrent overlay call"
 
 
 class TestServedAgentModulesAreOverlayReachable:
