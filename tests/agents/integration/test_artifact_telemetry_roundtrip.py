@@ -1372,3 +1372,40 @@ class TestArtifactAffectsBehavior:
             f"'explain quantum physics theory' should NOT match video template, "
             f"got: {no_match.name if no_match else None}"
         )
+
+
+class TestStableNameReplaceSemantics:
+    """Saving to a STABLE (un-versioned) artefact name must REPLACE, not append.
+    create_dataset appends a version on an existing name and get_dataset returns
+    the accumulated history, so every save grew the dataset: prompts leaked
+    REMOVED keys (last-wins only rescues OVERWRITTEN ones) and demonstrations
+    accumulated stale + duplicate rows, and a 'restore previous' re-appended
+    instead of reverting."""
+
+    @pytest.mark.asyncio
+    async def test_prompts_replace_removes_stale_keys(self, real_provider):
+        mgr = ArtifactManager(real_provider, tenant_id="replace-prompts")
+        await mgr.save_prompts("router", {"system": "v1", "extra": "keep"})
+        await mgr.save_prompts("router", {"system": "v2"})
+        loaded = await mgr.load_prompts("router")
+        assert loaded == {"system": "v2"}, (
+            "the second save must replace the first; the REMOVED 'extra' key "
+            f"leaked through the append path. got {loaded!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_demonstrations_replace_not_accumulate(self, real_provider):
+        mgr = ArtifactManager(real_provider, tenant_id="replace-demos")
+        await mgr.save_demonstrations(
+            "router",
+            [{"input": '{"q": "first"}', "output": '{"a": "1"}', "metadata": "{}"}],
+        )
+        await mgr.save_demonstrations(
+            "router",
+            [{"input": '{"q": "second"}', "output": '{"a": "2"}', "metadata": "{}"}],
+        )
+        loaded = await mgr.load_demonstrations("router")
+        assert len(loaded) == 1, (
+            f"stable-name save must replace; accumulated {loaded!r}"
+        )
+        assert loaded[0]["input"] == '{"q": "second"}'

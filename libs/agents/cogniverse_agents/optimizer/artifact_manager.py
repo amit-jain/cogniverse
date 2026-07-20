@@ -252,7 +252,11 @@ class ArtifactManager:
         rows = [{"name": k, "value": v} for k, v in prompts.items()]
         df = pd.DataFrame(rows)
         dataset_name = self._prompt_dataset_name(agent_type)
-        dataset_id = await self._provider.datasets.create_dataset(
+        # Replace (not append) on the stable name so the active prompts hold
+        # exactly the latest write: create_dataset appends a version and
+        # get_dataset would return the accumulated history (last-wins rescues
+        # the served value but the dataset grows unboundedly per save).
+        dataset_id = await self._provider.datasets.replace_dataset(
             name=dataset_name,
             data=df,
             metadata={
@@ -352,7 +356,11 @@ class ArtifactManager:
         """
         df = pd.DataFrame(demos)
         dataset_name = self._demo_dataset_name(agent_type)
-        dataset_id = await self._provider.datasets.create_dataset(
+        # Replace (not append) on the stable name: create_dataset appends, so
+        # demonstrations accumulated stale + duplicate rows every save (no key
+        # to dedup on read, unlike prompts) and a "restore previous" re-appended
+        # rather than reverting.
+        dataset_id = await self._provider.datasets.replace_dataset(
             name=dataset_name,
             data=df,
             metadata={
