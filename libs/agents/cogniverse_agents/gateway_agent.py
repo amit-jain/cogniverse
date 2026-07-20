@@ -626,6 +626,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         confidence: float,
         reasoning: str,
         thresholds: Optional["_RoutingThresholds"] = None,
+        entity_extraction_failed: bool = False,
     ) -> None:
         """Emit a cogniverse.routing span with the gateway's decision.
 
@@ -663,6 +664,12 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                         # production actually served.
                         "fast_path_confidence_threshold": snap.fast_path_confidence,
                         "gliner_threshold": snap.gliner,
+                        # A GLiNER outage routes with a low confidence that is
+                        # otherwise indistinguishable from a genuine
+                        # low-confidence classification. Record it so
+                        # RoutingEvaluator / QualityMonitor don't recalibrate
+                        # thresholds off entity-extraction failures.
+                        "entity_extraction_failed": entity_extraction_failed,
                     },
                     operation=OP_ROUTING,
                 )
@@ -750,6 +757,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             confidence=overall_confidence,
             reasoning=reasoning,
             thresholds=thresholds,
+            entity_extraction_failed=entity_extraction_failed,
         )
 
         return GatewayOutput(
