@@ -382,6 +382,34 @@ class TestProcessImpl:
         assert result.routed_to == "orchestrator_agent"
 
     @pytest.mark.asyncio
+    async def test_entity_extraction_outage_flags_and_routes_safely(
+        self, gateway_agent, mock_gliner_model
+    ):
+        """A GLiNER prediction outage still routes the query (conservatively, to
+        the orchestrator) but sets entity_extraction_failed, so a sidecar outage
+        is distinguishable from a genuine low-confidence classification."""
+        mock_gliner_model.predict_entities.side_effect = RuntimeError(
+            "GLiNER sidecar unreachable"
+        )
+        result = await gateway_agent._process_impl(
+            GatewayInput(query="please handle this request", tenant_id=TEST_TENANT_ID)
+        )
+        assert result.entity_extraction_failed is True
+        assert result.routed_to == "orchestrator_agent"
+
+    @pytest.mark.asyncio
+    async def test_successful_extraction_not_flagged(
+        self, gateway_agent, mock_gliner_model
+    ):
+        mock_gliner_model.predict_entities.return_value = [
+            {"text": "cooking videos", "label": "video_content", "score": 0.92},
+        ]
+        result = await gateway_agent._process_impl(
+            GatewayInput(query="Show me cooking videos", tenant_id=TEST_TENANT_ID)
+        )
+        assert result.entity_extraction_failed is False
+
+    @pytest.mark.asyncio
     async def test_keyword_modality_when_gliner_empty(
         self, gateway_agent, mock_gliner_model
     ):
