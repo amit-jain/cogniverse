@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -256,6 +257,15 @@ class AgentDispatcher:
         # removed in the build's finally, so the dict only holds active builds.
         self._gateway_build_inflight: Dict[str, "asyncio.Future[Any]"] = {}
         self._generic_build_inflight: Dict[Tuple[str, str], "asyncio.Future[Any]"] = {}
+        # _get_search_agent and _get_rail_chains run inside asyncio.to_thread OS
+        # threads (not on the loop), so their per-key cold-builds — each a
+        # heavyweight SearchAgent init or a Vespa get_config read — are guarded
+        # by threading.Locks. An asyncio Future guard (as the agent caches use)
+        # would not serialize concurrent thread first-touches.
+        self._search_agent_cache: Dict[str, Any] = {}
+        self._search_agent_cache_lock = threading.Lock()
+        self._rail_chains_cache: Dict[str, Optional[tuple]] = {}
+        self._rail_chains_cache_lock = threading.Lock()
         # Per-tenant OrchestratorAgent cache — the orchestration path (dispatch
         # and streaming) resolves through it so the workflow corpus is read once
         # per TTL, not per complex query.
@@ -1656,28 +1666,31 @@ class AgentDispatcher:
         re-instantiating on every dispatch."""
         from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
-        cache = getattr(self, "_search_agent_cache", None)
-        if cache is None:
-            cache = {}
-            self._search_agent_cache = cache
-        agent = cache.get(profile)
-        if agent is None:
-            # SearchAgentDeps.backend_url defaults to "http://localhost" if
-            # not set — that's the pod itself, never Vespa. Read the real
-            # backend URL from system config, same as the capability-based
-            # dispatch path above.
-            system_config = self._config_manager.get_system_config()
-            agent = SearchAgent(
-                deps=SearchAgentDeps(
-                    profile=profile,
-                    backend_url=system_config.backend_url,
-                    backend_port=system_config.backend_port,
-                ),
-                schema_loader=self._schema_loader,
-                config_manager=self._config_manager,
-            )
-            cache[profile] = agent
-        return agent
+        agent = self._search_agent_cache.get(profile)
+        if agent is not None:
+            return agent
+        with self._search_agent_cache_lock:
+            # Double-check: a concurrent thread may have built it while we
+            # waited on the lock — otherwise N first-touches each run the full
+            # SearchAgent build (encoder init + Vespa get_system_config read).
+            agent = self._search_agent_cache.get(profile)
+            if agent is None:
+                # SearchAgentDeps.backend_url defaults to "http://localhost" if
+                # not set — that's the pod itself, never Vespa. Read the real
+                # backend URL from system config, same as the capability-based
+                # dispatch path above.
+                system_config = self._config_manager.get_system_config()
+                agent = SearchAgent(
+                    deps=SearchAgentDeps(
+                        profile=profile,
+                        backend_url=system_config.backend_url,
+                        backend_port=system_config.backend_port,
+                    ),
+                    schema_loader=self._schema_loader,
+                    config_manager=self._config_manager,
+                )
+                self._search_agent_cache[profile] = agent
+            return agent
 
     async def _code_search(self, query: str, tenant_id: str) -> List[Dict[str, Any]]:
         """Code-context search for the coding agent via ``code_lateon_mv``.
@@ -1752,9 +1765,14 @@ class AgentDispatcher:
         the request front door — so internal agent-to-agent calls aren't
         gated.
         """
-        if not hasattr(self, "_rail_chains_cache"):
-            self._rail_chains_cache: Dict[str, Optional[tuple]] = {}
-        if tenant_id not in self._rail_chains_cache:
+        if tenant_id in self._rail_chains_cache:
+            return self._rail_chains_cache[tenant_id]
+        with self._rail_chains_cache_lock:
+            # Double-check under the lock — a concurrent to_thread first-touch
+            # for the same tenant otherwise re-runs the get_config Vespa read
+            # and chain compile.
+            if tenant_id in self._rail_chains_cache:
+                return self._rail_chains_cache[tenant_id]
             chains: Optional[tuple] = None
             try:
                 from cogniverse_core.agents.rails import RailsConfig
@@ -1771,7 +1789,7 @@ class AgentDispatcher:
                 )
                 chains = None
             self._rail_chains_cache[tenant_id] = chains
-        return self._rail_chains_cache[tenant_id]
+            return self._rail_chains_cache[tenant_id]
 
     async def _execute_gateway_task(
         self,
