@@ -5,12 +5,15 @@ Core package defines ONLY abstractions - zero knowledge of Phoenix, LangSmith, e
 Provider packages (cogniverse-telemetry-phoenix) implement these interfaces.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Generator, List, Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 class TraceStore(ABC):
@@ -227,6 +230,46 @@ class DatasetStore(ABC):
         raise NotImplementedError(
             f"{type(self).__name__} does not support delete_dataset"
         )
+
+    async def replace_dataset(
+        self, name: str, data: pd.DataFrame, metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Replace a dataset's contents: delete any existing dataset by this
+        name, then create it fresh.
+
+        ``create_dataset`` APPENDS a new version when the name already exists,
+        so repeated saves to a STABLE (un-versioned) name accumulate stale +
+        duplicate rows and ``get_dataset`` returns the whole history. For the
+        stable artefact names (active prompts / demonstrations) that must hold
+        exactly the latest write, use this so the read returns only the current
+        content and a "restore previous" truly reverts rather than re-appending.
+
+        Requires a backend that supports ``delete_dataset``. The previous
+        contents are pre-read and restored if the create fails after the delete
+        committed, so a torn replace never destroys the prior dataset (mirrors
+        ArtifactManager.save_blob's last-write-wins compensation).
+
+        Returns:
+            The new dataset identifier.
+        """
+        try:
+            previous = await self.get_dataset(name)
+        except Exception:
+            previous = None  # no prior dataset (or unreadable) — nothing to restore
+        await self.delete_dataset(name)
+        try:
+            return await self.create_dataset(name, data, metadata)
+        except Exception:
+            if previous is not None and not previous.empty:
+                try:
+                    await self.create_dataset(name, previous, metadata)
+                except Exception:
+                    logger.exception(
+                        "replace_dataset: failed to restore previous contents of "
+                        "'%s' after a torn create",
+                        name,
+                    )
+            raise
 
 
 class TelemetryProvider(ABC):

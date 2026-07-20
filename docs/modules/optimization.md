@@ -1573,8 +1573,8 @@ uv run python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds -
 
 After optimization, artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`:
 
-- `dspy-prompts-{tenant_id}-{agent_type}` — Optimized system prompts for an agent
-- `dspy-demos-{tenant_id}-{agent_type}` — Few-shot demonstration examples
+- `dspy-prompts-{tenant_id}-{agent_type}` — Optimized system prompts for an agent (last-write-wins: `save_prompts` uses `DatasetStore.replace_dataset`, so each save replaces the prior rather than appending a version)
+- `dspy-demos-{tenant_id}-{agent_type}` — Few-shot demonstration examples (last-write-wins via `replace_dataset`, same as prompts)
 - `dspy-experiments-{tenant_id}-{agent_type}` — Optimization run metrics as typed `ExperimentMetrics` rows (one per run via `save_experiment`; read the latest with `load_latest_experiment`)
 - `("model", <key>)` blobs — compiled DSPy module state for `profile_selection`, `entity_extraction`, `simba_query_enhancement` (triggered mode publishes compiled instructions as versioned prompts instead of a module-state blob)
 - `("config", "gateway_thresholds")` blob — calibrated gateway thresholds
