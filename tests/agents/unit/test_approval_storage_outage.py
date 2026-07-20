@@ -200,3 +200,66 @@ def test_ctor_canonicalizes_tenant_for_project_and_provider():
     assert storage.full_project_name == "cogniverse-acme:acme-synthetic_data"
     assert mgr.register_project.call_args.kwargs["tenant_id"] == "acme:acme"
     assert mgr.get_provider.call_args.kwargs["tenant_id"] == "acme:acme"
+
+
+class _FlushSpanCtx:
+    def set_status(self, *a, **k):
+        return None
+
+    def set_attribute(self, *a, **k):
+        return None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _FlushTelemetry:
+    """Minimal telemetry manager: span() works, force_flush is configurable."""
+
+    def __init__(self, flush_ok):
+        self._flush_ok = flush_ok
+        self._tenant_providers = {}
+
+    def span(self, **kwargs):
+        return _FlushSpanCtx()
+
+
+def _flush_storage(flush_ok):
+    storage = object.__new__(ApprovalStorageImpl)
+    storage.tenant_id = "acme:acme"
+    storage.project_name = "proj"
+    storage.full_project_name = "proj"
+    tm = _FlushTelemetry(flush_ok)
+
+    class _TracerProvider:
+        def force_flush(self, timeout_millis=None):
+            return flush_ok
+
+    tm._tenant_providers = {"acme:acme:proj": _TracerProvider()}
+    storage.telemetry_manager = tm
+    return storage
+
+
+@pytest.mark.asyncio
+async def test_save_batch_raises_when_force_flush_fails():
+    """force_flush returning False means the batch's spans were NOT exported;
+    returning batch_id anyway reports the batch persisted when nothing reached
+    the backend."""
+    from cogniverse_core.approval.interfaces import ApprovalBatch
+
+    storage = _flush_storage(flush_ok=False)
+    batch = ApprovalBatch(batch_id="b1", items=[], context={})
+    with pytest.raises(RuntimeError, match="failed to export"):
+        await storage.save_batch(batch)
+
+
+@pytest.mark.asyncio
+async def test_save_batch_returns_id_when_flush_succeeds():
+    from cogniverse_core.approval.interfaces import ApprovalBatch
+
+    storage = _flush_storage(flush_ok=True)
+    batch = ApprovalBatch(batch_id="b2", items=[], context={})
+    assert await storage.save_batch(batch) == "b2"
