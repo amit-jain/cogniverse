@@ -167,6 +167,46 @@ class TestTemplates:
         loaded = await store.load_templates("t:t")
         assert sorted(t.template_id for t in loaded) == ["a", "b"]
 
+    async def test_torn_delete_tombstones_blob_before_index(self, store):
+        """delete_template tombstones the blob BEFORE removing it from the
+        index; a failed index write must leave the template skipped by
+        load_templates and its blob an empty tombstone, never a non-empty
+        orphan the index still points at."""
+        from cogniverse_agents.workflow import telemetry_workflow_store as tws
+
+        await store.save_template("acme:prod", self._template("keep"))
+        await store.save_template("acme:prod", self._template("drop"))
+
+        real_am = store._am
+        fail = {"on": False}
+
+        def _am(tenant_id):
+            am = real_am(tenant_id)
+            real_save_blob = am.save_blob
+
+            async def _save_blob(kind, key, content):
+                if fail["on"] and key == tws._TEMPLATE_INDEX_KEY:
+                    raise ConnectionError("phoenix down on index write")
+                return await real_save_blob(kind, key, content)
+
+            am.save_blob = _save_blob
+            return am
+
+        store._am = _am
+        fail["on"] = True
+        with pytest.raises(ConnectionError):
+            await store.delete_template("acme:prod", "drop")
+        fail["on"] = False
+
+        # The dropped template is not listed (its blob is an empty tombstone the
+        # loader skips), and no live content is orphaned under it.
+        loaded = await store.load_templates("acme:prod")
+        assert [t.template_id for t in loaded] == ["keep"]
+        drop_blob = await store._am("acme:prod").load_blob(
+            tws._BLOB_KIND, tws._template_key("drop")
+        )
+        assert drop_blob == ""
+
 
 async def test_health_and_stats(store):
     assert store.health_check() is True
