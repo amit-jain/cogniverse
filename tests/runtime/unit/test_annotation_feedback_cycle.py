@@ -518,3 +518,59 @@ def test_workflow_pod_spec_from_env(monkeypatch):
         "BACKEND_URL": "http://cogniverse-vespa",
         "BACKEND_PORT": "8080",
     }
+
+
+class _ArgoDown:
+    """Argo API unreachable — returns 503. submit_argo_optimization_workflow
+    catches non-2xx and returns falsy (does NOT raise), so the cycle records
+    action='submit_failed' rather than 'error'."""
+
+    def __init__(self):
+        self.posts = []
+
+    async def post(self, url, json=None):
+        self.posts.append((url, json))
+
+        class _Resp:
+            status_code = 503
+
+            @staticmethod
+            def json():
+                return {}
+
+            text = "argo unavailable"
+
+        return _Resp()
+
+
+@pytest.mark.asyncio
+async def test_argo_submit_failure_counts_as_cycle_failure():
+    """A failed Argo submit (503, no exception) must fail the cycle so the cron
+    exits non-zero. Previously it set action='submit_failed', which was NOT in
+    errored_agents, so the cron reported success and the finally-stamp skipped
+    the next run while the optimization never launched (the --once path exited
+    1 on the identical outage — this removes that divergence)."""
+    from cogniverse_runtime.quality_monitor_cli import _cycle_failed
+
+    _StorageStub.rows_by_type = {"search": _annotated_rows(50)}
+    argo = _ArgoDown()
+    datasets = _DatasetStoreStub()
+    with patch(
+        "cogniverse_agents.routing.annotation_storage.AnnotationStorage",
+        _StorageStub,
+    ):
+        result = await run_annotation_feedback_cycle(
+            tenant_id="acme:acme",
+            argo_url="http://argo:2746",
+            argo_namespace="cogniverse",
+            automation_rules=_rules(),
+            config_manager=_config_manager(),
+            http_client=argo,
+            dataset_store=datasets,
+            now=NOW,
+        )
+
+    assert argo.posts, "the gate should have attempted an Argo submit"
+    assert result["agents"]["search"]["action"] == "submit_failed"
+    assert result.get("errored_agents") == ["search"]
+    assert _cycle_failed(result) is True
