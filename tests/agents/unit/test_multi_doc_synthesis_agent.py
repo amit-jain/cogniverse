@@ -141,6 +141,45 @@ class TestSynthesisPath:
         assert out.answer == ""
         assert out.metadata.get("reason") == "no_resolvable_documents"
 
+    async def test_partial_outage_raises_and_does_not_persist(self):
+        """One requested source resolves, another hits an outage. The outage
+        must propagate — not be flattened to a skipped doc so a partial
+        synthesis (missing the unreachable source) gets persisted as complete."""
+        agent = _build_agent_with_stub_synth("answer")
+        agent.is_memory_enabled = lambda: True  # type: ignore[assignment]
+        fake_mm = MagicMock()
+        fake_mm.memory = MagicMock()
+
+        def _get(mid):
+            if mid == "m_ok":
+                return {"id": mid, "memory": "good content", "metadata": {}}
+            raise ConnectionError("mem0 backend unreachable")
+
+        fake_mm.memory.get.side_effect = _get
+        agent.memory_manager = fake_mm
+
+        persisted: list = []
+
+        async def _spy_persist(**kwargs):
+            persisted.append(kwargs)
+            return "mem-persisted"
+
+        agent._persist_synthesis = _spy_persist  # type: ignore[assignment]
+
+        with pytest.raises(ConnectionError):
+            await agent._process_impl(
+                MultiDocSynthesisInput(
+                    tenant_id="acme",
+                    query="what?",
+                    documents=[
+                        DocumentRef(memory_id="m_ok"),
+                        DocumentRef(memory_id="m_down"),
+                    ],
+                    persist=True,
+                )
+            )
+        assert persisted == []
+
 
 @pytest.mark.asyncio
 class TestRLMRouting:

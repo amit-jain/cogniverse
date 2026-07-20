@@ -114,6 +114,22 @@ class TestSeedResolution:
         assert out.start_subject_key == "alice"
         assert {n.subject_key for n in out.nodes} == {"alice", "bob"}
 
+    async def test_seed_memory_outage_propagates(self):
+        """An outage resolving the requested seed id must propagate — a
+        flattened empty seed returns an empty traversal that reads as 'no
+        connected knowledge' for what is really a backend outage."""
+        agent = _build_agent([])
+
+        def _raise(mid):
+            raise ConnectionError("mem0 backend unreachable")
+
+        agent.memory_manager.memory.get.side_effect = _raise
+
+        with pytest.raises(ConnectionError):
+            await agent._process_impl(
+                KGTraversalInput(tenant_id="acme", start_memory_id="n_down")
+            )
+
     async def test_no_seed_returns_empty_with_reason(self):
         agent = _build_agent([])
         out = await agent._process_impl(KGTraversalInput(tenant_id="acme"))

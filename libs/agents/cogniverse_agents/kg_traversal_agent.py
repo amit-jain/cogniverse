@@ -477,15 +477,11 @@ class KnowledgeGraphTraversalAgent(
         if input.start_subject_key:
             return input.start_subject_key
         if input.start_memory_id and self.memory_manager is not None:
-            try:
-                memory = self.memory_manager.memory.get(input.start_memory_id)
-            except Exception as exc:
-                logger.debug(
-                    "KGTraversal: get(%s) failed: %s",
-                    input.start_memory_id,
-                    exc,
-                )
-                return ""
+            # An outage resolving the requested seed id must propagate, not
+            # flatten to "" — an empty seed reads as "this memory has no
+            # connected knowledge" and returns an empty traversal. A genuinely
+            # absent memory returns a non-dict and falls through to "".
+            memory = self.memory_manager.memory.get(input.start_memory_id)
             if isinstance(memory, dict):
                 meta = _read_metadata(memory)
                 return str(meta.get("subject_key") or "")

@@ -375,11 +375,12 @@ class MultiDocumentSynthesisAgent(
             and self.is_memory_enabled()
             and self.memory_manager is not None
         ):
-            try:
-                memory = self.memory_manager.memory.get(ref.memory_id)
-            except Exception as exc:
-                logger.debug("MultiDocSynth: get(%s) failed: %s", ref.memory_id, exc)
-                return None
+            # An outage fetching an explicitly-requested memory id must NOT be
+            # flattened to None (indistinguishable from a genuinely-absent id) —
+            # that silently drops the requested source and persists a partial
+            # synthesis as if it were complete. Let a backend failure propagate;
+            # a real absence returns None/empty and falls through to None below.
+            memory = self.memory_manager.memory.get(ref.memory_id)
             if isinstance(memory, dict):
                 return memory.get("memory") or memory.get("content") or ""
             if isinstance(memory, list) and memory and isinstance(memory[0], dict):
