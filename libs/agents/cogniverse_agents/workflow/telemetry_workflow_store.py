@@ -187,10 +187,14 @@ class TelemetryWorkflowStore(WorkflowStore):
         if template_id not in index:
             return False
         am = self._am(tenant_id)
+        # Tombstone the blob (blobs are overwrite-only) BEFORE removing it from
+        # the index: if the index write then fails, the id still resolves to an
+        # empty blob that load_templates skips, so a torn delete never leaves an
+        # index entry pointing at live content nor a non-empty orphan blob. A
+        # retry re-tombstones (idempotent) and completes the index removal.
+        await am.save_blob(_BLOB_KIND, _template_key(template_id), "")
         index.remove(template_id)
         await am.save_blob(_BLOB_KIND, _TEMPLATE_INDEX_KEY, json.dumps(index))
-        # Tombstone the config blob (blobs are overwrite-only).
-        await am.save_blob(_BLOB_KIND, _template_key(template_id), "")
         return True
 
     # ==================== Utility ====================
