@@ -537,9 +537,41 @@ grep -rlP 'def _(load|read)_\w+' libs/ --include="*.py" | while read f; do \
 grep -rln 'json={}' tests/*/integration/ tests/*/unit/ 2>/dev/null | xargs grep -l 'status_code == 422\|status_code == 404' 2>/dev/null
 # then for each route those files touch, confirm a NON-e2e test asserts a 2xx
 # success body; @skip_if_no_runtime-gated coverage does not count
+
+# A durable GUARD MARKER — an idempotency / inflight / dedup / lock / "claimed"
+# key — persisted BEFORE the side-effecting op it is meant to guard, with no
+# clear-on-failure. A failure of the guarded op then orphans the marker and masks
+# a never-completed operation for the marker's TTL. Generalize past any single
+# function's names (18th audit was mark_inflight before queue.submit, but the
+# class is "write a key that claims 'in progress / done' before the commit that
+# earns it"): find every guard-marker WRITE, then for each read whether a
+# submit / xadd / publish / .post / send / enqueue / feed follows and is
+# compensated (try → clear/delete the marker on failure → re-raise) rather than
+# left orphaned.
+grep -rnP '\b\w*(mark|set|persist|record|claim|reserve)\w*(inflight|pending|idempoten|dedup|lock|claimed|processing|reserved)\w*\(' libs/ --include="*.py"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
+
+### Class A extension — real-boundary test using the wrong concrete TYPE
+
+The "no mocks at the boundary" rule is necessary but NOT sufficient. A test can
+use a REAL library object + a REAL recording stub and still prove nothing,
+because it constructed a stand-in of a **different concrete type** than
+production builds. The 18th audit's overlay bug survived 7 audits behind a test
+that used a real `dspy.Predict` + a real recording `dspy.LM` — everything "real"
+— while every served agent is a `dspy.ChainOfThought` with a different
+signature-access shape. The gate `hasattr(predictor, "signature")` took the
+opposite branch for the two types.
+
+Detection: for any test that constructs a stand-in of a type the production code
+also constructs (a DSPy module, a pydantic model, a client wrapper), assert the
+fixture's concrete type == the production type, OR drive the REAL production
+object. A DSPy overlay/optimization test MUST use the same predictor wrapper
+(ChainOfThought vs Predict) the served agent uses — better, instantiate the real
+served module (see `tests/runtime/integration/test_artefact_overlay_consumed_by_agent.py`
+`TestServedAgentModulesAreOverlayReachable`, which iterates `_SERVE_TARGET` over
+the real modules). A real object of a convenient type is still a stand-in.
 
 ### Class D — Edge-input / dimension / format fuzzing
 
