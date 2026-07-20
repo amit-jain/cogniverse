@@ -121,6 +121,9 @@ class _DatasetStoreStub:
     def __init__(self):
         self.created = []
 
+    async def replace_dataset(self, name, data, metadata=None):
+        return await self.create_dataset(name=name, data=data, metadata=metadata)
+
     async def create_dataset(self, name, data, metadata=None):
         self.created.append((name, data, metadata))
 
