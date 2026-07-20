@@ -983,30 +983,28 @@ class TestDSPyComponentsIntegration:
         assert agent.agent_name == "simple_test_agent"
 
     def test_error_propagation_across_phases(self):
-        """Test error handling propagates correctly through the pipeline"""
+        """A failure inside the REAL _process_impl propagates out through the
+        real process() pipeline (input rails → span → _process_impl). The prior
+        test patched process itself and asserted it re-raised what it was told
+        to — no production path ran, so it proved nothing about propagation."""
+        import asyncio
 
-        # Test A2A-DSPy error handling
-
-        class FailingModule(dspy.Module):
+        class _FailingModule(dspy.Module):
             def forward(self, query):
                 raise ValueError("Test DSPy module failure")
 
-        # Create agent with proper constructor
-        agent = SimpleDSPyA2AAgent(port=8000)
+        class _FailingAgent(SimpleDSPyA2AAgent):
+            async def _process_impl(self, input: SimpleInput) -> SimpleOutput:
+                self.dspy_module.forward(query=input.query)
+                return SimpleOutput(result="unreachable", confidence=1.0)
 
-        # Test error handling by mocking the process method to simulate failures
-        # The new A2AAgent uses typed `process` method instead of `_process_with_dspy`
+        agent = _FailingAgent(port=8000)
+        agent.dspy_module = _FailingModule()
 
-        with patch.object(agent, "process", new_callable=AsyncMock) as mock_process:
-            # Mock a failure by raising an exception
-            mock_process.side_effect = ValueError("Test DSPy module failure")
-
-            # Verify the agent has error handling capability
-            # Test that errors are properly handled (in production, the A2A endpoint catches)
-            import asyncio
-
-            with pytest.raises(ValueError, match="Test DSPy module failure"):
-                asyncio.run(agent.process(SimpleInput(query="test")))
+        # Drive the real process(); the module error must surface through the
+        # span + _process_impl wrapping, not be swallowed into a result.
+        with pytest.raises(ValueError, match="Test DSPy module failure"):
+            asyncio.run(agent.process(SimpleInput(query="test")))
 
     @pytest.mark.asyncio
     async def test_extract_comprehensive_relationships_aggregates_inner_outputs(
