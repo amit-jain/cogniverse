@@ -480,8 +480,15 @@ async def run_annotation_feedback_cycle(
         state["last_optimization_at"] = last_optimization
         _save_loop_state(config_manager, tenant_id, state)
 
+    # A submit that FAILED (Argo/HTTP outage — submit_argo_optimization_workflow
+    # returns falsy rather than raising) is as much a cycle failure as the
+    # exception path: the optimization was never launched and the trigger
+    # dataset is orphaned. Both must drive a non-zero exit so the cron surfaces
+    # it, matching the --once forced path which exits 1 on the same outage.
     errored = sorted(
-        agent for agent, v in per_agent.items() if v.get("action") == "error"
+        agent
+        for agent, v in per_agent.items()
+        if v.get("action") in ("error", "submit_failed")
     )
     result = {
         "status": "completed_with_errors" if errored else "success",
