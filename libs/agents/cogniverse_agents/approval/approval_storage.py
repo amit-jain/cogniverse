@@ -181,6 +181,7 @@ class ApprovalStorageImpl(ApprovalStorage):
         # Force flush to ensure spans are exported immediately
         # With sync export (SimpleSpanProcessor), spans should be exported immediately
         # but we force flush to be extra sure
+        flush_ok: Optional[bool] = None
         try:
             # Access the cached tracer provider for this tenant/project
             cache_key = f"{self.tenant_id}:{self.project_name}"
@@ -189,9 +190,9 @@ class ApprovalStorageImpl(ApprovalStorage):
                     cache_key
                 )
                 if tracer_provider and hasattr(tracer_provider, "force_flush"):
-                    success = tracer_provider.force_flush(timeout_millis=5000)
+                    flush_ok = tracer_provider.force_flush(timeout_millis=5000)
                     logger.info(
-                        f"Force flush completed for tenant {self.tenant_id}: success={success}"
+                        f"Force flush completed for tenant {self.tenant_id}: success={flush_ok}"
                     )
                 else:
                     logger.warning(
@@ -204,6 +205,14 @@ class ApprovalStorageImpl(ApprovalStorage):
         except Exception as e:
             logger.error(f"Failed to flush tracer provider: {e}", exc_info=True)
 
+        # force_flush returning False means the batch's spans were NOT exported
+        # — returning batch_id anyway reports the batch persisted when nothing
+        # reached the backend (a masked write that later reads as "no batch").
+        if flush_ok is False:
+            raise RuntimeError(
+                f"Approval batch {batch.batch_id} spans failed to export "
+                "(force_flush returned False); the batch is not durably persisted"
+            )
         return batch.batch_id
 
     def _create_item_span(self, item: ReviewItem) -> None:
