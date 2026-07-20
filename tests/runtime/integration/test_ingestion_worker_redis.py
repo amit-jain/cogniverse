@@ -375,3 +375,43 @@ class TestStatusStream:
 
         second = await queue.read_status_since(redis, ingest_id, last_id=last_seen)
         assert [e[1]["state"] for e in second] == ["complete"]
+
+
+class TestEnqueueCompensation:
+    @pytest.mark.asyncio
+    async def test_submit_failure_clears_inflight_so_retry_re_enqueues(
+        self, redis, monkeypatch
+    ):
+        """mark_inflight runs BEFORE the work-stream submit. If submit fails,
+        the idempotency key must be cleared — otherwise a non-force retry
+        returns the orphaned 'in_flight' id for a job that never reached the
+        stream and will never run, silently dropping the upload until the 6h
+        TTL lapses. Verified end-to-end against real Redis: fault -> cleared ->
+        retry actually lands a job on the work stream."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = "s3://bucket/video.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+        real_submit = queue.submit
+
+        async def _boom(*args, **kwargs):
+            raise ConnectionError("redis reset on xadd")
+
+        monkeypatch.setattr(queue, "submit", _boom)
+        with pytest.raises(ConnectionError, match="reset on xadd"):
+            await enqueue_ingestion(
+                redis, source_url=src, profile=profile, tenant_id=tenant
+            )
+
+        # The orphaned inflight key must be gone — a retry must not see it.
+        assert await idempotency.get_existing_ingest_id(redis, sha) is None
+
+        # A retry (submit restored) actually enqueues and lands on the stream.
+        monkeypatch.setattr(queue, "submit", real_submit)
+        result = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        assert result.existing is False
+        assert result.state == "queued"
+        jobs = await queue.claim(redis, "ingestors", "consumer_retry", block_ms=1000)
+        assert [j.ingest_id for j in jobs] == [result.ingest_id]

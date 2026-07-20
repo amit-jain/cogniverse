@@ -139,25 +139,33 @@ async def enqueue_ingestion(
     await idempotency.mark_inflight(
         redis, sha, ingest_id, ttl_seconds=_inflight_ttl_seconds()
     )
-    await queue.publish_status(
-        redis,
-        ingest_id,
-        {
-            "state": "queued",
-            "ingest_id": ingest_id,
-            "source_url": source_url,
-            "profile": profile,
-            "tenant_id": tenant_id,
-        },
-    )
-    await queue.submit(
-        redis,
-        ingest_id=ingest_id,
-        source_url=source_url,
-        profile=profile,
-        tenant_id=tenant_id,
-        sha=sha,
-    )
+    # The inflight idempotency key is written BEFORE the job reaches the work
+    # stream. If the submit path fails, clear it — otherwise the orphaned key
+    # (6h TTL) makes every non-force retry return "in_flight" for a job that
+    # was never queued and will never run, silently dropping the upload.
+    try:
+        await queue.publish_status(
+            redis,
+            ingest_id,
+            {
+                "state": "queued",
+                "ingest_id": ingest_id,
+                "source_url": source_url,
+                "profile": profile,
+                "tenant_id": tenant_id,
+            },
+        )
+        await queue.submit(
+            redis,
+            ingest_id=ingest_id,
+            source_url=source_url,
+            profile=profile,
+            tenant_id=tenant_id,
+            sha=sha,
+        )
+    except Exception:
+        await idempotency.clear_inflight(redis, sha)
+        raise
     await queue.increment_active(redis, tenant_id)
 
     logger.info(
