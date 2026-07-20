@@ -53,6 +53,12 @@ class FakeMemoryManager:
     def search_memory(self, *, query, tenant_id, agent_name, top_k=5, filters=None):
         return list(self._search_results)
 
+    def get_all_memories(self, *, tenant_id, agent_name):
+        # The dedup read in _store_strategy uses get_all_memories (it raises on
+        # a real outage) rather than search_memory; return the seeded existing
+        # strategies so the bump-vs-fresh-write path is exercised.
+        return list(self._search_results)
+
 
 def _strategy(text: str = "use ColPali for video", confirmation_count: int = 1):
     return Strategy(
