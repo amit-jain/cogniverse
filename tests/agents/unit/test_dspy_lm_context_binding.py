@@ -90,8 +90,11 @@ class TestKnowledgeSummarizationLMContext:
                 "cogniverse_foundation.config.semantic_router.create_dspy_lm",
                 return_value=sentinel_lm,
             ) as mock_factory:
-                result = agent._summarise_without_rlm(title="t", block="b")
+                result, synthesis_ok = agent._summarise_without_rlm(
+                    title="t", block="b"
+                )
 
+        assert synthesis_ok is True
         assert agent._dspy_module.call_count == 1
         # Strong assertion: the LM seen at module-invocation time is the
         # per-tenant sentinel, not the ambient one.
@@ -109,8 +112,9 @@ class TestKnowledgeSummarizationLMContext:
         agent = self._make_agent_with_llm_config(llm_config=None)
 
         with dspy.context(lm=ambient_lm):
-            result = agent._summarise_without_rlm(title="t", block="b")
+            result, synthesis_ok = agent._summarise_without_rlm(title="t", block="b")
 
+        assert synthesis_ok is True
         assert agent._dspy_module.captured_lm is ambient_lm, (
             f"Expected ambient {ambient_lm!r}; got {agent._dspy_module.captured_lm!r}"
         )
@@ -129,8 +133,12 @@ class TestKnowledgeSummarizationLMContext:
             "cogniverse_foundation.config.semantic_router.create_dspy_lm",
             return_value=MagicMock(),
         ):
-            result = agent._summarise_without_rlm(title="t", block="some content here")
+            result, synthesis_ok = agent._summarise_without_rlm(
+                title="t", block="some content here"
+            )
 
+        # A failed synthesis flags itself so the caller refuses to promote it.
+        assert synthesis_ok is False
         assert result.startswith("[FALLBACK: synthesis failed]")
         assert "some content here" in result
 
