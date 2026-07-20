@@ -1046,6 +1046,11 @@ class ArtifactManager:
             "restored": {},
         }
 
+        # Resolve BOTH target datasets before writing either, so a missing
+        # version raises before any active write — never after save_prompts
+        # already landed (which would leave new prompts + old demos torn).
+        _absent = object()
+        new_prompts: Any = _absent
         if prompts_version is not None:
             name = self._versioned_dataset_name("prompts", agent_type, prompts_version)
             try:
@@ -1055,10 +1060,9 @@ class ArtifactManager:
                     f"prompts version {prompts_version} not found for "
                     f"{self._tenant_id}/{agent_type}"
                 ) from exc
-            prompts = self._extract_prompts_from_dataframe(df)
-            await self.save_prompts(agent_type, prompts)
-            result["restored"]["prompts_version"] = prompts_version
+            new_prompts = self._extract_prompts_from_dataframe(df)
 
+        new_demos: Any = _absent
         if demos_version is not None:
             name = self._versioned_dataset_name("demos", agent_type, demos_version)
             try:
@@ -1068,15 +1072,45 @@ class ArtifactManager:
                     f"demos version {demos_version} not found for "
                     f"{self._tenant_id}/{agent_type}"
                 ) from exc
-            demos = df.to_dict(orient="records")
-            await self.save_demonstrations(agent_type, demos)
-            result["restored"]["demos_version"] = demos_version
+            new_demos = df.to_dict(orient="records")
 
-        if not result["restored"]:
+        if new_prompts is _absent and new_demos is _absent:
             raise ValueError(
                 "rollback_to_version called with both prompts_version and "
                 "demos_version as None — nothing to restore"
             )
+
+        # Restore both under one compensation scope: a mid-rollback failure
+        # (demos save fails after prompts landed) restores the previous active
+        # pair so the slot never disagrees with itself.
+        previous_prompts = await self.load_prompts(agent_type)
+        previous_demos = await self.load_demonstrations(agent_type)
+        try:
+            if new_prompts is not _absent:
+                await self.save_prompts(agent_type, new_prompts)
+                result["restored"]["prompts_version"] = prompts_version
+            if new_demos is not _absent:
+                await self.save_demonstrations(agent_type, new_demos)
+                result["restored"]["demos_version"] = demos_version
+        except Exception:
+            try:
+                if previous_prompts is not None:
+                    await self.save_prompts(agent_type, previous_prompts)
+                if previous_demos is not None:
+                    await self.save_demonstrations(agent_type, previous_demos)
+                logger.warning(
+                    "Rollback failed for %s/%s; previous active artefacts restored",
+                    self._tenant_id,
+                    agent_type,
+                )
+            except Exception:
+                logger.exception(
+                    "Rollback failed for %s/%s and the restore also failed; "
+                    "active prompts/demos may be torn",
+                    self._tenant_id,
+                    agent_type,
+                )
+            raise
         logger.info(
             "Rolled back %s/%s to %s (backup snapshots: %s)",
             self._tenant_id,
@@ -1191,12 +1225,59 @@ class ArtifactManager:
                         # different counter, so land them directly too.
                         await self.save_demonstrations(agent_type, candidate_demos)
                 await self.promote_to_canary(agent_type, version, traffic_pct=100)
-                await self.promote_canary_to_active(agent_type)
+                try:
+                    await self.promote_canary_to_active(agent_type)
+                except Exception:
+                    # promote_canary_to_active restores the active datasets on
+                    # failure but leaves the canary@100% just persisted, which
+                    # would serve the candidate to ALL traffic despite the
+                    # promotion raising. Retire it so no unpromoted candidate
+                    # silently serves.
+                    try:
+                        await self.retire_canary(
+                            agent_type, reason="failed_active_promotion"
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Active promotion failed for %s/%s and retiring the "
+                            "canary@100%% also failed; the candidate may still "
+                            "serve all traffic via the canary overlay",
+                            self._tenant_id,
+                            agent_type,
+                        )
+                    raise
                 extras["served_version"] = version
             else:
-                await self.save_prompts(agent_type, candidate_prompts)
-                if candidate_demos is not None:
-                    await self.save_demonstrations(agent_type, candidate_demos)
+                # save_prompts then save_demonstrations are two sequential
+                # writes; a demos failure after prompts landed leaves the active
+                # slot torn (new prompts + old demos). Pre-read and restore on
+                # failure, mirroring promote_canary_to_active.
+                previous_prompts = await self.load_prompts(agent_type)
+                previous_demos = await self.load_demonstrations(agent_type)
+                try:
+                    await self.save_prompts(agent_type, candidate_prompts)
+                    if candidate_demos is not None:
+                        await self.save_demonstrations(agent_type, candidate_demos)
+                except Exception:
+                    try:
+                        if previous_prompts is not None:
+                            await self.save_prompts(agent_type, previous_prompts)
+                        if previous_demos is not None:
+                            await self.save_demonstrations(agent_type, previous_demos)
+                        logger.warning(
+                            "Non-versioned promotion failed for %s/%s; previous "
+                            "active artefacts restored",
+                            self._tenant_id,
+                            agent_type,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Non-versioned promotion failed for %s/%s and the "
+                            "restore also failed; active prompts/demos may be torn",
+                            self._tenant_id,
+                            agent_type,
+                        )
+                    raise
             logger.info(
                 "Promoted candidate for %s/%s: candidate=%.4f baseline=%.4f "
                 "(improvement=%.4f, min_improvement=%.4f, tolerance=%.4f)",
