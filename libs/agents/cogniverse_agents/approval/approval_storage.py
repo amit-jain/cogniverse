@@ -419,25 +419,25 @@ class ApprovalStorageImpl(ApprovalStorage):
                 & (project_spans["parent_id"] == batch_span_id)
             ]
 
-            # Query annotations to get latest status for each item
-            annotations_df = pd.DataFrame()
-            try:
-                # Log span IDs being queried
-                span_ids = item_spans["context.span_id"].tolist()
-                logger.debug(
-                    f"Querying annotations for {len(span_ids)} spans: {span_ids}"
-                )
-
-                annotations_df = await self.provider.annotations.get_annotations(
-                    spans_df=item_spans,
-                    project=self.full_project_name,
-                    annotation_names=["item_status_update", "human_approval"],
-                )
-                logger.info(f"Found {len(annotations_df)} annotations for batch items")
-                if not annotations_df.empty:
-                    logger.debug(f"Annotation columns: {list(annotations_df.columns)}")
-            except Exception as e:
-                logger.warning(f"Failed to query annotations: {e}", exc_info=True)
+            # Query annotations for the latest status of each item. Item
+            # approve/reject status lives ONLY in annotations, so a telemetry
+            # outage here MUST propagate to the outer handler (which raises):
+            # swallowing it left annotations_df empty and rebuilt every item at
+            # its span-time pending_review, silently reverting all decisions —
+            # the workflow then re-prompts resolved items / sits in
+            # awaiting_approval forever. A genuine absence returns an empty
+            # frame (not an exception), so the propagate-on-error contract
+            # matches get_pending_batches, the sibling querying the same spans.
+            span_ids = item_spans["context.span_id"].tolist()
+            logger.debug(f"Querying annotations for {len(span_ids)} spans: {span_ids}")
+            annotations_df = await self.provider.annotations.get_annotations(
+                spans_df=item_spans,
+                project=self.full_project_name,
+                annotation_names=["item_status_update", "human_approval"],
+            )
+            logger.info(f"Found {len(annotations_df)} annotations for batch items")
+            if not annotations_df.empty:
+                logger.debug(f"Annotation columns: {list(annotations_df.columns)}")
 
             # Reconstruct items — one malformed span (truncated data
             # blob, junk confidence, unknown status) costs that item,
