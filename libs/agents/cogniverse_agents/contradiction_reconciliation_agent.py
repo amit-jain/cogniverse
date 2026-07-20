@@ -307,16 +307,11 @@ class ContradictionReconciliationAgent(
         members: List[Dict[str, Any]] = []
         missing: List[str] = []
         for mid in input.conflict_member_ids:
-            try:
-                memory = self.memory_manager.memory.get(mid)
-            except Exception as exc:
-                logger.warning(
-                    "ContradictionReconciliationAgent: get(%s) failed: %r",
-                    mid,
-                    exc,
-                )
-                missing.append(mid)
-                continue
+            # A backend outage fetching a requested member must propagate — not
+            # be recorded as "missing", which would let a total outage no-op the
+            # reconciliation as if every conflicting memory had been deleted. A
+            # genuinely absent member returns a non-dict and is skipped below.
+            memory = self.memory_manager.memory.get(mid)
             if isinstance(memory, dict):
                 members.append(memory)
             elif isinstance(memory, list) and memory and isinstance(memory[0], dict):

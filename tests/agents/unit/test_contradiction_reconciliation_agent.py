@@ -210,6 +210,28 @@ class TestMissingMembers:
         assert "m_missing" in out.metadata["missing"]
         assert out.metadata["fetched_count"] == 2
 
+    async def test_member_outage_propagates_not_recorded_missing(self):
+        """A backend outage fetching a member must propagate — not be recorded
+        as 'missing', which would no-op the reconciliation as if every
+        conflicting memory had been deleted."""
+        a = _seed("m_a", "Lyon", "france:capital")
+        agent = _build_agent([a])
+
+        def _get(mid):
+            if mid == "m_a":
+                return a
+            raise ConnectionError("mem0 backend unreachable")
+
+        agent.memory_manager.memory.get.side_effect = _get
+
+        with pytest.raises(ConnectionError):
+            await agent._process_impl(
+                ContradictionReconciliationInput(
+                    target_kind="entity_fact",
+                    conflict_member_ids=["m_a", "m_down"],
+                )
+            )
+
     async def test_all_missing_returns_empty(self):
         agent = _build_agent([])
         out = await agent._process_impl(
