@@ -1299,6 +1299,61 @@ class TestRunFailed:
 
         assert _run_failed(None) is False
 
+    def test_failed_string_marker_fails(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        assert _run_failed("failed: Vespa connection refused") is True
+        assert _run_failed("error: boom") is True
+
+    def test_completed_string_marker_ok(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        assert _run_failed("completed: {'fact': 3}") is False
+        assert _run_failed("skipped: path /logs is not a directory") is False
+
+    def test_failed_key_dict_fails(self):
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        # config_vacuum encodes an outage as {"failed": <exc>}, no status key.
+        assert _run_failed({"config_vacuum": {"failed": "Vespa refused"}}) is True
+        # A zero failed-count is not a failure.
+        assert _run_failed({"failed": 0, "succeeded": 5}) is False
+
+    def test_cleanup_total_outage_shape_fails(self):
+        """The exact run_cleanup result under a total mem0/Vespa outage: the
+        per-tenant memory_cleanup entry is a 'failed: ...' string and
+        config_vacuum is {'failed': ...}, neither carrying a top-level status.
+        The old .get('status')-only check returned False here → exit 0 =
+        SUCCESS while the cron did nothing."""
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        outage_result = {
+            "log_retention_days": 7,
+            "memory_retention_days": 30,
+            "memory_cleanup": {"acme:acme": "failed: Vespa connection refused"},
+            "tenants_processed": 1,
+            "log_cleanup": {"path": "/logs", "scanned": 0, "deleted": 0, "errors": []},
+            "temp_cleanup": {"path": "/tmp", "scanned": 0, "deleted": 0, "errors": []},
+            "config_vacuum": {"failed": "Vespa connection refused"},
+        }
+        assert _run_failed(outage_result) is True
+
+    def test_cleanup_healthy_shape_ok(self):
+        """The happy run_cleanup result — completed per-tenant strings, a
+        dropped-count vacuum, empty prune errors — must NOT trip the exit."""
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        healthy_result = {
+            "log_retention_days": 7,
+            "memory_retention_days": 30,
+            "memory_cleanup": {"acme:acme": "completed: {'fact': 3}"},
+            "tenants_processed": 1,
+            "log_cleanup": {"path": "/logs", "scanned": 5, "deleted": 2, "errors": []},
+            "temp_cleanup": {"path": "/tmp", "scanned": 0, "deleted": 0, "errors": []},
+            "config_vacuum": {"dropped": 4, "keep_versions": 10},
+        }
+        assert _run_failed(healthy_result) is False
+
 
 class TestMainExitCode:
     """The exit code is the only success signal Argo sees for a workflow

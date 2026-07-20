@@ -1295,7 +1295,10 @@ async def run_cleanup(
         try:
             mm = Mem0MemoryManager(tenant_id=tid)
             if not lazy_init_memory(mm, tid, config_manager):
-                return "skipped: memory backend init failed (see workflow log)"
+                # An init failure means this tenant's cleanup did NOT run —
+                # a "failed:" marker so _run_failed trips the exit code rather
+                # than a "skipped:" that reads as an intentional no-op.
+                return "failed: memory backend init failed (see workflow log)"
             deleted_by_kind = mm.cleanup_with_schema(registry)
             return f"completed: {dict(deleted_by_kind)}"
         except Exception as e:
@@ -3376,17 +3379,26 @@ def _run_failed(result: Any) -> bool:
     is the only success signal Argo sees for a workflow step.
 
     Modes with a top-level ``status`` own their aggregation (e.g. synthetic
-    reports success when any optimizer succeeded); batch-shaped results
-    without one fail when any per-agent entry failed.
+    reports success when any optimizer succeeded) and short-circuit here.
+    Results without one (batch and cleanup) encode per-entry failure three
+    ways — ``run_cleanup`` emits all of them: a nested ``{"status": ...}``
+    dict, a ``{"failed": ...}`` dict, or a free-form ``"failed: ..."`` /
+    ``"error: ..."`` string keyed under a per-tenant id — so a total mem0 /
+    Vespa outage in the cleanup cron must not report exit-0 success. Recurse
+    so any of those shapes at any depth fails the run.
     """
+    if isinstance(result, str):
+        marker = result.strip().lower()
+        return marker.startswith("failed:") or marker.startswith("error:")
+    if isinstance(result, (list, tuple)):
+        return any(_run_failed(item) for item in result)
     if not isinstance(result, dict):
         return False
     if "status" in result:
         return result["status"] in ("failed", "error")
-    return any(
-        isinstance(value, dict) and value.get("status") in ("failed", "error")
-        for value in result.values()
-    )
+    if result.get("failed"):
+        return True
+    return any(_run_failed(value) for value in result.values())
 
 
 def main():
