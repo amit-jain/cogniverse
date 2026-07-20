@@ -137,6 +137,55 @@ def test_detailed_report_process_503_when_not_initialised(
     assert r.status_code == 503
 
 
+def test_detailed_report_process_happy_path_returns_envelope(
+    detailed_report_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(
+        executive_summary="exec",
+        detailed_findings="findings",
+        visual_analysis="visuals",
+        technical_details="tech",
+        recommendations=["r1", "r2"],
+        confidence_assessment="high",
+        metadata={"k": "v"},
+        thinking_phase=SimpleNamespace(
+            content_analysis="ca",
+            technical_findings="tf",
+            patterns_identified=["p1", "p2"],
+            reasoning="because",
+        ),
+    )
+    fake = MagicMock()
+    fake.generate_report = AsyncMock(return_value=result)
+    monkeypatch.setattr(dr_module, "detailed_report_agent", fake)
+
+    r = detailed_report_client.post(
+        "/process",
+        json={"query": "quarterly review", "search_results": [{"id": "d1"}]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "completed"
+    assert body["executive_summary"] == "exec"
+    assert body["detailed_findings"] == "findings"
+    assert body["recommendations"] == ["r1", "r2"]
+    assert body["confidence_assessment"] == "high"
+    assert body["metadata"] == {"k": "v"}
+    # patterns_identified is renamed to "patterns" in the envelope.
+    assert body["thinking_process"] == {
+        "content_analysis": "ca",
+        "technical_findings": "tf",
+        "patterns": ["p1", "p2"],
+        "reasoning": "because",
+    }
+    # The handler built a ReportRequest from the dict and passed it through.
+    req = fake.generate_report.call_args.args[0]
+    assert req.query == "quarterly review"
+    assert req.search_results == [{"id": "d1"}]
+
+
 def test_detailed_report_generate_endpoint_503_when_not_initialised(
     detailed_report_client: TestClient,
 ) -> None:
