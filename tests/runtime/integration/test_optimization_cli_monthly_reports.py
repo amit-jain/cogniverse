@@ -139,3 +139,103 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
                 )
             except Exception:
                 pass
+
+    @pytest.mark.asyncio
+    async def test_phoenix_outage_surfaces_as_failed_and_nonzero_exit(
+        self, memory_manager, vespa_instance, config_manager, tmp_path, monkeypatch
+    ):
+        """A per-tenant Phoenix outage must surface at the TOP level
+        (result['failed']) so the cron's _run_failed gate exits non-zero.
+        Previously the 'phoenix query failed' string lived only in the written
+        file and evaded _run_failed's failed:/error: prefix, so a total outage
+        wrote an all-errors report yet reported Succeeded and the dropped
+        monthly reports were never regenerated. Org/tenant listing stays real
+        (Vespa); only the Phoenix span read is faulted."""
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_runtime.admin import tenant_manager as tm
+        from cogniverse_runtime.optimization_cli import _run_failed
+
+        tm.set_config_manager(config_manager)
+        tm.set_schema_loader(FilesystemSchemaLoader(Path("configs/schemas")))
+        backend = tm.get_backend()
+
+        org_id = "monthly_rep_fault_org"
+        tenant_ids = [f"{org_id}:alpha", f"{org_id}:beta"]
+        backend.create_metadata_document(
+            schema="organization_metadata",
+            doc_id=org_id,
+            fields={
+                "org_id": org_id,
+                "org_name": "monthly-reports-fault",
+                "created_at": int(_time.time() * 1000),
+                "created_by": "integration-test",
+                "status": "active",
+                "tenant_count": len(tenant_ids),
+            },
+        )
+        for tid in tenant_ids:
+            backend.create_metadata_document(
+                schema="tenant_metadata",
+                doc_id=tid,
+                fields={
+                    "tenant_full_id": tid,
+                    "org_id": org_id,
+                    "tenant_name": tid.split(":", 1)[1],
+                    "created_at": int(_time.time() * 1000),
+                    "created_by": "integration-test",
+                    "status": "active",
+                    "schemas_deployed": ["agent_memories"],
+                },
+            )
+
+        class _Traces:
+            async def get_spans(self, **kwargs):
+                raise ConnectionError("phoenix unreachable")
+
+        class _Provider:
+            traces = _Traces()
+
+        class _Config:
+            @staticmethod
+            def get_project_name(tid):
+                return f"proj-{tid}"
+
+        class _PhoenixDownManager:
+            config = _Config()
+
+            def get_provider(self, tenant_id=None):
+                return _Provider()
+
+        monkeypatch.setattr(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            lambda: _PhoenixDownManager(),
+        )
+
+        try:
+            result = await run_monthly_reports(
+                output_dir=str(tmp_path / "reports"),
+                lookback_hours=1.0,
+            )
+            assert result.get("failed"), (
+                "a Phoenix outage on every tenant must surface at the top level"
+            )
+            assert sorted(result["failed"]) == sorted(tenant_ids), (
+                f"failed must name the errored tenants; got {result.get('failed')!r}"
+            )
+            assert _run_failed(result) is True, (
+                "the cron exit gate must treat a Phoenix outage as a failure"
+            )
+        finally:
+            for tid in tenant_ids:
+                try:
+                    backend.delete_metadata_document(
+                        schema="tenant_metadata", doc_id=tid
+                    )
+                except Exception:
+                    pass
+            try:
+                backend.delete_metadata_document(
+                    schema="organization_metadata", doc_id=org_id
+                )
+            except Exception:
+                pass

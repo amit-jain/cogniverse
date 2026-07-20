@@ -1649,7 +1649,7 @@ async def run_monthly_reports(
     perf_path = out / f"performance-{period}.json"
     perf_path.write_text(json.dumps(perf_report, indent=2, default=str))
 
-    return {
+    result = {
         "period": period,
         "generated_at": generated_at,
         "output_dir": str(out),
@@ -1664,6 +1664,21 @@ async def run_monthly_reports(
             ),
         },
     }
+    # Surface per-tenant Phoenix outages at the TOP level so the cron's
+    # _run_failed gate sees them and exits non-zero. Without this a total
+    # Phoenix outage wrote an all-errors report yet the cron reported
+    # Succeeded (the per-tenant "phoenix query failed" strings live only in
+    # the file and don't match _run_failed's failed:/error: prefix), so the
+    # dropped monthly reports were never regenerated. The usage/Vespa side
+    # already exits non-zero by propagating — this aligns the perf side.
+    perf_errors = sorted(
+        tid
+        for tid, v in perf_per_tenant.items()
+        if isinstance(v, dict) and v.get("error")
+    )
+    if perf_errors:
+        result["failed"] = perf_errors
+    return result
 
 
 async def run_simba_optimization(
