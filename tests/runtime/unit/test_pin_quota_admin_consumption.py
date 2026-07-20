@@ -17,6 +17,9 @@ The blob boundary is an in-memory fake so the test is self-contained.
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -143,3 +146,42 @@ class TestFallbackChain:
             "TenantConfig.metadata['pin_quota']; got user="
             f"{resolved.user}"
         )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_tenant_puts_serialize_and_stay_consistent(monkeypatch):
+    """Two concurrent PUTs for one tenant must serialize: the per-tenant write
+    lock keeps their save_blob critical sections from overlapping, so the
+    durable blob and the served override dict never diverge."""
+    admin._reset_admin_overrides_for_tests()
+    in_flight = {"n": 0, "max": 0}
+    blob: dict = {}
+
+    def _build_am(tenant_id):
+        class _AM:
+            async def save_blob(self, kind, key, data):
+                in_flight["n"] += 1
+                in_flight["max"] = max(in_flight["max"], in_flight["n"])
+                await asyncio.sleep(0.02)  # yield so an unserialized sibling overlaps
+                blob["value"] = data
+                await asyncio.sleep(0.02)
+                in_flight["n"] -= 1
+
+            async def load_blob(self, kind, key):
+                return blob.get("value")
+
+        return _AM()
+
+    monkeypatch.setattr(admin, "_build_artifact_manager", _build_am)
+
+    await asyncio.gather(
+        admin.set_pin_quotas("acme:acme", admin.PinQuotasUpdateRequest(user=10)),
+        admin.set_pin_quotas("acme:acme", admin.PinQuotasUpdateRequest(user=20)),
+    )
+
+    # Serialized: the two save_blob critical sections never ran concurrently.
+    assert in_flight["max"] == 1
+    # The served override dict equals the durable blob — no divergence.
+    served = admin._pin_quota_overrides["acme:acme"]
+    assert json.loads(blob["value"]) == served
+    assert served["user"] in (10, 20)

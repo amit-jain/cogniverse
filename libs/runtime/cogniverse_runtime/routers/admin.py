@@ -1150,8 +1150,25 @@ def _default_pin_quotas() -> Dict[str, int]:
 _pin_quota_overrides: Dict[str, Dict[str, int]] = {}
 _signature_variant_overrides: Dict[str, Dict[str, str]] = {}
 
+# Per-tenant write locks serialize the pin-quota read-modify-write so the blob
+# and the write-through cache never diverge under concurrent same-tenant PUTs.
+_pin_quota_write_locks: Dict[str, asyncio.Lock] = {}
+
 _PIN_QUOTA_BLOB_KIND = "config"
 _PIN_QUOTA_BLOB_KEY = "pin_quotas"
+
+
+def _pin_quota_write_lock(key: str) -> asyncio.Lock:
+    """Return the per-tenant pin-quota write lock (created on first use).
+
+    Runs on the event loop with no await between get and set, so the lookup is
+    atomic across concurrent handlers.
+    """
+    lock = _pin_quota_write_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _pin_quota_write_locks[key] = lock
+    return lock
 
 
 async def _load_pin_quotas(tenant_id: str) -> Dict[str, int]:
@@ -1203,19 +1220,27 @@ async def set_pin_quotas(
     if body.tenant_admin is not None and body.tenant_admin < 0:
         raise HTTPException(400, "tenant_admin quota must be >= 0")
 
-    current = await _load_pin_quotas(tenant_id)
-    if body.user is not None:
-        current["user"] = body.user
-    if body.tenant_admin is not None:
-        current["tenant_admin"] = body.tenant_admin
-    if body.org_admin is not None:
-        current["org_admin"] = body.org_admin
-
     key = canonical_tenant_id(tenant_id)
-    am = _build_artifact_manager(key)
-    await am.save_blob(_PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY, json.dumps(current))
-    _pin_quota_overrides[key] = current
-    logger.info("Updated + persisted pin quotas for tenant=%s: %s", key, current)
+    # Serialize the whole read-modify-write-cache sequence per tenant: two
+    # concurrent PUTs for the same tenant would otherwise interleave the
+    # save_blob await and the cache set, leaving the durable blob and the served
+    # override dict with different values (a wrong pin-quota limit) until a
+    # restart reconciles from the blob.
+    async with _pin_quota_write_lock(key):
+        current = await _load_pin_quotas(tenant_id)
+        if body.user is not None:
+            current["user"] = body.user
+        if body.tenant_admin is not None:
+            current["tenant_admin"] = body.tenant_admin
+        if body.org_admin is not None:
+            current["org_admin"] = body.org_admin
+
+        am = _build_artifact_manager(key)
+        await am.save_blob(
+            _PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY, json.dumps(current)
+        )
+        _pin_quota_overrides[key] = current
+        logger.info("Updated + persisted pin quotas for tenant=%s: %s", key, current)
     return PinQuotasResponse(tenant_id=tenant_id, quotas=current)
 
 
@@ -1777,4 +1802,5 @@ async def retire_canary(
 def _reset_admin_overrides_for_tests() -> None:
     """Reset the in-memory override dicts. Called by integration tests."""
     _pin_quota_overrides.clear()
+    _pin_quota_write_locks.clear()
     _signature_variant_overrides.clear()
