@@ -307,6 +307,51 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         )
 
     @pytest.mark.asyncio
+    async def test_routing_span_records_entity_extraction_failed(self, real_telemetry):
+        """A GLiNER outage routes with a low confidence indistinguishable from a
+        genuine low-confidence classification. The cogniverse.routing span must
+        record entity_extraction_failed=True so RoutingEvaluator/QualityMonitor
+        can exclude these from threshold recalibration — the flag was computed
+        on GatewayOutput but reached NO telemetry consumer before this."""
+        import json as _json
+
+        from cogniverse_agents.gateway_agent import (
+            GatewayAgent,
+            GatewayDeps,
+            GatewayInput,
+        )
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        agent = GatewayAgent(deps=GatewayDeps(), port=19015)
+        # GLiNER present but FAILING mid-predict -> entity_extraction_failed=True.
+        agent._gliner_model = MagicMock()
+        agent._gliner_model.predict_entities.side_effect = RuntimeError("gliner down")
+        agent.set_telemetry_manager(real_telemetry)
+
+        await agent.process(
+            GatewayInput(
+                query="find the report on q3 revenue",
+                tenant_id="entity_fail_test",
+            )
+        )
+        await asyncio.sleep(2)
+
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("entity_fail_test")
+        )
+        phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
+        row = _query_phoenix_for_span("cogniverse.routing", project_name, phoenix_url)
+        assert row is not None, "cogniverse.routing span not found in Phoenix"
+
+        raw = row.get("attributes.output.value")
+        assert raw, f"routing span has no output.value; columns={list(row.index)}"
+        output = _json.loads(raw)
+        assert output.get("entity_extraction_failed") is True, (
+            "routing span must record entity_extraction_failed=True on a GLiNER "
+            f"outage so it is distinguishable in telemetry; got {output!r}"
+        )
+
+    @pytest.mark.asyncio
     async def test_entity_extraction_emits_custom_span(self, real_telemetry):
         """EntityExtractionAgent emits cogniverse.entity_extraction span."""
         from cogniverse_agents.entity_extraction_agent import (
