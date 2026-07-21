@@ -1550,7 +1550,11 @@ All four are compiled with `dspy.teleprompt.BootstrapFewShot` — `DSPyAgentOpti
 builds the `BootstrapFewShot` config from `optimizer.optimization_settings` (including
 `teacher_settings`, populated when `initialize_language_model` was given a
 `teacher_endpoint_config`) and runs the compile scoped inside `dspy.context(lm=optimizer.lm)`
-when a real (non-mock) LM is configured.
+when a real (non-mock) LM is configured. `optimize_all_modules` holds out 20% of each module's
+examples as a validation split and passes it as `optimize_module`'s `validation_examples`;
+the compiled module is scored against the un-compiled baseline on that split (per-module
+metric, a raising prediction scores 0) and is discarded in favour of the baseline when it
+underperforms — the overfit gate for small training sets.
 
 ### Live Routing Optimization
 

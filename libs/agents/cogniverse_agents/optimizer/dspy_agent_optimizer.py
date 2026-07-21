@@ -453,11 +453,12 @@ class DSPyAgentOptimizerPipeline:
         try:
             teleprompter = BootstrapFewShot(**optimizer_config)
 
-            if (
+            use_lm_context = bool(
                 hasattr(self.optimizer, "lm")
                 and self.optimizer.lm
                 and not str(type(self.optimizer.lm)).endswith("Mock'>")
-            ):
+            )
+            if use_lm_context:
                 with dspy.context(lm=self.optimizer.lm):
                     compiled_module = teleprompter.compile(
                         module, trainset=training_examples
@@ -467,12 +468,55 @@ class DSPyAgentOptimizerPipeline:
                     module, trainset=training_examples
                 )
 
+            # The held-out split is the overfit gate: keep the compiled
+            # module only if it does not underperform the un-compiled
+            # baseline on examples it never trained on.
+            if validation_examples:
+                metric = optimizer_config["metric"]
+                if use_lm_context:
+                    with dspy.context(lm=self.optimizer.lm):
+                        compiled_score = self._score_on_valset(
+                            compiled_module, validation_examples, metric
+                        )
+                        baseline_score = self._score_on_valset(
+                            module, validation_examples, metric
+                        )
+                else:
+                    compiled_score = self._score_on_valset(
+                        compiled_module, validation_examples, metric
+                    )
+                    baseline_score = self._score_on_valset(
+                        module, validation_examples, metric
+                    )
+                if compiled_score < baseline_score:
+                    logger.warning(
+                        "Module %s scored %.3f compiled vs %.3f baseline on "
+                        "the validation split; keeping the baseline",
+                        module_name,
+                        compiled_score,
+                        baseline_score,
+                    )
+                    compiled_module = module
+
             self.compiled_modules[module_name] = compiled_module
             logger.info(f"Successfully optimized module: {module_name}")
             return compiled_module
 
         except Exception as e:
             raise RuntimeError(f"Failed to optimize module '{module_name}': {e}") from e
+
+    @staticmethod
+    def _score_on_valset(module, examples, metric) -> float:
+        """Mean metric over the held-out split; a prediction that raises
+        scores 0 for that example."""
+        total = 0.0
+        for example in examples:
+            try:
+                pred = module(**example.inputs())
+                total += float(metric(example, pred))
+            except Exception as exc:
+                logger.warning("Validation example failed: %r", exc)
+        return total / len(examples)
 
     def _create_metric_for_module(self, module_name: str):
         """Create evaluation metric for specific module type."""
