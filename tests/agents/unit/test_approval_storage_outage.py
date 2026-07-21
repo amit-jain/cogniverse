@@ -45,6 +45,26 @@ async def test_get_item_span_id_raises_on_outage():
         await storage.get_item_span_id("item-1", batch_id="batch-1")
 
 
+@pytest.mark.asyncio
+async def test_log_approval_decision_raises_on_annotation_outage():
+    """The reviewer identity and feedback live only in the human_approval
+    annotation — a swallowed write failure drops the who/why audit trail
+    while apply_decision reports the approval applied."""
+    storage = _bare_storage()
+    storage.provider.annotations = MagicMock()
+    storage.provider.annotations.add_annotation = AsyncMock(
+        side_effect=RuntimeError("Phoenix annotation write failed")
+    )
+    with pytest.raises(Exception, match="annotation write failed"):
+        await storage.log_approval_decision(
+            span_id="span-1",
+            item_id="item-1",
+            approved=True,
+            feedback="looks right",
+            reviewer="ops@acme",
+        )
+
+
 def _approved_item():
     from cogniverse_core.approval.interfaces import ApprovalStatus, ReviewItem
 
