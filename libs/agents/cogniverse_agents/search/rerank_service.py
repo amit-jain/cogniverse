@@ -100,9 +100,7 @@ async def rerank_result_dicts(
     # _to_rsr and surface as a 500; reject it as the 400 it is.
     bad = next((r for r in results if not isinstance(r, dict)), None)
     if bad is not None:
-        raise ValueError(
-            f"results must be objects; got {type(bad).__name__} element"
-        )
+        raise ValueError(f"results must be objects; got {type(bad).__name__} element")
     reranker = build_reranker(strategy, tenant_id, config_manager)
     rerank_kwargs: Dict[str, Any] = {}
     # Feed the temporal scorer a query time-range only when the query carries
