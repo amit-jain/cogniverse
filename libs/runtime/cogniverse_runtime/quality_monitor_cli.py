@@ -760,8 +760,11 @@ def main():
         asyncio.run(_run_and_close())
     except KeyboardInterrupt:
         logger.info("Quality monitor stopped by user")
-    finally:
         sys.exit(0)
+    except Exception:
+        logger.exception("Quality monitor exited with a fatal error")
+        sys.exit(1)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
