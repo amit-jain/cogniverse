@@ -336,6 +336,108 @@ class TestReaperRecovery:
         assert "abandoned after 4 deliveries" in events[-1]["error"]
 
     @pytest.mark.asyncio
+    async def test_dead_letter_crash_before_ack_never_double_settles(
+        self, redis, monkeypatch
+    ):
+        """A crash after the dead-letter settle but before the ack redelivers
+        the poison entry; the next sweep must NOT settle again — a second
+        decrement would free a slot a DIFFERENT still-running job of the same
+        tenant holds, and the dead stream would gain a duplicate entry. Only
+        the terminal publish + ack are repeated (at-least-once)."""
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-1"
+        config.reaper_max_deliveries = 3
+        tenant, sha, ingest_id = "acme:acme", "sha_crash", "ing_crash"
+        job = await _orphan_job(
+            redis, config, ingest_id=ingest_id, sha=sha, tenant=tenant
+        )
+        # A DIFFERENT job of the same tenant is running and holds one slot.
+        await queue.increment_active(redis, tenant)
+        for consumer in ("dead-2", "dead-3"):
+            await redis.xclaim(
+                queue.QUEUE_STREAM,
+                config.consumer_group,
+                consumer,
+                min_idle_time=0,
+                message_ids=[job.message_id],
+            )
+
+        real_publish = queue.publish_status
+
+        async def _crash(*args, **kwargs):
+            raise ConnectionError("pod killed before terminal publish")
+
+        monkeypatch.setattr(queue, "publish_status", _crash)
+        with pytest.raises(ConnectionError):
+            await reaper._dead_letter(redis, config, job, 4)
+        monkeypatch.setattr(queue, "publish_status", real_publish)
+
+        # Settle committed exactly once; entry still pending (no ack ran).
+        assert len(await redis.xrange(reaper.DEAD_STREAM)) == 1
+        assert await queue.get_active(redis, tenant) == 1
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") is None
+        assert await redis.get(f"{reaper.DEAD_MARKER_PREFIX}{job.message_id}")
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 1
+
+        # Next sweep redelivers (bumping to 4 > cap): it must skip the settle
+        # and only re-publish the terminal + ack.
+        recovered = await reaper.run_reaper_once(redis, config, min_idle_ms=0)
+        assert recovered == 1
+        dead = await redis.xrange(reaper.DEAD_STREAM)
+        assert len(dead) == 1, "crash-redelivery duplicated the dead entry"
+        assert dead[0][1]["times_delivered"] == "4"
+        assert await queue.get_active(redis, tenant) == 1, (
+            "second settle freed a slot the other running job holds"
+        )
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 0
+        assert await queue.queue_depth(redis) == 0
+        events = [e for _, e in await queue.read_status_since(redis, ingest_id)]
+        assert events[-1]["state"] == "failed"
+        assert events[-1]["error_type"] == "MaxDeliveriesExceeded"
+        assert "abandoned after 4 deliveries" in events[-1]["error"]
+
+    @pytest.mark.asyncio
+    async def test_dead_letter_settle_fault_leaves_state_retryable(
+        self, redis, monkeypatch
+    ):
+        """Redis failing the settle call itself must tear nothing: no marker,
+        no dead entry, counter and inflight untouched, entry still pending —
+        the next sweep retries the full settle successfully."""
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-1"
+        config.reaper_max_deliveries = 3
+        tenant, sha, ingest_id = "acme:acme", "sha_efault", "ing_efault"
+        job = await _orphan_job(
+            redis, config, ingest_id=ingest_id, sha=sha, tenant=tenant
+        )
+        await queue.increment_active(redis, tenant)
+
+        with monkeypatch.context() as m:
+
+            async def _down(*args, **kwargs):
+                raise ConnectionError("redis reset on eval")
+
+            m.setattr(redis, "eval", _down)
+            with pytest.raises(ConnectionError, match="reset on eval"):
+                await reaper._dead_letter(redis, config, job, 4)
+
+        assert await redis.get(f"{reaper.DEAD_MARKER_PREFIX}{job.message_id}") is None
+        assert len(await redis.xrange(reaper.DEAD_STREAM)) == 0
+        assert await queue.get_active(redis, tenant) == 2
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") == ingest_id
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 1
+
+        await reaper._dead_letter(redis, config, job, 4)
+        assert len(await redis.xrange(reaper.DEAD_STREAM)) == 1
+        assert await queue.get_active(redis, tenant) == 1
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") is None
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 0
+
+    @pytest.mark.asyncio
     async def test_concurrent_reapers_process_each_orphan_exactly_once(self, redis):
         """Two sweeps running concurrently over two orphans: XAUTOCLAIM hands
         each entry to exactly one caller, so no orphan is processed twice and
