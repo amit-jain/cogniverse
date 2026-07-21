@@ -247,15 +247,24 @@ class DatasetStore(ABC):
         Requires a backend that supports ``delete_dataset``. The previous
         contents are pre-read and restored if the create fails after the delete
         committed, so a torn replace never destroys the prior dataset (mirrors
-        ArtifactManager.save_blob's last-write-wins compensation).
+        ArtifactManager.save_blob's last-write-wins compensation). Only a genuine
+        not-found on the pre-read (KeyError/ValueError) is treated as "nothing to
+        restore"; any other pre-read error propagates BEFORE the destructive
+        delete, so a flapping backend can never destroy the prior dataset.
+
+        This is a single-writer, last-write-wins operation: it is NOT atomic
+        across concurrent writers to the same stable (tenant, agent) name. Two
+        simultaneous cross-process writers can merge or lose the active dataset;
+        callers must serialize writes to a given name (see the concurrency note
+        in docs/modules/optimization.md).
 
         Returns:
             The new dataset identifier.
         """
         try:
             previous = await self.get_dataset(name)
-        except Exception:
-            previous = None  # no prior dataset (or unreadable) — nothing to restore
+        except (KeyError, ValueError):
+            previous = None  # no prior dataset — nothing to restore
         await self.delete_dataset(name)
         try:
             return await self.create_dataset(name, data, metadata)
