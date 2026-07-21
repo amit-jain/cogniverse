@@ -8,6 +8,7 @@ a structured research report with citations.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -389,8 +390,11 @@ class DeepResearchAgent(
                 for r in (e.get("results") or [])
                 if isinstance(r, dict)
             ]
-            keyframe_images = self._keyframe_resolver.collect(
-                hits, max_images=self.max_keyframes_to_llm
+            # Frame collection downloads from object storage — off the loop.
+            keyframe_images = await asyncio.to_thread(
+                self._keyframe_resolver.collect,
+                hits,
+                max_images=self.max_keyframes_to_llm,
             )
 
         result = await self.call_dspy(

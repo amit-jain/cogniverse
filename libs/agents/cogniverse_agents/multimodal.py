@@ -21,6 +21,7 @@ already flattened them.
 from __future__ import annotations
 
 import logging
+import threading
 from collections import OrderedDict
 from typing import Any, Iterable, Optional
 
@@ -93,6 +94,11 @@ class KeyframeImageResolver:
         self._locator = locator
         self._cache: "OrderedDict[str, dspy.Image]" = OrderedDict()
         self._cache_size = max(1, cache_size)
+        # collect() runs from asyncio.to_thread workers, so concurrent
+        # requests mutate the cache from different threads. Fetches stay
+        # outside the lock — two threads racing the same cold URI both
+        # localize and the last write wins, which is idempotent.
+        self._cache_lock = threading.Lock()
 
     def collect(
         self, hits: Iterable[dict[str, Any]], max_images: int
@@ -112,10 +118,11 @@ class KeyframeImageResolver:
         return images
 
     def _image_for(self, uri: str) -> Optional[dspy.Image]:
-        cached = self._cache.get(uri)
-        if cached is not None:
-            self._cache.move_to_end(uri)
-            return cached
+        with self._cache_lock:
+            cached = self._cache.get(uri)
+            if cached is not None:
+                self._cache.move_to_end(uri)
+                return cached
         try:
             path = self._locator.localize(uri)
         except FileNotFoundError:
@@ -124,8 +131,9 @@ class KeyframeImageResolver:
             logger.warning("keyframe fetch failed for %s: %r", uri, e)
             return None
         img = dspy.Image(str(path))
-        self._cache[uri] = img
-        self._cache.move_to_end(uri)
-        while len(self._cache) > self._cache_size:
-            self._cache.popitem(last=False)
+        with self._cache_lock:
+            self._cache[uri] = img
+            self._cache.move_to_end(uri)
+            while len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
         return img

@@ -3,6 +3,7 @@ Summarizer Agent with full A2A support, VLM integration, and "think phase" for c
 Provides intelligent summarization of search results with visual content analysis.
 """
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -714,7 +715,10 @@ and structure summary based on identified themes and content categories.
 
         # Take top results for summary
         top_results = sorted_results[: request.max_results_to_analyze]
-        keyframe_images = self._collect_keyframes(request, top_results)
+        # Frame collection downloads from object storage — off the loop.
+        keyframe_images = await asyncio.to_thread(
+            self._collect_keyframes, request, top_results
+        )
 
         if request.summary_type == "brief":
             return await self._generate_brief_summary(

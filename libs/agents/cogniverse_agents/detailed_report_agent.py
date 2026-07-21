@@ -778,7 +778,10 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             and self.visual_analysis_enabled
             and request.include_visual_analysis
         ):
-            keyframe_images = self._keyframe_resolver.collect(
+            # collect() downloads frames from object storage — off the loop,
+            # like the call_dspy below, or every concurrent request stalls.
+            keyframe_images = await asyncio.to_thread(
+                self._keyframe_resolver.collect,
                 request.search_results[: request.max_results_to_analyze],
                 max_images=self.max_keyframes_to_llm,
             )

@@ -13,6 +13,7 @@ gap for the detailed-report agent:
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import AsyncMock, Mock, patch
 
 import dspy
@@ -549,3 +550,98 @@ class TestAnswerAgentResolverTargetsObjectStore:
             config_manager=self._config_manager_with_minio(""),
         )
         assert agent._keyframe_resolver._locator.config.s3.endpoint_url is None
+
+
+class _ThreadRecordingLocator(FakeLocator):
+    """Records the thread each localize() runs on, so tests can prove frame
+    fetches happen off the event loop."""
+
+    def __init__(self, jpg):
+        super().__init__(jpg)
+        self.threads: list = []
+
+    def localize(self, uri):
+        self.threads.append(threading.get_ident())
+        return super().localize(uri)
+
+
+@pytest.mark.unit
+class TestResolverCacheThreadSafety:
+    def test_concurrent_collect_is_threadsafe_and_cache_stays_bounded(self, jpg_path):
+        """collect() runs from asyncio.to_thread workers, so concurrent
+        requests hammer one resolver from many threads. With the cache bound
+        far below the working set, every thread constantly evicts while others
+        read/insert — the cache must stay consistent and bounded, and every
+        collect must still return one image per hit."""
+        resolver = KeyframeImageResolver(FakeLocator(jpg_path), cache_size=8)
+        hits = [_video_hit(i) for i in range(24)]
+        n_threads, rounds = 8, 10
+        barrier = threading.Barrier(n_threads)
+        failures: list = []
+        counts: list = []
+
+        def _work():
+            barrier.wait()
+            try:
+                for _ in range(rounds):
+                    counts.append(len(resolver.collect(hits, max_images=24)))
+            except Exception as exc:  # noqa: BLE001 — any exception is the bug
+                failures.append(exc)
+
+        threads = [threading.Thread(target=_work) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert failures == []
+        assert counts == [24] * (n_threads * rounds)
+        assert len(resolver._cache) <= 8
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestCollectRunsOffTheEventLoop:
+    """Keyframe collection does blocking object-store downloads; every agent
+    answer path must run it in a worker thread — on the loop it stalls every
+    concurrent request (and /health/live) for the duration of the downloads."""
+
+    async def test_report_agent_collects_off_loop(self, report_agent, jpg_path):
+        locator = _ThreadRecordingLocator(jpg_path)
+        report_agent._keyframe_resolver = KeyframeImageResolver(locator)
+        report_agent.call_dspy = AsyncMock(return_value=Mock(executive_summary="ok"))
+        req = ReportRequest(
+            query="q", search_results=[_video_hit(1)], include_visual_analysis=True
+        )
+        await report_agent._generate_executive_summary(req, _thinking_phase())
+        loop_thread = threading.get_ident()
+        assert locator.threads, "no keyframe was fetched"
+        assert all(t != loop_thread for t in locator.threads)
+
+    async def test_summarizer_collects_off_loop(self, summarizer_agent, jpg_path):
+        locator = _ThreadRecordingLocator(jpg_path)
+        summarizer_agent._keyframe_resolver = KeyframeImageResolver(locator)
+        summarizer_agent._generate_brief_summary = AsyncMock(return_value=("s", ["k"]))
+        req = SummaryRequest(
+            query="q",
+            search_results=[_video_hit(1)],
+            include_visual_analysis=True,
+            summary_type="brief",
+        )
+        await summarizer_agent._generate_summary(
+            req, Mock(relevance_scores={}), visual_insights=[]
+        )
+        loop_thread = threading.get_ident()
+        assert locator.threads, "no keyframe was fetched"
+        assert all(t != loop_thread for t in locator.threads)
+
+    async def test_deep_research_collects_off_loop(self, deep_research_agent, jpg_path):
+        locator = _ThreadRecordingLocator(jpg_path)
+        deep_research_agent._keyframe_resolver = KeyframeImageResolver(locator)
+        deep_research_agent.call_dspy = AsyncMock(return_value=Mock(summary="ok"))
+        await deep_research_agent._synthesize(
+            "q", [{"question": "q", "results": [_video_hit(1)]}]
+        )
+        loop_thread = threading.get_ident()
+        assert locator.threads, "no keyframe was fetched"
+        assert all(t != loop_thread for t in locator.threads)
