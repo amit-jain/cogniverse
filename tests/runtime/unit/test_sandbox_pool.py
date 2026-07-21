@@ -163,6 +163,93 @@ class TestCapacityCap:
         assert "b" in stats["agents"]
         assert "c" in stats["agents"]
 
+    def test_capacity_eviction_destroys_outside_the_lock(self):
+        """The at-capacity checkout eviction must destroy the victim OUTSIDE
+        the pool lock, like evict_idle/close_all — session.delete() is an
+        un-timed gateway RPC; holding the lock across it would block every
+        concurrent checkout/release behind a hung gateway."""
+        client = _CountingClient()
+        pool = SandboxSessionPool(
+            client,
+            config=SandboxPoolConfig(max_pool_size=1, max_idle_seconds=60.0),
+        )
+
+        seen: list = []
+        pool.with_session("a", lambda s: seen.append(s))
+        victim = seen[0]
+
+        lock_free_during_destroy = []
+
+        def _delete_checking_lock():
+            acquired = pool._lock.acquire(blocking=False)
+            lock_free_during_destroy.append(acquired)
+            if acquired:
+                pool._lock.release()
+            victim.delete_count += 1
+
+        victim.delete = _delete_checking_lock
+
+        # Checkout for a second agent at capacity 1 → evicts 'a'.
+        pool.with_session("b", lambda s: seen.append(s))
+
+        assert lock_free_during_destroy == [True]
+        assert victim.delete_count == 1
+        stats = pool.stats()
+        assert stats["pool_size"] == 1
+        assert "a" not in stats["agents"]
+        assert "b" in stats["agents"]
+
+    def test_hung_gateway_during_eviction_does_not_block_other_checkouts(self):
+        """Executable interleaving: while the evicted victim's delete() hangs,
+        a concurrent checkout for another agent must complete — the hang is
+        confined to the evicting thread."""
+        import threading
+
+        client = _CountingClient()
+        pool = SandboxSessionPool(
+            client,
+            config=SandboxPoolConfig(max_pool_size=1, max_idle_seconds=60.0),
+        )
+
+        seen: list = []
+        pool.with_session("a", lambda s: seen.append(s))
+        victim = seen[0]
+
+        delete_entered = threading.Event()
+        release_delete = threading.Event()
+
+        def _hanging_delete():
+            delete_entered.set()
+            assert release_delete.wait(timeout=10), "test hung"
+            victim.delete_count += 1
+
+        victim.delete = _hanging_delete
+
+        evictor = threading.Thread(
+            target=pool.with_session, args=("b", lambda s: None)
+        )
+        evictor.start()
+        assert delete_entered.wait(timeout=5), "eviction never reached delete"
+
+        # The gateway is hung mid-delete; another agent's checkout must
+        # still complete promptly.
+        done = threading.Event()
+
+        def _other_checkout():
+            pool.with_session("c", lambda s: None)
+            done.set()
+
+        other = threading.Thread(target=_other_checkout)
+        other.start()
+        assert done.wait(timeout=5), (
+            "checkout blocked behind a hung gateway delete — the destroy "
+            "is running under the pool lock"
+        )
+        release_delete.set()
+        evictor.join(timeout=10)
+        other.join(timeout=10)
+        assert victim.delete_count == 1
+
 
 class TestErrorHandling:
     def test_callback_exception_drops_pooled_session(self):
