@@ -21,6 +21,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 class _StubMonitor:
     force_result = {"status": "ok"}
+    run_exc: BaseException | None = None
     instances: list = []
 
     def __init__(self, **kwargs):
@@ -32,6 +33,8 @@ class _StubMonitor:
         return type(self).force_result
 
     async def run(self):
+        if type(self).run_exc is not None:
+            raise type(self).run_exc
         return None
 
     async def close(self):
@@ -55,6 +58,7 @@ def patched(monkeypatch):
         "cogniverse_evaluation.quality_monitor.QualityMonitor", _StubMonitor
     )
     _StubMonitor.force_result = {"status": "ok"}
+    _StubMonitor.run_exc = None
     _StubMonitor.instances = []
     return monkeypatch
 
@@ -107,4 +111,31 @@ def test_once_status_error_exits_1_and_closes(patched):
     code = _main_exit(patched, [*_BASE, "--once"])
     assert code == 1
     # close() ran in the same loop as the cycle even on the failure exit path.
+    assert _StubMonitor.instances[-1].closed is True
+
+
+def _silence_annotation_loop(monkeypatch):
+    async def _noop_cycle(**kwargs):
+        return {}
+
+    monkeypatch.setattr(qm, "run_annotation_cycle", _noop_cycle)
+    monkeypatch.setattr(qm, "_load_automation_rules", lambda tenant_id: None)
+
+
+def test_default_monitor_run_error_exits_1_and_logs(patched, caplog):
+    _silence_annotation_loop(patched)
+    _StubMonitor.run_exc = RuntimeError("boom")
+    with caplog.at_level("ERROR"):
+        code = _main_exit(patched, _BASE)
+    assert code == 1
+    assert "boom" in caplog.text
+    # The monitor still closed cleanly before the non-zero exit.
+    assert _StubMonitor.instances[-1].closed is True
+
+
+def test_default_monitor_keyboard_interrupt_exits_0(patched):
+    _silence_annotation_loop(patched)
+    _StubMonitor.run_exc = KeyboardInterrupt()
+    code = _main_exit(patched, _BASE)
+    assert code == 0
     assert _StubMonitor.instances[-1].closed is True
