@@ -308,3 +308,105 @@ class TestServedAgentModulesAreOverlayReachable:
                 "reach a .signature, so a promoted canary/variant prompt would "
                 "silently serve the un-optimized prompt."
             )
+
+
+class TestOverlayValueFaultContract:
+    """A malformed overlay value (non-string, empty, None) must degrade to the
+    active prompt for that predictor: no crash at LM-call time, no silent
+    blanking of the served instructions.
+
+    Drives the REAL served ``SearchOptimizationModule`` (a ChainOfThought whose
+    signature lives on ``.predict.signature``) — the exact object the search
+    agent hands to ``call_dspy``. A non-string value fed to
+    ``signature.with_instructions`` produces a corrupted signature whose later
+    ``.instructions`` access raises ``AttributeError`` inside the to_thread /
+    streamify worker, crashing the whole dispatch; an empty/None value silently
+    blanks the served instructions.
+    """
+
+    class _Agent:
+        def __init__(self, prompts):
+            self._prompts = prompts
+
+        def get_dispatched_prompts(self):
+            return self._prompts
+
+    def _base_instructions(self, module):
+        from cogniverse_core.agents.base import _signature_predictor
+
+        return _signature_predictor(module.search_optimizer).signature.instructions
+
+    def test_non_string_overlay_value_serves_active_prompt(self):
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import (
+            _dispatched_prompt_overlay,
+            _signature_predictor,
+        )
+
+        module = SearchOptimizationModule()
+        base_instr = self._base_instructions(module)
+
+        with _dispatched_prompt_overlay(
+            self._Agent({"search_optimizer": 123}), module
+        ) as clone:
+            served = _signature_predictor(clone.search_optimizer).signature
+            # Accessing .instructions must not raise (the corrupted-signature bug
+            # deferred the AttributeError to LM-call time inside to_thread).
+            assert served.instructions == base_instr
+
+        assert self._base_instructions(module) == base_instr
+
+    def test_empty_string_overlay_value_serves_active_prompt(self):
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import (
+            _dispatched_prompt_overlay,
+            _signature_predictor,
+        )
+
+        module = SearchOptimizationModule()
+        base_instr = self._base_instructions(module)
+
+        with _dispatched_prompt_overlay(
+            self._Agent({"search_optimizer": ""}), module
+        ) as clone:
+            served = _signature_predictor(clone.search_optimizer).signature
+            assert served.instructions == base_instr
+
+        assert self._base_instructions(module) == base_instr
+
+    def test_none_overlay_value_serves_active_prompt(self):
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import (
+            _dispatched_prompt_overlay,
+            _signature_predictor,
+        )
+
+        module = SearchOptimizationModule()
+        base_instr = self._base_instructions(module)
+
+        with _dispatched_prompt_overlay(
+            self._Agent({"search_optimizer": None}), module
+        ) as clone:
+            served = _signature_predictor(clone.search_optimizer).signature
+            assert served.instructions == base_instr
+
+        assert self._base_instructions(module) == base_instr
+
+    def test_valid_string_overlay_value_applies_and_leaves_base_untouched(self):
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import (
+            _dispatched_prompt_overlay,
+            _signature_predictor,
+        )
+
+        module = SearchOptimizationModule()
+        base_instr = self._base_instructions(module)
+
+        with _dispatched_prompt_overlay(
+            self._Agent({"search_optimizer": "OPTIMIZED_PROMPT"}), module
+        ) as clone:
+            served = _signature_predictor(clone.search_optimizer).signature
+            assert served.instructions == "OPTIMIZED_PROMPT"
+
+        # The shared cached module's base is never mutated.
+        assert self._base_instructions(module) == base_instr
