@@ -416,3 +416,360 @@ class TestSystemStats:
             )
         assert resp.status_code == 501
         assert "get_statistics" in resp.json()["detail"]
+
+
+def _trusted_row(memory_id: str, score: float = 0.5, endorsements: int = 2):
+    from cogniverse_core.memory.trust import TrustRecord, attach_trust_to_metadata
+
+    trust = TrustRecord(
+        score=score,
+        initial_score=score,
+        decayed_at="2026-07-01T00:00:00+00:00",
+        endorsements=endorsements,
+    )
+    return {
+        "id": memory_id,
+        "memory": "acme ships on fridays",
+        "metadata": attach_trust_to_metadata({}, trust),
+    }
+
+
+def _pin_service_with_mm(monkeypatch, rows):
+    """Patch _get_pin_service with a stub whose ._mm serves ``rows`` and
+    records memory.update calls — the exact seam the endorse/promote/restore
+    handlers reuse."""
+    mm = MagicMock(name="memory_manager")
+    mm.memory.get_all.return_value = {"results": rows}
+    svc = SimpleNamespace(_mm=mm)
+    monkeypatch.setattr(admin_router, "_get_pin_service", lambda tenant_id: svc)
+    return mm
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestEndorseMemoryRoute:
+    def test_endorse_bumps_trust_and_persists(self, client, monkeypatch):
+        mm = _pin_service_with_mm(monkeypatch, [_trusted_row("mem-1")])
+
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/mem-1/endorse",
+            json={"endorser_role": "org_admin", "actor_id": "ops@acme"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "memory_id": "mem-1",
+            "new_score": 0.7,
+            "endorsements": 3,
+        }
+        update = mm.memory.update.call_args.kwargs
+        assert update["memory_id"] == "mem-1"
+        assert update["data"] == "acme ships on fridays"
+        assert update["metadata"]["trust"]["score"] == 0.7
+        assert update["metadata"]["trust"]["endorsements"] == 3
+
+    def test_unknown_role_400_before_backend(self, client, monkeypatch):
+        mm = _pin_service_with_mm(monkeypatch, [_trusted_row("mem-1")])
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/mem-1/endorse",
+            json={"endorser_role": "superuser", "actor_id": "ops"},
+        )
+        assert resp.status_code == 400
+        assert "superuser" in resp.json()["detail"]
+        mm.memory.get_all.assert_not_called()
+
+    def test_unknown_memory_404(self, client, monkeypatch):
+        _pin_service_with_mm(monkeypatch, [_trusted_row("other")])
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/mem-x/endorse",
+            json={"endorser_role": "user", "actor_id": "ops"},
+        )
+        assert resp.status_code == 404
+
+    def test_backend_outage_maps_to_503_not_success(self, client, monkeypatch):
+        mm = _pin_service_with_mm(monkeypatch, [])
+        mm.memory.get_all.side_effect = ConnectionError("vespa down")
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/mem-1/endorse",
+            json={"endorser_role": "user", "actor_id": "ops"},
+        )
+        assert resp.status_code == 503
+        assert "vespa down" in resp.json()["detail"]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestPromoteToOrgTrunkRoute:
+    def _stub_federation(self, monkeypatch, *, denied=False):
+        calls = {}
+
+        class _StubFederation:
+            def __init__(self, memory_manager_factory, registry):
+                calls["registry"] = registry
+
+            def promote_to_org_trunk(self, **kwargs):
+                calls["promote"] = kwargs
+                if denied:
+                    from cogniverse_core.memory.federation import (
+                        FederationDeniedError,
+                    )
+
+                    raise FederationDeniedError("role user may not promote")
+                return SimpleNamespace(
+                    source_memory_id=kwargs["source_memory"]["id"],
+                    promoted_memory_id="trunk-mem-9",
+                    org_trunk_tenant_id="acme:__org_trunk__",
+                )
+
+        monkeypatch.setattr(
+            "cogniverse_core.memory.federation.FederationService", _StubFederation
+        )
+        return calls
+
+    def test_promote_returns_trunk_ids(self, client, monkeypatch):
+        _pin_service_with_mm(monkeypatch, [_trusted_row("mem-7")])
+        calls = self._stub_federation(monkeypatch)
+
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/mem-7/promote_to_org_trunk",
+            json={"actor_role": "org_admin", "actor_id": "ops@acme"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "source_tenant_id": "acme:prod",
+            "source_memory_id": "mem-7",
+            "promoted_memory_id": "trunk-mem-9",
+            "org_trunk_tenant_id": "acme:__org_trunk__",
+        }
+        assert calls["promote"]["source_tenant_id"] == "acme:prod"
+        assert calls["promote"]["actor_id"] == "ops@acme"
+        assert calls["promote"]["actor_role"].value == "org_admin"
+
+    def test_denied_maps_to_403(self, client, monkeypatch):
+        _pin_service_with_mm(monkeypatch, [_trusted_row("mem-7")])
+        self._stub_federation(monkeypatch, denied=True)
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/mem-7/promote_to_org_trunk",
+            json={"actor_role": "user", "actor_id": "u1"},
+        )
+        assert resp.status_code == 403
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestPinRoutes:
+    def _svc(self, monkeypatch):
+        svc = MagicMock(name="pin_service")
+        monkeypatch.setattr(admin_router, "_get_pin_service", lambda tenant_id: svc)
+        return svc
+
+    def _record(self, target="mem-3"):
+        from cogniverse_core.memory.pinning import Pinnable
+
+        return SimpleNamespace(
+            memory_id="pin-1",
+            target_memory_id=target,
+            target_kind="entity_fact",
+            pinned_by=Pinnable("tenant_admin"),
+            pinned_by_actor="ops@acme",
+        )
+
+    def test_pin_returns_persisted_record(self, client, monkeypatch):
+        svc = self._svc(monkeypatch)
+        svc.pin.return_value = self._record()
+
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/mem-3/pin",
+            json={
+                "target_kind": "entity_fact",
+                "pinned_by": "tenant_admin",
+                "actor_id": "ops@acme",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "memory_id": "pin-1",
+            "target_memory_id": "mem-3",
+            "target_kind": "entity_fact",
+            "pinned_by": "tenant_admin",
+            "pinned_by_actor": "ops@acme",
+        }
+        assert svc.pin.call_args.kwargs["target_memory_id"] == "mem-3"
+        assert svc.pin.call_args.kwargs["tenant_id"] == "acme:prod"
+
+    def test_pin_quota_maps_to_429_and_authority_to_403(self, client, monkeypatch):
+        from cogniverse_core.memory.pinning import (
+            PinAuthorityError,
+            PinQuotaExceededError,
+        )
+
+        svc = self._svc(monkeypatch)
+        svc.pin.side_effect = PinQuotaExceededError("user quota 5 reached")
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/m/pin",
+            json={"target_kind": "k", "pinned_by": "user", "actor_id": "u"},
+        )
+        assert resp.status_code == 429
+
+        svc.pin.side_effect = PinAuthorityError("user may not pin org kind")
+        resp = client.post(
+            "/admin/tenants/acme:prod/memories/m/pin",
+            json={"target_kind": "k", "pinned_by": "user", "actor_id": "u"},
+        )
+        assert resp.status_code == 403
+
+    def test_unpin_reports_removed_count(self, client, monkeypatch):
+        svc = self._svc(monkeypatch)
+        svc.unpin.return_value = 2
+        resp = client.request(
+            "DELETE",
+            "/admin/tenants/acme:prod/memories/mem-3/pin",
+            json={"requester_role": "org_admin", "actor_id": "ops"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "tenant_id": "acme:prod",
+            "target_memory_id": "mem-3",
+            "removed": 2,
+        }
+
+    def test_list_pins_serialises_records(self, client, monkeypatch):
+        svc = self._svc(monkeypatch)
+        svc.list_pins.return_value = [self._record()]
+        resp = client.get("/admin/tenants/acme:prod/pins")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "tenant_id": "acme:prod",
+            "pins": [
+                {
+                    "memory_id": "pin-1",
+                    "target_memory_id": "mem-3",
+                    "target_kind": "entity_fact",
+                    "pinned_by": "tenant_admin",
+                    "pinned_by_actor": "ops@acme",
+                }
+            ],
+        }
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestSessionRoutes:
+    def _stub_manager_cls(self, monkeypatch, drop_result):
+        class _StubMgr:
+            instances: list = []
+            _instances: dict = {}
+
+            def __init__(self, tenant_id):
+                self.tenant_id = tenant_id
+                self.memory = object()
+                self.drop_calls: list = []
+                type(self).instances.append(self)
+
+            def drop_session(self, session_id, registry):
+                self.drop_calls.append(session_id)
+                return dict(drop_result)
+
+        monkeypatch.setattr(
+            "cogniverse_core.memory.manager.Mem0MemoryManager", _StubMgr
+        )
+        return _StubMgr
+
+    def test_drop_session_reports_per_kind_counts(self, client, monkeypatch):
+        stub_cls = self._stub_manager_cls(
+            monkeypatch, {"chat_turn": 3, "scratchpad": 1}
+        )
+        resp = client.delete("/admin/tenants/acme:prod/sessions/sess-9")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "dropped",
+            "tenant_id": "acme:prod",
+            "session_id": "sess-9",
+            "deleted_by_kind": {"chat_turn": 3, "scratchpad": 1},
+            "total_deleted": 4,
+        }
+        (mgr,) = stub_cls.instances
+        assert mgr.tenant_id == "acme:prod"
+        assert mgr.drop_calls == ["sess-9"]
+
+    def test_close_session_sweeps_warm_tenants(self, client, monkeypatch):
+        stub_cls = self._stub_manager_cls(monkeypatch, {"chat_turn": 2})
+        warm_a = stub_cls("acme:prod")
+        warm_b = stub_cls("beta:beta")
+        stub_cls._instances = {"acme:prod": warm_a, "beta:beta": warm_b}
+
+        resp = client.post("/admin/sessions/sess-9/close")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "closed"
+        assert body["session_id"] == "sess-9"
+        assert body["total_deleted"] == 4
+        assert body["per_tenant"] == {
+            "acme:prod": {"chat_turn": 2},
+            "beta:beta": {"chat_turn": 2},
+        }
+        assert warm_a.drop_calls == ["sess-9"]
+        assert warm_b.drop_calls == ["sess-9"]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestCanaryRoutes:
+    def _am(self, monkeypatch):
+        am = MagicMock(name="artifact_manager")
+        monkeypatch.setattr(
+            admin_router, "_build_artifact_manager", lambda tenant_id: am
+        )
+        return am
+
+    def test_promote_canary_returns_state(self, client, monkeypatch):
+        am = self._am(monkeypatch)
+
+        async def _promote(agent_type, version, traffic_pct):
+            return {"canary_version": version, "traffic_pct": traffic_pct}
+
+        am.promote_to_canary = _promote
+        resp = client.post(
+            "/admin/tenants/acme:prod/canary/summarizer_agent/promote",
+            json={"version": 4, "traffic_pct": 25},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "tenant_id": "acme:prod",
+            "agent_type": "summarizer_agent",
+            "state": {"canary_version": 4, "traffic_pct": 25},
+        }
+
+    def test_promote_unknown_version_maps_to_400(self, client, monkeypatch):
+        am = self._am(monkeypatch)
+
+        async def _promote(agent_type, version, traffic_pct):
+            raise ValueError("no artefact at version 99")
+
+        am.promote_to_canary = _promote
+        resp = client.post(
+            "/admin/tenants/acme:prod/canary/summarizer_agent/promote",
+            json={"version": 99, "traffic_pct": 10},
+        )
+        assert resp.status_code == 400
+        assert "version 99" in resp.json()["detail"]
+
+    def test_retire_canary_returns_state(self, client, monkeypatch):
+        am = self._am(monkeypatch)
+
+        async def _retire(agent_type, reason):
+            return {"canary_version": None, "retired_reason": reason}
+
+        am.retire_canary = _retire
+        resp = client.post(
+            "/admin/tenants/acme:prod/canary/summarizer_agent/retire",
+            params={"reason": "bad_quality"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "tenant_id": "acme:prod",
+            "agent_type": "summarizer_agent",
+            "state": {"canary_version": None, "retired_reason": "bad_quality"},
+        }
