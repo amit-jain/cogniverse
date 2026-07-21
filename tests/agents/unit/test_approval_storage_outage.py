@@ -227,7 +227,7 @@ class _FlushTelemetry:
         return _FlushSpanCtx()
 
 
-def _flush_storage(flush_ok):
+def _flush_storage(flush_ok=None, flush_exc=None):
     storage = object.__new__(ApprovalStorageImpl)
     storage.tenant_id = "acme:acme"
     storage.project_name = "proj"
@@ -236,6 +236,8 @@ def _flush_storage(flush_ok):
 
     class _TracerProvider:
         def force_flush(self, timeout_millis=None):
+            if flush_exc is not None:
+                raise flush_exc
             return flush_ok
 
     tm._tenant_providers = {"acme:acme:proj": _TracerProvider()}
@@ -252,6 +254,19 @@ async def test_save_batch_raises_when_force_flush_fails():
 
     storage = _flush_storage(flush_ok=False)
     batch = ApprovalBatch(batch_id="b1", items=[], context={})
+    with pytest.raises(RuntimeError, match="failed to export"):
+        await storage.save_batch(batch)
+
+
+@pytest.mark.asyncio
+async def test_save_batch_raises_when_force_flush_itself_raises():
+    """A force_flush that RAISES (collector unreachable) must surface the same
+    RuntimeError as a False return — swallowing the exception left flush_ok=None,
+    skipping the guard and reporting the batch persisted when nothing exported."""
+    from cogniverse_core.approval.interfaces import ApprovalBatch
+
+    storage = _flush_storage(flush_exc=ConnectionError("collector down"))
+    batch = ApprovalBatch(batch_id="b3", items=[], context={})
     with pytest.raises(RuntimeError, match="failed to export"):
         await storage.save_batch(batch)
 

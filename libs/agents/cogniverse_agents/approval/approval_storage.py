@@ -204,6 +204,7 @@ class ApprovalStorageImpl(ApprovalStorage):
                 )
         except Exception as e:
             logger.error(f"Failed to flush tracer provider: {e}", exc_info=True)
+            flush_ok = False
 
         # force_flush returning False means the batch's spans were NOT exported
         # — returning batch_id anyway reports the batch persisted when nothing
