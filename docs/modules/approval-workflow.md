@@ -123,7 +123,10 @@ item.status = ApprovalStatus.APPROVED
 item.reviewed_at = datetime.utcnow()
 await storage.update_item(item, batch_id="batch_001")
 
-# Log approval decision (creates telemetry annotation)
+# Log approval decision (creates telemetry annotation). Raises on a
+# telemetry write failure — the reviewer identity and feedback live only
+# in this annotation, so a swallowed failure would silently drop the
+# who/why audit trail while the decision reads as applied.
 # Note: Requires span_id from item
 span_id = await storage.get_item_span_id(item_id="item_001", batch_id="batch_001")
 await storage.log_approval_decision(

@@ -779,7 +779,11 @@ class ApprovalStorageImpl(ApprovalStorage):
             reviewer: Optional reviewer identifier
 
         Returns:
-            True if annotation logged successfully
+            True when the annotation persisted. A write failure RAISES: the
+            reviewer identity and feedback live only in this annotation (the
+            item-status update carries neither), so swallowing the failure
+            silently drops the who/why audit trail while the decision reads
+            as applied.
         """
         try:
             # Prepare metadata
@@ -812,7 +816,7 @@ class ApprovalStorageImpl(ApprovalStorage):
             logger.error(
                 f"Failed to log approval decision annotation: {e}", exc_info=True
             )
-            return False
+            raise
 
     async def append_to_training_dataset(
         self,
