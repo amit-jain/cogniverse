@@ -168,9 +168,11 @@ class _OrchestratorAgentEntry:
     loaded_at: float
 
 
-def _new_orchestrator_agent_cache() -> "TenantLRUCache[_OrchestratorAgentEntry]":
+def _new_orchestrator_agent_cache(
+    on_evict: "Callable[[str, _OrchestratorAgentEntry], None] | None" = None,
+) -> "TenantLRUCache[_OrchestratorAgentEntry]":
     return register_tenant_cache(
-        TenantLRUCache(capacity=ORCHESTRATOR_AGENT_CACHE_CAPACITY)
+        TenantLRUCache(capacity=ORCHESTRATOR_AGENT_CACHE_CAPACITY, on_evict=on_evict)
     )
 
 
@@ -270,7 +272,9 @@ class AgentDispatcher:
         # and streaming) resolves through it so the workflow corpus is read once
         # per TTL, not per complex query.
         self._orchestrator_agents: TenantLRUCache[_OrchestratorAgentEntry] = (
-            _new_orchestrator_agent_cache()
+            _new_orchestrator_agent_cache(
+                on_evict=self._close_evicted_orchestrator_client
+            )
         )
         self._orchestrator_artifact_ttl_s: float = ORCHESTRATOR_ARTIFACT_TTL_S
         self._orchestrator_build_inflight: Dict[str, "asyncio.Future[Any]"] = {}
@@ -392,6 +396,40 @@ class AgentDispatcher:
         finally:
             inflight.pop(tenant_id, None)
 
+    def _close_evicted_orchestrator_client(
+        self, tenant_id: str, entry: "_OrchestratorAgentEntry"
+    ) -> None:
+        """Close the evicted orchestrator's pooled http client.
+
+        Wired as the orchestrator cache's ``on_evict``. The cached
+        OrchestratorAgent owns a per-tenant policy-enforcing
+        ``httpx.AsyncClient``; an LRU capacity evict or a same-key
+        set-displace drops the entry, and without closing the client its
+        connection pool and file descriptors leak for the pod's lifetime.
+        ``on_evict`` runs synchronously while ``aclose()`` is async, so
+        schedule the close on the running loop and keep a strong reference to
+        the task so CPython does not GC the coroutine before it runs; fall
+        back to ``asyncio.run`` when no loop is running.
+        """
+        agent = getattr(entry, "agent", None)
+        client = getattr(agent, "_http_client_override", None)
+        aclose = getattr(client, "aclose", None)
+        if not callable(aclose):
+            return
+        coro = aclose()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None:
+            asyncio.run(coro)
+            return
+        task = loop.create_task(coro)
+        tasks = getattr(self, "_background_tasks", None)
+        if tasks is not None:
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+
     async def _build_orchestrator_agent(self, tenant_id: str):
         """Construct the per-tenant OrchestratorAgent with its WorkflowIntelligence
         corpus, policy-enforcing client, memory wiring, and first artifact read.
@@ -459,7 +497,9 @@ class AgentDispatcher:
         """
         cache = getattr(self, "_orchestrator_agents", None)
         if cache is None:
-            cache = _new_orchestrator_agent_cache()
+            cache = _new_orchestrator_agent_cache(
+                on_evict=self._close_evicted_orchestrator_client
+            )
             self._orchestrator_agents = cache
         entry = cache.get(tenant_id)
         if entry is not None:
@@ -511,7 +551,9 @@ class AgentDispatcher:
             # never triggers a schema redeploy that could drop just-fed rows.
             setter(get_graph_manager(tenant_id, deploy=False))
         except Exception as exc:  # graph backend not configured / unavailable
-            logger.debug("Graph manager bind skipped for tenant %s: %s", tenant_id, exc)
+            logger.warning(
+                "Graph manager bind skipped for tenant %s: %s", tenant_id, exc
+            )
 
     def _init_agent_memory(self, agent: Any, agent_name: str, tenant_id: str) -> None:
         """Auto-initialize MemoryAwareMixin for any agent that supports it.
