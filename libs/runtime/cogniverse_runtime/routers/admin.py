@@ -168,12 +168,14 @@ async def get_system_stats(
             stats["tenant_id"] = tenant_id
             stats["backend_type"] = backend_instance.__class__.__name__
 
-            if not hasattr(backend_instance, "get_stats"):
+            if not hasattr(backend_instance, "get_statistics"):
                 raise HTTPException(
                     status_code=501,
-                    detail=f"Backend '{backend}' does not implement get_stats()",
+                    detail=(f"Backend '{backend}' does not implement get_statistics()"),
                 )
-            backend_stats = await backend_instance.get_stats()
+            # get_statistics is the sync Backend-interface method — off the
+            # loop; it can call into the live cluster.
+            backend_stats = await asyncio.to_thread(backend_instance.get_statistics)
             stats.update(backend_stats)
 
         return stats
