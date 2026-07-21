@@ -276,3 +276,35 @@ class TestEndToEndWorkflowRunWithRealDispatch:
             "trajectories anymore — the deep-synthesis workflow now goes "
             "through real A2A HTTP dispatch"
         )
+
+
+@pytest.mark.asyncio
+class TestRateLimiterSharedAcrossBuilds:
+    async def test_hourly_cap_spans_per_request_workflow_builds(
+        self, orchestrator_with_subagent, monkeypatch
+    ):
+        """Each request builds a fresh DeepSynthesisWorkflow, so the hourly
+        cap only exists if the limiter is shared across builds. Two acquires
+        through the first build must exhaust a cap of 2 for the SECOND build
+        too — a limiter allocated inside the workflow constructor would start
+        every request with an empty window and admit unboundedly."""
+        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+        orchestrator, _, _ = orchestrator_with_subagent
+        from cogniverse_agents.deep_synthesis_workflow import (
+            DeepSynthesisRateLimiter,
+        )
+
+        orchestrator._deep_synth_limiter = DeepSynthesisRateLimiter(
+            rate_limit_per_hour=2
+        )
+        wf1 = orchestrator._build_deep_synthesis_workflow("acme:acme")
+        wf2 = orchestrator._build_deep_synthesis_workflow("acme:acme")
+        assert wf1 is not None and wf2 is not None
+        assert wf1 is not wf2
+        assert wf1.rate_limiter is wf2.rate_limiter
+
+        assert await wf1.rate_limiter.try_acquire("acme:acme") is True
+        assert await wf1.rate_limiter.try_acquire("acme:acme") is True
+        assert await wf2.rate_limiter.try_acquire("acme:acme") is False
+        # A different tenant is not starved by the exhausted one.
+        assert await wf2.rate_limiter.try_acquire("other:other") is True
