@@ -38,3 +38,11 @@ def test_missing_and_garbage_return_none():
     assert _parse_timestamp({}) is None
     assert _parse_timestamp({"creation_timestamp": "not-a-number"}) is None
     assert _parse_timestamp({"creation_timestamp": None}) is None
+
+
+def test_astronomical_epoch_returns_none_not_overflow():
+    """A caller-supplied 1e30 epoch overflows fromtimestamp — same
+    unparseable-timestamp contract as garbage strings, never an exception
+    that turns the rerank route into a 500."""
+    assert _parse_timestamp({"creation_timestamp": 1e30}) is None
+    assert _parse_timestamp({"creation_timestamp": -1e30}) is None
