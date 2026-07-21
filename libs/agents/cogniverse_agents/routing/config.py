@@ -125,7 +125,13 @@ class IntervalConfig(BaseModel):
         30, description="How often to identify spans for annotation"
     )
     feedback_interval_minutes: int = Field(
-        15, description="How often to process annotations"
+        15,
+        description=(
+            "Mirror of the annotation-feedback CronWorkflow schedule — not "
+            "read at runtime. The in-process feedback poll uses "
+            "feedback.poll_interval_minutes; change the chart schedule to "
+            "change the deployed cadence."
+        ),
     )
 
 
