@@ -38,7 +38,9 @@ def _parse_timestamp(d: Dict[str, Any]) -> Optional[datetime]:
         value *= 1000.0
     try:
         return datetime.fromtimestamp(value / 1000.0, tz=timezone.utc)
-    except (ValueError, OSError):
+    except (ValueError, OSError, OverflowError):
+        # OverflowError: a caller-supplied astronomically large epoch —
+        # same unparseable-timestamp contract as the siblings.
         return None
 
 
@@ -94,6 +96,13 @@ async def rerank_result_dicts(
     """
     if not results:
         return []
+    # Caller-supplied JSON: a non-dict element would AttributeError deep in
+    # _to_rsr and surface as a 500; reject it as the 400 it is.
+    bad = next((r for r in results if not isinstance(r, dict)), None)
+    if bad is not None:
+        raise ValueError(
+            f"results must be objects; got {type(bad).__name__} element"
+        )
     reranker = build_reranker(strategy, tenant_id, config_manager)
     rerank_kwargs: Dict[str, Any] = {}
     # Feed the temporal scorer a query time-range only when the query carries
