@@ -235,7 +235,12 @@ class TestEnqueueAndWorker:
             assert second.ingest_id == first.ingest_id
             assert second.sha == first.sha
 
-            assert await queue.queue_depth(env_redis) == 1
+            # ack() XDELs the completed entry and the deduped resubmit
+            # enqueues nothing, so the stream holds no live backlog — a
+            # duplicate enqueue would show up here as depth 1.
+            assert await queue.queue_depth(env_redis) == 0
+            pending = await env_redis.xpending(queue.QUEUE_STREAM, "ingestors")
+            assert pending["pending"] == 0
         finally:
             stop.set()
             await asyncio.wait_for(worker_task, timeout=30)

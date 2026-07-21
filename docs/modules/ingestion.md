@@ -62,19 +62,21 @@ libs/runtime/cogniverse_runtime/ingestion_worker/
 ├── idempotency.py             # SHA-keyed dedup: same file SHA → same ingest_id
 ├── redis_client.py            # aioredis pool factory
 ├── minio_client.py            # boto3 wrapper for the cogniverse-ingest bucket
-├── submit_api.py              # POST /ingestion/upload route handler
+├── submit_api.py              # enqueue_ingestion — queue submission called by the POST /ingestion/upload handler
 ├── status_api.py              # GET /ingestion/{id}/status + /events route handlers
-└── backpressure.py            # Per-tenant in-flight cap + circuit breaker
+├── backpressure.py            # Per-tenant in-flight cap + circuit breaker
+└── reaper.py                  # XAUTOCLAIM crash recovery for orphaned PEL entries
 ```
 
 | Module | Role |
 |---|---|
-| `worker.py` | `python -m cogniverse_runtime.ingestion_worker.worker` is the `cogniverse-ingestor` pod's CMD. Long-lived process that joins the configured Redis consumer group and processes one job at a time via `_default_processor`, which calls `VideoIngestionPipeline.process_video_async` from `ingestion/` then runs the per-segment KG extraction + face pipeline + back-ref PATCH. |
-| `queue.py` | Redis Streams primitives (`enqueue_job`, `claim_pending`, `ack_message`, etc.) + the `IngestJob` dataclass that flows through the stream. |
-| `idempotency.py` | Computes a per-file SHA at upload time; subsequent uploads of the same file return the existing `ingest_id` instead of re-running the pipeline. `force=true` query-param bypasses this. |
-| `submit_api.py` | The `POST /ingestion/upload` handler — uploads file bytes to MinIO, computes SHA, enqueues an `IngestJob` on Redis, returns `202 + ingest_id`. |
+| `worker.py` | `python -m cogniverse_runtime.ingestion_worker.worker` is the `cogniverse-ingestor` pod's CMD. Long-lived process that joins the configured Redis consumer group and processes one job at a time via `_default_processor`, which localizes the source, runs the cold builds (config manager + graph-factory install) off-loop via `asyncio.to_thread`, calls `VideoIngestionPipeline.process_video_async` from `ingestion/`, then runs the per-segment KG extraction + face pipeline + back-ref PATCH. Terminal cleanup steps (mark done, clear inflight, decrement active, ack) are each best-effort; a failed step is named on the terminal event's `cleanup_error` and its leftovers are recovered by the reaper. |
+| `queue.py` | Redis Streams primitives (`submit`, `claim`, `ack`, `autoclaim`, `times_delivered`, active counters, status streams) + the `IngestJob` dataclass that flows through the stream. |
+| `idempotency.py` | Computes a per-file SHA at upload time; subsequent uploads of the same file return the existing `ingest_id` instead of re-running the pipeline. `force=true` query-param bypasses this. `get_done_ingest_id` distinguishes a completed run from an in-flight one for the reaper. |
+| `submit_api.py` | No router defined here — `enqueue_ingestion` is the queue-submission helper called by the `POST /ingestion/upload` handler in `routers/ingestion.py` after it uploads the file to MinIO. Computes the idempotency SHA, marks the inflight key and increments the tenant's active counter BEFORE the job becomes claimable, enqueues an `IngestJob` on Redis; the router then returns `202 + ingest_id` (or blocks for the terminal event when `wait=true`). A submit failure compensates both the counter and the inflight marker. |
 | `status_api.py` | `GET /ingestion/{ingest_id}/status` and `/events` — read terminal-state events from Redis Streams. |
 | `backpressure.py` | Per-tenant counter for in-flight jobs + automatic 429 when the cap is hit. |
+| `reaper.py` | A worker SIGKILLed between claim and ack strands its entry in a dead consumer's PEL — `claim()` reads only new entries, so the upload would be silently lost and XLEN would inflate until queue-depth backpressure 429s every submit. `run_reaper_once` XAUTOCLAIMs entries idle past `INGEST_REAPER_MIN_IDLE_MS` (default 5 min) and re-drives them idempotently: a sha already marked done is settled (ack + clear stale inflight, no reprocess, no double decrement); anything else re-runs through `_process_job` like a fresh claim. A job redelivered more than `INGEST_REAPER_MAX_DELIVERIES` times (default 5) without completing — a pod-killing poison message — is abandoned to the `ingest:queue:dead` stream with a `failed` terminal event instead of crash-looping the ingestor. `worker.run()` starts `reaper_loop` (interval `INGEST_REAPER_INTERVAL_SECONDS`, default 60s, first sweep after one full interval) unless `INGEST_REAPER_ENABLED=false`. |
 
 Both packages are required: `ingestion/` is "do the work" (synchronous, library-shaped); `ingestion_worker/` is "consume jobs and call ingestion/" (async, service-shaped). The synchronous `/ingestion/start` path bypasses the worker and runs the pipeline in a FastAPI background task; the async `/ingestion/upload` path goes through MinIO + Redis and the worker.
 

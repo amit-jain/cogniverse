@@ -52,6 +52,17 @@ async def get_existing_ingest_id(redis: aioredis.Redis, sha: str) -> Optional[st
     return done
 
 
+async def get_done_ingest_id(redis: aioredis.Redis, sha: str) -> Optional[str]:
+    """Return the ingest_id of a COMPLETED run for ``sha``, or None.
+
+    Unlike ``get_existing_ingest_id`` this ignores the in-flight key — the
+    reaper uses it to distinguish "worker died before acking a finished job"
+    (just settle the leftovers) from "worker died mid-processing" (re-drive
+    the job), where the stale in-flight marker is present in both cases.
+    """
+    return await redis.get(f"{DONE_KEY_PREFIX}{sha}")
+
+
 async def mark_inflight(
     redis: aioredis.Redis, sha: str, ingest_id: str, ttl_seconds: int
 ) -> None:

@@ -696,6 +696,7 @@ flowchart TB
         Queue["<span style='color:#000'>queue.py</span>"]
         Idempotency["<span style='color:#000'>idempotency.py</span>"]
         Backpressure["<span style='color:#000'>backpressure.py</span>"]
+        Reaper["<span style='color:#000'>reaper.py</span>"]
     end
 
     subgraph SandboxSubg["<span style='color:#000'>Sandbox</span>"]
@@ -735,6 +736,7 @@ flowchart TB
     RuntimePkg --> Queue
     RuntimePkg --> Idempotency
     RuntimePkg --> Backpressure
+    RuntimePkg --> Reaper
     RuntimePkg --> SandboxManager
     RuntimePkg --> GatewayHealthProbe
     RuntimePkg --> SandboxPool
@@ -748,6 +750,10 @@ flowchart TB
     Worker --> Queue
     Worker --> Idempotency
     Worker --> Backpressure
+    Worker --> Reaper
+    Reaper --> Worker
+    Reaper --> Queue
+    Reaper --> Idempotency
 
     style RuntimePkg fill:#90caf9,stroke:#1565c0,stroke-width:3px,color:#000
     style AdminRouter fill:#90caf9,stroke:#1565c0,color:#000
@@ -771,6 +777,7 @@ flowchart TB
     style Queue fill:#64b5f6,stroke:#1565c0,color:#000
     style Idempotency fill:#64b5f6,stroke:#1565c0,color:#000
     style Backpressure fill:#64b5f6,stroke:#1565c0,color:#000
+    style Reaper fill:#64b5f6,stroke:#1565c0,color:#000
     style SandboxManager fill:#64b5f6,stroke:#1565c0,color:#000
     style GatewayHealthProbe fill:#64b5f6,stroke:#1565c0,color:#000
     style SandboxPool fill:#64b5f6,stroke:#1565c0,color:#000

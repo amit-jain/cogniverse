@@ -145,6 +145,63 @@ async def claim(
     return jobs
 
 
+async def autoclaim(
+    redis: aioredis.Redis,
+    group: str,
+    consumer_id: str,
+    *,
+    min_idle_ms: int,
+    start_id: str = "0-0",
+    count: int = 10,
+) -> tuple:
+    """XAUTOCLAIM entries pending longer than ``min_idle_ms`` over to
+    ``consumer_id``. Returns ``(next_cursor, jobs)``; a next_cursor of
+    ``"0-0"`` means the scan wrapped and the PEL holds nothing further to
+    examine. Entries that were XDEL'd from the stream while still pending
+    are dropped from the PEL by Redis itself and never surface as jobs.
+    """
+    response = await redis.xautoclaim(
+        QUEUE_STREAM,
+        group,
+        consumer_id,
+        min_idle_time=min_idle_ms,
+        start_id=start_id,
+        count=count,
+    )
+    # Redis 7+ replies (cursor, entries, deleted); Redis 6 omits the third.
+    next_cursor, entries = response[0], response[1]
+    jobs: List[IngestJob] = []
+    for message_id, fields in entries:
+        if not fields:
+            continue
+        jobs.append(
+            IngestJob(
+                message_id=message_id,
+                ingest_id=fields["ingest_id"],
+                source_url=fields["source_url"],
+                profile=fields["profile"],
+                tenant_id=fields["tenant_id"],
+                sha=fields["sha"],
+            )
+        )
+    return next_cursor, jobs
+
+
+async def times_delivered(redis: aioredis.Redis, group: str, message_id: str) -> int:
+    """How many times ``message_id`` has been delivered to any consumer.
+
+    Every XREADGROUP claim, XCLAIM and XAUTOCLAIM bumps the PEL delivery
+    counter — the reaper reads it to abandon poison messages instead of
+    re-driving them forever. Returns 0 for an entry no longer pending.
+    """
+    detail = await redis.xpending_range(
+        QUEUE_STREAM, group, min=message_id, max=message_id, count=1
+    )
+    if not detail:
+        return 0
+    return int(detail[0]["times_delivered"])
+
+
 async def ack(redis: aioredis.Redis, group: str, message_id: str) -> int:
     """XACK then XDEL the message so a terminal job leaves the stream.
 
