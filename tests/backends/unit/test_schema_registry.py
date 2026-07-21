@@ -517,3 +517,96 @@ class TestReloadReflectsDeletions:
         store.list_all_configs.return_value = [self._entry("acme", "video")]
 
         assert {s.base_schema_name for s in registry._get_all_schemas()} == {"video"}
+
+
+class TestSchemaRegistryDeployRace:
+    """deploy_schema under concurrent first-touch for the same/different
+    tenants. The already-deployed short-circuit is re-checked INSIDE the
+    deploy lock and the complete-schema-list snapshot is taken INSIDE it,
+    so a race can neither run the global redeploy twice nor deploy a stale
+    list that drops a concurrently-registered schema."""
+
+    def test_concurrent_first_deploys_run_global_redeploy_once(
+        self, schema_registry, mock_backend
+    ):
+        import threading
+        import time
+
+        deploys: list = []
+        start = threading.Barrier(2)
+
+        def _deploy(schemas):
+            deploys.append([s["name"] for s in schemas])
+            time.sleep(0.05)
+            return True
+
+        mock_backend.deploy_schemas.side_effect = _deploy
+
+        results: list = []
+        errors: list = []
+
+        def _call():
+            start.wait(timeout=5)
+            try:
+                results.append(schema_registry.deploy_schema("acme", "base_schema"))
+            except Exception as exc:  # noqa: BLE001 — collected for assertion
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_call) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert errors == []
+        assert results == ["base_schema_acme_acme", "base_schema_acme_acme"]
+        assert len(deploys) == 1, f"global redeploy ran {len(deploys)}x: {deploys}"
+        assert deploys[0] == ["base_schema_acme_acme"]
+
+    def test_concurrent_deploys_of_distinct_tenants_never_drop_a_schema(
+        self, schema_registry, mock_backend
+    ):
+        """deploy_schemas ships the COMPLETE cross-tenant list — whichever
+        concurrent deploy lands second must include the first one's schema,
+        or the second global redeploy silently removes it from the backend."""
+        import threading
+        import time
+
+        deploys: list = []
+        start = threading.Barrier(2)
+
+        def _deploy(schemas):
+            deploys.append(sorted(s["name"] for s in schemas))
+            time.sleep(0.05)
+            return True
+
+        mock_backend.deploy_schemas.side_effect = _deploy
+
+        errors: list = []
+
+        def _call(tenant):
+            start.wait(timeout=5)
+            try:
+                schema_registry.deploy_schema(tenant, "base_schema")
+            except Exception as exc:  # noqa: BLE001 — collected for assertion
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=_call, args=("acme",)),
+            threading.Thread(target=_call, args=("globex",)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert errors == []
+        assert len(deploys) == 2
+        assert deploys[0] in (
+            ["base_schema_acme_acme"],
+            ["base_schema_globex_globex"],
+        )
+        assert deploys[1] == ["base_schema_acme_acme", "base_schema_globex_globex"], (
+            "second deploy shipped a stale list — it would drop the first "
+            "tenant's just-deployed schema from the backend"
+        )

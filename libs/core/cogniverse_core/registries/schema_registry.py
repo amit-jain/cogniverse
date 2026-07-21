@@ -430,38 +430,47 @@ class SchemaRegistry:
         # Transform schema name to tenant-specific
         base_schema_json["name"] = tenant_schema_name
 
-        # Collect ALL existing schemas (including from other tenants)
-        # This is critical for backends that require all schemas in each deployment
         import json
-
-        # Save previous state for rollback (BEFORE adding new schema)
-        existing_schemas = self._get_all_schemas()  # Private method
-        previous_schemas = []
-        for schema_info in existing_schemas:
-            previous_schemas.append(
-                {
-                    "name": schema_info.full_schema_name,
-                    "definition": schema_info.schema_definition,
-                    "tenant_id": schema_info.tenant_id,
-                    "base_schema_name": schema_info.base_schema_name,
-                }
-            )
-
-        # Build new schema list (existing + new)
-        all_schemas = list(previous_schemas)  # Copy for deployment
-        all_schemas.append(
-            {
-                "name": tenant_schema_name,
-                "definition": json.dumps(base_schema_json),
-                "tenant_id": tenant_id,
-                "base_schema_name": base_schema_name,
-            }
-        )
 
         # Deploy to Vespa and record in the ConfigStore as one atomic step:
         # a concurrent deploy must not observe this schema live-but-unregistered
         # (see _deploy_lock).
         with SchemaRegistry._deploy_lock:
+            # Re-check under the lock: the loser of a concurrent first-deploy
+            # race returns the winner's registration instead of running a
+            # second global redeploy.
+            if not force and self.schema_exists(tenant_id, base_schema_name):
+                tracked = self._schemas[(tenant_id, base_schema_name)]
+                if tracked.full_schema_name == tenant_schema_name:
+                    return tenant_schema_name
+
+            # Collect ALL existing schemas (including other tenants') INSIDE
+            # the lock. deploy_schemas ships the complete list, so a snapshot
+            # taken before a concurrent deploy registered its schema would
+            # redeploy without it and drop it from the backend.
+            existing_schemas = self._get_all_schemas()
+            previous_schemas = []
+            for schema_info in existing_schemas:
+                previous_schemas.append(
+                    {
+                        "name": schema_info.full_schema_name,
+                        "definition": schema_info.schema_definition,
+                        "tenant_id": schema_info.tenant_id,
+                        "base_schema_name": schema_info.base_schema_name,
+                    }
+                )
+
+            # Build new schema list (existing + new)
+            all_schemas = list(previous_schemas)  # Copy for deployment
+            all_schemas.append(
+                {
+                    "name": tenant_schema_name,
+                    "definition": json.dumps(base_schema_json),
+                    "tenant_id": tenant_id,
+                    "base_schema_name": base_schema_name,
+                }
+            )
+
             # Deploy to backend first (atomic operation)
             try:
                 success = self._backend.deploy_schemas(all_schemas)

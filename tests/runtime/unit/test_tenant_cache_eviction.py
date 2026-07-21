@@ -315,3 +315,77 @@ async def test_delete_tenant_internal_evicts_registered_tenant_caches(monkeypatc
     assert result["status"] == "deleted"
     assert "delwire:a" not in cache
     assert cache.get("delwire:b") == "gateway-agent-b"
+
+
+class TestGraphManagerSingleColdBuild:
+    def _race_factory(self, build_factory):
+        """Drive ``build_factory(backend, config_manager) -> factory`` with 4
+        concurrent first-touches for one fresh tenant; return (deploys, builds,
+        results). The cold build must funnel through a single deploy + a single
+        GraphManager construction, with every caller sharing that instance."""
+        import threading
+        import time
+
+        deploys: list = []
+        builds: list = []
+
+        backend = MagicMock()
+        backend.get_tenant_schema_name.side_effect = lambda tid, base: (
+            f"{base}_{tid.replace(':', '_')}"
+        )
+
+        def _deploy(**kwargs):
+            deploys.append(kwargs["tenant_id"])
+            time.sleep(0.05)
+
+        backend.schema_registry.deploy_schema.side_effect = _deploy
+        config_manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(
+                inference_service_urls={"colbert_pylate": "http://colbert:9000"}
+            )
+        )
+
+        class _CountingStub(_StubGraphManager):
+            def __init__(self, **kwargs):
+                builds.append(kwargs.get("tenant_id"))
+                super().__init__(**kwargs)
+
+        with patch("cogniverse_agents.graph.graph_manager.GraphManager", _CountingStub):
+            factory = build_factory(backend, config_manager)
+
+        start = threading.Barrier(4)
+        results: list = []
+        lock = threading.Lock()
+
+        def _touch():
+            start.wait(timeout=5)
+            mgr = factory("coldrace:a")
+            with lock:
+                results.append(mgr)
+
+        threads = [threading.Thread(target=_touch) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        return deploys, builds, results
+
+    def test_runtime_factory_concurrent_first_touch_builds_once(self):
+        import cogniverse_runtime.main as main
+
+        deploys, builds, results = self._race_factory(main._build_graph_manager_factory)
+        assert deploys == ["coldrace:a"], f"deploy_schema ran {len(deploys)}x"
+        assert builds == ["coldrace:a"], f"GraphManager built {len(builds)}x"
+        assert len(results) == 4
+        assert all(r is results[0] for r in results)
+
+    def test_worker_factory_concurrent_first_touch_builds_once(self):
+        from cogniverse_runtime.ingestion_worker import worker
+
+        deploys, builds, results = self._race_factory(
+            worker._build_worker_graph_factory
+        )
+        assert deploys == ["coldrace:a"], f"deploy_schema ran {len(deploys)}x"
+        assert builds == ["coldrace:a"], f"GraphManager built {len(builds)}x"
+        assert len(results) == 4
+        assert all(r is results[0] for r in results)
