@@ -21,6 +21,32 @@ from cogniverse_vespa._yql import yql_quote
 logger = logging.getLogger(__name__)
 
 
+def _raise_if_degraded(response: Any, config_id: str) -> None:
+    """Raise on a Vespa soft-timeout (degraded) query response.
+
+    A soft timeout arrives as HTTP 200 with ``root.errors`` and/or degraded
+    coverage plus empty/partial hits. Consuming ``response.hits`` without this
+    check turns a degraded backend into an empty result the caller reads as a
+    genuinely-absent config — so a transient outage silently looks like
+    "first run". Raise instead, joining the existing outage-raises contract.
+    """
+    root: Dict[str, Any] = {}
+    get_json = getattr(response, "get_json", None)
+    if callable(get_json):
+        root = (get_json() or {}).get("root", {})
+    else:
+        raw = getattr(response, "json", None)
+        if isinstance(raw, dict):
+            root = raw.get("root", {})
+    errors = root.get("errors") or []
+    coverage = root.get("coverage") or {}
+    if errors or coverage.get("degraded"):
+        raise RuntimeError(
+            f"Vespa returned a degraded/soft-timeout response for config "
+            f"{config_id}: errors={errors} coverage={coverage}"
+        )
+
+
 class VespaConfigStore(ConfigStore):
     """
     Vespa-based configuration store with multi-tenant support.
@@ -390,6 +416,7 @@ class VespaConfigStore(ConfigStore):
 
         try:
             response = self.vespa_app.query(yql=yql)
+            _raise_if_degraded(response, config_id)
 
             if not response.hits or len(response.hits) == 0:
                 return None
@@ -450,6 +477,7 @@ class VespaConfigStore(ConfigStore):
 
         try:
             response = self.vespa_app.query(yql=yql)
+            _raise_if_degraded(response, config_id)
 
             entries = []
             for hit in response.hits:
@@ -513,6 +541,7 @@ class VespaConfigStore(ConfigStore):
 
         try:
             response = self.vespa_app.query(yql=yql)
+            _raise_if_degraded(response, f"list({where_clause})")
 
             # Group by config_id and keep only latest version
             latest_configs: Dict[str, ConfigEntry] = {}
