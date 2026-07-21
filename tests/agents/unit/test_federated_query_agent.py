@@ -213,10 +213,9 @@ class TestACLs:
                 )
             )
 
-    async def test_no_caller_tenant_skips_cross_org_check(self):
-        # When tenant_id is None, the caller's org cannot be inferred so
-        # the cross-org check is skipped (admin-CLI pattern). Functional
-        # behaviour: queries succeed across whatever tenants are listed.
+    async def test_no_caller_tenant_is_rejected(self):
+        # Without a caller tenant_id there is no org to scope to; the agent
+        # must reject rather than read across every listed org.
         per_tenant = {
             "acme:alpha": [_row("a", "Paris")],
             "globex:beta": [_row("b", "Paris")],
@@ -224,15 +223,17 @@ class TestACLs:
             "globex:_org_trunk": [],
         }
         agent = _build(per_tenant)
-        out = await agent._process_impl(
-            FederatedQueryInput(
-                query="Paris",
-                tenant_ids=["acme:alpha", "globex:beta"],
-                actor_role="org_admin",
-                actor_id="oadm",
+        with pytest.raises(ACLRejected, match="tenant_id is required") as exc:
+            await agent._process_impl(
+                FederatedQueryInput(
+                    tenant_id=None,
+                    query="Paris",
+                    tenant_ids=["acme:alpha", "globex:beta"],
+                    actor_role="org_admin",
+                    actor_id="oadm",
+                )
             )
-        )
-        assert {h.memory_id for h in out.hits} == {"a", "b"}
+        assert "cannot be verified" in str(exc.value)
 
 
 @pytest.mark.asyncio
