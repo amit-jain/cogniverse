@@ -10,6 +10,7 @@ with ``ArtifactManager.load_blob`` + ``module.load_state``.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from typing import Any, List, Optional
@@ -27,6 +28,12 @@ logger = logging.getLogger(__name__)
 # path instead of a single ChainOfThought call. Tuned for typical
 # transcript-segment sizes; long PDF / code chunks trip this.
 RLM_PROMOTION_TOKENS = 3000
+
+# Minimum LM output budget for the ClaimExtraction call: the signature's
+# three output fields (reasoning, claims JSON, rationale) overflow the
+# endpoint-default 1000-token cap on verbose models, truncating away
+# ``rationale`` and failing the parse for every segment.
+CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS = 3000
 
 # Hard cap on the verbatim evidence_span length stored on each Edge.
 _MAX_EVIDENCE_CHARS = 200
@@ -170,6 +177,20 @@ class ClaimExtractor:
         # When set, every module invocation runs inside ``dspy.context(lm=...)``
         # bound from this config. None means the call falls through to the
         # ambient ``dspy.settings.lm`` (the worker-startup default).
+        # The signature emits three output fields (reasoning + claims JSON +
+        # rationale); a verbose model hits the endpoint-default 1000-token cap
+        # before ``rationale``, the parse fails, and every segment silently
+        # yields zero claims — the whole KG ends up empty. Guarantee an
+        # adequate output budget for this call path.
+        current_cap = getattr(llm_config, "max_tokens", None)
+        if (
+            llm_config is not None
+            and isinstance(current_cap, int)
+            and current_cap < CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS
+        ):
+            llm_config = dataclasses.replace(
+                llm_config, max_tokens=CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS
+            )
         self._llm_config = llm_config
         # Needed to resolve semantic routing per request; None keeps the direct
         # (direct) path.

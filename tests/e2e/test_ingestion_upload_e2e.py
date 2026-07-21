@@ -132,9 +132,14 @@ def _vespa_search(yql: str, hits: int = 50) -> list:
     ]
 
 
-def _wait_terminal(ingest_id: str, deadline_s: int = 480) -> dict:
+def _wait_terminal(ingest_id: str, deadline_s: int = 2400) -> dict:
     """Block until the ingest reaches a terminal state. Returns the
-    latest event dict. Fails the test on timeout."""
+    latest event dict. Fails the test on timeout.
+
+    The bound covers the real pipeline on shared local hardware: the
+    per-segment KG claim extraction spends 60-90s of LM time per segment,
+    so ~19 segments legitimately run 20-30 minutes.
+    """
     deadline = time.time() + deadline_s
     last = None
     while time.time() < deadline:
@@ -179,7 +184,7 @@ def upload_result():
     )
     upload_payload = resp.json()
     ingest_id = upload_payload["ingest_id"]
-    final = _wait_terminal(ingest_id, deadline_s=480)
+    final = _wait_terminal(ingest_id, deadline_s=2400)
     return {"upload": upload_payload, "final": final}
 
 

@@ -154,3 +154,26 @@ def test_out_of_range_and_missing_confidence_are_clamped() -> None:
     )
 
     assert [e.confidence for e in edges] == [1.0, 1.0]
+
+
+def test_output_budget_raised_above_endpoint_default() -> None:
+    """The signature's three output fields overflow the endpoint-default
+    1000-token cap: the LM truncates before ``rationale``, the parse fails,
+    and every segment silently yields zero claims (an empty KG that reads as
+    success). The extractor must guarantee itself an adequate budget."""
+    from cogniverse_agents.graph.claim_extractor import (
+        CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS,
+        ClaimExtractor,
+    )
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    capped = LLMEndpointConfig(model="openai/auto", max_tokens=1000)
+    extractor = ClaimExtractor(llm_config=capped)
+    assert extractor._llm_config.max_tokens == CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS
+    # Everything else carries over unchanged.
+    assert extractor._llm_config.model == "openai/auto"
+
+    roomy = LLMEndpointConfig(model="openai/auto", max_tokens=8000)
+    assert ClaimExtractor(llm_config=roomy)._llm_config.max_tokens == 8000
+
+    assert ClaimExtractor(llm_config=None)._llm_config is None
