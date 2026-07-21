@@ -63,8 +63,13 @@ def _parse_iso(value: Any) -> Optional[datetime]:
 
 
 def _content_signature(rows: List[Dict[str, Any]]) -> str:
-    """Stable hash of the sorted contents — for cheap window-vs-window diff."""
-    contents = sorted((r.get("memory", "")).strip() for r in rows)
+    """Stable hash of the sorted contents — for cheap window-vs-window diff.
+
+    Coerces like the report path (``str(r.get("memory") or "")``): a store row
+    can carry ``memory: null`` or a non-str value, and a bare ``.strip()``
+    would crash the whole request on it.
+    """
+    contents = sorted(str(r.get("memory") or "").strip() for r in rows)
     h = hashlib.sha256()
     for c in contents:
         h.update(c.encode("utf-8"))

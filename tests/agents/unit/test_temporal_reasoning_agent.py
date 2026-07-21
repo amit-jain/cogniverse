@@ -91,6 +91,18 @@ class TestContentSignature:
         b = _content_signature([{"memory": "y"}])
         assert a != b
 
+    def test_null_and_non_str_memory_rows_hash_like_their_coercion(self):
+        """A store row can carry ``memory: null`` or a non-str value; the
+        signature must coerce (like the report path's ``str(... or "")``)
+        instead of crashing the whole request on ``.strip()``."""
+        assert _content_signature([{"memory": None}]) == _content_signature([{}])
+        assert _content_signature([{"memory": 42}]) == _content_signature(
+            [{"memory": "42"}]
+        )
+        assert _content_signature([{"memory": None}]) != _content_signature(
+            [{"memory": "x"}]
+        )
+
 
 class TestTimeWindowValidation:
     def test_unparseable_start_rejected(self):
