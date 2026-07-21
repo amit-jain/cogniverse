@@ -16,6 +16,7 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 
 
 @pytest.mark.unit
+@pytest.mark.ci_fast
 class TestAgentRegistryHTTPEndpoints:
     """Test HTTP endpoints for Curated Agent Registry"""
 
@@ -248,6 +249,7 @@ class TestAgentRegistryHTTPEndpoints:
 # due to abstract method requirements and context manager mocking
 
 
+@pytest.mark.unit
 @pytest.mark.ci_fast
 class TestAgentRegistryIntegration:
     """Integration tests for agent registry with HTTP endpoints"""
@@ -313,6 +315,7 @@ class TestAgentRegistryIntegration:
         assert response.json()["count"] == 2
 
 
+@pytest.mark.unit
 @pytest.mark.ci_fast
 class TestProcessAgentTaskDispatch:
     """Test that process_agent_task dispatches to the correct handler based on capabilities."""
