@@ -768,6 +768,18 @@ class ArtifactManager:
         await self._save_artefact_state(agent_type, state)
         return state
 
+    async def _clear_active_prompts(self, agent_type: str) -> None:
+        """Delete the un-versioned active prompts dataset (no-op if absent)."""
+        await self._provider.datasets.delete_dataset(
+            self._prompt_dataset_name(agent_type)
+        )
+
+    async def _clear_active_demonstrations(self, agent_type: str) -> None:
+        """Delete the un-versioned active demos dataset (no-op if absent)."""
+        await self._provider.datasets.delete_dataset(
+            self._demo_dataset_name(agent_type)
+        )
+
     async def promote_canary_to_active(self, agent_type: str) -> Dict[str, Any]:
         """Promote the current canary to active. Previous active retired."""
         state = await self.get_artefact_state(agent_type)
@@ -809,8 +821,12 @@ class ArtifactManager:
             try:
                 if previous_prompts is not None:
                     await self.save_prompts(agent_type, previous_prompts)
+                else:
+                    await self._clear_active_prompts(agent_type)
                 if previous_demos is not None:
                     await self.save_demonstrations(agent_type, previous_demos)
+                else:
+                    await self._clear_active_demonstrations(agent_type)
                 logger.warning(
                     "Canary promotion failed for %s/%s; previous active "
                     "artefacts restored",
@@ -1270,8 +1286,12 @@ class ArtifactManager:
                     try:
                         if previous_prompts is not None:
                             await self.save_prompts(agent_type, previous_prompts)
+                        else:
+                            await self._clear_active_prompts(agent_type)
                         if previous_demos is not None:
                             await self.save_demonstrations(agent_type, previous_demos)
+                        else:
+                            await self._clear_active_demonstrations(agent_type)
                         logger.warning(
                             "Non-versioned promotion failed for %s/%s; previous "
                             "active artefacts restored",

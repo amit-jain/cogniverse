@@ -7,7 +7,9 @@ Contract:
   * If ``save_prompts`` raises (the FIRST artefact write), nothing else is
     attempted: no demos, no experiment row. Active state is unchanged.
   * If ``save_demonstrations`` raises after ``save_prompts`` succeeded, the
-    prompts ARE persisted (partial promotion). The experiment row is NOT
+    active slot is reverted so the unvetted candidate never serves: with a
+    prior active the previous pair is restored, with no prior active (a fresh
+    tenant) the candidate prompts are cleared. The experiment row is NOT
     written (we cannot truthfully claim promoted=true for a half-written
     artefact set). The original exception propagates.
   * If ``save_experiment`` raises AFTER artefact saves succeeded, both
@@ -19,12 +21,14 @@ Contract:
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 import pandas as pd
 import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_foundation.telemetry.providers.base import DatasetStore
 
 
 class _Mode:
@@ -128,7 +132,7 @@ class TestPromptSaveFailure:
 
 @pytest.mark.asyncio
 class TestDemoSaveFailure:
-    async def test_prompts_persisted_demos_partial_no_experiment(self):
+    async def test_fresh_tenant_demos_failure_clears_leaked_prompts(self):
         store = FaultInjectingStore(mode=_Mode.FAIL_DEMOS)
         mgr = ArtifactManager(FakeProvider(store), tenant_id="acme")
 
@@ -141,13 +145,19 @@ class TestDemoSaveFailure:
                 candidate_score=0.7,
             )
 
-        # Prompts already landed before demos failed (partial promotion).
-        assert _ds_prompts("x") in store.created
+        # Fresh tenant: the prompts landed before demos failed, but with no
+        # prior active to restore the compensation CLEARS the slot so the
+        # unvetted candidate never serves via the default path.
+        assert _ds_prompts("x") not in store.created
         # Demos write failed; not present.
         assert _ds_demos("x") not in store.created
         # Experiment row NOT written — promote_if_better cannot truthfully
         # claim promoted=true when the artefact set is half-written.
         assert _ds_experiments("x") not in store.created
+        # The candidate does not serve to any traffic.
+        served = await mgr.load_for_request("x", request_seed="anyseed")
+        assert served["served_from"] == "default"
+        assert served["prompts"] is None
 
 
 @pytest.mark.asyncio
@@ -489,3 +499,97 @@ class TestRollbackCompensation:
         assert _io(await mgr.load_demonstrations("x")) == [
             {"input": "q0", "output": "a0"}
         ]
+
+
+class FirstPromoteStore(DatasetStore):
+    """create overwrites (last-write-wins). Fails the create for the
+    un-versioned demos dataset exactly once — the mid-copy demos write that
+    lands after the un-versioned prompts write has already succeeded."""
+
+    def __init__(self):
+        self.data: dict[str, pd.DataFrame] = {}
+        self.armed = True
+
+    @staticmethod
+    def _is_unversioned_demos(name: str) -> bool:
+        return name.startswith("dspy-demos-") and not re.search(r"-v\d+$", name)
+
+    async def create_dataset(self, name, data, metadata=None):
+        if self.armed and self._is_unversioned_demos(name):
+            self.armed = False
+            raise ConnectionError("demos create failed mid-copy")
+        self.data[name] = data.copy()
+        return name
+
+    async def get_dataset(self, name):
+        if name not in self.data:
+            raise KeyError(name)
+        return self.data[name]
+
+    async def append_to_dataset(self, name, data, metadata=None):
+        raise KeyError("no dataset")
+
+    async def delete_dataset(self, name):
+        return self.data.pop(name, None) is not None
+
+
+@pytest.mark.asyncio
+class TestFirstPromotionClearsSlot:
+    """A FRESH tenant's first promotion has no prior un-versioned active. When
+    a mid-copy demos save fails AFTER the un-versioned prompts save landed, the
+    un-versioned prompts slot holds the unvetted candidate. With no prior to
+    restore, the compensation must CLEAR the slot (delete the un-versioned
+    dataset) so the failed candidate never serves to any traffic via the
+    default path."""
+
+    async def test_serve_versioned_clears_leaked_candidate_prompts(self):
+        store = FirstPromoteStore()
+        mgr = ArtifactManager(FakeProvider(store), tenant_id="tornco")
+        agent = "router"
+
+        with pytest.raises(ConnectionError, match="demos create failed mid-copy"):
+            await mgr.promote_if_better(
+                agent_type=agent,
+                candidate_prompts={"system": "CANDIDATE_PROMPT"},
+                candidate_demos=[{"input": "i", "output": "o", "metadata": "{}"}],
+                baseline_score=0.5,
+                candidate_score=0.9,
+                serve_versioned=True,
+                snapshot_before_promote=False,
+            )
+
+        served = await mgr.load_for_request(agent, request_seed="anyseed")
+        assert served["served_from"] == "default"
+        assert served["prompts"] is None
+
+        assert await mgr.load_prompts(agent) is None
+
+        state = await mgr.get_artefact_state(agent)
+        assert state.get("active") is None
+        assert state.get("canary") is None
+
+    async def test_non_serve_versioned_clears_leaked_candidate_prompts(self):
+        store = FirstPromoteStore()
+        mgr = ArtifactManager(FakeProvider(store), tenant_id="tornco")
+        agent = "router"
+
+        with pytest.raises(ConnectionError, match="demos create failed mid-copy"):
+            await mgr.promote_if_better(
+                agent_type=agent,
+                candidate_prompts={"system": "CANDIDATE_PROMPT"},
+                candidate_demos=[{"input": "i", "output": "o", "metadata": "{}"}],
+                baseline_score=0.5,
+                candidate_score=0.9,
+                serve_versioned=False,
+                snapshot_before_promote=False,
+            )
+
+        served = await mgr.load_for_request(agent, request_seed="anyseed")
+        assert served["served_from"] == "default"
+        assert served["prompts"] is None
+
+        assert await mgr.load_prompts(agent) is None
+
+        state = await mgr.get_artefact_state(agent)
+        assert state.get("active") is None
+        assert state.get("canary") is None
