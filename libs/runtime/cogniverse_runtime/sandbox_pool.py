@@ -224,9 +224,14 @@ class SandboxSessionPool:
                 return entry
 
             # No reusable entry — make space then create a fresh one.
-            self._evict_oldest_if_full_locked(skip_agent=agent_type)
+            victim = self._evict_oldest_if_full_locked(skip_agent=agent_type)
 
             # Drop the lock for the (potentially slow) network calls below.
+        # Destroy OUTSIDE the lock (like evict_idle/close_all): session.delete()
+        # is an un-timed gateway RPC — holding self._lock across it would block
+        # every checkout/release behind a hung gateway.
+        if victim is not None:
+            self._destroy_session_quiet(victim.session)
         # If checkout above hit "in_use" race (rare with single-thread per
         # event loop), fall through to creating a new session anyway. This
         # accepts a transient over-provision rather than blocking.
@@ -277,10 +282,14 @@ class SandboxSessionPool:
             "Sandbox pool dropped %s session (reason=%s)", agent_type, reason
         )
 
-    def _evict_oldest_if_full_locked(self, *, skip_agent: str) -> None:
-        """Caller holds the lock. Drop the oldest idle entry if at capacity."""
+    def _evict_oldest_if_full_locked(self, *, skip_agent: str) -> Optional[_PoolEntry]:
+        """Caller holds the lock. Pop the oldest idle entry if at capacity.
+
+        Returns the popped entry for the caller to destroy AFTER releasing
+        the lock — session.delete() is an un-timed gateway RPC.
+        """
         if len(self._entries) < self._config.max_pool_size:
-            return
+            return None
         idle = [
             (k, e) for k, e in self._entries.items() if not e.in_use and k != skip_agent
         ]
@@ -292,12 +301,12 @@ class SandboxSessionPool:
                 "creating an over-cap session",
                 self._config.max_pool_size,
             )
-            return
+            return None
         # Drop oldest by last_used_at.
         idle.sort(key=lambda pair: pair[1].last_used_at)
         victim_key, victim_entry = idle[0]
         self._entries.pop(victim_key, None)
-        self._destroy_session_quiet(victim_entry.session)
+        return victim_entry
 
     @staticmethod
     def _destroy_session_quiet(session: Any) -> None:
