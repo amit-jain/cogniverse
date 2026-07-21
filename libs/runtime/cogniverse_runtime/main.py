@@ -108,41 +108,46 @@ def _build_graph_manager_factory(graph_backend, config_manager):
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
         tenant_id = canonical_tenant_id(tenant_id)
+
+        def _build() -> GraphManager:
+            if deploy:
+                try:
+                    graph_backend.schema_registry.deploy_schema(
+                        tenant_id=tenant_id, base_schema_name="knowledge_graph"
+                    )
+                except Exception as schema_err:
+                    logger.warning(
+                        f"Knowledge graph schema deploy for tenant {tenant_id} "
+                        f"skipped: {schema_err}"
+                    )
+
+            sys_cfg = config_manager.get_system_config()
+            colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
+            if not colbert_url:
+                raise RuntimeError(
+                    "knowledge_graph requires the colbert_pylate inference "
+                    "service to be deployed and present in "
+                    "INFERENCE_SERVICE_URLS. Available services: "
+                    f"{sorted(sys_cfg.inference_service_urls)}"
+                )
+            return GraphManager(
+                backend=graph_backend,
+                tenant_id=tenant_id,
+                schema_name=graph_backend.get_tenant_schema_name(
+                    tenant_id, "knowledge_graph"
+                ),
+                colbert_endpoint_url=colbert_url,
+            )
+
+        if deploy:
+            # get_or_set holds the cache lock across the build, so N
+            # concurrent first-touches for a fresh tenant run deploy_schema
+            # + the manager construction exactly once.
+            return _graph_managers.get_or_set(tenant_id, _build)
         cached = _graph_managers.get(tenant_id)
         if cached is not None:
             return cached
-
-        if deploy:
-            try:
-                graph_backend.schema_registry.deploy_schema(
-                    tenant_id=tenant_id, base_schema_name="knowledge_graph"
-                )
-            except Exception as schema_err:
-                logger.warning(
-                    f"Knowledge graph schema deploy for tenant {tenant_id} "
-                    f"skipped: {schema_err}"
-                )
-
-        sys_cfg = config_manager.get_system_config()
-        colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
-        if not colbert_url:
-            raise RuntimeError(
-                "knowledge_graph requires the colbert_pylate inference "
-                "service to be deployed and present in "
-                "INFERENCE_SERVICE_URLS. Available services: "
-                f"{sorted(sys_cfg.inference_service_urls)}"
-            )
-        mgr = GraphManager(
-            backend=graph_backend,
-            tenant_id=tenant_id,
-            schema_name=graph_backend.get_tenant_schema_name(
-                tenant_id, "knowledge_graph"
-            ),
-            colbert_endpoint_url=colbert_url,
-        )
-        if deploy:
-            _graph_managers.set(tenant_id, mgr)
-        return mgr
+        return _build()
 
     return _graph_manager_factory
 
