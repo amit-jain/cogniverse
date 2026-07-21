@@ -622,6 +622,14 @@ class OrchestratorAgent(
         self.active_workflows: Dict[str, OrchestrationPlan] = {}
         self._cancelled_workflows: set = set()
 
+        # Shared across requests: the deep-synthesis workflow is rebuilt per
+        # request (per-tenant RLM + dispatcher closures), so a limiter built
+        # inside it would start every request with an empty window and the
+        # hourly cap would never fire. The limiter buckets per tenant
+        # internally; one instance enforces the cross-request cap. Built
+        # lazily because the deep-synthesis module is an optional import.
+        self._deep_synth_limiter = None
+
         orchestration_module = OrchestrationModule()
 
         config = A2AAgentConfig(
@@ -780,6 +788,7 @@ class OrchestratorAgent(
         try:
             from cogniverse_agents.deep_synthesis_workflow import (
                 DeepSynthesisConfig,
+                DeepSynthesisRateLimiter,
                 DeepSynthesisWorkflow,
             )
             from cogniverse_agents.inference.rlm_inference import (
@@ -790,6 +799,9 @@ class OrchestratorAgent(
         except Exception as exc:
             logger.debug("Deep synthesis prerequisites missing: %s", exc)
             return None
+
+        if self._deep_synth_limiter is None:
+            self._deep_synth_limiter = DeepSynthesisRateLimiter()
 
         try:
             tenant_id = tenant_id or "__system__"
@@ -862,6 +874,7 @@ class OrchestratorAgent(
             rlm=rlm,
             sub_agent_dispatcher=_dispatcher,
             config=DeepSynthesisConfig(),
+            rate_limiter=self._deep_synth_limiter,
         )
 
     async def _process_impl(
