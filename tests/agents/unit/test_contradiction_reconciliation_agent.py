@@ -276,3 +276,82 @@ def test_agent_capabilities_advertised():
     assert agent.agent_name == "contradiction_reconciliation_agent"
     assert "contradiction_reconciliation" in agent.capabilities
     assert agent.port == 8020
+
+
+@pytest.mark.asyncio
+async def test_kg_outage_raises_when_kg_is_sole_source(monkeypatch):
+    """Memory disabled → the KG scan is the ONLY conflict source; a Vespa
+    outage must surface instead of returning "no conflicts" as a success
+    indistinguishable from a genuinely conflict-free subject."""
+    agent = ContradictionReconciliationAgent(
+        deps=ContradictionReconciliationDeps(tenant_id="acme")
+    )
+    agent._graph_manager = MagicMock()
+    monkeypatch.setattr(
+        agent, "detect", MagicMock(side_effect=ConnectionError("vespa down"))
+    )
+    with pytest.raises(ConnectionError, match="vespa down"):
+        await agent._process_impl(
+            ContradictionReconciliationInput(
+                target_kind="entity_fact",
+                conflict_member_ids=["m1", "m2"],
+                subject_key="acme_corp",
+                predicate="employee_count",
+                tenant_id="acme",
+            )
+        )
+
+
+def test_kg_outage_degrades_to_empty_complement_when_memory_answers(monkeypatch):
+    """Memory enabled → the KG is a complement; its outage degrades to an
+    empty complement while the mem0 reconciliation still answers."""
+    agent = ContradictionReconciliationAgent(
+        deps=ContradictionReconciliationDeps(tenant_id="acme")
+    )
+    agent._graph_manager = MagicMock()
+    monkeypatch.setattr(agent, "is_memory_enabled", lambda: True)
+    agent.memory_manager = MagicMock()
+    monkeypatch.setattr(
+        agent, "detect", MagicMock(side_effect=ConnectionError("vespa down"))
+    )
+    entries, policy = agent._kg_conflict_complement(
+        ContradictionReconciliationInput(
+            target_kind="entity_fact",
+            conflict_member_ids=["m1", "m2"],
+            subject_key="acme_corp",
+            predicate="employee_count",
+            tenant_id="acme",
+        )
+    )
+    assert entries == []
+    assert policy is None
+
+
+@pytest.mark.asyncio
+async def test_kg_conflict_scan_runs_off_the_event_loop(monkeypatch):
+    """The KG conflict scan is a blocking Vespa read; _process_impl must run
+    it in a worker thread, not on the loop."""
+    import threading
+
+    agent = ContradictionReconciliationAgent(
+        deps=ContradictionReconciliationDeps(tenant_id="acme")
+    )
+    agent._graph_manager = MagicMock()
+    threads: list = []
+
+    def _detect(node_name, predicate):
+        threads.append(threading.get_ident())
+        return {"conflict_set": {}}
+
+    monkeypatch.setattr(agent, "detect", _detect)
+    await agent._process_impl(
+        ContradictionReconciliationInput(
+            target_kind="entity_fact",
+            conflict_member_ids=["m1", "m2"],
+            subject_key="acme_corp",
+            predicate="employee_count",
+            tenant_id="acme",
+        )
+    )
+    assert threads, "detect was never invoked"
+    assert all(t != threading.get_ident() for t in threads)

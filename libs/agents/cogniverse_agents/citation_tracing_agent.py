@@ -17,6 +17,7 @@ agent that returned a memory id.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -203,6 +204,11 @@ class CitationTracingAgent(
         try:
             traced = self.trace(input.claim_id)
         except Exception as exc:
+            if not self.is_memory_enabled() or self.memory_manager is None:
+                # The KG is the SOLE grounding source here — swallowing its
+                # outage would return "no provenance" as success,
+                # indistinguishable from a genuinely ungrounded claim.
+                raise
             logger.warning(
                 "citation: Vespa-KG complement skipped for claim %s: %r",
                 input.claim_id,
@@ -227,7 +233,8 @@ class CitationTracingAgent(
         """Walk the chain and return a structured graph."""
         from cogniverse_core.memory.provenance import ProvenanceWalker
 
-        kg_primary_sources = self._kg_primary_sources(input)
+        # The KG trace is a blocking Vespa read — off the loop.
+        kg_primary_sources = await asyncio.to_thread(self._kg_primary_sources, input)
 
         if not self.is_memory_enabled() or self.memory_manager is None:
             logger.warning(
