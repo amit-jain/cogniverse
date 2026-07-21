@@ -24,6 +24,10 @@ from cogniverse_foundation.config.unified_config import (
 # Re-export the canonical session-scoped Vespa from the project root.
 from tests.conftest import shared_vespa  # noqa: F401, E402
 
+# Direct import (not pytest_plugins — rejected in non-rootdir conftests);
+# same pattern as tests/ingestion/conftest.py.
+from tests.fixtures.sidecars import vllm_sidecar  # noqa: F401, E402
+
 logger = logging.getLogger(__name__)
 
 SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
