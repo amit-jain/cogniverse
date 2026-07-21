@@ -234,6 +234,33 @@ class TestQueue:
         assert pending_after["pending"] == 0
 
     @pytest.mark.asyncio
+    async def test_refresh_claim_resets_idle_without_bumping_deliveries(self, redis):
+        """The worker's processing heartbeat resets the PEL idle clock (so
+        XAUTOCLAIM's min-idle never fires on a live job) WITHOUT advancing
+        the delivery counter (so heartbeats can't push a healthy long job
+        over the poison-message dead-letter cap)."""
+        await queue.ensure_consumer_group(redis, "g1")
+        await queue.submit(redis, "i_hb", "s3://b/hb", "video", "acme", "sha_hb")
+        jobs = await queue.claim(redis, "g1", "consumer_a", block_ms=500)
+        mid = jobs[0].message_id
+
+        await asyncio.sleep(0.3)
+        detail = await redis.xpending_range(
+            queue.QUEUE_STREAM, "g1", min=mid, max=mid, count=1
+        )
+        assert detail[0]["time_since_delivered"] >= 250
+
+        assert await queue.refresh_claim(redis, "g1", "consumer_a", mid) is True
+        detail = await redis.xpending_range(
+            queue.QUEUE_STREAM, "g1", min=mid, max=mid, count=1
+        )
+        assert detail[0]["time_since_delivered"] < 150
+        assert detail[0]["times_delivered"] == 1
+
+        await queue.ack(redis, "g1", mid)
+        assert await queue.refresh_claim(redis, "g1", "consumer_a", mid) is False
+
+    @pytest.mark.asyncio
     async def test_ensure_consumer_group_is_idempotent(self, redis):
         """Restarting an ingestor pod must not crash on BUSYGROUP."""
         await queue.ensure_consumer_group(redis, "g1")

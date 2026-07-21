@@ -213,6 +213,73 @@ class TestReaperRecovery:
         assert await queue.get_active(redis, tenant) == 1
 
     @pytest.mark.asyncio
+    async def test_reaper_never_reclaims_heartbeating_live_job(self, redis):
+        """A live worker mid-pipeline heartbeats its claim, so reaper sweeps
+        whose min-idle threshold is far below the pipeline duration must
+        never steal the entry — without the heartbeat, XAUTOCLAIM (idle-based
+        only) reclaims the still-processing job, runs the pipeline a second
+        time concurrently, double-decrements the tenant counter, and after
+        enough reclaims dead-letters a legitimately long video as poison."""
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-1"
+        config.heartbeat_interval_s = 0.05
+        tenant, sha, ingest_id = "acme:acme", "sha_hb", "ing_hb"
+        await queue.ensure_consumer_group(redis, config.consumer_group)
+        await idempotency.mark_inflight(redis, sha, ingest_id, ttl_seconds=600)
+        await queue.increment_active(redis, tenant)
+        await queue.submit(
+            redis,
+            ingest_id=ingest_id,
+            source_url="s3://b/hb.mp4",
+            profile="video",
+            tenant_id=tenant,
+            sha=sha,
+        )
+        jobs = await queue.claim(
+            redis, config.consumer_group, config.consumer_id, block_ms=1000
+        )
+        assert [j.ingest_id for j in jobs] == [ingest_id]
+
+        # Warm the telemetry singleton so its one-time cold init (a sync,
+        # loop-blocking setup) doesn't consume the idle budget before the
+        # first heartbeat can run.
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        get_telemetry_manager()
+
+        runs: list = []
+
+        async def _slow(job):
+            runs.append(job.ingest_id)
+            await asyncio.sleep(0.8)
+            return {"status": "success", "video_id": "v1", "results": {}}
+
+        async def _sweeps():
+            recovered = 0
+            for _ in range(3):
+                await asyncio.sleep(0.2)
+                recovered += await reaper.run_reaper_once(
+                    redis, config, min_idle_ms=200, processor=_slow
+                )
+            return recovered
+
+        _, recovered = await asyncio.gather(
+            worker._process_job(redis, jobs[0], config, processor=_slow),
+            _sweeps(),
+        )
+
+        assert runs == [ingest_id], f"pipeline ran {len(runs)}x for one job"
+        assert recovered == 0, "a sweep reclaimed a live, heartbeating claim"
+        assert await idempotency.get_done_ingest_id(redis, sha) == ingest_id
+        assert await queue.get_active(redis, tenant) == 0
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 0
+        assert await queue.queue_depth(redis) == 0
+        events = [e for _, e in await queue.read_status_since(redis, ingest_id)]
+        assert events[-1]["state"] == "complete"
+        assert "cleanup_error" not in events[-1]
+
+    @pytest.mark.asyncio
     async def test_reaper_dead_letters_poison_job_after_max_deliveries(self, redis):
         """A job that keeps getting redelivered without ever completing (a
         pod-killing poison message — e.g. an OOM-sized video) must not be
