@@ -415,3 +415,253 @@ class TestEnqueueCompensation:
         assert result.state == "queued"
         jobs = await queue.claim(redis, "ingestors", "consumer_retry", block_ms=1000)
         assert [j.ingest_id for j in jobs] == [result.ingest_id]
+
+
+class TestSubmitActiveCounterOrdering:
+    @pytest.mark.asyncio
+    async def test_worker_decrement_in_submit_window_does_not_stick_counter(
+        self, redis, monkeypatch
+    ):
+        """The active counter must be incremented BEFORE the job becomes
+        claimable. If the increment runs after ``queue.submit`` (which makes
+        the job claimable), a fast worker can claim + process + decrement
+        (floored at 0) in the window before the increment, leaving the counter
+        stuck at 1 for the whole ACTIVE_TTL and permanently undercounting one
+        slot of tenant capacity."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        tenant = "acme:acme"
+        real_submit = queue.submit
+
+        async def submit_then_worker_decrement(*args, **kwargs):
+            msg_id = await real_submit(*args, **kwargs)
+            # A fast worker claims the just-submitted job and reaches terminal
+            # cleanup (decrement_active) before control returns to the API.
+            await queue.decrement_active(redis, tenant)
+            return msg_id
+
+        monkeypatch.setattr(queue, "submit", submit_then_worker_decrement)
+        await enqueue_ingestion(
+            redis, source_url="s3://b/v.mp4", profile="video", tenant_id=tenant
+        )
+        # increment(->1) must precede submit's decrement(->0): net 0, not 1.
+        assert await queue.get_active(redis, tenant) == 0
+
+    @pytest.mark.asyncio
+    async def test_submit_fault_restores_active_counter_and_inflight(
+        self, redis, monkeypatch
+    ):
+        """A submit failure compensates BOTH the inflight marker and the active
+        counter — the counter is incremented before the guarded submit, so the
+        except path must decrement it back to its prior value."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        tenant, src, profile = "acme:acme", "s3://b/v.mp4", "video"
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        async def _boom(*args, **kwargs):
+            raise ConnectionError("xadd reset")
+
+        monkeypatch.setattr(queue, "submit", _boom)
+        with pytest.raises(ConnectionError, match="xadd reset"):
+            await enqueue_ingestion(
+                redis, source_url=src, profile=profile, tenant_id=tenant
+            )
+        assert await queue.get_active(redis, tenant) == 0
+        assert await idempotency.get_existing_ingest_id(redis, sha) is None
+
+    @pytest.mark.asyncio
+    async def test_successful_submit_increments_once_worker_returns_to_zero(
+        self, redis, redis_container, monkeypatch
+    ):
+        """A successful submit increments the counter exactly once; the
+        worker's terminal decrement returns it to 0 with no underflow."""
+        from cogniverse_runtime.ingestion_worker import worker
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        tenant = "acme:acme"
+        result = await enqueue_ingestion(
+            redis, source_url="s3://b/v.mp4", profile="video", tenant_id=tenant
+        )
+        assert await queue.get_active(redis, tenant) == 1
+
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        config = worker.WorkerConfig()
+        await queue.ensure_consumer_group(redis, config.consumer_group)
+        jobs = await queue.claim(redis, config.consumer_group, "c1", block_ms=1000)
+        assert [j.ingest_id for j in jobs] == [result.ingest_id]
+
+        async def _trivial(job):
+            return {}
+
+        await worker._process_job(redis, jobs[0], config, processor=_trivial)
+        assert await queue.get_active(redis, tenant) == 0
+
+
+class TestTerminalCleanupBestEffort:
+    async def _submit_and_claim(self, redis, config, tenant, sha, ingest_id):
+        await queue.ensure_consumer_group(redis, config.consumer_group)
+        await queue.submit(
+            redis,
+            ingest_id=ingest_id,
+            source_url="s3://b/v.mp4",
+            profile="video",
+            tenant_id=tenant,
+            sha=sha,
+        )
+        jobs = await queue.claim(
+            redis, config.consumer_group, config.consumer_id, block_ms=1000
+        )
+        assert len(jobs) == 1
+        return jobs[0]
+
+    @staticmethod
+    def _terminal_event(events):
+        terminal = [
+            event for _, event in events if event.get("state") in ("complete", "failed")
+        ]
+        assert terminal, "no terminal event was published"
+        return terminal[-1]
+
+    @pytest.mark.asyncio
+    async def test_ack_failure_flags_cleanup_error_and_leaves_entry_pending(
+        self, redis, redis_container, monkeypatch
+    ):
+        """When ack fails, the earlier steps still ran, the terminal event
+        carries a cleanup-error signal (not a fully-clean complete), and the
+        entry stays in the PEL so the reaper can recover it."""
+        from cogniverse_runtime.ingestion_worker import worker
+
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        config = worker.WorkerConfig()
+        tenant, sha, ingest_id = "acme:acme", "sha_ack", "ing_ack"
+        await queue.increment_active(redis, tenant)
+        job = await self._submit_and_claim(redis, config, tenant, sha, ingest_id)
+
+        async def _ack_boom(*args, **kwargs):
+            raise ConnectionError("ack reset")
+
+        monkeypatch.setattr(queue, "ack", _ack_boom)
+
+        async def _trivial(job):
+            return {}
+
+        await worker._process_job(redis, job, config, processor=_trivial)
+
+        assert await redis.get(f"{idempotency.DONE_KEY_PREFIX}{sha}") == ingest_id
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") is None
+        assert await queue.get_active(redis, tenant) == 0
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 1  # ack never landed -> reaper can recover
+        terminal = self._terminal_event(await queue.read_status_since(redis, ingest_id))
+        assert terminal["state"] == "complete"
+        assert "ack" in terminal["cleanup_error"]
+
+    @pytest.mark.asyncio
+    async def test_early_cleanup_failure_does_not_skip_decrement_or_ack(
+        self, redis, redis_container, monkeypatch
+    ):
+        """A failure in an EARLY cleanup step (clear_inflight) must not skip the
+        later steps. Each step is best-effort, so decrement_active and ack still
+        run: the tenant slot frees and the PEL drains, with the failed step
+        named on the terminal event."""
+        from cogniverse_runtime.ingestion_worker import worker
+
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        config = worker.WorkerConfig()
+        tenant, sha, ingest_id = "acme:acme", "sha_early", "ing_early"
+        await queue.increment_active(redis, tenant)
+        job = await self._submit_and_claim(redis, config, tenant, sha, ingest_id)
+
+        async def _clear_boom(_redis, _sha):
+            raise ConnectionError("clear_inflight reset")
+
+        monkeypatch.setattr(idempotency, "clear_inflight", _clear_boom)
+
+        async def _trivial(job):
+            return {}
+
+        await worker._process_job(redis, job, config, processor=_trivial)
+
+        # decrement_active ran despite the earlier failure -> slot freed.
+        assert await queue.get_active(redis, tenant) == 0
+        # ack ran -> PEL drained, stream emptied.
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 0
+        assert await queue.queue_depth(redis) == 0
+        terminal = self._terminal_event(await queue.read_status_since(redis, ingest_id))
+        assert "clear_inflight" in terminal["cleanup_error"]
+
+
+class TestColdBuildOffload:
+    @pytest.mark.asyncio
+    async def test_prepare_job_context_runs_off_the_event_loop(self, monkeypatch):
+        """The cold builds (config manager + graph-factory install, with their
+        Vespa reads and deploy convergence waits) must run via ``to_thread``.
+        Inline on the loop they block the SIGTERM handler, deferring graceful
+        shutdown into a SIGKILL. Proof: the builder records its thread id and
+        blocks until the LOOP releases it — release can only arrive while the
+        builder is blocked if the loop stayed responsive, and the recorded id
+        must differ from the loop thread's."""
+        import threading
+
+        from cogniverse_runtime.ingestion_worker import worker
+
+        loop_thread = threading.get_ident()
+        seen: dict = {}
+        release = threading.Event()
+
+        def _blocking_context():
+            seen["thread"] = threading.get_ident()
+            seen["released"] = release.wait(timeout=5.0)
+            return (object(), object())
+
+        monkeypatch.setattr(worker, "_prepare_job_context", _blocking_context)
+
+        class _Pipeline:
+            def __init__(self, **kwargs):
+                pass
+
+            async def process_video_async(self, path, source_uri=None):
+                return {"status": "success", "video_id": "v1", "results": {}}
+
+        async def _no_graph(**kwargs):
+            return {"nodes_upserted": 0, "edges_upserted": 0, "graph_failed": 0}
+
+        class _Locator:
+            def __init__(self, tenant_id, config):
+                pass
+
+            def localize(self, url):
+                return "/tmp/never-read.mp4"
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.ingestion.pipeline.VideoIngestionPipeline", _Pipeline
+        )
+        monkeypatch.setattr(
+            "cogniverse_runtime.routers.ingestion._extract_graph_per_segment",
+            _no_graph,
+        )
+        monkeypatch.setattr("cogniverse_core.common.media.MediaLocator", _Locator)
+
+        job = queue.IngestJob(
+            message_id="0-1",
+            ingest_id="ing_offload",
+            source_url="file:///tmp/never-read.mp4",
+            profile="video",
+            tenant_id="acme:acme",
+            sha="sha_offload",
+        )
+        task = asyncio.create_task(worker._default_processor(job))
+        deadline = time.time() + 5.0
+        while "thread" not in seen and time.time() < deadline:
+            await asyncio.sleep(0.01)
+        release.set()
+        result = await asyncio.wait_for(task, timeout=10.0)
+
+        assert result["status"] == "success" and result["video_id"] == "v1"
+        assert seen["thread"] != loop_thread, "cold build ran ON the event loop"
+        assert seen["released"] is True, (
+            "loop never serviced the release while the builder blocked — "
+            "the build was not offloaded"
+        )

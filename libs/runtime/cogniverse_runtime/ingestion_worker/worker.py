@@ -15,13 +15,15 @@ For each claimed job:
 
 Errors from any step land as a ``failed`` event with the exception
 message; the message is still ACKed so it doesn't get redelivered.
-PEL-based retry of stuck-in-flight messages is a separate reaper
-job (out of scope here).
+Entries orphaned in a dead consumer's PEL (worker SIGKILLed mid-job)
+are recovered by ``reaper.py``, which XAUTOCLAIMs them back to a live
+consumer and re-drives them idempotently.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -73,6 +75,18 @@ class WorkerConfig:
             os.environ.get("INGEST_IDEMPOTENCY_TTL_SECONDS", "604800")
         )
         self.claim_block_ms = int(os.environ.get("INGEST_CLAIM_BLOCK_MS", "5000"))
+        self.reaper_enabled = os.environ.get(
+            "INGEST_REAPER_ENABLED", "true"
+        ).lower() in ("1", "true", "yes")
+        self.reaper_interval_s = int(
+            os.environ.get("INGEST_REAPER_INTERVAL_SECONDS", "60")
+        )
+        self.reaper_min_idle_ms = int(
+            os.environ.get("INGEST_REAPER_MIN_IDLE_MS", "300000")
+        )
+        self.reaper_max_deliveries = int(
+            os.environ.get("INGEST_REAPER_MAX_DELIVERIES", "5")
+        )
 
 
 def _media_config_from_env() -> "object":
@@ -102,6 +116,76 @@ def _media_config_from_env() -> "object":
 _GRAPH_FACTORY_INSTALLED = False
 
 
+def _build_worker_graph_factory(graph_backend, config_manager):
+    """Build the worker's per-tenant GraphManager factory.
+
+    Same single-cold-build contract as ``main._build_graph_manager_factory``:
+    ``get_or_set`` holds the cache lock across the build, so concurrent
+    first-touches for a fresh tenant deploy + construct exactly once.
+    """
+    from cogniverse_agents.graph.graph_manager import GraphManager
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_foundation.caching import TenantLRUCache
+
+    _graph_managers: TenantLRUCache[GraphManager] = TenantLRUCache(capacity=64)
+
+    def _factory(tenant_id: str, deploy: bool = True) -> GraphManager:
+        # ``deploy`` MUST be False on read-only paths: deploy_schema
+        # triggers a Vespa redeploy that can drop another process's
+        # just-fed rows mid-read. Read-built managers are not cached so
+        # the first writer still deploys.
+        tenant_id = canonical_tenant_id(tenant_id)
+
+        def _build() -> GraphManager:
+            if deploy:
+                try:
+                    graph_backend.schema_registry.deploy_schema(
+                        tenant_id=tenant_id, base_schema_name="knowledge_graph"
+                    )
+                except Exception as exc:  # noqa: BLE001 — log + degrade
+                    # The common case is "schema already deployed"; the deploy
+                    # call is idempotent at the Vespa convergence layer but the
+                    # client wrapper can raise on transient transport errors
+                    # or genuine schema validation failures. Log so a real
+                    # failure is visible — first feed/query attempt will then
+                    # surface the actual blocking error to the caller.
+                    logger.warning(
+                        "Knowledge-graph schema deploy for tenant %s raised "
+                        "(treating as already-deployed; real error surfaces on "
+                        "first feed/query): %s",
+                        tenant_id,
+                        exc,
+                    )
+            sys_cfg = config_manager.get_system_config()
+            colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
+            if not colbert_url:
+                raise RuntimeError(
+                    "knowledge_graph requires colbert_pylate in "
+                    "INFERENCE_SERVICE_URLS. Available: "
+                    f"{sorted(sys_cfg.inference_service_urls)}"
+                )
+            return GraphManager(
+                backend=graph_backend,
+                tenant_id=tenant_id,
+                schema_name=graph_backend.get_tenant_schema_name(
+                    tenant_id, "knowledge_graph"
+                ),
+                colbert_endpoint_url=colbert_url,
+            )
+
+        if deploy:
+            # get_or_set holds the cache lock across the build, so N
+            # concurrent first-touches for a fresh tenant run deploy_schema
+            # + the manager construction exactly once.
+            return _graph_managers.get_or_set(tenant_id, _build)
+        cached = _graph_managers.get(tenant_id)
+        if cached is not None:
+            return cached
+        return _build()
+
+    return _factory
+
+
 def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
     """Install the per-tenant GraphManager factory on the graph router
     so ``_extract_graph_per_segment`` can reach it during ingest.
@@ -115,11 +199,7 @@ def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
     if _GRAPH_FACTORY_INSTALLED:
         return
 
-    from cogniverse_agents.graph.graph_manager import GraphManager
-    from cogniverse_core.common.tenant_utils import (
-        SYSTEM_TENANT_ID,
-        canonical_tenant_id,
-    )
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
     from cogniverse_core.registries.backend_registry import BackendRegistry
     from cogniverse_foundation.config.bootstrap import BootstrapConfig
     from cogniverse_runtime.routers import graph as graph_router
@@ -138,56 +218,9 @@ def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
         schema_loader=schema_loader,
     )
 
-    _graph_managers: dict = {}
-
-    def _factory(tenant_id: str, deploy: bool = True) -> GraphManager:
-        # ``deploy`` MUST be False on read-only paths: deploy_schema
-        # triggers a Vespa redeploy that can drop another process's
-        # just-fed rows mid-read. Read-built managers are not cached so
-        # the first writer still deploys.
-        tenant_id = canonical_tenant_id(tenant_id)
-        if tenant_id in _graph_managers:
-            return _graph_managers[tenant_id]
-        if deploy:
-            try:
-                graph_backend.schema_registry.deploy_schema(
-                    tenant_id=tenant_id, base_schema_name="knowledge_graph"
-                )
-            except Exception as exc:  # noqa: BLE001 — log + degrade
-                # The common case is "schema already deployed"; the deploy
-                # call is idempotent at the Vespa convergence layer but the
-                # client wrapper can raise on transient transport errors
-                # or genuine schema validation failures. Log so a real
-                # failure is visible — first feed/query attempt will then
-                # surface the actual blocking error to the caller.
-                logger.warning(
-                    "Knowledge-graph schema deploy for tenant %s raised "
-                    "(treating as already-deployed; real error surfaces on "
-                    "first feed/query): %s",
-                    tenant_id,
-                    exc,
-                )
-        sys_cfg = config_manager.get_system_config()
-        colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
-        if not colbert_url:
-            raise RuntimeError(
-                "knowledge_graph requires colbert_pylate in "
-                "INFERENCE_SERVICE_URLS. Available: "
-                f"{sorted(sys_cfg.inference_service_urls)}"
-            )
-        mgr = GraphManager(
-            backend=graph_backend,
-            tenant_id=tenant_id,
-            schema_name=graph_backend.get_tenant_schema_name(
-                tenant_id, "knowledge_graph"
-            ),
-            colbert_endpoint_url=colbert_url,
-        )
-        if deploy:
-            _graph_managers[tenant_id] = mgr
-        return mgr
-
-    graph_router.set_graph_manager_factory(_factory)
+    graph_router.set_graph_manager_factory(
+        _build_worker_graph_factory(graph_backend, config_manager)
+    )
     _configure_dspy_lm(config_manager)
     _GRAPH_FACTORY_INSTALLED = True
 
@@ -266,23 +299,19 @@ def _configure_dspy_lm(config_manager) -> None:
     )
 
 
-async def _default_processor(job: IngestJob) -> dict:
-    """Production processor: localise the source via MediaLocator, run
-    the VideoIngestionPipeline, then run the per-segment KG extraction
-    + back-ref PATCH so the graph state lands alongside the content
-    documents. Returns the pipeline's result dict augmented with the
-    graph counts; the worker passes it to ``_summarise`` for the
-    status event payload.
+def _prepare_job_context():
+    """Build the config manager + schema loader and install the per-tenant
+    GraphManager factory (mirroring the one main.py installs for the API
+    runtime, so the worker behaves identically).
+
+    All of this is cold-start heavy — Vespa-backed config reads plus a
+    schema deploy with convergence waits — so ``_default_processor`` runs it
+    via ``asyncio.to_thread``. Inline on the worker loop it would block the
+    ``add_signal_handler`` SIGTERM callback, turning graceful shutdown into
+    a SIGKILL.
     """
-    from cogniverse_core.common.media import MediaLocator
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
-    from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
-    from cogniverse_runtime.routers.ingestion import _extract_graph_per_segment
-
-    media_config = _media_config_from_env()
-    locator = MediaLocator(tenant_id=job.tenant_id, config=media_config)
-    local_path = await asyncio.to_thread(locator.localize, job.source_url)
 
     config_manager = create_default_config_manager()
 
@@ -310,11 +339,27 @@ async def _default_processor(job: IngestJob) -> dict:
     schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
     schema_loader = FilesystemSchemaLoader(schemas_dir)
 
-    # Install the per-tenant GraphManager factory before the pipeline
-    # runs so the downstream graph-extraction call can reach it. The
-    # factory mirrors the one main.py installs for the API runtime,
-    # so the worker behaves identically.
     _ensure_graph_manager_factory(config_manager, schema_loader)
+    return config_manager, schema_loader
+
+
+async def _default_processor(job: IngestJob) -> dict:
+    """Production processor: localise the source via MediaLocator, run
+    the VideoIngestionPipeline, then run the per-segment KG extraction
+    + back-ref PATCH so the graph state lands alongside the content
+    documents. Returns the pipeline's result dict augmented with the
+    graph counts; the worker passes it to ``_summarise`` for the
+    status event payload.
+    """
+    from cogniverse_core.common.media import MediaLocator
+    from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+    from cogniverse_runtime.routers.ingestion import _extract_graph_per_segment
+
+    media_config = _media_config_from_env()
+    locator = MediaLocator(tenant_id=job.tenant_id, config=media_config)
+    local_path = await asyncio.to_thread(locator.localize, job.source_url)
+
+    config_manager, schema_loader = await asyncio.to_thread(_prepare_job_context)
 
     pipeline = VideoIngestionPipeline(
         tenant_id=job.tenant_id,
@@ -397,10 +442,12 @@ async def _process_job(
     processor=_default_processor,
 ) -> None:
     """Run one job end-to-end and publish events for every state
-    change. Always ACKs the queue message — even on failure — so the
-    PEL doesn't grow unbounded under repeated transient errors. Stuck
-    jobs are surfaced through the per-tenant active counter and the
-    SSE error event, not via Redis-level retry.
+    change. ACKs the queue message on terminal state — success or
+    failure — so the PEL doesn't grow unbounded under repeated
+    transient errors. Cleanup steps are each best-effort; a step that
+    fails (including the ack) is named on the terminal event's
+    ``cleanup_error`` and whatever it left behind is recovered by the
+    reaper (``reaper.py``).
 
     ``processor`` is injectable for tests that don't need the full
     Vespa+ColPali stack — production uses ``_default_processor``.
@@ -463,22 +510,39 @@ async def _process_job(
             job_span.set_attribute("job.outcome", "failed")
             job_span.set_attribute("job.error_type", type(exc).__name__)
 
-    try:
-        if success:
-            await idempotency.mark_done(
-                redis, job.sha, job.ingest_id, ttl_seconds=config.idempotency_ttl
+    # Each cleanup step is independently best-effort: a failure in one must
+    # not skip the others (a clear_inflight blip would otherwise leave the
+    # tenant slot occupied and the message stuck in the PEL). Failed steps
+    # are named on the terminal event so a watcher can distinguish a fully
+    # clean terminal from one needing reaper recovery, and the reaper can
+    # pick up whatever an unacked entry left behind.
+    cleanup_errors: list = []
+
+    async def _cleanup_step(name: str, coro) -> None:
+        try:
+            await coro
+        except Exception as exc:
+            logger.exception(
+                "Cleanup step %s failed for %s; continuing with remaining steps",
+                name,
+                job.ingest_id,
             )
-        await idempotency.clear_inflight(redis, job.sha)
-        await queue.decrement_active(redis, job.tenant_id)
-        await queue.ack(redis, config.consumer_group, job.message_id)
-    except Exception as cleanup_exc:
-        # Cleanup failures are themselves observable. Don't let them
-        # crash the worker loop — log, attach to the terminal event,
-        # and continue. The next claim still fires.
-        logger.exception(
-            "Cleanup failed for %s; terminal event will still publish", job.ingest_id
+            cleanup_errors.append(f"{name}: {exc}")
+
+    if success:
+        await _cleanup_step(
+            "mark_done",
+            idempotency.mark_done(
+                redis, job.sha, job.ingest_id, ttl_seconds=config.idempotency_ttl
+            ),
         )
-        terminal_event["cleanup_error"] = str(cleanup_exc)
+    await _cleanup_step("clear_inflight", idempotency.clear_inflight(redis, job.sha))
+    await _cleanup_step(
+        "decrement_active", queue.decrement_active(redis, job.tenant_id)
+    )
+    await _cleanup_step("ack", queue.ack(redis, config.consumer_group, job.message_id))
+    if cleanup_errors:
+        terminal_event["cleanup_error"] = "; ".join(cleanup_errors)
 
     await queue.publish_status(redis, job.ingest_id, terminal_event)
 
@@ -573,15 +637,27 @@ async def run(
 
     redis = await get_redis(config.redis_url)
     logger.info(
-        "Worker %s started: group=%s redis=%s",
+        "Worker %s started: group=%s redis=%s reaper=%s",
         config.consumer_id,
         config.consumer_group,
         config.redis_url,
+        "on" if config.reaper_enabled else "off",
     )
+    reaper_task = None
     try:
+        if config.reaper_enabled:
+            from cogniverse_runtime.ingestion_worker.reaper import reaper_loop
+
+            reaper_task = asyncio.create_task(
+                reaper_loop(redis, config, stop, processor=processor)
+            )
         await _claim_loop(redis, config, stop, processor=processor)
     finally:
         logger.info("Worker %s stopping", config.consumer_id)
+        if reaper_task is not None:
+            reaper_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reaper_task
         await close_redis()
 
 

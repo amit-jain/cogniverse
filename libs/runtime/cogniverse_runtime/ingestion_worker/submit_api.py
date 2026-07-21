@@ -139,10 +139,15 @@ async def enqueue_ingestion(
     await idempotency.mark_inflight(
         redis, sha, ingest_id, ttl_seconds=_inflight_ttl_seconds()
     )
-    # The inflight idempotency key is written BEFORE the job reaches the work
-    # stream. If the submit path fails, clear it — otherwise the orphaned key
+    # Increment the active counter BEFORE the job reaches the work stream, so
+    # the increment always precedes claimability. If it ran after submit(), a
+    # fast worker could claim + process + decrement (floored at 0) in the
+    # window before the increment, sticking the per-tenant counter at 1 for the
+    # whole ACTIVE_TTL. The inflight key is likewise written before submit; a
+    # failure on the submit path must compensate both, or the orphaned key
     # (6h TTL) makes every non-force retry return "in_flight" for a job that
-    # was never queued and will never run, silently dropping the upload.
+    # was never queued and the leaked counter wedges tenant backpressure.
+    await queue.increment_active(redis, tenant_id)
     try:
         await queue.publish_status(
             redis,
@@ -164,9 +169,9 @@ async def enqueue_ingestion(
             sha=sha,
         )
     except Exception:
+        await queue.decrement_active(redis, tenant_id)
         await idempotency.clear_inflight(redis, sha)
         raise
-    await queue.increment_active(redis, tenant_id)
 
     logger.info(
         "Ingest enqueued: id=%s tenant=%s profile=%s source=%s",
