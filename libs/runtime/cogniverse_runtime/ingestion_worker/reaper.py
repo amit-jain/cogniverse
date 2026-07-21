@@ -44,6 +44,31 @@ from cogniverse_runtime.ingestion_worker.worker import (
 logger = logging.getLogger(__name__)
 
 DEAD_STREAM = "ingest:queue:dead"
+DEAD_MARKER_PREFIX = "ingest:dead:"
+DEAD_MARKER_TTL_SECONDS = 6 * 60 * 60
+
+# Atomic exactly-once dead-letter settle. The three side effects (dead-stream
+# xadd, inflight clear, floored active decrement) are not individually
+# idempotent — a crash between any two of them and the ack would redeliver the
+# entry and re-run them: a second decrement frees a slot a DIFFERENT
+# still-running job of the same tenant holds, and the dead stream gains a
+# duplicate entry. Running them inside one server-side script gated on a
+# SET NX marker means they happen exactly once no matter how many times the
+# entry is redelivered.
+# KEYS: marker, dead stream, inflight key, active-counter key.
+# ARGV: ingest_id, marker TTL, source_url, profile, tenant_id, sha, delivered.
+_SETTLE_LUA = """
+if not redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
+  return 0
+end
+redis.call('XADD', KEYS[2], '*',
+  'ingest_id', ARGV[1], 'source_url', ARGV[3], 'profile', ARGV[4],
+  'tenant_id', ARGV[5], 'sha', ARGV[6], 'times_delivered', ARGV[7])
+redis.call('DEL', KEYS[3])
+local v = redis.call('DECR', KEYS[4])
+if v < 0 then redis.call('SET', KEYS[4], '0') end
+return 1
+"""
 
 
 async def _dead_letter(
@@ -53,11 +78,15 @@ async def _dead_letter(
 
     A poison message that kills the pod each time it runs (an OOM-sized
     video) would otherwise crash-loop the ingestor forever, one re-drive
-    per sweep. The job lands on the dead stream for operator inspection,
-    its submit-side state is settled (slot freed, stale inflight cleared,
-    PEL drained) and an observable ``failed`` terminal publishes last, so
-    a watcher never sees a terminal state with invariants still torn. No
-    done marker is written — a corrected re-submission re-enqueues.
+    per sweep. The job lands on the dead stream for operator inspection
+    and its submit-side state is settled (slot freed, stale inflight
+    cleared) in one atomic exactly-once step, so a crash-redelivery can
+    never double-free a tenant slot or duplicate the dead entry. The
+    observable ``failed`` terminal publishes after the settle (a watcher
+    never sees it with invariants torn) and before the ack, so a crash in
+    between redelivers the entry and re-publishes rather than losing the
+    terminal forever. No done marker is written — a corrected
+    re-submission re-enqueues.
     """
     logger.error(
         "Reaper abandoning ingest %s after %d deliveries (tenant=%s, "
@@ -68,20 +97,21 @@ async def _dead_letter(
         job.source_url,
         DEAD_STREAM,
     )
-    await redis.xadd(
+    await redis.eval(
+        _SETTLE_LUA,
+        4,
+        f"{DEAD_MARKER_PREFIX}{job.message_id}",
         DEAD_STREAM,
-        {
-            "ingest_id": job.ingest_id,
-            "source_url": job.source_url,
-            "profile": job.profile,
-            "tenant_id": job.tenant_id,
-            "sha": job.sha,
-            "times_delivered": str(delivered),
-        },
+        f"{idempotency.INFLIGHT_KEY_PREFIX}{job.sha}",
+        f"{queue.ACTIVE_KEY_PREFIX}{job.tenant_id}",
+        job.ingest_id,
+        str(DEAD_MARKER_TTL_SECONDS),
+        job.source_url,
+        job.profile,
+        job.tenant_id,
+        job.sha,
+        str(delivered),
     )
-    await idempotency.clear_inflight(redis, job.sha)
-    await queue.decrement_active(redis, job.tenant_id)
-    await queue.ack(redis, config.consumer_group, job.message_id)
     await queue.publish_status(
         redis,
         job.ingest_id,
@@ -92,6 +122,7 @@ async def _dead_letter(
             "error_type": "MaxDeliveriesExceeded",
         },
     )
+    await queue.ack(redis, config.consumer_group, job.message_id)
 
 
 async def run_reaper_once(
