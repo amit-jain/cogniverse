@@ -311,12 +311,16 @@ class TestRestoreMemory:
 
 
 class _StubStatsBackend:
-    def __init__(self):
-        self.get_stats_calls = 0
+    """Sync ``get_statistics`` matching the Backend interface every registered
+    backend implements — pinned against the real VespaBackend type below so
+    this stub cannot drift into a shape production never builds."""
 
-    async def get_stats(self):
-        self.get_stats_calls += 1
-        return {"document_count": 42, "schema_count": 3}
+    def __init__(self):
+        self.get_statistics_calls = 0
+
+    def get_statistics(self):
+        self.get_statistics_calls += 1
+        return {"backend": "vespa", "status": "healthy", "search_enabled": True}
 
 
 @pytest.mark.unit
@@ -373,13 +377,42 @@ class TestSystemStats:
             "backend": "vespa",
             "tenant_id": "acme:prod",
             "backend_type": "_StubStatsBackend",
-            "document_count": 42,
-            "schema_count": 3,
+            "status": "healthy",
+            "search_enabled": True,
         }
-        assert backend.get_stats_calls == 1
+        assert backend.get_statistics_calls == 1
         registry.get_ingestion_backend.assert_called_once_with(
             "vespa",
             tenant_id="acme:prod",
             config_manager=cm,
             schema_loader=sl,
         )
+
+    def test_stub_contract_matches_real_backend_type(self):
+        """The route dispatches on the sync Backend-interface method. The
+        real VespaBackend exposes ``get_statistics`` and has NO ``get_stats``
+        — a stub with any other method name or an async signature exercises a
+        type production never builds, and the backend-specific stats path
+        would ship dead (501 on every real request) behind a green test."""
+        import inspect
+
+        from cogniverse_vespa.backend import VespaBackend
+
+        assert not hasattr(VespaBackend, "get_stats")
+        assert callable(VespaBackend.get_statistics)
+        assert not inspect.iscoroutinefunction(VespaBackend.get_statistics)
+        assert not hasattr(_StubStatsBackend, "get_stats")
+        assert not inspect.iscoroutinefunction(_StubStatsBackend.get_statistics)
+
+    def test_backend_without_statistics_method_returns_501(self, monkeypatch):
+        class _NoStats:
+            pass
+
+        app, _, _, _ = self._app(monkeypatch, backend=_NoStats())
+        with TestClient(app) as client:
+            resp = client.get(
+                "/admin/system/stats",
+                params={"tenant_id": "acme:prod", "backend": "vespa"},
+            )
+        assert resp.status_code == 501
+        assert "get_statistics" in resp.json()["detail"]
