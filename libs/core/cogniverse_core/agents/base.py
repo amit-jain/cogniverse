@@ -217,6 +217,14 @@ class _DispatchedPromptOverlayContext:
             predictor = _signature_predictor(getattr(local, name, None))
             if predictor is None:
                 continue
+            if not isinstance(value, str) or not value.strip():
+                logger.warning(
+                    "prompt overlay for %s is not a non-empty string (type=%s); "
+                    "serving active prompt for that predictor",
+                    name,
+                    type(value).__name__,
+                )
+                continue
             try:
                 sig = predictor.signature
                 # Newer DSPy returns a new Signature class from
