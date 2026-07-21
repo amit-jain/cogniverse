@@ -75,6 +75,11 @@ class WorkerConfig:
             os.environ.get("INGEST_IDEMPOTENCY_TTL_SECONDS", "604800")
         )
         self.claim_block_ms = int(os.environ.get("INGEST_CLAIM_BLOCK_MS", "5000"))
+        # Must be well below reaper_min_idle_ms: the heartbeat is what keeps
+        # a live long-running job's PEL entry from looking abandoned.
+        self.heartbeat_interval_s = int(
+            os.environ.get("INGEST_HEARTBEAT_INTERVAL_SECONDS", "60")
+        )
         self.reaper_enabled = os.environ.get(
             "INGEST_REAPER_ENABLED", "true"
         ).lower() in ("1", "true", "yes")
@@ -435,6 +440,38 @@ async def _default_processor(job: IngestJob) -> dict:
     return processing_results
 
 
+async def _claim_heartbeat(
+    redis: aioredis.Redis,
+    job: IngestJob,
+    config: WorkerConfig,
+    stop: asyncio.Event,
+) -> None:
+    """Keep the claimed entry's PEL idle clock fresh while the pipeline runs.
+
+    Without this, any job whose pipeline outlives ``reaper_min_idle_ms``
+    is XAUTOCLAIMed away mid-processing and re-driven concurrently: the
+    pipeline runs twice, the tenant counter double-decrements, and after
+    enough reclaims a legitimately long video is dead-lettered as poison.
+    Best-effort: a failed refresh retries next interval; if Redis is down
+    the pipeline's own Redis calls fail first.
+    """
+    while True:
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=config.heartbeat_interval_s)
+        if stop.is_set():
+            return
+        try:
+            await queue.refresh_claim(
+                redis, config.consumer_group, config.consumer_id, job.message_id
+            )
+        except Exception:
+            logger.warning(
+                "Claim heartbeat failed for %s; retrying next interval",
+                job.ingest_id,
+                exc_info=True,
+            )
+
+
 async def _process_job(
     redis: aioredis.Redis,
     job: IngestJob,
@@ -460,55 +497,64 @@ async def _process_job(
     """
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-    tm = get_telemetry_manager()
-
-    await queue.publish_status(
-        redis,
-        job.ingest_id,
-        {
-            "state": "running",
-            "ingest_id": job.ingest_id,
-            "consumer_id": config.consumer_id,
-        },
-    )
-
     success = False
     terminal_event: dict
+    # The heartbeat starts before ANY other work: telemetry cold init and
+    # the running publish can stall, and the claim must never look
+    # abandoned while this coroutine owns the job.
+    stop_heartbeat = asyncio.Event()
+    heartbeat = asyncio.create_task(
+        _claim_heartbeat(redis, job, config, stop_heartbeat)
+    )
     # Outer span wraps the full job lifecycle (processor + cleanup +
     # status publish). component=pipeline so the TelemetryLevel filter
     # admits at DETAILED+. Errors propagate into the span via the
     # contextmanager's try/yield/except path.
-    with tm.span(
-        "pipeline.worker.process_job",
-        tenant_id=job.tenant_id,
-        component="pipeline",
-        attributes={
-            "job.id": job.ingest_id,
-            "job.source_url": getattr(job, "source_url", "") or "",
-            "job.profile": getattr(job, "profile", "") or "",
-            "job.consumer_id": config.consumer_id,
-        },
-    ) as job_span:
-        try:
-            result = await processor(job)
-            _raise_if_pipeline_failed(result)
-            success = True
-            terminal_event = {
-                "state": "complete",
+    try:
+        tm = get_telemetry_manager()
+        await queue.publish_status(
+            redis,
+            job.ingest_id,
+            {
+                "state": "running",
                 "ingest_id": job.ingest_id,
-                "result": _summarise(result),
-            }
-            job_span.set_attribute("job.outcome", "success")
-        except Exception as exc:
-            logger.exception("Ingest job %s failed", job.ingest_id)
-            terminal_event = {
-                "state": "failed",
-                "ingest_id": job.ingest_id,
-                "error": str(exc),
-                "error_type": type(exc).__name__,
-            }
-            job_span.set_attribute("job.outcome", "failed")
-            job_span.set_attribute("job.error_type", type(exc).__name__)
+                "consumer_id": config.consumer_id,
+            },
+        )
+        with tm.span(
+            "pipeline.worker.process_job",
+            tenant_id=job.tenant_id,
+            component="pipeline",
+            attributes={
+                "job.id": job.ingest_id,
+                "job.source_url": getattr(job, "source_url", "") or "",
+                "job.profile": getattr(job, "profile", "") or "",
+                "job.consumer_id": config.consumer_id,
+            },
+        ) as job_span:
+            try:
+                result = await processor(job)
+                _raise_if_pipeline_failed(result)
+                success = True
+                terminal_event = {
+                    "state": "complete",
+                    "ingest_id": job.ingest_id,
+                    "result": _summarise(result),
+                }
+                job_span.set_attribute("job.outcome", "success")
+            except Exception as exc:
+                logger.exception("Ingest job %s failed", job.ingest_id)
+                terminal_event = {
+                    "state": "failed",
+                    "ingest_id": job.ingest_id,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+                job_span.set_attribute("job.outcome", "failed")
+                job_span.set_attribute("job.error_type", type(exc).__name__)
+    finally:
+        stop_heartbeat.set()
+        await heartbeat
 
     # Each cleanup step is independently best-effort: a failure in one must
     # not skip the others (a clear_inflight blip would otherwise leave the

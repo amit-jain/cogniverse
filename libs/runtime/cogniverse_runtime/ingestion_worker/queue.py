@@ -187,6 +187,29 @@ async def autoclaim(
     return next_cursor, jobs
 
 
+async def refresh_claim(
+    redis: aioredis.Redis, group: str, consumer_id: str, message_id: str
+) -> bool:
+    """Reset the PEL idle clock on a claimed entry (XCLAIM to self).
+
+    XAUTOCLAIM reclaims on idle time alone — it cannot tell a crashed
+    owner from a live one mid-pipeline. The worker heartbeats this while
+    processing, so the reaper's min-idle threshold only ever fires on
+    entries whose owner stopped heartbeating. ``justid`` leaves the
+    delivery counter untouched: heartbeats must not advance the
+    poison-message cap. Returns True if the entry was still pending.
+    """
+    claimed = await redis.xclaim(
+        QUEUE_STREAM,
+        group,
+        consumer_id,
+        min_idle_time=0,
+        message_ids=[message_id],
+        justid=True,
+    )
+    return bool(claimed)
+
+
 async def times_delivered(redis: aioredis.Redis, group: str, message_id: str) -> int:
     """How many times ``message_id`` has been delivered to any consumer.
 
