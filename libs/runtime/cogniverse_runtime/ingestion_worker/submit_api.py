@@ -143,12 +143,19 @@ async def enqueue_ingestion(
     # the increment always precedes claimability. If it ran after submit(), a
     # fast worker could claim + process + decrement (floored at 0) in the
     # window before the increment, sticking the per-tenant counter at 1 for the
-    # whole ACTIVE_TTL. The inflight key is likewise written before submit; a
-    # failure on the submit path must compensate both, or the orphaned key
-    # (6h TTL) makes every non-force retry return "in_flight" for a job that
-    # was never queued and the leaked counter wedges tenant backpressure.
-    await queue.increment_active(redis, tenant_id)
+    # whole ACTIVE_TTL. The inflight key is written before all of this; any
+    # failure between it and a successful submit must compensate every step
+    # that committed, or the orphaned key (6h TTL) makes every non-force retry
+    # return "in_flight" for a job that was never queued. Compensation steps
+    # are each best-effort and only for steps that actually ran: a failing
+    # decrement must not skip clearing the inflight marker (the counter
+    # self-heals via ACTIVE_TTL; the marker poisons resubmits for its whole
+    # TTL), and the original submit error must surface, not the
+    # compensation's.
+    incremented = False
     try:
+        await queue.increment_active(redis, tenant_id)
+        incremented = True
         await queue.publish_status(
             redis,
             ingest_id,
@@ -169,8 +176,23 @@ async def enqueue_ingestion(
             sha=sha,
         )
     except Exception:
-        await queue.decrement_active(redis, tenant_id)
-        await idempotency.clear_inflight(redis, sha)
+        if incremented:
+            try:
+                await queue.decrement_active(redis, tenant_id)
+            except Exception:
+                logger.exception(
+                    "Enqueue compensation: decrement_active failed for "
+                    "tenant=%s; counter self-heals via ACTIVE_TTL",
+                    tenant_id,
+                )
+        try:
+            await idempotency.clear_inflight(redis, sha)
+        except Exception:
+            logger.exception(
+                "Enqueue compensation: clear_inflight failed for sha=%s; "
+                "resubmits return the dead id until the inflight TTL lapses",
+                sha,
+            )
         raise
 
     logger.info(

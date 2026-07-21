@@ -416,6 +416,75 @@ class TestEnqueueCompensation:
         jobs = await queue.claim(redis, "ingestors", "consumer_retry", block_ms=1000)
         assert [j.ingest_id for j in jobs] == [result.ingest_id]
 
+    @pytest.mark.asyncio
+    async def test_increment_fault_clears_inflight_without_bogus_decrement(
+        self, redis, monkeypatch
+    ):
+        """Redis dropping the connection between mark_inflight and
+        increment_active must still clear the inflight marker — and must NOT
+        run decrement_active for a counter that was never incremented (that
+        would free a slot a different running job of the same tenant holds)."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = "s3://bucket/incr.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+        # Another job of the same tenant is mid-flight and owns one slot.
+        await queue.increment_active(redis, tenant)
+        decrements: list = []
+        real_decrement = queue.decrement_active
+
+        async def _boom_increment(*args, **kwargs):
+            raise ConnectionError("redis reset on incr")
+
+        async def _recording_decrement(r, t):
+            decrements.append(t)
+            return await real_decrement(r, t)
+
+        monkeypatch.setattr(queue, "increment_active", _boom_increment)
+        monkeypatch.setattr(queue, "decrement_active", _recording_decrement)
+        with pytest.raises(ConnectionError, match="reset on incr"):
+            await enqueue_ingestion(
+                redis, source_url=src, profile=profile, tenant_id=tenant
+            )
+
+        assert await idempotency.get_existing_ingest_id(redis, sha) is None
+        assert decrements == [], "compensated a counter that was never incremented"
+        assert await queue.get_active(redis, tenant) == 1
+        assert await queue.queue_depth(redis) == 0
+
+    @pytest.mark.asyncio
+    async def test_decrement_fault_in_compensation_still_clears_inflight(
+        self, redis, monkeypatch
+    ):
+        """When Redis is still failing during compensation, a decrement_active
+        failure must not skip clear_inflight, and the ORIGINAL submit error
+        must propagate — not the compensation's. The leaked counter is the
+        accepted residual (self-heals via ACTIVE_TTL); a surviving inflight
+        marker would poison every non-force resubmit for its whole TTL."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = "s3://bucket/comp.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        async def _boom_submit(*args, **kwargs):
+            raise ConnectionError("xadd reset")
+
+        async def _boom_decrement(*args, **kwargs):
+            raise TimeoutError("decr timed out")
+
+        monkeypatch.setattr(queue, "submit", _boom_submit)
+        monkeypatch.setattr(queue, "decrement_active", _boom_decrement)
+        with pytest.raises(ConnectionError, match="xadd reset"):
+            await enqueue_ingestion(
+                redis, source_url=src, profile=profile, tenant_id=tenant
+            )
+
+        assert await idempotency.get_existing_ingest_id(redis, sha) is None
+        # The failed decrement leaves the counter at 1 — bounded by the
+        # self-healing TTL set at increment time.
+        assert await queue.get_active(redis, tenant) == 1
+        assert await redis.ttl(f"{queue.ACTIVE_KEY_PREFIX}{tenant}") > 0
+
 
 class TestSubmitActiveCounterOrdering:
     @pytest.mark.asyncio
