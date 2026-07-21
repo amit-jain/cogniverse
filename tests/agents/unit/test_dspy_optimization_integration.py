@@ -582,5 +582,77 @@ class TestTeacherLMWiring:
         assert kwargs["teacher_settings"] == {"lm": optimizer.teacher_lm}
 
 
+@pytest.mark.ci_fast
+class TestValidationSplitGatesCompiledModule:
+    """optimize_all_modules holds out 20% as a validation split and passes it
+    to optimize_module; the split must actually gate the result — a compiled
+    module that underperforms the un-compiled baseline on held-out examples
+    is discarded in favour of the baseline."""
+
+    @staticmethod
+    def _pipeline(monkeypatch, compiled_module):
+        import dspy
+
+        from cogniverse_agents.optimizer import dspy_agent_optimizer as mod
+
+        optimizer = DSPyAgentPromptOptimizer()
+        pipeline = DSPyAgentOptimizerPipeline(optimizer)
+
+        def _baseline(**kwargs):
+            return Mock(answer="baseline")
+
+        pipeline.modules["query_analysis"] = _baseline
+
+        class _StubTeleprompter:
+            def __init__(self, **kwargs):
+                pass
+
+            def compile(self, module, trainset):
+                return compiled_module
+
+        monkeypatch.setattr(mod, "BootstrapFewShot", _StubTeleprompter)
+
+        def _metric(example, pred, trace=None):
+            return 1.0 if pred.answer == "compiled" else 0.5
+
+        monkeypatch.setattr(pipeline, "_create_metric_for_module", lambda name: _metric)
+        examples = [
+            dspy.Example(question=f"q{i}", answer="a").with_inputs("question")
+            for i in range(3)
+        ]
+        return pipeline, _baseline, examples
+
+    def test_compiled_module_kept_when_it_wins_on_the_split(self, monkeypatch):
+        def _compiled(**kwargs):
+            return Mock(answer="compiled")
+
+        pipeline, _baseline, examples = self._pipeline(monkeypatch, _compiled)
+        out = pipeline.optimize_module("query_analysis", examples, examples)
+        assert out is _compiled
+        assert pipeline.compiled_modules["query_analysis"] is _compiled
+
+    def test_compiled_module_discarded_when_it_loses_on_the_split(self, monkeypatch):
+        def _compiled(**kwargs):
+            return Mock(answer="overfit")
+
+        pipeline, baseline, examples = self._pipeline(monkeypatch, _compiled)
+
+        def _metric(example, pred, trace=None):
+            return {"baseline": 0.8, "overfit": 0.2}.get(pred.answer, 0.0)
+
+        monkeypatch.setattr(pipeline, "_create_metric_for_module", lambda name: _metric)
+        out = pipeline.optimize_module("query_analysis", examples, examples)
+        assert out is baseline
+        assert pipeline.compiled_modules["query_analysis"] is baseline
+
+    def test_no_validation_split_keeps_compiled_module(self, monkeypatch):
+        def _compiled(**kwargs):
+            return Mock(answer="compiled")
+
+        pipeline, _baseline, examples = self._pipeline(monkeypatch, _compiled)
+        out = pipeline.optimize_module("query_analysis", examples, None)
+        assert out is _compiled
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
