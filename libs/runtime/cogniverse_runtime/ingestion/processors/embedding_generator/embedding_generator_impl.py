@@ -286,15 +286,16 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 if isinstance(embeddings, Exception):
                     raise embeddings
 
+                # The generators return None only on failure — treating it as
+                # a benign skip would silently index the video with fewer
+                # documents than it has segments while reporting success.
                 if embeddings is None:
-                    self.logger.debug(
-                        f"    ⚠️ No embeddings generated for segment {idx}"
+                    raise ValueError(
+                        "embedding generation returned no output (see error log)"
                     )
-                    continue
-                else:
-                    self.logger.debug(
-                        f"    ✅ Generated embeddings shape: {embeddings.shape}"
-                    )
+                self.logger.debug(
+                    f"    ✅ Generated embeddings shape: {embeddings.shape}"
+                )
 
                 frame_ref = self._segment_frame_ref(segment)
                 description = (
@@ -371,11 +372,12 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 )
                 if isinstance(embeddings, Exception):
                     raise embeddings
-                if embeddings is not None:
-                    all_embeddings.append(embeddings)
-                    self.logger.debug(
-                        f"    ✅ Added embeddings shape: {embeddings.shape}"
+                if embeddings is None:
+                    raise ValueError(
+                        "embedding generation returned no output (see error log)"
                     )
+                all_embeddings.append(embeddings)
+                self.logger.debug(f"    ✅ Added embeddings shape: {embeddings.shape}")
             except Exception as e:
                 self.logger.error(f"Error processing segment {idx}: {e}")
                 errors.append(f"Segment {idx}: {str(e)}")
