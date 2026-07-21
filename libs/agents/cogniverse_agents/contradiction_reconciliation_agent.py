@@ -20,6 +20,7 @@ sentinel kind) when policy = ``preserve_both`` so audit history persists.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -241,6 +242,11 @@ class ContradictionReconciliationAgent(
         try:
             conflict = self.detect(input.subject_key, input.predicate)
         except Exception as exc:
+            if not self.is_memory_enabled() or self.memory_manager is None:
+                # The KG is the SOLE conflict source here — swallowing its
+                # outage would return "no conflicts" as success,
+                # indistinguishable from a genuinely conflict-free subject.
+                raise
             logger.warning(
                 "contradiction: Vespa-KG complement skipped for (%s, %s): %r",
                 input.subject_key,
@@ -265,7 +271,10 @@ class ContradictionReconciliationAgent(
     async def _process_impl(
         self, input: ContradictionReconciliationInput
     ) -> ContradictionReconciliationOutput:
-        kg_conflict_entries, kg_policy = self._kg_conflict_complement(input)
+        # The KG conflict scan is a blocking Vespa read — off the loop.
+        kg_conflict_entries, kg_policy = await asyncio.to_thread(
+            self._kg_conflict_complement, input
+        )
 
         if not self.is_memory_enabled() or self.memory_manager is None:
             logger.warning(

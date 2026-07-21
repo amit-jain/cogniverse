@@ -171,3 +171,57 @@ def test_agent_capabilities_advertised():
     assert "citation_tracing" in agent.capabilities
     assert "provenance_walk" in agent.capabilities
     assert agent.port == 8019
+
+
+@pytest.mark.asyncio
+async def test_kg_outage_raises_when_kg_is_sole_source(monkeypatch):
+    """Memory disabled → the KG trace is the ONLY grounding source; a Vespa
+    outage must surface instead of returning "no provenance" as a success
+    indistinguishable from a genuinely ungrounded claim."""
+    agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent._graph_manager = MagicMock()
+    monkeypatch.setattr(
+        agent, "trace", MagicMock(side_effect=ConnectionError("vespa down"))
+    )
+    with pytest.raises(ConnectionError, match="vespa down"):
+        await agent._process_impl(
+            CitationTracingInput(memory_id="m_root", claim_id="c1", tenant_id="acme")
+        )
+
+
+def test_kg_outage_degrades_to_empty_complement_when_memory_answers(monkeypatch):
+    """Memory enabled → the KG is a complement; its outage degrades to an
+    empty complement while the memory walk still answers."""
+    agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent._graph_manager = MagicMock()
+    monkeypatch.setattr(agent, "is_memory_enabled", lambda: True)
+    agent.memory_manager = MagicMock()
+    monkeypatch.setattr(
+        agent, "trace", MagicMock(side_effect=ConnectionError("vespa down"))
+    )
+    out = agent._kg_primary_sources(
+        CitationTracingInput(memory_id="m_root", claim_id="c1", tenant_id="acme")
+    )
+    assert out == []
+
+
+@pytest.mark.asyncio
+async def test_kg_trace_runs_off_the_event_loop(monkeypatch):
+    """The KG trace is a blocking Vespa read; _process_impl must run it in a
+    worker thread, not on the loop."""
+    import threading
+
+    agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+    agent._graph_manager = MagicMock()
+    threads: list = []
+
+    def _trace(claim_id):
+        threads.append(threading.get_ident())
+        return {"chain": []}
+
+    monkeypatch.setattr(agent, "trace", _trace)
+    await agent._process_impl(
+        CitationTracingInput(memory_id="m_root", claim_id="c1", tenant_id="acme")
+    )
+    assert threads, "trace was never invoked"
+    assert all(t != threading.get_ident() for t in threads)
