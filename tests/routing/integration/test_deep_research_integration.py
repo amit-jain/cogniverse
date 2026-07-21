@@ -52,8 +52,40 @@ def configure_dspy():
     dspy.configure(lm=None)
 
 
+@pytest.fixture(scope="module")
+def colpali_query_encoder_url(vllm_sidecar, vespa_instance):
+    """The smol500 profile resolves its query encoder through the
+    ``vllm_colpali`` inference service; without a registered URL every
+    sub-question search fails and the cycle synthesizes over zero evidence.
+    Spawn the real embed sidecar and persist its URL into the store-backed
+    system config, where each fresh create_default_config_manager() (built
+    per search call) reads it back."""
+    from cogniverse_core.query.encoders import QueryEncoderFactory
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    url = vllm_sidecar.spawn(
+        model="TomoroAI/tomoro-colqwen3-embed-4b",
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--max-model-len",
+            "4096",
+        ],
+    )
+    cm = create_default_config_manager()
+    sys_cfg = cm.get_system_config()
+    sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
+    sys_cfg.inference_service_urls["vllm_colpali"] = url
+    cm.set_system_config(sys_cfg)
+    QueryEncoderFactory._encoder_cache.clear()
+    yield url
+    QueryEncoderFactory._encoder_cache.clear()
+
+
 @pytest.fixture
-def real_search_fn(vespa_instance):
+def real_search_fn(vespa_instance, colpali_query_encoder_url):
     """Search function that hits the test Vespa Docker container.
 
     The vespa_instance fixture sets BACKEND_URL/BACKEND_PORT env vars,
@@ -146,8 +178,9 @@ def seeded_outdoor_corpus(vespa_instance):
             "end_time": 1.0,
             "segment_description": description,
             "audio_transcript": description,
-            "embedding": {"blocks": {"0": [0.1] * 128}},
-            "embedding_binary": {"blocks": {"0": [1] * 16}},
+            # Dims track configs/schemas/video_colpali_smol500_mv_frame_schema.json
+            "embedding": {"blocks": {"0": [0.1] * 320}},
+            "embedding_binary": {"blocks": {"0": [1] * 40}},
         }
         resp = requests.post(
             f"http://localhost:{port}/document/v1/video/{schema}"
