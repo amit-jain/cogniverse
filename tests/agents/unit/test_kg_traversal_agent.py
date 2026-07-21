@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+import threading
 from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
@@ -359,3 +362,75 @@ class TestGraphSoleSourceFaultContract:
         assert any(n.subject_key == "a" for n in out.nodes), (
             "mem0 result must survive a KG-complement outage"
         )
+
+    @pytest.mark.asyncio
+    async def test_kg_complement_degrade_logs_warning(self, caplog):
+        # A persistent Vespa-KG outage on the complement path must be visible at
+        # prod INFO — it logs at WARNING (not DEBUG), and the mem0 results survive
+        # with the KG contribution dropped.
+        agent = _build_agent([_node("n1", "a", label="A")])
+        agent._graph_manager = MagicMock()
+
+        def _boom(seed):
+            raise ConnectionError("vespa KG down")
+
+        agent.traverse = _boom  # type: ignore[assignment]
+
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.kg_traversal_agent"
+        ):
+            out = await agent._process_impl(
+                KGTraversalInput(tenant_id="acme", start_subject_key="a")
+            )
+
+        assert [n.subject_key for n in out.nodes] == ["a"]
+        degrade = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and "complement" in r.getMessage().lower()
+        ]
+        assert len(degrade) == 1
+        assert "vespa KG down" in degrade[0].getMessage()
+
+
+@pytest.mark.asyncio
+class TestSeedResolveOffload:
+    """_resolve_seed_subject does a blocking mem0.get (sync Vespa); it must run
+    off the event loop so a slow seed lookup never stalls the whole API loop."""
+
+    async def test_seed_resolve_runs_off_loop(self):
+        main_thread = threading.get_ident()
+        started = threading.Event()
+        release = threading.Event()
+        recorded: Dict[str, Any] = {}
+
+        def blocking_get(mid):
+            recorded["thread"] = threading.get_ident()
+            started.set()
+            recorded["released"] = release.wait(timeout=5.0)
+            return {"metadata": {"kind": "kg_node", "subject_key": "alice"}}
+
+        agent = _build_agent([_node("n_alice", "alice", label="Alice")])
+        agent.memory_manager.memory.get.side_effect = blocking_get
+
+        counter = {"n": 0}
+
+        async def progress():
+            # Only reachable if the loop is free while the mem0.get blocks.
+            while not started.is_set():
+                await asyncio.sleep(0.001)
+            counter["n"] += 1
+            release.set()
+
+        proc = asyncio.create_task(
+            agent._process_impl(
+                KGTraversalInput(tenant_id="acme", start_memory_id="n_alice")
+            )
+        )
+        await progress()
+        out = await proc
+
+        assert counter["n"] == 1
+        assert recorded["released"] is True
+        assert recorded["thread"] != main_thread
+        assert out.start_subject_key == "alice"
