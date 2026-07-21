@@ -315,7 +315,7 @@ class KnowledgeGraphTraversalAgent(
                 metadata={"reason": "no_backend_available"},
             )
 
-        seed_subject = self._resolve_seed_subject(input)
+        seed_subject = await asyncio.to_thread(self._resolve_seed_subject, input)
         if not seed_subject:
             return KGTraversalOutput(
                 start_subject_key="",
@@ -413,7 +413,7 @@ class KnowledgeGraphTraversalAgent(
                     # connected knowledge"), indistinguishable from a real
                     # absence. Surface it so the caller sees the failure.
                     raise
-                logger.debug(
+                logger.warning(
                     "Vespa-KG complement skipped for %s: %s", seed_subject, exc
                 )
                 kg = None
