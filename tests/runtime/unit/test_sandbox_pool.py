@@ -225,9 +225,7 @@ class TestCapacityCap:
 
         victim.delete = _hanging_delete
 
-        evictor = threading.Thread(
-            target=pool.with_session, args=("b", lambda s: None)
-        )
+        evictor = threading.Thread(target=pool.with_session, args=("b", lambda s: None))
         evictor.start()
         assert delete_entered.wait(timeout=5), "eviction never reached delete"
 
