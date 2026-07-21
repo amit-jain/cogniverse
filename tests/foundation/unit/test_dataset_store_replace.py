@@ -75,3 +75,43 @@ async def test_replace_on_absent_name_creates_fresh():
     # No prior dataset — replace must simply create it (no restore attempted).
     await store.replace_dataset("d", pd.DataFrame([{"v": "x"}]))
     assert list((await store.get_dataset("d"))["v"]) == ["x"]
+
+
+class _OutageOnPreReadStore(DatasetStore):
+    """``get_dataset`` raises a transient NON-KeyError outage (a backend blip,
+    not a not-found). Records whether ``delete_dataset`` ran so a test can prove
+    the destructive delete never fired when the pre-read could not confirm the
+    prior contents."""
+
+    def __init__(self):
+        self.data: dict = {"d": pd.DataFrame([{"v": "PRECIOUS"}])}
+        self.deleted: list = []
+
+    async def create_dataset(self, name, data, metadata=None):
+        self.data[name] = data
+        return name
+
+    async def get_dataset(self, name):
+        raise ConnectionError("phoenix 503 during pre-read")
+
+    async def append_to_dataset(self, name, data, metadata=None):
+        raise NotImplementedError
+
+    async def delete_dataset(self, name):
+        self.deleted.append(name)
+        return self.data.pop(name, None) is not None
+
+
+@pytest.mark.asyncio
+async def test_replace_pre_read_outage_propagates_before_delete():
+    """A transient outage on the pre-read must propagate BEFORE the destructive
+    delete, so a flapping backend can never destroy the prior dataset. Only a
+    genuine not-found (KeyError/ValueError) may be treated as 'nothing to
+    restore'."""
+    store = _OutageOnPreReadStore()
+    with pytest.raises(ConnectionError, match="503 during pre-read"):
+        await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
+    assert store.deleted == [], (
+        "destructive delete ran despite an unconfirmable pre-read"
+    )
+    assert "d" in store.data and list(store.data["d"]["v"]) == ["PRECIOUS"]
