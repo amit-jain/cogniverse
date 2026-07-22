@@ -1360,6 +1360,9 @@ schema_manager = backend.schema_manager  # Already has schema_registry, schema_l
 ```python
 # Deploy metadata schemas (organization/tenant) for multi-tenant management.
 # Schema-aware: preserves existing tenant schemas to avoid Vespa removal errors.
+# Pass allow_schema_removal=False when the caller cannot prove the package
+# covers every live schema (e.g. the registry-less first-install bootstrap) —
+# Vespa then refuses a deploy that would drop schemas instead of executing it.
 schema_manager.upload_metadata_schemas(app_name="cogniverse")
 
 # Deploy content-type schemas together in one application package

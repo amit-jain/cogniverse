@@ -244,10 +244,16 @@ Job) loops `config.tenants` × `initJobs.schemaDeployment.profiles` and calls on
 `POST /admin/profiles/{profile}/deploy` — it does **not** call `POST /admin/tenants`,
 so it never creates a `tenant_metadata` record; it just ensures each tenant's
 data (video/etc.) schema exists. Global metadata schemas (`organization_metadata`,
-`tenant_metadata`, `config_metadata`, `adapter_registry`) are deployed once by the
-runtime itself at startup (`main.py` → `system_backend.schema_manager.upload_metadata_schemas()`),
-not by this job and not per-tenant. `agent_memories_<tenant>` is **not** deployed by
-either path — `Mem0MemoryManager` deploys it lazily on first use for that tenant.
+`tenant_metadata`, `config_metadata`, `adapter_registry`) are deployed by the
+runtime itself at startup — unconditionally, on every run, via `main.py` →
+`system_backend.schema_manager.upload_metadata_schemas()` — not by this job and
+not per-tenant. Before that call, if the initial config-store read fails, an
+earlier fresh-install bootstrap deploys the same schemas first through a
+registry-less schema manager with schema removal disabled; it proceeds only
+when the config server (`_application_exists`) reports NO application package
+yet, and raises instead of touching a populated cluster whose read merely
+failed. `agent_memories_<tenant>` is **not** deployed by either path —
+`Mem0MemoryManager` deploys it lazily on first use for that tenant.
 
 ```mermaid
 sequenceDiagram
