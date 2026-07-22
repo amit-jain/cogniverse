@@ -8,12 +8,43 @@ the loop responsive while retrying an unreachable backend.
 """
 
 import asyncio
+import socket
 
 import pytest
 
-from cogniverse_runtime.main import _wait_for_backend_ready
+from cogniverse_runtime.main import (
+    _wait_for_backend_ready,
+    _wait_for_config_server,
+)
 
 pytestmark = pytest.mark.integration
+
+
+def test_wait_for_config_server_true_when_port_accepts():
+    """A cold Vespa opens its query port before its config/deploy server, so
+    the metadata bootstrap waits for the config server to accept connections
+    rather than deploying blind and crash-looping the whole runtime."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        assert _wait_for_config_server("127.0.0.1", port, max_attempts=1) is True
+    finally:
+        listener.close()
+
+
+def test_wait_for_config_server_false_when_refused():
+    # Bind then close so the port is definitely free (connection refused),
+    # and cap attempts so the bounded wait returns quickly.
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    assert (
+        _wait_for_config_server("127.0.0.1", port, max_attempts=3, interval=0.05)
+        is False
+    )
 
 
 async def test_wait_for_backend_ready_against_real_vespa(vespa_instance):
