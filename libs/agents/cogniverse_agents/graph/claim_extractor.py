@@ -312,6 +312,20 @@ class ClaimExtractor:
             return [c for c in claims if isinstance(c, dict)]
         return []
 
+    @staticmethod
+    def _claim_field_text(value: object) -> str:
+        """LMs emit JSON scalars where the signature asks for strings
+        ("object": 1867 for born_in). Numbers carry meaning — keep their
+        text form. Structured values (list/dict/bool/None) have no usable
+        node text — map to "" so only that claim drops."""
+        if isinstance(value, str):
+            return value.strip()
+        if value is None or isinstance(value, bool):
+            return ""
+        if isinstance(value, (int, float)):
+            return str(value)
+        return ""
+
     def _claims_to_edges(
         self,
         *,
@@ -323,9 +337,9 @@ class ClaimExtractor:
     ) -> List[Edge]:
         edges: List[Edge] = []
         for claim in claims:
-            subject = (claim.get("subject") or "").strip()
-            predicate_raw = (claim.get("predicate") or "").strip()
-            obj = (claim.get("object") or "").strip()
+            subject = self._claim_field_text(claim.get("subject"))
+            predicate_raw = self._claim_field_text(claim.get("predicate"))
+            obj = self._claim_field_text(claim.get("object"))
             if not subject or not predicate_raw or not obj:
                 continue
             predicate = _normalize_predicate(predicate_raw)
@@ -337,7 +351,7 @@ class ClaimExtractor:
                 # Keeping them would fracture the KG.
                 continue
 
-            evidence = (claim.get("evidence_span") or "").strip()
+            evidence = self._claim_field_text(claim.get("evidence_span"))
             if not evidence or evidence not in full_text:
                 evidence = full_text[:_MAX_EVIDENCE_CHARS]
             evidence = evidence[:_MAX_EVIDENCE_CHARS]
