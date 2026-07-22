@@ -961,6 +961,16 @@ when the source is remote.
 | `s3://<bucket>/<key>` | Fetched via fsspec + s3fs; cached in the tenant-scoped local cache. | AWS S3 and S3-compatible object stores (MinIO, R2, B2). |
 | `http://...`, `https://...` | Fetched via fsspec + aiohttp; cached. | Test fixtures, public mirrors. |
 
+Network fetches are time-bounded and carry a uniform fault contract: the s3
+path sets botocore connect/read timeouts (standard retry mode, bounded
+attempts), every network `localize()` is capped by a hard wall-clock deadline
+(`NETWORK_FETCH_DEADLINE_S`, 60s) over the stacked s3fs/botocore retry layers,
+and connection-level failures (endpoint down, connect/read timeout) are
+raised as `OSError` — matching s3fs's own translation of HTTP-status failures
+(404 → `FileNotFoundError`, 403 → `PermissionError`) so consumers that degrade
+on `OSError` (answer-time keyframe resolution) treat an unreachable store like
+any other IO failure instead of crashing.
+
 ### Configuration
 
 The locator reads its config from the `media` section of the application

@@ -713,3 +713,36 @@ class TestKeyframeDownsampling:
         assert len(imgs) == 1
         _, decoded = _decode_dspy_jpeg(imgs[0])
         assert max(decoded.size) <= 768, decoded.size
+
+    def test_corrupt_keyframe_skipped_good_one_kept(self, tmp_path):
+        """A truncated / partially-uploaded keyframe object must degrade like a
+        missing one — skipped with the remaining frames still attached — not
+        crash the whole report with a decode error."""
+        from cogniverse_agents.multimodal import hit_keyframe_uri
+
+        good = tmp_path / "good.jpg"
+        Image.new("RGB", (64, 64), (9, 9, 9)).save(good)
+        bad = tmp_path / "bad.jpg"
+        bad.write_bytes(b"\xff\xd8\xff\xe0 not really a jpeg")
+
+        bad_hit, good_hit = _video_hit(1), _video_hit(2)
+
+        class _PathMapLocator:
+            def __init__(self, mapping):
+                self._mapping = mapping
+
+            def localize(self, uri):
+                return self._mapping[uri]
+
+        resolver = KeyframeImageResolver(
+            _PathMapLocator(
+                {
+                    hit_keyframe_uri(bad_hit): str(bad),
+                    hit_keyframe_uri(good_hit): str(good),
+                }
+            )
+        )
+        imgs = resolver.collect([bad_hit, good_hit], max_images=4)
+        assert len(imgs) == 1
+        _, decoded = _decode_dspy_jpeg(imgs[0])
+        assert decoded.size == (64, 64)

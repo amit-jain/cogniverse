@@ -279,3 +279,79 @@ class TestCacheBaseDirSelection:
         cfg = MediaConfig(cache=MediaCacheConfig(base_dir=str(configured)))
         loc = MediaLocator(tenant_id="t", config=cfg)
         assert str(configured) in str(loc.cache.base_dir)
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestObjectStoreFaultContract:
+    """Connection-level object-store failures must surface as OSError.
+
+    s3fs translates HTTP-status failures (404 -> FileNotFoundError, 403 ->
+    PermissionError, both OSError subclasses), but botocore's connection-level
+    errors (endpoint down, connect/read timeout) are NOT OSError. Consumers
+    that degrade on OSError — answer-time keyframe resolution — would crash
+    with a 500 on every request during an object-store outage instead of
+    degrading to text-only. The store must also be time-bounded: without
+    botocore timeouts a hung endpoint blocks localize() forever.
+    """
+
+    def _locator(self, tmp_path, endpoint):
+        return MediaLocator(
+            tenant_id="acme:acme",
+            config=MediaConfig.for_object_store(endpoint),
+            cache_root=tmp_path / "cache",
+        )
+
+    def test_unreachable_endpoint_raises_oserror(self, tmp_path, monkeypatch):
+        import time
+
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+        loc = self._locator(tmp_path, "http://127.0.0.1:9")
+
+        start = time.monotonic()
+        with pytest.raises(OSError):
+            loc.localize("s3://media/acme:acme/keyframes/v/0001.jpg")
+        assert time.monotonic() - start < 30, "connection failure not bounded"
+
+    def test_hung_endpoint_bounded_by_timeouts(self, tmp_path, monkeypatch):
+        import socket
+        import threading
+        import time
+
+        from cogniverse_core.common.media import locator as locator_module
+
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+        monkeypatch.setattr(locator_module, "S3_CONNECT_TIMEOUT_S", 2)
+        monkeypatch.setattr(locator_module, "S3_READ_TIMEOUT_S", 2)
+        monkeypatch.setattr(locator_module, "NETWORK_FETCH_DEADLINE_S", 5)
+
+        # Accepts TCP then never answers — the shape of a hung object store.
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(4)
+        port = server.getsockname()[1]
+        stalled: list = []
+
+        def _accept_forever():
+            while True:
+                try:
+                    conn, _ = server.accept()
+                except OSError:
+                    return
+                stalled.append(conn)
+
+        thread = threading.Thread(target=_accept_forever, daemon=True)
+        thread.start()
+        try:
+            loc = self._locator(tmp_path, f"http://127.0.0.1:{port}")
+            start = time.monotonic()
+            with pytest.raises(OSError, match="deadline"):
+                loc.localize("s3://media/acme:acme/keyframes/v/0001.jpg")
+            elapsed = time.monotonic() - start
+            assert elapsed < 15, f"hung store held localize() for {elapsed:.0f}s"
+        finally:
+            server.close()
+            for conn in stalled:
+                conn.close()

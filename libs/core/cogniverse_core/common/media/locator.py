@@ -33,6 +33,50 @@ logger = logging.getLogger(__name__)
 LOCAL_SCHEMES = frozenset({"file", ""})
 PVC_SCHEME = "pvc"
 NETWORK_SCHEMES = frozenset({"s3", "gs", "az", "http", "https"})
+
+# botocore timeouts for the s3 scheme — same hazard the http branch guards
+# with an aiohttp timeout: without these a hung object store blocks
+# localize() (and the request holding it) indefinitely. Retry mode must be
+# "standard": legacy mode ignores max_attempts and retries per its own
+# table. These bound each SOCKET operation; s3fs stacks its own retry loop
+# (class-level retries=5 with backoff, no constructor knob) on top, so the
+# caller-facing hard bound is NETWORK_FETCH_DEADLINE_S below.
+S3_CONNECT_TIMEOUT_S = 5
+S3_READ_TIMEOUT_S = 15
+S3_MAX_ATTEMPTS = 2
+
+# Hard wall-clock cap for one network fetch, over every stacked retry layer.
+# On expiry the caller gets OSError immediately; the orphaned fetch thread
+# unwinds on the (bounded) socket timeouts above.
+NETWORK_FETCH_DEADLINE_S = 60
+
+
+def _is_connection_failure(exc: BaseException) -> bool:
+    """Connection-level fetch failures that are NOT OSError subclasses.
+
+    s3fs translates HTTP-status failures into OSError subclasses (404 ->
+    FileNotFoundError, 403 -> PermissionError), but botocore's endpoint /
+    connect-timeout / read-timeout errors and aiohttp's client errors are
+    separate hierarchies. Callers that degrade on OSError need an unreachable
+    store to look the same as any other IO failure.
+    """
+    try:
+        import botocore.exceptions as botocore_exceptions
+
+        if isinstance(exc, botocore_exceptions.BotoCoreError):
+            return True
+    except ImportError:
+        pass
+    try:
+        import aiohttp
+
+        if isinstance(exc, aiohttp.ClientError):
+            return True
+    except ImportError:
+        pass
+    return False
+
+
 DEFAULT_VIDEO_EXTENSIONS: tuple[str, ...] = (
     ".mp4",
     ".mkv",
@@ -136,6 +180,26 @@ class MediaLocator:
         return p
 
     def _localize_network(self, uri: str) -> Path:
+        """Fetch with a hard wall-clock deadline over the whole stat+download
+        stack — s3fs/botocore stack several retry layers whose combined worst
+        case reaches minutes; the caller is released at the deadline and the
+        orphaned worker unwinds on the bounded socket timeouts."""
+        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import TimeoutError as FutureTimeoutError
+
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(self._localize_network_inner, uri)
+        try:
+            return future.result(timeout=NETWORK_FETCH_DEADLINE_S)
+        except FutureTimeoutError:
+            raise OSError(
+                f"network fetch deadline ({NETWORK_FETCH_DEADLINE_S}s) "
+                f"exceeded for {uri}"
+            ) from None
+        finally:
+            pool.shutdown(wait=False)
+
+    def _localize_network_inner(self, uri: str) -> Path:
         basename = Path(urlparse(uri).path).name or "blob"
 
         stat = self._stat_remote(uri)
@@ -162,16 +226,21 @@ class MediaLocator:
         import fsspec
 
         fs_kwargs = self._fs_kwargs_for(uri)
-        fs, path = fsspec.core.url_to_fs(uri, **fs_kwargs)
         try:
-            fs.get_file(path, str(dest))
-            return
-        except (NotImplementedError, AttributeError):
-            with (
-                fsspec.open(uri, mode="rb", **fs_kwargs) as src,
-                open(dest, "wb") as dst,
-            ):
-                shutil.copyfileobj(src, dst)
+            fs, path = fsspec.core.url_to_fs(uri, **fs_kwargs)
+            try:
+                fs.get_file(path, str(dest))
+                return
+            except (NotImplementedError, AttributeError):
+                with (
+                    fsspec.open(uri, mode="rb", **fs_kwargs) as src,
+                    open(dest, "wb") as dst,
+                ):
+                    shutil.copyfileobj(src, dst)
+        except Exception as exc:
+            if _is_connection_failure(exc):
+                raise OSError(f"object store unreachable for {uri}: {exc!r}") from exc
+            raise
 
     def _fs_kwargs_for(self, uri: str) -> dict[str, Any]:
         scheme = self._scheme(uri)
@@ -187,6 +256,11 @@ class MediaLocator:
                 kwargs["client_kwargs"] = client_kwargs
             if s3.anon:
                 kwargs["anon"] = True
+            kwargs["config_kwargs"] = {
+                "connect_timeout": S3_CONNECT_TIMEOUT_S,
+                "read_timeout": S3_READ_TIMEOUT_S,
+                "retries": {"max_attempts": S3_MAX_ATTEMPTS, "mode": "standard"},
+            }
             return kwargs
         if scheme in ("http", "https"):
             # fsspec's HTTPFileSystem forwards client_kwargs to aiohttp's
