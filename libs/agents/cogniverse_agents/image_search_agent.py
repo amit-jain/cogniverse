@@ -207,8 +207,11 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         logger.info(f"🔍 Searching images: query='{query}', mode={search_mode}")
 
         try:
-            # Encode query with ColPali
-            query_embedding = self.query_encoder.encode(query)
+            # Encode query with ColPali — blocking HTTP/model call, off the loop
+            # (the lambda keeps the lazy encoder build off it too).
+            query_embedding = await asyncio.to_thread(
+                lambda: self.query_encoder.encode(query)
+            )
 
             # Search Vespa
             results = await self._search_vespa(
@@ -244,8 +247,10 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         logger.info("🔍 Finding similar images")
 
         try:
-            # Encode image with ColPali
-            image_embedding = self._encode_image(reference_image)
+            # Encode image with ColPali — blocking model forward, off the loop
+            image_embedding = await asyncio.to_thread(
+                self._encode_image, reference_image
+            )
 
             # Search Vespa with image embedding
             results = await self._search_vespa(

@@ -410,8 +410,9 @@ class AudioAnalysisAgent(
         # CLAP text features land in the same 512-dim space as the stored audio
         # acoustic_embedding, so a text query is directly comparable to it.
         logger.info("Generating query embedding for acoustic search...")
-        query_embedding = self.embedding_generator.generate_acoustic_text_embedding(
-            query
+        # Blocking CLAP HTTP call — off the loop, lazy generator build included.
+        query_embedding = await asyncio.to_thread(
+            lambda: self.embedding_generator.generate_acoustic_text_embedding(query)
         )
         return await self._search_by_acoustic_embedding(query_embedding, limit)
 
@@ -484,9 +485,10 @@ class AudioAnalysisAgent(
 
         # CLAP text features for the acoustic half (same 512-dim space as the
         # stored acoustic_embedding); the transcript half uses the raw query text.
+        # Blocking CLAP HTTP call — off the loop, lazy generator build included.
         logger.info("Generating query embedding for hybrid search...")
-        query_embedding = self.embedding_generator.generate_acoustic_text_embedding(
-            query
+        query_embedding = await asyncio.to_thread(
+            lambda: self.embedding_generator.generate_acoustic_text_embedding(query)
         )
 
         # hybrid_acoustic_bm25 = 0.5*closeness(acoustic) + 0.5*bm25(text); the

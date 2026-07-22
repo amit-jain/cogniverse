@@ -18,6 +18,8 @@ import pytest
 
 from cogniverse_agents.document_agent import DocumentAgent
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class _FakeResp:
     status_code = 200
@@ -95,3 +97,58 @@ async def test_search_hybrid_runs_both_concurrently(monkeypatch):
     # awaits (the old code) would give [v_start, v_end, t_start, t_end].
     assert order.index("v_start") < order.index("t_end")
     assert order.index("t_start") < order.index("v_end")
+
+
+def _patch_vespa_seam(monkeypatch):
+    monkeypatch.setattr(
+        "cogniverse_agents.search.vespa_query.vespa_search_post",
+        lambda endpoint, params, timeout: _FakeResp(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_visual_offloads_blocking_encode(monkeypatch):
+    """The ColPali query encode is a blocking HTTP/model call and must run in a
+    worker thread like the Vespa post below it — inline on the loop it stalls
+    every other coroutine for the whole encode round-trip."""
+    release = threading.Event()
+
+    def blocking_encode(query):
+        assert release.wait(timeout=5), "event loop was blocked by query encode"
+        return np.zeros((2, 3))
+
+    agent = _bare_agent()
+    agent._query_encoder = SimpleNamespace(encode=blocking_encode)
+    _patch_vespa_seam(monkeypatch)
+
+    async def releaser():
+        await asyncio.sleep(0.05)
+        release.set()
+
+    results, _ = await asyncio.wait_for(
+        asyncio.gather(agent._search_visual("q", 5), releaser()), timeout=5
+    )
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_search_text_offloads_blocking_encode(monkeypatch):
+    """Same contract for the ColBERT text-query encode in _search_text."""
+    release = threading.Event()
+
+    def blocking_encode(query):
+        assert release.wait(timeout=5), "event loop was blocked by query encode"
+        return np.zeros((2, 3))
+
+    agent = _bare_agent()
+    agent._text_query_encoder = SimpleNamespace(encode=blocking_encode)
+    _patch_vespa_seam(monkeypatch)
+
+    async def releaser():
+        await asyncio.sleep(0.05)
+        release.set()
+
+    results, _ = await asyncio.wait_for(
+        asyncio.gather(agent._search_text("q", 5), releaser()), timeout=5
+    )
+    assert results == []

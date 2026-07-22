@@ -433,8 +433,12 @@ class DocumentAgent(
         # ColPali per-token (patch) query embedding (matches document_visual
         # ingestion). The phased profile does binary hamming recall then a float
         # MaxSim rerank, so send both the float (qt) and binarized (qtb) query
-        # tensors the schema declares.
-        query_embedding = self.query_encoder.encode(query)
+        # tensors the schema declares. The encode is a blocking HTTP/model call
+        # — run it off the loop like the Vespa post below (the lambda keeps the
+        # lazy encoder build off it too).
+        query_embedding = await asyncio.to_thread(
+            lambda: self.query_encoder.encode(query)
+        )
         # querytoken{} mapped tensor takes {token_index: vector}; a single
         # (dim,) vector stays a flat list.
         if query_embedding.ndim == 2:
@@ -518,7 +522,10 @@ class DocumentAgent(
         logger.info("📝 Using text strategy (ColBERT tokens + bm25)")
 
         # ColBERT per-token query embedding (matches document_text ingestion).
-        query_embedding = self.text_query_encoder.encode(query)
+        # Blocking HTTP/model call — off the loop, lazy build included.
+        query_embedding = await asyncio.to_thread(
+            lambda: self.text_query_encoder.encode(query)
+        )
         # querytoken{} mapped tensor takes {token_index: vector}; a single
         # (dim,) vector stays a flat list.
         if query_embedding.ndim == 2:
