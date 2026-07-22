@@ -6,6 +6,7 @@ Tests audio transcription with Whisper, audio search, and Vespa integration.
 
 import asyncio
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -16,6 +17,8 @@ from cogniverse_agents.audio_analysis_agent import (
     AudioResult,
     TranscriptionResult,
 )
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 class TestAudioAnalysisAgent:
@@ -440,6 +443,80 @@ class TestAudioSearchEventLoop:
         )
         assert result.text == "hello world"
         assert result.language == "en"
+
+
+class _Vec:
+    def tolist(self):
+        return [0.0, 0.0]
+
+
+class _EmptyVespaResp:
+    status_code = 200
+
+    def json(self):
+        return {"root": {"children": []}}
+
+
+def _bare_acoustic_agent(blocking_embed):
+    agent = object.__new__(AudioAnalysisAgent)
+    agent._tenant_id = "test:test"
+    agent._vespa_endpoint = "http://fake-vespa:8080"
+    agent._embedding_generator = SimpleNamespace(
+        generate_acoustic_text_embedding=blocking_embed
+    )
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_search_hybrid_offloads_blocking_clap_encode(monkeypatch):
+    """The CLAP text encode is a blocking HTTP call and must run in a worker
+    thread like the Vespa post below it — inline on the loop it stalls every
+    other coroutine for the whole encode round-trip."""
+    release = threading.Event()
+
+    def blocking_embed(query):
+        assert release.wait(timeout=5), "event loop was blocked by CLAP encode"
+        return _Vec()
+
+    agent = _bare_acoustic_agent(blocking_embed)
+    monkeypatch.setattr(
+        "cogniverse_agents.search.vespa_query.vespa_search_post",
+        lambda endpoint, params, timeout: _EmptyVespaResp(),
+    )
+
+    async def releaser():
+        await asyncio.sleep(0.05)
+        release.set()
+
+    results, _ = await asyncio.wait_for(
+        asyncio.gather(agent._search_hybrid("q", 5), releaser()), timeout=5
+    )
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_search_acoustic_offloads_blocking_clap_encode(monkeypatch):
+    """Same contract for the pure-acoustic search mode."""
+    release = threading.Event()
+
+    def blocking_embed(query):
+        assert release.wait(timeout=5), "event loop was blocked by CLAP encode"
+        return _Vec()
+
+    agent = _bare_acoustic_agent(blocking_embed)
+    monkeypatch.setattr(
+        "cogniverse_agents.search.vespa_query.vespa_search_post",
+        lambda endpoint, params, timeout: _EmptyVespaResp(),
+    )
+
+    async def releaser():
+        await asyncio.sleep(0.05)
+        release.set()
+
+    results, _ = await asyncio.wait_for(
+        asyncio.gather(agent._search_acoustic("q", 5), releaser()), timeout=5
+    )
+    assert results == []
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import asyncio
 import json
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
@@ -20,6 +21,8 @@ from cogniverse_agents.image_search_agent import (
     ImageSearchDeps,
 )
 from cogniverse_core.query.encoders import QueryEncoderFactory
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 _CONFIG = json.loads(Path("configs/config.json").read_text())
 _COLPALI_URL = "http://sentinel-colpali:8000"
@@ -379,3 +382,61 @@ class TestImageSearchEventLoop:
             timeout=5,
         )
         assert results == []
+
+
+@pytest.mark.asyncio
+async def test_search_images_offloads_blocking_encode():
+    """The ColPali text-query encode is a blocking HTTP/model call and must run
+    in a worker thread like the Vespa search below it — inline on the loop it
+    stalls every other coroutine for the whole encode round-trip."""
+    release = threading.Event()
+
+    def blocking_encode(query):
+        assert release.wait(timeout=5), "event loop was blocked by query encode"
+        return np.zeros((2, 128), dtype=np.float32)
+
+    agent = object.__new__(ImageSearchAgent)
+    agent._query_encoder = SimpleNamespace(encode=blocking_encode)
+
+    async def fake_search_vespa(**kwargs):
+        return []
+
+    agent._search_vespa = fake_search_vespa
+
+    async def releaser():
+        await asyncio.sleep(0.05)
+        release.set()
+
+    results, _ = await asyncio.wait_for(
+        asyncio.gather(agent.search_images("q"), releaser()), timeout=5
+    )
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_find_similar_images_offloads_blocking_image_encode():
+    """find_similar_images runs the reference image through the ColPali model —
+    equally blocking, equally required to leave the event loop responsive."""
+    release = threading.Event()
+
+    def blocking_encode_image(image):
+        assert release.wait(timeout=5), "event loop was blocked by image encode"
+        return np.zeros((2, 128), dtype=np.float32)
+
+    agent = object.__new__(ImageSearchAgent)
+    agent._encode_image = blocking_encode_image
+
+    async def fake_search_vespa(**kwargs):
+        return []
+
+    agent._search_vespa = fake_search_vespa
+
+    async def releaser():
+        await asyncio.sleep(0.05)
+        release.set()
+
+    results, _ = await asyncio.wait_for(
+        asyncio.gather(agent.find_similar_images(Image.new("RGB", (2, 2))), releaser()),
+        timeout=5,
+    )
+    assert results == []
