@@ -861,10 +861,14 @@ _E2E_FINGERPRINT_CM = "e2e-build-fingerprint"
 
 def _e2e_deploy_fingerprint() -> str:
     """Content hash of everything baked into the e2e images / affecting the
-    deploy: committed HEAD + the diff of ``libs``/``configs``/``charts`` +
-    any untracked files under them. ``tests/`` is deliberately excluded —
-    pytest reads test files fresh each run, so iterating on test assertions
-    must NOT force a cluster rebuild; a change to deployed code must."""
+    deploy: the committed CONTENT of ``libs``/``configs``/``charts`` +
+    packaging, plus any uncommitted changes to them.
+
+    Keyed on the git TREE object of each path (``HEAD:libs`` …), not the
+    commit SHA — so a commit that touches only ``tests/`` (or anything else)
+    does NOT flip the fingerprint, while any change to the deployed content
+    does. That is what lets assertion iteration reuse the warm cluster; a
+    change to deployed code forces a rebuild."""
     import hashlib
 
     repo_root = Path(__file__).resolve().parents[2]
@@ -878,14 +882,17 @@ def _e2e_deploy_fingerprint() -> str:
         ).stdout
 
     paths = ["libs", "configs", "charts", "pyproject.toml"]
-    material = "\n".join(
-        [
-            _git("rev-parse", "HEAD").strip(),
-            _git("diff", "HEAD", "--", *paths),
-            _git("status", "--porcelain", "--untracked-files=all", "--", *paths),
-        ]
+    material_parts = [
+        # Tree/blob object of each deployed path at HEAD — changes iff that
+        # path's committed content changes, independent of the commit SHA.
+        _git("rev-parse", f"HEAD:{p}").strip()
+        for p in paths
+    ]
+    material_parts.append(_git("diff", "HEAD", "--", *paths))
+    material_parts.append(
+        _git("status", "--porcelain", "--untracked-files=all", "--", *paths)
     )
-    return hashlib.sha256(material.encode()).hexdigest()[:16]
+    return hashlib.sha256("\n".join(material_parts).encode()).hexdigest()[:16]
 
 
 def _kubectl_e2e(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
