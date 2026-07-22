@@ -1331,6 +1331,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         asyncio.get_running_loop().remove_signal_handler(_signal.SIGUSR1)
     except (NotImplementedError, ValueError, RuntimeError):
         pass
+    if _reload_tasks:
+        # A SIGUSR1 reload still running would otherwise be torn down at
+        # loop close mid-re-read; it is quick and idempotent, so drain it.
+        await asyncio.gather(*_reload_tasks, return_exceptions=True)
     if gateway_probe is not None:
         await gateway_probe.stop()
     if cert_rotator is not None:
