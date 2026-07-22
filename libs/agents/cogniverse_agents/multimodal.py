@@ -158,7 +158,13 @@ class KeyframeImageResolver:
         except OSError as e:
             logger.warning("keyframe fetch failed for %s: %r", uri, e)
             return None
-        img = _downsampled_dspy_image(path)
+        try:
+            img = _downsampled_dspy_image(path)
+        except (OSError, ValueError) as e:
+            # Truncated/corrupt object (e.g. a frame still uploading) —
+            # degrade like a missing frame, don't fail the whole answer.
+            logger.warning("keyframe decode failed for %s: %r", uri, e)
+            return None
         with self._cache_lock:
             self._cache[uri] = img
             self._cache.move_to_end(uri)
