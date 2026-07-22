@@ -15,6 +15,8 @@ from cogniverse_agents.deep_synthesis_workflow import (
     DeepSynthesisWorkflow,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @dataclass
 class _StubRLMResult:

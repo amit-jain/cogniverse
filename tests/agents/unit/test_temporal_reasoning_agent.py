@@ -16,6 +16,8 @@ from cogniverse_agents.temporal_reasoning_agent import (
     _parse_iso,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _row(
     mid: str,

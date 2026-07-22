@@ -23,6 +23,8 @@ from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotationStorage,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.mark.asyncio
 async def test_statistics_window_is_utc_aware_30_days():

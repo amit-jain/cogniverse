@@ -18,7 +18,7 @@ from httpx import ASGITransport, AsyncClient
 
 from cogniverse_runtime.routers import graph as graph_router
 
-pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
 
 class _StubGraphManager:

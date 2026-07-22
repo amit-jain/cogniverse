@@ -9,6 +9,8 @@ from cogniverse_agents.routing.dspy_relationship_router import (
     ComposableQueryAnalysisModule,
 )
 
+pytestmark = [pytest.mark.unit]
+
 
 @pytest.fixture
 def module():

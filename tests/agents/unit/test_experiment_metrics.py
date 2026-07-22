@@ -21,6 +21,8 @@ from cogniverse_agents.optimizer.artifact_manager import (
     ExperimentMetrics,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class FakeDatasetStore:
     """In-memory DatasetStore stub so unit tests do not need Phoenix."""

@@ -4,7 +4,11 @@ flattened ``metadata`` key, and passes through already-public-shaped results.
 
 from __future__ import annotations
 
+import pytest
+
 from cogniverse_agents.search_agent import _format_public_result
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 def test_raw_result_with_metadata_key_is_still_reshaped():

@@ -18,6 +18,8 @@ from cogniverse_sdk.interfaces.workflow_store import (
     WorkflowTemplate,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class _FakeArtifactManager:
     """Async demonstration + blob store backed by shared dicts, per tenant."""

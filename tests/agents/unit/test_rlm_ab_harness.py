@@ -12,6 +12,8 @@ from cogniverse_agents.inference.ab_harness import (
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _make_runner(judge=None) -> RLMABRunner:
     return RLMABRunner(

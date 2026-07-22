@@ -30,6 +30,8 @@ import pytest
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_foundation.telemetry.providers.base import DatasetStore
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class _Mode:
     NORMAL = "normal"

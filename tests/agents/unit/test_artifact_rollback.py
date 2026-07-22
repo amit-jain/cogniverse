@@ -9,6 +9,8 @@ import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class FakeStore:
     """Captures dataset writes; tracks calls to assert snapshot semantics."""

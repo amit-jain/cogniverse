@@ -7,6 +7,8 @@ import pytest
 from cogniverse_agents.search.rerank_service import rerank_result_dicts
 from cogniverse_agents.search.temporal_query import extract_time_range
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 _NOW = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 

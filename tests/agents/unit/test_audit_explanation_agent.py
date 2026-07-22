@@ -16,6 +16,8 @@ from cogniverse_agents.audit_explanation_agent import (
     _format_explanation,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _row(
     mid: str,

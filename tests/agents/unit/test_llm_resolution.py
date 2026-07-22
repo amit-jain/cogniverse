@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cogniverse_agents._llm_resolution import resolve_llm_config
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 def test_explicit_llm_config_returned_verbatim() -> None:

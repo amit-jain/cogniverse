@@ -14,6 +14,8 @@ from cogniverse_agents.query_enhancement_agent import (
 )
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.fixture
 def mock_dspy_lm():

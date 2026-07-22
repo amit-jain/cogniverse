@@ -23,6 +23,8 @@ from cogniverse_core.agents.rails import (
     TopicBoundaryRail,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class TestTopicBoundaryRail:
     def test_allows_matching_topic(self):

@@ -21,6 +21,8 @@ from cogniverse_core.memory.schema import (
 )
 from cogniverse_core.memory.trust import TrustRecord, attach_trust_to_metadata
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

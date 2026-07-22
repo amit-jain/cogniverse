@@ -16,6 +16,8 @@ from cogniverse_agents.multi_document_synthesis_agent import (
 )
 from cogniverse_core.agents.rlm_options import RLMOptions
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _build_agent_with_stub_synth(answer: str = "synthesised answer"):
     """Construct an agent and stub the LLM path to return ``answer``."""

@@ -23,6 +23,8 @@ from cogniverse_agents import detailed_report_agent as dr_module
 from cogniverse_agents import search_agent as sa_module
 from cogniverse_agents import summarizer_agent as sm_module
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.fixture
 def summarizer_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:

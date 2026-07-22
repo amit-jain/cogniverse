@@ -8,6 +8,8 @@ import pytest
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class TestRLMOptions:
     """Test RLMOptions configuration."""

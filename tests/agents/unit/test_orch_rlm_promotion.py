@@ -12,6 +12,8 @@ from cogniverse_agents._rlm_promotion import (
     maybe_promote_to_rlm as _maybe_promote_to_rlm,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class TestProjectedPayloadChars:
     def test_sums_string_field_lengths(self):

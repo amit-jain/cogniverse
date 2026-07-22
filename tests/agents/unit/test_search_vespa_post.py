@@ -16,6 +16,8 @@ import requests
 
 from cogniverse_agents.search.vespa_query import vespa_search_post
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _resp(status, text="ok"):
     return SimpleNamespace(status_code=status, text=text, json=lambda: {})

@@ -15,6 +15,8 @@ from cogniverse_agents.document_agent import (
     DocumentResult,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class TestDocumentAgent:
     """Unit tests for DocumentAgent"""

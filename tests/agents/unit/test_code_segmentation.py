@@ -14,6 +14,8 @@ from cogniverse_runtime.ingestion.strategies import (
     CodeSegmentationStrategy,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.fixture
 def strategy():

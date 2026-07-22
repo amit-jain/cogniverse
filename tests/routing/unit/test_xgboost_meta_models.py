@@ -15,6 +15,8 @@ from cogniverse_agents.routing.xgboost_meta_models import (
 )
 from cogniverse_agents.search.types import QueryModality
 
+pytestmark = [pytest.mark.unit]
+
 
 def _make_mock_telemetry_provider():
     """Create a mock TelemetryProvider with in-memory blob stores."""

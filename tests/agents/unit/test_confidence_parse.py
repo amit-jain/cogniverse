@@ -6,6 +6,8 @@ import pytest
 
 from cogniverse_agents._confidence import parse_confidence
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.mark.parametrize(
     "raw,expected",

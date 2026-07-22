@@ -16,6 +16,8 @@ from cogniverse_agents.gateway_agent import (
 )
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -18,6 +18,8 @@ from cogniverse_synthetic.schemas import (
     WorkflowExecutionSchema,
 )
 
+pytestmark = [pytest.mark.unit]
+
 
 class TestOptimizerConfig:
     """Test OptimizerConfig dataclass"""

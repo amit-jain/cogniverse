@@ -15,6 +15,8 @@ import pytest
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class _Agent(MemoryAwareMixin):
     pass

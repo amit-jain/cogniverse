@@ -10,6 +10,8 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_synthetic.backend_querier import BackendQuerier
 
+pytestmark = [pytest.mark.unit]
+
 
 class _RecordingBackend:
     """Same signature as the real ``Backend.query_metadata_documents``."""

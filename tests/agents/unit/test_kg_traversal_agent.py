@@ -20,6 +20,8 @@ from cogniverse_agents.kg_traversal_agent import (
 )
 from cogniverse_core.agents.rlm_options import RLMOptions
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _node(
     mid: str, subject_key: str, label: str = "", excerpt: str = ""
