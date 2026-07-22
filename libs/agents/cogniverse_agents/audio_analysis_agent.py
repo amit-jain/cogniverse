@@ -294,8 +294,12 @@ class AudioAnalysisAgent(
                 self._transcribe_via_sidecar, Path(audio_path), language
             )
         else:
-            result = self.audio_transcriber.transcribe_audio(
-                video_path=Path(audio_path), output_dir=None
+            # Local Whisper is a heavy blocking model forward — same
+            # offload contract as the sidecar branch above.
+            result = await asyncio.to_thread(
+                self.audio_transcriber.transcribe_audio,
+                video_path=Path(audio_path),
+                output_dir=None,
             )
 
         transcription = TranscriptionResult(

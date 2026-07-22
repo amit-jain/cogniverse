@@ -338,3 +338,12 @@ def test_agent_capabilities_advertised():
     assert agent.agent_name == "federated_query_agent"
     assert "federated_query" in agent.capabilities
     assert agent.port == 8024
+
+
+def test_matches_query_tolerates_non_string_memory_values():
+    """A federated row whose memory field is a bare number must not crash
+    the whole federated query."""
+    from cogniverse_agents.federated_query_agent import _matches_query
+
+    assert _matches_query({"memory": 5}, "cat") is False
+    assert _matches_query({"memory": 5}, "5") is True

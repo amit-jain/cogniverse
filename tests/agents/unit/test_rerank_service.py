@@ -46,3 +46,13 @@ def test_astronomical_epoch_returns_none_not_overflow():
     that turns the rerank route into a 500."""
     assert _parse_timestamp({"creation_timestamp": 1e30}) is None
     assert _parse_timestamp({"creation_timestamp": -1e30}) is None
+
+
+def test_non_numeric_score_raises_named_item_error():
+    """Non-route callers (the eval harness) reach _to_rsr without the HTTP
+    400 guard; the error must name the malformed item, not be a bare
+    float() traceback."""
+    from cogniverse_agents.search.rerank_service import _to_rsr
+
+    with pytest.raises(ValueError, match="doc-7.*non-numeric score.*high"):
+        _to_rsr({"id": "doc-7", "score": "high"})

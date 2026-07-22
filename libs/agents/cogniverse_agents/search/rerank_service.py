@@ -45,12 +45,23 @@ def _parse_timestamp(d: Dict[str, Any]) -> Optional[datetime]:
 
 
 def _to_rsr(d: Dict[str, Any]) -> RerankerSearchResult:
+    raw_score = d.get("score", 0.0) or 0.0
+    try:
+        score = float(raw_score)
+    except (TypeError, ValueError) as exc:
+        # Name the offending item: non-route callers (the eval harness) hit
+        # this too, and a bare float() traceback doesn't say which result
+        # was malformed.
+        raise ValueError(
+            f"result {d.get('id') or d.get('document_id') or '?'!s} has a "
+            f"non-numeric score {raw_score!r}"
+        ) from exc
     return RerankerSearchResult(
         id=str(d.get("id") or d.get("source_id") or d.get("document_id") or ""),
         title=d.get("title", "") or "",
         content=d.get("content", "") or d.get("description", "") or "",
         modality=d.get("modality", "") or d.get("content_type", "") or "",
-        score=float(d.get("score", 0.0) or 0.0),
+        score=score,
         metadata=d.get("metadata", {}) or {},
         timestamp=_parse_timestamp(d),
     )
