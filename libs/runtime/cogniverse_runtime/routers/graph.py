@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _canonical_or_400(tenant_id: str) -> str:
+    """Canonicalize, mapping a malformed tenant id to 400 instead of 500 —
+    the same contract the search and ingestion routes give the caller."""
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    try:
+        return canonical_tenant_id(tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 _graph_manager_factory = None
 
 
@@ -137,14 +149,13 @@ async def upsert(request: UpsertRequest) -> UpsertResponse:
     )
     from cogniverse_core.common.tenant_utils import (
         assert_tenant_exists,
-        canonical_tenant_id,
     )
 
     # Canonicalize before EVERY downstream use so the document's
     # tenant_id field matches the form queries (stats/search/neighbors)
     # filter by — without this, simple-form upsert and canonical-form
     # stats live in the same Vespa schema but never see each other.
-    tenant_id = canonical_tenant_id(request.tenant_id)
+    tenant_id = _canonical_or_400(request.tenant_id)
     await assert_tenant_exists(tenant_id)
     # Write path: deploy=True (default) is correct — the first upsert for a new
     # tenant deploys the schema. Offload the resolution: the deploy blocks on
@@ -225,10 +236,9 @@ async def search_nodes(
     """Semantic search over graph nodes."""
     from cogniverse_core.common.tenant_utils import (
         assert_tenant_exists,
-        canonical_tenant_id,
     )
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = _canonical_or_400(tenant_id)
     await assert_tenant_exists(tenant_id)
     # deploy=False: a read must never trigger a schema redeploy (drops just-fed
     # rows). Resolution is offloaded — even without a deploy it does a blocking
@@ -247,10 +257,9 @@ async def get_neighbors(
     """Return direct neighbors (out and in) of a node by name."""
     from cogniverse_core.common.tenant_utils import (
         assert_tenant_exists,
-        canonical_tenant_id,
     )
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = _canonical_or_400(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = await asyncio.to_thread(get_graph_manager, tenant_id, deploy=False)
     result = await asyncio.to_thread(mgr.get_neighbors, node, depth=depth)
@@ -267,10 +276,9 @@ async def get_path(
     """Shortest path between two nodes by name."""
     from cogniverse_core.common.tenant_utils import (
         assert_tenant_exists,
-        canonical_tenant_id,
     )
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = _canonical_or_400(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = await asyncio.to_thread(get_graph_manager, tenant_id, deploy=False)
     path = await asyncio.to_thread(mgr.get_path, source, target, max_depth=max_depth)
@@ -287,10 +295,9 @@ async def get_stats(tenant_id: str) -> StatsResponse:
     """Graph statistics: node and edge counts, top-degree nodes."""
     from cogniverse_core.common.tenant_utils import (
         assert_tenant_exists,
-        canonical_tenant_id,
     )
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = _canonical_or_400(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = await asyncio.to_thread(get_graph_manager, tenant_id, deploy=False)
     stats = await asyncio.to_thread(mgr.get_stats)

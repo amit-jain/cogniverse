@@ -158,3 +158,25 @@ def test_wait_and_force_as_form_fields_are_ignored(upload_client):
     assert resp.status_code == 200, resp.text
     assert captured["wait"] is False
     assert captured["force"] is False
+
+
+def test_empty_profile_rejected_before_any_upload(upload_client, monkeypatch):
+    """An empty profile used to fail only at idempotency hashing — AFTER the
+    whole multipart body had been copied into the object store — and as a
+    500. It must be a 400 before a single byte is transferred."""
+    client, captured, _state = upload_client
+
+    uploads: list = []
+    monkeypatch.setattr(
+        minio_client,
+        "upload_bytes",
+        lambda *a, **k: uploads.append(a) or _SOURCE_URL,
+        raising=True,
+    )
+
+    resp = _post(client, data={"profile": "   "})
+
+    assert resp.status_code == 400, resp.text
+    assert "profile" in resp.json()["detail"]
+    assert uploads == []
+    assert captured == {}

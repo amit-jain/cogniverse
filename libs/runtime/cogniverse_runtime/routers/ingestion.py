@@ -233,6 +233,14 @@ async def upload_video(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    if not profile or not profile.strip():
+        # Validate BEFORE the multipart body is copied into the object store:
+        # an empty profile used to fail only at idempotency hashing, after
+        # the whole upload had already been transferred, and as a 500.
+        raise HTTPException(
+            status_code=400, detail="profile must be a non-empty string"
+        )
+
     # Reject ingestion for tenants that haven't been registered. Without
     # this guard the worker auto-deploys per-tenant schemas on first
     # upload, which produces "schema-only tenants" — schema in Vespa,

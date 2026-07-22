@@ -228,6 +228,24 @@ class TestSearchEndpoint:
         assert resp.status_code == 400
         assert "profile" in resp.json()["detail"].lower()
 
+    def test_search_rejects_out_of_bounds_top_k(self, search_client):
+        """top_k must be bounded: a negative value reached Vespa as hits<0
+        (backend 400 surfaced as a customer 500) and an unbounded one is a
+        heap-sized allocation request. The graph search route already
+        bounds its limit; this pins the same contract here."""
+        for bad in (0, -5, 1_000_000_000):
+            resp = search_client.post(
+                "/search", json={"query": "cats", "top_k": bad, "tenant_id": "acme"}
+            )
+            assert resp.status_code == 422, (bad, resp.text)
+
+    def test_search_rejects_blank_query(self, search_client):
+        for bad in ("", "   "):
+            resp = search_client.post(
+                "/search", json={"query": bad, "tenant_id": "acme"}
+            )
+            assert resp.status_code == 422, (bad, resp.text)
+
     def test_search_request_defaults(self):
         """SearchRequest model has correct defaults."""
         req = SearchRequest(query="test query")

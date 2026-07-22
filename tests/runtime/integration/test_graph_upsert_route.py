@@ -182,3 +182,27 @@ async def test_upsert_unregistered_tenant_returns_404(monkeypatch):
     # The guard fires before any manager build.
     assert built == {}
     assert stub.received == {}
+
+
+@pytest.mark.asyncio
+async def test_malformed_tenant_id_returns_400_not_500(monkeypatch):
+    """'a:b:c' cannot canonicalize; the parse error must map to a client
+    error like the search and ingestion routes do, not a stack-trace 500."""
+    app, stub, built, orig = _build_app(
+        {"nodes_upserted": 0, "edges_upserted": 0, "failed_ids": []},
+        monkeypatch=monkeypatch,
+    )
+    try:
+        resp = await _post(
+            app,
+            {"tenant_id": "a:b:c", "source_doc_id": "x", "nodes": [], "edges": []},
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://t"
+        ) as client:
+            resp_get = await client.get("/graph/stats", params={"tenant_id": "a:b:c"})
+    finally:
+        graph_router._graph_manager_factory = orig
+
+    assert resp.status_code == 400, resp.text
+    assert resp_get.status_code == 400, resp_get.text

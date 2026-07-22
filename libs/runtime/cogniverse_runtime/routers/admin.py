@@ -1221,6 +1221,11 @@ async def set_pin_quotas(
         raise HTTPException(400, "user quota must be >= 0")
     if body.tenant_admin is not None and body.tenant_admin < 0:
         raise HTTPException(400, "tenant_admin quota must be >= 0")
+    if body.org_admin is not None and body.org_admin < -1:
+        # -1 is the unlimited sentinel; any other negative persists as a
+        # literal limit that used >= comparisons always exceed, silently
+        # rejecting every org_admin pin for the tenant.
+        raise HTTPException(400, "org_admin quota must be >= 0, or -1 for unlimited")
 
     key = canonical_tenant_id(tenant_id)
     # Serialize the whole read-modify-write-cache sequence per tenant: two

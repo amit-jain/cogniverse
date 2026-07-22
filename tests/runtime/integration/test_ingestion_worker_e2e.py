@@ -479,3 +479,13 @@ class TestSseEndpoints:
     async def test_status_endpoint_404_for_unknown_ingest(self, client):
         r = await client.get(f"/ingestion/never_existed_{os.getpid()}/status")
         assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_events_rejects_malformed_last_event_id(client):
+    """A malformed resume id used to make XREAD raise INSIDE the already-200
+    SSE generator, killing the stream mid-flight; it must fail the request
+    cleanly before the stream starts."""
+    resp = await client.get("/ingestion/ing-x/events", params={"last-event-id": "abc"})
+    assert resp.status_code == 400
+    assert "stream id" in resp.json()["detail"]

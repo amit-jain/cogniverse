@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from cogniverse_agents.search.service import SearchService
 from cogniverse_core.common.tenant_utils import (
@@ -53,15 +53,25 @@ def get_schema_loader_dependency() -> SchemaLoader:
 class SearchRequest(BaseModel):
     """Search request model."""
 
-    query: str
+    query: str = Field(..., min_length=1)
     profile: Optional[str] = None
     strategy: Optional[str] = "default"
-    top_k: int = 10
+    # Bounded like the graph search route: a negative value reached Vespa as
+    # hits=<0 (backend 400 -> customer 500) and an unbounded one is a
+    # heap-sized allocation request.
+    top_k: int = Field(10, ge=1, le=1000)
     filters: Dict[str, Any] = {}
     tenant_id: Optional[str] = None
     org_id: Optional[str] = None
     session_id: Optional[str] = None
     stream: bool = False
+
+    @field_validator("query")
+    @classmethod
+    def _query_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("query must not be blank")
+        return value
 
 
 class SearchResponse(BaseModel):
