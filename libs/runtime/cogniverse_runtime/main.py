@@ -340,25 +340,61 @@ async def _wait_for_backend_ready(
     return False
 
 
+def _wait_for_config_server(
+    host: str, port: int, *, max_attempts: int = 60, interval: float = 5.0
+) -> bool:
+    """Poll until the backend's config/deploy server accepts TCP connections.
+
+    A cold Vespa opens its query port (8080) before its config/deploy server
+    (19071), so a metadata deploy fired the instant the query port answers
+    hits ``Connection refused`` on 19071. Waiting here keeps the retry
+    IN-PROCESS — otherwise the deploy raises, the whole app startup exits,
+    and the only thing retrying is the kubelet restarting the crashed pod
+    (5+ crash-loops with full tracebacks before the config server is up).
+    """
+    import socket
+    import time
+
+    for _ in range(max_attempts):
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                return True
+        except OSError:
+            time.sleep(interval)
+    return False
+
+
 def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
     """Deploy the metadata schemas to a backend with no application package.
 
     A fresh backend serves nothing on the query chain until the first
     application deploys, so every config read fails — the config_metadata
     schema is itself part of the metadata application. Runs BEFORE the
-    first config read on first install only; raises when the backend's
-    config server is unreachable (genuine outage → fail fast).
+    first config read on first install only. Waits for the config/deploy
+    server to accept connections first (a cold backend brings it up after
+    the query port), then raises if the deploy itself fails (genuine
+    outage / misconfig → fail fast).
 
     Constructs the schema manager DIRECTLY: every registry/backend path
     reads the config store internally, which is exactly what cannot work
     yet on a fresh backend.
     """
+    from urllib.parse import urlparse
+
     from cogniverse_vespa.config_utils import calculate_config_port
     from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
+    config_port = calculate_config_port(bootstrap.backend_port)
+    host = urlparse(bootstrap.backend_url).hostname or bootstrap.backend_url
+    if not _wait_for_config_server(host, config_port):
+        raise RuntimeError(
+            f"Backend config server {host}:{config_port} never accepted "
+            "connections — cannot bootstrap metadata schemas"
+        )
+
     manager = VespaSchemaManager(
         backend_endpoint=bootstrap.backend_url,
-        backend_port=calculate_config_port(bootstrap.backend_port),
+        backend_port=config_port,
         schema_registry=None,
     )
     manager.upload_metadata_schemas(app_name=application_name)
