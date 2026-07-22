@@ -508,14 +508,28 @@ class DSPyAgentOptimizerPipeline:
     @staticmethod
     def _score_on_valset(module, examples, metric) -> float:
         """Mean metric over the held-out split; a prediction that raises
-        scores 0 for that example."""
+        scores 0 for that example.
+
+        Raises when EVERY example fails: a total LM outage would otherwise
+        score compiled and baseline 0.0 alike, and the overfit gate — which
+        exists to reject unvalidated modules — would keep the compiled one
+        having validated nothing. Failing the optimization run is the
+        fail-closed contract.
+        """
         total = 0.0
+        successes = 0
         for example in examples:
             try:
                 pred = module(**example.inputs())
                 total += float(metric(example, pred))
+                successes += 1
             except Exception as exc:
                 logger.warning("Validation example failed: %r", exc)
+        if successes == 0:
+            raise RuntimeError(
+                f"validation scored 0/{len(examples)} examples — the split "
+                "cannot gate promotion (LM outage?); keeping the baseline"
+            )
         return total / len(examples)
 
     def _create_metric_for_module(self, module_name: str):
