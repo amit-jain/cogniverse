@@ -174,7 +174,7 @@ def _parse_port_csv(value: str | None) -> list[int]:
 
 def create_cluster(
     name: str = CLUSTER_NAME,
-    ports: list[int] | None = None,
+    ports: list[int | str] | None = None,
     *,
     exclude_ports: list[int] | None = None,
     workspace_path: str | None = None,
@@ -252,7 +252,13 @@ def create_cluster(
         os.makedirs(host_state, exist_ok=True)
         cmd.extend(["--volume", f"{host_state}:/host-data@server:0"])
     for port in ports:
-        cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
+        # An int maps host:node 1:1; a "host:node" string maps a different
+        # host port onto a chart NodePort (e.g. "33000:28000" — used by the
+        # e2e stack so its host ports never collide with a dev cluster's).
+        mapping = str(port)
+        if ":" not in mapping:
+            mapping = f"{mapping}:{mapping}"
+        cmd.extend(["-p", f"{mapping}@loadbalancer"])
     subprocess.run(cmd, check=True, timeout=120)
 
 

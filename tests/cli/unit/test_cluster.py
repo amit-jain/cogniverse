@@ -88,6 +88,24 @@ class TestCreateCluster:
             assert f"{port}:{port}@loadbalancer" in port_flags
 
     @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_host_node_port_pairs_map_asymmetrically(self, mock_run: object) -> None:
+        """A "host:node" string entry maps a different host port onto a chart
+        NodePort — the e2e stack's scheme (33xxx host side, canonical node
+        side) — while plain ints keep the 1:1 mapping."""
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+
+        create_cluster("cogniverse-e2e", ports=["33000:28000", 8080])
+
+        cmd = mock_run.call_args[0][0]  # type: ignore[attr-defined]
+        port_flags = [cmd[i + 1] for i in range(len(cmd)) if cmd[i] == "-p"]
+        assert port_flags == [
+            "33000:28000@loadbalancer",
+            "8080:8080@loadbalancer",
+        ]
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
     def test_env_override_replaces_default_ports(
         self, mock_run: object, monkeypatch
     ) -> None:
