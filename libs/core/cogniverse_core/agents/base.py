@@ -36,7 +36,9 @@ import asyncio
 import contextvars
 import copy
 import logging
+import threading
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from typing import (
     TYPE_CHECKING,
@@ -57,6 +59,39 @@ from typing import (
 
 if TYPE_CHECKING:
     from cogniverse_core.agents.rails import RailChain
+
+# Dedicated pool for LM round-trips. On the shared default executor (bounded
+# small for ordinary offloads), each LM call parks a worker for the full
+# request timeout — a burst of slow LM calls occupies every worker and stalls
+# all other to_thread users (search, admin, keyframes) runtime-wide. LM calls
+# are pure IO waits, so a wide dedicated pool is cheap and confines the blast
+# radius to LM traffic.
+_LM_EXECUTOR_WORKERS = 64
+_LM_EXECUTOR: Optional[ThreadPoolExecutor] = None
+_LM_EXECUTOR_LOCK = threading.Lock()
+
+
+def _lm_executor() -> ThreadPoolExecutor:
+    global _LM_EXECUTOR
+    if _LM_EXECUTOR is None:
+        with _LM_EXECUTOR_LOCK:
+            if _LM_EXECUTOR is None:
+                _LM_EXECUTOR = ThreadPoolExecutor(
+                    max_workers=_LM_EXECUTOR_WORKERS, thread_name_prefix="lm-call"
+                )
+    return _LM_EXECUTOR
+
+
+async def _call_in_lm_executor(fn, /, *args, **kwargs):
+    """``asyncio.to_thread`` semantics on the dedicated LM pool — the
+    contextvars snapshot carries the ``dspy.context`` tenant-LM binding into
+    the worker thread exactly as ``to_thread`` would."""
+    loop = asyncio.get_running_loop()
+    ctx = contextvars.copy_context()
+    return await loop.run_in_executor(
+        _lm_executor(), lambda: ctx.run(fn, *args, **kwargs)
+    )
+
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -478,7 +513,6 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         Returns:
             DSPy Prediction from the module
         """
-        import asyncio
 
         with (
             self._adapter_lm_context(),
@@ -505,13 +539,13 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                             "token", str(chunk), data={"accumulated": accumulated}
                         )
                 if prediction is None:
-                    prediction = await asyncio.to_thread(call_module, **kwargs)
+                    prediction = await _call_in_lm_executor(call_module, **kwargs)
                 return prediction
             else:
                 # module(...) not module.forward(...): forward bypasses DSPy's
                 # __call__ instrumentation (callbacks, usage tracking, history)
                 # and warns on every dispatch.
-                return await asyncio.to_thread(call_module, **kwargs)
+                return await _call_in_lm_executor(call_module, **kwargs)
 
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:
         """
