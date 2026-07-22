@@ -856,27 +856,131 @@ def _stop_dev_cluster_and_free_ports() -> None:
     )
 
 
+_E2E_FINGERPRINT_CM = "e2e-build-fingerprint"
+
+
+def _e2e_deploy_fingerprint() -> str:
+    """Content hash of everything baked into the e2e images / affecting the
+    deploy: committed HEAD + the diff of ``libs``/``configs``/``charts`` +
+    any untracked files under them. ``tests/`` is deliberately excluded —
+    pytest reads test files fresh each run, so iterating on test assertions
+    must NOT force a cluster rebuild; a change to deployed code must."""
+    import hashlib
+
+    repo_root = Path(__file__).resolve().parents[2]
+
+    def _git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(repo_root), *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout
+
+    paths = ["libs", "configs", "charts", "pyproject.toml"]
+    material = "\n".join(
+        [
+            _git("rev-parse", "HEAD").strip(),
+            _git("diff", "HEAD", "--", *paths),
+            _git("status", "--porcelain", "--untracked-files=all", "--", *paths),
+        ]
+    )
+    return hashlib.sha256(material.encode()).hexdigest()[:16]
+
+
+def _kubectl_e2e(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["kubectl", "--context", f"k3d-{E2E_CLUSTER_NAME}", *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _read_e2e_fingerprint() -> str:
+    got = _kubectl_e2e(
+        "-n",
+        "cogniverse",
+        "get",
+        "configmap",
+        _E2E_FINGERPRINT_CM,
+        "-o",
+        "jsonpath={.data.fingerprint}",
+    )
+    return got.stdout.strip() if got.returncode == 0 else ""
+
+
+def _stamp_e2e_fingerprint(fingerprint: str) -> None:
+    rendered = _kubectl_e2e(
+        "-n",
+        "cogniverse",
+        "create",
+        "configmap",
+        _E2E_FINGERPRINT_CM,
+        f"--from-literal=fingerprint={fingerprint}",
+        "--dry-run=client",
+        "-o",
+        "yaml",
+    )
+    subprocess.run(
+        ["kubectl", "--context", f"k3d-{E2E_CLUSTER_NAME}", "apply", "-f", "-"],
+        input=rendered.stdout,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def _e2e_cluster_reusable(fingerprint: str) -> bool:
+    """A warm ``cogniverse-e2e`` cluster can be reused iff it is running,
+    reachable, its runtime answers, and it was built from the SAME deployed
+    content (fingerprint). Any of those failing → boot fresh."""
+    listed = subprocess.run(
+        ["k3d", "cluster", "list", E2E_CLUSTER_NAME],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if listed.returncode != 0 or E2E_CLUSTER_NAME not in listed.stdout:
+        return False
+    if (
+        _kubectl_e2e("get", "ns", "cogniverse", "-o", "name", timeout=15).returncode
+        != 0
+    ):
+        return False
+    if not runtime_available():
+        return False
+    return _read_e2e_fingerprint() == fingerprint
+
+
 @pytest.fixture(scope="session", autouse=True)
 def e2e_stack():
-    """Boot an isolated e2e stack and bootstrap it.
+    """Provide a healthy, bootstrapped e2e stack — reusing a warm cluster
+    when the deployed content is unchanged, booting fresh otherwise.
 
-    Creates a dedicated k3d cluster whose loadbalancer maps the offset
-    33xxx HOST ports onto the chart's canonical NodePorts (see
-    ``E2E_HOST_PORTS``), builds the images from the working tree, and
-    Helm-installs with devMode OFF: the pods run the code baked into the
-    images, never a bind-mounted tree with a stale interpreter. Host storage is NOT shared, so the stack starts on fresh
-    data and cannot touch a dev cluster's persisted state. The cluster is
-    deleted on session teardown.
+    The cluster is a dedicated k3d deployment whose loadbalancer maps the
+    offset 33xxx HOST ports onto the chart's canonical NodePorts (see
+    ``E2E_HOST_PORTS``), Helm-installed with devMode OFF so the pods run the
+    code baked into images built from the working tree — never a bind-mounted
+    tree with a stale interpreter. Host storage is NOT shared, so a fresh
+    boot starts on clean data and cannot touch a dev cluster's state.
 
-    A dev (``cogniverse up``) stack is never reused — e2e results must come
-    from a reproducible self-contained deployment. A running dev cluster is
-    STOPPED first (never deleted): the host cannot fit two clusters' pods
-    in RAM, and the dev loadbalancer holds the NodePorts this stack maps.
+    Lifecycle:
+      * REUSE — if a running ``cogniverse-e2e`` whose stamped deploy
+        fingerprint matches the current ``libs``/``configs``/``charts`` is
+        already up, reuse it (~seconds). Editing only ``tests/`` keeps the
+        fingerprint, so assertion iteration is fast.
+      * FRESH — otherwise (no cluster / unhealthy / deployed code changed /
+        ``E2E_FRESH`` set) stop any dev cluster (RAM + ports), rebuild
+        images, create the cluster, deploy, wait, and stamp the fingerprint.
+        The fresh path is what proves the first-install contract.
+      * TEARDOWN — the cluster is LEFT WARM for the next run; only
+        ``E2E_FRESH=1`` deletes it. Reset manually with
+        ``k3d cluster delete cogniverse-e2e``.
 
-    After the stack is healthy: creates the E2E tenant, deploys schemas,
-    ingests sample data, and brings up the OpenShell sandbox gateway.
-    CronWorkflows are suspended for the session — they otherwise spawn
-    workflow pods that compete with e2e tests for k3d node resources.
+    After the stack is healthy (reused or fresh) the E2E tenant + schemas +
+    sample data are (idempotently) bootstrapped and CronWorkflows suspended
+    for the session.
     """
     from tests.e2e.deployment.conftest import (
         create_test_cluster,
@@ -884,18 +988,27 @@ def e2e_stack():
         deploy_stack,
     )
 
-    # A crashed previous session leaves its disposable cluster — and its
-    # 33xxx port bindings — behind. Reap it before the port check, or the
-    # leftover reads as "another process holds the ports".
-    delete_test_cluster(E2E_CLUSTER_NAME)
-    _stop_dev_cluster_and_free_ports()
+    fingerprint = _e2e_deploy_fingerprint()
+    force_fresh = os.environ.get("E2E_FRESH", "").lower() in ("1", "true", "yes")
 
-    create_test_cluster(
-        E2E_CLUSTER_NAME,
-        ports=[f"{host}:{node}" for host, node in E2E_HOST_PORTS.items()],
-        share_host_storage=False,
-    )
-    try:
+    if not force_fresh and _e2e_cluster_reusable(fingerprint):
+        print(
+            f"Reusing warm e2e cluster {E2E_CLUSTER_NAME} "
+            f"(deploy fingerprint {fingerprint} unchanged)"
+        )
+    else:
+        # A crashed previous session leaves its disposable cluster — and its
+        # 33xxx port bindings — behind, and a stale-fingerprint cluster must
+        # be replaced. Reap it before the port check, or the leftover reads
+        # as "another process holds the ports".
+        delete_test_cluster(E2E_CLUSTER_NAME)
+        _stop_dev_cluster_and_free_ports()
+
+        create_test_cluster(
+            E2E_CLUSTER_NAME,
+            ports=[f"{host}:{node}" for host, node in E2E_HOST_PORTS.items()],
+            share_host_storage=False,
+        )
         # Test-cluster-only helm overrides (never touch the shipped chart):
         #  - teacher LM off: only the opt-in teacher-optimization e2e uses it,
         #    and it can't coexist with colpali + student during GPU weight
@@ -947,7 +1060,11 @@ def e2e_stack():
                 "e2e stack deployments not all available within 40m: "
                 f"{(wait.stdout or '')[-600:]} {(wait.stderr or '')[-300:]}"
             )
+        # Stamp the deployed content so the next session can reuse this
+        # cluster iff the deployed code is still identical.
+        _stamp_e2e_fingerprint(fingerprint)
 
+    try:
         cron_restore = _suspend_cronworkflows_for_session()
         _bootstrap_tenant_and_schemas()
         _ingest_sample_video()
@@ -958,7 +1075,10 @@ def e2e_stack():
         finally:
             _restore_cronworkflows(cron_restore)
     finally:
-        delete_test_cluster(E2E_CLUSTER_NAME)
+        # Leave the cluster warm for reuse; only a forced-fresh run tears
+        # it down (so CI / first-install verification stays hermetic).
+        if force_fresh:
+            delete_test_cluster(E2E_CLUSTER_NAME)
 
 
 # Prefixes used by per-test tenants. Anything else (bootstrap, system,
