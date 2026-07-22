@@ -691,20 +691,33 @@ LLM_MODEL = "qwen3:4b"
 
 
 def _ensure_llm_model() -> None:
-    """Pull the LLM model if not already available."""
+    """Ensure the ollama-served LLM model is available — a quiet no-op on the
+    vLLM deployments the e2e stack actually uses.
+
+    ``LLM_URL`` is the ollama-style endpoint (``/api/tags`` + ``/api/pull``).
+    When the cluster serves its chat LM via vLLM (the default here — the
+    report/agents talk to ``cogniverse-vllm-llm-student``), nothing listens
+    there: the probe connection-refuses and there is simply no model to
+    pull, so return quietly. Only a REACHABLE ollama endpoint missing the
+    model triggers a pull, and only a pull that then errors is a genuine
+    (still non-fatal) failure worth logging as one.
+    """
     try:
         resp = httpx.get(f"{LLM_URL}/api/tags", timeout=10)
-        if resp.status_code == 200:
-            models = resp.json().get("models", [])
-            if any(LLM_MODEL in m.get("name", "") for m in models):
-                return  # Model already loaded
-        # Pull the model
-        print(f"Pulling LLM model {LLM_MODEL}...")
-        httpx.post(
-            f"{LLM_URL}/api/pull",
-            json={"name": LLM_MODEL},
-            timeout=600,
-        )
+    except (httpx.HTTPError, OSError):
+        # No ollama endpoint at LLM_URL → vLLM-served cluster; the chat LM is
+        # a separate service that needs no pull. Not a failure.
+        print(f"No ollama endpoint at {LLM_URL}; vLLM-served LM, nothing to pull")
+        return
+
+    if resp.status_code == 200:
+        models = resp.json().get("models", [])
+        if any(LLM_MODEL in m.get("name", "") for m in models):
+            return  # already loaded
+
+    print(f"Pulling LLM model {LLM_MODEL}...")
+    try:
+        httpx.post(f"{LLM_URL}/api/pull", json={"name": LLM_MODEL}, timeout=600)
         print(f"Model {LLM_MODEL} pulled")
     except (httpx.HTTPError, OSError) as exc:
         print(f"LLM model pull failed (non-fatal): {exc}")
