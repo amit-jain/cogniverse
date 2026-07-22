@@ -422,6 +422,7 @@ def deploy_stack(
         dev_image_set_values,
         dev_version,
         import_images,
+        prune_superseded_images,
     )
 
     backend = detect_torch_backend()
@@ -444,6 +445,18 @@ def deploy_stack(
         project_root, torch_backend=backend, version=image_version
     )
     import_images(cluster_name, built_tags)
+
+    # Reclaim superseded generations (host + k3d node containerd) like
+    # ``cogniverse up`` does — keeps the current build + one prior and drops
+    # the rest. Without this, each e2e rebuild leaves ~24GB of stale
+    # cogniverse/* tags, and repeated runs fill the host disk until Vespa
+    # trips its 80% feed-block and the runtime crash-loops on NO_SPACE.
+    try:
+        prune_superseded_images(
+            image_version, node_container=f"k3d-{cluster_name}-server-0"
+        )
+    except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
+        print(f"Superseded-image prune skipped: {exc}", file=sys.stderr)
 
     # No AMD device plugin install — runtime mounts /dev/kfd and
     # /dev/dri via hostPath when backend=rocm (chart's
