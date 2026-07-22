@@ -663,7 +663,18 @@ async def _claim_loop(
         for job in jobs:
             if stop.is_set():
                 break
-            await _process_job(redis, job, config, processor=processor)
+            try:
+                await _process_job(redis, job, config, processor=processor)
+            except Exception:
+                # Status-publish/telemetry blips escape the per-job guard;
+                # they must not kill the consumer. Leave the entry in the
+                # PEL for the reaper and keep serving, mirroring the claim
+                # guard above.
+                logger.exception(
+                    "processing %s crashed; leaving it to the reaper",
+                    getattr(job, "ingest_id", "?"),
+                )
+                await asyncio.sleep(2.0)
 
 
 async def run(
