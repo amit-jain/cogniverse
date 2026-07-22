@@ -4,6 +4,7 @@ Generates comprehensive detailed reports with visual and technical analysis.
 """
 
 import asyncio
+import contextvars
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -30,6 +31,15 @@ from cogniverse_foundation.config.semantic_router import routed_lm_context_for
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8004
+
+# Per-request report call state (frames attached, degraded flag/reason). The
+# dispatcher builds a fresh agent per request, but the standalone A2A app
+# serves a module-level singleton — instance attributes there race concurrent
+# requests, letting one request's degraded flag bleed into a sibling's
+# metadata. A ContextVar is task-scoped, so each request reads only its own.
+_REPORT_CALL_STATE: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "_detailed_report_call_state", default=None
+)
 
 
 class DetailedReportInput(AgentInput):
@@ -416,13 +426,17 @@ class DetailedReportAgent(
                         "results_analyzed": len(request.search_results),
                         "report_type": request.report_type,
                         "visual_analysis_enabled": request.include_visual_analysis,
-                        "keyframes_attached": getattr(self, "_keyframes_attached", 0),
+                        "keyframes_attached": (_REPORT_CALL_STATE.get() or {}).get(
+                            "keyframes_attached", 0
+                        ),
                         # True when the answer LM call failed and the executive
                         # summary is the templated fallback, not a grounded
                         # report — callers must be able to tell the two apart.
-                        "report_degraded": getattr(self, "_report_degraded", False),
-                        "report_degraded_reason": getattr(
-                            self, "_report_degraded_reason", ""
+                        "report_degraded": (_REPORT_CALL_STATE.get() or {}).get(
+                            "report_degraded", False
+                        ),
+                        "report_degraded_reason": (_REPORT_CALL_STATE.get() or {}).get(
+                            "report_degraded_reason", ""
                         ),
                         "technical_analysis_enabled": (
                             request.include_technical_details
@@ -795,10 +809,12 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         # Observable count of frames actually attached to the LLM call — surfaced
         # in the report metadata so callers (and e2e tests) can confirm the
         # retrieved keyframes reached the answer model.
-        self._keyframes_attached = len(keyframe_images)
-
-        self._report_degraded = False
-        self._report_degraded_reason = ""
+        call_state = {
+            "keyframes_attached": len(keyframe_images),
+            "report_degraded": False,
+            "report_degraded_reason": "",
+        }
+        _REPORT_CALL_STATE.set(call_state)
         try:
             dspy_result = await self.call_dspy(
                 self.report_module,
@@ -808,24 +824,27 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                 report_type=request.report_type,
                 keyframes=keyframe_images,
             )
-
-            return dspy_result.executive_summary, self._parse_llm_list(
-                getattr(dspy_result, "recommendations", "")
-            )
+            executive_summary = dspy_result.executive_summary
+            raw_recommendations = getattr(dspy_result, "recommendations", "")
         except Exception as e:
             # The answer LM call failed (e.g. a payload/context overflow from
-            # the attached keyframes). Degrade to a templated stub so the
-            # request still returns — but FLAG it in the metadata below, so a
-            # fallback is never indistinguishable from a real grounded report.
+            # the attached keyframes) or returned an unusable shape. Degrade
+            # to a templated stub so the request still returns — but FLAG it
+            # in the metadata below, so a fallback is never indistinguishable
+            # from a real grounded report.
             logger.error(f"DSPy summary generation failed: {e}")
-            self._report_degraded = True
-            self._report_degraded_reason = f"{type(e).__name__}: {e}"
+            call_state["report_degraded"] = True
+            call_state["report_degraded_reason"] = f"{type(e).__name__}: {e}"
             return (
                 f"Analysis of {len(request.search_results)} results for "
                 f"'{request.query}' with average relevance of "
                 f"{thinking_phase.content_analysis['avg_relevance']:.2f}.",
                 [],
             )
+        # Recommendation parsing runs OUTSIDE the degrade guard: a bug in our
+        # own post-processing must surface, not masquerade as a degraded
+        # report.
+        return executive_summary, self._parse_llm_list(raw_recommendations)
 
     def _generate_detailed_findings(
         self, request: ReportRequest, thinking_phase: ThinkingPhase
