@@ -5,9 +5,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import dspy
+import pytest
 
 from cogniverse_agents.graph.claim_extractor import ClaimExtractor
 from cogniverse_agents.graph.graph_schema import Mention
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 class _CapturingModule:
@@ -122,6 +125,54 @@ def test_non_numeric_confidence_maps_to_band_instead_of_crashing() -> None:
 
     assert [e.confidence for e in edges] == [0.9, 0.85]
     assert [e.target for e in edges] == ["Warsaw", "Poland"]
+
+
+def test_non_string_claim_fields_coerce_or_drop_instead_of_crashing() -> None:
+    """LMs emit JSON scalars where the signature asks for strings ("object":
+    1867 for born_in). A numeric subject/object must keep its text form and
+    the claim must survive; list/dict/bool/None fields drop only that claim.
+    Any non-string used to crash the whole segment's edge build with
+    AttributeError, and ingestion's KG stage swallowed it — the document
+    lost its entire graph while the ingest reported success."""
+    text = "Marie Curie was born in 1867. Radium glows."
+    extractor = ClaimExtractor(llm_config=None)
+    extractor._cot_module = _ClaimsModule(
+        [
+            {
+                "subject": "Marie Curie",
+                "predicate": "born_in",
+                "object": 1867,
+                "evidence_span": "Marie Curie was born in 1867",
+            },
+            {
+                "subject": "Marie Curie",
+                "predicate": "born_in",
+                "object": "Warsaw",
+                "evidence_span": 99999,
+            },
+            {"subject": ["Radium"], "predicate": "born_in", "object": "light"},
+            {"subject": "Radium", "predicate": {"r": "born_in"}, "object": "light"},
+            {"subject": "Radium", "predicate": "born_in", "object": True},
+            {"subject": None, "predicate": "born_in", "object": "light"},
+        ]
+    )
+
+    edges = extractor.extract(
+        text=text,
+        entity_hints=["Marie Curie"],
+        modality_hint="text",
+        segment_anchor=_anchor(),
+        tenant_id="acme:acme",
+        source_doc_id="doc1",
+    )
+
+    assert [(e.source, e.relation, e.target) for e in edges] == [
+        ("Marie Curie", "born_in", "1867"),
+        ("Marie Curie", "born_in", "Warsaw"),
+    ]
+    # "99999" appears nowhere in the text, so the evidence falls back to
+    # the leading span of the segment text.
+    assert edges[1].evidence_span == text
 
 
 def test_out_of_range_and_missing_confidence_are_clamped() -> None:
