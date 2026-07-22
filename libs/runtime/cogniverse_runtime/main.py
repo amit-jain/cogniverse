@@ -340,6 +340,31 @@ async def _wait_for_backend_ready(
     return False
 
 
+def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
+    """Deploy the metadata schemas to a backend with no application package.
+
+    A fresh backend serves nothing on the query chain until the first
+    application deploys, so every config read fails — the config_metadata
+    schema is itself part of the metadata application. Runs BEFORE the
+    first config read on first install only; raises when the backend's
+    config server is unreachable (genuine outage → fail fast).
+
+    Constructs the schema manager DIRECTLY: every registry/backend path
+    reads the config store internally, which is exactly what cannot work
+    yet on a fresh backend.
+    """
+    from cogniverse_vespa.config_utils import calculate_config_port
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+    manager = VespaSchemaManager(
+        backend_endpoint=bootstrap.backend_url,
+        backend_port=calculate_config_port(bootstrap.backend_port),
+        schema_registry=None,
+    )
+    manager.upload_metadata_schemas(app_name=application_name)
+    logger.info("Metadata schemas bootstrapped for fresh backend")
+
+
 def _mirror_minio_credentials_to_aws() -> None:
     """Mirror the ``MINIO_*`` secret onto the ``AWS_*`` names fsspec's s3 client
     reads, so answer-time keyframe resolution (agents localize ``s3://``
@@ -489,6 +514,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
+
+    # 2a. First-install probe. A FRESH backend serves health while its query
+    # chain has NO application deployed, so every config read fails until
+    # the metadata schemas (config_metadata included) deploy — which used to
+    # happen in VespaBackend.__init__ before any read and now runs late in
+    # this lifespan. Probe with a real config read; on failure deploy the
+    # metadata application and re-probe with a convergence budget. A read
+    # still failing after that is a genuine outage and raises, preserving
+    # the fail-fast contract. Clusters with persisted data pass the first
+    # probe and never bootstrap.
+    try:
+        await asyncio.to_thread(config_manager.get_system_config)
+    except Exception as probe_exc:
+        logger.warning(
+            "Config store not queryable (%s) — deploying metadata schemas "
+            "in case this is a fresh backend with no application package",
+            probe_exc,
+        )
+        from cogniverse_foundation.config.unified_config import SystemConfig
+
+        await asyncio.to_thread(
+            _bootstrap_metadata_schemas,
+            bootstrap,
+            SystemConfig().application_name,
+        )
+        for attempt in range(12):
+            try:
+                await asyncio.to_thread(config_manager.get_system_config)
+                logger.info("Config store queryable after metadata bootstrap")
+                break
+            except Exception:
+                if attempt == 11:
+                    raise
+                await asyncio.sleep(10)
 
     # Wire profile-change propagation: when /admin/profiles adds or removes
     # a backend profile, push the update into live search-backend instances
