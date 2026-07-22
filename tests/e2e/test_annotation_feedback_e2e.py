@@ -35,11 +35,11 @@ import pytest
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
 NAMESPACE = "cogniverse"
-PHOENIX_HTTP = "http://localhost:26006"  # phoenix.service nodePort
-PHOENIX_GRPC = "localhost:4317"  # phoenix OTLP nodePort
+PHOENIX_HTTP = "http://localhost:33006"  # phoenix.service nodePort
+PHOENIX_GRPC = "localhost:33317"  # phoenix OTLP nodePort
 VESPA_URL = "http://localhost"  # vespa.service nodePort
 VESPA_PORT = 8080
-RUNTIME_URL = "http://localhost:28000"  # runtime.service nodePort
+RUNTIME_URL = "http://localhost:33000"  # runtime.service nodePort
 # Per-run tenant: seeds, calibration windows, artifacts, and loop state are
 # isolated from real tenants and prior runs, so every measurement the compile
 # persists is exactly derivable from this run's seeds. The runtime keys

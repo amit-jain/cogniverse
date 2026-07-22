@@ -10,7 +10,7 @@ The gateway_agent is the new primary entry point for all queries.
 Entity extraction, query enhancement, and profile selection are internal
 to the orchestration pipeline and not directly callable via REST.
 
-Requires live k3d-deployed runtime at http://localhost:28000.
+Requires live k3d-deployed runtime at http://localhost:33000.
 """
 
 import httpx

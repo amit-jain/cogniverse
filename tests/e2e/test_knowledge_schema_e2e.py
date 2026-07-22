@@ -54,8 +54,8 @@ from tests.e2e.conftest import RUNTIME, run_async, skip_if_no_runtime, unique_id
 # which shows 8080->8080 (Vespa /query/), 19071->19071 (Vespa /config),
 # and the 29004-29006 NodePort range (denseon at 29006).
 VESPA_HTTP_PORT = 8080
-VESPA_CONFIG_PORT = 19071
-DENSEON_URL = "http://localhost:29006"
+VESPA_CONFIG_PORT = 33071
+DENSEON_URL = "http://localhost:33906"
 
 
 def _build_manager(tenant_id: str) -> Mem0MemoryManager:

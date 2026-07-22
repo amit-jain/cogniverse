@@ -235,24 +235,35 @@ def _cmd(
         raise
 
 
-def _cluster_exists() -> bool:
-    result = _cmd(["k3d", "cluster", "list", CLUSTER_NAME], check=False)
-    return result.returncode == 0 and CLUSTER_NAME in result.stdout
+def _cluster_exists(cluster_name: str = CLUSTER_NAME) -> bool:
+    result = _cmd(["k3d", "cluster", "list", cluster_name], check=False)
+    return result.returncode == 0 and cluster_name in result.stdout
 
 
-@pytest.fixture(scope="session")
-def k3d_cluster():
+def create_test_cluster(
+    cluster_name: str,
+    *,
+    ports: list[int] | None,
+    share_host_storage: bool,
+) -> None:
     """Create an isolated k3d test cluster provisioned like ``cogniverse up``.
 
     ``values.k3s.yaml`` uses hostStorage (hostPath ``/host-hf-cache`` +
     ``/host-data``) and schedules GPU inference pods with a
     ``amd.com/gpu.present`` / ``nvidia.com/gpu.present`` nodeSelector, so the
-    cluster must bind-mount those host paths AND label the node — otherwise the
-    GPU pods stay Pending and the runtime's hf-cache mount fails. ``ports=[]``
-    skips the loadbalancer mappings because service access goes through
-    ``kubectl port-forward`` to the ``PORTS`` in the deployed_stack fixture."""
-    if _cluster_exists():
-        _cmd(["k3d", "cluster", "delete", CLUSTER_NAME], check=False, timeout=60)
+    cluster must bind-mount the hf-cache AND label the node — otherwise the
+    GPU pods stay Pending and the runtime's hf-cache mount fails.
+
+    ``ports=[]`` skips the loadbalancer mappings (service access via
+    ``kubectl port-forward``); ``ports=None`` maps the canonical
+    ``cogniverse up`` NodePorts; ``"host:node"`` string entries map offset
+    host ports onto chart NodePorts (the main e2e suite's scheme).
+    ``share_host_storage=False`` keeps /host-data node-local
+    (DirectoryOrCreate) so the test cluster's Vespa/Phoenix data is fresh
+    and cannot touch the dev cluster's persisted state.
+    """
+    if _cluster_exists(cluster_name):
+        _cmd(["k3d", "cluster", "delete", cluster_name], check=False, timeout=60)
 
     import os
 
@@ -264,15 +275,79 @@ def k3d_cluster():
 
     try:
         create_cluster(
-            name=CLUSTER_NAME,
-            ports=[],
+            name=cluster_name,
+            ports=ports,
             workspace_path=None,
             share_hf_cache=True,
-            share_host_storage=True,
+            share_host_storage=share_host_storage,
         )
     except subprocess.CalledProcessError as exc:
         pytest.fail(
             f"k3d cluster creation failed: {(exc.stderr or '').strip()[:300] or exc}"
+        )
+
+    # k3d's CoreDNS forwards to the host's resolv.conf; on hosts whose
+    # resolver is a dead/localhost stub, every pod's external DNS fails and
+    # the vLLM pods (which touch huggingface.co even with a warm weight
+    # cache) never become ready. Pin real upstream resolvers.
+    ctx = f"k3d-{cluster_name}"
+    cm = _cmd(
+        [
+            "kubectl",
+            "--context",
+            ctx,
+            "-n",
+            "kube-system",
+            "get",
+            "configmap",
+            "coredns",
+            "-o",
+            "yaml",
+        ],
+        check=False,
+    )
+    if cm.returncode == 0 and "forward . /etc/resolv.conf" in cm.stdout:
+        patched = cm.stdout.replace(
+            "forward . /etc/resolv.conf", "forward . 1.1.1.1 8.8.8.8"
+        )
+        subprocess.run(
+            ["kubectl", "--context", ctx, "apply", "-f", "-"],
+            input=patched,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        _cmd(
+            [
+                "kubectl",
+                "--context",
+                ctx,
+                "-n",
+                "kube-system",
+                "rollout",
+                "restart",
+                "deployment/coredns",
+            ],
+            check=False,
+        )
+
+    if not share_host_storage:
+        # /host-data is node-local here; the chart's DirectoryOrCreate
+        # hostPath volumes would create root-owned dirs, and Phoenix runs
+        # as a non-root uid — it exits 1 within a second when its working
+        # dir isn't writable (and the runtime then crash-loops on the dead
+        # telemetry backend). Pre-create the tree world-writable.
+        _cmd(
+            [
+                "docker",
+                "exec",
+                f"k3d-{cluster_name}-server-0",
+                "sh",
+                "-c",
+                "mkdir -p /host-data/phoenix /host-data/vespa"
+                " && chmod -R 0777 /host-data",
+            ],
+            check=False,
         )
 
     # Label the node so GPU inference pods schedule, as `cogniverse up` does.
@@ -302,18 +377,35 @@ def k3d_cluster():
             check=False,
         )
 
+
+def delete_test_cluster(cluster_name: str) -> None:
+    _cmd(["k3d", "cluster", "delete", cluster_name], check=False, timeout=120)
+
+
+@pytest.fixture(scope="session")
+def k3d_cluster():
+    """Isolated cluster for the deployment-lifecycle tests (port-forward
+    access, so no loadbalancer mappings)."""
+    create_test_cluster(CLUSTER_NAME, ports=[], share_host_storage=True)
     yield {
         "cluster_name": CLUSTER_NAME,
         "namespace": NAMESPACE,
         "ports": PORTS,
     }
+    delete_test_cluster(CLUSTER_NAME)
 
-    _cmd(["k3d", "cluster", "delete", CLUSTER_NAME], check=False, timeout=60)
 
+def deploy_stack(
+    cluster_name: str,
+    namespace: str,
+    *,
+    extra_set: dict[str, str] | None = None,
+) -> None:
+    """Build images from the working tree and Helm-install the full stack.
 
-@pytest.fixture(scope="session")
-def deployed_stack(k3d_cluster):
-    """Deploy the full cogniverse stack via Helm into the test cluster."""
+    ``devMode`` is always off: the deployed pods run the code BAKED INTO the
+    freshly built images, never a bind-mounted tree with a stale interpreter.
+    """
     from pathlib import Path
 
     project_root = Path(__file__).parent.parent.parent.parent
@@ -327,11 +419,18 @@ def deployed_stack(k3d_cluster):
     from cogniverse_cli.images import (
         build_images,
         detect_torch_backend,
+        dev_image_set_values,
+        dev_version,
         import_images,
     )
 
     backend = detect_torch_backend()
     device_values_file = get_device_values_file(backend, project_root=project_root)
+    # One git-derived version for the built tags AND the helm overrides —
+    # without the override the chart falls back to its static ``0.1.0-dev``
+    # placeholder and every first-party pod dies with ErrImageNeverPull
+    # (pullPolicy=Never can only see the imported, git-tagged images).
+    image_version = dev_version(project_root)
 
     # Build the canonical image set the chart's k3s values enable —
     # runtime + dashboard for the host's torch backend, plus the
@@ -341,8 +440,10 @@ def deployed_stack(k3d_cluster):
     # build_images() owns the docker-build invocations + the matching
     # --build-arg TORCH_BACKEND wiring; import_images() lifts them into
     # the k3d cluster so pods with pullPolicy=Never can find them.
-    built_tags = build_images(project_root, torch_backend=backend)
-    import_images(CLUSTER_NAME, built_tags)
+    built_tags = build_images(
+        project_root, torch_backend=backend, version=image_version
+    )
+    import_images(cluster_name, built_tags)
 
     # No AMD device plugin install — runtime mounts /dev/kfd and
     # /dev/dri via hostPath when backend=rocm (chart's
@@ -379,7 +480,7 @@ def deployed_stack(k3d_cluster):
     _hf_token = _read_hf_token()
     if _hf_token:
         subprocess.run(
-            ["kubectl", "create", "namespace", NAMESPACE],
+            ["kubectl", "create", "namespace", namespace],
             capture_output=True,
             timeout=30,
             check=False,
@@ -392,7 +493,7 @@ def deployed_stack(k3d_cluster):
                 "generic",
                 HF_TOKEN_SECRET,
                 "-n",
-                NAMESPACE,
+                namespace,
                 f"--from-literal=HF_TOKEN={_hf_token}",
                 "--dry-run=client",
                 "-o",
@@ -427,6 +528,11 @@ def deployed_stack(k3d_cluster):
         "devMode.enabled": "false",
         "runtime.sandbox.enabled": "false",
     }
+    helm_set_overrides.update(
+        dev_image_set_values(project_root, torch_backend=backend, version=image_version)
+    )
+    if extra_set:
+        helm_set_overrides.update(extra_set)
 
     def _dump_pod_state() -> None:
         """Snapshot cluster state to pytest's captured stdout — runs on
@@ -436,9 +542,9 @@ def deployed_stack(k3d_cluster):
 
         print("\n========== POD STATE ON HELM FAILURE ==========", file=sys.stdout)
         for diag in [
-            ["kubectl", "get", "pods", "-n", NAMESPACE, "-o", "wide"],
-            ["kubectl", "get", "events", "-n", NAMESPACE, "--sort-by=.lastTimestamp"],
-            ["kubectl", "describe", "pods", "-n", NAMESPACE],
+            ["kubectl", "get", "pods", "-n", namespace, "-o", "wide"],
+            ["kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp"],
+            ["kubectl", "describe", "pods", "-n", namespace],
         ]:
             print(f"\n--- {' '.join(diag)} ---", file=sys.stdout)
             sys.stdout.flush()
@@ -449,7 +555,7 @@ def deployed_stack(k3d_cluster):
                 "get",
                 "pods",
                 "-n",
-                NAMESPACE,
+                namespace,
                 "-o",
                 "jsonpath={range .items[?(@.status.phase!='Running')]}"
                 "{.metadata.name}{'\\n'}{end}",
@@ -465,7 +571,7 @@ def deployed_stack(k3d_cluster):
             print(f"\n--- kubectl logs {pod} (last 100 lines) ---", file=sys.stdout)
             sys.stdout.flush()
             subprocess.run(
-                ["kubectl", "logs", "-n", NAMESPACE, pod, "--tail=100"],
+                ["kubectl", "logs", "-n", namespace, pod, "--tail=100"],
                 check=False,
                 timeout=30,
             )
@@ -476,7 +582,7 @@ def deployed_stack(k3d_cluster):
             chart_path,
             helm_values,
             set_values=helm_set_overrides,
-            namespace=NAMESPACE,
+            namespace=namespace,
             timeout="20m",
         )
     except RuntimeError:
@@ -493,12 +599,18 @@ def deployed_stack(k3d_cluster):
             "-l",
             "app.kubernetes.io/instance=cogniverse",
             "-n",
-            NAMESPACE,
+            namespace,
             "--timeout=300s",
         ],
         check=False,
         timeout=310,
     )
+
+
+@pytest.fixture(scope="session")
+def deployed_stack(k3d_cluster):
+    """Deploy the full cogniverse stack via Helm into the test cluster."""
+    deploy_stack(CLUSTER_NAME, NAMESPACE)
 
     # Port-forward with offset ports. Capture stderr (instead of
     # silencing) so a dead port-forward can surface its reason later.

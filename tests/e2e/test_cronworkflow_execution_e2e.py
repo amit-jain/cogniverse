@@ -29,7 +29,7 @@ import pytest
 
 NAMESPACE = "cogniverse"
 RUNTIME = (
-    "http://localhost:28000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
+    "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
 )
 SUBMISSION_TIMEOUT_S = 600.0
 POLL_INTERVAL_S = 5.0

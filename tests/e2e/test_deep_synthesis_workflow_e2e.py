@@ -203,7 +203,7 @@ class TestDeepSynthesisOverHundredDocuments:
         cm._system_config_cache = SystemConfig(  # noqa: SLF001
             backend_url="http://localhost",
             backend_port=8080,
-            inference_service_urls={"denseon": "http://localhost:29006"},
+            inference_service_urls={"denseon": "http://localhost:33906"},
         )
         mm = Mem0MemoryManager(tenant_id=tenant_id)
         mm.initialize(
@@ -214,7 +214,7 @@ class TestDeepSynthesisOverHundredDocuments:
             llm_model="google/gemma-4-e4b-it",
             embedding_model="lightonai/DenseOn",
             llm_base_url=("http://cogniverse-vllm-llm-student.cogniverse:8000/v1"),
-            embedder_base_url="http://localhost:29006",
+            embedder_base_url="http://localhost:33906",
             auto_create_schema=True,
             config_manager=cm,
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),

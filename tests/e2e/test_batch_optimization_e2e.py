@@ -7,8 +7,8 @@ spans exist in Phoenix -> batch job reads them -> produces artifact -> artifact
 contains correct data -> agent can load the artifact.
 
 Requires live k3d stack via `cogniverse up` with:
-- Runtime at localhost:28000
-- Phoenix at localhost:26006
+- Runtime at localhost:33000
+- Phoenix at localhost:33006
 - kubectl context: k3d-cogniverse
 
 MARKED AS SLOW: the module fixture seeds ~80 DSPy spans via real agent calls
@@ -42,7 +42,7 @@ CONTAINER = "runtime"
 # fixture's 20-simple + 10-complex query mix) get drowned out when past runs
 # skewed the population. 1h comfortably covers fixture → test-run latency.
 LOOKBACK_HOURS = 1
-RUNTIME = "http://localhost:28000"
+RUNTIME = "http://localhost:33000"
 
 
 # ---------------------------------------------------------------------------

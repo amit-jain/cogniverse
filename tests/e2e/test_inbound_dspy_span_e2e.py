@@ -30,8 +30,8 @@ import uuid
 import httpx
 import pytest
 
-RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:28000")
-PHOENIX_BASE = os.environ.get("COGNIVERSE_PHOENIX_BASE", "http://localhost:26006")
+RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:33000")
+PHOENIX_BASE = os.environ.get("COGNIVERSE_PHOENIX_BASE", "http://localhost:33006")
 _TENANT = "flywheel_org:production"
 _CONSTRAINT_TEXT = "focus on safety equipment and protective gear"
 

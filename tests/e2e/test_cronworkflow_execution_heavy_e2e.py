@@ -25,7 +25,7 @@ import pytest
 
 NAMESPACE = "cogniverse"
 RUNTIME = (
-    "http://localhost:28000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
+    "http://localhost:33000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
 )
 HEAVY_TIMEOUT_S = 1500.0  # 25 min — covers DSPy training + Phoenix work
 POLL_INTERVAL_S = 10.0
@@ -74,7 +74,7 @@ def _phoenix_url() -> str:
     # Without 26006 the GET silently 0-results and the test
     # mis-reports "no new datasets appeared" when the workflow
     # actually created them.
-    return "http://localhost:26006"
+    return "http://localhost:33006"
 
 
 def _phoenix_dataset_names() -> set[str]:

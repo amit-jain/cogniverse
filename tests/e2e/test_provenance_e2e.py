@@ -45,8 +45,8 @@ from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
 # k3d-cogniverse-serverlb forwards these. Same constants as the
 # knowledge-schema e2e tests; if those pass, the host port mapping is correct.
 VESPA_HTTP_PORT = 8080
-VESPA_CONFIG_PORT = 19071
-DENSEON_URL = "http://localhost:29006"
+VESPA_CONFIG_PORT = 33071
+DENSEON_URL = "http://localhost:33906"
 
 
 def _build_manager(tenant_id: str) -> Mem0MemoryManager:

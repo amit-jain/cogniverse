@@ -26,8 +26,8 @@ from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 from tests.e2e.conftest import run_async, skip_if_no_runtime, unique_id
 
-PHOENIX_HTTP = "http://localhost:26006"
-PHOENIX_GRPC = "localhost:4317"
+PHOENIX_HTTP = "http://localhost:33006"
+PHOENIX_GRPC = "localhost:33317"
 
 
 def _make_artifact_manager(tenant_id: str) -> ArtifactManager:
