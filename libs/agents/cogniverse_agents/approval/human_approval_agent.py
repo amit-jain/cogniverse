@@ -220,13 +220,15 @@ class HumanApprovalAgent:
         if not item:
             raise ValueError(f"Item {decision.item_id} not found in batch {batch_id}")
 
-        # Apply decision
+        # Apply decision. The audit annotation is written FIRST: it raises on
+        # an annotation-backend outage, and at that point nothing has been
+        # persisted — the item stays pending and the whole approval is
+        # retryable. The old order committed status=APPROVED before the
+        # annotation write, so an outage left the item approved-but-unaudited
+        # and skipped the training-dataset append. A re-approval after a
+        # failure later in the sequence re-runs every step (the status update
+        # is idempotent; a duplicate annotation is append-only evidence).
         if decision.approved:
-            item.status = ApprovalStatus.APPROVED
-            await self.storage.update_item(item, batch_id=batch.batch_id)
-
-            # Log approval decision as telemetry annotation (SpanEvaluation)
-            # Find span_id for this item and annotate it
             from cogniverse_agents.approval.approval_storage import (
                 ApprovalStorageImpl,
             )
@@ -244,7 +246,10 @@ class HumanApprovalAgent:
                         reviewer=decision.reviewer,
                     )
 
-                # Add approved item to training dataset
+            item.status = ApprovalStatus.APPROVED
+            await self.storage.update_item(item, batch_id=batch.batch_id)
+
+            if isinstance(self.storage, ApprovalStorageImpl):
                 dataset_name = batch.context.get(
                     "dataset_name", "approved_synthetic_data"
                 )
@@ -258,10 +263,8 @@ class HumanApprovalAgent:
             return item
 
         else:
-            item.status = ApprovalStatus.REJECTED
-            await self.storage.update_item(item, batch_id=batch.batch_id)
-
-            # Log rejection decision as telemetry annotation (SpanEvaluation)
+            # Same ordering contract as the approve branch: audit annotation
+            # first (raises on outage with nothing persisted), then status.
             from cogniverse_agents.approval.approval_storage import (
                 ApprovalStorageImpl,
             )
@@ -278,6 +281,9 @@ class HumanApprovalAgent:
                         feedback=decision.feedback,
                         reviewer=decision.reviewer,
                     )
+
+            item.status = ApprovalStatus.REJECTED
+            await self.storage.update_item(item, batch_id=batch.batch_id)
 
             # Attempt regeneration if feedback handler available
             if self.feedback_handler:
