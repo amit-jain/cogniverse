@@ -298,3 +298,41 @@ async def test_save_batch_returns_id_when_flush_succeeds():
     storage = _flush_storage(flush_ok=True)
     batch = ApprovalBatch(batch_id="b2", items=[], context={})
     assert await storage.save_batch(batch) == "b2"
+
+
+@pytest.mark.asyncio
+async def test_annotation_outage_leaves_item_pending_not_approved():
+    """The audit annotation is written before the status commit: when the
+    annotation backend is down, apply_decision must raise with the item
+    still pending and nothing appended to the training dataset. The old
+    order committed status=APPROVED first, so an outage produced an
+    approved-but-unaudited item that never reached the dataset."""
+    from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
+    from cogniverse_core.approval.interfaces import (
+        ApprovalBatch,
+        ApprovalStatus,
+        ReviewDecision,
+        ReviewItem,
+    )
+
+    storage = _bare_storage()
+    item = ReviewItem(item_id="item-1", data={"q": "x"}, confidence=0.4)
+    batch = ApprovalBatch(batch_id="b1", items=[item], context={})
+    storage.get_batch = AsyncMock(return_value=batch)
+    storage.get_item_span_id = AsyncMock(return_value="span-1")
+    storage.log_approval_decision = AsyncMock(
+        side_effect=RuntimeError("annotation backend down")
+    )
+    storage.update_item = AsyncMock()
+    storage.append_to_training_dataset = AsyncMock()
+
+    agent = HumanApprovalAgent(confidence_extractor=MagicMock(), storage=storage)
+
+    with pytest.raises(RuntimeError, match="annotation backend down"):
+        await agent.apply_decision(
+            "b1", ReviewDecision(item_id="item-1", approved=True, reviewer="r")
+        )
+
+    assert item.status == ApprovalStatus.PENDING_REVIEW
+    storage.update_item.assert_not_awaited()
+    storage.append_to_training_dataset.assert_not_awaited()
