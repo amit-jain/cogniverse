@@ -24,6 +24,7 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_foundation.config.semantic_router import routed_lm_context_for
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,16 @@ class DeepResearchAgent(
         )
 
     async def _process_impl(self, input: DeepResearchInput) -> DeepResearchOutput:
+        # Every DSPy call in the run (decompose, evaluate, synthesize) binds
+        # the REQUEST tenant's LM — semantic-routed when enabled, ambient
+        # otherwise. Without this wrap the whole research run silently used
+        # the process-global default LM regardless of tenant configuration.
+        with routed_lm_context_for(
+            self._config_manager, input.tenant_id, "deep_research_agent"
+        ):
+            return await self._research(input)
+
+    async def _research(self, input: DeepResearchInput) -> DeepResearchOutput:
         # Set tenant for memory/instructions injection and enrich the query
         # with the full context stack (instructions + learned strategies +
         # tenant memories) before decomposition. Mirrors the pattern used
