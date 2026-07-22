@@ -647,50 +647,63 @@ class TestCollectRunsOffTheEventLoop:
         assert all(t != loop_thread for t in locator.threads)
 
 
+def _decode_dspy_jpeg(dspy_img):
+    """Decode the JPEG data-URI payload a downsampled dspy.Image carries."""
+    import base64
+    import io
+
+    from PIL import Image as PILImage
+
+    uri = dspy_img.url
+    assert uri.startswith("data:image/jpeg;base64,"), uri[:40]
+    raw = base64.b64decode(uri.split(",", 1)[1])
+    assert raw[:2] == b"\xff\xd8", "payload is not JPEG"
+    return raw, PILImage.open(io.BytesIO(raw))
+
+
 @pytest.mark.unit
 class TestKeyframeDownsampling:
-    """Keyframes are downsampled before becoming an LLM image payload, so a
-    handful of native-resolution frames can't overflow the answer model's
-    request-size / vision-token budget (which silently degraded reports)."""
+    """Keyframes are downsampled AND JPEG-encoded before becoming an LLM image
+    payload, so a handful of native-resolution frames can't overflow the
+    answer model's request-size limit (which silently degraded reports — the
+    PNG default was ~1 MB/frame, JPEG q85 is ~4x smaller)."""
 
-    def test_large_keyframe_downsampled_to_bounded_edge(self, tmp_path, monkeypatch):
+    def test_large_keyframe_downsampled_to_bounded_edge(self, tmp_path):
         from cogniverse_agents import multimodal
 
         big = tmp_path / "big.jpg"
         Image.new("RGB", (1920, 1080), (10, 20, 30)).save(big)
 
-        captured = {}
-        real_from_pil = dspy.Image.from_PIL
-
-        def _capture(pil_img):
-            captured["size"] = pil_img.size
-            return real_from_pil(pil_img)
-
-        monkeypatch.setattr(dspy.Image, "from_PIL", staticmethod(_capture))
-        img = multimodal._downsampled_dspy_image(str(big))
-
-        assert isinstance(img, dspy.Image)
+        _, decoded = _decode_dspy_jpeg(multimodal._downsampled_dspy_image(str(big)))
         # 1920x1080 fit into a 768 box, aspect preserved → 768x432.
-        assert captured["size"] == (768, 432), captured["size"]
-        assert max(captured["size"]) <= multimodal._MAX_LLM_IMAGE_PX
+        assert decoded.size == (768, 432), decoded.size
+        assert max(decoded.size) <= multimodal._MAX_LLM_IMAGE_PX
 
-    def test_small_keyframe_not_upscaled(self, tmp_path, monkeypatch):
+    def test_small_keyframe_not_upscaled(self, tmp_path):
         from cogniverse_agents import multimodal
 
         small = tmp_path / "small.jpg"
         Image.new("RGB", (120, 90), (1, 2, 3)).save(small)
 
-        captured = {}
-        real_from_pil = dspy.Image.from_PIL
-        monkeypatch.setattr(
-            dspy.Image,
-            "from_PIL",
-            staticmethod(
-                lambda p: captured.__setitem__("size", p.size) or real_from_pil(p)
-            ),
-        )
-        multimodal._downsampled_dspy_image(str(small))
-        assert captured["size"] == (120, 90), captured["size"]
+        _, decoded = _decode_dspy_jpeg(multimodal._downsampled_dspy_image(str(small)))
+        assert decoded.size == (120, 90), decoded.size
+
+    def test_payload_is_jpeg_and_small(self, tmp_path):
+        """The encoded payload is JPEG and far smaller than the PNG default —
+        4 of them must fit a served LM's body limit."""
+        import os
+
+        from cogniverse_agents import multimodal
+
+        # Noise so it can't compress trivially (worst case for a real frame).
+        big = tmp_path / "noise.png"
+        Image.frombytes("RGB", (1920, 1080), os.urandom(1920 * 1080 * 3)).save(big)
+
+        raw, decoded = _decode_dspy_jpeg(multimodal._downsampled_dspy_image(str(big)))
+        assert decoded.size == (768, 432)
+        # A single 768px JPEG frame stays well under 400 KB (PNG was ~1 MB),
+        # so four frames comfortably fit a multi-MB request budget.
+        assert len(raw) < 400_000, len(raw)
 
     def test_resolver_collect_downsamples(self, tmp_path):
         big = tmp_path / "frame.jpg"
@@ -698,13 +711,5 @@ class TestKeyframeDownsampling:
         resolver = KeyframeImageResolver(FakeLocator(str(big)))
         imgs = resolver.collect([_video_hit(1)], max_images=1)
         assert len(imgs) == 1
-        # The cached dspy.Image decodes back to the downsampled size.
-        import base64
-        import io
-
-        from PIL import Image as PILImage
-
-        data_uri = imgs[0].url
-        b64 = data_uri.split(",", 1)[1]
-        decoded = PILImage.open(io.BytesIO(base64.b64decode(b64)))
+        _, decoded = _decode_dspy_jpeg(imgs[0])
         assert max(decoded.size) <= 768, decoded.size

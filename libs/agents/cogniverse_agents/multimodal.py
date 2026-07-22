@@ -32,24 +32,32 @@ from cogniverse_core.common.media import MediaLocator, keyframe_uri
 logger = logging.getLogger(__name__)
 
 # Keyframes are extracted at native video resolution; attaching several
-# full-res frames as base64 blows a served LM's request-size limit (and its
-# vision token budget), so the answer LM's call fails and the agent silently
-# falls back to a stub report. Vision models downsample internally anyway —
-# bound the long edge to this before encoding so the payload stays small.
+# full-res frames as base64 blows a served LM's request-size limit, so the
+# answer LM's call 413s and the agent silently falls back to a stub report.
+# Bound the long edge AND re-encode as JPEG: dspy's PIL path emits PNG
+# (~1 MB for a 768px frame → 4 frames ≈ 5 MB base64, over vLLM's body
+# limit); JPEG q85 of the same frame is ~4x smaller (4 frames ≈ 1 MB).
 _MAX_LLM_IMAGE_PX = 768
+_LLM_IMAGE_JPEG_QUALITY = 85
 
 
 def _downsampled_dspy_image(path: object) -> dspy.Image:
     """Load a keyframe, downscale it so its long edge is at most
-    ``_MAX_LLM_IMAGE_PX`` (aspect preserved, never upscaled), and return it
-    as a ``dspy.Image`` whose base64 payload is small enough for the answer
-    LM's request limit."""
+    ``_MAX_LLM_IMAGE_PX`` (aspect preserved, never upscaled), JPEG-encode it,
+    and return a ``dspy.Image`` whose base64 payload is small enough for the
+    answer LM's request-size limit."""
+    import base64
+    import io
+
     from PIL import Image as PILImage
 
     with PILImage.open(str(path)) as im:
         im = im.convert("RGB")
         im.thumbnail((_MAX_LLM_IMAGE_PX, _MAX_LLM_IMAGE_PX))
-        return dspy.Image.from_PIL(im)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=_LLM_IMAGE_JPEG_QUALITY)
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return dspy.Image(url=f"data:image/jpeg;base64,{b64}")
 
 
 def _bucket_and_tenant(source_url: str) -> Optional[tuple[str, str]]:
