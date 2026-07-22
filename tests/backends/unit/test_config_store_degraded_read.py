@@ -130,3 +130,20 @@ def test_list_configs_raises_on_soft_timeout():
     store = _store_with(_soft_timeout_response())
     with pytest.raises(RuntimeError, match="degraded"):
         store.list_configs("acme")
+
+
+def test_latest_version_read_raises_on_soft_timeout():
+    """The latest-version read gates every write: a soft-timeout returns
+    empty hits, which used to read as version 0 — set_config then wrote
+    version 1 BELOW the real latest and the operator's change silently
+    never took effect."""
+    store = _store_with(_soft_timeout_response())
+    with pytest.raises(RuntimeError, match="degraded"):
+        store._get_latest_version("acme", ConfigScope.SYSTEM, "system", "poll_state")
+
+
+def test_get_stats_surfaces_soft_timeout_instead_of_partial_counts():
+    """A degraded scan must not present partial counts as complete stats."""
+    store = _store_with(_soft_timeout_response())
+    stats = store.get_stats()
+    assert "error" in stats and "degraded" in stats["error"]

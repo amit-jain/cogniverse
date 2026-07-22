@@ -167,6 +167,11 @@ class VespaConfigStore(ConfigStore):
             # real v1 row. Raise so the write aborts.
             logger.error(f"Failed to query latest config version: {e!r}")
             raise
+        # A soft-timeout arrives as HTTP 200 + root.errors + EMPTY hits — the
+        # same shape as "no versions yet". Without this guard a degraded read
+        # returned 0 and set_config wrote version 1 below the real latest,
+        # silently shadowing the operator's change.
+        _raise_if_degraded(response, config_id)
         if response.hits and len(response.hits) > 0:
             return response.hits[0]["fields"]["version"]
         return 0
@@ -838,6 +843,7 @@ class VespaConfigStore(ConfigStore):
             # Select all fields needed for stats
             yql_total = f"select config_id, tenant_id, scope from {self.schema_name} where true limit 400"
             response = self.vespa_app.query(yql=yql_total)
+            _raise_if_degraded(response, "stats")
 
             total_versions = len(response.hits)
             unique_config_ids = len(
