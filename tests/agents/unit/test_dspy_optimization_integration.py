@@ -654,5 +654,49 @@ class TestValidationSplitGatesCompiledModule:
         assert out is _compiled
 
 
+def test_score_on_valset_raises_when_every_example_fails():
+    """A total LM outage during held-out validation scores compiled and
+    baseline 0.0 alike — the overfit gate would keep the compiled module
+    having validated nothing. Zero successes must fail the run instead."""
+    import dspy
+
+    from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+        DSPyAgentOptimizerPipeline,
+    )
+
+    class _Down:
+        def __call__(self, **kwargs):
+            raise ConnectionError("LM down")
+
+    examples = [dspy.Example(q=str(i)).with_inputs("q") for i in range(3)]
+    with pytest.raises(RuntimeError, match="0/3"):
+        DSPyAgentOptimizerPipeline._score_on_valset(
+            _Down(), examples, lambda example, pred: 1.0
+        )
+
+
+def test_score_on_valset_partial_failures_average_over_all_examples():
+    import dspy
+
+    from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+        DSPyAgentOptimizerPipeline,
+    )
+
+    calls = {"n": 0}
+
+    class _FlakyOnce:
+        def __call__(self, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("blip")
+            return {"answer": "ok"}
+
+    examples = [dspy.Example(q=str(i)).with_inputs("q") for i in range(3)]
+    score = DSPyAgentOptimizerPipeline._score_on_valset(
+        _FlakyOnce(), examples, lambda example, pred: 1.0
+    )
+    assert score == pytest.approx(2 / 3)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
