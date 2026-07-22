@@ -16,6 +16,8 @@ import pytest
 
 from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _agent():
     agent = object.__new__(AudioAnalysisAgent)

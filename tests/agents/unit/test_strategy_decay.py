@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
+import pytest
+
 from cogniverse_agents.optimizer.strategy_learner import (
     DEDUP_SIMILARITY_THRESHOLD,
     STRATEGY_AGENT_NAME,
@@ -18,6 +20,8 @@ from cogniverse_core.memory.schema import (
     _retire_unconfirmed_strategy,
     build_default_registry,
 )
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 class FakeMemoryManager:

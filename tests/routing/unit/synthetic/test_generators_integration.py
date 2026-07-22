@@ -20,6 +20,8 @@ from cogniverse_synthetic.schemas import (
 )
 from cogniverse_synthetic.utils import AgentInferrer, PatternExtractor
 
+pytestmark = [pytest.mark.unit]
+
 
 def create_routing_config():
     """Create test configuration for routing generator with mock DSPy"""

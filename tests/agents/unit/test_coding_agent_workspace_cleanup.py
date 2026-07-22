@@ -15,6 +15,8 @@ import pytest
 
 from cogniverse_agents.coding_agent import CodingAgent, CodingInput
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.mark.asyncio
 async def test_workspace_removed_after_run():

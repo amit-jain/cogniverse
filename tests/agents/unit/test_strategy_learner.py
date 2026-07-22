@@ -11,6 +11,8 @@ from cogniverse_agents.optimizer.strategy_learner import (
     _text_overlap,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.fixture
 def mock_memory_manager():

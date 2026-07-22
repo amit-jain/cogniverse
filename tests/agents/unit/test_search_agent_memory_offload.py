@@ -19,6 +19,8 @@ import pytest
 
 from cogniverse_agents.search_agent import SearchAgent
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class _FakeDoc:
     def __init__(self, doc_id):

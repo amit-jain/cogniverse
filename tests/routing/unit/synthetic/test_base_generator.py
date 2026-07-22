@@ -9,6 +9,8 @@ from pydantic import BaseModel
 
 from cogniverse_synthetic.generators.base import BaseGenerator
 
+pytestmark = [pytest.mark.unit]
+
 
 class MockSchema(BaseModel):
     """Mock schema for testing"""

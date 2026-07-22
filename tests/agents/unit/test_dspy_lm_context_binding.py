@@ -31,6 +31,8 @@ import pytest
 
 from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class _CapturingDSPyModule:
     """Stand-in for ``dspy.ChainOfThought(_SummarizationSignature)``.

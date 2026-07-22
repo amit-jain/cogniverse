@@ -14,6 +14,8 @@ from cogniverse_agents.optimizer.signature_variants import (
     variant_qualified_agent_key,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @dataclass
 class _StubTenantConfig:

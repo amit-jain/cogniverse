@@ -6,6 +6,8 @@ import threading
 
 import pytest
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.fixture
 def http_server(tmp_path):

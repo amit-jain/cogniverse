@@ -12,6 +12,8 @@ import pytest
 
 from cogniverse_agents.graph.graph_schema import Node, node_id_from_doc_id
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.mark.parametrize(
     "tenant_id, name",

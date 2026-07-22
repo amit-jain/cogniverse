@@ -15,6 +15,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
+import pytest
+
 from cogniverse_agents.routing.annotation_agent import (
     AnnotationPriority,
     AnnotationRequest,
@@ -25,6 +27,8 @@ from cogniverse_agents.routing.llm_auto_annotator import (
     LLMAutoAnnotator,
 )
 from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 def _annotator() -> LLMAutoAnnotator:

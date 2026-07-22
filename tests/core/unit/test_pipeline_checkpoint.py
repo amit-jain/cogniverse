@@ -21,6 +21,8 @@ from cogniverse_core.durable import (
     PipelineCheckpointStorage,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _cp(**overrides) -> PipelineCheckpoint:
     base = dict(

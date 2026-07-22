@@ -14,6 +14,8 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 from cogniverse_synthetic.service import SyntheticDataService
 
+pytestmark = [pytest.mark.unit]
+
 
 def create_test_generator_config():
     """Create test generator configuration with all required optimizer configs"""

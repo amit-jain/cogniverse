@@ -18,6 +18,8 @@ import pytest
 
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorInput
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class _StopHere(Exception):
     pass

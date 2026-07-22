@@ -15,6 +15,8 @@ from cogniverse_agents.cross_tenant_comparison_agent import (
 from cogniverse_core.memory.federation import ACLRejected
 from cogniverse_core.memory.schema import build_default_registry
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _row(mid: str, content: str, *, subject_key: str = "", kind: str = "external_doc"):
     meta: Dict[str, Any] = {"kind": kind}

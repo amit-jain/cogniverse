@@ -19,6 +19,8 @@ from httpx import ASGITransport
 
 import cogniverse_agents.search_agent as sa
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.mark.asyncio
 async def test_process_route_offloads_blocking_call(monkeypatch):

@@ -38,6 +38,8 @@ from cogniverse_runtime.ingestion_worker.submit_api import (
 )
 from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
 
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
+
 CONTAINER_NAME = "redis-ingestion-v2-e2e"
 
 

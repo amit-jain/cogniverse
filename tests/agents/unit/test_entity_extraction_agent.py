@@ -16,6 +16,8 @@ from cogniverse_agents.entity_extraction_agent import (
 )
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _make_extraction_agent():
     """Create EntityExtractionAgent with mocked DSPy for use in tests."""

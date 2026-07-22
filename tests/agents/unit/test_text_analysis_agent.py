@@ -15,6 +15,8 @@ from cogniverse_agents.text_analysis_agent import (
     set_config_manager,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class TestTextAnalysisAgent:
     """Test TextAnalysisAgent initialization and core functionality"""

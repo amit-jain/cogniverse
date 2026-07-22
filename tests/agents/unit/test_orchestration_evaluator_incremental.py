@@ -12,6 +12,8 @@ import pytest
 
 from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvaluator
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _evaluator(get_spans):
     ev = object.__new__(OrchestrationEvaluator)

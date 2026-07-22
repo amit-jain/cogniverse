@@ -23,6 +23,8 @@ from cogniverse_agents.routing.annotation_agent import (
 from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
 
+pytestmark = [pytest.mark.unit]
+
 
 def _make_request(
     span_id: str = "span-1",

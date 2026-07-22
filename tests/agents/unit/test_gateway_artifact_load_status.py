@@ -18,7 +18,11 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 @contextmanager

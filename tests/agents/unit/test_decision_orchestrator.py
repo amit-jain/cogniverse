@@ -15,9 +15,11 @@ import asyncio
 import pytest
 
 from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
-from cogniverse_core.approval.interfaces import ConfidenceExtractor
 from cogniverse_agents.approval.orchestrator import DecisionOrchestrator
 from cogniverse_agents.workflow.state_machine import WorkflowState
+from cogniverse_core.approval.interfaces import ConfidenceExtractor
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 THRESHOLD = 0.85
 

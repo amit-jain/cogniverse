@@ -23,6 +23,8 @@ from cogniverse_core.events.types import (
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class TestInstrumentedRLMBasics:
     """Basic tests for InstrumentedRLM initialization."""

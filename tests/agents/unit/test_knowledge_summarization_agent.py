@@ -17,6 +17,8 @@ from cogniverse_agents.knowledge_summarization_agent import (
 from cogniverse_agents.temporal_reasoning_agent import _parse_iso
 from cogniverse_core.memory.schema import build_default_registry
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _row(
     mid: str,

@@ -21,6 +21,8 @@ from cogniverse_agents.inference.tolerant_interpreter import (
     TolerantPythonInterpreter,
 )
 
+pytestmark = [pytest.mark.unit]
+
 
 class _StubProcess:
     """Pipes-only stand-in for the Deno subprocess (never exits)."""

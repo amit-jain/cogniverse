@@ -13,6 +13,8 @@ import pytest
 from cogniverse_agents.search.learned_reranker import LearnedReranker
 from cogniverse_agents.search.types import RerankerSearchResult
 
+pytestmark = [pytest.mark.unit]
+
 
 class TestLearnedReranker:
     """Test LiteLLM-based learned reranker"""

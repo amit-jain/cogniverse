@@ -18,6 +18,8 @@ from cogniverse_foundation.config.unified_config import (
     SemanticRouterConfig,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 _SR_URL = "http://semantic-router:8080/v1"
 _DIRECT = "http://direct"
 

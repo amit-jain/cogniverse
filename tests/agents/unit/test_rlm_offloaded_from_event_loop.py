@@ -26,6 +26,8 @@ from cogniverse_agents.multi_document_synthesis_agent import (
 )
 from cogniverse_agents.temporal_reasoning_agent import TemporalReasoningAgent
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 # (agent class, method name, positional args for the 3-arg signature)
 _CASES = [
     (FederatedQueryAgent, "_summarise_with_rlm", ("q", "block")),

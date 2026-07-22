@@ -18,6 +18,8 @@ from cogniverse_synthetic.approval import (
     SyntheticDataFeedbackHandler,
 )
 
+pytestmark = [pytest.mark.unit]
+
 
 class TestApprovalInterfaces:
     """Test approval data structures"""

@@ -20,6 +20,8 @@ from cogniverse_core.memory.provenance import (
     Provenance,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 def _node(memory_id: str, depth: int, with_prov: bool = True) -> CitationNode:
     prov = (

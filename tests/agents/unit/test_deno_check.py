@@ -11,6 +11,8 @@ from cogniverse_agents.inference.deno_check import (
     is_deno_available,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class TestIsDenoAvailable:
     def test_returns_true_when_deno_on_path(self, tmp_path, monkeypatch):

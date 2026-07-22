@@ -13,6 +13,8 @@ import pytest
 
 from cogniverse_agents.graph.graph_manager import GraphManager
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 TENANT = 'ac"me'
 SCHEMA = "kg_test"
 
