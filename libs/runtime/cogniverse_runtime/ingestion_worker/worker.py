@@ -41,6 +41,14 @@ from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_re
 logger = logging.getLogger(__name__)
 
 
+class JobDeadlineExceeded(Exception):
+    """Pipeline exceeded the per-job wall-clock deadline.
+
+    The claim heartbeat makes a hung job indistinguishable from a live one
+    to the reaper, so this deadline is the only bound on "alive but stuck".
+    """
+
+
 class IngestPipelineError(RuntimeError):
     """A pipeline envelope reported ``status='failed'`` / ``'cancelled'``.
 
@@ -92,6 +100,13 @@ class WorkerConfig:
         self.reaper_max_deliveries = int(
             os.environ.get("INGEST_REAPER_MAX_DELIVERIES", "5")
         )
+        # Hard wall-clock cap per job. The claim heartbeat keeps a HUNG
+        # pipeline's PEL entry fresh forever, so without this deadline a
+        # processor stuck on a timeoutless await leaves the job "running"
+        # and its tenant slot held until pod restart. Must exceed the
+        # longest legitimate pipeline (long-video KG extraction runs ~40min
+        # here); 0 disables.
+        self.job_deadline_s = int(os.environ.get("INGEST_JOB_DEADLINE_SECONDS", "7200"))
 
 
 def _media_config_from_env() -> "object":
@@ -533,7 +548,18 @@ async def _process_job(
             },
         ) as job_span:
             try:
-                result = await processor(job)
+                if config.job_deadline_s > 0:
+                    try:
+                        result = await asyncio.wait_for(
+                            processor(job), timeout=config.job_deadline_s
+                        )
+                    except TimeoutError:
+                        raise JobDeadlineExceeded(
+                            f"job exceeded the {config.job_deadline_s}s "
+                            "wall-clock deadline"
+                        ) from None
+                else:
+                    result = await processor(job)
                 _raise_if_pipeline_failed(result)
                 success = True
                 terminal_event = {

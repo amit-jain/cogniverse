@@ -132,17 +132,40 @@ async def claim(
     jobs: List[IngestJob] = []
     for _stream, entries in response:
         for message_id, fields in entries:
-            jobs.append(
-                IngestJob(
-                    message_id=message_id,
-                    ingest_id=fields["ingest_id"],
-                    source_url=fields["source_url"],
-                    profile=fields["profile"],
-                    tenant_id=fields["tenant_id"],
-                    sha=fields["sha"],
-                )
-            )
+            job = _parse_entry(message_id, fields)
+            if job is None:
+                await ack(redis, group, message_id)
+                continue
+            jobs.append(job)
     return jobs
+
+
+def _parse_entry(message_id: str, fields: dict) -> Optional[IngestJob]:
+    """Decode one stream entry, or None for a malformed one.
+
+    An entry missing a required field (external XADD, producer/consumer
+    version skew) can never be processed; raising here used to abort the
+    whole claim/reclaim batch — in the reaper's sweep that happened BEFORE
+    the dead-letter check, so one malformed entry stalled orphan recovery
+    for every entry behind it. Callers ack the malformed entry away.
+    """
+    try:
+        return IngestJob(
+            message_id=message_id,
+            ingest_id=fields["ingest_id"],
+            source_url=fields["source_url"],
+            profile=fields["profile"],
+            tenant_id=fields["tenant_id"],
+            sha=fields["sha"],
+        )
+    except KeyError as exc:
+        logger.error(
+            "dropping malformed queue entry %s (missing %s): %r",
+            message_id,
+            exc,
+            fields,
+        )
+        return None
 
 
 async def autoclaim(
@@ -174,16 +197,11 @@ async def autoclaim(
     for message_id, fields in entries:
         if not fields:
             continue
-        jobs.append(
-            IngestJob(
-                message_id=message_id,
-                ingest_id=fields["ingest_id"],
-                source_url=fields["source_url"],
-                profile=fields["profile"],
-                tenant_id=fields["tenant_id"],
-                sha=fields["sha"],
-            )
-        )
+        job = _parse_entry(message_id, fields)
+        if job is None:
+            await ack(redis, group, message_id)
+            continue
+        jobs.append(job)
     return next_cursor, jobs
 
 
@@ -247,16 +265,27 @@ async def queue_depth(redis: aioredis.Redis) -> int:
     return await redis.xlen(QUEUE_STREAM)
 
 
-async def increment_active(redis: aioredis.Redis, tenant_id: str) -> int:
-    """INCR the per-tenant active counter and return the new value.
+# INCR and EXPIRE in one atomic script: with two round-trips, a connection
+# drop after the INCR leaked a +1 with NO TTL, and the submit-side
+# compensation (which never saw the increment succeed) couldn't decrement
+# it — wedging the tenant's backpressure until a later increment happened
+# to re-arm the TTL.
+_INCR_WITH_TTL_LUA = """
+local v = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+return v
+"""
 
-    Refreshes a TTL on every increment so a leaked counter (incremented but
-    never decremented) self-heals instead of wedging backpressure forever.
+
+async def increment_active(redis: aioredis.Redis, tenant_id: str) -> int:
+    """Atomically INCR the per-tenant active counter with a fresh TTL.
+
+    The TTL self-heals a leaked counter (incremented but never
+    decremented) instead of wedging backpressure forever.
     """
     key = f"{ACTIVE_KEY_PREFIX}{tenant_id}"
-    new_val = await redis.incr(key)
-    await redis.expire(key, ACTIVE_TTL_SECONDS)
-    return new_val
+    new_val = await redis.eval(_INCR_WITH_TTL_LUA, 1, key, ACTIVE_TTL_SECONDS)
+    return int(new_val)
 
 
 async def decrement_active(redis: aioredis.Redis, tenant_id: str) -> int:

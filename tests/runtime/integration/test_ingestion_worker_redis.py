@@ -765,6 +765,101 @@ class TestColdBuildOffload:
         )
 
 
+class TestSubmitIdempotencyRace:
+    @pytest.mark.asyncio
+    async def test_concurrent_identical_submits_enqueue_once(self, redis, monkeypatch):
+        """Identical submissions racing through the check-then-mark window
+        must yield ONE queued job and one shared ingest_id. The old
+        get-then-SET let every racer enqueue: the same video ingested
+        twice and the duplicates burned the tenant's concurrency budget,
+        429ing a different legitimate upload."""
+        from cogniverse_runtime.ingestion_worker import submit_api
+
+        results = await asyncio.gather(
+            *[
+                submit_api.enqueue_ingestion(
+                    redis,
+                    source_url="s3://b/dup.mp4",
+                    profile="video",
+                    tenant_id="acme:acme",
+                )
+                for _ in range(4)
+            ]
+        )
+
+        assert len({r.ingest_id for r in results}) == 1
+        assert sum(1 for r in results if not r.existing) == 1
+        assert await queue.queue_depth(redis) == 1
+        assert await queue.get_active(redis, "acme:acme") == 1
+
+
+class TestJobDeadline:
+    @pytest.mark.asyncio
+    async def test_hung_processor_hits_deadline_and_settles(
+        self, redis, redis_container, monkeypatch
+    ):
+        """A processor stuck on a timeoutless await must not stay 'running'
+        forever behind its own heartbeat: the deadline fails the job,
+        publishes a terminal event, frees the tenant slot, and acks the
+        entry."""
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        monkeypatch.setenv("INGEST_JOB_DEADLINE_SECONDS", "1")
+        from cogniverse_runtime.ingestion_worker import worker
+
+        config = worker.WorkerConfig()
+        await queue.ensure_consumer_group(redis, config.consumer_group)
+        await queue.increment_active(redis, "acme:acme")
+        await idempotency.mark_inflight(redis, "sha_hang", "ing_hang", ttl_seconds=600)
+        await queue.submit(
+            redis,
+            ingest_id="ing_hang",
+            source_url="s3://b/h.mp4",
+            profile="video",
+            tenant_id="acme:acme",
+            sha="sha_hang",
+        )
+        jobs = await queue.claim(
+            redis, config.consumer_group, config.consumer_id, block_ms=1000
+        )
+
+        async def hung(job):
+            await asyncio.sleep(600)
+
+        await worker._process_job(redis, jobs[0], config, processor=hung)
+
+        events = [e for _, e in await queue.read_status_since(redis, "ing_hang")]
+        terminal = events[-1]
+        assert terminal["state"] == "failed"
+        assert terminal["error_type"] == "JobDeadlineExceeded"
+        assert await queue.get_active(redis, "acme:acme") == 0
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 0
+
+
+class TestMalformedEntryTolerance:
+    @pytest.mark.asyncio
+    async def test_malformed_entry_dropped_good_sibling_claimed(self, redis):
+        """A stream entry missing required fields (external XADD, version
+        skew) can never be processed — it must be logged and acked away,
+        not crash the claim batch and starve everything behind it."""
+        await queue.ensure_consumer_group(redis, "g1")
+        await redis.xadd(queue.QUEUE_STREAM, {"ingest_id": "only_field"})
+        await queue.submit(
+            redis,
+            ingest_id="ok1",
+            source_url="s3://b/k",
+            profile="video",
+            tenant_id="t",
+            sha="s1",
+        )
+
+        jobs = await queue.claim(redis, "g1", "c1", block_ms=1000, count=10)
+
+        assert [j.ingest_id for j in jobs] == ["ok1"]
+        pending = await redis.xpending(queue.QUEUE_STREAM, "g1")
+        assert pending["pending"] == 1
+
+
 class TestClaimLoopSurvivesPublishFault:
     @pytest.mark.asyncio
     async def test_publish_fault_leaves_job_pending_and_loop_alive(
