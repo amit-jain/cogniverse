@@ -47,7 +47,10 @@ import httpx
 import pytest
 import requests
 
-from cogniverse_agents.graph.graph_schema import normalize_name
+from cogniverse_agents.graph.graph_schema import (
+    node_id_from_doc_id,
+    normalize_name,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -58,6 +61,7 @@ VESPA_URL = "http://localhost:33080"
 TENANT_FULL_ID = "flywheel_org:production"
 PROFILE = "video_colpali_smol500_mv_frame"
 SCHEMA_NAME = "video_colpali_smol500_mv_frame_flywheel_org_production"
+KG_SCHEMA_NAME = "knowledge_graph_flywheel_org_production"
 
 
 # --------------------------------------------------------------------- #
@@ -264,14 +268,24 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
     ``_``), and PATCHes the ids onto every content doc through the Vespa
     Document v1 update path.
 
-    The exact entities depend on the ASR + claim-extraction LM output for
-    this clip and vary run to run, so identity is NOT asserted. The contract
-    is that extraction actually POPULATES well-formed, deduplicated backrefs
-    on the content segments — the invariant the claim-extraction output-token
-    budget restored. Before that fix the claim extractor's response truncated
-    before its final output field, the parse failed on every segment, and
-    each content doc silently persisted an EMPTY entity_ids list while the
-    job still reported success (an indexed-but-ungrounded corpus).
+    Exact entity strings vary with the ASR + LM output, so identity is not
+    pinned; the contract has three layers:
+      * CONTENT — the extraction captured what is actually in THIS clip: a
+        man (person), a wooded/scrubland outdoor setting, and fire/smoke
+        surfacing in the later frames as the fire is lit. Matched on token
+        membership so wording varies freely but the subject matter must be
+        present and temporally correct.
+      * REFERENTIAL INTEGRITY — every backref resolves to a node genuinely
+        persisted in the tenant's knowledge_graph schema (no dangling
+        pointers; the ``_prune_failed_backrefs`` invariant, end to end).
+      * SHAPE — backrefs populate the content segments and every id is a
+        well-formed, deduplicated, node-normalized token.
+
+    Before the claim-extraction output-token budget fix the extractor's
+    response truncated before its final output field, the parse failed on
+    every segment, and each content doc silently persisted an EMPTY
+    entity_ids list while the job still reported success (an
+    indexed-but-ungrounded corpus).
     """
     video_id = upload_result["final"]["latest"]["result"]["video_id"]
     yql = f'select * from sources {SCHEMA_NAME} where video_id contains "{video_id}"'
@@ -297,12 +311,44 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
         f"KG backrefs populated on only {len(populated)}/19 segments "
         f"(pre-fix silent-empty regression?): {per_seg}"
     )
-    # A real extraction surfaces many distinct entities across the frames but
-    # not an implausible flood — the wide ceiling is a sanity rail against a
-    # broken extractor (the per-id structural checks below carry the weight);
-    # a verbose VLM legitimately yields ~3-6 distinct entities per frame.
-    assert 3 <= len(distinct) <= 200, (
-        f"distinct entity count {len(distinct)} out of range: {sorted(distinct)}"
+
+    # Content: the sample clip shows a man lighting a fire in a wooded /
+    # scrubland outdoor area. Regardless of exact LM phrasing, the extraction
+    # must capture those three semantic elements of THIS specific video —
+    # a pipeline that extracted nothing relevant, or unrelated content, fails
+    # here. Matched on token membership so wording variance ('man' vs
+    # 'the_man' vs 'young_man') doesn't break the check.
+    def _segments_with(*needles: str) -> list:
+        return sorted(
+            i
+            for i, ids in per_seg.items()
+            if any(any(n in e for n in needles) for e in ids)
+        )
+
+    person_segs = _segments_with("man", "person", "people", "human")
+    outdoor_segs = _segments_with(
+        "outdoor", "wood", "forest", "wilderness", "natural", "scrub", "grass", "field"
+    )
+    fire_segs = _segments_with("fire", "smoke", "flame", "ember", "burn")
+
+    # The subject — a man — is the persistent focus across the clip.
+    assert len(person_segs) >= 5, (
+        f"a clip of a man yielded person entities in only {len(person_segs)} "
+        f"segments: {per_seg}"
+    )
+    # The outdoor / wooded setting is present throughout.
+    assert len(outdoor_segs) >= 5, (
+        f"an outdoor clip yielded outdoor/nature entities in only "
+        f"{len(outdoor_segs)} segments: {per_seg}"
+    )
+    # The activity — lighting a fire — surfaces as fire/smoke, and does so in
+    # the LATER frames (the fire is lit toward the end of the clip), proving
+    # the extraction tracks the video's actual narrative progression rather
+    # than emitting generic tokens.
+    assert fire_segs, f"no fire/smoke entity from a fire-lighting clip: {per_seg}"
+    assert max(fire_segs) >= 10, (
+        f"fire/smoke only in early segments {fire_segs}; expected it as the "
+        f"fire develops toward the end of the clip: {per_seg}"
     )
 
     node_id_re = re.compile(r"^[a-z0-9][a-z0-9_]*$")
@@ -316,6 +362,44 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
                 f"seg={seg} entity_id not node-normalized: "
                 f"{e!r} -> {normalize_name(e)!r}"
             )
+
+    # Referential integrity against the REAL persisted graph: every backref
+    # must resolve to an actual node written to the tenant's knowledge_graph
+    # schema. This is the strong content assertion — it proves the ids point
+    # at graph data that genuinely exists (not a dangling reference, not a
+    # normalization mismatch between the backref writer and the node writer,
+    # not a silently-failed node upsert) without asserting entity identity,
+    # which varies by LM run.
+    node_docs = _vespa_search(
+        f'select * from sources {KG_SCHEMA_NAME} where doc_type contains "node"',
+        hits=400,
+    )
+    persisted_node_ids = {
+        node_id_from_doc_id(str(d.get("doc_id", "")), TENANT_FULL_ID) for d in node_docs
+    }
+    persisted_node_ids.discard("")
+    # The graph is non-empty and every distinct backref resolves to a node.
+    assert len(persisted_node_ids) >= 3, (
+        f"KG schema {KG_SCHEMA_NAME} holds too few nodes "
+        f"({len(persisted_node_ids)}) — node upsert path may have failed"
+    )
+    dangling = distinct - persisted_node_ids
+    assert not dangling, (
+        f"{len(dangling)} entity_id backrefs resolve to no persisted KG node "
+        f"(dangling references): {sorted(dangling)}"
+    )
+    # Each node also carries the fields the traversal/search paths read.
+    node_by_id = {
+        node_id_from_doc_id(str(d.get("doc_id", "")), TENANT_FULL_ID): d
+        for d in node_docs
+    }
+    for e in sorted(distinct):
+        node = node_by_id[e]
+        assert node.get("doc_type") == "node", f"{e}: wrong doc_type {node!r}"
+        assert node.get("tenant_id") == TENANT_FULL_ID, f"{e}: wrong tenant {node!r}"
+        assert normalize_name(str(node.get("name", ""))) == e, (
+            f"{e}: node name {node.get('name')!r} does not normalize to its id"
+        )
 
     # relation_ids / claim_ids (the SPO-edge back-refs) may or may not be
     # present depending on whether the LM emitted extractable relations for
