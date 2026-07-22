@@ -45,7 +45,10 @@ logger = logging.getLogger(__name__)
 
 DEAD_STREAM = "ingest:queue:dead"
 DEAD_MARKER_PREFIX = "ingest:dead:"
-DEAD_MARKER_TTL_SECONDS = 6 * 60 * 60
+# Must outlive the longest PEL idle a redelivery can arrive after (matches
+# the done-marker's 7-day default) — at 6h, an entry that idled past the
+# marker's expiry re-ran the settle and wrote a duplicate dead-stream row.
+DEAD_MARKER_TTL_SECONDS = 7 * 24 * 60 * 60
 
 # Atomic exactly-once dead-letter settle. The three side effects (dead-stream
 # xadd, inflight clear, floored active decrement) are not individually

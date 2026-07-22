@@ -84,6 +84,35 @@ async def mark_inflight(
         await redis.set(f"{INFLIGHT_KEY_PREFIX}{sha}", ingest_id)
 
 
+async def claim_inflight(
+    redis: aioredis.Redis, sha: str, ingest_id: str, ttl_seconds: int
+) -> Optional[str]:
+    """Atomically claim the in-flight slot for ``sha``.
+
+    Returns None when this call WON the claim (``ingest_id`` recorded), or
+    the ingest_id already holding the slot when a concurrent or earlier
+    submission owns it — the caller returns that id instead of enqueuing a
+    duplicate. SET NX makes check-and-claim one step; the separate
+    get-then-mark it replaces had an await between check and write, so two
+    identical submissions racing through the gap both enqueued (double
+    ingest, and enough duplicates exhausted the tenant's concurrency
+    budget and 429'd a different legitimate upload).
+    """
+    key = f"{INFLIGHT_KEY_PREFIX}{sha}"
+    ex = ttl_seconds if ttl_seconds > 0 else None
+    for _ in range(2):
+        won = await redis.set(key, ingest_id, ex=ex, nx=True)
+        if won:
+            return None
+        holder = await redis.get(key)
+        if holder:
+            return holder
+        # The holder's key expired between our NX loss and the read —
+        # retry the claim once; second failure falls through to claiming.
+    await redis.set(key, ingest_id, ex=ex)
+    return None
+
+
 async def clear_inflight(redis: aioredis.Redis, sha: str) -> None:
     """Worker calls this on terminal state (success or failure)."""
     await redis.delete(f"{INFLIGHT_KEY_PREFIX}{sha}")

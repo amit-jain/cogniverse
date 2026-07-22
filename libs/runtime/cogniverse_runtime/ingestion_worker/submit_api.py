@@ -136,9 +136,19 @@ async def enqueue_ingestion(
     await queue.ensure_consumer_group(
         redis, os.environ.get("INGEST_CONSUMER_GROUP", "ingestors")
     )
-    await idempotency.mark_inflight(
+    holder = await idempotency.claim_inflight(
         redis, sha, ingest_id, ttl_seconds=_inflight_ttl_seconds()
     )
+    if holder is not None:
+        # A concurrent identical submission won the claim between the
+        # early existing-id check and here — return its run, enqueue
+        # nothing, touch no counters.
+        return EnqueueResult(
+            ingest_id=holder,
+            sha=sha,
+            state="in_flight",
+            existing=True,
+        )
     # Increment the active counter BEFORE the job reaches the work stream, so
     # the increment always precedes claimability. If it ran after submit(), a
     # fast worker could claim + process + decrement (floored at 0) in the
