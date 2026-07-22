@@ -27,6 +27,8 @@ import pytest
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
+
 CONTAINER_NAME = "redis-ingestion-v2-tests"
 
 
@@ -761,3 +763,81 @@ class TestColdBuildOffload:
             "loop never serviced the release while the builder blocked — "
             "the build was not offloaded"
         )
+
+
+class TestClaimLoopSurvivesPublishFault:
+    @pytest.mark.asyncio
+    async def test_publish_fault_leaves_job_pending_and_loop_alive(
+        self, redis, redis_container, monkeypatch
+    ):
+        """A transient Redis error while publishing job status must not crash
+        the consumer loop: the running-publish fires before the per-job error
+        guard, so its failure escapes _process_job — the loop has to absorb
+        it, leave the entry in the PEL for the reaper, and keep claiming and
+        processing later jobs. A crash here takes down the whole worker pod
+        on any Redis blip."""
+        from cogniverse_runtime.ingestion_worker import worker
+
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        monkeypatch.setenv("INGEST_CLAIM_BLOCK_MS", "200")
+        config = worker.WorkerConfig()
+
+        real_publish = queue.publish_status
+
+        async def flaky_publish(r, ingest_id, event):
+            if ingest_id == "ing_blip" and event.get("state") == "running":
+                raise ConnectionError("redis blip during status publish")
+            return await real_publish(r, ingest_id, event)
+
+        monkeypatch.setattr(queue, "publish_status", flaky_publish)
+
+        processed: list[str] = []
+
+        async def processor(job):
+            processed.append(job.ingest_id)
+            return {"status": "success", "video_id": job.ingest_id}
+
+        await queue.ensure_consumer_group(redis, config.consumer_group)
+        await queue.submit(
+            redis, "ing_blip", "s3://b/k1", "video", "acme:acme", "sha_b1"
+        )
+
+        stop = asyncio.Event()
+        loop_task = asyncio.create_task(
+            worker._claim_loop(redis, config, stop, processor=processor)
+        )
+        try:
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                pending = await redis.xpending(
+                    queue.QUEUE_STREAM, config.consumer_group
+                )
+                if pending["pending"] == 1:
+                    break
+                await asyncio.sleep(0.05)
+
+            await queue.submit(
+                redis, "ing_ok", "s3://b/k2", "video", "acme:acme", "sha_b2"
+            )
+            deadline = time.time() + 10
+            while "ing_ok" not in processed and time.time() < deadline:
+                await asyncio.sleep(0.05)
+
+            assert not loop_task.done(), "claim loop crashed on a status-publish blip"
+            # The blipped job never reached the processor (its publish failed
+            # first) and stays pending for the reaper; the later job ran.
+            assert processed == ["ing_ok"], processed
+            # ing_ok's ack runs after the processor returns; wait for it to
+            # land so only the blipped entry remains for the reaper.
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                pending = await redis.xpending(
+                    queue.QUEUE_STREAM, config.consumer_group
+                )
+                if pending["pending"] == 1:
+                    break
+                await asyncio.sleep(0.05)
+            assert pending["pending"] == 1
+        finally:
+            stop.set()
+            await asyncio.wait_for(loop_task, timeout=5)

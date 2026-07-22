@@ -131,11 +131,17 @@ async def run_reaper_once(
     *,
     min_idle_ms: int,
     processor=_default_processor,
-    count: int = 10,
+    count: int = 1,
 ) -> int:
     """One full PEL sweep. Returns the number of entries recovered
     (settled or reprocessed). Entries idle less than ``min_idle_ms`` —
     a live worker's in-progress jobs — are never touched.
+
+    ``count`` stays 1 so each orphan is claimed only when it is about to be
+    processed. A larger batch parks the tail behind a minutes-long re-drive
+    with its idle clock running: past ``min_idle_ms`` another replica's
+    reaper reclaims the tail entry and both re-drive it concurrently —
+    duplicate ingestion and a double-decremented tenant counter.
     """
     recovered = 0
     cursor = "0-0"

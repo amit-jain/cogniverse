@@ -24,6 +24,8 @@ import pytest
 from cogniverse_runtime.ingestion_worker import idempotency, queue, reaper, worker
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
+
 CONTAINER_NAME = "redis-ingestion-reaper-tests"
 
 
@@ -147,6 +149,57 @@ class TestReaperRecovery:
         events = [e for _, e in await queue.read_status_since(redis, ingest_id)]
         assert events[-1]["state"] == "complete"
         assert "cleanup_error" not in events[-1]
+
+    @pytest.mark.asyncio
+    async def test_orphans_are_claimed_one_at_a_time(self, redis):
+        """While the reaper re-drives one orphan, the remaining orphans must
+        still belong to the dead consumer — claiming a batch up front parks
+        the tail with its idle clock running, so past the min-idle window a
+        second replica's reaper reclaims a tail entry and both re-drive it
+        concurrently (duplicate ingestion, double-decremented counter)."""
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-reaper"
+        tenant = "acme:acme"
+        for i in range(3):
+            await _orphan_job(
+                redis,
+                config,
+                ingest_id=f"ing_tail_{i}",
+                sha=f"sha_tail_{i}",
+                tenant=tenant,
+            )
+
+        owners_during_first: list = []
+        gate = asyncio.Event()
+
+        async def _proc(job):
+            if not gate.is_set():
+                entries = await redis.xpending_range(
+                    queue.QUEUE_STREAM,
+                    config.consumer_group,
+                    min="-",
+                    max="+",
+                    count=10,
+                )
+                owners_during_first.extend(e["consumer"] for e in entries)
+                gate.set()
+            return {"status": "success", "video_id": job.ingest_id, "results": {}}
+
+        recovered = await reaper.run_reaper_once(
+            redis, config, min_idle_ms=0, processor=_proc
+        )
+
+        assert recovered == 3
+        # During the first re-drive: exactly one entry claimed by the reaper,
+        # the other two still owned by the dead consumer (idle only while
+        # actually about to be processed).
+        owners = [
+            o.decode() if isinstance(o, bytes) else o for o in owners_during_first
+        ]
+        assert owners.count("live-reaper") == 1, owners
+        assert owners.count("dead-1") == 2, owners
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 0
 
     @pytest.mark.asyncio
     async def test_reaper_settles_finished_but_unacked_job_without_reprocess(
