@@ -55,7 +55,7 @@ import pytest
 
 RUNTIME_BASE = os.environ.get(
     "COGNIVERSE_RUNTIME_BASE",
-    "http://localhost:28000",
+    "http://localhost:33000",
 )
 
 
@@ -69,18 +69,7 @@ def _runtime_reachable() -> bool:
         return False
 
 
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not _runtime_reachable(),
-        reason=(
-            f"cogniverse-runtime not reachable at {RUNTIME_BASE}; "
-            "this E2E requires the k3d cluster to be up with the "
-            "runtime NodePort exposed (28000 by default). Set "
-            "COGNIVERSE_RUNTIME_BASE if the address differs."
-        ),
-    ),
-]
+pytestmark = [pytest.mark.e2e]
 
 
 # --------------------------------------------------------------------- #
@@ -795,7 +784,7 @@ def test_with_constraint_response_payload_exposes_loop_trajectory_fields():
 def _phoenix_reachable() -> bool:
     try:
         with httpx.Client(timeout=2.0) as c:
-            r = c.get("http://localhost:26006/v1/traces")
+            r = c.get("http://localhost:33006/v1/traces")
         return r.status_code == 200
     except Exception:
         return False
@@ -803,7 +792,7 @@ def _phoenix_reachable() -> bool:
 
 @pytest.mark.skipif(
     not _phoenix_reachable(),
-    reason="Phoenix not reachable at localhost:26006",
+    reason="Phoenix not reachable at localhost:33006",
 )
 def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
     """End-to-end Phoenix span check: a /process call with a constraint
@@ -864,7 +853,7 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
                     raise
                 time.sleep(2)
 
-    px_initial = Client(base_url="http://localhost:26006")
+    px_initial = Client(base_url="http://localhost:33006")
     spans_for_match = _tenant_spans(px_initial)
     # Match session_ids that start with the base; pick the one with
     # ``inbound_constraints_applied`` populated (the successful run).
@@ -885,7 +874,7 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
     # and the runtime emits the final span at loop exit. Poll up to
     # 30 s for the expected count to appear rather than asserting
     # on a snapshot that might be mid-ingest.
-    px = Client(base_url="http://localhost:26006")
+    px = Client(base_url="http://localhost:33006")
     expected_iter_count = il["iterations_executed"]
     iter_spans = None
     deadline = time.time() + 30

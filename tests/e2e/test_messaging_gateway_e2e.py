@@ -4,7 +4,7 @@ Integration tests for messaging gateway with real services.
 Tests the full flow: mock Telegram updates → gateway handler → real runtime API.
 Real Mem0 for conversation history. Real invite token flow.
 
-Requires: Runtime at localhost:28000, the configured LM endpoint.
+Requires: Runtime at localhost:33000, the configured LM endpoint.
 """
 
 import logging
@@ -17,7 +17,7 @@ from cogniverse_messaging.telegram_handler import format_agent_response
 
 logger = logging.getLogger(__name__)
 
-RUNTIME_URL = "http://localhost:28000"
+RUNTIME_URL = "http://localhost:33000"
 
 
 def _runtime_available() -> bool:
@@ -31,7 +31,7 @@ def _runtime_available() -> bool:
 
 skip_if_no_runtime = pytest.mark.skipif(
     not _runtime_available(),
-    reason="Runtime not available at localhost:28000",
+    reason="Runtime not available at localhost:33000",
 )
 
 

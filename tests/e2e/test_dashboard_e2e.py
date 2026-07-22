@@ -6,8 +6,8 @@ memory lifecycle, DSPy optimization pipeline (annotation harvesting,
 golden dataset, synthetic data, module optimization), and monitoring tabs.
 
 Requires:
-- Dashboard running at http://localhost:28501
-- Runtime at http://localhost:28000
+- Dashboard running at http://localhost:33501
+- Runtime at http://localhost:33000
 - LM, Vespa, Phoenix running
 - flywheel_org:production tenant with ingested data
 """

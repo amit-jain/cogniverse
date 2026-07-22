@@ -34,7 +34,7 @@ import uuid
 import httpx
 import pytest
 
-RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:28000")
+RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:33000")
 _TENANT = "flywheel_org:production"
 _CONSTRAINT_TEXT = "focus on safety equipment and protective gear"
 _CONSTRAINT_WORDS = {"safety", "equipment", "protective", "gear"}
@@ -50,13 +50,7 @@ def _runtime_reachable() -> bool:
         return False
 
 
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not _runtime_reachable(),
-        reason=f"cogniverse-runtime not reachable at {RUNTIME_BASE}",
-    ),
-]
+pytestmark = [pytest.mark.e2e]
 
 
 def _run_process(session_id: str, query: str, constraint: str | None) -> dict:

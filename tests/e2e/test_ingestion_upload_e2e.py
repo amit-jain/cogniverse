@@ -28,8 +28,8 @@ PRE-REQS
 ========
 
 * k3d cluster up with the cogniverse helm chart deployed.
-* ``cogniverse-runtime`` at localhost:28000 (NodePort 28000).
-* ``cogniverse-vespa`` at localhost:8080 (NodePort 8080).
+* ``cogniverse-runtime`` at localhost:33000 (NodePort 28000).
+* ``cogniverse-vespa`` at localhost:33080 (NodePort 8080).
 * Tenant ``flywheel_org:production`` registered (the chart ships
   it as the default test tenant).
 * Sample video at
@@ -39,6 +39,7 @@ The test will skip with a clear reason when any prereq is missing —
 no silent passes.
 """
 
+import re
 import time
 from pathlib import Path
 
@@ -46,12 +47,14 @@ import httpx
 import pytest
 import requests
 
+from cogniverse_agents.graph.graph_schema import normalize_name
+
 pytestmark = pytest.mark.e2e
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_VIDEO = REPO_ROOT / "data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4"
-RUNTIME_URL = "http://localhost:28000"
-VESPA_URL = "http://localhost:8080"
+RUNTIME_URL = "http://localhost:33000"
+VESPA_URL = "http://localhost:33080"
 TENANT_FULL_ID = "flywheel_org:production"
 PROFILE = "video_colpali_smol500_mv_frame"
 SCHEMA_NAME = "video_colpali_smol500_mv_frame_flywheel_org_production"
@@ -89,18 +92,6 @@ pytestmark = [
     pytest.mark.skipif(
         not SAMPLE_VIDEO.exists(),
         reason=f"sample video missing: {SAMPLE_VIDEO}",
-    ),
-    pytest.mark.skipif(
-        not _service_up(f"{RUNTIME_URL}/health"),
-        reason=f"cogniverse-runtime not reachable at {RUNTIME_URL}",
-    ),
-    pytest.mark.skipif(
-        not _service_up(f"{VESPA_URL}/state/v1/health"),
-        reason=f"live Vespa not reachable at {VESPA_URL}",
-    ),
-    pytest.mark.skipif(
-        not _tenant_registered(),
-        reason=f"tenant {TENANT_FULL_ID} not registered in the cluster",
     ),
 ]
 
@@ -264,30 +255,23 @@ def test_persisted_documents_carry_expected_fields(upload_result):
 
 
 def test_persisted_documents_have_kg_backrefs(upload_result):
-    """KG back-refs (entity_ids) populate on every content doc.
+    """KG back-refs (entity_ids) populate on the content docs with
+    well-formed, deduplicated, node-normalized ids.
 
-    The per-segment KG extraction pass runs after content ingestion:
-    Whisper transcribes the audio, the transcript is aligned to each
-    keyframe's 1-second window, GLiNER extracts entities per chunk,
-    and the resulting node_ids are PATCHed onto every content doc via
-    the Vespa Document v1 update path.
+    The per-segment KG pass extracts entities from BOTH the aligned audio
+    transcript AND the per-keyframe VLM frame descriptions, normalizes each
+    to a node id via ``normalize_name`` (lowercased, non-alphanumerics →
+    ``_``), and PATCHes the ids onto every content doc through the Vespa
+    Document v1 update path.
 
-    For the v_-D1gdv_gQyw.mp4 sample (the speaker says "I'm about to
-    light a fire Bear Grylls style. Or at least try. Don't tell me I
-    got it on the first try. Don't tell me I got it on the first one.
-    Will it catch it on fire? Look at that. We have fire!"), GLiNER at
-    threshold 0.3 reliably surfaces:
-        - 'Bear Grylls' (Person, score ~0.917)
-        - 'fire'        (Substance, score ~0.75-0.81)
-    Pronouns 'I', 'We' are filtered by _PRONOUN_BLOCKLIST.
-
-    Whisper returns a single transcript segment for this audio; only
-    the keyframes whose 1-second window overlaps the spoken-audio span
-    receive KG back-refs. Empirically against the live cluster + this
-    video: keyframes 0..16 overlap (17 with entities), 17 + 18 fall
-    past the transcript end and have empty entity_ids — that boundary
-    shape is locked so a future Whisper-segmentation change here
-    surfaces for explicit review.
+    The exact entities depend on the ASR + claim-extraction LM output for
+    this clip and vary run to run, so identity is NOT asserted. The contract
+    is that extraction actually POPULATES well-formed, deduplicated backrefs
+    on the content segments — the invariant the claim-extraction output-token
+    budget restored. Before that fix the claim extractor's response truncated
+    before its final output field, the parse failed on every segment, and
+    each content doc silently persisted an EMPTY entity_ids list while the
+    job still reported success (an indexed-but-ungrounded corpus).
     """
     video_id = upload_result["final"]["latest"]["result"]["video_id"]
     yql = f'select * from sources {SCHEMA_NAME} where video_id contains "{video_id}"'
@@ -295,39 +279,54 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
     assert len(docs) == 19
 
     by_seg = {int(d["segment_id"]): d for d in docs}
-    expected_entity_ids = sorted(["fire", "bear_grylls"])
+    per_seg = {i: list(by_seg[i].get("entity_ids") or []) for i in range(19)}
+    # Surface the real distribution in the run log — model output varies, so
+    # this records what this run actually extracted for later inspection.
+    print("KG entity_ids per segment:", per_seg)
 
-    # Keyframes 0..16 overlap the Whisper transcript window →
-    # entity_ids populated with ['bear_grylls', 'fire'] (sorted).
-    for idx in range(17):
-        doc = by_seg[idx]
-        actual = sorted(doc.get("entity_ids", []))
-        assert actual == expected_entity_ids, (
-            f"seg={idx}: expected entity_ids={expected_entity_ids}, got {actual}"
-        )
+    populated = [i for i, ids in per_seg.items() if ids]
+    all_ids = [e for ids in per_seg.values() for e in ids]
+    distinct = set(all_ids)
 
-    # Keyframes 17 + 18 fall past the spoken-audio span → no
-    # transcript overlap → empty entity_ids. Locked so a Whisper
-    # segmentation change here surfaces for explicit review.
-    for idx in (17, 18):
-        doc = by_seg[idx]
-        assert doc.get("entity_ids", []) == [], (
-            f"seg={idx}: expected empty entity_ids past transcript end, "
-            f"got {doc.get('entity_ids')}"
-        )
+    # Extraction populated backrefs on the vast majority of the 19 segments —
+    # the per-keyframe VLM description alone yields entities for every frame,
+    # so a mostly-empty result means the extraction/parse regressed to the
+    # pre-fix silent-empty behaviour. The floor allows a few frames whose
+    # terse description filters to nothing without flaking on LM variance.
+    assert len(populated) >= 12, (
+        f"KG backrefs populated on only {len(populated)}/19 segments "
+        f"(pre-fix silent-empty regression?): {per_seg}"
+    )
+    # A real extraction surfaces many distinct entities across the frames but
+    # not an implausible flood — the wide ceiling is a sanity rail against a
+    # broken extractor (the per-id structural checks below carry the weight);
+    # a verbose VLM legitimately yields ~3-6 distinct entities per frame.
+    assert 3 <= len(distinct) <= 200, (
+        f"distinct entity count {len(distinct)} out of range: {sorted(distinct)}"
+    )
 
-    # ClaimExtractor produces SPO edges only when the transcript yields
-    # extractable relations against the locked predicate vocabulary
-    # (born_in, discovered, worked_at, won, ...). The Bear-Grylls test
-    # clip has no such relations, so relation_ids / claim_ids stay
-    # empty for this fixture. Lock the empty-list shape so a future
-    # ClaimExtractor change that starts emitting edges for this clip
-    # surfaces here for explicit review.
-    for idx in range(19):
-        doc = by_seg[idx]
-        assert doc.get("relation_ids", []) == [], (
-            f"seg={idx}: unexpected relation_ids: {doc.get('relation_ids')}"
-        )
-        assert doc.get("claim_ids", []) == [], (
-            f"seg={idx}: unexpected claim_ids: {doc.get('claim_ids')}"
-        )
+    node_id_re = re.compile(r"^[a-z0-9][a-z0-9_]*$")
+    for seg, ids in per_seg.items():
+        assert len(ids) == len(set(ids)), f"seg={seg} duplicate entity_ids: {ids}"
+        assert len(ids) <= 30, f"seg={seg} implausible entity count {len(ids)}: {ids}"
+        for e in ids:
+            assert node_id_re.match(e), f"seg={seg} malformed entity_id: {e!r}"
+            # Every id is a node identifier, i.e. re-normalizing is a no-op.
+            assert normalize_name(e) == e, (
+                f"seg={seg} entity_id not node-normalized: "
+                f"{e!r} -> {normalize_name(e)!r}"
+            )
+
+    # relation_ids / claim_ids (the SPO-edge back-refs) may or may not be
+    # present depending on whether the LM emitted extractable relations for
+    # this clip; assert only the shape and the same node-normalized id form
+    # when present, never exact identity.
+    for seg in range(19):
+        for field in ("relation_ids", "claim_ids"):
+            vals = by_seg[seg].get(field) or []
+            assert isinstance(vals, list), f"seg={seg} {field} not a list: {vals!r}"
+            assert len(vals) == len(set(vals)), f"seg={seg} duplicate {field}: {vals}"
+            for v in vals:
+                assert isinstance(v, str) and v.strip(), (
+                    f"seg={seg} malformed {field} entry: {v!r}"
+                )

@@ -2,9 +2,9 @@
 E2E tests for quality monitor sidecar, strategy learning, and Argo workflows.
 
 Requires live k3d stack via `cogniverse up` with:
-- Runtime at localhost:28000 (Service NodePort, exposed via k3d loadbalancer)
-- Vespa at localhost:8080 (Service port directly)
-- Phoenix at localhost:26006 (Service NodePort)
+- Runtime at localhost:33000 (Service NodePort, exposed via k3d loadbalancer)
+- Vespa at localhost:33080 (Service port directly)
+- Phoenix at localhost:33006 (Service NodePort)
 - the configured LM endpoint
 - Argo controller deployed
 
@@ -22,8 +22,8 @@ import pytest
 
 from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
 
-PHOENIX = "http://localhost:26006"
-VESPA = "http://localhost:8080"
+PHOENIX = "http://localhost:33006"
+VESPA = "http://localhost:33080"
 
 
 def _get_kubeconfig() -> str:

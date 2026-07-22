@@ -24,35 +24,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-
-def _runtime_already_up_for_collect() -> bool:
-    """Cheap runtime probe used at collection time. Retries 3× with 2s
-    spacing so a mid-rollout pod doesn't cause collect_ignore to misfire.
-    """
-    import time
-
-    for attempt in range(3):
-        try:
-            if (
-                httpx.get(
-                    "http://localhost:28000/health/live", timeout=10.0
-                ).status_code
-                == 200
-            ):
-                return True
-        except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError):
-            pass
-        if attempt < 2:
-            time.sleep(2)
-    return False
-
-
-# Deployment-lifecycle tests bring up their own k3d cluster and are no-ops
-# against an existing stack. Drop them at collection so they don't count
-# as skipped (CLAUDE.md requires 0 skipped).
-collect_ignore_glob: list[str] = []
-if _runtime_already_up_for_collect():
-    collect_ignore_glob.append("deployment/*")
+# Deployment-lifecycle tests bring up their own port-forward-based cluster
+# and are exercised via a dedicated ``pytest tests/e2e/deployment/`` run —
+# never as part of the main suite, which boots its own NodePort stack via
+# ``e2e_stack`` (two cluster creates in one session would double a
+# 20-minute boot and the subsuite's own stack-conflict guard would fire).
+collect_ignore_glob: list[str] = ["deployment/*"]
 
 
 def _openshell_sandbox_ready() -> bool:
@@ -158,9 +135,9 @@ def pytest_collection_modifyitems(config, items):
 
 
 # k3d NodePort URLs — defined in charts/cogniverse/values.yaml
-RUNTIME = "http://localhost:28000"  # runtime.service.nodePort
-DASHBOARD = "http://localhost:28501"  # dashboard.service.nodePort
-PHOENIX_URL = "http://localhost:26006"  # phoenix.service.nodePort
+RUNTIME = "http://localhost:33000"  # runtime.service.nodePort
+DASHBOARD = "http://localhost:33501"  # dashboard.service.nodePort
+PHOENIX_URL = "http://localhost:33006"  # phoenix.service.nodePort
 TENANT_ID = "flywheel_org:production"
 
 DATA_ROOT = Path(__file__).parent.parent.parent / "data"
@@ -210,7 +187,7 @@ def _skip_if_no_runtime():
     """Skip marker that checks runtime availability at test time, not import time."""
     if not runtime_available():
         pytest.skip(
-            "Runtime not available at localhost:28000 — run 'cogniverse up' first"
+            "Runtime not available at localhost:33000 — run 'cogniverse up' first"
         )
 
 
@@ -218,7 +195,7 @@ def _skip_if_no_dashboard():
     """Skip marker that checks dashboard availability at test time, not import time."""
     if not dashboard_available():
         pytest.skip(
-            "Dashboard not available at localhost:28501 — run 'cogniverse up' first"
+            "Dashboard not available at localhost:33501 — run 'cogniverse up' first"
         )
 
 
@@ -248,12 +225,12 @@ def unique_id(prefix: str = "e2e") -> str:
 
 
 # Vespa config-server URL. The e2e suite ASSUMES a k3d cluster with the
-# config-server NodePort-mapped at localhost:19071 (see
+# config-server NodePort-mapped at localhost:33071 (see
 # charts/cogniverse/values.k3s.yaml). Override via VESPA_CONFIG_URL
 # only if running against a non-k3d topology.
 _VESPA_SCHEMAS_LIST_URL = os.environ.get(
     "VESPA_CONFIG_URL",
-    "http://localhost:19071",
+    "http://localhost:33071",
 ).rstrip("/") + (
     "/application/v2/tenant/default/application/default/"
     "environment/prod/region/default/instance/default/content/schemas/"
@@ -709,7 +686,7 @@ def _bootstrap_tenant_and_schemas() -> None:
             print(f"Profile registration failed: {exc}")
 
 
-LLM_URL = "http://localhost:11434"
+LLM_URL = "http://localhost:33434"
 LLM_MODEL = "qwen3:4b"
 
 
@@ -802,54 +779,186 @@ def _ingest_sample_video() -> None:
         print(f"Video ingestion failed (non-fatal): {exc}")
 
 
+E2E_CLUSTER_NAME = "cogniverse-e2e"
+DEV_CLUSTER_NAME = "cogniverse"
+
+# Host-side loadbalancer ports of the e2e cluster. The right-hand side is
+# the chart's canonical NodePort (unchanged); the host side is offset into
+# 33xxx so the e2e stack never collides with a dev cluster's 28xxx/8080
+# mappings or the 29xxx test-sidecar range. Every localhost URL in this
+# suite uses the 33xxx side.
+E2E_HOST_PORTS = {
+    33080: 8080,  # vespa http
+    33071: 19071,  # vespa config
+    33000: 28000,  # runtime
+    33501: 28501,  # dashboard
+    33006: 26006,  # phoenix ui
+    33317: 4317,  # otel grpc
+    33434: 11434,  # llm (ollama-compat)
+    33746: 2746,  # argo server
+    33901: 29001,  # inference sidecars
+    33902: 29002,
+    33904: 29004,
+    33905: 29005,
+    33906: 29006,
+    33910: 29010,
+    33911: 29011,
+}
+
+
+def _port_bound(port: int) -> bool:
+    import socket
+
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _stop_dev_cluster_and_free_ports() -> None:
+    """Stop (never delete) a running dev ``cogniverse`` k3d cluster.
+
+    The host cannot fit two clusters' pods in RAM, and the dev cluster's
+    loadbalancer holds the canonical NodePorts the e2e stack maps. Data
+    survives the stop — bring it back with ``k3d cluster start cogniverse``
+    (or ``cogniverse up``) after the e2e run.
+
+    The e2e cluster's own host ports (33xxx) never overlap the dev
+    cluster's, but a stray process could hold one — verify they are all
+    free before the create, which would otherwise fail the whole session.
+    """
+    result = subprocess.run(
+        ["k3d", "cluster", "list", DEV_CLUSTER_NAME],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode == 0 and DEV_CLUSTER_NAME in result.stdout:
+        print(
+            f"Stopping dev cluster {DEV_CLUSTER_NAME!r} — the e2e stack needs "
+            "the host's RAM and NodePorts. Restart it afterwards with "
+            f"'k3d cluster start {DEV_CLUSTER_NAME}'."
+        )
+        subprocess.run(
+            ["k3d", "cluster", "stop", DEV_CLUSTER_NAME],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+    deadline = _time.time() + 90
+    while _time.time() < deadline:
+        busy = [p for p in E2E_HOST_PORTS if _port_bound(p)]
+        if not busy:
+            return
+        _time.sleep(2)
+    pytest.fail(
+        f"e2e host ports {busy} are bound by another process — free them and re-run."
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def e2e_stack():
-    """Session fixture that ensures the stack is running and bootstrapped.
+    """Boot an isolated e2e stack and bootstrap it.
 
-    If services are already up (from a prior ``cogniverse up``), uses them.
-    Otherwise attempts to start the stack. After services are confirmed,
-    creates the E2E tenant, deploys schemas, ingests sample data, and brings
-    up the OpenShell sandbox gateway so the coding agent's sandbox path is
-    exercised end-to-end (not short-circuited by a skip).
+    Creates a dedicated k3d cluster whose loadbalancer maps the offset
+    33xxx HOST ports onto the chart's canonical NodePorts (see
+    ``E2E_HOST_PORTS``), builds the images from the working tree, and
+    Helm-installs with devMode OFF: the pods run the code baked into the
+    images, never a bind-mounted tree with a stale interpreter. Host storage is NOT shared, so the stack starts on fresh
+    data and cannot touch a dev cluster's persisted state. The cluster is
+    deleted on session teardown.
 
-    CronWorkflows in the cogniverse namespace are suspended for the
-    duration of the session and their prior state restored on teardown
-    — they otherwise spawn workflow pods that compete with e2e tests
-    for k3d node resources (observed: stuck pods after long runs,
-    cascading evictions). The previous workaround was a live
-    ``kubectl patch`` left in place across runs, which leaked state.
+    A dev (``cogniverse up``) stack is never reused — e2e results must come
+    from a reproducible self-contained deployment. A running dev cluster is
+    STOPPED first (never deleted): the host cannot fit two clusters' pods
+    in RAM, and the dev loadbalancer holds the NodePorts this stack maps.
+
+    After the stack is healthy: creates the E2E tenant, deploys schemas,
+    ingests sample data, and brings up the OpenShell sandbox gateway.
+    CronWorkflows are suspended for the session — they otherwise spawn
+    workflow pods that compete with e2e tests for k3d node resources.
     """
-    if not _ensure_stack_running():
-        pytest.skip("Cogniverse stack not available — run 'cogniverse up' first")
+    from tests.e2e.deployment.conftest import (
+        create_test_cluster,
+        delete_test_cluster,
+        deploy_stack,
+    )
 
-    cron_restore = _suspend_cronworkflows_for_session()
+    # A crashed previous session leaves its disposable cluster — and its
+    # 33xxx port bindings — behind. Reap it before the port check, or the
+    # leftover reads as "another process holds the ports".
+    delete_test_cluster(E2E_CLUSTER_NAME)
+    _stop_dev_cluster_and_free_ports()
 
-    # Force the devMode-mounted code to reload. ``cogniverse up`` leaves
-    # runtime/dashboard pods running with whatever Python modules were
-    # imported at pod-start time, so later ``git pull``s or local edits
-    # aren't picked up by the running process. Tests against a stale
-    # interpreter produce misleading failures (we just hit this with a
-    # cached SearchAgent holding the pre-fix localhost backend URL).
-    # No-op in production mode (no bind-mount, no staleness risk).
-    from tests.e2e.deployment.conftest import refresh_workload_pods_if_devmode
-
-    if not refresh_workload_pods_if_devmode():
-        pytest.fail("Runtime pod did not come back healthy after refresh")
-
-    # Pre-flight: drop test tenants and Vespa-side orphans left from
-    # earlier crashes so the session starts on a known-clean baseline.
-    _cleanup_test_tenants()
-    _reconcile_vespa_orphans()
-
-    _bootstrap_tenant_and_schemas()
-    _ingest_sample_video()
-    _ensure_llm_model()
-    _ensure_sandbox_gateway()
+    create_test_cluster(
+        E2E_CLUSTER_NAME,
+        ports=[f"{host}:{node}" for host, node in E2E_HOST_PORTS.items()],
+        share_host_storage=False,
+    )
     try:
-        yield
+        # Test-cluster-only helm overrides (never touch the shipped chart):
+        #  - teacher LM off: only the opt-in teacher-optimization e2e uses it,
+        #    and it can't coexist with colpali + student during GPU weight
+        #    load; the dev cluster keeps it scaled to zero for the same reason.
+        #  - vLLM liveness grace widened: on a COLD cluster the GPU engines
+        #    load weights from disk for ~12 min (vs instant off the warm dev
+        #    cache), then profile — overrunning the shipped 22-min liveness
+        #    budget, so the kubelet kills them mid-init and they never
+        #    converge. ~50 min (initialDelay 1200s + 60×30s) covers a cold
+        #    load under memory contention. Only LIVENESS matters — readiness
+        #    never kills, it just gates the Available condition the wait below
+        #    keys off, so it is left shipped-default.
+        gpu_vllm = ("vllm_colpali", "vllm_asr", "vllm_llm_student")
+        extra_set = {"inference.vllm_llm_teacher.enabled": "false"}
+        for svc in gpu_vllm:
+            extra_set[f"inference.{svc}.livenessProbe.initialDelaySeconds"] = "1200"
+            extra_set[f"inference.{svc}.livenessProbe.failureThreshold"] = "60"
+        deploy_stack(E2E_CLUSTER_NAME, "cogniverse", extra_set=extra_set)
+        if not _ensure_stack_running():
+            pytest.fail("e2e stack did not become healthy after deploy")
+
+        # GPU inference deployments (colpali embed, ASR, student) load
+        # weights from a cold disk for ~12 min each, then profile — the
+        # ingest path depends on them and deploy_stack's own pod wait is
+        # best-effort at 300s. Without this, the first upload runs while the
+        # embed service refuses connections, every segment's embedding
+        # fails, and the job (correctly) terminates failed instead of
+        # exercising the pipeline. Budget 40 min to cover the cold-load +
+        # profile chain under GPU-memory contention.
+        wait = subprocess.run(
+            [
+                "kubectl",
+                "--context",
+                f"k3d-{E2E_CLUSTER_NAME}",
+                "wait",
+                "--for=condition=available",
+                "deployment",
+                "--all",
+                "-n",
+                "cogniverse",
+                "--timeout=2400s",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2460,
+        )
+        if wait.returncode != 0:
+            pytest.fail(
+                "e2e stack deployments not all available within 40m: "
+                f"{(wait.stdout or '')[-600:]} {(wait.stderr or '')[-300:]}"
+            )
+
+        cron_restore = _suspend_cronworkflows_for_session()
+        _bootstrap_tenant_and_schemas()
+        _ingest_sample_video()
+        _ensure_llm_model()
+        _ensure_sandbox_gateway()
+        try:
+            yield
+        finally:
+            _restore_cronworkflows(cron_restore)
     finally:
-        _cleanup_test_tenants()
-        _restore_cronworkflows(cron_restore)
+        delete_test_cluster(E2E_CLUSTER_NAME)
 
 
 # Prefixes used by per-test tenants. Anything else (bootstrap, system,
@@ -920,7 +1029,7 @@ def _cleanup_test_tenants() -> None:
     # 1. Tenant sweep — query Vespa for every schema_registry row and
     # delete via runtime so the registry tombstone + Vespa schema both
     # land atomically.
-    vespa_url = os.environ.get("VESPA_URL", "http://localhost:8080")
+    vespa_url = os.environ.get("VESPA_URL", "http://localhost:33080")
     yql = (
         "select tenant_id from config_metadata "
         'where scope contains "schema" '
@@ -1634,7 +1743,7 @@ E2E_REPORT_MD = E2E_REPORT_DIR / "e2e_report.md"
 class E2EReportCollector:
     """Collects HTTP operations and test outcomes for E2E reporting.
 
-    Automatically captures every httpx call to the runtime (localhost:28000)
+    Automatically captures every httpx call to the runtime (localhost:33000)
     by monkeypatching httpx.Client.send. Groups operations by test name
     and writes JSON + markdown reports at session end.
     """
@@ -1680,7 +1789,7 @@ class E2EReportCollector:
     ):
         url = str(request.url)
         # Only capture calls to the runtime, not external downloads
-        if "localhost:28000" not in url and "127.0.0.1:8000" not in url:
+        if "localhost:33000" not in url and "127.0.0.1:8000" not in url:
             return
 
         # Parse request body — guard against streaming requests that

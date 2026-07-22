@@ -32,7 +32,7 @@ import httpx
 import pytest
 import redis.asyncio as aioredis
 
-RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:28000")
+RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:33000")
 REDIS_URL = os.environ.get("COGNIVERSE_TEST_REDIS_URL", "redis://localhost:26379/0")
 _CONSTRAINT_TEXT = "focus on safety equipment"
 _TENANT = "flywheel_org:production"
@@ -76,13 +76,7 @@ def _redis_reachable_sync() -> bool:
         return False
 
 
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not _runtime_reachable(),
-        reason=f"requires cogniverse-runtime at {RUNTIME_BASE}",
-    ),
-]
+pytestmark = [pytest.mark.e2e]
 
 
 @pytest.fixture(scope="module", autouse=True)

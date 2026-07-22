@@ -15,7 +15,7 @@ from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
 
 # DenseOn (768-dim, ModernBERT) served by the colbert_pylate sidecar in mode=dense.
 # k3s NodePort wired in chart values: inference.denseon.service.nodePort.
-DENSEON_URL = "http://localhost:29006"
+DENSEON_URL = "http://localhost:33906"
 
 
 def _embed(text: str) -> list:
@@ -651,12 +651,12 @@ def _get_runtime_config_manager():
     # k3d-LB host ports per inference.<svc>.service.nodePort.
     sys_cfg = cm.get_system_config()
     host_inference_urls = {
-        "denseon": "http://localhost:29006",
-        "vllm_colpali": "http://localhost:29001",
-        "colbert_pylate": "http://localhost:29002",
-        "code_colbert_pylate": "http://localhost:29004",
-        "videoprism_jax": "http://localhost:29006",
-        "vllm_asr": "http://localhost:29005",
+        "denseon": "http://localhost:33906",
+        "vllm_colpali": "http://localhost:33901",
+        "colbert_pylate": "http://localhost:33902",
+        "code_colbert_pylate": "http://localhost:33904",
+        "videoprism_jax": "http://localhost:33906",
+        "vllm_asr": "http://localhost:33905",
     }
     sys_cfg.inference_service_urls = {
         k: host_inference_urls.get(k, v)

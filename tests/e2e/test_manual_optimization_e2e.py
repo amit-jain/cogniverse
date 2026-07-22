@@ -6,7 +6,7 @@ argo-server, Argo actually creates the Workflow, and we verify via the
 Argo API that the Workflow landed with the expected spec.
 
 Requires live stack via ``cogniverse up``:
-- Runtime at localhost:28000 (with WORKFLOW_API_URL wired)
+- Runtime at localhost:33000 (with WORKFLOW_API_URL wired)
 - kubectl context: k3d-cogniverse
 - Argo Workflows installed in the `cogniverse` namespace
 
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.slow
 
 KUBECTL_CONTEXT = "k3d-cogniverse"
 NAMESPACE = "cogniverse"
-RUNTIME = "http://localhost:28000"
+RUNTIME = "http://localhost:33000"
 
 
 def _kubectl_get_workflow(name: str) -> dict | None:
@@ -360,7 +360,7 @@ class TestManualOptimizationDeepE2E:
         # Verify the artifact was persisted to Phoenix — fetch it by ID and
         # confirm it's a real dataset the runtime can consume.
         artifact_id = payload["artifact_id"]
-        phoenix_endpoint = "http://localhost:26006"
+        phoenix_endpoint = "http://localhost:33006"
         with httpx.Client(base_url=phoenix_endpoint, timeout=30.0) as phx:
             # Phoenix v1 datasets endpoint: GET /v1/datasets/{id}
             dataset_resp = phx.get(f"/v1/datasets/{artifact_id}")

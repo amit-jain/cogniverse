@@ -39,8 +39,8 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
 
 VESPA_HTTP_PORT = 8080
-VESPA_CONFIG_PORT = 19071
-DENSEON_URL = "http://localhost:29006"
+VESPA_CONFIG_PORT = 33071
+DENSEON_URL = "http://localhost:33906"
 # The reconciliation route injects "contradiction_reconciliation_agent"
 # as the memory_agent_name; the agent reads via mm.get_all_memories
 # scoped to that name. Write the conflicting facts under the same name.

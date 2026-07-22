@@ -24,8 +24,8 @@ import requests
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_VIDEO = REPO_ROOT / "data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4"
-RUNTIME_URL = "http://localhost:28000"
-VESPA_URL = "http://localhost:8080"
+RUNTIME_URL = "http://localhost:33000"
+VESPA_URL = "http://localhost:33080"
 TENANT_FULL_ID = "flywheel_org:production"
 PROFILE = "video_colpali_smol500_mv_frame"
 SCHEMA_NAME = "video_colpali_smol500_mv_frame_flywheel_org_production"
@@ -56,19 +56,8 @@ def _tenant_registered() -> bool:
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(
-        not SAMPLE_VIDEO.exists(), reason=f"sample video missing: {SAMPLE_VIDEO}"
-    ),
-    pytest.mark.skipif(
-        not _service_up(f"{RUNTIME_URL}/health"),
-        reason=f"cogniverse-runtime not reachable at {RUNTIME_URL}",
-    ),
-    pytest.mark.skipif(
-        not _service_up(f"{VESPA_URL}/state/v1/health"),
-        reason=f"live Vespa not reachable at {VESPA_URL}",
-    ),
-    pytest.mark.skipif(
-        not _tenant_registered(),
-        reason=f"tenant {TENANT_FULL_ID} not registered in the cluster",
+        not SAMPLE_VIDEO.exists(),
+        reason=f"sample video missing: {SAMPLE_VIDEO}",
     ),
 ]
 

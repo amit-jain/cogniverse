@@ -69,8 +69,8 @@ def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 120.0) -
 
 
 VESPA_HTTP_PORT = 8080
-VESPA_CONFIG_PORT = 19071
-DENSEON_URL = "http://localhost:29006"
+VESPA_CONFIG_PORT = 33071
+DENSEON_URL = "http://localhost:33906"
 # The runtime route injects "multi_document_synthesis_agent" as the
 # memory_agent_name; pre-seeded source memories must live under that
 # agent_name so mm.memory.get(memory_id) finds them.

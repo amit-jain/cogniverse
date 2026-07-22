@@ -2,7 +2,7 @@
 E2E API tests exercising routing, search, tenant CRUD, agent registry,
 A2A protocol, profile CRUD, ingestion, synthetic data, and event streaming.
 
-Requires live runtime at http://localhost:28000 with LM + Vespa + Phoenix.
+Requires live runtime at http://localhost:33000 with LM + Vespa + Phoenix.
 Uses flywheel_org:production tenant which has ingested data.
 
 Architecture note (A2A gateway):

@@ -1,7 +1,7 @@
 """E2E tests for the Coding Agent CLI — real runtime, real Vespa, real agents.
 
 Tests the CLI implementation functions directly (not via subprocess) against
-the live k3d runtime at localhost:28000. Assertions verify real data flow:
+the live k3d runtime at localhost:33000. Assertions verify real data flow:
 - `index_files` ingests into real Vespa
 - `stream_coding_response` consumes real A2A SSE
 - REPL session state survives multi-turn round-trips

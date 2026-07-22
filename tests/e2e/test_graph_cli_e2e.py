@@ -1,6 +1,6 @@
 """E2E tests for knowledge graph extraction and queries.
 
-Tests against the live k3d runtime at localhost:28000:
+Tests against the live k3d runtime at localhost:33000:
 - cogniverse index extracts graph from code + text files and upserts
 - /graph endpoints return real nodes, edges, stats, neighbors, paths
 - Round-trip semantic search returns nodes matching the query
