@@ -1,8 +1,9 @@
 """Health check endpoints for runtime monitoring."""
 
 import logging
+import time
 from functools import lru_cache
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -15,6 +16,49 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# One backend probe per TTL window serves every /health + /health/ready hit —
+# kubelet probes each pod every few seconds, and a fresh httpx client + Vespa
+# GET per probe adds steady background load exactly when Vespa is busiest.
+_PROBE_TTL_S = 5.0
+
+# /health/ready keeps reporting ready for this long after the LAST successful
+# backend probe. A tail-latency blip (Vespa p99 above the probe timeout under
+# load) would otherwise fail readiness on EVERY replica at once — the Service
+# loses all endpoints and a slow backend becomes a total self-inflicted
+# outage. A genuine outage outlasts the grace and still flips the pod
+# not-ready; /health (monitoring) stays strict and goes red immediately.
+_READY_GRACE_S = 30.0
+
+_probe_state: Dict[str, Any] = {
+    "at": 0.0,
+    "url": None,
+    "ok": False,
+    "reason": "",
+    "last_ok_at": None,
+}
+
+
+def _reset_probe_state() -> None:
+    _probe_state.update(at=0.0, url=None, ok=False, reason="", last_ok_at=None)
+
+
+async def _backend_reachable_cached(base_url: Optional[str]) -> tuple[bool, str]:
+    now = time.monotonic()
+    if _probe_state["url"] == base_url and now - _probe_state["at"] < _PROBE_TTL_S:
+        return _probe_state["ok"], _probe_state["reason"]
+    ok, reason = await _backend_reachable(base_url)
+    if _probe_state["url"] != base_url:
+        _probe_state["last_ok_at"] = None
+    _probe_state.update(at=time.monotonic(), url=base_url, ok=ok, reason=reason)
+    if ok:
+        _probe_state["last_ok_at"] = _probe_state["at"]
+    return ok, reason
+
+
+def _within_ready_grace() -> bool:
+    last_ok = _probe_state["last_ok_at"]
+    return last_ok is not None and time.monotonic() - last_ok <= _READY_GRACE_S
 
 
 async def _backend_reachable(
@@ -100,7 +144,7 @@ async def health_check(request: Request) -> Any:
         )
 
     base_url = getattr(request.app.state, "backend_base_url", None)
-    reachable, reason = await _backend_reachable(base_url)
+    reachable, reason = await _backend_reachable_cached(base_url)
     if not reachable:
         return JSONResponse(
             status_code=503,
@@ -151,8 +195,18 @@ async def readiness_probe(request: Request) -> Any:
         )
 
     base_url = getattr(request.app.state, "backend_base_url", None)
-    reachable, reason = await _backend_reachable(base_url)
+    reachable, reason = await _backend_reachable_cached(base_url)
     if not reachable:
+        if _within_ready_grace():
+            # Recent success + failing probe = likely a load/tail-latency
+            # blip. Ejecting every replica at once turns it into a full
+            # outage; stay in the Service and let /health carry the red.
+            logger.warning("backend probe failing within readiness grace: %s", reason)
+            return {
+                "status": "ready",
+                "backends": len(backends),
+                "backend_degraded": True,
+            }
         return JSONResponse(
             status_code=503,
             content={"status": "not_ready", "reason": reason},

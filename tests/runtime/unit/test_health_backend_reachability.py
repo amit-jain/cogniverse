@@ -61,8 +61,10 @@ def _client(base_url) -> TestClient:
     app.include_router(health.router)
     if base_url is not None:
         app.state.backend_base_url = base_url
-    # Isolate the reachability behaviour from config-driven registry assembly.
+    # Isolate the reachability behaviour from config-driven registry assembly
+    # and from another test's cached probe result / readiness-grace state.
     getattr(health._get_agent_registry, "cache_clear", lambda: None)()
+    health._reset_probe_state()
     return TestClient(app)
 
 
@@ -111,3 +113,84 @@ class TestHealthReflectsBackendReachability:
             resp = _client(base).get("/health")
         assert resp.status_code == 200
         assert resp.json()["status"] == "healthy"
+
+
+class _CountingHandler(http.server.BaseHTTPRequestHandler):
+    hits = 0
+
+    def do_GET(self):  # noqa: N802
+        type(self).hits += 1
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"{}")
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.mark.unit
+class TestReadinessFlapResistance:
+    """A backend probe blip must not eject every replica from the Service.
+
+    When Vespa's tail latency exceeds the probe timeout under load, all pods
+    fail the probe simultaneously; without a grace window the Service loses
+    all endpoints and a slow backend becomes a total outage. Readiness rides
+    out a blip that follows a recent success; /health stays strict so
+    monitoring goes red; a genuine outage outlasts the grace and still flips
+    the pod not-ready. Cold starts get no grace — a pod that never reached
+    the backend must not serve.
+    """
+
+    def test_blip_after_success_keeps_ready_and_health_red(self, monkeypatch):
+        monkeypatch.setattr(
+            health,
+            "_get_agent_registry",
+            lambda: type("R", (), {"list_agents": lambda self: []})(),
+        )
+        with _stub_backend() as base:
+            client = _client(base)
+            assert client.get("/health/ready").status_code == 200
+        # Backend gone; expire the probe cache so the next hit re-probes.
+        monkeypatch.setattr(health, "_PROBE_TTL_S", 0.0)
+        ready = client.get("/health/ready")
+        assert ready.status_code == 200
+        assert ready.json()["backend_degraded"] is True
+        strict = client.get("/health")
+        assert strict.status_code == 503
+        assert strict.json()["status"] == "unhealthy"
+
+    def test_outage_beyond_grace_flips_not_ready(self, monkeypatch):
+        import time
+
+        with _stub_backend() as base:
+            client = _client(base)
+            assert client.get("/health/ready").status_code == 200
+        monkeypatch.setattr(health, "_PROBE_TTL_S", 0.0)
+        monkeypatch.setattr(health, "_READY_GRACE_S", 0.05)
+        time.sleep(0.1)
+        resp = client.get("/health/ready")
+        assert resp.status_code == 503
+        assert resp.json()["status"] == "not_ready"
+
+    def test_cold_start_failure_gets_no_grace(self):
+        resp = _client(_dead_url()).get("/health/ready")
+        assert resp.status_code == 503
+
+    def test_probe_result_shared_across_probes_within_ttl(self, monkeypatch):
+        monkeypatch.setattr(
+            health,
+            "_get_agent_registry",
+            lambda: type("R", (), {"list_agents": lambda self: []})(),
+        )
+        _CountingHandler.hits = 0
+        srv = http.server.HTTPServer(("127.0.0.1", 0), _CountingHandler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            client = _client(f"http://127.0.0.1:{srv.server_address[1]}")
+            for _ in range(4):
+                assert client.get("/health/ready").status_code == 200
+                assert client.get("/health").status_code == 200
+        finally:
+            srv.shutdown()
+        # Eight endpoint hits inside one TTL window -> one upstream probe.
+        assert _CountingHandler.hits == 1
