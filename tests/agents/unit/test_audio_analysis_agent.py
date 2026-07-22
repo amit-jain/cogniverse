@@ -519,5 +519,37 @@ async def test_search_acoustic_offloads_blocking_clap_encode(monkeypatch):
     assert results == []
 
 
+@pytest.mark.asyncio
+async def test_local_whisper_transcription_offloads_blocking_model():
+    """The in-process Whisper fallback is a heavy blocking model forward —
+    same offload contract as the sidecar branch above it."""
+    release = threading.Event()
+
+    class _BlockingTranscriber:
+        def transcribe_audio(self, video_path, output_dir=None):
+            assert release.wait(timeout=5), "event loop was blocked by whisper"
+            return {
+                "full_text": "hi",
+                "segments": [],
+                "language": "en",
+                "duration": 1.0,
+            }
+
+    agent = object.__new__(AudioAnalysisAgent)
+    agent._whisper_endpoint = None
+    agent._audio_transcriber = _BlockingTranscriber()
+    agent._get_audio_path = lambda url: "/tmp/x.wav"
+
+    async def releaser():
+        await asyncio.sleep(0.05)
+        release.set()
+
+    result, _ = await asyncio.wait_for(
+        asyncio.gather(agent.transcribe_audio("file:///x.wav"), releaser()),
+        timeout=5,
+    )
+    assert result.text == "hi"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

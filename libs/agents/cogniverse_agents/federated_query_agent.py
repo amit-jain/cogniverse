@@ -131,7 +131,7 @@ def _matches_query(memory: Dict[str, Any], query: str) -> bool:
     if not query:
         return True
     q = query.lower()
-    content = (memory.get("memory") or memory.get("content") or "").lower()
+    content = str(memory.get("memory") or memory.get("content") or "").lower()
     return q in content
 
 

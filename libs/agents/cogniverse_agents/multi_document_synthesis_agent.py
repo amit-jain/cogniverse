@@ -259,7 +259,12 @@ class MultiDocumentSynthesisAgent(
         try:
             kg = self.synthesize(query="")
         except Exception as exc:
-            logger.debug("multidoc: Vespa-KG complement skipped: %s", exc)
+            # The KG is a complement here (mem0 is the primary source), so a
+            # backend failure degrades rather than fails the synthesis — but
+            # at WARNING: a kg_claim_group_count of 0 is otherwise
+            # indistinguishable from a genuinely empty graph during an
+            # outage.
+            logger.warning("multidoc: Vespa-KG complement unavailable: %r", exc)
             return []
         return [
             KGClaimGroupOut(

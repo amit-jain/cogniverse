@@ -82,7 +82,7 @@ def _hit_field(hit: dict[str, Any], key: str) -> Any:
     top level. Prefer a non-null top-level value, else read it from ``metadata``.
     """
     value = hit.get(key)
-    if value is not None:
+    if value is not None and value != "":
         return value
     metadata = hit.get("metadata")
     if isinstance(metadata, dict):
@@ -102,6 +102,8 @@ def hit_keyframe_uri(hit: dict[str, Any]) -> Optional[str]:
     if not video_id or segment_id is None:
         return None
     try:
+        if int(segment_id) < 0:
+            return None  # a negative index formats into a key that never exists
         return keyframe_uri(bucket, tenant_id, str(video_id), segment_id)
     except (ValueError, TypeError):
         return None
@@ -134,15 +136,24 @@ class KeyframeImageResolver:
         images: list[dspy.Image] = []
         if max_images <= 0:
             return images
-        for hit in hits:
-            if len(images) >= max_images:
-                break
-            uri = hit_keyframe_uri(hit)
-            if uri is None:
-                continue
-            img = self._image_for(uri)
-            if img is not None:
-                images.append(img)
+        derivable = [
+            uri for uri in (hit_keyframe_uri(hit) for hit in hits) if uri is not None
+        ]
+        if not derivable:
+            return images
+        # Fetch in a small pool instead of serially: the whole collect runs
+        # inside one to_thread worker, so four sequential object-store
+        # round-trips held that worker (and the request) for 4x the
+        # per-download latency. Order is preserved, and the first
+        # ``max_images`` successes win exactly as the serial loop did.
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(4, len(derivable))) as pool:
+            for img in pool.map(self._image_for, derivable):
+                if img is not None:
+                    images.append(img)
+                    if len(images) >= max_images:
+                        break
         return images
 
     def _image_for(self, uri: str) -> Optional[dspy.Image]:

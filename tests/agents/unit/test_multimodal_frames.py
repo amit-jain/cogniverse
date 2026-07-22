@@ -132,6 +132,45 @@ class TestHitKeyframeUri:
         assert hit_keyframe_uri(_video_hit("7")) == hit_keyframe_uri(_video_hit(7))
 
 
+def test_collect_fetches_frames_concurrently(tmp_path):
+    """Four sequential object-store round-trips held the request for 4x the
+    per-download latency; the pooled fetch must overlap them while keeping
+    hit order and the first-max_images-successes contract."""
+    import time
+
+    frame = tmp_path / "frame.jpg"
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(frame)
+
+    class _SlowLocator:
+        def localize(self, uri):
+            time.sleep(0.15)
+            return str(frame)
+
+    resolver = KeyframeImageResolver(_SlowLocator())
+    start = time.monotonic()
+    imgs = resolver.collect([_video_hit(i) for i in range(4)], max_images=4)
+    elapsed = time.monotonic() - start
+
+    assert len(imgs) == 4
+    assert elapsed < 0.45, f"4 x 0.15s fetches took {elapsed:.2f}s — serial"
+
+
+def test_negative_segment_id_yields_no_uri():
+    """A negative index would format into an object key that never exists —
+    the hit must degrade to no-keyframe, not fetch a bogus key."""
+    assert hit_keyframe_uri(_flat_video_hit(-5)) is None
+
+
+def test_empty_string_top_level_falls_through_to_metadata():
+    """A pipeline that flattens fields but leaves an empty string must not
+    shadow the real value under metadata."""
+    hit = _video_hit(3)
+    hit["source_url"] = ""
+    expected = hit_keyframe_uri(_video_hit(3))
+    assert expected is not None
+    assert hit_keyframe_uri(hit) == expected
+
+
 @pytest.mark.unit
 class TestKeyframeImageResolver:
     def test_collect_returns_one_image_per_hit(self, jpg_path):
