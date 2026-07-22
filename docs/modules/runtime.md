@@ -844,7 +844,7 @@ Runtime diagnostics gated behind `COGNIVERSE_DEBUG_MEM` (`libs/runtime/cognivers
 ### Health Endpoints
 
 **GET /health** - Health check. 503 `unhealthy` when the system status cannot be assembled OR the configured backend is unreachable (pings `/ApplicationStatus`); 200 `healthy` otherwise.
-**GET /health/ready** - Readiness probe. 503 `not_ready` until a backend is registered AND its container node answers `/ApplicationStatus` — registration alone is not enough because the Vespa backend class self-registers at import. Gates k8s traffic on real backend connectivity.
+**GET /health/ready** - Readiness probe. 503 `not_ready` until a backend is registered AND its container node answers `/ApplicationStatus` — registration alone is not enough because the Vespa backend class self-registers at import. Gates k8s traffic on real backend connectivity. The backend probe result is cached for a short TTL (one upstream ping serves every `/health*` hit in the window), and after a successful probe readiness keeps reporting ready (with `backend_degraded: true`) through a 30s grace window — a backend tail-latency blip must not fail readiness on every replica at once and empty the Service; a genuine outage outlasts the grace and flips the pod not-ready. Cold starts get no grace, and `/health` stays strict (goes red immediately) for monitoring.
 **GET /health/live** - Liveness probe. Always 200 while the process runs; never pings the backend, so a backend outage does not trigger a pod restart.
 
 ### Events Endpoints (SSE Streaming)
