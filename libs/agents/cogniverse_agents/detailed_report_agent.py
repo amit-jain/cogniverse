@@ -417,6 +417,13 @@ class DetailedReportAgent(
                         "report_type": request.report_type,
                         "visual_analysis_enabled": request.include_visual_analysis,
                         "keyframes_attached": getattr(self, "_keyframes_attached", 0),
+                        # True when the answer LM call failed and the executive
+                        # summary is the templated fallback, not a grounded
+                        # report — callers must be able to tell the two apart.
+                        "report_degraded": getattr(self, "_report_degraded", False),
+                        "report_degraded_reason": getattr(
+                            self, "_report_degraded_reason", ""
+                        ),
                         "technical_analysis_enabled": (
                             request.include_technical_details
                             and self.technical_analysis_enabled
@@ -790,6 +797,8 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         # retrieved keyframes reached the answer model.
         self._keyframes_attached = len(keyframe_images)
 
+        self._report_degraded = False
+        self._report_degraded_reason = ""
         try:
             dspy_result = await self.call_dspy(
                 self.report_module,
@@ -804,8 +813,13 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
                 getattr(dspy_result, "recommendations", "")
             )
         except Exception as e:
+            # The answer LM call failed (e.g. a payload/context overflow from
+            # the attached keyframes). Degrade to a templated stub so the
+            # request still returns — but FLAG it in the metadata below, so a
+            # fallback is never indistinguishable from a real grounded report.
             logger.error(f"DSPy summary generation failed: {e}")
-            # Fallback summary; no LM recommendations on this path.
+            self._report_degraded = True
+            self._report_degraded_reason = f"{type(e).__name__}: {e}"
             return (
                 f"Analysis of {len(request.search_results)} results for "
                 f"'{request.query}' with average relevance of "
