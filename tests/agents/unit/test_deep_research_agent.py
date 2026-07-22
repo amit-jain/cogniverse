@@ -1,14 +1,22 @@
-"""DeepResearchAgent evidence-gathering resilience.
+"""DeepResearchAgent evidence-gathering resilience and tenant LM routing.
 
-One failing sub-question search must not abort the whole research run, and the
-evidence summary's result count must not misreport non-list payloads.
+One failing sub-question search must not abort the whole research run, the
+evidence summary's result count must not misreport non-list payloads, and the
+whole research run must bind the REQUEST tenant's LM — every sibling answer
+agent routes through ``routed_lm_context_for``; deep research silently ran on
+the process-global default LM for every tenant.
 """
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
+import dspy
 import pytest
 
-from cogniverse_agents.deep_research_agent import DeepResearchAgent
+from cogniverse_agents.deep_research_agent import DeepResearchAgent, DeepResearchInput
+
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 @pytest.mark.asyncio
@@ -36,3 +44,83 @@ def test_result_count_handles_non_list_shapes():
     assert DeepResearchAgent._result_count("some text") == 1
     assert DeepResearchAgent._result_count({"results": []}) == 1
     assert DeepResearchAgent._result_count(None) == 0
+
+
+@pytest.mark.asyncio
+async def test_research_runs_under_request_tenant_routed_lm(monkeypatch):
+    """With the semantic router enabled, the entire research run must see the
+    LM routed for the REQUEST tenant — not the ambient process-global LM."""
+    from cogniverse_foundation.config.semantic_router import SemanticRouterConfig
+
+    agent = object.__new__(DeepResearchAgent)
+    agent._config_manager = object()
+
+    sentinel_lm = MagicMock(name="tenant_routed_lm")
+    ambient_lm = MagicMock(name="ambient_global_lm")
+    seen: dict = {}
+
+    async def fake_research(inp):
+        seen["lm"] = dspy.settings.lm
+        return "RESEARCH_DONE"
+
+    agent._research = fake_research
+
+    cfg = MagicMock()
+    cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=True)
+    endpoint = MagicMock(name="deep_research_endpoint")
+    cfg.get_llm_config.return_value.resolve.return_value = endpoint
+
+    captured: dict = {}
+
+    def fake_create_routed_lm(ep, router, tenant_id):
+        captured["endpoint"] = ep
+        captured["tenant_id"] = tenant_id
+        return sentinel_lm
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config",
+        lambda tenant_id, config_manager: cfg,
+    )
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.semantic_router.create_routed_lm",
+        fake_create_routed_lm,
+    )
+
+    with dspy.context(lm=ambient_lm):
+        result = await agent._process_impl(
+            DeepResearchInput(query="q", tenant_id="acme:acme")
+        )
+
+    assert result == "RESEARCH_DONE"
+    assert seen["lm"] is sentinel_lm, (
+        f"research ran on {seen['lm']!r}, not the tenant-routed LM"
+    )
+    assert captured["tenant_id"] == "acme:acme"
+    assert captured["endpoint"] is endpoint
+    assert cfg.get_llm_config.return_value.resolve.call_args[0][0] == (
+        "deep_research_agent"
+    )
+
+
+@pytest.mark.asyncio
+async def test_research_keeps_ambient_lm_without_config_manager():
+    """Standalone process with no config store: routing cannot be enabled, so
+    the ambient LM is the defined behaviour — unchanged by the wrap."""
+    agent = object.__new__(DeepResearchAgent)
+    agent._config_manager = None
+    seen: dict = {}
+
+    async def fake_research(inp):
+        seen["lm"] = dspy.settings.lm
+        return "OK"
+
+    agent._research = fake_research
+
+    ambient_lm = MagicMock(name="ambient_global_lm")
+    with dspy.context(lm=ambient_lm):
+        result = await agent._process_impl(
+            DeepResearchInput(query="q", tenant_id="t:t")
+        )
+
+    assert result == "OK"
+    assert seen["lm"] is ambient_lm
