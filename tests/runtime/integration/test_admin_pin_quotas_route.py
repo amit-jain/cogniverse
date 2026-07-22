@@ -36,8 +36,14 @@ class _StubArtifactManager:
 
 def _build_app(blobs, monkeypatch):
     stub = _StubArtifactManager(blobs)
+    stub.built_for = []
     admin_router._reset_admin_overrides_for_tests()
-    monkeypatch.setattr(admin_router, "_build_artifact_manager", lambda key: stub)
+
+    def _factory(key):
+        stub.built_for.append(key)
+        return stub
+
+    monkeypatch.setattr(admin_router, "_build_artifact_manager", _factory)
     app = FastAPI()
     app.include_router(admin_router.router, prefix="/admin")
     return app, stub
@@ -89,3 +95,34 @@ async def test_pin_quotas_unset_returns_defaults(monkeypatch):
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"tenant_id": "acme:acme", "quotas": expected}
     assert stub.received == [("config", "pin_quotas")]
+    # The CANONICAL tenant must reach the per-tenant store — a factory that
+    # dropped or mis-derived the tenant would read another tenant's quotas.
+    assert stub.built_for == ["acme:acme"]
+
+
+async def _put(app, path, body):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as client:
+        return await client.put(path, json=body)
+
+
+@pytest.mark.asyncio
+async def test_org_admin_quota_rejects_sub_sentinel_negatives(monkeypatch):
+    """-1 means unlimited; any other negative used to persist as a literal
+    limit that usage comparisons always exceed — every org_admin pin for
+    the tenant was silently rejected until the value was corrected."""
+    from unittest.mock import AsyncMock
+
+    app, stub = _build_app({}, monkeypatch)
+    stub.save_blob = AsyncMock()
+    try:
+        bad = await _put(app, "/admin/tenants/acme:acme/pin_quotas", {"org_admin": -5})
+        ok = await _put(app, "/admin/tenants/acme:acme/pin_quotas", {"org_admin": -1})
+    finally:
+        admin_router._reset_admin_overrides_for_tests()
+
+    assert bad.status_code == 400
+    assert "org_admin" in bad.json()["detail"]
+    assert ok.status_code == 200
+    assert ok.json()["quotas"]["org_admin"] == -1

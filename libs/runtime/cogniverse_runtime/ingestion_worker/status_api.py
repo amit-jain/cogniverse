@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -71,6 +72,14 @@ async def stream_events(
     """SSE endpoint streaming the per-ingest event history then live
     updates. Terminal events end the stream; otherwise it ends after
     ``timeout_seconds`` of no new events."""
+    if last_event_id is not None and not re.fullmatch(r"\d+-\d+", last_event_id):
+        # A malformed id would make XREAD raise INSIDE the already-200
+        # generator, killing the stream mid-flight instead of failing the
+        # request cleanly.
+        raise HTTPException(
+            status_code=400,
+            detail="last-event-id must be a Redis stream id like 1712000000000-0",
+        )
     redis = await get_redis(_redis_url())
 
     async def gen():
