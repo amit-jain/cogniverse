@@ -348,6 +348,19 @@ schema_manager = VespaSchemaManager(
 schema_manager.upload_metadata_schemas(app_name="cogniverse")
 ```
 
+`main.py` deploys metadata schemas at startup in two places. If the initial
+config-store read fails, a first-install probe (`_application_exists`) asks
+the config server whether an application package already exists; only when
+none exists (a genuinely fresh backend) does startup proceed, deploying
+through a registry-less schema manager with `allow_schema_removal=False` so
+Vespa refuses a package that would drop any existing tenant schema — a
+populated cluster whose read merely failed raises instead of bootstrapping
+blind. Once the config store is queryable, startup unconditionally calls
+`system_backend.schema_manager.upload_metadata_schemas()` again on every run;
+that manager is schema-registry-aware, so its default
+`allow_schema_removal=True` is safe — existing tenant schemas are fetched from
+the registry and merged into the deployed package rather than dropped.
+
 **Backend Features:**
 
 - High availability and replication

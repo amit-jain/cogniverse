@@ -364,6 +364,42 @@ def _wait_for_config_server(
     return False
 
 
+def _application_exists(
+    host: str, port: int, *, max_attempts: int = 6, interval: float = 5.0
+) -> bool:
+    """Ask the config server whether an application package is deployed.
+
+    Discriminates a genuinely FRESH backend (404 → safe to bootstrap) from a
+    populated one whose config read merely failed (200 → a registry-less
+    metadata-only deploy would drop every tenant schema and lose their
+    documents). An answer that is neither leaves fresh-vs-populated unknown —
+    raise rather than deploy blind.
+    """
+    import time
+
+    import httpx
+
+    url = f"http://{host}:{port}/application/v2/tenant/default/application/default"
+    last: object = None
+    for attempt in range(max_attempts):
+        try:
+            resp = httpx.get(url, timeout=10)
+        except httpx.HTTPError as exc:
+            last = repr(exc)
+        else:
+            if resp.status_code == 200:
+                return True
+            if resp.status_code == 404:
+                return False
+            last = f"HTTP {resp.status_code}"
+        if attempt < max_attempts - 1:
+            time.sleep(interval)
+    raise RuntimeError(
+        f"Cannot determine whether {host}:{port} has an application deployed "
+        f"(last answer: {last}) — refusing to bootstrap metadata schemas blind"
+    )
+
+
 def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
     """Deploy the metadata schemas to a backend with no application package.
 
@@ -374,6 +410,14 @@ def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
     server to accept connections first (a cold backend brings it up after
     the query port), then raises if the deploy itself fails (genuine
     outage / misconfig → fail fast).
+
+    A failed config read is NOT proof of a fresh backend — a populated
+    cluster mid cold-start or answering degraded fails the same way, and
+    deploying the registry-less metadata-only package over it would remove
+    every tenant content schema. Two guards make that impossible: the
+    config server must report NO deployed application before anything is
+    deployed, and the deploy runs with schema removal disabled so Vespa
+    itself refuses a package that would drop schemas.
 
     Constructs the schema manager DIRECTLY: every registry/backend path
     reads the config store internally, which is exactly what cannot work
@@ -392,12 +436,21 @@ def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
             "connections — cannot bootstrap metadata schemas"
         )
 
+    if _application_exists(host, config_port):
+        raise RuntimeError(
+            f"Backend {host}:{config_port} already has an application deployed "
+            "— the failed config read is a real outage, not a fresh install; "
+            "a metadata-only deploy here would drop the existing tenant schemas"
+        )
+
     manager = VespaSchemaManager(
         backend_endpoint=bootstrap.backend_url,
         backend_port=config_port,
         schema_registry=None,
     )
-    manager.upload_metadata_schemas(app_name=application_name)
+    manager.upload_metadata_schemas(
+        app_name=application_name, allow_schema_removal=False
+    )
     logger.info("Metadata schemas bootstrapped for fresh backend")
 
 
