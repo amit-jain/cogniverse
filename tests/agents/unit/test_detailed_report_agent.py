@@ -291,6 +291,42 @@ class TestDetailedReportAgent:
         # The LM's recommendations reach the report — not the canned templates.
         assert result.recommendations == ["deepen coverage", "add benchmarks"]
         assert isinstance(result.confidence_assessment, dict)
+        # A real grounded report is NOT flagged degraded.
+        assert result.metadata["report_degraded"] is False
+        assert result.metadata["report_degraded_reason"] == ""
+
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_report_degraded_flag_set_when_answer_lm_fails(self, mock_vlm_class):
+        """When the answer LM call fails (e.g. an attached-keyframe payload
+        overflow) the agent degrades to a templated stub so the request still
+        returns — but must FLAG it in metadata, or a broken report is
+        indistinguishable from a real one (the stub even echoes the query)."""
+        mock_vlm_class.return_value = Mock()
+        with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=Mock()
+            )
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
+
+        agent.call_dspy = AsyncMock(side_effect=RuntimeError("Payload Too Large"))
+
+        request = ReportRequest(
+            query="test query",
+            search_results=[{"id": "1", "title": "Test", "score": 0.8}],
+            report_type="comprehensive",
+            include_visual_analysis=False,
+        )
+        result = await agent._generate_report(request)
+
+        assert result.metadata["report_degraded"] is True
+        assert result.metadata["report_degraded_reason"] == (
+            "RuntimeError: Payload Too Large"
+        )
+        # The summary is the templated fallback, not a grounded report.
+        assert result.executive_summary.startswith("Analysis of 1 results")
+        assert "test query" in result.executive_summary
 
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio

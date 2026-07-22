@@ -31,6 +31,26 @@ from cogniverse_core.common.media import MediaLocator, keyframe_uri
 
 logger = logging.getLogger(__name__)
 
+# Keyframes are extracted at native video resolution; attaching several
+# full-res frames as base64 blows a served LM's request-size limit (and its
+# vision token budget), so the answer LM's call fails and the agent silently
+# falls back to a stub report. Vision models downsample internally anyway —
+# bound the long edge to this before encoding so the payload stays small.
+_MAX_LLM_IMAGE_PX = 768
+
+
+def _downsampled_dspy_image(path: object) -> dspy.Image:
+    """Load a keyframe, downscale it so its long edge is at most
+    ``_MAX_LLM_IMAGE_PX`` (aspect preserved, never upscaled), and return it
+    as a ``dspy.Image`` whose base64 payload is small enough for the answer
+    LM's request limit."""
+    from PIL import Image as PILImage
+
+    with PILImage.open(str(path)) as im:
+        im = im.convert("RGB")
+        im.thumbnail((_MAX_LLM_IMAGE_PX, _MAX_LLM_IMAGE_PX))
+        return dspy.Image.from_PIL(im)
+
 
 def _bucket_and_tenant(source_url: str) -> Optional[tuple[str, str]]:
     """Parse ``(bucket, tenant_id)`` from an ``s3://bucket/tenant_id/…`` URL.
@@ -130,7 +150,7 @@ class KeyframeImageResolver:
         except OSError as e:
             logger.warning("keyframe fetch failed for %s: %r", uri, e)
             return None
-        img = dspy.Image(str(path))
+        img = _downsampled_dspy_image(path)
         with self._cache_lock:
             self._cache[uri] = img
             self._cache.move_to_end(uri)

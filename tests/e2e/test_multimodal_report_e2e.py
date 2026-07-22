@@ -62,7 +62,11 @@ pytestmark = [
 ]
 
 
-def _wait_terminal(ingest_id: str, deadline_s: int = 600) -> dict:
+def _wait_terminal(ingest_id: str, deadline_s: int = 2400) -> dict:
+    # Same bound as the ingestion-upload e2e: a fresh force=true ingest of
+    # the sample video re-runs the full pipeline, whose per-segment KG claim
+    # extraction spends 60-90s of LM time per segment (~19 segments ≈
+    # 20-30 min). 600s timed out mid-pipeline.
     deadline = time.time() + deadline_s
     last = None
     while time.time() < deadline:
@@ -144,16 +148,65 @@ def test_report_agent_attaches_retrieved_keyframes_to_llm(ingested_video):
     result = body["result"]
     metadata = result["metadata"]
 
-    # The dispatch ran a real search — the agent was not fed an empty result set.
-    assert metadata["results_analyzed"] > 0, (
-        f"detailed-report dispatch must run a real search, got metadata={metadata}"
+    # The dispatch ran a real search — the agent was not fed an empty result
+    # set — bounded by the agent's max_results_to_analyze cap (20).
+    results_analyzed = metadata["results_analyzed"]
+    assert 1 <= results_analyzed <= 20, (
+        f"detailed-report dispatch must run a real search within the "
+        f"max_results_to_analyze cap, got metadata={metadata}"
     )
-    # THE contract: retrieved keyframes reached the answer LLM.
-    assert metadata["keyframes_attached"] > 0, (
-        "no keyframes reached the answer LLM — frames did not flow from the "
-        f"search hits into the report agent. metadata={metadata}"
+    # THE contract, as an exact value: keyframes attached == the analyzed
+    # results capped at max_keyframes_to_llm (4). Every top hit's keyframe
+    # resolves from MinIO for a just-ingested video, so the cap — not a
+    # missing frame — is what bounds it.
+    assert metadata["keyframes_attached"] == min(results_analyzed, 4), (
+        "keyframes attached to the LLM must equal min(results_analyzed, 4); "
+        f"got metadata={metadata}"
     )
-    # And the model produced a real report over them.
-    assert len(result["executive_summary"]) > 50, (
-        f"executive_summary too short to be grounded: {result['executive_summary']!r}"
+
+    # The report must be a REAL grounded summary, not the templated fallback
+    # the agent emits when the answer LM call fails (e.g. a keyframe payload
+    # overflow). Without this, a broken multimodal report is indistinguishable
+    # from a real one — the fallback stub even echoes the query, so the
+    # content checks below would be fooled.
+    assert metadata.get("report_degraded") is False, (
+        "detailed report degraded to the fallback stub — the answer LM call "
+        f"failed: {metadata.get('report_degraded_reason')!r}"
     )
+
+    # Content: the report answers "describe the outdoor scene and what the
+    # person is doing" over a clip of a man lighting a fire outdoors, so the
+    # grounded summary must describe the person, the outdoor setting, and the
+    # fire activity — not just be 50+ chars of anything. Robust to phrasing
+    # via concept membership. (The query is stripped first so a bare echo of
+    # it can't satisfy these on its own.)
+    summary_lc = (
+        result["executive_summary"]
+        .lower()
+        .replace("describe the outdoor scene and what the person is doing", "")
+    )
+    assert any(
+        t in summary_lc
+        for t in ("man", "person", "individual", "figure", "people", "someone")
+    ), f"report does not describe the person in the clip: {summary_lc!r}"
+    assert any(
+        t in summary_lc
+        for t in (
+            "outdoor",
+            "outside",
+            "nature",
+            "wooded",
+            "forest",
+            "dirt",
+            "ground",
+            "field",
+            "wilderness",
+            "gravel",
+            "terrain",
+            "scrub",
+        )
+    ), f"report does not describe the outdoor scene: {summary_lc!r}"
+    assert any(
+        t in summary_lc
+        for t in ("fire", "smoke", "flame", "burn", "spark", "kindl", "ignit")
+    ), f"report does not describe the fire-lighting activity: {summary_lc!r}"
