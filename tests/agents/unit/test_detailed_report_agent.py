@@ -1,5 +1,6 @@
 """Tests for DetailedReportAgent with DSPy integration."""
 
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -327,6 +328,84 @@ class TestDetailedReportAgent:
         # The summary is the templated fallback, not a grounded report.
         assert result.executive_summary.startswith("Analysis of 1 results")
         assert "test query" in result.executive_summary
+
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_own_parsing_bug_propagates_not_masked_as_degraded(
+        self, mock_vlm_class
+    ):
+        """Degradation is for LM/boundary failures only: a TypeError in OUR
+        recommendation parsing must surface as an error, not ship a 200
+        stub labelled degraded that hides the bug."""
+        from types import SimpleNamespace
+
+        mock_vlm_class.return_value = Mock()
+        with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=Mock()
+            )
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
+
+        agent.call_dspy = AsyncMock(
+            return_value=SimpleNamespace(
+                executive_summary="grounded", recommendations="a\nb"
+            )
+        )
+        agent._parse_llm_list = Mock(side_effect=TypeError("our parsing bug"))
+
+        request = ReportRequest(
+            query="test query",
+            search_results=[{"id": "1", "title": "Test", "score": 0.8}],
+            report_type="comprehensive",
+            include_visual_analysis=False,
+        )
+        with pytest.raises(TypeError, match="our parsing bug"):
+            await agent._generate_report(request)
+
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_degraded_flag_does_not_bleed_between_concurrent_requests(
+        self, mock_vlm_class
+    ):
+        """The standalone A2A app serves ONE module-level agent: two
+        concurrent requests, one degrading and one succeeding, must each
+        read their own flags. Instance attributes let the failing request's
+        flag overwrite the healthy sibling's metadata."""
+        from types import SimpleNamespace
+
+        mock_vlm_class.return_value = Mock()
+        with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=Mock()
+            )
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
+
+        async def fake_call_dspy(module, output_field, **kwargs):
+            if "bad" in kwargs["query"]:
+                raise RuntimeError("boom")
+            await asyncio.sleep(0.1)
+            return SimpleNamespace(executive_summary="grounded", recommendations="")
+
+        agent.call_dspy = fake_call_dspy
+
+        def _req(query):
+            return ReportRequest(
+                query=query,
+                search_results=[{"id": "1", "title": "Test", "score": 0.8}],
+                report_type="comprehensive",
+                include_visual_analysis=False,
+            )
+
+        bad, good = await asyncio.gather(
+            agent._generate_report(_req("bad query")),
+            agent._generate_report(_req("good query")),
+        )
+
+        assert bad.metadata["report_degraded"] is True
+        assert good.metadata["report_degraded"] is False
+        assert good.executive_summary == "grounded"
 
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
