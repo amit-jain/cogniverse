@@ -686,43 +686,6 @@ def _bootstrap_tenant_and_schemas() -> None:
             print(f"Profile registration failed: {exc}")
 
 
-LLM_URL = "http://localhost:33434"
-LLM_MODEL = "qwen3:4b"
-
-
-def _ensure_llm_model() -> None:
-    """Ensure the ollama-served LLM model is available — a quiet no-op on the
-    vLLM deployments the e2e stack actually uses.
-
-    ``LLM_URL`` is the ollama-style endpoint (``/api/tags`` + ``/api/pull``).
-    When the cluster serves its chat LM via vLLM (the default here — the
-    report/agents talk to ``cogniverse-vllm-llm-student``), nothing listens
-    there: the probe connection-refuses and there is simply no model to
-    pull, so return quietly. Only a REACHABLE ollama endpoint missing the
-    model triggers a pull, and only a pull that then errors is a genuine
-    (still non-fatal) failure worth logging as one.
-    """
-    try:
-        resp = httpx.get(f"{LLM_URL}/api/tags", timeout=10)
-    except (httpx.HTTPError, OSError):
-        # No ollama endpoint at LLM_URL → vLLM-served cluster; the chat LM is
-        # a separate service that needs no pull. Not a failure.
-        print(f"No ollama endpoint at {LLM_URL}; vLLM-served LM, nothing to pull")
-        return
-
-    if resp.status_code == 200:
-        models = resp.json().get("models", [])
-        if any(LLM_MODEL in m.get("name", "") for m in models):
-            return  # already loaded
-
-    print(f"Pulling LLM model {LLM_MODEL}...")
-    try:
-        httpx.post(f"{LLM_URL}/api/pull", json={"name": LLM_MODEL}, timeout=600)
-        print(f"Model {LLM_MODEL} pulled")
-    except (httpx.HTTPError, OSError) as exc:
-        print(f"LLM model pull failed (non-fatal): {exc}")
-
-
 def _ingest_sample_video() -> None:
     """Ingest a sample video so search tests have data to query.
 
@@ -1088,7 +1051,10 @@ def e2e_stack():
         cron_restore = _suspend_cronworkflows_for_session()
         _bootstrap_tenant_and_schemas()
         _ingest_sample_video()
-        _ensure_llm_model()
+        # Ollama model-pulling is owned by the chart's ``model-pulling``
+        # post-install hook — engine-gated (no-op for vLLM), readiness-waiting,
+        # and retrying. The old conftest ``_ensure_llm_model`` duplicated it
+        # (worse: not gated, no wait) and was removed.
         _ensure_sandbox_gateway()
         try:
             yield
