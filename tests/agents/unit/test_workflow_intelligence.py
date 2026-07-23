@@ -367,3 +367,105 @@ class TestPerformanceOptimization:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.unit
+class TestLearnedQueryPatterns:
+    """Successful executions feed query_type_patterns and template matching
+    consults them — the learned corpus used to round-trip to storage without
+    a single reader."""
+
+    def _execution(self, query: str, success: bool = True):
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
+
+        return WorkflowExecution(
+            workflow_id="wf-1",
+            query=query,
+            query_type="",
+            execution_time=1.0,
+            success=success,
+            agent_sequence=["video_search"],
+            task_count=1,
+            parallel_efficiency=1.0,
+            confidence_score=0.9,
+        )
+
+    @pytest.mark.asyncio
+    async def test_successful_execution_learns_classified_query(self):
+        intel = _make_intelligence()
+
+        await intel.record_execution(self._execution("show me sunset footage"))
+        await intel.record_execution(
+            self._execution("watch broken video", success=False)
+        )
+        await intel.record_execution(self._execution("SHOW ME SUNSET FOOTAGE"))
+
+        assert intel.query_type_patterns["video_search"] == [
+            "show me sunset footage"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_learned_patterns_capped_oldest_evicted(self):
+        intel = _make_intelligence()
+        cap = intel._MAX_LEARNED_PATTERNS_PER_TYPE
+
+        for i in range(cap + 5):
+            await intel.record_execution(self._execution(f"show clip number {i}"))
+
+        learned = intel.query_type_patterns["video_search"]
+        assert len(learned) == cap
+        assert learned[0] == "show clip number 5"
+        assert learned[-1] == f"show clip number {cap + 4}"
+
+    @pytest.mark.asyncio
+    async def test_learned_pattern_drives_template_match(self):
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowTemplate
+
+        intel = _make_intelligence()
+        template = WorkflowTemplate(
+            template_id="tpl-video",
+            name="video search",
+            description="",
+            query_patterns=["find video clips"],
+            task_sequence=[],
+            expected_execution_time=1.0,
+            success_rate=0.9,
+        )
+        intel.workflow_templates[template.template_id] = template
+
+        # No built-in pattern shares vocabulary with this phrasing.
+        assert intel._find_matching_template("show me sunset footage") is None
+
+        await intel.record_execution(self._execution("show me sunset footage"))
+
+        assert (
+            intel._find_matching_template("show me sunset footage") is template
+        )
+
+    @pytest.mark.asyncio
+    async def test_other_type_patterns_do_not_leak_into_video_template(self):
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowTemplate
+
+        intel = _make_intelligence()
+        template = WorkflowTemplate(
+            template_id="tpl-video",
+            name="video search",
+            description="",
+            query_patterns=["find video clips"],
+            task_sequence=[],
+            expected_execution_time=1.0,
+            success_rate=0.9,
+        )
+        intel.workflow_templates[template.template_id] = template
+
+        await intel.record_execution(
+            self._execution("compare quarterly revenue versus costs")
+        )
+
+        assert intel.query_type_patterns["comparison"] == [
+            "compare quarterly revenue versus costs"
+        ]
+        assert (
+            intel._find_matching_template("compare quarterly revenue versus costs")
+            is None
+        )
