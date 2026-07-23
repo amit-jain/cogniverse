@@ -228,8 +228,17 @@ async def upload_video(
     Returns 202 + ingest_id by default. ``wait=true`` polls until terminal
     state and returns a synchronous result. ``force=true`` bypasses idempotency.
     """
+    # A client may send org_id separately with a simple tenant_id; combine them
+    # into the canonical org:tenant form (matching the admin tenant route).
+    # Without this org_id was silently dropped and the upload landed in the
+    # wrong namespace (or a 400).
+    combined_tenant = tenant_id
+    if org_id and tenant_id and ":" not in tenant_id:
+        combined_tenant = f"{org_id}:{tenant_id}"
     try:
-        upload_tenant_id = require_tenant_id(tenant_id, source="/ingestion/upload")
+        upload_tenant_id = require_tenant_id(
+            combined_tenant, source="/ingestion/upload"
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
