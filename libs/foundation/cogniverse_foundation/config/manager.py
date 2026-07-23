@@ -156,8 +156,12 @@ class ConfigManager:
         Returns:
             SystemConfig instance
         """
+        # Return a copy so a caller mutating a field (the get-modify-set path,
+        # or a nested dict) cannot poison the shared cache other callers read.
+        # The cache still saves the expensive store round-trip; the copy of a
+        # small dataclass is cheap by comparison.
         if self._system_config_cache is not None:
-            return self._system_config_cache
+            return copy.deepcopy(self._system_config_cache)
 
         entry = self.store.get_config(
             tenant_id=self._SYSTEM_TENANT_ID,
@@ -173,7 +177,7 @@ class ConfigManager:
             cfg = SystemConfig.from_dict(entry.config_value)
 
         self._system_config_cache = cfg
-        return cfg
+        return copy.deepcopy(cfg)
 
     def set_system_config(self, system_config: SystemConfig) -> SystemConfig:
         """Set system-wide infrastructure configuration.
