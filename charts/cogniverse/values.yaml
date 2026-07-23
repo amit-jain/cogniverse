@@ -1538,6 +1538,13 @@ ingress:
   className: "nginx"
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Long-running answer routes (detailed report, deep research) hold the
+    # request for LM calls that legitimately run past nginx's 60s default
+    # read timeout. Align with the semantic-router envoy route timeout
+    # (files/semantic-router/envoy.yaml, 300s) so the proxy never cuts a
+    # request the backend is still serving.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "100m"
 

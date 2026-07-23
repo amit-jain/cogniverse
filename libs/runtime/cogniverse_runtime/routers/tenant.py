@@ -28,6 +28,25 @@ from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 logger = logging.getLogger(__name__)
 
+# One client per running event loop for the Argo submit/status calls.
+# Building a client per request paid ~10ms of TLS-context setup plus a fresh
+# TCP handshake on every call; keying by loop id keeps tests (one loop per
+# test) from reusing a client bound to a torn-down loop. No lock: the
+# check-construct-set sequence has no await, so it is atomic on its loop.
+_ARGO_CLIENT_TIMEOUT = httpx.Timeout(10.0)
+_argo_clients: Dict[int, httpx.AsyncClient] = {}
+
+
+async def _shared_argo_client() -> httpx.AsyncClient:
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    client = _argo_clients.get(key)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(timeout=_ARGO_CLIENT_TIMEOUT)
+        _argo_clients[key] = client
+    return client
+
+
 router = APIRouter()
 
 # Module-level config manager — set by main.py at startup
@@ -465,13 +484,13 @@ async def _submit_cron_workflow(manifest: dict) -> None:
     namespace = manifest["metadata"]["namespace"]
     name = manifest["metadata"]["name"]
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                f"{get_workflow_settings().api_url}/api/v1/cron-workflows/{namespace}",
-                # Argo's CreateCronWorkflowRequest wraps the manifest.
-                json={"namespace": namespace, "cronWorkflow": manifest},
-                headers=_argo_auth_headers(),
-            )
+        client = await _shared_argo_client()
+        response = await client.post(
+            f"{get_workflow_settings().api_url}/api/v1/cron-workflows/{namespace}",
+            # Argo's CreateCronWorkflowRequest wraps the manifest.
+            json={"namespace": namespace, "cronWorkflow": manifest},
+            headers=_argo_auth_headers(),
+        )
     except Exception as exc:
         logger.error("Failed to submit CronWorkflow %s to Argo: %s", name, exc)
         raise HTTPException(
@@ -505,11 +524,11 @@ async def _delete_cron_workflow(name: str, namespace: str) -> None:
     desired end state, so it counts as success.
     """
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.delete(
-                f"{get_workflow_settings().api_url}/api/v1/cron-workflows/{namespace}/{name}",
-                headers=_argo_auth_headers(),
-            )
+        client = await _shared_argo_client()
+        response = await client.delete(
+            f"{get_workflow_settings().api_url}/api/v1/cron-workflows/{namespace}/{name}",
+            headers=_argo_auth_headers(),
+        )
     except Exception as exc:
         logger.error("Failed to delete CronWorkflow %s from Argo: %s", name, exc)
         raise HTTPException(
@@ -631,12 +650,12 @@ async def _submit_workflow(manifest: dict) -> dict:
     """Submit a one-off Workflow to Argo. Returns the server response."""
     namespace = manifest["metadata"]["namespace"]
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                f"{get_workflow_settings().api_url}/api/v1/workflows/{namespace}",
-                json={"workflow": manifest},
-                headers=_argo_auth_headers(),
-            )
+        client = await _shared_argo_client()
+        response = await client.post(
+            f"{get_workflow_settings().api_url}/api/v1/workflows/{namespace}",
+            json={"workflow": manifest},
+            headers=_argo_auth_headers(),
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502, detail=f"Argo API unreachable: {exc}"
@@ -795,11 +814,11 @@ async def _argo_get_workflow_data(workflow_name: str, tenant_id: str) -> Dict[st
             detail="Argo is not configured on this deployment.",
         )
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{get_workflow_settings().api_url}/api/v1/workflows/{get_workflow_settings().namespace}/{workflow_name}",
-                headers=_argo_auth_headers(),
-            )
+        client = await _shared_argo_client()
+        response = await client.get(
+            f"{get_workflow_settings().api_url}/api/v1/workflows/{get_workflow_settings().namespace}/{workflow_name}",
+            headers=_argo_auth_headers(),
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502, detail=f"Argo API unreachable: {exc}"
@@ -851,12 +870,12 @@ async def _argo_workflow_action(
         f"{get_workflow_settings().namespace}/{workflow_name}/{action_path}"
     )
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.put(
-                url,
-                json={"name": workflow_name},
-                headers=_argo_auth_headers(),
-            )
+        client = await _shared_argo_client()
+        response = await client.put(
+            url,
+            json={"name": workflow_name},
+            headers=_argo_auth_headers(),
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,
