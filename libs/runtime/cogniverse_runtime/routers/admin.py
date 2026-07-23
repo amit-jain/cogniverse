@@ -1166,6 +1166,57 @@ _PIN_QUOTA_CACHE_TTL_S = 30.0
 _PIN_QUOTA_BLOB_KIND = "config"
 _PIN_QUOTA_BLOB_KEY = "pin_quotas"
 
+# Signature-variant selections persist the same way pin quotas do: a per-tenant
+# blob so a PUT survives a restart and is visible to every replica, fronted by a
+# TTL-bounded write-through cache. Without persistence the selection lived only
+# in the process dict of the replica that served the PUT — lost on restart and
+# invisible to the dispatcher on every other replica.
+_signature_variant_cache_ts: Dict[str, float] = {}
+_signature_variant_write_locks: Dict[str, asyncio.Lock] = {}
+_SIGNATURE_VARIANT_BLOB_KIND = "config"
+_SIGNATURE_VARIANT_BLOB_KEY = "signature_variants"
+
+
+def _signature_variant_write_lock(key: str) -> asyncio.Lock:
+    lock = _signature_variant_write_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _signature_variant_write_locks[key] = lock
+    return lock
+
+
+async def load_signature_variants(tenant_id: str) -> Dict[str, str]:
+    """Return a tenant's persisted signature-variant selections.
+
+    TTL-bounded write-through cache in front of the durable blob (see
+    _load_pin_quotas). Warmed by the dispatcher before it resolves a variant so
+    every replica serves the selection an admin PUT persisted, not just the one
+    that handled the PUT. A store outage propagates rather than masquerading as
+    "no selection".
+    """
+    key = canonical_tenant_id(tenant_id)
+    cached = _signature_variant_overrides.get(key)
+    ts = _signature_variant_cache_ts.get(key)
+    if (
+        cached is not None
+        and ts is not None
+        and (time.monotonic() - ts) < _PIN_QUOTA_CACHE_TTL_S
+    ):
+        return dict(cached)
+
+    am = _build_artifact_manager(key)
+    raw = await am.load_blob(_SIGNATURE_VARIANT_BLOB_KIND, _SIGNATURE_VARIANT_BLOB_KEY)
+    if not raw:
+        return {}
+    try:
+        selections = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Corrupt signature_variants blob for tenant=%s; ignoring", key)
+        return {}
+    _signature_variant_overrides[key] = selections
+    _signature_variant_cache_ts[key] = time.monotonic()
+    return dict(selections)
+
 
 def _pin_quota_write_lock(key: str) -> asyncio.Lock:
     """Return the per-tenant pin-quota write lock (created on first use).
@@ -1714,9 +1765,7 @@ async def get_signature_variants(tenant_id: str) -> SignatureVariantResponse:
     """list per-agent variant selections for a tenant."""
     return SignatureVariantResponse(
         tenant_id=tenant_id,
-        selections=dict(
-            _signature_variant_overrides.get(canonical_tenant_id(tenant_id), {})
-        ),
+        selections=await load_signature_variants(tenant_id),
     )
 
 
@@ -1735,9 +1784,20 @@ async def set_signature_variant(
     # Store under the canonical key so the dispatcher's _resolve_signature_variant
     # finds it whether the tenant arrives as simple or colon form.
     key = canonical_tenant_id(tenant_id)
-    selections = dict(_signature_variant_overrides.get(key, {}))
-    selections[agent_type] = body.variant_id
-    _signature_variant_overrides[key] = selections
+    # Read-modify-write under the per-tenant lock so the blob and cache never
+    # diverge under concurrent same-tenant PUTs, and persist to the durable blob
+    # so the selection survives a restart and reaches every replica.
+    async with _signature_variant_write_lock(key):
+        selections = await load_signature_variants(tenant_id)
+        selections[agent_type] = body.variant_id
+        am = _build_artifact_manager(key)
+        await am.save_blob(
+            _SIGNATURE_VARIANT_BLOB_KIND,
+            _SIGNATURE_VARIANT_BLOB_KEY,
+            json.dumps(selections),
+        )
+        _signature_variant_overrides[key] = selections
+        _signature_variant_cache_ts[key] = time.monotonic()
     logger.info(
         "Tenant=%s now using variant=%r for agent=%s",
         tenant_id,
@@ -1836,3 +1896,5 @@ def _reset_admin_overrides_for_tests() -> None:
     _pin_quota_cache_ts.clear()
     _pin_quota_write_locks.clear()
     _signature_variant_overrides.clear()
+    _signature_variant_cache_ts.clear()
+    _signature_variant_write_locks.clear()

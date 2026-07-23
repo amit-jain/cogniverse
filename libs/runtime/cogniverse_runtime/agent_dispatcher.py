@@ -848,7 +848,15 @@ class AgentDispatcher:
             return None
 
         # Consumer for PUT /admin/tenants/{t}/signature_variants/{agent};
-        # falls back to default when no admin selection exists.
+        # falls back to default when no admin selection exists. Warm the
+        # blob-backed cache first (TTL-bounded) so the selection an admin
+        # persisted reaches this replica, not just the one that served the PUT.
+        try:
+            from cogniverse_runtime.routers.admin import load_signature_variants
+
+            await load_signature_variants(tenant_id)
+        except Exception as exc:
+            logger.debug("signature-variant cache warm skipped: %s", exc)
         variant_id = self._resolve_signature_variant(tenant_id, agent_name)
 
         try:
