@@ -155,6 +155,15 @@ class AnnotationStore(ABC):
         pass
 
 
+class DatasetNotFoundError(ValueError):
+    """A dataset lookup failed because no dataset by that name exists.
+
+    Subclasses ValueError so existing ``except ValueError`` callers keep
+    working, while letting callers distinguish genuine not-found from a
+    backend outage (which raises the underlying transport error).
+    """
+
+
 class DatasetStore(ABC):
     """
     Manage training datasets.

@@ -13,6 +13,9 @@ dependencies = [
     "pillow==12.2.0",
 ]
 
+[project.scripts]
+cogniverse-eval = "cogniverse_evaluation.cli:main"
+
 [tool.uv.sources]
 cogniverse-foundation = { workspace = true }
 cogniverse-sdk = { workspace = true }

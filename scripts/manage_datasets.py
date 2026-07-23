@@ -14,13 +14,16 @@ from cogniverse_evaluation.data import DatasetManager
 
 def main():
     parser = argparse.ArgumentParser(description="Manage evaluation datasets")
+    parser.add_argument(
+        "--tenant-id", required=True, help="Tenant whose dataset store to use"
+    )
     parser.add_argument("--list", action="store_true", help="List all datasets")
     parser.add_argument("--create", help="Create dataset with name")
     parser.add_argument("--csv", help="CSV file path")
     parser.add_argument("--info", help="Get info about specific dataset")
     args = parser.parse_args()
 
-    dm = DatasetManager()
+    dm = DatasetManager(tenant_id=args.tenant_id)
 
     if args.list:
         dataset_names = dm.list_datasets()

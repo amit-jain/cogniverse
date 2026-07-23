@@ -17,6 +17,7 @@ from phoenix.client import AsyncClient
 from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
 from cogniverse_foundation.telemetry.providers.base import (
     AnnotationStore,
+    DatasetNotFoundError,
     DatasetStore,
     TelemetryProvider,
     TraceStore,
@@ -68,8 +69,6 @@ class PhoenixTraceStore(TraceStore):
             project_template: Template for project naming (e.g., "cogniverse-{tenant_id}-{service}")
         """
         self.http_endpoint = http_endpoint
-        self.tenant_id = tenant_id
-        self.project_template = project_template
         # Telemetry is integral (auto-optimization, eval) but not on the user
         # request path, so its breaker uses a longer reset window — there is no
         # urgency to retry Phoenix fast. Read call sites choose whether to
@@ -219,7 +218,6 @@ class PhoenixAnnotationStore(AnnotationStore):
             tenant_id: Tenant identifier
         """
         self.http_endpoint = http_endpoint
-        self.tenant_id = tenant_id
 
     def _get_client(self) -> AsyncClient:
         """Return the memoized AsyncClient for the current event loop."""
@@ -388,7 +386,6 @@ class PhoenixDatasetStore(DatasetStore):
             tenant_id: Tenant identifier
         """
         self.http_endpoint = http_endpoint
-        self.tenant_id = tenant_id
 
     def _get_client(self) -> AsyncClient:
         """Return the memoized AsyncClient for the current event loop."""
@@ -494,6 +491,9 @@ class PhoenixDatasetStore(DatasetStore):
 
         Returns:
             DataFrame with dataset records
+
+        Raises:
+            DatasetNotFoundError: If no dataset by that name exists.
         """
         try:
             from phoenix.client import Client
@@ -508,6 +508,9 @@ class PhoenixDatasetStore(DatasetStore):
             return df
 
         except Exception as e:
+            msg = str(e).lower()
+            if "not found" in msg or "404" in msg:
+                raise DatasetNotFoundError(f"Dataset not found: {name}") from e
             logger.error(f"Failed to retrieve dataset '{name}': {e}")
             raise
 
@@ -553,7 +556,9 @@ class PhoenixDatasetStore(DatasetStore):
                 except Exception as lookup_exc:
                     msg = str(lookup_exc).lower()
                     if "not found" in msg or "404" in msg:
-                        raise ValueError(f"Dataset not found: {name}") from lookup_exc
+                        raise DatasetNotFoundError(
+                            f"Dataset not found: {name}"
+                        ) from lookup_exc
                     raise
                 sync_client.datasets.add_examples_to_dataset(
                     dataset=name,

@@ -135,18 +135,18 @@ class TraceManager:
         """
         start_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
 
-        # Build filter for specific experiment. Phoenix evaluates the filter
-        # as a Python expression, so repr() yields a correctly-quoted/escaped
-        # string literal — a raw value with a quote would break the filter.
-        filter_condition = (
-            f"attributes.metadata.profile == {profile!r} AND "
-            f"attributes.metadata.strategy == {strategy!r}"
-        )
+        df = self.storage.get_traces_for_evaluation(start_time=start_time, limit=1000)
 
-        df = self.storage.get_traces_for_evaluation(
-            start_time=start_time, filter_condition=filter_condition, limit=1000
-        )
+        # Filter client-side on the flattened frame columns — the storage
+        # layer takes no filter expression (values are matched literally, so
+        # quotes or other hostile characters in profile names are inert).
+        profile_col = "attributes.metadata.profile"
+        strategy_col = "attributes.metadata.strategy"
+        if df.empty or profile_col not in df.columns or strategy_col not in df.columns:
+            logger.info(f"Retrieved 0 traces for {profile}/{strategy}")
+            return df.iloc[0:0]
 
+        df = df[(df[profile_col] == profile) & (df[strategy_col] == strategy)]
         logger.info(f"Retrieved {len(df)} traces for {profile}/{strategy}")
         return df
 

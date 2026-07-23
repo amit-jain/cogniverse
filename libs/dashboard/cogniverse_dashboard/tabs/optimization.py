@@ -829,6 +829,18 @@ def _render_synthetic_data_tab():
         """)
 
 
+def create_dataset_from_upload(tenant_id: str, csv_path: str, dataset_name: str) -> str:
+    """Create a telemetry dataset from an uploaded CSV, scoped to the tenant."""
+    from cogniverse_evaluation.data import DatasetManager
+
+    manager = DatasetManager(tenant_id=tenant_id)
+    return manager.create_from_csv(
+        csv_path=csv_path,
+        dataset_name=dataset_name,
+        description="Uploaded via optimization dashboard",
+    )
+
+
 def _render_routing_optimization_tab():
     """Render routing optimization interface"""
     st.subheader("🎯 Module Optimization")
@@ -977,10 +989,6 @@ def _render_routing_optimization_tab():
                             try:
                                 import tempfile
 
-                                from cogniverse_evaluation.data import (
-                                    DatasetManager,
-                                )
-
                                 # Save uploaded file to temp location
                                 with tempfile.NamedTemporaryFile(
                                     mode="wb", suffix=".csv", delete=False
@@ -990,12 +998,10 @@ def _render_routing_optimization_tab():
 
                                 st.info("Processing CSV file...")
 
-                                # Use existing DatasetManager to create dataset
-                                dataset_manager = DatasetManager()
-                                dataset_id = dataset_manager.create_from_csv(
-                                    csv_path=tmp_path,
-                                    dataset_name=dataset_name,
-                                    description="Uploaded via optimization dashboard",
+                                dataset_id = create_dataset_from_upload(
+                                    st.session_state["current_tenant"],
+                                    tmp_path,
+                                    dataset_name,
                                 )
 
                                 # Clean up temp file

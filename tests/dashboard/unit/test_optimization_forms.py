@@ -363,3 +363,25 @@ def test_golden_dataset_excludes_nan_annotation_scores(monkeypatch) -> None:
 
     assert list(dataset.keys()) == ["annotated query"]
     assert dataset["annotated query"]["avg_relevance"] == 0.9
+
+
+def test_create_dataset_from_upload_threads_tenant() -> None:
+    """The CSV-upload path scopes the dataset store to the session tenant —
+    the zero-arg DatasetManager() construction this replaced raised TypeError
+    on every upload."""
+    from unittest.mock import patch
+
+    from cogniverse_dashboard.tabs.optimization import create_dataset_from_upload
+
+    with patch("cogniverse_evaluation.data.DatasetManager") as manager_cls:
+        manager_cls.return_value.create_from_csv.return_value = "ds-up"
+
+        result = create_dataset_from_upload("acme:dash", "/tmp/q.csv", "uploaded")
+
+    assert result == "ds-up"
+    manager_cls.assert_called_once_with(tenant_id="acme:dash")
+    manager_cls.return_value.create_from_csv.assert_called_once_with(
+        csv_path="/tmp/q.csv",
+        dataset_name="uploaded",
+        description="Uploaded via optimization dashboard",
+    )
