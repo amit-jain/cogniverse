@@ -1130,6 +1130,7 @@ strategy = AudioTranscriptionStrategy(model="whisper-large-v3", language="auto")
 - `batch_size`: Batch size for frame processing (default 500)
 - `timeout`: Request timeout in seconds (default 10800 / 3 hours)
 - `auto_start`: Whether to auto-start Modal service if not running (default True)
+- `vlm_concurrency`: Keyframe describe-requests kept in flight against an OpenAI-compatible `/v1` (vLLM) endpoint (default 8). Concurrent requests are what feed vLLM's continuous batching — the chat API returns one completion per request, so there is no single-request multi-image describe. Raise it on a GPU that can serve a bigger batch; keep it low on a small one. Ignored by the Modal zip-batch path.
 
 **Usage**:
 ```python

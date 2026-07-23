@@ -87,6 +87,7 @@ class TestVLMDescriptor:
             assert descriptor.batch_size == 500
             assert descriptor.timeout == 10800
             assert descriptor.auto_start is True
+            assert descriptor.vlm_concurrency == 8
             assert descriptor._service_started is False
 
     def test_initialization_custom_values(self):
@@ -738,6 +739,18 @@ class TestVLMProcessor:
         assert processor.batch_size == 500
         assert processor.timeout == 10800
         assert processor.auto_start is True
+        assert processor.vlm_concurrency == 8
+
+    def test_from_config_threads_vlm_concurrency(self, mock_logger):
+        """A profile-set vlm_concurrency reaches the processor."""
+        from cogniverse_runtime.ingestion.processors.vlm_processor import VLMProcessor
+
+        config = {
+            "vlm_endpoint": "http://test.com/generate-description",
+            "vlm_concurrency": 24,
+        }
+        processor = VLMProcessor.from_config(config, mock_logger)
+        assert processor.vlm_concurrency == 24
 
     def test_lazy_descriptor_initialization(self, mock_logger):
         """VLMDescriptor is only created on first generate_descriptions call."""
@@ -768,6 +781,7 @@ class TestVLMProcessor:
                 batch_size=500,
                 timeout=10800,
                 auto_start=False,
+                vlm_concurrency=8,
             )
             mock_descriptor.generate_descriptions.assert_called_once()
             assert result == {"descriptions": {"frame_1": "a cat"}}
@@ -922,6 +936,7 @@ class TestVLMDescriptionStrategyWiring:
                 batch_size=100,
                 timeout=10800,
                 auto_start=False,
+                vlm_concurrency=8,
             )
             assert result["descriptions"]["f1"] == "a person walking"
 
@@ -1210,3 +1225,34 @@ class TestVLMOpenAIConcurrency:
         assert server.models_request_count >= 1
         # 8 x 0.3s serial would be ~2.4s; concurrent is ~0.3s.
         assert elapsed < 1.0
+
+    def test_vlm_concurrency_bounds_in_flight_requests(self, tmp_path):
+        """A configured vlm_concurrency caps how many describe-POSTs the vLLM
+        endpoint sees at once — the throughput lever operators tune per GPU."""
+        server = _VLMServer(("127.0.0.1", 0), _VLMHandler)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            keyframes = []
+            for i in range(12):
+                p = tmp_path / f"f{i}.jpg"
+                p.write_bytes(f"f{i}".encode())
+                keyframes.append({"frame_id": f"f{i}", "path": str(p)})
+
+            descriptor = VLMDescriptor(
+                vlm_endpoint=f"http://127.0.0.1:{port}/v1",
+                batch_size=500,
+                timeout=30,
+                auto_start=False,
+                vlm_concurrency=3,
+            )
+            result = descriptor._process_vlm_batch_openai(keyframes)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        # 12 frames, concurrency 3 -> never more than 3 POSTs in flight...
+        assert server.max_concurrency == 3
+        # ...and every frame still described.
+        assert server.chat_request_count == 12
+        assert set(result.keys()) == {f"f{i}" for i in range(12)}

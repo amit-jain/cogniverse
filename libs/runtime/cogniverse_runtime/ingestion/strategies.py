@@ -218,11 +218,13 @@ class VLMDescriptionStrategy(BaseStrategy):
         batch_size: int = 500,
         timeout: int = 10800,
         auto_start: bool = True,
+        vlm_concurrency: int = 8,
     ):
         self.vlm_endpoint = vlm_endpoint
         self.batch_size = batch_size
         self.timeout = timeout
         self.auto_start = auto_start
+        self.vlm_concurrency = vlm_concurrency
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """VLM description requires VLM processor."""
@@ -232,6 +234,7 @@ class VLMDescriptionStrategy(BaseStrategy):
                 "batch_size": self.batch_size,
                 "timeout": self.timeout,
                 "auto_start": self.auto_start,
+                "vlm_concurrency": self.vlm_concurrency,
             }
         }
 
