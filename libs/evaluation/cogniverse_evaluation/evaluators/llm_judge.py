@@ -143,32 +143,36 @@ class LLMJudgeCore:
         """
         import re
 
-        # Try to extract score from response
+        # Try to extract score from response. Each pattern carries its
+        # denominator: /100 must not be read as /10 (85/100 is 0.85, not 1.0),
+        # and a leading minus is captured so "-3/10" clamps to 0.0 rather than
+        # being read as a positive 0.3. ``None`` uses the 0-10-vs-0-1 heuristic.
         score_patterns = [
-            r"score[:\s]+([0-9.]+)",
-            r"rating[:\s]+([0-9.]+)",
-            r"([0-9.]+)/10",
-            r"([0-9.]+)\s+out of\s+10",
+            (r"(-?[0-9.]+)\s*/\s*100\b", 100.0),
+            (r"(-?[0-9.]+)\s*/\s*10\b", 10.0),
+            (r"(-?[0-9.]+)\s+out of\s+10", 10.0),
+            (r"score[:\s]+(-?[0-9.]+)", None),
+            (r"rating[:\s]+(-?[0-9.]+)", None),
         ]
 
         score: float | None = None
-        for pattern in score_patterns:
+        for pattern, denom in score_patterns:
             match = re.search(pattern, response.lower())
             if match:
                 try:
                     raw_score = float(match.group(1))
-                    # Normalize to 0-1 range
-                    if raw_score > 1:
-                        score = raw_score / 10
-                    else:
-                        score = raw_score
-                    # LMs write "12/10" or "100/10"; anything outside [0, 1]
-                    # would skew persisted quality means and the 0.8/0.5
-                    # example-classification gates.
-                    score = max(0.0, min(1.0, score))
-                    break
-                except Exception:
+                except ValueError:
                     continue
+                if denom is not None:
+                    value = raw_score / denom
+                elif raw_score > 1:
+                    value = raw_score / 10
+                else:
+                    value = raw_score
+                # Anything outside [0, 1] would skew persisted quality means
+                # and the 0.8/0.5 example-classification gates.
+                score = max(0.0, min(1.0, value))
+                break
 
         # Extract explanation (first sentence or full response)
         explanation = response.split("\n")[0] if "\n" in response else response

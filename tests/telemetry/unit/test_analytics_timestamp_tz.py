@@ -265,3 +265,21 @@ def test_mixed_tz_within_row_still_yields_duration() -> None:
 
     assert len(traces) == 1
     assert traces[0].duration_ms == 2000.0
+
+
+def test_ensure_utc_handles_string_and_epoch_cells() -> None:
+    """Object-dtype start/end cells (str, np.datetime64, epoch) must not crash
+    get_traces — the .replace(tzinfo=...) fallback assumed a datetime."""
+    import numpy as np
+
+    from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
+
+    f = PhoenixAnalytics._ensure_utc
+    # str timestamp -> coerced to a UTC-aware Timestamp
+    assert f("2026-01-01 10:00:00").tzinfo is not None
+    # np.datetime64 -> UTC-aware
+    assert f(np.datetime64("2026-01-01T10:00:00")).tzinfo is not None
+    # None / NaT pass through
+    assert f(None) is None
+    # An uncoercible value returns without raising
+    assert f(object()) is not None or True

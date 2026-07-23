@@ -22,6 +22,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _coerce_latency(value: object) -> float:
+    """Coerce a span's processing_time to milliseconds, defaulting to 0.0 for
+    a missing/non-numeric value rather than raising."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class RoutingOutcome(Enum):
     """Classification of routing decision outcomes"""
 
@@ -186,7 +195,9 @@ class RoutingEvaluator:
             # Routers emit floats, labels ("high") or percents ("85%") —
             # parse_confidence maps them all into [0, 1].
             "confidence": parse_confidence(confidence),
-            "latency_ms": float(latency_ms),
+            # Coerce defensively: a None/list processing_time must not raise a
+            # TypeError that aborts the whole calculate_metrics batch.
+            "latency_ms": _coerce_latency(latency_ms),
             "success": outcome == RoutingOutcome.SUCCESS,
             "downstream_status": downstream_status,
         }

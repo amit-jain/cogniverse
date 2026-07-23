@@ -539,3 +539,42 @@ class TestConfidenceCoercion:
         _, metrics = evaluator.evaluate_routing_decision(span_data)
 
         assert metrics["confidence"] == 0.85
+
+
+class TestLatencyAndNumpyCoercion:
+    def test_non_numeric_latency_does_not_abort_batch(self, mock_provider):
+        """A span with a None/list processing_time must not raise a TypeError
+        that aborts the whole calculate_metrics batch — the ValueError-only
+        caller guard didn't catch it."""
+        evaluator = RoutingEvaluator(provider=mock_provider)
+        span = {
+            "name": "cogniverse.routing",
+            "status_code": "OK",
+            "attributes": {
+                "routing.chosen_agent": "video_search",
+                "routing.confidence": 0.9,
+                "routing.processing_time": None,
+            },
+            "events": [],
+        }
+        _, metrics = evaluator.evaluate_routing_decision(span)
+        assert metrics["latency_ms"] == 0.0
+
+    def test_numpy_bool_confidence_is_not_zero(self, mock_provider):
+        """A confidence read as np.bool_(True) from a pandas row must map to
+        1.0, not silently to 0.0."""
+        import numpy as np
+
+        evaluator = RoutingEvaluator(provider=mock_provider)
+        span = {
+            "name": "cogniverse.routing",
+            "status_code": "OK",
+            "attributes": {
+                "routing.chosen_agent": "video_search",
+                "routing.confidence": np.bool_(True),
+                "routing.processing_time": 10.0,
+            },
+            "events": [],
+        }
+        _, metrics = evaluator.evaluate_routing_decision(span)
+        assert metrics["confidence"] == 1.0

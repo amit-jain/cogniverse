@@ -53,7 +53,14 @@ class PhoenixAnalytics:
 
     @staticmethod
     def _ensure_utc(value):
-        """Coerce a timestamp to UTC-aware; None/NaT pass through unchanged."""
+        """Coerce a timestamp to UTC-aware; None/NaT pass through unchanged.
+
+        Object-dtype cells may be str / np.datetime64 / epoch, not just
+        datetimes — coerce those via pd.Timestamp rather than assuming a
+        ``.tz_localize`` / ``.replace(tzinfo=...)`` method (which crashed
+        get_traces). An uncoercible value is returned unchanged so the
+        per-span duration guard drops just that trace, not the whole read.
+        """
         if value is None or (isinstance(value, float) and pd.isna(value)):
             return value
         try:
@@ -61,13 +68,18 @@ class PhoenixAnalytics:
                 return value
         except (TypeError, ValueError):
             pass
-        tzinfo = getattr(value, "tzinfo", None)
-        if tzinfo is None:
+        ts = value
+        if not isinstance(ts, (datetime, pd.Timestamp)):
             try:
-                return value.tz_localize("UTC")
-            except AttributeError:
-                return value.replace(tzinfo=timezone.utc)
-        return value
+                ts = pd.Timestamp(ts)
+            except (ValueError, TypeError):
+                return value
+        if getattr(ts, "tzinfo", None) is None:
+            try:
+                return ts.tz_localize("UTC")
+            except (AttributeError, TypeError):
+                return ts.replace(tzinfo=timezone.utc)
+        return ts
 
     def get_traces(
         self,

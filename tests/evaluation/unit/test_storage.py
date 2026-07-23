@@ -702,3 +702,30 @@ class TestEnableMetricsToggle:
         assert monitored.export([Mock(), Mock()]) == SpanExportResult.SUCCESS
         assert metrics.total_spans_sent == 0
         assert metrics.export_latencies == deque([], maxlen=100)
+
+
+class TestExporterTimeoutUnits:
+    @pytest.mark.unit
+    def test_otlp_exporter_timeout_is_seconds_not_millis(self):
+        """OTLPSpanExporter.timeout is SECONDS; passing export_timeout_millis
+        (30000) verbatim gave an 8.3-hour per-attempt budget."""
+        import contextlib
+
+        from opentelemetry import trace as _trace
+
+        config = ConnectionConfig(export_timeout_millis=30000)
+        storage = TelemetryStorage.__new__(TelemetryStorage)
+        storage.config = config
+        storage.metrics = ExportMetrics()
+        storage.tracer = None
+
+        with patch(
+            "cogniverse_evaluation.data.storage.OTLPSpanExporter"
+        ) as mock_exporter:
+            # The exporter is constructed before the tracer wiring; the mock's
+            # call args are captured regardless of the tail's behavior.
+            with patch.object(_trace, "get_tracer_provider", return_value=object()):
+                with contextlib.suppress(Exception):
+                    storage._configure_opentelemetry()
+
+        assert mock_exporter.call_args.kwargs["timeout"] == 30

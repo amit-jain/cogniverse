@@ -58,3 +58,23 @@ class TestScoreClamping:
     def test_plain_score_unchanged(self):
         score, _ = self._judge()._extract_score_from_response("Score: 7/10")
         assert score == 0.7
+
+
+class TestScoreRegexEdges:
+    def _judge(self) -> LLMJudgeCore:
+        return LLMJudgeCore(model_name="x", base_url="http://unused")
+
+    def test_out_of_100_is_not_treated_as_out_of_10(self):
+        assert self._judge()._extract_score_from_response("Score: 85/100")[0] == 0.85
+        assert self._judge()._extract_score_from_response("3/100")[0] == 0.03
+
+    def test_negative_score_clamps_to_zero_not_positive(self):
+        # -3/10 must be 0.0, not 0.3 (sign dropped by the old regex).
+        assert self._judge()._extract_score_from_response("Score: -3/10")[0] == 0.0
+
+    def test_plain_fractions_unchanged(self):
+        assert self._judge()._extract_score_from_response("Score: 5/10")[0] == 0.5
+        assert self._judge()._extract_score_from_response("rating: 0.5")[0] == 0.5
+        assert (
+            self._judge()._extract_score_from_response("the value is 100/10")[0] == 1.0
+        )
