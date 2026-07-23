@@ -99,9 +99,16 @@ def _real_config_manager():
 
 def _config_json_primary_api_base() -> str:
     import json
+    import os
     from pathlib import Path
 
-    cfg = json.loads(Path("configs/config.json").read_text())
+    # Read the EFFECTIVE config the ConfigManager resolves — the session
+    # fixture rewrites the primary endpoint to host Ollama when the
+    # production LM is unreachable and points COGNIVERSE_CONFIG at that
+    # rewritten copy. Reading configs/config.json directly would compare the
+    # bound LM against a stale endpoint whenever the rewrite fired.
+    cfg_path = os.environ.get("COGNIVERSE_CONFIG") or "configs/config.json"
+    cfg = json.loads(Path(cfg_path).read_text())
     return cfg["llm_config"]["primary"]["api_base"]
 
 

@@ -213,6 +213,9 @@ class ConfigManager:
         Returns:
             AgentConfig or None if not found
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_agent_config"
+        )
         # Served from the scoped TTL cache — this read sits on the
         # per-dispatch answer path (behavior toggles for every summarizer /
         # report dispatch), so an uncached read cost one synchronous Vespa
@@ -241,6 +244,9 @@ class ConfigManager:
         Returns:
             Updated AgentConfig
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.set_agent_config"
+        )
         unified = AgentConfigUnified(tenant_id=tenant_id, agent_config=agent_config)
 
         self.store.set_config(
@@ -330,6 +336,9 @@ class ConfigManager:
         scopes were cached. Returns the stored ``config_value`` (typically
         ``{"text": ..., "updated_at": ...}``) or ``None`` when unset.
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_tenant_instructions_config"
+        )
         return self._cached_config_value(
             ConfigScope.SYSTEM, tenant_id, "tenant_instructions", "system_prompt"
         )
@@ -792,6 +801,9 @@ class ConfigManager:
         Returns:
             Configuration value or default
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_config_value"
+        )
         entry = self.store.get_config(
             tenant_id=tenant_id, scope=scope, service=service, config_key=config_key
         )
@@ -819,6 +831,9 @@ class ConfigManager:
             config_key: Configuration key
             config_value: Configuration value
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.set_config_value"
+        )
         self.store.set_config(
             tenant_id=tenant_id,
             scope=scope,
