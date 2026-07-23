@@ -12,15 +12,7 @@ import logging
 import pandas as pd
 import pytest
 
-from tests.fixtures.llm import is_test_lm_available
-
 logger = logging.getLogger(__name__)
-
-
-skip_if_no_lm = pytest.mark.skipif(
-    not is_test_lm_available(),
-    reason="Test LM not available for triggered optimization",
-)
 
 
 @pytest.fixture
@@ -120,7 +112,6 @@ def trigger_dataset_in_phoenix(real_telemetry, phoenix_container):
 
 
 @pytest.mark.integration
-@skip_if_no_lm
 class TestTriggeredOptimization:
     """Test run_triggered_optimization() end-to-end."""
 
@@ -157,7 +148,11 @@ class TestTriggeredOptimization:
 
     @pytest.mark.asyncio
     async def test_strategy_distillation_from_trigger_dataset(
-        self, trigger_dataset_in_phoenix, memory_manager, phoenix_container
+        self,
+        ensure_host_ollama,
+        trigger_dataset_in_phoenix,
+        memory_manager,
+        phoenix_container,
     ):
         """Load trigger dataset from Phoenix and distill strategies into real Vespa memory.
 
@@ -193,7 +188,12 @@ class TestTriggeredOptimization:
 
     @pytest.mark.asyncio
     async def test_run_triggered_optimization_end_to_end(
-        self, trigger_dataset_in_phoenix, config_manager, phoenix_container, monkeypatch
+        self,
+        ensure_host_ollama,
+        trigger_dataset_in_phoenix,
+        config_manager,
+        phoenix_container,
+        monkeypatch,
     ):
         """Call run_triggered_optimization() with injected config_manager
         and phoenix_endpoint. Verifies the full CLI orchestration path.

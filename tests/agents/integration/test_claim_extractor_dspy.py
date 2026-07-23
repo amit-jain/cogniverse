@@ -35,10 +35,7 @@ from cogniverse_agents.graph.claim_extractor import ClaimExtractor
 from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
 from cogniverse_agents.graph.graph_schema import Mention
 from tests.fixtures.llm import (
-    is_test_lm_available,
     resolve_api_key,
-    resolve_base_url,
-    resolve_prefixed_model,
 )
 
 # --------------------------------------------------------------------------- #
@@ -111,20 +108,7 @@ def assert_golden_edges(sorted_edges: Any, name: str) -> None:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Skip the entire file when the test LM is unreachable.                       #
-# --------------------------------------------------------------------------- #
-
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not is_test_lm_available(),
-        reason=(
-            f"Test LM endpoint not reachable at {resolve_base_url()} — "
-            "ClaimExtractor requires a live LM"
-        ),
-    ),
-]
+pytestmark = [pytest.mark.integration]
 
 
 # --------------------------------------------------------------------------- #
@@ -170,8 +154,26 @@ def _vlm_flowers_anchor() -> Mention:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.fixture(scope="module")
+def hermetic_test_lm():
+    """Provision (or reattach to) the hermetic vLLM sidecar the goldens
+    were locked against — the same ``ensure_llm`` path
+    ``tests/evaluation/integration/conftest.py::llm_endpoint`` uses. Fails
+    loudly when the sidecar cannot come up (this file errors, never skips,
+    on infra faults)."""
+    from tests.utils.hermetic_llm import ensure_llm
+
+    base = ensure_llm()
+    if base is None:
+        pytest.fail(
+            "hermetic test-LM sidecar failed to provision "
+            "(Docker unavailable or the model never became ready)"
+        )
+    return base
+
+
 @pytest.fixture(scope="function")
-def configured_dspy_lm():
+def configured_dspy_lm(hermetic_test_lm):
     """Configure DSPy with a temperature=0 test LM (deterministic).
 
     Function-scope is required because the session-wide ``cleanup_dspy_state``
@@ -187,16 +189,25 @@ def configured_dspy_lm():
 
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    from tests.utils.hermetic_llm import MODEL as SIDECAR_MODEL
 
+    # Pin model + base to the sidecar the goldens were recorded against.
+    # The session test-config fixture rewrites the resolver chain to
+    # whatever live OAI server it detects (e.g. host ollama), which would
+    # silently swap the model under the locked goldens.
     endpoint = LLMEndpointConfig(
-        model=resolve_prefixed_model(),
-        api_base=resolve_base_url(),
+        model=f"openai/{SIDECAR_MODEL}",
+        api_base=hermetic_test_lm,
         api_key=resolve_api_key(),
         # Hard-pinned for golden determinism.
         temperature=0.0,
         max_tokens=800,
     )
     lm = create_dspy_lm(endpoint)
+    # Bypass the litellm/dspy disk cache: a cached completion recorded
+    # against an earlier serving of the same model id would be replayed
+    # forever, so the assertions would never exercise the live model.
+    lm.cache = False
     dspy.configure(lm=lm)
     try:
         yield lm
@@ -311,12 +322,16 @@ class TestClaimExtractorMarieCurie:
             f"rationale length {len(rationale)} outside sane bounds: "
             f"{rationale[:200]!r}"
         )
-        assert "Marie Curie discovered radium" in rationale, rationale[:400]
-        assert '"Marie Curie" (subject)' in rationale, rationale[:400]
+        # The prose re-words across runs (vLLM batching is not
+        # byte-deterministic even at temperature 0); the citation format is
+        # the contract, so assert the grounded citations — subject, both
+        # predicates, and the object — never an exact prose phrase.
+        assert '"Marie Curie" (subject)' in rationale, rationale
         for predicate in ("discovered", "discovered_in"):
             assert f'"{predicate}" (predicate)' in rationale, (
                 f"rationale never cites predicate {predicate!r}:\n{rationale}"
             )
+        assert '"radium" (object)' in rationale, rationale
 
     def test_negative_yellow_flowers_no_edges(self, configured_dspy_lm):
         """'Yellow flowers in a glass vase.' yields zero SPO edges
@@ -494,7 +509,9 @@ class TestClaimExtractorArtifact:
     """Compiled-artifact dataset equality + demo count."""
 
     @pytest.mark.asyncio
-    async def test_artifact_blob_round_trip(self, configured_dspy_lm):
+    async def test_artifact_blob_round_trip(
+        self, configured_dspy_lm, phoenix_container
+    ):
         """Compiled ClaimExtractor state persists as a ``("model",
         "claim_extraction")`` JSON blob and round-trips byte-for-byte through
         ArtifactManager, then restores into a fresh ChainOfThought via
@@ -516,31 +533,10 @@ class TestClaimExtractorArtifact:
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
         from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-        # Default to the k3d cluster's NodePort-exposed Phoenix when env
-        # vars aren't set — the test harness expects a live Phoenix and the
-        # cluster is the only one we ship. If neither the env override nor
-        # the default URL is reachable, the test asks the operator to start
-        # Phoenix rather than silently skipping (per the "skips = bugs"
-        # rule in CLAUDE.md).
-        http_endpoint = os.environ.get(
-            "PHOENIX_HTTP_ENDPOINT", "http://localhost:26006"
-        )
-        grpc_endpoint = os.environ.get("PHOENIX_GRPC_ENDPOINT", "http://localhost:4317")
-        try:
-            import requests as _requests
-
-            probe = _requests.get(f"{http_endpoint.rstrip('/')}/healthz", timeout=2)
-            if probe.status_code != 200:
-                pytest.fail(
-                    f"Phoenix at {http_endpoint} returned "
-                    f"{probe.status_code} — start the k3d cluster's Phoenix "
-                    "or override PHOENIX_HTTP_ENDPOINT"
-                )
-        except Exception as exc:
-            pytest.fail(
-                f"Phoenix at {http_endpoint} unreachable ({exc}) — start "
-                "the k3d cluster's Phoenix or override PHOENIX_HTTP_ENDPOINT"
-            )
+        # The managed per-process Phoenix container — the test provisions
+        # its own backend instead of probing for an operator-run one.
+        http_endpoint = phoenix_container["http_endpoint"]
+        grpc_endpoint = phoenix_container["grpc_endpoint"]
 
         provider = PhoenixProvider()
         provider.initialize(

@@ -280,7 +280,15 @@ class ClaimExtractor:
             if self._rlm_module is None:
                 with self._module_lock:
                     if self._rlm_module is None:
-                        module = dspy.RLM(ClaimExtractionSignature)
+                        # Bound the REPL output folded into follow-up prompts:
+                        # the dspy default (100k chars) packs the next request
+                        # to the serving window's boundary, which 400s on
+                        # smaller-window deployments (the server's tokenizer
+                        # counts a token or two more than the client's trim
+                        # math reserved).
+                        module = dspy.RLM(
+                            ClaimExtractionSignature, max_output_chars=16_000
+                        )
                         self._load_compiled_state(module, tenant_id)
                         self._rlm_module = module
             return self._rlm_module
