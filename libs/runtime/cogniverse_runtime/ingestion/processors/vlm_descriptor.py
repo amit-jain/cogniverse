@@ -39,11 +39,18 @@ class VLMDescriptor:
         batch_size: int = 500,
         timeout: int = 10800,
         auto_start: bool = True,
+        vlm_concurrency: int = 8,
     ):
         self.vlm_endpoint = vlm_endpoint
         self.batch_size = batch_size
         self.timeout = timeout  # 3 hours default
         self.auto_start = auto_start
+        # How many keyframe describe-requests to keep in flight against an
+        # OpenAI-compatible ``/v1`` endpoint. Concurrent requests are what feed
+        # vLLM's continuous batching (there is no single-request multi-image
+        # describe API), so this is the throughput lever: raise it on a GPU that
+        # can serve a bigger batch, keep it low on a small one.
+        self.vlm_concurrency = max(1, vlm_concurrency)
         self._service_started = False
         # An OpenAI-compatible ``/v1`` endpoint (e.g. the deployed vLLM vision
         # model) speaks chat/completions with image_url parts; a Modal endpoint
@@ -364,8 +371,11 @@ class VLMDescriptor:
     def _process_vlm_batch_openai(self, keyframes: list[dict]) -> dict[str, str]:
         """Describe each keyframe via an OpenAI-compatible vision chat model.
 
-        Frames are described concurrently (up to 8 in flight) so vLLM's
-        continuous batching is fed; a strictly-sequential loop starved it.
+        Frames are described concurrently (up to ``vlm_concurrency`` in flight)
+        so vLLM's continuous batching is fed; a strictly-sequential loop starved
+        it. Concurrent requests are the only way to feed the server-side batcher
+        — the chat API returns one completion per request, so there is no
+        single-request multi-image describe.
         """
         model = self._resolve_openai_model()
         chat_url = f"{self._openai_base()}/chat/completions"
@@ -375,7 +385,8 @@ class VLMDescriptor:
                 self._describe_one_openai(kf, model, chat_url) for kf in keyframes
             ]
         else:
-            with ThreadPoolExecutor(max_workers=min(8, len(keyframes))) as pool:
+            workers = min(self.vlm_concurrency, len(keyframes))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
                 results = list(
                     pool.map(
                         lambda kf: self._describe_one_openai(kf, model, chat_url),

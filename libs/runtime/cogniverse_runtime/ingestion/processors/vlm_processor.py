@@ -24,6 +24,7 @@ class VLMProcessor(BaseProcessor):
         batch_size: int = 500,
         timeout: int = 10800,
         auto_start: bool = True,
+        vlm_concurrency: int = 8,
     ):
         """
         Initialize VLM processor.
@@ -40,6 +41,7 @@ class VLMProcessor(BaseProcessor):
         self.batch_size = batch_size
         self.timeout = timeout
         self.auto_start = auto_start
+        self.vlm_concurrency = vlm_concurrency
         self._descriptor = None
 
     def _get_descriptor(self):
@@ -52,6 +54,7 @@ class VLMProcessor(BaseProcessor):
                 batch_size=self.batch_size,
                 timeout=self.timeout,
                 auto_start=self.auto_start,
+                vlm_concurrency=self.vlm_concurrency,
             )
             self.logger.info(
                 f"VLMDescriptor initialized with endpoint: {self.vlm_endpoint}"
@@ -75,6 +78,7 @@ class VLMProcessor(BaseProcessor):
             batch_size=config.get("batch_size", 500),
             timeout=config.get("timeout", 10800),
             auto_start=config.get("auto_start", True),
+            vlm_concurrency=config.get("vlm_concurrency", 8),
         )
 
     def process(self, *args, **kwargs) -> Any:
