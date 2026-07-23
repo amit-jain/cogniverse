@@ -132,7 +132,10 @@ def test_batch_cap_truncates_and_logs(caplog) -> None:
         out = ann.batch_annotate(requests)
 
     assert len(out) == 3
-    assert called == ["span-0", "span-1", "span-2"]
+    # PUTs run through a thread pool, so call order is not deterministic — the
+    # SET of processed spans is the first 3, and the RESULT stays in request
+    # order.
+    assert set(called) == {"span-0", "span-1", "span-2"}
     assert [a.span_id for a in out] == ["span-0", "span-1", "span-2"]
     cap_logs = [r.message for r in caplog.records if "capping" in r.message.lower()]
     assert len(cap_logs) == 1
@@ -147,7 +150,8 @@ def test_batch_cap_none_processes_all(caplog) -> None:
         out = ann.batch_annotate(requests)
 
     assert len(out) == 5
-    assert called == [f"span-{i}" for i in range(5)]
+    assert set(called) == {f"span-{i}" for i in range(5)}
+    assert [a.span_id for a in out] == [f"span-{i}" for i in range(5)]
     assert not [r for r in caplog.records if "capping" in r.message.lower()]
 
 
@@ -159,5 +163,100 @@ def test_batch_cap_above_count_processes_all(caplog) -> None:
         out = ann.batch_annotate(requests)
 
     assert len(out) == 5
-    assert called == [f"span-{i}" for i in range(5)]
+    assert set(called) == {f"span-{i}" for i in range(5)}
+    assert [a.span_id for a in out] == [f"span-{i}" for i in range(5)]
     assert not [r for r in caplog.records if "capping" in r.message.lower()]
+
+
+def test_batch_annotate_preserves_request_order_under_parallelism() -> None:
+    """The pool completes spans out of order; the result list must still be in
+    request order (a downstream persist zips it against the request list)."""
+    import threading
+    import time
+
+    ann = object.__new__(LLMAutoAnnotator)
+    ann.max_annotations_per_batch = None
+    lock = threading.Lock()
+    completion_order: list[int] = []
+
+    def _slow(request: AnnotationRequest) -> AutoAnnotation:
+        idx = int(request.span_id.rsplit("-", 1)[1])
+        time.sleep(0.02 * (8 - idx))  # earlier spans finish last
+        with lock:
+            completion_order.append(idx)
+        return AutoAnnotation(
+            span_id=request.span_id,
+            label=AnnotationLabel.CORRECT,
+            confidence=0.9,
+            reasoning="ok",
+            suggested_correct_agent=None,
+            requires_human_review=False,
+        )
+
+    ann.annotate = _slow
+    requests = [_request(i) for i in range(8)]
+    out = ann.batch_annotate(requests)
+
+    assert completion_order[0] > completion_order[-1]  # genuinely out of order
+    assert [a.span_id for a in out] == [f"span-{i}" for i in range(8)]
+
+
+def test_batch_annotate_raises_on_lm_outage_not_fabricated_annotations() -> None:
+    """When the LM endpoint is unreachable, batch_annotate RAISES rather than
+    returning a full batch of fabricated INSUFFICIENT_INFO verdicts that the
+    optimization loop would consume as real signal."""
+    ann = object.__new__(LLMAutoAnnotator)
+    ann.max_annotations_per_batch = None
+
+    def _down(request: AnnotationRequest) -> AutoAnnotation:
+        raise ConnectionError("LM endpoint refused connection")
+
+    ann.annotate = _down
+    with pytest.raises(ConnectionError, match="refused connection"):
+        ann.batch_annotate([_request(i) for i in range(4)])
+
+
+def test_annotate_propagates_transport_error(monkeypatch) -> None:
+    """A completion() transport failure propagates out of annotate() — it is NOT
+    laundered into a confidence-0.0 annotation the caller reads as a real
+    verdict."""
+    ann = object.__new__(LLMAutoAnnotator)
+    ann.model = "openai/x"
+    ann.api_base = "http://127.0.0.1:9"
+    ann.api_key = "k"
+
+    def _boom(**_kwargs):
+        raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(
+        "cogniverse_agents.routing.llm_auto_annotator.completion", _boom
+    )
+    with pytest.raises(ConnectionError, match="connection refused"):
+        ann.annotate(_request(0))
+
+
+def test_annotate_degrades_only_malformed_content_not_outage(monkeypatch) -> None:
+    """A well-formed completion whose body is not our JSON schema degrades to a
+    per-span review-needed annotation (content issue), while the surrounding
+    outage path still raises — the two failure modes stay distinct."""
+    ann = object.__new__(LLMAutoAnnotator)
+    ann.model = "openai/x"
+    ann.api_base = None
+    ann.api_key = None
+
+    class _Msg:
+        content = "the model rambled instead of returning json"
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    monkeypatch.setattr(
+        "cogniverse_agents.routing.llm_auto_annotator.completion",
+        lambda **_: _Resp(),
+    )
+    out = ann.annotate(_request(0))
+    assert out.label is AnnotationLabel.INSUFFICIENT_INFO
+    assert out.requires_human_review is True
