@@ -24,6 +24,7 @@ TESTS_ROOT = Path(__file__).resolve().parents[2]
 GATED_DIRS = {
     "runtime/integration": "integration",
     "common/integration": "integration",
+    "routing/integration": "integration",
     "agents/unit": "unit",
     "core/unit": "unit",
     "routing/unit": "unit",

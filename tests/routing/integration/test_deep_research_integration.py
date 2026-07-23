@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 pytestmark = [
+    pytest.mark.integration,
     pytest.mark.skipif(
         not is_test_lm_available(),
         reason=f"Test LM not reachable at {resolve_base_url()}",
