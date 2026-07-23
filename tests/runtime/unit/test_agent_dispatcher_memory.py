@@ -100,6 +100,27 @@ class TestInitAgentMemory:
 
         assert agent.set_tenant_calls == ["acme"]
 
+    def test_honors_deps_auto_create_memory_schema_false(self, mock_dispatcher):
+        """An agent whose deps set auto_create_memory_schema=False (SearchAgent)
+        must init memory WITHOUT auto-deploying the schema — the flag was
+        dropped and the mixin always defaulted to True."""
+        from types import SimpleNamespace
+
+        agent = _MemoryAgentStub()
+        agent.deps = SimpleNamespace(auto_create_memory_schema=False)
+
+        mock_dispatcher._init_agent_memory(agent, "search_agent", "acme")
+
+        assert agent.initialize_calls[0]["auto_create_schema"] is False
+
+    def test_defaults_auto_create_schema_true_without_deps_field(self, mock_dispatcher):
+        """Agents whose deps carry no such field keep the auto-deploy default."""
+        agent = _MemoryAgentStub()  # no deps attribute
+
+        mock_dispatcher._init_agent_memory(agent, "test_agent", "acme")
+
+        assert agent.initialize_calls[0]["auto_create_schema"] is True
+
     def test_no_op_for_non_mixin_agent(self, mock_dispatcher):
         """Agents that don't inherit MemoryAwareMixin (e.g., ImageSearchAgent)
         must not raise when passed to the helper."""
