@@ -36,7 +36,7 @@ class StrategyFactory:
           "strategies": {
             "segmentation": {
               "class": "FrameSegmentationStrategy",
-              "params": {"fps": 1.0}
+              "params": {"fps": 0.5}
             },
             "transcription": {
               "class": "AudioTranscriptionStrategy",

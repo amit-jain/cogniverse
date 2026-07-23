@@ -264,7 +264,7 @@ def render_create_profile_form(manager, tenant_id: str):
                     "extract_keyframes": True,
                     "transcribe_audio": False,
                     "generate_descriptions": False,
-                    "keyframe_fps": 1.0,
+                    "keyframe_fps": 0.5,
                 },
                 indent=2,
             ),
@@ -280,7 +280,7 @@ def render_create_profile_form(manager, tenant_id: str):
                 {
                     "segmentation": {
                         "class": "FrameSegmentationStrategy",
-                        "params": {"fps": 1.0, "max_frames": 100},
+                        "params": {"fps": 0.5, "max_frames": 100},
                     },
                     "embedding": {
                         "class": "MultiVectorEmbeddingStrategy",

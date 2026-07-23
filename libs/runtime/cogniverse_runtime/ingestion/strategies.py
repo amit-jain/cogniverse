@@ -64,7 +64,7 @@ class FrameSegmentationStrategy(BaseStrategy):
     """Extract frames from video (e.g., for ColPali)."""
 
     def __init__(
-        self, fps: float = 1.0, threshold: float = 0.999, max_frames: int = 3000
+        self, fps: float = 0.5, threshold: float = 0.999, max_frames: int = 3000
     ):
         self.fps = fps
         self.threshold = threshold

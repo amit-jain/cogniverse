@@ -74,7 +74,7 @@ The create form will appear with the following fields:
     "segmentation": {
       "class": "FrameSegmentationStrategy",
       "params": {
-        "fps": 1.0,
+        "fps": 0.5,
         "threshold": 0.999,
         "max_frames": 3000
       }
@@ -98,7 +98,7 @@ The create form will appear with the following fields:
     "generate_descriptions": true,
     "generate_embeddings": true,
     "keyframe_strategy": "fps",
-    "keyframe_fps": 1.0
+    "keyframe_fps": 0.5
   }
   ```
 

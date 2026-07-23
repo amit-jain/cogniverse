@@ -1000,7 +1000,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 # Extract frames at regular intervals
                 fps = cap.get(cv2.CAP_PROP_FPS)
                 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                target_fps = self.profile_config.get("fps", 1.0)
+                target_fps = self.profile_config.get("fps", 0.5)
 
                 # Calculate frame indices to extract
                 interval = int(fps / target_fps) if fps > target_fps else 1
@@ -1183,7 +1183,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
                 frames = []
-                target_fps = self.profile_config.get("fps", 1.0)
+                target_fps = self.profile_config.get("fps", 0.5)
                 interval = int(fps / target_fps) if fps > target_fps else 1
 
                 for frame_idx in range(

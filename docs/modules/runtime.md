@@ -328,14 +328,14 @@ Strategies define how videos are processed. Each strategy specifies required pro
 from cogniverse_runtime.ingestion.strategies import FrameSegmentationStrategy
 
 strategy = FrameSegmentationStrategy(
-    fps=1.0,              # Extract 1 frame per second
+    fps=0.5,               # Extract 1 frame every 2 seconds (default)
     threshold=0.999,       # Similarity threshold for deduplication
     max_frames=3000        # Maximum frames per video
 )
 
 # Required processors
 strategy.get_required_processors()
-# -> {"keyframe": {"fps": 1.0, "threshold": 0.999, "max_frames": 3000}}
+# -> {"keyframe": {"fps": 0.5, "threshold": 0.999, "max_frames": 3000}}
 ```
 
 **ChunkSegmentationStrategy** - Extract video chunks (for ColQwen, VideoPrism):
@@ -897,7 +897,7 @@ backend:
         segmentation:
           class: FrameSegmentationStrategy
           params:
-            fps: 1.0
+            fps: 0.5
             threshold: 0.999
             max_frames: 3000
         transcription:

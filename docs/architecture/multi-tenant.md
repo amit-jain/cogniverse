@@ -1097,13 +1097,13 @@ flowchart TB
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
-          "keyframe_fps": 1.0
+          "keyframe_fps": 0.5
         },
         "strategies": {
           "segmentation": {
             "class": "FrameSegmentationStrategy",
             "params": {
-              "fps": 1.0,
+              "fps": 0.5,
               "max_frames": 100
             }
           },
@@ -1134,7 +1134,7 @@ Tenants can override system-level backend configuration:
     "profiles": {
       "video_colpali_smol500_mv_frame": {
         "pipeline_config": {
-          "keyframe_fps": 1.0
+          "keyframe_fps": 0.5
         },
         "strategies": {
           "segmentation": {
@@ -1179,18 +1179,18 @@ print(merged_profile.strategies)
 #   max_frames overridden (100 -> 200); 'class' inherited unchanged from system
 
 print(merged_profile.pipeline_config)
-# {'keyframe_fps': 1.0}  # inherited from system, untouched by the override
+# {'keyframe_fps': 0.5}  # inherited from system, untouched by the override
 ```
 
 #### Deep Merge Visualization
 
 ```mermaid
 flowchart LR
-    SystemConfig[<span style='color:#000'>System Base Config<br/>max_frames: 100<br/>keyframe_fps: 1.0<br/>transcribe_audio: true</span>] --> Merge{<span style='color:#000'>Deep Merge</span>}
+    SystemConfig[<span style='color:#000'>System Base Config<br/>max_frames: 100<br/>keyframe_fps: 0.5<br/>transcribe_audio: true</span>] --> Merge{<span style='color:#000'>Deep Merge</span>}
 
     TenantOverride[<span style='color:#000'>Tenant Override acme<br/>max_frames: 200</span>] --> Merge
 
-    Merge --> FinalConfig[<span style='color:#000'>Final Tenant Config<br/>max_frames: 200 ✓<br/>keyframe_fps: 1.0 ✓<br/>transcribe_audio: true ✓</span>]
+    Merge --> FinalConfig[<span style='color:#000'>Final Tenant Config<br/>max_frames: 200 ✓<br/>keyframe_fps: 0.5 ✓<br/>transcribe_audio: true ✓</span>]
 
     style SystemConfig fill:#90caf9,stroke:#1565c0,color:#000
     style TenantOverride fill:#ffcc80,stroke:#ef6c00,color:#000

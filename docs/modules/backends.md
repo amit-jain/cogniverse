@@ -219,7 +219,7 @@ flowchart TD
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
-          "keyframe_fps": 1.0
+          "keyframe_fps": 0.5
         },
         "strategies": {
           "segmentation": {"class": "FrameSegmentationStrategy", "params": {}},
@@ -263,7 +263,7 @@ profile = BackendProfileConfig(
     pipeline_config={
         "extract_keyframes": True,
         "transcribe_audio": True,
-        "keyframe_fps": 1.0
+        "keyframe_fps": 0.5
     },
     strategies={
         "segmentation": {"class": "FrameSegmentationStrategy"},

@@ -789,7 +789,7 @@ profile_config = {
     "strategies": {
         "segmentation": {
             "class": "FrameSegmentationStrategy",
-            "params": {"fps": 1.0, "threshold": 0.999}
+            "params": {"fps": 0.5, "threshold": 0.999}
         },
         "transcription": {
             "class": "AudioTranscriptionStrategy",
@@ -875,7 +875,7 @@ def __init__(self, **strategies)
 Accepts any number of named strategies:
 ```python
 strategy_set = ProcessingStrategySet(
-    segmentation=FrameSegmentationStrategy(fps=1.0),
+    segmentation=FrameSegmentationStrategy(fps=0.5),
     transcription=AudioTranscriptionStrategy(),
     embedding=MultiVectorEmbeddingStrategy()
 )
@@ -1039,9 +1039,9 @@ pipeline = (
 
 **Usage**:
 ```python
-strategy = FrameSegmentationStrategy(fps=1.0, threshold=0.999, max_frames=3000)
+strategy = FrameSegmentationStrategy(fps=0.5, threshold=0.999, max_frames=3000)
 requirements = strategy.get_required_processors()
-# Returns: {"keyframe": {"fps": 1.0, "threshold": 0.999, "max_frames": 3000}}
+# Returns: {"keyframe": {"fps": 0.5, "threshold": 0.999, "max_frames": 3000}}
 ```
 
 **Best For**: ColPali multi-vector frame embeddings
@@ -1360,7 +1360,7 @@ strategy = CodeTextEmbeddingStrategy(colbert_model="lightonai/LateOn-Code-edge")
 Extract keyframes using histogram or FPS method.
 
 ```python
-processor = KeyframeProcessor(logger, threshold=0.999, max_frames=3000, fps=1.0)
+processor = KeyframeProcessor(logger, threshold=0.999, max_frames=3000, fps=0.5)
 result = processor.extract_keyframes(
     video_path=Path("video.mp4"),
     output_dir=Path("outputs/")
@@ -1690,7 +1690,7 @@ video_colpali_smol500_mv_frame:
     segmentation:
       class: "FrameSegmentationStrategy"
       params:
-        fps: 1.0
+        fps: 0.5
         threshold: 0.999
         max_frames: 3000
     transcription:
