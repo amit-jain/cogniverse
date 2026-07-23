@@ -51,11 +51,16 @@ class QueryResultRelevanceEvaluator(Evaluator):
                 explanation="No results returned for query",
             )
 
-        # Heuristic: Check if top results have high scores
+        # Heuristic: Check if top results have high scores. Scores arrive
+        # from serialized span payloads, so coerce — a "0.85" string or None
+        # must not crash the whole composite for the span.
         top_scores = []
         for _i, result in enumerate(output[:5]):  # Top 5
-            score = result.get("relevance_score", result.get("score", 0))
-            top_scores.append(score)
+            raw = result.get("relevance_score", result.get("score", 0))
+            try:
+                top_scores.append(float(raw))
+            except (TypeError, ValueError):
+                continue
 
         avg_top_score = np.mean(top_scores) if top_scores else 0
 
@@ -152,8 +157,11 @@ class TemporalCoverageEvaluator(Evaluator):
         for result in output:
             temporal_info = result.get("temporal_info", {})
             if temporal_info:
-                start = temporal_info.get("start_time", 0)
-                end = temporal_info.get("end_time", start)
+                try:
+                    start = float(temporal_info.get("start_time", 0))
+                    end = float(temporal_info.get("end_time", start))
+                except (TypeError, ValueError):
+                    continue
                 time_ranges.append((start, end))
 
         if not time_ranges:

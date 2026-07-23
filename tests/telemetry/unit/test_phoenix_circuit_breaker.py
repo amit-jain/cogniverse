@@ -28,7 +28,11 @@ def _breaker(name):
     )
 
 
-def test_analytics_degrades_fast_when_phoenix_breaker_open():
+def test_analytics_raises_on_outage_and_fails_fast_when_breaker_open():
+    """A Phoenix outage must RAISE from get_traces — returning [] reads as
+    "no traces in range" on the dashboard, indistinguishable from genuine
+    empty data. The breaker still bounds dialing: once open, the call fails
+    fast without touching the client."""
     from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 
     analytics = PhoenixAnalytics.__new__(PhoenixAnalytics)
@@ -40,14 +44,34 @@ def test_analytics_degrades_fast_when_phoenix_breaker_open():
     )
     analytics._breaker = _breaker("phoenix:analytics")
 
-    # First two calls dial and degrade to [].
+    # First two calls dial and raise the transport error.
     for _ in range(2):
-        assert analytics.get_traces() == []
+        with pytest.raises(ConnectionError, match="phoenix down"):
+            analytics.get_traces()
     assert analytics.client.spans.get_spans_dataframe.call_count == 2
 
-    # Third: breaker open -> degrade WITHOUT dialing.
-    assert analytics.get_traces() == []
+    # Third: breaker open -> raises CircuitOpenError WITHOUT dialing.
+    with pytest.raises(CircuitOpenError):
+        analytics.get_traces()
     assert analytics.client.spans.get_spans_dataframe.call_count == 2
+
+
+def test_analytics_raises_on_non_transport_error():
+    """A code/parse bug inside the fetch must never be flattened to [] —
+    that hides real defects as 'no data'."""
+    from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
+
+    analytics = PhoenixAnalytics.__new__(PhoenixAnalytics)
+    analytics.telemetry_url = "http://phoenix:6006"
+    analytics._cache = {}
+    analytics.client = MagicMock()
+    analytics.client.spans.get_spans_dataframe = MagicMock(
+        side_effect=KeyError("unexpected frame shape")
+    )
+    analytics._breaker = _breaker("phoenix:analytics-nontransport")
+
+    with pytest.raises(KeyError, match="unexpected frame shape"):
+        analytics.get_traces()
 
 
 @pytest.mark.asyncio

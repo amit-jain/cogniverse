@@ -384,3 +384,53 @@ class TestPluginRegistrationWiring:
             ),
             ImageSchemaAnalyzer,
         )
+
+
+class TestVideoTemporalAnalyzer:
+    """VideoTemporalAnalyzer is registered live in plugins/__init__ — it runs
+    for any temporal video schema, so its dispatch and analysis are pinned."""
+
+    def _fields(self):
+        return {
+            "id_fields": ["video_id"],
+            "content_fields": ["description"],
+            "temporal_fields": ["start_time", "end_time"],
+            "numeric_fields": [],
+            "text_fields": [],
+        }
+
+    @pytest.mark.unit
+    def test_can_handle_temporal_video_schema(self):
+        from cogniverse_evaluation.plugins.video_analyzer import (
+            VideoTemporalAnalyzer,
+        )
+
+        analyzer = VideoTemporalAnalyzer()
+        assert analyzer.can_handle("video_frames", self._fields()) is True
+        assert analyzer.can_handle("documents", self._fields()) is False
+        no_temporal = {**self._fields(), "temporal_fields": []}
+        assert analyzer.can_handle("video_frames", no_temporal) is False
+
+    @pytest.mark.unit
+    def test_analyze_query_adds_advanced_temporal_pattern(self):
+        from cogniverse_evaluation.plugins.video_analyzer import (
+            VideoTemporalAnalyzer,
+        )
+
+        constraints = VideoTemporalAnalyzer().analyze_query(
+            "5 seconds before the goal", self._fields()
+        )
+
+        assert constraints["temporal_constraints"]["before_event"] == (
+            "5",
+            "the goal",
+        )
+        assert constraints["query_type"] == "video_temporal_complex"
+
+    @pytest.mark.unit
+    def test_extract_item_id_reads_video_id(self):
+        from cogniverse_evaluation.plugins.video_analyzer import (
+            VideoTemporalAnalyzer,
+        )
+
+        assert VideoTemporalAnalyzer().extract_item_id({"video_id": "v42"}) == "v42"

@@ -127,7 +127,10 @@ class DefaultSchemaAnalyzer(SchemaAnalyzer):
             ]
             for id_field in id_fields:
                 if id_field in document:
-                    return str(document[id_field])
+                    value = document[id_field]
+                if isinstance(value, (list, tuple)):
+                    value = value[0] if value else ""
+                return str(value)
 
         # Try object attributes (new Document structure)
         if hasattr(document, "id"):

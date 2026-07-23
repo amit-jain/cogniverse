@@ -1,6 +1,10 @@
 """Unit tests for LLMJudgeCore score extraction."""
 
+import pytest
+
 from cogniverse_evaluation.evaluators.llm_judge import LLMJudgeCore
+
+pytestmark = pytest.mark.unit
 
 
 class TestScoreExtraction:
@@ -29,3 +33,28 @@ class TestScoreExtraction:
             "The results look reasonable overall."
         )
         assert score is None
+
+
+class TestScoreClamping:
+    """LM replies like "12/10" or "-3/10" must clamp into [0, 1] — an
+    out-of-range score flows into the quality monitor's persisted means and
+    its 0.8/0.5 example-classification gates."""
+
+    def _judge(self) -> LLMJudgeCore:
+        return LLMJudgeCore(model_name="x", base_url="http://unused")
+
+    def test_over_ten_clamps_to_one(self):
+        score, _ = self._judge()._extract_score_from_response("Score: 12/10")
+        assert score == 1.0
+
+    def test_hundred_out_of_ten_clamps_to_one(self):
+        score, _ = self._judge()._extract_score_from_response("the value is 100/10")
+        assert score == 1.0
+
+    def test_ten_point_five_clamps_to_one(self):
+        score, _ = self._judge()._extract_score_from_response("Score: 10.5/10")
+        assert score == 1.0
+
+    def test_plain_score_unchanged(self):
+        score, _ = self._judge()._extract_score_from_response("Score: 7/10")
+        assert score == 0.7

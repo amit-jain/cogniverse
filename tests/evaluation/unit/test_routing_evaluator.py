@@ -498,3 +498,44 @@ class TestQueryRoutingSpansAwaited:
         metrics = evaluator.calculate_metrics(result)
         assert metrics.total_decisions == 2
         assert metrics.routing_accuracy == 1.0
+
+
+class TestConfidenceCoercion:
+    """Routers emit confidence as floats, labels ("high") or percents ("85%").
+    Every form must coerce through parse_confidence — a bare float() raised
+    ValueError on labels and the caller dropped the span, so a label-emitting
+    router lost ALL routing metrics."""
+
+    def test_label_confidence_is_coerced(self, mock_provider):
+        evaluator = RoutingEvaluator(provider=mock_provider)
+        span_data = {
+            "name": "cogniverse.routing",
+            "status_code": "OK",
+            "attributes": {
+                "routing.chosen_agent": "video_search",
+                "routing.confidence": "high",
+                "routing.processing_time": 10.0,
+            },
+            "events": [],
+        }
+
+        _, metrics = evaluator.evaluate_routing_decision(span_data)
+
+        assert 0.0 < metrics["confidence"] <= 1.0
+
+    def test_percent_confidence_is_coerced(self, mock_provider):
+        evaluator = RoutingEvaluator(provider=mock_provider)
+        span_data = {
+            "name": "cogniverse.routing",
+            "status_code": "OK",
+            "attributes": {
+                "routing.chosen_agent": "video_search",
+                "routing.confidence": "85%",
+                "routing.processing_time": 10.0,
+            },
+            "events": [],
+        }
+
+        _, metrics = evaluator.evaluate_routing_decision(span_data)
+
+        assert metrics["confidence"] == 0.85

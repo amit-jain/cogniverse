@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import random
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from cogniverse_evaluation.evaluators.agent_evaluators import get_agent_evaluator
@@ -143,7 +143,7 @@ class OnlineEvaluator:
             score=result.score,
             label=result.label,
             explanation=result.explanation,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )
 
     def _eval_routing_outcome(
@@ -159,7 +159,13 @@ class OnlineEvaluator:
         return self._run_evaluator("confidence_calibration", span_data, span_id)
 
     async def _persist_results(self, results: List[OnlineEvalResult]) -> None:
-        """Write evaluation results as telemetry annotations."""
+        """Write evaluation results as telemetry annotations.
+
+        Every result is attempted; if any write failed, raises RuntimeError
+        naming the failures — a silently unpersisted score would vanish from
+        the drift-detection signal while the caller counts it as persisted.
+        """
+        failed: List[tuple] = []
         for result in results:
             try:
                 annotation_name = f"{self.annotation_name}.{result.evaluator_name}"
@@ -177,7 +183,15 @@ class OnlineEvaluator:
                     project=self.project_name,
                 )
             except Exception as e:
-                logger.warning(f"Failed to persist score for {result.span_id}: {e}")
+                logger.error(f"Failed to persist score for {result.span_id}: {e}")
+                failed.append((result.span_id, result.evaluator_name, e))
+
+        if failed:
+            names = ", ".join(f"{sid}:{ev}" for sid, ev, _ in failed)
+            raise RuntimeError(
+                f"Failed to persist {len(failed)}/{len(results)} online eval "
+                f"scores ({names})"
+            ) from failed[-1][2]
 
     def get_statistics(self) -> Dict[str, Any]:
         """Return running statistics."""

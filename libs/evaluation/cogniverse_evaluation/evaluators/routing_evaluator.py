@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from cogniverse_foundation.confidence import parse_confidence
+
 if TYPE_CHECKING:
     from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
@@ -181,7 +183,9 @@ class RoutingEvaluator:
 
         metrics = {
             "chosen_agent": chosen_agent,
-            "confidence": float(confidence),
+            # Routers emit floats, labels ("high") or percents ("85%") —
+            # parse_confidence maps them all into [0, 1].
+            "confidence": parse_confidence(confidence),
             "latency_ms": float(latency_ms),
             "success": outcome == RoutingOutcome.SUCCESS,
             "downstream_status": downstream_status,

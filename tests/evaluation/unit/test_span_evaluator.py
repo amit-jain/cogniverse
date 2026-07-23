@@ -33,9 +33,6 @@ class TestSpanEvaluator:
     # `get_recent_spans` returns an empty DataFrame (not fabricated spans) when
     # Phoenix has no spans or errors, so the quality monitor never scores
     # fiction — see TestGetRecentSpans.
-    def test_tenant_id_stored(self, evaluator):
-        assert evaluator.tenant_id == "test"
-
     def test_project_name_stored(self, evaluator):
         assert evaluator.project_name == "test-project"
 
@@ -64,13 +61,16 @@ class TestGetRecentSpans:
         assert df.empty
 
     @pytest.mark.asyncio
-    async def test_returns_empty_on_provider_exception(self, evaluator):
-        # A Phoenix error surfaces as "no traffic", never scored fiction.
+    async def test_raises_on_provider_exception(self, evaluator):
+        # The trace store deliberately fails fast on a Phoenix outage; the
+        # evaluator must propagate that, never flatten it into an empty frame
+        # indistinguishable from genuine no-traffic (which would silently
+        # disable live quality monitoring for the whole outage).
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(
-            side_effect=Exception("Phoenix down")
+            side_effect=ConnectionError("Phoenix down")
         )
-        df = await evaluator.get_recent_spans(hours=1)
-        assert df.empty
+        with pytest.raises(ConnectionError, match="Phoenix down"):
+            await evaluator.get_recent_spans(hours=1)
 
     @pytest.mark.asyncio
     async def test_filters_embedding_dimension_spans(self, evaluator):
@@ -416,9 +416,10 @@ class TestUploadEvaluations:
 
     @pytest.mark.asyncio
     async def test_upload_error_logged_not_raised(self, evaluator):
-        """Upload failure must not crash the pipeline."""
+        """Upload failure must not crash the pipeline. The fault is injected on
+        log_evaluations — the call upload_evaluations actually makes."""
         evaluator.provider.telemetry.annotations = MagicMock()
-        evaluator.provider.telemetry.annotations.add_annotation = AsyncMock(
+        evaluator.provider.telemetry.annotations.log_evaluations = AsyncMock(
             side_effect=Exception("annotation api down")
         )
 

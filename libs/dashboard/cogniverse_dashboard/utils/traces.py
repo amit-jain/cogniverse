@@ -39,6 +39,31 @@ def fetch_tenant_traces(
     )
 
 
+def fetch_tenant_traces_safely(
+    analytics: Any,
+    tenant_id: str,
+    start_time: datetime,
+    end_time: datetime,
+    operation_filter: str | None,
+    limit: int = 10000,
+) -> tuple[list, str | None]:
+    """Fetch traces, mapping a telemetry failure to an error message.
+
+    Returns (traces, None) on success and ([], message) on failure so the
+    Analytics tab can show the outage instead of the indistinguishable
+    "No traces found" empty state.
+    """
+    try:
+        return (
+            fetch_tenant_traces(
+                analytics, tenant_id, start_time, end_time, operation_filter, limit
+            ),
+            None,
+        )
+    except Exception as exc:
+        return [], f"Failed to fetch traces from the telemetry backend: {exc}"
+
+
 def filter_traces_df(
     traces_df: pd.DataFrame, search_type: str, search_text: str
 ) -> pd.DataFrame:

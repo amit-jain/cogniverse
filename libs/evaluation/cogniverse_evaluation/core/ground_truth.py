@@ -144,6 +144,13 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
             # Analyze query using schema-specific analyzer
             query_constraints = analyzer.analyze_query(query, schema_fields)
 
+            # High-precision mode (BackendGroundTruthStrategy): halve the
+            # analyzer's result budget so harvested ground truth keeps only
+            # the top-ranked hits, favoring precision over recall.
+            if trace_data.get("metadata", {}).get("high_precision"):
+                effective = query_constraints.get("max_results", 50)
+                query_constraints["max_results"] = max(1, effective // 2)
+
             # Search based on query type and constraints
             results = await self._search_with_constraints(
                 backend, query, query_constraints, schema_fields
@@ -235,8 +242,13 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
         if not schema_name:
             schema_name = metadata.get("schema", "unknown")
 
-        # Discover fields with multiple methods
-        fields = await self._discover_schema_fields(schema_name, backend)
+        # Discover fields once per schema — discovery costs several backend
+        # round-trips and the fields are stable for the strategy's lifetime.
+        fields = self.schema_cache.get(schema_name)
+        if fields is None:
+            fields = await self._discover_schema_fields(schema_name, backend)
+            if fields and any(fields.values()):
+                self.schema_cache[schema_name] = fields
 
         if not fields or not any(fields.values()):
             raise SchemaDiscoveryError(
@@ -322,8 +334,15 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
             for field_name, field_info in schema_info["fields"].items():
                 field_type = field_info.get("type", "").lower()
 
-                # Categorize based on type
-                if "id" in field_name.lower() or field_info.get("is_id"):
+                # Categorize based on type. Match "id" as a token, not a
+                # substring — "width" is not an id field.
+                lowered = field_name.lower()
+                if (
+                    lowered == "id"
+                    or lowered.endswith("_id")
+                    or lowered.startswith("id_")
+                    or field_info.get("is_id")
+                ):
                     fields["id_fields"].append(field_name)
                 elif field_type in ["text", "string"]:
                     if (
@@ -721,9 +740,11 @@ class BackendGroundTruthStrategy(GroundTruthStrategy):
         # Delegate to schema-aware strategy but with high-precision settings
         strategy = SchemaAwareGroundTruthStrategy()
 
-        # Modify trace data to request high precision
+        # Request high precision on a copy — a shallow copy would write the
+        # flag into the CALLER's metadata dict, leaking it to sibling
+        # strategies run on the same trace (e.g. inside Hybrid).
         modified_trace = trace_data.copy()
-        modified_trace["metadata"] = modified_trace.get("metadata", {})
+        modified_trace["metadata"] = dict(modified_trace.get("metadata") or {})
         modified_trace["metadata"]["high_precision"] = True
 
         return await strategy.extract_ground_truth(modified_trace, backend)

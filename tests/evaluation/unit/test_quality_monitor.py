@@ -15,6 +15,12 @@ from cogniverse_evaluation.quality_monitor import (
     QualityMonitor,
     Verdict,
 )
+from tests.evaluation.fakes import FailingDatasetStore, InMemoryDatasetStore
+
+pytestmark = pytest.mark.unit
+
+# canonical_tenant_id("test_tenant") — the form every derived name uses
+CANON = "test_tenant:test_tenant"
 
 
 @pytest.fixture
@@ -43,8 +49,12 @@ def golden_dataset(tmp_path):
 
 @pytest.fixture
 def monitor(golden_dataset):
-    """Create a QualityMonitor instance for testing."""
-    return QualityMonitor(
+    """Create a QualityMonitor instance for testing.
+
+    The dataset store is an in-memory fake so baseline reads see a genuine
+    empty store (first run) instead of reaching for a real Phoenix.
+    """
+    m = QualityMonitor(
         tenant_id="test_tenant",
         runtime_url="http://localhost:28000",
         phoenix_http_endpoint="http://localhost:6006",
@@ -54,6 +64,8 @@ def monitor(golden_dataset):
         argo_api_url="http://localhost:2746",
         argo_namespace="test-ns",
     )
+    m._dataset_store = InMemoryDatasetStore()
+    return m
 
 
 class TestSpanEvaluatorEndpoint:
@@ -77,13 +89,14 @@ class TestSpanEvaluatorEndpoint:
         # The suite-level autouse fixture mocks the factory; the wiring
         # under test is the CALL — the monitor must hand its endpoint over.
         call = providers_mod.get_evaluation_provider.call_args
-        assert call.kwargs["tenant_id"] == "test_tenant"
+        assert call.kwargs["tenant_id"] == CANON
         assert call.kwargs["config"]["http_endpoint"] == (
             "http://cogniverse-phoenix:6006"
         )
-        assert call.kwargs["config"]["project_name"] == (
-            "cogniverse-test_tenant-runtime"
-        )
+        # The project production agents actually WRITE spans to: the
+        # tenant-only user-ops project. No "-runtime" suffix exists on any
+        # span writer — reading a suffixed project scores zero live samples.
+        assert call.kwargs["config"]["project_name"] == f"cogniverse-{CANON}"
 
 
 class TestGoldenDatasetLoading:
@@ -330,7 +343,7 @@ class TestArgoSubmission:
         mock_client.post = AsyncMock(return_value=mock_response)
         monitor._argo_client = mock_client
 
-        await monitor.submit_optimization(trigger)
+        await monitor.submit_optimization(trigger, trigger_dataset="opt-trigger-ds")
 
         mock_client.post.assert_called_once()
         call_args = mock_client.post.call_args
@@ -340,7 +353,10 @@ class TestArgoSubmission:
             p["name"]: p["value"] for p in workflow["spec"]["arguments"]["parameters"]
         }
         assert params["agents"] == "search,summary"
-        assert params["tenant-id"] == "test_tenant"
+        assert params["tenant-id"] == CANON
+        # The submitted workflow references EXACTLY the dataset that was
+        # stored — never an independently re-derived name that may not exist.
+        assert params["trigger-dataset"] == "opt-trigger-ds"
 
     @pytest.mark.asyncio
     async def test_submit_optimization_carries_pod_spec(self):
@@ -380,7 +396,7 @@ class TestArgoSubmission:
             high_scoring_examples={},
             misrouted_queries=[],
         )
-        await monitor.submit_optimization(trigger)
+        await monitor.submit_optimization(trigger, trigger_dataset="opt-ds")
 
         template = mock_client.post.call_args[1]["json"]["workflow"]["spec"][
             "templates"
@@ -677,7 +693,7 @@ class TestEvaluateLiveTraffic:
                 ):
                     result = await monitor.evaluate_live_traffic()
 
-        assert result.tenant_id == "test_tenant"
+        assert result.tenant_id == CANON
 
 
 class TestEvaluateAgentSpans:
@@ -856,10 +872,34 @@ class TestEvaluateAgentSpans:
 class TestGetAgentBaseline:
     @pytest.mark.asyncio
     async def test_returns_none_when_no_baseline(self, monitor):
-        with patch("phoenix.client.Client") as mock_client:
-            mock_client.side_effect = Exception("no connection")
-            result = await monitor._get_agent_baseline(AgentType.SEARCH)
+        """A genuinely absent baseline dataset reads as None (first run)."""
+        result = await monitor._get_agent_baseline(AgentType.SEARCH)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_raises_on_backend_outage(self, monitor):
+        """A dead telemetry backend must raise — 'no baseline' would silently
+        skip the degradation check for the whole outage."""
+        monitor._dataset_store = FailingDatasetStore()
+        with pytest.raises(ConnectionError, match="connection refused"):
+            await monitor._get_agent_baseline(AgentType.SEARCH)
+
+    @pytest.mark.asyncio
+    async def test_reads_score_from_nested_output(self, monitor):
+        """update_baseline writes agent/score with input/output key metadata;
+        the read side must parse the nested example shape Phoenix returns."""
+        import pandas as pd
+
+        monitor._dataset_store._frames[f"quality-baseline-{monitor.tenant_id}"] = (
+            pd.DataFrame(
+                [
+                    {"input": {"agent": "search"}, "output": {"score": 0.83}},
+                    {"input": {"agent": "summary"}, "output": {"score": 0.65}},
+                ]
+            )
+        )
+        assert await monitor._get_agent_baseline(AgentType.SEARCH) == 0.83
+        assert await monitor._get_agent_baseline(AgentType.SUMMARY) == 0.65
 
 
 class TestHTTPClient:
@@ -1323,3 +1363,238 @@ class TestOperationalHealth:
 
         err, p95 = QualityMonitor._operational_health(pd.DataFrame({"x": [1]}))
         assert err is None and p95 is None
+
+
+class TestBaselineReads:
+    """Baseline reads distinguish first-run (None) from backend outage (raise),
+    and never treat a partial golden run as a baseline."""
+
+    @pytest.mark.asyncio
+    async def test_missing_dataset_reads_none(self, monitor):
+        assert await monitor._read_baseline_metric("mean_mrr") is None
+
+    @pytest.mark.asyncio
+    async def test_outage_raises(self, monitor):
+        monitor._dataset_store = FailingDatasetStore()
+        with pytest.raises(ConnectionError, match="connection refused"):
+            await monitor._read_baseline_metric("mean_mrr")
+
+    @pytest.mark.asyncio
+    async def test_skips_partial_rows_nested_shape(self, monitor):
+        """A run with failed queries is stored for the record but must never
+        become the comparison baseline — its mean is biased toward whatever
+        queries happened to survive."""
+        import pandas as pd
+
+        monitor._dataset_store._frames[f"quality-baseline-{monitor.tenant_id}"] = (
+            pd.DataFrame(
+                [
+                    {
+                        "input": {"timestamp": "t1"},
+                        "output": {"mean_mrr": 0.9, "failed_query_count": 0},
+                    },
+                    {
+                        "input": {"timestamp": "t2"},
+                        "output": {"mean_mrr": 1.0, "failed_query_count": 2},
+                    },
+                ]
+            )
+        )
+        assert await monitor._read_baseline_metric("mean_mrr") == 0.9
+
+    @pytest.mark.asyncio
+    async def test_reads_latest_complete_row_flat_shape(self, monitor):
+        import pandas as pd
+
+        monitor._dataset_store._frames[f"quality-baseline-{monitor.tenant_id}"] = (
+            pd.DataFrame(
+                [
+                    {"timestamp": "t1", "mean_mrr": 0.7, "failed_query_count": 0},
+                    {"timestamp": "t2", "mean_mrr": 0.9, "failed_query_count": 0},
+                ]
+            )
+        )
+        assert await monitor._read_baseline_metric("mean_mrr") == 0.9
+
+    @pytest.mark.asyncio
+    async def test_store_golden_raises_on_store_failure(self, monitor):
+        """The quality-baseline dataset feeds every future drop check; a
+        silently lost write would freeze the baseline without anyone knowing."""
+        monitor._dataset_store = FailingDatasetStore()
+        result = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=CANON,
+            mean_mrr=0.8,
+            mean_ndcg=0.7,
+            mean_precision_at_5=0.6,
+            query_count=5,
+        )
+        with pytest.raises(ConnectionError, match="connection refused"):
+            await monitor._store_golden_eval_result(result)
+
+
+class TestGoldenPartialBatch:
+    @pytest.mark.asyncio
+    async def test_partial_failures_recorded_not_silently_dropped(self, monitor):
+        """Failed /search queries must be counted and named on the result, not
+        silently dropped into a survivors-only mean."""
+        import httpx
+
+        def handler(request):
+            body = json.loads(request.content)
+            if "barbell" in body.get("query", ""):
+                return httpx.Response(
+                    200,
+                    json={"results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]},
+                )
+            return httpx.Response(500, text="backend blew up")
+
+        monitor._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://testserver"
+        )
+
+        result = await monitor.evaluate_golden_set()
+
+        assert result.query_count == 1
+        assert result.failed_query_count == 1
+        assert result.failed_queries == ["dog playing in park"]
+        assert result.mean_mrr == 1.0
+
+    @pytest.mark.asyncio
+    async def test_partial_run_stored_with_failure_count(self, monitor):
+        """The persisted baseline row carries failed_query_count so the
+        baseline reader can refuse to use it."""
+        import httpx
+
+        def handler(request):
+            body = json.loads(request.content)
+            if "barbell" in body.get("query", ""):
+                return httpx.Response(
+                    200,
+                    json={"results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]},
+                )
+            return httpx.Response(500, text="backend blew up")
+
+        monitor._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://testserver"
+        )
+
+        await monitor.evaluate_golden_set()
+
+        stored = monitor._dataset_store._frames[f"quality-baseline-{monitor.tenant_id}"]
+        assert int(stored["failed_query_count"].iloc[-1]) == 1
+        # And a subsequent baseline read refuses the partial row
+        assert await monitor._read_baseline_metric("mean_mrr") is None
+
+
+class TestTriggerDatasetContract:
+    """The Argo workflow must reference exactly the dataset that was stored —
+    never a name that was never created."""
+
+    def _golden(self, low=None):
+        return GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=CANON,
+            mean_mrr=0.8,
+            mean_ndcg=0.75,
+            mean_precision_at_5=0.6,
+            query_count=10,
+            low_scoring_queries=low or [],
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_examples_skips_submit(self, monitor):
+        monitor.argo_api_url = "http://argo:2746"
+        with (
+            patch.object(
+                monitor, "evaluate_golden_set", new_callable=AsyncMock
+            ) as mock_golden,
+            patch.object(
+                monitor, "evaluate_live_traffic", new_callable=AsyncMock
+            ) as mock_live,
+            patch.object(
+                monitor, "submit_optimization", new_callable=AsyncMock
+            ) as mock_submit,
+        ):
+            mock_golden.return_value = self._golden()
+            mock_live.return_value = LiveEvalResult(
+                timestamp=datetime.utcnow(), tenant_id=CANON
+            )
+
+            result = await monitor.force_optimization_cycle()
+
+        mock_submit.assert_not_awaited()
+        assert result["status"] == "no_trigger_examples"
+        assert result["submitted_to_argo"] is False
+
+    @pytest.mark.asyncio
+    async def test_store_failure_propagates_before_submit(self, monitor):
+        monitor.argo_api_url = "http://argo:2746"
+        monitor._dataset_store = FailingDatasetStore()
+        low = [{"query": "weak", "score": 0.1, "output": {}}]
+        with (
+            patch.object(
+                monitor, "evaluate_golden_set", new_callable=AsyncMock
+            ) as mock_golden,
+            patch.object(
+                monitor, "evaluate_live_traffic", new_callable=AsyncMock
+            ) as mock_live,
+            patch.object(
+                monitor, "submit_optimization", new_callable=AsyncMock
+            ) as mock_submit,
+        ):
+            mock_golden.return_value = self._golden(low=low)
+            mock_live.return_value = LiveEvalResult(
+                timestamp=datetime.utcnow(), tenant_id=CANON
+            )
+
+            with pytest.raises(ConnectionError, match="connection refused"):
+                await monitor.force_optimization_cycle()
+
+        mock_submit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_submit_references_stored_dataset_name(self, monitor):
+        monitor.argo_api_url = "http://argo:2746"
+        low = [{"query": "weak", "score": 0.1, "output": {}}]
+        with (
+            patch.object(
+                monitor, "evaluate_golden_set", new_callable=AsyncMock
+            ) as mock_golden,
+            patch.object(
+                monitor, "evaluate_live_traffic", new_callable=AsyncMock
+            ) as mock_live,
+            patch.object(
+                monitor, "submit_optimization", new_callable=AsyncMock
+            ) as mock_submit,
+        ):
+            mock_golden.return_value = self._golden(low=low)
+            mock_live.return_value = LiveEvalResult(
+                timestamp=datetime.utcnow(), tenant_id=CANON
+            )
+            mock_submit.return_value = True
+
+            result = await monitor.force_optimization_cycle()
+
+        mock_submit.assert_awaited_once()
+        submitted_name = mock_submit.await_args.kwargs.get(
+            "trigger_dataset", mock_submit.await_args.args[-1]
+        )
+        assert submitted_name in monitor._dataset_store._frames
+        assert result["submitted_to_argo"] is True
+
+
+class TestEvaluateLiveTrafficOutage:
+    @pytest.mark.asyncio
+    async def test_span_read_outage_propagates(self, monitor):
+        """A telemetry outage during live eval must fail the cycle loudly —
+        an empty 'no traffic' result would silently disable monitoring."""
+        with patch("cogniverse_evaluation.span_evaluator.SpanEvaluator") as MockEval:
+            mock_eval = MagicMock()
+            mock_eval.get_recent_spans = AsyncMock(
+                side_effect=ConnectionError("Phoenix down")
+            )
+            MockEval.return_value = mock_eval
+
+            with pytest.raises(ConnectionError, match="Phoenix down"):
+                await monitor.evaluate_live_traffic()

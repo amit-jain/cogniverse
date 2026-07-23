@@ -230,6 +230,8 @@ def _eval_enhancement_effect(
     output = io["output"] if isinstance(io.get("output"), dict) else {}
     original = io.get("input") or ""
     enhanced = output.get("enhanced_query") or ""
+    if not isinstance(enhanced, str):
+        enhanced = str(enhanced)
     if enhanced.strip().casefold() == str(original).strip().casefold():
         return StructuralEvalResult(
             evaluator_name="enhancement_effect",
@@ -255,6 +257,10 @@ def _eval_extraction_yield(span_data: Dict[str, Any], io: dict) -> StructuralEva
     entity_count = output.get("entity_count")
     if entity_count is None:
         entity_count = len(entities)
+    try:
+        entity_count = int(float(entity_count))
+    except (TypeError, ValueError):
+        entity_count = len(entities) if isinstance(entities, list) else 0
     text = str(io.get("input") or "")
     if entity_count > 0:
         return StructuralEvalResult(

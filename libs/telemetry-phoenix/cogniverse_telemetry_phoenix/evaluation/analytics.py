@@ -51,6 +51,24 @@ class PhoenixAnalytics:
             )
         )
 
+    @staticmethod
+    def _ensure_utc(value):
+        """Coerce a timestamp to UTC-aware; None/NaT pass through unchanged."""
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return value
+        try:
+            if pd.isna(value):
+                return value
+        except (TypeError, ValueError):
+            pass
+        tzinfo = getattr(value, "tzinfo", None)
+        if tzinfo is None:
+            try:
+                return value.tz_localize("UTC")
+            except AttributeError:
+                return value.replace(tzinfo=timezone.utc)
+        return value
+
     def get_traces(
         self,
         start_time: datetime | None = None,
@@ -92,13 +110,14 @@ class PhoenixAnalytics:
                 self.client.spans.get_spans_dataframe, **kwargs
             )
         except CircuitOpenError:
-            # Phoenix is down: degrade the dashboard (no traces) rather than
-            # error the tab; the breaker already logged the trip.
-            logger.warning("Phoenix circuit open — analytics degraded to no traces")
-            return []
+            # Phoenix is known-down; fail fast without dialing. Raise rather
+            # than return [] — an empty list reads as "no traces in range",
+            # indistinguishable from genuine empty data. Callers surface it.
+            logger.warning("Phoenix circuit open — trace fetch unavailable")
+            raise
         except Exception as e:
             logger.error(f"Failed to fetch spans: {e}")
-            return []
+            raise
 
         if spans_df.empty:
             return []
@@ -117,6 +136,14 @@ class PhoenixAnalytics:
         # Group by trace to get trace-level metrics
         # Use parent_id to identify root spans (traces)
         root_spans = spans_df[spans_df["parent_id"].isna()].copy()
+
+        # Normalize timestamps: Phoenix values are UTC but sometimes arrive
+        # tz-naive. Mixed naive/aware rows made per-row duration subtraction
+        # raise (silently dropping the trace) and crashed
+        # calculate_statistics/resample downstream with a TypeError.
+        for col in ("start_time", "end_time"):
+            if col in root_spans.columns:
+                root_spans[col] = root_spans[col].map(self._ensure_utc)
 
         # Convert to TraceMetrics
         metrics = []

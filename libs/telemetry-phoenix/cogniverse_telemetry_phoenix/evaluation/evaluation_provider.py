@@ -5,7 +5,7 @@ Implements the generic EvaluationProvider interface for Phoenix backend.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from cogniverse_evaluation.providers.base import EvaluationProvider
@@ -89,7 +89,10 @@ class PhoenixEvaluationProvider(EvaluationProvider):
             manager_config.get("grpc_endpoint", "http://localhost:4317"),
         )
 
-        # Get telemetry provider for this tenant
+        # Get telemetry provider for this tenant. A failure here RAISES:
+        # swallowing it left a provider that looked constructed but had
+        # telemetry=None, so every later call died with an AttributeError
+        # far from the root cause.
         try:
             from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
@@ -104,14 +107,15 @@ class PhoenixEvaluationProvider(EvaluationProvider):
                     "grpc_endpoint": grpc_endpoint,
                 },
             )
-
-            self._initialized = True
-            logger.info(
-                f"Initialized Phoenix evaluation provider for tenant: {self.tenant_id}"
-            )
         except Exception as e:
-            logger.error(f"Failed to initialize Phoenix evaluation provider: {e}")
             self._initialized = False
+            logger.error(f"Failed to initialize Phoenix evaluation provider: {e}")
+            raise
+
+        self._initialized = True
+        logger.info(
+            f"Initialized Phoenix evaluation provider for tenant: {self.tenant_id}"
+        )
 
     @property
     def telemetry(self) -> Any:
@@ -123,35 +127,84 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         """
         return self._telemetry_provider
 
+    @staticmethod
+    def _run_sync(coro):
+        """Drive an async dataset-store call from these sync methods."""
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        raise RuntimeError(
+            "create_experiment/log_evaluation are sync facades and cannot be "
+            "driven from a running event loop; use telemetry.datasets directly"
+        )
+
+    @staticmethod
+    def _experiment_dataset_name(experiment_id: str) -> str:
+        return (
+            experiment_id
+            if experiment_id.startswith("experiment-")
+            else f"experiment-{experiment_id}"
+        )
+
     def create_experiment(
         self,
         name: str,
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Any:
+    ) -> Dict[str, Any]:
         """
-        Create a new Phoenix experiment.
+        Register an experiment as a durable dataset record.
 
-        Args:
-            name: Experiment name
-            description: Experiment description
-            metadata: Additional metadata
+        The registry dataset (``experiment-{name}``) holds the creation
+        record; ``log_evaluation`` appends evaluation rows to it, so the
+        experiment's history is readable back from the telemetry backend.
 
         Returns:
-            Phoenix experiment object
+            Dict with ``id`` (the dataset name), ``name``, ``description``,
+            ``metadata`` and ``created_at``.
         """
         if not self._initialized:
             raise RuntimeError("Provider not initialized. Call initialize() first.")
 
-        try:
-            # Phoenix experiment creation logic
-            logger.info(f"Creating Phoenix experiment: {name}")
-            # Implementation depends on Phoenix SDK
-            # For now, return a mock experiment object
-            return {"id": name, "description": description, "metadata": metadata}
-        except Exception as e:
-            logger.error(f"Failed to create experiment: {e}")
-            raise
+        import json as _json
+
+        import pandas as pd
+
+        dataset_name = self._experiment_dataset_name(name)
+        created_at = datetime.now(timezone.utc).isoformat()
+        df = pd.DataFrame(
+            [
+                {
+                    "event": "experiment_created",
+                    "experiment": name,
+                    "description": description or "",
+                    "created_at": created_at,
+                    "metadata": _json.dumps(metadata or {}, default=str),
+                }
+            ]
+        )
+        self._run_sync(
+            self._telemetry_provider.datasets.create_dataset(
+                name=dataset_name,
+                data=df,
+                metadata={
+                    "description": description or f"Experiment {name}",
+                    "input_keys": ["event", "experiment"],
+                    "output_keys": ["description", "created_at", "metadata"],
+                },
+            )
+        )
+        logger.info(f"Registered experiment '{name}' as dataset {dataset_name}")
+        return {
+            "id": dataset_name,
+            "name": name,
+            "description": description,
+            "metadata": metadata or {},
+            "created_at": created_at,
+        }
 
     def create_dataset(
         self,
@@ -217,17 +270,43 @@ class PhoenixEvaluationProvider(EvaluationProvider):
             metadata: Additional metadata
         """
         if not self._initialized:
-            logger.warning("Provider not initialized, skipping evaluation logging")
-            return
+            raise RuntimeError("Provider not initialized. Call initialize() first.")
 
-        try:
-            logger.debug(
-                f"Logging evaluation for experiment {experiment_id}: {evaluation_name} = {score}"
+        import json as _json
+
+        import pandas as pd
+
+        dataset_name = self._experiment_dataset_name(experiment_id)
+        df = pd.DataFrame(
+            [
+                {
+                    "event": "evaluation",
+                    "experiment": experiment_id,
+                    "evaluation_name": evaluation_name,
+                    "score": float(score),
+                    "label": label or "",
+                    "explanation": explanation or "",
+                    "logged_at": datetime.now(timezone.utc).isoformat(),
+                    "metadata": _json.dumps(metadata or {}, default=str),
+                }
+            ]
+        )
+        # append raises DatasetNotFoundError (a ValueError) when the
+        # experiment was never created — logging into a void would silently
+        # drop the evaluation.
+        self._run_sync(
+            self._telemetry_provider.datasets.append_to_dataset(
+                name=dataset_name,
+                data=df,
+                metadata={
+                    "input_keys": ["event", "experiment", "evaluation_name"],
+                    "output_keys": ["score", "label", "explanation", "logged_at"],
+                },
             )
-            # Phoenix evaluation logging logic
-            # Implementation depends on Phoenix SDK
-        except Exception as e:
-            logger.error(f"Failed to log evaluation: {e}")
+        )
+        logger.debug(
+            f"Logged evaluation for {dataset_name}: {evaluation_name} = {score}"
+        )
 
     def create_evaluation_result(
         self,
@@ -337,59 +416,63 @@ class PhoenixEvaluationProvider(EvaluationProvider):
             metadata: Additional metadata
         """
         if not self._initialized:
-            logger.warning("Provider not initialized, skipping session evaluation")
-            return
+            raise RuntimeError("Provider not initialized. Call initialize() first.")
 
-        try:
-            # Build annotation data
-            annotation_data = {
-                "evaluation_name": evaluation_name,
-                "session_score": session_score,
-                "session_outcome": session_outcome,
-                "evaluated_at": datetime.now().isoformat(),
-            }
+        annotation_data = {
+            "evaluation_name": evaluation_name,
+            "session_score": session_score,
+            "session_outcome": session_outcome,
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        }
 
-            if turn_scores:
-                annotation_data["turn_scores"] = turn_scores
-                annotation_data["num_turns"] = len(turn_scores)
-                annotation_data["avg_turn_score"] = sum(turn_scores) / len(turn_scores)
+        if turn_scores:
+            annotation_data["turn_scores"] = turn_scores
+            annotation_data["num_turns"] = len(turn_scores)
+            annotation_data["avg_turn_score"] = sum(turn_scores) / len(turn_scores)
 
-            if explanation:
-                annotation_data["explanation"] = explanation
+        if explanation:
+            annotation_data["explanation"] = explanation
 
-            if metadata:
-                annotation_data.update(metadata)
+        if metadata:
+            annotation_data.update(metadata)
 
-            # Store as annotation using the telemetry provider's annotation store
-            if self._telemetry_provider is not None:
-                import asyncio
+        if self._telemetry_provider is not None:
+            import asyncio
 
-                # Get annotation store from provider
-                annotation_store = self._telemetry_provider.annotations
+            annotation_store = self._telemetry_provider.annotations
 
-                # Create task to add annotation
-                async def add_annotation():
-                    await annotation_store.add_annotation(
-                        span_id=session_id,
-                        name="session_evaluation",
-                        label=session_outcome,
-                        score=session_score,
-                        metadata=annotation_data,
-                        project=self._project_name,
-                    )
+            async def add_annotation():
+                await annotation_store.add_annotation(
+                    span_id=session_id,
+                    name="session_evaluation",
+                    label=session_outcome,
+                    score=session_score,
+                    metadata=annotation_data,
+                    project=self._project_name,
+                )
+                logger.info(
+                    f"Logged session evaluation for {session_id}: "
+                    f"{evaluation_name}={session_score:.2f} ({session_outcome})"
+                )
 
-                # Run async operation
-                try:
-                    asyncio.get_running_loop()
-                except RuntimeError:
-                    # No running loop — caller is sync; spin up our own.
-                    asyncio.run(add_annotation())
-                else:
-                    self._spawn_background(add_annotation())
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop — caller is sync. Run to completion so a
+                # write failure raises to the caller (the dashboard shows it)
+                # instead of reporting success for an unpersisted evaluation.
+                asyncio.run(add_annotation())
+            else:
+                # Fire-and-forget on a live loop; failures must still be
+                # visible, so log them from the task itself (the done-callback
+                # only drops the strong reference, it never retrieves errors).
+                async def add_annotation_logged():
+                    try:
+                        await add_annotation()
+                    except Exception:
+                        logger.error(
+                            f"Failed to log session evaluation for {session_id}",
+                            exc_info=True,
+                        )
 
-            logger.info(
-                f"Logged session evaluation for {session_id}: "
-                f"{evaluation_name}={session_score:.2f} ({session_outcome})"
-            )
-        except Exception as e:
-            logger.error(f"Failed to log session evaluation: {e}")
+                self._spawn_background(add_annotation_logged())

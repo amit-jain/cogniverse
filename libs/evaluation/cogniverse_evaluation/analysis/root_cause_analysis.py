@@ -9,7 +9,7 @@ import logging
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import numpy as np
@@ -47,8 +47,6 @@ class RootCauseAnalyzer:
     """Automated root cause analysis for trace failures and performance issues"""
 
     def __init__(self):
-        self.failure_patterns = defaultdict(list)
-        self.performance_baselines = {}
         self.known_issues = self._load_known_issues()
 
     def _load_known_issues(self) -> dict[str, dict]:
@@ -144,7 +142,7 @@ class RootCauseAnalyzer:
                 "failed_traces": len(failed_traces),
                 "performance_degraded": len(performance_degraded),
                 "failure_rate": len(failed_traces) / len(traces) if traces else 0,
-                "analysis_time": datetime.now().isoformat(),
+                "analysis_time": datetime.now(timezone.utc).isoformat(),
             },
             "failure_analysis": {},
             "performance_analysis": {},

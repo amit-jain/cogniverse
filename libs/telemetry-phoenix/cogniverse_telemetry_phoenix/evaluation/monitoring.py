@@ -71,10 +71,13 @@ class RetrievalMonitor:
         self.alert_thresholds = alert_thresholds or AlertThresholds()
         self.phoenix_session = None
 
-        # Metric windows for different profiles
+        # Metric windows for different profiles. Producer threads insert
+        # first-seen profile keys while the monitoring thread iterates, so
+        # every access goes through windows_lock.
         self.latency_windows: dict[str, MetricWindow] = {}
         self.error_windows: dict[str, MetricWindow] = {}
         self.mrr_windows: dict[str, MetricWindow] = {}
+        self.windows_lock = threading.Lock()
 
         # Alert state
         self.active_alerts: dict[str, dict[str, Any]] = {}
@@ -136,20 +139,20 @@ class RetrievalMonitor:
 
         # Initialize windows if needed
         profile_key = f"{profile}_{strategy}"
-        if profile_key not in self.latency_windows:
-            self.latency_windows[profile_key] = MetricWindow()
-            self.error_windows[profile_key] = MetricWindow()
-            self.mrr_windows[profile_key] = MetricWindow()
+        with self.windows_lock:
+            if profile_key not in self.latency_windows:
+                self.latency_windows[profile_key] = MetricWindow()
+                self.error_windows[profile_key] = MetricWindow()
+                self.mrr_windows[profile_key] = MetricWindow()
 
-        # Update metric windows
-        if "latency_ms" in event:
-            self.latency_windows[profile_key].add(event["latency_ms"])
+            if "latency_ms" in event:
+                self.latency_windows[profile_key].add(event["latency_ms"])
 
-        if "error" in event:
-            self.error_windows[profile_key].add(1.0 if event["error"] else 0.0)
+            if "error" in event:
+                self.error_windows[profile_key].add(1.0 if event["error"] else 0.0)
 
-        if "mrr" in event:
-            self.mrr_windows[profile_key].add(event["mrr"])
+            if "mrr" in event:
+                self.mrr_windows[profile_key].add(event["mrr"])
 
         # Buffer event for Phoenix logging
         with self.buffer_lock:
@@ -229,6 +232,15 @@ class RetrievalMonitor:
         """Check for alert conditions"""
         alerts_to_trigger = []
 
+        with self.windows_lock:
+            self._collect_alerts(alerts_to_trigger)
+
+        # Trigger alerts outside windows_lock (alert_lock nests inside)
+        for alert in alerts_to_trigger:
+            self._trigger_alert(alert)
+
+    def _collect_alerts(self, alerts_to_trigger: list):
+        """Scan windows for threshold breaches; caller holds windows_lock."""
         for profile_key, latency_window in self.latency_windows.items():
             # Check latency
             p95_latency = latency_window.get_p95()
@@ -270,10 +282,6 @@ class RetrievalMonitor:
                         }
                     )
 
-        # Trigger alerts
-        for alert in alerts_to_trigger:
-            self._trigger_alert(alert)
-
     def _trigger_alert(self, alert: dict[str, Any]):
         """Trigger an alert"""
         alert_key = f"{alert['type']}_{alert['profile']}"
@@ -310,21 +318,22 @@ class RetrievalMonitor:
         """Get current metrics summary"""
         summary = {}
 
-        for profile_key in self.latency_windows.keys():
-            summary[profile_key] = {
-                "latency_mean": self.latency_windows[profile_key].get_mean(),
-                "latency_p95": self.latency_windows[profile_key].get_p95(),
-                "error_rate": (
-                    self.error_windows[profile_key].get_error_rate()
-                    if profile_key in self.error_windows
-                    else 0
-                ),
-                "mrr_mean": (
-                    self.mrr_windows[profile_key].get_mean()
-                    if profile_key in self.mrr_windows
-                    else 0
-                ),
-            }
+        with self.windows_lock:
+            for profile_key in self.latency_windows.keys():
+                summary[profile_key] = {
+                    "latency_mean": self.latency_windows[profile_key].get_mean(),
+                    "latency_p95": self.latency_windows[profile_key].get_p95(),
+                    "error_rate": (
+                        self.error_windows[profile_key].get_error_rate()
+                        if profile_key in self.error_windows
+                        else 0
+                    ),
+                    "mrr_mean": (
+                        self.mrr_windows[profile_key].get_mean()
+                        if profile_key in self.mrr_windows
+                        else 0
+                    ),
+                }
 
         return summary
 

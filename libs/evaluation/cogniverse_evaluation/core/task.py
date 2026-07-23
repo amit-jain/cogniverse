@@ -3,7 +3,7 @@ Evaluation task implementation using Inspect AI.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 # Provider import moved to function scope to avoid circular deps
@@ -180,7 +180,7 @@ def evaluation_task(
         metadata={
             "mode": mode,
             "dataset_name": dataset_name,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "profiles": profiles,
             "strategies": strategies,
         },

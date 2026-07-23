@@ -902,3 +902,58 @@ class TestDatasetGroundTruthFetchOnce:
         assert results[2]["expected_items"] == ["v1", "v2"]
         assert results[3]["source"] == "dataset_no_match"
         assert results[4]["expected_items"] == ["v3"]
+
+
+class TestSchemaCacheAndPrecision:
+    def _backend(self):
+        backend = Mock()
+        backend.schema_name = "cached_schema"
+        backend.get_schema_info = AsyncMock(
+            return_value={
+                "fields": {
+                    "video_id": {"type": "string"},
+                    "description": {"type": "text"},
+                }
+            }
+        )
+        backend.search = AsyncMock(return_value=[{"video_id": "v1"}])
+        return backend
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_schema_discovery_cached_across_traces(self):
+        """The schema-aware strategy re-ran full schema discovery (several
+        backend round-trips) for every trace; the cache must make discovery
+        once per schema name."""
+        strategy = SchemaAwareGroundTruthStrategy()
+        backend = self._backend()
+        trace = {"query": "find v1", "metadata": {"schema": "cached_schema"}}
+
+        await strategy.extract_ground_truth(dict(trace), backend)
+        await strategy.extract_ground_truth(dict(trace), backend)
+
+        assert backend.get_schema_info.await_count == 1
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_backend_strategy_tightens_top_k(self):
+        """The 'backend' (high-precision) strategy must actually query more
+        precisely than schema_aware — a tighter top_k — not run byte-identical
+        settings under a different name."""
+        from cogniverse_evaluation.core.ground_truth import (
+            BackendGroundTruthStrategy,
+        )
+
+        backend = self._backend()
+        trace = {"query": "find v1", "metadata": {"schema": "cached_schema"}}
+
+        await BackendGroundTruthStrategy().extract_ground_truth(dict(trace), backend)
+        high_precision_top_k = backend.search.await_args.kwargs["top_k"]
+
+        backend2 = self._backend()
+        await SchemaAwareGroundTruthStrategy().extract_ground_truth(
+            dict(trace), backend2
+        )
+        default_top_k = backend2.search.await_args.kwargs["top_k"]
+
+        assert high_precision_top_k < default_top_k

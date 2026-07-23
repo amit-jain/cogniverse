@@ -666,33 +666,34 @@ class ExperimentTracker:
             return None
 
 
-def main(args=None):
+def main(args):
     """
     Main function that mimics run_experiments_with_visualization.py
     but uses the new evaluation framework.
     """
     # Create tracker with new framework
     tracker = ExperimentTracker(
+        tenant_id=args.tenant_id,
         experiment_project_name="experiments",
-        enable_quality_evaluators=args.quality_evaluators if args else True,
-        enable_llm_evaluators=args.llm_evaluators if args else False,
-        evaluator_name=args.evaluator if args else "visual_judge",
-        llm_model=args.llm_model if args else None,
-        llm_base_url=args.llm_base_url if args else None,
+        enable_quality_evaluators=args.quality_evaluators,
+        enable_llm_evaluators=args.llm_evaluators,
+        evaluator_name=args.evaluator,
+        llm_model=args.llm_model,
+        llm_base_url=args.llm_base_url,
     )
 
     # Get configurations (same as original)
     _ = tracker.get_experiment_configurations(
-        profiles=args.profiles if args else None,
-        strategies=args.strategies if args else None,
-        all_strategies=args.all_strategies if args else False,
+        profiles=args.profiles,
+        strategies=args.strategies,
+        all_strategies=args.all_strategies,
     )
 
     # Create or get dataset (same as original)
     dataset_name = tracker.create_or_get_dataset(
-        dataset_name=args.dataset_name if args else None,
-        csv_path=args.csv_path if args else None,
-        force_new=args.force_new if args else False,
+        dataset_name=args.dataset_name,
+        csv_path=args.csv_path,
+        force_new=args.force_new,
     )
 
     # Run all experiments using new framework
@@ -719,6 +720,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description="Run experiments with new evaluation framework"
+    )
+    parser.add_argument(
+        "--tenant-id", required=True, help="Tenant to run experiments for"
     )
     parser.add_argument("--dataset-name", help="Name of dataset")
     parser.add_argument("--csv-path", help="Path to CSV file")
