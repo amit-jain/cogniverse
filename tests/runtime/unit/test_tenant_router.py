@@ -1967,3 +1967,46 @@ class TestListMemoriesEventLoop:
 
         assert resp.status_code == 200
         assert ticks >= 5, f"event loop starved during list: {ticks} ticks"
+
+
+class TestSharedArgoClient:
+    """Argo calls reuse one client per event loop instead of paying TLS-context
+    setup and a fresh TCP handshake on every submit."""
+
+    @pytest.mark.asyncio
+    async def test_same_loop_reuses_one_client(self):
+        from cogniverse_runtime.routers.tenant import _shared_argo_client
+
+        first = await _shared_argo_client()
+        second = await _shared_argo_client()
+        assert first is second
+        assert not first.is_closed
+
+    @pytest.mark.asyncio
+    async def test_closed_client_is_rebuilt(self):
+        from cogniverse_runtime.routers.tenant import _shared_argo_client
+
+        first = await _shared_argo_client()
+        await first.aclose()
+        second = await _shared_argo_client()
+        assert second is not first
+        assert not second.is_closed
+
+    def test_each_loop_gets_its_own_client(self):
+        import asyncio
+
+        from cogniverse_runtime.routers.tenant import _shared_argo_client
+
+        # Keep the first loop alive while the second runs — a freed loop's
+        # id() can be reused, which would alias the cache keys.
+        loop_one = asyncio.new_event_loop()
+        try:
+            first = loop_one.run_until_complete(_shared_argo_client())
+            loop_two = asyncio.new_event_loop()
+            try:
+                second = loop_two.run_until_complete(_shared_argo_client())
+            finally:
+                loop_two.close()
+        finally:
+            loop_one.close()
+        assert first is not second
