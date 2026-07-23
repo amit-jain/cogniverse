@@ -142,8 +142,37 @@ def test_latest_version_read_raises_on_soft_timeout():
         store._get_latest_version("acme", ConfigScope.SYSTEM, "system", "poll_state")
 
 
-def test_get_stats_surfaces_soft_timeout_instead_of_partial_counts():
-    """A degraded scan must not present partial counts as complete stats."""
+def test_get_stats_raises_on_soft_timeout():
+    """A degraded scan must raise, not present partial (or zero) counts as
+    complete stats — a dashboard keyed off the counts would read an empty
+    store during a Vespa blip. Matches the raising sibling reads."""
     store = _store_with(_soft_timeout_response())
-    stats = store.get_stats()
-    assert "error" in stats and "degraded" in stats["error"]
+    with pytest.raises(RuntimeError, match="degraded"):
+        store.get_stats()
+
+
+def test_export_configs_history_raises_on_soft_timeout():
+    """export_configs(include_history=True) must not return a partial export a
+    caller would persist as authoritative when the scan is degraded."""
+    store = _store_with(_soft_timeout_response())
+    with pytest.raises(RuntimeError, match="degraded"):
+        store.export_configs("acme:acme", include_history=True)
+
+
+class _RaisingVespaApp:
+    url = "http://localhost:8080"
+
+    def query(self, yql=None, **kwargs):
+        raise ConnectionError("config store unreachable")
+
+
+def test_get_stats_raises_on_outage():
+    store = VespaConfigStore(vespa_app=_RaisingVespaApp())
+    with pytest.raises(ConnectionError):
+        store.get_stats()
+
+
+def test_export_configs_raises_on_outage():
+    store = VespaConfigStore(vespa_app=_RaisingVespaApp())
+    with pytest.raises(ConnectionError):
+        store.export_configs("acme:acme", include_history=True)
