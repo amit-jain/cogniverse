@@ -65,7 +65,9 @@ class WorkflowIntelligence:
         # per-tenant provider itself, so no provider is threaded through here.
         self._store = WorkflowStoreRegistry.get(name="telemetry")
 
-        # In-memory data structures (loaded at startup, read-only at runtime)
+        # In-memory data structures. Loaded at startup; read-only on the
+        # serving path (batch jobs append learned query patterns via
+        # record_execution before persisting the corpus).
         self.workflow_history: deque = deque(maxlen=max_history_size)
         self.agent_performance: Dict[str, AgentPerformance] = {}
         self.workflow_templates: Dict[str, WorkflowTemplate] = {}
@@ -154,9 +156,16 @@ class WorkflowIntelligence:
         best_score = 0.0
 
         for template in self.workflow_templates.values():
-            # Calculate similarity score with template patterns
+            # Calculate similarity score with template patterns, extended by
+            # the learned queries of the template's own dominant type — a
+            # phrasing that succeeded before matches even when no built-in
+            # pattern does.
+            candidate_patterns = list(template.query_patterns)
+            candidate_patterns += self.query_type_patterns.get(
+                self._template_query_type(template), []
+            )
             score = 0.0
-            for pattern in template.query_patterns:
+            for pattern in candidate_patterns:
                 pattern_words = set(pattern.lower().split())
                 query_words = set(query_lower.split())
 
@@ -303,6 +312,18 @@ class WorkflowIntelligence:
 
         plan.metadata["performance_optimized"] = True
         return plan
+
+    def _template_query_type(self, template: WorkflowTemplate) -> str:
+        """Dominant query type of a template, by classifying its built-in
+        patterns (majority vote, first winner on ties). Links learned
+        queries to templates without adding a schema field."""
+        votes: Dict[str, int] = {}
+        for pattern in template.query_patterns:
+            pattern_type = self._classify_query_type(pattern)
+            votes[pattern_type] = votes.get(pattern_type, 0) + 1
+        if not votes:
+            return "general"
+        return max(votes, key=votes.get)
 
     def _classify_query_type(self, query: str) -> str:
         """Classify query into type for pattern recognition"""
@@ -476,11 +497,34 @@ class WorkflowIntelligence:
         }
 
     async def record_execution(self, workflow_execution: WorkflowExecution) -> None:
-        """Record workflow execution directly (called by OrchestrationEvaluator in batch jobs)."""
+        """Record workflow execution directly (called by OrchestrationEvaluator in batch jobs).
+
+        Successful executions also feed the learned query-pattern corpus:
+        the query is classified and kept (deduplicated, bounded) under its
+        type, so template matching recognises phrasings that actually
+        succeeded for this tenant, not only each template's built-in
+        patterns. The batch save persists the corpus; the serving path
+        loads it read-only at startup.
+        """
         self.workflow_history.append(workflow_execution)
+        if workflow_execution.success and workflow_execution.query.strip():
+            self._learn_query_pattern(workflow_execution.query)
         self.logger.debug(
             "Recorded workflow execution: %s", workflow_execution.workflow_id
         )
+
+    _MAX_LEARNED_PATTERNS_PER_TYPE = 50
+
+    def _learn_query_pattern(self, query: str) -> None:
+        query_type = self._classify_query_type(query)
+        patterns = self.query_type_patterns[query_type]
+        normalized = query.strip()
+        if any(existing.lower() == normalized.lower() for existing in patterns):
+            return
+        patterns.append(normalized)
+        overflow = len(patterns) - self._MAX_LEARNED_PATTERNS_PER_TYPE
+        if overflow > 0:
+            del patterns[:overflow]
 
     async def record_ground_truth_execution(
         self, workflow_execution: WorkflowExecution
