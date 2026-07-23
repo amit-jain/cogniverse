@@ -30,7 +30,9 @@ from __future__ import annotations
 import importlib.metadata
 import logging
 import os
-from typing import Any, ClassVar, Dict, Generic, List, Optional, Type, TypeVar
+import threading
+import time
+from typing import Any, ClassVar, Dict, Generic, List, Optional, Tuple, Type, TypeVar
 
 from cogniverse_foundation.caching import TenantLRUCache
 
@@ -39,6 +41,42 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 _DEFAULT_TENANT_CACHE_CAPACITY = 16
+
+# LRU capacity eviction can drop an instance that a concurrent request still
+# holds (``get()`` returned it and the caller is mid-await). Closing its
+# sockets/sessions then is a use-after-close. So a capacity-evicted instance is
+# queued and closed on a later sweep, once this grace window has passed — by
+# which time any realistic request has released it. (A finalizer cannot trigger
+# the close on last-reference-drop: calling the instance's own close() requires
+# holding the instance, which would keep it alive and never fire.)
+_EVICTED_CLOSE_GRACE_S = 60.0
+_pending_close: "List[Tuple[float, str, Any]]" = []
+_pending_close_lock = threading.Lock()
+
+
+def _close_instance_now(key: str, instance: Any) -> None:
+    """Call ``close()`` or ``shutdown()`` on a plugin instance immediately.
+
+    Used for instances with no other holder (a cold-start loser) and for
+    teardown flushes — where an in-flight hold is impossible.
+    """
+    for method in ("close", "shutdown"):
+        closer = getattr(instance, method, None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception as exc:
+                logger.debug("Plugin %s.%s() failed: %s", key, method, exc)
+            return
+
+
+def _flush_pending_close() -> None:
+    """Close every queued instance now (teardown: clear_cache / reset)."""
+    with _pending_close_lock:
+        pending = list(_pending_close)
+        _pending_close.clear()
+    for _evicted_at, key, instance in pending:
+        _close_instance_now(key, instance)
 
 
 def _tenant_cache_capacity() -> int:
@@ -57,21 +95,29 @@ def _tenant_cache_capacity() -> int:
 
 
 def _on_instance_evicted(key: str, instance: Any) -> None:
-    """Call ``close()`` or ``shutdown()`` on an evicted plugin instance.
+    """Defer the close of an LRU-capacity-evicted plugin instance.
 
     Phoenix / OTLP / Vespa-store plugins hold sockets, HTTP clients, and
-    pyvespa app handles. Releasing them on LRU eviction prevents the
-    transport pool from leaking one socket per test tenant for the
-    lifetime of the process.
+    pyvespa app handles. Releasing them on eviction prevents the transport
+    pool from leaking one socket per tenant for the process lifetime — but a
+    capacity-evicted instance may still be held by an in-flight request, so the
+    close is queued and performed on a later sweep after the grace window, not
+    synchronously. A same-timestamp sweep also drains anything already past the
+    window so the queue can't grow without a subsequent eviction.
     """
-    for method in ("close", "shutdown"):
-        closer = getattr(instance, method, None)
-        if callable(closer):
-            try:
-                closer()
-            except Exception as exc:
-                logger.debug("Plugin %s.%s() failed: %s", key, method, exc)
-            return
+    now = time.monotonic()
+    to_close: "List[Tuple[str, Any]]" = []
+    with _pending_close_lock:
+        _pending_close.append((now, key, instance))
+        keep: "List[Tuple[float, str, Any]]" = []
+        for evicted_at, k, inst in _pending_close:
+            if now - evicted_at >= _EVICTED_CLOSE_GRACE_S:
+                to_close.append((k, inst))
+            else:
+                keep.append((evicted_at, k, inst))
+        _pending_close[:] = keep
+    for k, inst in to_close:
+        _close_instance_now(k, inst)
 
 
 class EntryPointRegistry(Generic[T]):
@@ -203,8 +249,13 @@ class EntryPointRegistry(Generic[T]):
 
     @classmethod
     def clear_cache(cls) -> None:
-        """Evict all cached plugin instances (triggers close/shutdown)."""
+        """Evict all cached plugin instances (triggers close/shutdown).
+
+        Teardown closes immediately — nothing is mid-request — so the deferred
+        queue the eviction enqueues is flushed right away.
+        """
         cls._instances.clear()
+        _flush_pending_close()
         logger.info("Cleared %s cache", cls._label)
 
     @classmethod
@@ -212,6 +263,7 @@ class EntryPointRegistry(Generic[T]):
         """Restore the registry to its pristine state — for tests only."""
         cls._registry_classes.clear()
         cls._instances.clear()
+        _flush_pending_close()
         cls._entry_points_loaded = False
         cls._instance = None
 
@@ -266,7 +318,8 @@ class EntryPointRegistry(Generic[T]):
         # set_if_absent keeps the winner and hands us the loser to release.
         winner = cls._instances.set_if_absent(cache_key, instance)
         if winner is not instance:
-            _on_instance_evicted(cache_key, instance)
+            # We built the loser; nobody else holds it, so close it now.
+            _close_instance_now(cache_key, instance)
             return winner
         logger.info("Created %s: %s", cls._label, cache_key)
         return instance
