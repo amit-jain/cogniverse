@@ -15,13 +15,23 @@ api_base / api_key / extra_body / sampling onto the dspy.LM and emit
 one well-formed log line per construction.
 """
 
-import logging
+from __future__ import annotations
 
-import dspy
+import logging
+from typing import TYPE_CHECKING
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
+if TYPE_CHECKING:
+    import dspy
+
 logger = logging.getLogger(__name__)
+
+# dspy (and its litellm dependency) is imported lazily inside create_dspy_lm:
+# importing it at module level cost ~2.2s on every process that touches
+# cogniverse_foundation.config (every CLI, the worker pod), even on paths that
+# never build a dspy.LM. The annotation below is a string via the __future__
+# import, so it needs no import at definition time.
 
 
 def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
@@ -40,6 +50,8 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     """
     if not config.model:
         raise ValueError("LLMEndpointConfig.model is required and must be non-empty")
+
+    import dspy
 
     kwargs: dict = {
         "temperature": config.temperature,
