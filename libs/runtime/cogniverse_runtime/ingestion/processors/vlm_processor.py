@@ -7,6 +7,7 @@ Delegates to VLMDescriptor for actual Modal VLM service communication.
 """
 
 import logging
+import threading
 from typing import Any
 
 from ..processor_base import BaseProcessor
@@ -43,22 +44,31 @@ class VLMProcessor(BaseProcessor):
         self.auto_start = auto_start
         self.vlm_concurrency = vlm_concurrency
         self._descriptor = None
+        self._descriptor_lock = threading.Lock()
 
     def _get_descriptor(self):
-        """Lazy-init VLMDescriptor on first use."""
-        if self._descriptor is None:
-            from .vlm_descriptor import VLMDescriptor
+        """Lazy-init VLMDescriptor on first use (thread-safe).
 
-            self._descriptor = VLMDescriptor(
-                vlm_endpoint=self.vlm_endpoint,
-                batch_size=self.batch_size,
-                timeout=self.timeout,
-                auto_start=self.auto_start,
-                vlm_concurrency=self.vlm_concurrency,
-            )
-            self.logger.info(
-                f"VLMDescriptor initialized with endpoint: {self.vlm_endpoint}"
-            )
+        Description runs per-video on a worker thread while videos process
+        concurrently, so an unguarded check-then-set would build one descriptor
+        per racing first-touch — in Modal auto_start mode each independently
+        deploys the service and the discarded ones are never stopped.
+        """
+        if self._descriptor is None:
+            with self._descriptor_lock:
+                if self._descriptor is None:
+                    from .vlm_descriptor import VLMDescriptor
+
+                    self._descriptor = VLMDescriptor(
+                        vlm_endpoint=self.vlm_endpoint,
+                        batch_size=self.batch_size,
+                        timeout=self.timeout,
+                        auto_start=self.auto_start,
+                        vlm_concurrency=self.vlm_concurrency,
+                    )
+                    self.logger.info(
+                        f"VLMDescriptor initialized with endpoint: {self.vlm_endpoint}"
+                    )
         return self._descriptor
 
     @classmethod
