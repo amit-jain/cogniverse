@@ -612,6 +612,15 @@ class AgentDispatcher:
                 embedder_base_url=denseon_url,
                 config_manager=self._config_manager,
                 schema_loader=self._schema_loader,
+                # Honor the agent's deps toggle (SearchAgentDeps sets it) — a
+                # caller passing auto_create_memory_schema=False was ignored,
+                # so the mixin always auto-deployed. Default True for agents
+                # whose deps carry no such field.
+                auto_create_schema=getattr(
+                    getattr(agent, "deps", None),
+                    "auto_create_memory_schema",
+                    True,
+                ),
             )
         except Exception as exc:
             logger.warning(
