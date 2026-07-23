@@ -114,12 +114,14 @@ def test_upload_keyframes_raises_if_any_put_fails(tmp_path):
 
     def flaky_put(*, Key, **_):
         if Key.endswith("0002.jpg"):
-            raise RuntimeError("minio 503 on segment 2")
+            # Generic error with no segment/key info — the naming must come from
+            # the production wrapper, not from this message.
+            raise RuntimeError("minio 503")
 
     fake_client = MagicMock()
     fake_client.put_object.side_effect = flaky_put
     with patch.object(minio_client, "_client", return_value=fake_client):
-        with pytest.raises(RuntimeError, match="segment 2"):
+        with pytest.raises(RuntimeError, match=r"Keyframe upload failed.*0002"):
             minio_client.upload_keyframes(
                 tenant_id="t:t", video_id="v", keyframe_paths=paths, bucket="media"
             )
