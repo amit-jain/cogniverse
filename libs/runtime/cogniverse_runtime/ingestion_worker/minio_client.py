@@ -99,19 +99,37 @@ def upload_keyframes(
     under ``keyframe_object_key(tenant_id, video_id, i)`` — the same ``i`` the
     embedding step assigns as ``segment_id`` and the hit later carries. Returns
     the ``s3://`` URIs in that order.
+
+    A long video yields hundreds of keyframes; uploading them one PUT at a time
+    serialises hundreds of MinIO round-trips. The PUTs are independent, so they
+    run through a bounded thread pool (boto3 low-level clients are thread-safe
+    for concurrent calls). If any PUT fails the call raises — the return value
+    is only ever the full ordered URI list, never a partial one.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     from cogniverse_core.common.media import keyframe_object_key
 
     bucket_name = bucket or _default_bucket()
+    keys = [
+        keyframe_object_key(tenant_id, video_id, segment_id)
+        for segment_id in range(len(keyframe_paths))
+    ]
+    if not keys:
+        return []
     client = _client()
-    uris: list[str] = []
-    for segment_id, path in enumerate(keyframe_paths):
-        key = keyframe_object_key(tenant_id, video_id, segment_id)
+
+    def _put(path: str, key: str) -> None:
         client.put_object(
             Bucket=bucket_name,
             Key=key,
             Body=Path(path).read_bytes(),
             ContentType="image/jpeg",
         )
-        uris.append(f"s3://{bucket_name}/{key}")
-    return uris
+
+    with ThreadPoolExecutor(max_workers=min(8, len(keys))) as pool:
+        # Materialise so every PUT is submitted before we block on any result;
+        # list() over the map re-raises the first failure and preserves order.
+        list(pool.map(_put, keyframe_paths, keys))
+
+    return [f"s3://{bucket_name}/{key}" for key in keys]
