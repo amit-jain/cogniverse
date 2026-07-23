@@ -687,10 +687,18 @@ class QualityMonitor:
                 logger.debug(f"No spans found for {agent_type.value}")
                 continue
 
+            # Read the baseline OUTSIDE the per-agent guard: a telemetry
+            # outage here affects every agent identically, so swallowing it
+            # per-agent yields an empty "successful" cycle that skips
+            # optimization. A genuine missing baseline maps to None.
+            baseline_score = await self._get_agent_baseline(agent_type)
+
             sampled = spans_df.sample(n=min(self.live_sample_count, len(spans_df)))
 
             try:
-                agent_result = await self._evaluate_agent_spans(agent_type, sampled)
+                agent_result = await self._evaluate_agent_spans(
+                    agent_type, sampled, baseline_score
+                )
                 result.agent_results[agent_type] = agent_result
             except Exception as e:
                 logger.warning(f"Live eval failed for {agent_type.value}: {e}")
@@ -699,9 +707,17 @@ class QualityMonitor:
         return result
 
     async def _evaluate_agent_spans(
-        self, agent_type: AgentType, spans_df: pd.DataFrame
+        self,
+        agent_type: AgentType,
+        spans_df: pd.DataFrame,
+        baseline_score: Optional[float],
     ) -> AgentEvalResult:
-        """Score sampled spans for a specific agent using LLM judge."""
+        """Score sampled spans for a specific agent using LLM judge.
+
+        ``baseline_score`` is read by the caller (outside the per-agent guard)
+        so a telemetry outage fails the whole cycle rather than being
+        swallowed per agent.
+        """
         judge = self._get_llm_judge()
         scores = []
         low_scoring = []
@@ -774,7 +790,6 @@ class QualityMonitor:
 
         mean_score = sum(scores) / len(scores) if scores else 0.0
 
-        baseline_score = await self._get_agent_baseline(agent_type)
         degradation = 0.0
         if baseline_score and baseline_score > 0:
             degradation = (baseline_score - mean_score) / baseline_score
@@ -1174,19 +1189,19 @@ class QualityMonitor:
             return
 
         df = pd.DataFrame(records)
-        try:
-            await store.create_dataset(
-                name=dataset_name,
-                data=df,
-                metadata={
-                    "description": f"Live traffic eval for tenant {self.tenant_id}",
-                    "input_keys": ["agent"],
-                    "output_keys": ["score", "degradation_pct"],
-                },
-            )
-            logger.info(f"Stored live eval results: {dataset_name}")
-        except Exception as e:
-            logger.error(f"Failed to store live eval: {e}")
+        # Raise on failure: a silently lost write freezes the live baselines
+        # that degradation checks compare against (same contract as the
+        # golden store).
+        await store.create_dataset(
+            name=dataset_name,
+            data=df,
+            metadata={
+                "description": f"Live traffic eval for tenant {self.tenant_id}",
+                "input_keys": ["agent"],
+                "output_keys": ["score", "degradation_pct"],
+            },
+        )
+        logger.info(f"Stored live eval results: {dataset_name}")
 
     async def _store_trigger_dataset(
         self, trigger: OptimizationTrigger
@@ -1346,18 +1361,17 @@ class QualityMonitor:
                 for agent, score in live_results.items()
             ]
             df = pd.DataFrame(records)
-            try:
-                await store.create_dataset(
-                    name=dataset_name,
-                    data=df,
-                    metadata={
-                        "description": "Live eval baselines per agent",
-                        "input_keys": ["agent"],
-                        "output_keys": ["score"],
-                    },
-                )
-            except Exception as e:
-                logger.error(f"Failed to update live baselines: {e}")
+            # Raise on failure — a lost baseline write freezes degradation
+            # detection with no signal to the operator.
+            await store.create_dataset(
+                name=dataset_name,
+                data=df,
+                metadata={
+                    "description": "Live eval baselines per agent",
+                    "input_keys": ["agent"],
+                    "output_keys": ["score"],
+                },
+            )
 
     async def grow_golden_set(self, new_queries: List[Dict[str, Any]]):
         """Add high-scoring live queries to the golden dataset.

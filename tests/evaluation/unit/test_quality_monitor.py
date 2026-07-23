@@ -767,7 +767,7 @@ class TestEvaluateAgentSpans:
         with patch.object(
             monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=0.85
         ):
-            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans)
+            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans, None)
 
         assert result.agent == AgentType.SEARCH
         assert result.score == 0.8
@@ -808,7 +808,7 @@ class TestEvaluateAgentSpans:
         with patch.object(
             monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=None
         ):
-            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans)
+            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans, None)
 
         # Only the scored span counts; averaging the failed one would give 0.65.
         assert result.sample_count == 1
@@ -849,7 +849,7 @@ class TestEvaluateAgentSpans:
             monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=None
         ):
             result = await asyncio.wait_for(
-                monitor._evaluate_agent_spans(AgentType.SEARCH, spans), timeout=10
+                monitor._evaluate_agent_spans(AgentType.SEARCH, spans, None), timeout=10
             )
 
         assert result.sample_count == n
@@ -880,7 +880,7 @@ class TestEvaluateAgentSpans:
         with patch.object(
             monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=None
         ):
-            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans)
+            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans, None)
 
         assert result.sample_count == 0
         assert result.score == 0.0
@@ -910,7 +910,7 @@ class TestEvaluateAgentSpans:
         with patch.object(
             monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=None
         ):
-            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans)
+            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans, None)
 
         assert result.sample_count == 0
         assert result.score == 0.0
@@ -1694,3 +1694,47 @@ class TestGoldenScoringRobustness:
 
         assert result.query_count == 1
         assert result.failed_query_count == 1
+
+
+class TestLiveEvalOutageContracts:
+    @pytest.mark.asyncio
+    async def test_baseline_read_outage_fails_the_cycle(self, monitor):
+        """A telemetry outage while reading an agent baseline must fail the
+        whole live cycle loudly — not be swallowed per-agent into an empty
+        'successful' result that skips optimization."""
+        import pandas as pd
+
+        spans = pd.DataFrame(
+            [{"span_id": "s1", "attributes": {"query": "q"}, "outputs": {"value": "x"}}]
+        )
+        judge = MagicMock()
+        judge._call_llm = AsyncMock(return_value="Score: 5/10")
+        judge._extract_score_from_response = MagicMock(return_value=(0.5, "ok"))
+        monitor._llm_judge = judge
+        with patch("cogniverse_evaluation.span_evaluator.SpanEvaluator") as MockEval:
+            ev = MagicMock()
+            ev.get_recent_spans = AsyncMock(return_value=spans)
+            MockEval.return_value = ev
+            monitor._dataset_store = FailingDatasetStore()
+            with pytest.raises(ConnectionError, match="connection refused"):
+                await monitor.evaluate_live_traffic()
+
+    @pytest.mark.asyncio
+    async def test_store_live_eval_raises_on_store_failure(self, monitor):
+        monitor._dataset_store = FailingDatasetStore()
+        result = LiveEvalResult(timestamp=datetime.utcnow(), tenant_id=CANON)
+        result.agent_results[AgentType.SEARCH] = AgentEvalResult(
+            agent=AgentType.SEARCH,
+            score=0.7,
+            baseline_score=None,
+            degradation_pct=0.0,
+            sample_count=3,
+        )
+        with pytest.raises(ConnectionError, match="connection refused"):
+            await monitor._store_live_eval_result(result)
+
+    @pytest.mark.asyncio
+    async def test_update_baseline_live_raises_on_store_failure(self, monitor):
+        monitor._dataset_store = FailingDatasetStore()
+        with pytest.raises(ConnectionError, match="connection refused"):
+            await monitor.update_baseline(live_results={AgentType.SEARCH: 0.8})
