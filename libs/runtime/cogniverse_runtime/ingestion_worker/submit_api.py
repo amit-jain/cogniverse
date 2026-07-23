@@ -71,6 +71,38 @@ def _inflight_ttl_seconds() -> int:
     return int(os.environ.get("INGEST_INFLIGHT_TTL_SECONDS", "21600"))
 
 
+# A submit goes claim_inflight -> increment -> publish_status -> submit ->
+# mark_submitted in a handful of local Redis round-trips (tens of ms). An
+# inflight marker without a submitted marker that is older than this grace did
+# not merely lose a race with a concurrent winner mid-submit — it is a phantom
+# from a crash before submit. Far shorter than the 6h inflight TTL so a phantom
+# self-heals in seconds, far longer than the real claim->submit window so a live
+# winner is never re-enqueued.
+_COMMIT_GRACE_SECONDS = 30.0
+
+
+async def _existing_run_is_real(redis: aioredis.Redis, sha: str) -> bool:
+    """Whether an existing idempotency record names a run that actually exists.
+
+    True for a completed run (done marker) or an in-flight run that reached the
+    work stream (submitted marker). A bare inflight marker with no submitted
+    marker is a phantom from a crash between claim and submit — unless it was
+    claimed within the commit grace, in which case a concurrent winner may still
+    be mid-submit and we must not re-enqueue.
+    """
+    if await idempotency.get_done_ingest_id(redis, sha):
+        return True
+    if await idempotency.is_submitted(redis, sha):
+        return True
+    age = await idempotency.inflight_claim_age_seconds(
+        redis, sha, _inflight_ttl_seconds()
+    )
+    if age is None:
+        # Cannot age the marker (no TTL) — stay conservative, treat as real.
+        return True
+    return age < _COMMIT_GRACE_SECONDS
+
+
 async def _wait_for_terminal(
     redis: aioredis.Redis, ingest_id: str, deadline_seconds: float
 ) -> Optional[dict]:
@@ -114,13 +146,26 @@ async def enqueue_ingestion(
         await idempotency.clear_done(redis, sha)
     else:
         existing_id = await idempotency.get_existing_ingest_id(redis, sha)
-        if existing_id:
+        if existing_id and await _existing_run_is_real(redis, sha):
             return EnqueueResult(
                 ingest_id=existing_id,
                 sha=sha,
                 state="in_flight",
                 existing=True,
             )
+        if existing_id:
+            # The inflight marker exists but the run never reached the work
+            # stream — a hard crash between claim_inflight and submit orphaned
+            # it. Clear it and fall through to re-enqueue instead of handing
+            # back a phantom id that never completes. claim_inflight (SET NX)
+            # below still dedupes concurrent resubmits.
+            logger.warning(
+                "Clearing phantom inflight marker for sha=%s (id=%s): the run "
+                "never reached the work stream",
+                sha,
+                existing_id,
+            )
+            await idempotency.clear_inflight(redis, sha)
 
     queue_limit, tenant_limit = _backpressure_limits()
     rejection = await backpressure.check(
@@ -185,6 +230,10 @@ async def enqueue_ingestion(
             tenant_id=tenant_id,
             sha=sha,
         )
+        # The job is now in the work stream — mark it committed so a resubmit
+        # can tell a genuine in-flight run from a phantom left by a crash
+        # before this point.
+        await idempotency.mark_submitted(redis, sha, _inflight_ttl_seconds())
     except Exception:
         if incremented:
             try:
