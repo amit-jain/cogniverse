@@ -74,3 +74,23 @@ def test_search_connection_failfast():
 
     assert conn._sync.http_client.timeout == 15.0
     assert conn._sync.num_retries_429 == 2
+
+
+def test_health_check_probes_through_the_clamped_session():
+    """The reaper's health probe must go through the fail-fast-clamped session,
+    not the raw un-clamped app — otherwise a hung Vespa blocks the health sweep
+    for pyvespa's 120s default, delaying detection of the bad connection."""
+    from unittest.mock import MagicMock
+
+    from cogniverse_vespa.search_backend import VespaConnection
+
+    conn = VespaConnection.__new__(VespaConnection)
+    conn.connection_id = "c1"
+    conn.is_healthy = True
+    conn._sync = MagicMock()
+    conn._sync.query.return_value = {"root": {"children": []}}
+    conn.vespa = MagicMock()  # the un-clamped app — must NOT be probed
+
+    assert conn.health_check() is True
+    conn._sync.query.assert_called_once()
+    conn.vespa.query.assert_not_called()

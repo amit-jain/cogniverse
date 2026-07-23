@@ -263,8 +263,11 @@ class VespaConnection:
     def health_check(self) -> bool:
         """Check connection health"""
         try:
-            # Simple health check query
-            result = self.vespa.query(yql="select * from sources * where true limit 1")
+            # Probe through the fail-fast-clamped session, not the raw
+            # ``self.vespa`` (pyvespa's 120s x 11-attempt default) — a hung
+            # Vespa would otherwise block the reaper's health sweep for minutes,
+            # delaying detection and healing of the very connection it checks.
+            result = self._sync.query(yql="select * from sources * where true limit 1")
             self.is_healthy = result is not None
             return self.is_healthy
         except Exception as e:
