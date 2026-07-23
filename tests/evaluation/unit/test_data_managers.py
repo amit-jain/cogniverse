@@ -151,15 +151,26 @@ class TestDatasetManager:
         assert sorted(manager.list_datasets()) == ["ds_a", "ds_b"]
 
     @pytest.mark.unit
-    def test_create_test_dataset(self, manager, store):
-        dataset_id = manager.create_test_dataset()
+    def test_create_test_dataset_returns_the_written_name(self, manager, store):
+        # Returns the dataset NAME (what callers evaluate by), not the id.
+        name = manager.create_test_dataset()
 
-        assert dataset_id.startswith("ds-test_dataset_")
-        name = dataset_id[len("ds-") :]
+        assert name.startswith("test_dataset_")
+        assert name in store._frames
         df = store._frames[name]
         assert len(df) == 3
         assert df["query"].iloc[0] == "person wearing red shirt"
         assert df["expected_videos"].iloc[0] == "video1,video2"
+
+    @pytest.mark.unit
+    def test_join_expected_coerces_hostile_values(self):
+        # Scalars, dicts and None must never raise or repr-leak.
+        assert DatasetManager._join_expected(["v1", "v2"]) == "v1,v2"
+        assert DatasetManager._join_expected("v1,v2") == "v1,v2"
+        assert DatasetManager._join_expected(42) == "42"
+        assert DatasetManager._join_expected(None) == ""
+        assert DatasetManager._join_expected({"v1": True}) == ""
+        assert DatasetManager._join_expected(("a", "b")) == "a,b"
 
     @pytest.mark.unit
     def test_update_dataset_appends(self, manager, store):

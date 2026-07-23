@@ -277,6 +277,53 @@ class TestGoldenSetGrowth:
         assert updated[2]["query"] == "cat sitting on couch"
 
     @pytest.mark.asyncio
+    async def test_grow_golden_set_skips_queries_without_ground_truth(
+        self, monitor, golden_dataset
+    ):
+        """A query with no expected_videos can only ever score MRR 0 — adding
+        it poisons the golden mean and spawns spurious optimization triggers.
+        Such queries must never enter the golden set."""
+        await monitor.grow_golden_set(
+            [
+                {"query": "unanswerable live query", "expected_videos": []},
+                {"query": "also empty", "expected_videos": ""},
+                {"query": "good one", "expected_videos": ["v9"]},
+            ]
+        )
+
+        with open(golden_dataset) as f:
+            updated = json.load(f)
+        queries = {q["query"] for q in updated}
+        assert "good one" in queries
+        assert "unanswerable live query" not in queries
+        assert "also empty" not in queries
+
+    @pytest.mark.asyncio
+    async def test_grow_golden_set_write_is_atomic(self, monitor, golden_dataset):
+        """A crash mid-write must not truncate the golden file — the next load
+        would raise JSONDecodeError and kill golden eval. Simulate os.replace
+        failing after the tmp write and assert the original file is intact."""
+        import os
+
+        original = monitor._load_golden_queries()
+        with patch(
+            "cogniverse_evaluation.quality_monitor.os.replace",
+            side_effect=OSError("disk full"),
+        ):
+            with pytest.raises(OSError):
+                await monitor.grow_golden_set(
+                    [{"query": "new q", "expected_videos": ["v1"]}]
+                )
+
+        # The original file is still valid JSON with the original content.
+        with open(golden_dataset) as f:
+            after = json.load(f)
+        assert after == original
+        # No orphan tmp file left behind.
+        d = os.path.dirname(golden_dataset)
+        assert not [f for f in os.listdir(d) if f.endswith(".tmp")]
+
+    @pytest.mark.asyncio
     async def test_grow_golden_set_deduplicates(self, monitor, golden_dataset):
         # Try adding a query that already exists
         new_queries = [
@@ -1598,3 +1645,52 @@ class TestEvaluateLiveTrafficOutage:
 
             with pytest.raises(ConnectionError, match="Phoenix down"):
                 await monitor.evaluate_live_traffic()
+
+
+class TestGoldenScoringRobustness:
+    @pytest.mark.asyncio
+    async def test_comma_string_expected_is_split_not_substring_matched(self, monitor):
+        """A golden file may carry expected_videos as a comma-joined string
+        (the exported shape). It must be split into ids, not substring-matched
+        — else retrieved 'video' scores 1.0 against expected 'video1,video2'."""
+        import httpx
+
+        monitor._golden_queries = [
+            {"query": "q", "expected_videos": "video1,video2"},
+        ]
+
+        def handler(request):
+            # Retrieve an id that is a SUBSTRING of the joined string but not a
+            # real member — substring matching would score this MRR 1.0.
+            return httpx.Response(200, json={"results": [{"source_id": "video"}]})
+
+        monitor._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://testserver"
+        )
+        with patch.object(monitor, "_store_golden_eval_result", new_callable=AsyncMock):
+            result = await monitor.evaluate_golden_set()
+
+        assert result.mean_mrr == 0.0
+
+    @pytest.mark.asyncio
+    async def test_missing_query_key_is_a_failed_entry_not_a_crash(self, monitor):
+        """A malformed golden entry without a 'query' key must be recorded as
+        a failed query, not raise a bare KeyError that aborts the whole eval."""
+        import httpx
+
+        monitor._golden_queries = [
+            {"expected_videos": ["v1"]},  # no "query"
+            {"query": "ok", "expected_videos": ["v2"]},
+        ]
+
+        def handler(request):
+            return httpx.Response(200, json={"results": [{"source_id": "v2"}]})
+
+        monitor._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://testserver"
+        )
+        with patch.object(monitor, "_store_golden_eval_result", new_callable=AsyncMock):
+            result = await monitor.evaluate_golden_set()
+
+        assert result.query_count == 1
+        assert result.failed_query_count == 1

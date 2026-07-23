@@ -142,3 +142,38 @@ class TestDatasetFetchOncePerSweep:
             )
 
         task_mod._DATASET_FRAMES.clear()
+
+
+class TestRowToRecord:
+    """A DatasetManager-created dataset puts expected_videos in the OUTPUT
+    slot; the reader must merge input+output+metadata or every sample target
+    comes back empty."""
+
+    @pytest.mark.unit
+    def test_merges_output_slot(self):
+        import pandas as pd
+
+        from cogniverse_evaluation.core.task import _row_to_record
+
+        row = pd.Series(
+            {
+                "input": {"query": "q1", "category": "visual"},
+                "output": {"expected_videos": "v1,v2"},
+                "metadata": {"query_type": "answer_phrase"},
+            }
+        )
+        record = _row_to_record(row)
+        assert record["query"] == "q1"
+        assert record["expected_videos"] == "v1,v2"
+        assert record["query_type"] == "answer_phrase"
+
+    @pytest.mark.unit
+    def test_flat_columns_fallback(self):
+        import pandas as pd
+
+        from cogniverse_evaluation.core.task import _row_to_record
+
+        row = pd.Series({"query": "q2", "expected_videos": "v3"})
+        record = _row_to_record(row)
+        assert record["query"] == "q2"
+        assert record["expected_videos"] == "v3"
