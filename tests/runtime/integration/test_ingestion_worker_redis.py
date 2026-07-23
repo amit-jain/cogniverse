@@ -446,6 +446,79 @@ class TestEnqueueCompensation:
         assert [j.ingest_id for j in jobs] == [result.ingest_id]
 
     @pytest.mark.asyncio
+    async def test_happy_path_marks_submitted(self, redis):
+        """A successful enqueue records the submitted marker so a resubmit can
+        tell a real in-flight run from a crash-orphaned phantom."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = "s3://bucket/submitted.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+        await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        assert await idempotency.is_submitted(redis, sha) is True
+
+    @pytest.mark.asyncio
+    async def test_aged_phantom_marker_is_cleared_and_re_enqueued(self, redis):
+        """A hard crash (SIGKILL/OOM) between claim_inflight and submit runs no
+        compensation, orphaning the inflight marker with no submitted marker.
+        A resubmit must not hand back that phantom id for the 6h TTL — it must
+        re-enqueue a real job that lands on the work stream."""
+        from cogniverse_runtime.ingestion_worker.submit_api import (
+            _inflight_ttl_seconds,
+            enqueue_ingestion,
+        )
+
+        src, profile, tenant = "s3://bucket/phantom.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        # Plant an aged inflight marker (claimed ~60s ago, past the commit
+        # grace) with NO submitted marker — a phantom from a pre-submit crash.
+        await redis.set(
+            f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}",
+            "ingest_phantom",
+            ex=_inflight_ttl_seconds() - 60,
+        )
+
+        result = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+
+        assert result.existing is False, "phantom returned instead of re-enqueue"
+        assert result.ingest_id != "ingest_phantom"
+        assert result.state == "queued"
+        jobs = await queue.claim(redis, "ingestors", "consumer_phantom", block_ms=1000)
+        assert [j.ingest_id for j in jobs] == [result.ingest_id]
+
+    @pytest.mark.asyncio
+    async def test_fresh_inflight_without_submitted_is_treated_as_live(self, redis):
+        """An inflight marker claimed within the commit grace and not yet
+        submitted is a concurrent winner mid-submit — a resubmit returns its id
+        rather than racing it into a duplicate enqueue."""
+        from cogniverse_runtime.ingestion_worker.submit_api import (
+            _inflight_ttl_seconds,
+            enqueue_ingestion,
+        )
+
+        src, profile, tenant = "s3://bucket/fresh.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        # Freshly claimed (full TTL remaining ⇒ age ~0 < grace), no submitted.
+        await redis.set(
+            f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}",
+            "ingest_winner",
+            ex=_inflight_ttl_seconds(),
+        )
+
+        result = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+
+        assert result.existing is True
+        assert result.ingest_id == "ingest_winner"
+        assert await queue.queue_depth(redis) == 0
+
+    @pytest.mark.asyncio
     async def test_increment_fault_clears_inflight_without_bogus_decrement(
         self, redis, monkeypatch
     ):

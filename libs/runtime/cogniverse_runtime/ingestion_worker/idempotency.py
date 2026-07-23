@@ -20,6 +20,7 @@ import redis.asyncio as aioredis
 
 DONE_KEY_PREFIX = "ingest:done:"
 INFLIGHT_KEY_PREFIX = "ingest:by_sha:"
+SUBMITTED_KEY_PREFIX = "ingest:submitted:"
 
 
 def compute_sha(source_url: str, profile: str, tenant_id: str) -> str:
@@ -115,7 +116,43 @@ async def claim_inflight(
 
 async def clear_inflight(redis: aioredis.Redis, sha: str) -> None:
     """Worker calls this on terminal state (success or failure)."""
-    await redis.delete(f"{INFLIGHT_KEY_PREFIX}{sha}")
+    await redis.delete(f"{INFLIGHT_KEY_PREFIX}{sha}", f"{SUBMITTED_KEY_PREFIX}{sha}")
+
+
+async def mark_submitted(redis: aioredis.Redis, sha: str, ttl_seconds: int) -> None:
+    """Record that the job for ``sha`` actually reached the work stream.
+
+    Set right after ``queue.submit`` succeeds. Distinguishes a genuine
+    in-flight run from a phantom: a hard crash (SIGKILL / OOM) between
+    ``claim_inflight`` and ``queue.submit`` orphans the inflight marker with
+    no compensation, and without this every resubmit for the inflight TTL
+    (6h) returns an id whose job was never queued. Cleared with the inflight
+    marker on terminal state.
+    """
+    if ttl_seconds > 0:
+        await redis.set(f"{SUBMITTED_KEY_PREFIX}{sha}", "1", ex=ttl_seconds)
+    else:
+        await redis.set(f"{SUBMITTED_KEY_PREFIX}{sha}", "1")
+
+
+async def is_submitted(redis: aioredis.Redis, sha: str) -> bool:
+    """True if the job for ``sha`` reached the work stream (see mark_submitted)."""
+    return bool(await redis.get(f"{SUBMITTED_KEY_PREFIX}{sha}"))
+
+
+async def inflight_claim_age_seconds(
+    redis: aioredis.Redis, sha: str, ttl_seconds: int
+) -> Optional[float]:
+    """Seconds since the inflight marker was claimed, derived from its
+    remaining TTL. None when the marker is absent, has no TTL, or the TTL is
+    disabled — the caller then cannot age-out a phantom and stays conservative.
+    """
+    if ttl_seconds <= 0:
+        return None
+    pttl = await redis.pttl(f"{INFLIGHT_KEY_PREFIX}{sha}")
+    if pttl is None or pttl < 0:
+        return None
+    return ttl_seconds - (pttl / 1000.0)
 
 
 async def mark_done(
