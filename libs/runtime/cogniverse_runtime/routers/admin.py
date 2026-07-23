@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -1156,6 +1157,12 @@ _signature_variant_overrides: Dict[str, Dict[str, str]] = {}
 # and the write-through cache never diverge under concurrent same-tenant PUTs.
 _pin_quota_write_locks: Dict[str, asyncio.Lock] = {}
 
+# Monotonic timestamp of each cached pin-quota entry. The write-through cache is
+# bounded by a short TTL so a PUT on another replica converges here instead of
+# being masked forever by a same-instance cache that only its own writes touch.
+_pin_quota_cache_ts: Dict[str, float] = {}
+_PIN_QUOTA_CACHE_TTL_S = 30.0
+
 _PIN_QUOTA_BLOB_KIND = "config"
 _PIN_QUOTA_BLOB_KEY = "pin_quotas"
 
@@ -1183,12 +1190,19 @@ async def _load_pin_quotas(tenant_id: str) -> Dict[str, int]:
     """
     key = canonical_tenant_id(tenant_id)
     cached = _pin_quota_overrides.get(key)
-    if cached is not None:
+    ts = _pin_quota_cache_ts.get(key)
+    if (
+        cached is not None
+        and ts is not None
+        and (time.monotonic() - ts) < (_PIN_QUOTA_CACHE_TTL_S)
+    ):
         return dict(cached)
 
     am = _build_artifact_manager(key)
     raw = await am.load_blob(_PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY)
     if not raw:
+        # No override blob — do not cache under the tenant key, so PinQuotas
+        # .for_tenant still falls through to TenantConfig metadata / defaults.
         return _default_pin_quotas()
     try:
         quotas = json.loads(raw)
@@ -1196,6 +1210,7 @@ async def _load_pin_quotas(tenant_id: str) -> Dict[str, int]:
         logger.warning("Corrupt pin_quotas blob for tenant=%s; using defaults", key)
         return _default_pin_quotas()
     _pin_quota_overrides[key] = quotas
+    _pin_quota_cache_ts[key] = time.monotonic()
     return dict(quotas)
 
 
@@ -1247,6 +1262,7 @@ async def set_pin_quotas(
             _PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY, json.dumps(current)
         )
         _pin_quota_overrides[key] = current
+        _pin_quota_cache_ts[key] = time.monotonic()
         logger.info("Updated + persisted pin quotas for tenant=%s: %s", key, current)
     return PinQuotasResponse(tenant_id=tenant_id, quotas=current)
 
@@ -1289,6 +1305,20 @@ class PinUnpinResponse(BaseModel):
     tenant_id: str
     target_memory_id: str
     removed: int
+
+
+async def _pin_service_for(tenant_id: str):
+    """Build the tenant's PinService with quotas read from the durable blob.
+
+    Enforcement resolves quotas through PinQuotas.for_tenant, which reads the
+    process-local override cache. That cache is only warmed by a pin-quota
+    GET/PUT on this same replica, so without this pre-load a pod that never
+    served one enforced hardcoded defaults and ignored an admin PUT made on
+    another replica. Loading here (bounded by the cache TTL) makes every
+    replica enforce the persisted quotas.
+    """
+    await _load_pin_quotas(tenant_id)
+    return await asyncio.to_thread(_get_pin_service, tenant_id)
 
 
 def _get_pin_service(tenant_id: str):
@@ -1358,7 +1388,7 @@ async def pin_memory(
     pinned_by = _parse_pinnable(body.pinned_by)
     if not body.actor_id.strip():
         raise HTTPException(400, "actor_id must be non-empty")
-    svc = await asyncio.to_thread(_get_pin_service, tenant_id)
+    svc = await _pin_service_for(tenant_id)
     try:
         record = svc.pin(
             target_memory_id=memory_id,
@@ -1404,7 +1434,7 @@ async def unpin_memory(
     requester = _parse_pinnable(body.requester_role)
     if not body.actor_id.strip():
         raise HTTPException(400, "actor_id must be non-empty")
-    svc = await asyncio.to_thread(_get_pin_service, tenant_id)
+    svc = await _pin_service_for(tenant_id)
     try:
         removed = svc.unpin(
             target_memory_id=memory_id,
@@ -1431,7 +1461,7 @@ async def unpin_memory(
 @router.get("/tenants/{tenant_id}/pins", response_model=PinListResponse)
 async def list_pins(tenant_id: str) -> PinListResponse:
     """list all pin records for a tenant (audit + UI)."""
-    svc = await asyncio.to_thread(_get_pin_service, tenant_id)
+    svc = await _pin_service_for(tenant_id)
     records = svc.list_pins(tenant_id)
     return PinListResponse(
         tenant_id=tenant_id,
@@ -1496,9 +1526,7 @@ async def promote_to_org_trunk(
     # Locate the source memory in the tenant's store. We don't know
     # which agent_name owns it, so go through the tenant-wide get_all
     # (Mem0 doesn't require agent_id when user_id is given).
-    source_mm = (
-        await asyncio.to_thread(_get_pin_service, tenant_id)
-    )._mm  # reuse the lazy-init path
+    source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
     try:
         rows_blob = source_mm.memory.get_all(user_id=tenant_id)
     except Exception as exc:
@@ -1587,9 +1615,7 @@ async def endorse_memory(
             f"unknown endorser_role={body.endorser_role!r}; valid: {valid}",
         )
 
-    source_mm = (
-        await asyncio.to_thread(_get_pin_service, tenant_id)
-    )._mm  # reuse the lazy-init path
+    source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
     try:
         rows_blob = source_mm.memory.get_all(user_id=tenant_id)
     except Exception as exc:
@@ -1658,9 +1684,7 @@ class RestoreMemoryResponse(BaseModel):
 )
 async def restore_memory(tenant_id: str, memory_id: str) -> RestoreMemoryResponse:
     """clear the archived flag on a soft-deleted memory."""
-    source_mm = (
-        await asyncio.to_thread(_get_pin_service, tenant_id)
-    )._mm  # reuse the lazy-init path
+    source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
     ok = source_mm.restore_archived_memory(memory_id)
     if not ok:
         raise HTTPException(
@@ -1809,5 +1833,6 @@ async def retire_canary(
 def _reset_admin_overrides_for_tests() -> None:
     """Reset the in-memory override dicts. Called by integration tests."""
     _pin_quota_overrides.clear()
+    _pin_quota_cache_ts.clear()
     _pin_quota_write_locks.clear()
     _signature_variant_overrides.clear()
