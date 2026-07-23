@@ -1,11 +1,12 @@
-"""HTTP-level coverage for the GET /admin/tenants/{tenant_id}/pin_quotas body.
+"""Unit coverage for the /admin/tenants/{tenant_id}/pin_quotas route body.
 
-This read route had no in-process test at all — its only exerciser was a
-skip-gated full-cluster e2e, so the load-blob -> json.loads -> PinQuotasResponse
-serialization path never ran in an ordinary pytest run. These drive the mounted
-FastAPI app via ASGITransport with a faithful ArtifactManager double (async
-``load_blob`` returning the JSON blob the real store persists), asserting the
-exact wire body for both a persisted-blob tenant and an unset tenant (defaults).
+Drives the mounted FastAPI app in-process via ASGITransport to pin the route's
+request/response serialization and validation: the exact wire body shape, the
+org_admin unlimited-sentinel rejection, and canonical-tenant routing of the
+artifact key. The ArtifactManager is a double here because these assert route
+LOGIC, not store behavior — the real Phoenix save->cold-read->load round-trip
+and cross-replica enforcement live in
+tests/runtime/integration/test_pin_quota_enforcement_reads_blob.py.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from httpx import ASGITransport, AsyncClient
 
 from cogniverse_runtime.routers import admin as admin_router
 
-pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 class _StubArtifactManager:
