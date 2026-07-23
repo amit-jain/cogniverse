@@ -120,12 +120,19 @@ def upload_keyframes(
     client = _client()
 
     def _put(path: str, key: str) -> None:
-        client.put_object(
-            Bucket=bucket_name,
-            Key=key,
-            Body=Path(path).read_bytes(),
-            ContentType="image/jpeg",
-        )
+        try:
+            client.put_object(
+                Bucket=bucket_name,
+                Key=key,
+                Body=Path(path).read_bytes(),
+                ContentType="image/jpeg",
+            )
+        except Exception as exc:
+            # Name the failing segment so an operator sees which keyframe failed,
+            # not a bare boto3 error or FileNotFoundError.
+            raise RuntimeError(
+                f"Keyframe upload failed for key={key!r} path={path!r}: {exc}"
+            ) from exc
 
     with ThreadPoolExecutor(max_workers=min(8, len(keys))) as pool:
         # Materialise so every PUT is submitted before we block on any result;
