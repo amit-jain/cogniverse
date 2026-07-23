@@ -27,13 +27,60 @@ logger = logging.getLogger(__name__)
 
 # AsyncClient connection pools bind to the event loop that uses them, so a
 # process-wide singleton breaks callers that run on fresh loops (Streamlit's
-# asyncio.run per interaction). Memoize per (running loop, endpoint) instead:
-# long-lived loops (the runtime, the quality monitor) reuse one client and
-# its TCP pool; the WeakKeyDictionary drops entries when a loop is GC'd.
+# asyncio.run per interaction). Memoize per (running loop, endpoint) instead.
+#
+# Keep-alive is DISABLED on the underlying httpx client: under the
+# asyncio.run-per-call pattern a kept-alive socket stays bound to the
+# now-closed loop, pinning the loop (so the WeakKeyDictionary can never reap
+# it) and leaking a file descriptor per call until EMFILE. With keep-alive
+# off, each request's socket is released on the still-running loop before it
+# closes, so nothing survives the loop. Phoenix reads here are infrequent
+# (monitor cycles, dashboard interactions), so the per-request handshake cost
+# is negligible. Closed-loop entries are also pruned on access so the memo
+# stays bounded regardless of GC timing.
 _CLIENTS_BY_LOOP: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
+def _prune_closed_loops() -> None:
+    for loop in list(_CLIENTS_BY_LOOP.keys()):
+        if loop.is_closed():
+            _CLIENTS_BY_LOOP.pop(loop, None)
+
+
+# Dataset ops run the sync phoenix Client, whose per-request default is 5s —
+# too short for a large trigger dataset or a loaded Phoenix (the same
+# under-sizing the span path fixed with 120s). Pass this to every dataset call.
+_DATASET_OP_TIMEOUT_S = 120
+
+
+def _http_status(exc: BaseException) -> Optional[int]:
+    """The HTTP status code from an exception or its ``__cause__``, if any.
+
+    Phoenix wraps upload conflicts in ``DatasetUploadError`` whose cause is the
+    ``httpx.HTTPStatusError`` carrying the response — a 409 is a genuine
+    duplicate-name conflict, distinct from a 500/503 body that merely mentions
+    "already exists".
+    """
+    for e in (exc, getattr(exc, "__cause__", None)):
+        resp = getattr(e, "response", None)
+        if resp is not None:
+            return getattr(resp, "status_code", None)
+    return None
+
+
+def _is_dataset_not_found(exc: BaseException) -> bool:
+    """True only for phoenix's own missing-dataset signal — a plain
+    ``ValueError('Dataset not found: ...')`` raised AFTER a successful HTTP
+    call resolves an empty record set. An outage/proxy 404 is an
+    ``httpx.HTTPStatusError`` (not a ValueError) whose text embeds "404 Not
+    Found" / the URL; matching that as "missing" would silently read an outage
+    as no-data.
+    """
+    return isinstance(exc, ValueError) and "not found" in str(exc).lower()
+
+
 def _client_for_current_loop(http_endpoint: str) -> AsyncClient:
+    _prune_closed_loops()
     loop = asyncio.get_running_loop()
     by_endpoint = _CLIENTS_BY_LOOP.get(loop)
     if by_endpoint is None:
@@ -48,9 +95,15 @@ def _client_for_current_loop(http_endpoint: str) -> AsyncClient:
         # queries (limit=10000 on a project with a day of traffic) blow
         # through routinely — the optimizers then misread the timeout as
         # "no spans". Wrap an httpx client with a budget sized for those.
+        # max_keepalive_connections=0 keeps a per-call fresh loop from
+        # orphaning a socket (see the module comment above).
         client = AsyncClient(
             base_url=http_endpoint,
-            http_client=httpx.AsyncClient(base_url=http_endpoint, timeout=120.0),
+            http_client=httpx.AsyncClient(
+                base_url=http_endpoint,
+                timeout=120.0,
+                limits=httpx.Limits(max_keepalive_connections=0),
+            ),
         )
         by_endpoint[http_endpoint] = client
     return client
@@ -429,16 +482,20 @@ class PhoenixDatasetStore(DatasetStore):
                         output_keys=output_keys if output_keys else (),
                         metadata_keys=metadata_keys if metadata_keys else (),
                         dataset_description=description if description else None,
+                        timeout=_DATASET_OP_TIMEOUT_S,
                     )
                 except Exception as create_err:
-                    if "already exists" in str(create_err):
-                        # Dataset exists — append a new version
+                    # 409 = genuine duplicate-name conflict → append a version.
+                    # Any other failure (500/503/body that merely mentions
+                    # "already exists") must surface, not silently append.
+                    if _http_status(create_err) == 409:
                         return sync_client.datasets.add_examples_to_dataset(
                             dataset=name,
                             dataframe=data,
                             input_keys=input_keys if input_keys else (),
                             output_keys=output_keys if output_keys else (),
                             metadata_keys=metadata_keys if metadata_keys else (),
+                            timeout=_DATASET_OP_TIMEOUT_S,
                         )
                     raise
 
@@ -469,12 +526,19 @@ class PhoenixDatasetStore(DatasetStore):
         def _delete() -> bool:
             client = Client(base_url=self.http_endpoint)
             try:
-                dataset = client.datasets.get_dataset(dataset=name, timeout=30)
-            except Exception:
-                return False  # nothing to delete
+                dataset = client.datasets.get_dataset(
+                    dataset=name, timeout=_DATASET_OP_TIMEOUT_S
+                )
+            except Exception as e:
+                if _is_dataset_not_found(e):
+                    return False  # genuinely nothing to delete
+                # An outage must surface — reading it as "nothing to delete"
+                # turns replace-dataset's delete-then-create into a silent
+                # append, breaking the exactly-one-row invariant.
+                raise
             resp = httpx.delete(
                 f"{self.http_endpoint.rstrip('/')}/v1/datasets/{dataset.id}",
-                timeout=30,
+                timeout=_DATASET_OP_TIMEOUT_S,
             )
             if resp.status_code not in (204, 404):
                 resp.raise_for_status()
@@ -500,7 +564,9 @@ class PhoenixDatasetStore(DatasetStore):
 
             def _get() -> pd.DataFrame:
                 sync_client = Client(base_url=self.http_endpoint)
-                return sync_client.datasets.get_dataset(dataset=name).to_dataframe()
+                return sync_client.datasets.get_dataset(
+                    dataset=name, timeout=_DATASET_OP_TIMEOUT_S
+                ).to_dataframe()
 
             df = await asyncio.to_thread(_get)
 
@@ -508,8 +574,7 @@ class PhoenixDatasetStore(DatasetStore):
             return df
 
         except Exception as e:
-            msg = str(e).lower()
-            if "not found" in msg or "404" in msg:
+            if _is_dataset_not_found(e):
                 raise DatasetNotFoundError(f"Dataset not found: {name}") from e
             logger.error(f"Failed to retrieve dataset '{name}': {e}")
             raise
@@ -534,8 +599,9 @@ class PhoenixDatasetStore(DatasetStore):
                 to classify columns, same shape as ``create_dataset``.
 
         Raises:
-            ValueError: If the dataset does not exist (callers create it
-                with their full metadata, which append cannot infer).
+            DatasetNotFoundError: If the dataset does not exist (callers create
+                it with their full metadata, which append cannot infer). An
+                outage surfaces as its underlying transport error.
         """
         metadata = metadata or {}
         input_keys = metadata.get("input_keys", [])
@@ -549,13 +615,15 @@ class PhoenixDatasetStore(DatasetStore):
                 sync_client = Client(base_url=self.http_endpoint)
                 # Phoenix's append AUTO-CREATES a missing dataset, which would
                 # silently bypass the caller's create path (and its dataset
-                # metadata). Enforce the documented raise-on-missing contract
-                # with an explicit existence check.
+                # metadata). Enforce the raise-on-missing contract with an
+                # explicit existence check — but only a genuine ValueError
+                # not-found counts; an outage must surface.
                 try:
-                    sync_client.datasets.get_dataset(dataset=name)
+                    sync_client.datasets.get_dataset(
+                        dataset=name, timeout=_DATASET_OP_TIMEOUT_S
+                    )
                 except Exception as lookup_exc:
-                    msg = str(lookup_exc).lower()
-                    if "not found" in msg or "404" in msg:
+                    if _is_dataset_not_found(lookup_exc):
                         raise DatasetNotFoundError(
                             f"Dataset not found: {name}"
                         ) from lookup_exc
@@ -566,13 +634,15 @@ class PhoenixDatasetStore(DatasetStore):
                     input_keys=input_keys if input_keys else (),
                     output_keys=output_keys if output_keys else (),
                     metadata_keys=metadata_keys if metadata_keys else (),
+                    timeout=_DATASET_OP_TIMEOUT_S,
                 )
 
             await asyncio.to_thread(_append)
             logger.info(f"Appended {len(data)} records to dataset '{name}'")
+        except DatasetNotFoundError:
+            # Preserve the subclass — do not flatten it to plain ValueError.
+            raise
         except Exception as e:
-            if "not found" in str(e).lower() or "does not exist" in str(e).lower():
-                raise ValueError(f"Dataset not found: {name}") from e
             logger.error(f"Failed to append to dataset '{name}': {e}")
             raise
 
