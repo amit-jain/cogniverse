@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import threading
 from typing import Any, List, Optional
 
 import dspy
@@ -174,6 +175,11 @@ class ClaimExtractor:
         self._rlm_promotion_chars = rlm_promotion_chars
         self._cot_module: Optional[dspy.ChainOfThought] = None
         self._rlm_module: Optional[dspy.RLM] = None
+        # Guards the lazy module build below: the per-segment KG claim pass
+        # invokes one shared extractor from several threads at once, so an
+        # unguarded ``if self._cot_module is None`` would double-build the
+        # module (and double-load its compiled state) on the first touch.
+        self._module_lock = threading.Lock()
         # When set, every module invocation runs inside ``dspy.context(lm=...)``
         # bound from this config. None means the call falls through to the
         # ambient ``dspy.settings.lm`` (the worker-startup default).
@@ -264,16 +270,27 @@ class ClaimExtractor:
         )
 
     def _select_module(self, *, text: str, tenant_id: str):
-        """Pick ChainOfThought for short text, RLM for long text."""
+        """Pick ChainOfThought for short text, RLM for long text.
+
+        The build is double-checked-locked and only publishes the module after
+        its compiled state is loaded, so concurrent first-touches build it once
+        and no thread ever sees a half-loaded module.
+        """
         if len(text) > self._rlm_promotion_chars:
             if self._rlm_module is None:
-                self._rlm_module = dspy.RLM(ClaimExtractionSignature)
-                self._load_compiled_state(self._rlm_module, tenant_id)
+                with self._module_lock:
+                    if self._rlm_module is None:
+                        module = dspy.RLM(ClaimExtractionSignature)
+                        self._load_compiled_state(module, tenant_id)
+                        self._rlm_module = module
             return self._rlm_module
 
         if self._cot_module is None:
-            self._cot_module = dspy.ChainOfThought(ClaimExtractionSignature)
-            self._load_compiled_state(self._cot_module, tenant_id)
+            with self._module_lock:
+                if self._cot_module is None:
+                    module = dspy.ChainOfThought(ClaimExtractionSignature)
+                    self._load_compiled_state(module, tenant_id)
+                    self._cot_module = module
         return self._cot_module
 
     def _load_compiled_state(self, module: dspy.Module, tenant_id: str) -> None:

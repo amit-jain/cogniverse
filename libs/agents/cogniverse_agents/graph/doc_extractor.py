@@ -12,6 +12,7 @@ This extractor produces nodes only. SPO edges are produced by
 
 import logging
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
@@ -23,6 +24,23 @@ from cogniverse_agents.graph.graph_schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SegmentEntities:
+    """Pass-1 output for one segment of the two-pass extraction.
+
+    ``nodes`` are the entity nodes; ``per_chunk_entity_names`` records, per text
+    chunk, the entity names GLiNER found in that chunk — the exact per-chunk
+    hints the claim pass feeds the ``ClaimExtractor``. Carrying it lets the
+    entity pass run for every segment first (no cross-segment coreference
+    dependency, so parallelisable) while the claim pass still reproduces the
+    identical chunk-level hints.
+    """
+
+    nodes: List[Node] = field(default_factory=list)
+    per_chunk_entity_names: List[List[str]] = field(default_factory=list)
+
 
 _TEXT_EXTENSIONS = {".md", ".txt", ".rst", ".html", ".htm"}
 _PDF_EXTENSIONS = {".pdf"}
@@ -328,6 +346,46 @@ class DocExtractor:
             logger.warning("PDF text extraction failed for %s: %s", file_path, exc)
             return ""
 
+    def extract_entities_from_text(
+        self,
+        text: str,
+        tenant_id: str,
+        source_doc_id: str,
+        segment_anchor: Mention,
+    ) -> SegmentEntities:
+        """Pass 1 of the two-pass extraction: entity nodes for one segment.
+
+        Runs GLiNER (or the fallback) over the segment's chunks. Has NO
+        cross-segment coreference dependency, so it is safe to run for every
+        segment concurrently before any claim extraction begins.
+        """
+        return self._extract_entities(text, tenant_id, source_doc_id, segment_anchor)
+
+    def extract_claims_from_text(
+        self,
+        text: str,
+        segment_entities: SegmentEntities,
+        prior_entities: Optional[List[str]],
+        tenant_id: str,
+        source_doc_id: str,
+        segment_anchor: Mention,
+    ) -> List[Edge]:
+        """Pass 2 of the two-pass extraction: claim edges for one segment.
+
+        Given ``segment_entities`` (this segment's Pass-1 output) and
+        ``prior_entities`` (entity names from the other segments used for
+        coreference), extracts SPO claim edges. With the prior pool precomputed,
+        this too runs concurrently across segments.
+        """
+        return self._extract_claims(
+            text,
+            segment_entities.per_chunk_entity_names,
+            prior_entities,
+            tenant_id,
+            source_doc_id,
+            segment_anchor,
+        )
+
     def _extract_from_text(
         self,
         text: str,
@@ -336,14 +394,38 @@ class DocExtractor:
         segment_anchor: Mention,
         prior_entities: Optional[List[str]] = None,
     ) -> ExtractionResult:
+        # Serial composition of the two passes — the entity pass then the claim
+        # pass over the same chunks. Byte-identical to running them interleaved
+        # per chunk, since claim extraction for a chunk depends only on that
+        # chunk's entities plus prior_entities, both available up front.
+        ents = self._extract_entities(text, tenant_id, source_doc_id, segment_anchor)
+        edges = self._extract_claims(
+            text,
+            ents.per_chunk_entity_names,
+            prior_entities,
+            tenant_id,
+            source_doc_id,
+            segment_anchor,
+        )
+        return ExtractionResult(
+            source_doc_id=source_doc_id,
+            nodes=ents.nodes,
+            edges=edges,
+        )
+
+    def _extract_entities(
+        self,
+        text: str,
+        tenant_id: str,
+        source_doc_id: str,
+        segment_anchor: Mention,
+    ) -> SegmentEntities:
         gliner = self._get_gliner()
         nodes: List[Node] = []
-        edges: List[Edge] = []
         seen: Set[str] = set()
+        per_chunk_entity_names: List[List[str]] = []
 
-        chunks = self._chunk_text(text)
-
-        for chunk in chunks:
+        for chunk in self._chunk_text(text):
             entities_in_chunk: List[Tuple[str, str]] = []
 
             if gliner is not None:
@@ -412,31 +494,53 @@ class DocExtractor:
                     )
                 )
 
-            if self._claim_extractor is not None:
-                chunk_hints = [name for name, _ in entities_in_chunk]
-                prior = prior_entities or []
-                merged_hints: List[str] = []
-                seen_hints: Set[str] = set()
-                for n in chunk_hints + prior:
-                    if n.lower() not in seen_hints:
-                        merged_hints.append(n)
-                        seen_hints.add(n.lower())
-                if merged_hints:
-                    claim_edges = self._claim_extractor.extract(
-                        text=chunk,
-                        entity_hints=merged_hints,
-                        modality_hint=segment_anchor.modality,
-                        segment_anchor=segment_anchor,
-                        tenant_id=tenant_id,
-                        source_doc_id=source_doc_id,
-                    )
-                    edges.extend(claim_edges)
+            # Record the chunk's raw entity names (pre node-dedup), which are the
+            # hints the claim pass merges with prior_entities for this chunk.
+            per_chunk_entity_names.append([name for name, _ in entities_in_chunk])
 
-        return ExtractionResult(
-            source_doc_id=source_doc_id,
-            nodes=nodes,
-            edges=edges,
+        return SegmentEntities(
+            nodes=nodes, per_chunk_entity_names=per_chunk_entity_names
         )
+
+    def _extract_claims(
+        self,
+        text: str,
+        per_chunk_entity_names: List[List[str]],
+        prior_entities: Optional[List[str]],
+        tenant_id: str,
+        source_doc_id: str,
+        segment_anchor: Mention,
+    ) -> List[Edge]:
+        if self._claim_extractor is None:
+            return []
+
+        edges: List[Edge] = []
+        prior = prior_entities or []
+
+        for chunk_i, chunk in enumerate(self._chunk_text(text)):
+            chunk_hints = (
+                per_chunk_entity_names[chunk_i]
+                if chunk_i < len(per_chunk_entity_names)
+                else []
+            )
+            merged_hints: List[str] = []
+            seen_hints: Set[str] = set()
+            for n in chunk_hints + prior:
+                if n.lower() not in seen_hints:
+                    merged_hints.append(n)
+                    seen_hints.add(n.lower())
+            if merged_hints:
+                claim_edges = self._claim_extractor.extract(
+                    text=chunk,
+                    entity_hints=merged_hints,
+                    modality_hint=segment_anchor.modality,
+                    segment_anchor=segment_anchor,
+                    tenant_id=tenant_id,
+                    source_doc_id=source_doc_id,
+                )
+                edges.extend(claim_edges)
+
+        return edges
 
     def _chunk_text(self, text: str) -> List[str]:
         """Split text into paragraph-aware chunks of at most _MAX_CHARS_PER_CHUNK."""

@@ -2,8 +2,9 @@
 
 Exercises the full path:
     _iter_segments_for_graph(processing_results)
-        -> _extract_graph_per_segment(...)
-            -> DocExtractor.extract_from_text(text, ..., segment_anchor=mention)
+        -> _extract_graph_per_segment(...)  # two passes, bounded-concurrent
+            -> DocExtractor.extract_entities_from_text(...)  # pass 1, per segment
+            -> DocExtractor.extract_claims_from_text(..., prior_entities=<0..N-1>)
                 -> ClaimExtractor.extract(...)
                     -> ExtractionResult{nodes, edges}
                         -> GraphManager.upsert -> real Vespa
