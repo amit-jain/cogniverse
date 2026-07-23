@@ -768,7 +768,7 @@ class VespaSchemaManager:
         # Refuse instead; a failed enumeration propagates because guessing
         # the survivor set is how the data loss happens.
         try:
-            deployed = self.list_deployed_document_types()
+            deployed = self.list_deployed_document_types(raise_on_failure=True)
         except Exception as e:
             raise RuntimeError(
                 f"Cannot enumerate Vespa-deployed schemas before deleting "
@@ -864,7 +864,7 @@ class VespaSchemaManager:
         )
 
         try:
-            deployed = self.list_deployed_document_types()
+            deployed = self.list_deployed_document_types(raise_on_failure=True)
         except Exception as e:
             raise RuntimeError(
                 f"Cannot enumerate Vespa-deployed schemas before delete: {e}. "
@@ -978,7 +978,7 @@ class VespaSchemaManager:
 
         tenant_suffix = "_" + tenant_id.replace(":", "_")
         try:
-            deployed = self.list_deployed_document_types()
+            deployed = self.list_deployed_document_types(raise_on_failure=True)
         except Exception as e:
             raise RuntimeError(
                 f"Cannot enumerate Vespa-deployed schemas before deleting "
@@ -1030,7 +1030,7 @@ class VespaSchemaManager:
             return []
 
         try:
-            deployed = self.list_deployed_document_types()
+            deployed = self.list_deployed_document_types(raise_on_failure=True)
         except Exception as e:
             raise RuntimeError(
                 f"Cannot enumerate Vespa-deployed schemas before bulk delete: {e}"
@@ -1096,13 +1096,20 @@ class VespaSchemaManager:
 
         return self._schema_registry.schema_exists(tenant_id, base_schema_name)
 
-    def list_deployed_document_types(self) -> List[str]:
+    def list_deployed_document_types(self, raise_on_failure: bool = False) -> List[str]:
         """Return the document-type names currently deployed in Vespa.
 
         Reads the config server's application listing — read-after-write
-        consistent with prepareandactivate. Returns an empty list on
-        failure so callers can treat it as "don't know, fall back to
-        registry".
+        consistent with prepareandactivate.
+
+        Args:
+            raise_on_failure: When False (default), a config-server probe
+                failure returns an empty list so callers can fall back to the
+                registry. Delete/redeploy callers that build a survivor set MUST
+                pass True: an empty list read as "no other schemas" lets the
+                redeploy drop every peer-tenant schema and destroy its
+                documents, so the enumeration failure must be fatal, not
+                silently treated as an authoritative empty deployment.
         """
         import requests
 
@@ -1119,11 +1126,15 @@ class VespaSchemaManager:
             self._logger.warning(
                 f"list_deployed_document_types: config-server probe failed: {exc}"
             )
+            if raise_on_failure:
+                raise
             return []
 
         try:
             entries = resp.json()
         except ValueError:
+            if raise_on_failure:
+                raise
             return []
 
         # Each entry is a URL ending in ``schemas/<name>.sd``.
