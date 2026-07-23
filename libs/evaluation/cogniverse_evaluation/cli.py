@@ -18,6 +18,7 @@ from inspect_ai import eval as inspect_eval
 
 from cogniverse_evaluation.core import evaluation_task
 from cogniverse_evaluation.data import DatasetManager, TraceManager
+from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 
 # Configure logging
 logging.basicConfig(
@@ -167,26 +168,27 @@ def evaluate(mode, dataset, profiles, strategies, trace_ids, config, output, ver
 
 @cli.command()
 @click.option("--name", required=True, help="Dataset name")
+@click.option("--tenant-id", required=True, help="Tenant whose dataset store to use")
 @click.option("--csv", type=click.Path(exists=True), help="CSV file with queries")
 @click.option(
     "--queries-json", type=click.Path(exists=True), help="JSON file with queries"
 )
 @click.option("--description", help="Dataset description")
-def create_dataset(name, csv, queries_json, description):
+def create_dataset(name, tenant_id, csv, queries_json, description):
     """
     Create a new dataset in Phoenix.
 
     Examples:
         # From CSV
-        cogniverse-eval create-dataset --name my_dataset --csv queries.csv
+        cogniverse-eval create-dataset --name my_dataset --tenant-id acme:acme --csv queries.csv
 
         # From JSON
-        cogniverse-eval create-dataset --name my_dataset --queries-json queries.json
+        cogniverse-eval create-dataset --name my_dataset --tenant-id acme:acme --queries-json queries.json
     """
     if not csv and not queries_json:
         raise click.UsageError("Either --csv or --queries-json must be provided")
 
-    dataset_manager = DatasetManager()
+    dataset_manager = DatasetManager(tenant_id=tenant_id)
 
     try:
         if csv:
@@ -252,14 +254,19 @@ def list_traces(hours, limit):
 
 
 @cli.command()
-def test():
+@click.option(
+    "--tenant-id",
+    default=SYSTEM_TENANT_ID,
+    help="Tenant whose dataset store to use (default: system tenant)",
+)
+def test(tenant_id):
     """
     Run a quick test evaluation.
     """
     click.echo("Running test evaluation...")
 
     # Create test dataset
-    dataset_manager = DatasetManager()
+    dataset_manager = DatasetManager(tenant_id=tenant_id)
 
     try:
         _ = dataset_manager.create_test_dataset()

@@ -2,6 +2,7 @@
 Unit tests for dataset and trace managers.
 """
 
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, mock_open, patch
 
@@ -10,41 +11,22 @@ import pytest
 
 from cogniverse_evaluation.data.datasets import DatasetManager
 from cogniverse_evaluation.data.traces import TraceManager
+from tests.evaluation.fakes import FailingDatasetStore, InMemoryDatasetStore
 
 
 class TestDatasetManager:
-    """Test dataset manager functionality."""
+    """DatasetManager against a real in-memory DatasetStore."""
 
     @pytest.fixture
-    def manager(self, mock_phoenix_client):
-        """Create dataset manager with mocked storage."""
-        with patch(
-            "cogniverse_evaluation.data.storage.TelemetryStorage"
-        ) as mock_storage_class:
-            # Create mock storage instance
-            mock_storage = Mock()
-            # Create mock provider structure
-            mock_provider = Mock()
-            mock_provider.telemetry.traces.get_spans = Mock(
-                return_value=mock_phoenix_client.get_spans_dataframe()
-            )
-            mock_storage.provider = mock_provider
-            mock_storage.connection_state = Mock(value="connected")
-            mock_storage_class.return_value = mock_storage
+    def store(self):
+        return InMemoryDatasetStore()
 
-            manager = DatasetManager()
-            # Mock the removed methods that DatasetManager still expects
-            manager.storage.create_dataset = Mock(return_value="test_dataset_id")
-            # Create a proper mock for get_dataset that has the expected attributes
-            mock_dataset = Mock()
-            mock_dataset.id = "test_id"
-            mock_dataset.name = "test_dataset"
-            manager.storage.get_dataset = Mock(return_value=mock_dataset)
-            return manager
+    @pytest.fixture
+    def manager(self, store):
+        return DatasetManager(tenant_id="acme:unit", dataset_store=store)
 
     @pytest.mark.unit
-    def test_create_from_queries(self, manager):
-        """Test creating dataset from queries."""
+    def test_create_from_queries(self, manager, store):
         queries = [
             {"query": "red car", "expected_videos": ["v1", "v2"], "category": "visual"},
             {
@@ -55,164 +37,187 @@ class TestDatasetManager:
         ]
 
         dataset_id = manager.create_from_queries(
-            queries=queries, dataset_name="test_dataset"
+            queries=queries, dataset_name="test_dataset", description="unit ds"
         )
 
-        assert dataset_id is not None
-        manager.storage.create_dataset.assert_called_once()
-
-        # Check dataset structure
-        call_args = manager.storage.create_dataset.call_args
-        assert call_args[1]["name"] == "test_dataset"
-        queries = call_args[1]["queries"]
-        assert len(queries) == 2
+        assert dataset_id == "ds-test_dataset"
+        df = store._frames["test_dataset"]
+        assert list(df.columns) == ["query", "category", "expected_videos"]
+        assert df["query"].tolist() == ["red car", "meeting discussion"]
+        assert df["expected_videos"].tolist() == ["v1,v2", "v3"]
+        meta = store.metadata["test_dataset"]
+        assert meta["input_keys"] == ["query", "category"]
+        assert meta["output_keys"] == ["expected_videos"]
+        assert meta["description"] == "unit ds"
 
     @pytest.mark.unit
-    def test_create_from_csv(self, manager, temp_csv_file):
-        """Test creating dataset from CSV file."""
+    def test_create_from_queries_requires_query_field(self, manager):
+        with pytest.raises(ValueError, match="query"):
+            manager.create_from_queries(
+                queries=[{"expected_videos": []}], dataset_name="bad"
+            )
+
+    @pytest.mark.unit
+    def test_create_from_csv(self, manager, store, temp_csv_file):
         dataset_id = manager.create_from_csv(
             csv_path=temp_csv_file, dataset_name="csv_dataset"
         )
 
-        assert dataset_id is not None
-        manager.storage.create_dataset.assert_called_once()
-
-        # Verify CSV was parsed correctly
-        call_args = manager.storage.create_dataset.call_args
-        queries = call_args[1]["queries"]
-        assert len(queries) == 3  # Based on fixture
+        assert dataset_id == "ds-csv_dataset"
+        df = store._frames["csv_dataset"]
+        assert len(df) == 3
+        assert df["query"].tolist() == [
+            "person wearing red shirt",
+            "what happened after the meeting",
+            "dog playing in the park",
+        ]
+        assert df["expected_videos"].tolist() == [
+            "video1,video2",
+            "video3",
+            "video4,video5",
+        ]
+        assert df["category"].tolist() == ["visual", "temporal", "activity"]
 
     @pytest.mark.unit
-    def test_create_from_json(self, manager, temp_json_file):
-        """Test creating dataset from JSON file."""
+    def test_create_from_csv_missing_query_column_raises(self, manager, tmp_path):
+        bad_csv = tmp_path / "bad.csv"
+        bad_csv.write_text("name,value\na,1\n")
+
+        with pytest.raises(ValueError, match="query"):
+            manager.create_from_csv(csv_path=str(bad_csv), dataset_name="bad")
+
+    @pytest.mark.unit
+    def test_create_from_json(self, manager, store, temp_json_file):
         dataset_id = manager.create_from_json(
             json_path=temp_json_file, dataset_name="json_dataset"
         )
 
-        assert dataset_id is not None
-        manager.storage.create_dataset.assert_called_once()
+        assert dataset_id == "ds-json_dataset"
+        assert "json_dataset" in store._frames
 
     @pytest.mark.unit
-    def test_get_dataset(self, manager):
-        """Test retrieving dataset."""
-        dataset_info = manager.get_dataset("test_dataset")
+    def test_create_from_json_dict_form(self, manager, store, tmp_path):
+        json_path = tmp_path / "wrapped.json"
+        json_path.write_text(
+            json.dumps({"queries": [{"query": "q1", "expected_videos": ["v"]}]})
+        )
 
-        assert dataset_info is not None
-        # get_dataset returns a dict with dataset info
-        assert dataset_info["dataset"].name == "test_dataset"
-        manager.storage.get_dataset.assert_called_with("test_dataset")
+        manager.create_from_json(str(json_path), "wrapped")
+
+        assert store._frames["wrapped"]["query"].tolist() == ["q1"]
 
     @pytest.mark.unit
-    def test_get_dataset_not_found(self, manager):
-        """Test retrieving non-existent dataset."""
-        manager.storage.get_dataset.return_value = None
+    def test_get_dataset_returns_dataframe_and_caches(self, manager, store):
+        manager.create_from_queries([{"query": "q", "expected_videos": []}], "cached")
 
-        dataset = manager.get_dataset("nonexistent")
+        info = manager.get_dataset("cached")
 
-        assert dataset is None
+        assert info["id"] == "ds-cached"
+        assert isinstance(info["dataframe"], pd.DataFrame)
+        assert len(info["dataframe"]) == 1
+        # Cached: a second call must not hit the store again
+        store._frames.clear()
+        assert manager.get_dataset("cached") is info
+
+    @pytest.mark.unit
+    def test_get_dataset_not_found_returns_none(self, manager):
+        assert manager.get_dataset("nonexistent") is None
+
+    @pytest.mark.unit
+    def test_get_dataset_outage_raises(self, store):
+        manager = DatasetManager(
+            tenant_id="acme:unit", dataset_store=FailingDatasetStore()
+        )
+
+        with pytest.raises(ConnectionError, match="connection refused"):
+            manager.get_dataset("anything")
+
+    @pytest.mark.unit
+    def test_create_raises_on_store_failure(self):
+        manager = DatasetManager(
+            tenant_id="acme:unit", dataset_store=FailingDatasetStore()
+        )
+
+        with pytest.raises(ConnectionError, match="connection refused"):
+            manager.create_from_queries(
+                [{"query": "q", "expected_videos": []}], "doomed"
+            )
 
     @pytest.mark.unit
     def test_list_datasets(self, manager):
-        """Test listing all datasets."""
-        # Pre-populate cache with some datasets
-        manager.datasets = {
-            "dataset1": {"id": "id1", "dataset": Mock(name="dataset1")},
-            "dataset2": {"id": "id2", "dataset": Mock(name="dataset2")},
-        }
+        manager.create_from_queries([{"query": "a", "expected_videos": []}], "ds_a")
+        manager.create_from_queries([{"query": "b", "expected_videos": []}], "ds_b")
 
-        dataset_names = manager.list_datasets()
-
-        assert len(dataset_names) == 2
-        assert "dataset1" in dataset_names
-        assert "dataset2" in dataset_names
+        assert sorted(manager.list_datasets()) == ["ds_a", "ds_b"]
 
     @pytest.mark.unit
-    def test_create_test_dataset(self, manager):
-        """Test creating a test dataset."""
+    def test_create_test_dataset(self, manager, store):
         dataset_id = manager.create_test_dataset()
 
-        assert dataset_id is not None
-
-        # Verify test dataset has expected structure
-        call_args = manager.storage.create_dataset.call_args
-        queries = call_args[1]["queries"]
-
-        # Should have some test queries
-        assert len(queries) > 0
-
-        # Check first query structure
-        first_query = queries[0]
-        assert "query" in first_query
-        # Expected items should be a list
-        assert isinstance(first_query.get("expected_items", []), list)
+        assert dataset_id.startswith("ds-test_dataset_")
+        name = dataset_id[len("ds-") :]
+        df = store._frames[name]
+        assert len(df) == 3
+        assert df["query"].iloc[0] == "person wearing red shirt"
+        assert df["expected_videos"].iloc[0] == "video1,video2"
 
     @pytest.mark.unit
-    def test_update_dataset(self, manager):
-        """Test updating existing dataset."""
-        # Mock get_dataset to return a proper structure with examples
-        mock_example = Mock()
-        mock_example.input = {"query": "old query"}
-        mock_example.output = {"expected_items": []}
-
-        mock_dataset = Mock()
-        mock_dataset.examples = [mock_example]
-
-        manager.get_dataset = Mock(return_value={"dataset": mock_dataset})
-
-        new_queries = [{"query": "new query", "expected_videos": ["v10"]}]
-
-        success = manager.update_dataset(
-            dataset_name="test_dataset", new_queries=new_queries
+    def test_update_dataset_appends(self, manager, store):
+        manager.create_from_queries(
+            [{"query": "old", "expected_videos": ["v0"]}], "upd"
         )
 
-        assert success is True
+        assert manager.update_dataset(
+            "upd", [{"query": "new", "expected_videos": ["v10"]}]
+        )
 
-        # Should get existing dataset first
-        manager.get_dataset.assert_called_with("test_dataset")
-
-        # Then upload updated version
-        assert manager.storage.create_dataset.call_count == 1
-
-    @pytest.mark.unit
-    def test_delete_dataset(self, manager):
-        """Test deleting dataset."""
-        # Pre-populate cache
-        manager.datasets["test_dataset"] = {"id": "test_id", "dataset": Mock()}
-
-        success = manager.delete_dataset("test_dataset")
-
-        assert success is True
-        # Dataset should be removed from cache
-        assert "test_dataset" not in manager.datasets
-        # Note: Phoenix client doesn't have delete_dataset method, so we don't test that call
+        df = store._frames["upd"]
+        assert df["query"].tolist() == ["old", "new"]
+        assert df["expected_videos"].tolist() == ["v0", "v10"]
 
     @pytest.mark.unit
-    def test_export_dataset(self, manager):
-        """Test exporting dataset to file."""
-        # Mock get_dataset to return a proper structure with examples
-        mock_example = Mock()
-        mock_example.input = {"query": "test query"}
-        mock_example.output = {"expected_items": ["item1"]}
+    def test_update_missing_dataset_raises(self, manager):
+        with pytest.raises(ValueError, match="does not exist"):
+            manager.update_dataset("ghost", [{"query": "q", "expected_videos": []}])
 
-        mock_dataset = Mock()
-        mock_dataset.examples = [mock_example]
+    @pytest.mark.unit
+    def test_delete_dataset(self, manager, store):
+        manager.create_from_queries([{"query": "q", "expected_videos": []}], "gone")
+        assert manager.get_dataset("gone") is not None
 
-        manager.get_dataset = Mock(return_value={"dataset": mock_dataset})
+        assert manager.delete_dataset("gone") is True
+        assert "gone" not in store._frames
+        assert "gone" not in manager.datasets
+        assert manager.delete_dataset("gone") is False
 
-        with patch("builtins.open", mock_open()) as mock_file:
-            success = manager.export_dataset(
-                dataset_name="test_dataset", output_path="export.json"
-            )
+    @pytest.mark.unit
+    def test_export_dataset(self, manager, tmp_path):
+        manager.create_from_queries(
+            [{"query": "exported query", "expected_videos": ["v1"], "category": "c"}],
+            "exp",
+        )
+        out = tmp_path / "export.json"
 
-            assert success is True
-            mock_file.assert_called_with("export.json", "w")
+        assert manager.export_dataset("exp", str(out)) is True
 
-            # Verify JSON was written
-            handle = mock_file()
-            written_content = "".join(
-                str(call.args[0]) for call in handle.write.call_args_list if call.args
-            )
-            assert len(written_content) > 0
+        data = json.loads(out.read_text())
+        assert data["name"] == "exp"
+        assert data["queries"] == [
+            {"query": "exported query", "category": "c", "expected_videos": "v1"}
+        ]
+
+    @pytest.mark.unit
+    def test_export_missing_dataset_raises(self, manager, tmp_path):
+        with pytest.raises(ValueError, match="not found"):
+            manager.export_dataset("ghost", str(tmp_path / "x.json"))
+
+    @pytest.mark.unit
+    def test_cached_timestamps_are_utc_aware(self, manager):
+        manager.create_from_queries([{"query": "q", "expected_videos": []}], "tz")
+
+        created_at = manager.datasets["tz"]["created_at"]
+        assert created_at.tzinfo is not None
+        assert created_at.utcoffset().total_seconds() == 0
 
 
 class TestTraceManager:
@@ -341,17 +346,32 @@ class TestTraceManager:
 
     @pytest.mark.unit
     def test_get_traces_by_experiment(self, manager):
-        """Test getting traces for specific experiment."""
+        """Filtering happens client-side on the returned frame — the storage
+        layer takes no filter expression at all."""
+        manager.storage.get_traces_for_evaluation = Mock(
+            return_value=pd.DataFrame(
+                [
+                    {
+                        "trace_id": "keep",
+                        "attributes.metadata.profile": "test_profile",
+                        "attributes.metadata.strategy": "test_strategy",
+                    },
+                    {
+                        "trace_id": "drop",
+                        "attributes.metadata.profile": "other",
+                        "attributes.metadata.strategy": "test_strategy",
+                    },
+                ]
+            )
+        )
+
         traces = manager.get_traces_by_experiment(
             profile="test_profile", strategy="test_strategy", hours_back=24
         )
 
-        assert traces is not None
-
-        # Verify get_traces_for_evaluation was called with filtering
-        manager.storage.get_traces_for_evaluation.assert_called()
+        assert traces["trace_id"].tolist() == ["keep"]
         call_kwargs = manager.storage.get_traces_for_evaluation.call_args[1]
-        assert "filter_condition" in call_kwargs
+        assert "filter_condition" not in call_kwargs
 
     @pytest.mark.unit
     def test_get_trace_statistics(self, manager):

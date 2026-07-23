@@ -2,6 +2,7 @@
 Comprehensive unit tests for Phoenix storage.
 """
 
+from collections import deque
 from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
@@ -389,10 +390,7 @@ class TestTelemetryStorage:
                 df = storage.get_traces_for_evaluation(limit=10)
                 assert len(df) == 2
 
-                # Test with filter
-                df = storage.get_traces_for_evaluation(
-                    filter_condition="name == 'test1'", limit=10
-                )
+                df = storage.get_traces_for_evaluation(limit=10)
                 # Verify the async mock was called with expected args
                 assert (
                     mock_provider.telemetry.traces.get_spans.call_count >= 2
@@ -439,15 +437,15 @@ class TestTelemetryStorage:
 
     @pytest.mark.unit
     def test_get_traces_when_disconnected(self, config):
-        """Test get_traces_for_evaluation when disconnected."""
+        """A disconnected read raises — never an empty frame that reads as
+        genuine no-traffic."""
         storage = TelemetryStorage.__new__(TelemetryStorage)
         storage.config = config
         storage.connection_state = ConnectionState.DISCONNECTED
         storage.metrics = ExportMetrics()
 
-        result = storage.get_traces_for_evaluation()
-
-        assert result.empty
+        with pytest.raises(ConnectionError, match="not connected"):
+            storage.get_traces_for_evaluation()
 
     @pytest.mark.unit
     def test_get_traces_with_error(self, mock_phoenix_client, mock_provider, config):
@@ -558,10 +556,11 @@ class TestTelemetryStorage:
                 # Simulate disconnection
                 storage.connection_state = ConnectionState.DISCONNECTED
 
-                # Make reconnection fail
+                # Make reconnection fail at the lock-held seam the health
+                # check actually calls
                 with patch.object(
                     storage,
-                    "_initialize_connection",
+                    "_connect_locked",
                     side_effect=Exception("Cannot reconnect"),
                 ):
                     storage._perform_health_check()
@@ -625,3 +624,81 @@ class TestTelemetryStorage:
                         raise ValueError("Test error")
 
                 mock_span.record_exception.assert_called()
+
+
+class TestHealthCheckReconnect:
+    @pytest.mark.unit
+    def test_reconnect_does_not_deadlock(self, mock_provider=None):
+        """A failed health check flips state to DISCONNECTED; the next check
+        reconnects while already holding the storage lock. The reconnect path
+        must not re-acquire the same non-reentrant lock (which hung the
+        health-check thread forever and silently ended reconnection)."""
+        import threading
+        from unittest.mock import AsyncMock, Mock
+
+        import pandas as pd
+
+        provider = Mock()
+        provider.telemetry.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
+
+        config = ConnectionConfig(
+            max_retries=1,
+            retry_delay_seconds=0.01,
+            enable_health_checks=False,
+        )
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider",
+            return_value=provider,
+        ):
+            with patch("cogniverse_evaluation.data.storage.trace"):
+                storage = TelemetryStorage(config)
+                storage.connection_state = ConnectionState.DISCONNECTED
+
+                t = threading.Thread(target=storage._perform_health_check, daemon=True)
+                t.start()
+                t.join(timeout=5)
+
+                assert not t.is_alive(), (
+                    "health-check reconnect deadlocked on the storage lock"
+                )
+                assert storage.connection_state == ConnectionState.CONNECTED
+
+
+class TestDisconnectedReadContract:
+    @pytest.mark.unit
+    def test_disconnected_read_raises(self, mock_provider=None):
+        """A mid-life disconnect must surface as an error — an empty frame
+        reads as 'no traffic' and silently blanks every consumer."""
+        from unittest.mock import AsyncMock, Mock
+
+        provider = Mock()
+        provider.telemetry.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
+        config = ConnectionConfig(
+            max_retries=1, retry_delay_seconds=0.01, enable_health_checks=False
+        )
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider",
+            return_value=provider,
+        ):
+            with patch("cogniverse_evaluation.data.storage.trace"):
+                storage = TelemetryStorage(config)
+                storage.connection_state = ConnectionState.DISCONNECTED
+
+                with pytest.raises(ConnectionError, match="not connected"):
+                    storage.get_traces_for_evaluation(limit=5)
+
+
+class TestEnableMetricsToggle:
+    @pytest.mark.unit
+    def test_disabled_metrics_record_nothing(self):
+        from unittest.mock import Mock
+
+        exporter = Mock()
+        exporter.export = Mock(return_value=SpanExportResult.SUCCESS)
+        config = ConnectionConfig(enable_metrics=False, enable_health_checks=False)
+        metrics = ExportMetrics()
+        monitored = MonitoredSpanExporter(exporter, config, metrics)
+
+        assert monitored.export([Mock(), Mock()]) == SpanExportResult.SUCCESS
+        assert metrics.total_spans_sent == 0
+        assert metrics.export_latencies == deque([], maxlen=100)

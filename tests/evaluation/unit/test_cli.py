@@ -56,15 +56,20 @@ class TestCLI:
             yield mock
 
     @pytest.fixture
-    def mock_dataset_manager(self):
-        """Mock DatasetManager."""
+    def mock_dataset_manager_cls(self):
+        """Mock DatasetManager class (to assert construction kwargs)."""
         with patch("cogniverse_evaluation.cli.DatasetManager") as mock_cls:
             manager = Mock()
             manager.create_from_csv.return_value = "dataset_123"
             manager.create_from_queries.return_value = "dataset_456"
             manager.create_test_dataset.return_value = "test_dataset_789"
             mock_cls.return_value = manager
-            yield manager
+            yield mock_cls
+
+    @pytest.fixture
+    def mock_dataset_manager(self, mock_dataset_manager_cls):
+        """Mock DatasetManager instance."""
+        return mock_dataset_manager_cls.return_value
 
     @pytest.fixture
     def mock_trace_manager(self):
@@ -329,7 +334,9 @@ class TestCLI:
         assert "Evaluation failed: Task creation failed" in result.output
 
     @pytest.mark.unit
-    def test_create_dataset_from_csv(self, runner, mock_dataset_manager):
+    def test_create_dataset_from_csv(
+        self, runner, mock_dataset_manager, mock_dataset_manager_cls
+    ):
         """Test create-dataset command with CSV."""
         with runner.isolated_filesystem():
             # Create CSV file
@@ -342,6 +349,8 @@ class TestCLI:
                 [
                     "--name",
                     "my_dataset",
+                    "--tenant-id",
+                    "acme:cli",
                     "--csv",
                     "queries.csv",
                     "--description",
@@ -352,6 +361,7 @@ class TestCLI:
             assert result.exit_code == 0
             assert "Dataset 'my_dataset' created with ID: dataset_123" in result.output
 
+            mock_dataset_manager_cls.assert_called_once_with(tenant_id="acme:cli")
             mock_dataset_manager.create_from_csv.assert_called_once_with(
                 csv_path="queries.csv",
                 dataset_name="my_dataset",
@@ -370,7 +380,14 @@ class TestCLI:
 
             result = runner.invoke(
                 create_dataset,
-                ["--name", "my_dataset", "--queries-json", "queries.json"],
+                [
+                    "--name",
+                    "my_dataset",
+                    "--tenant-id",
+                    "acme:cli",
+                    "--queries-json",
+                    "queries.json",
+                ],
             )
 
             assert result.exit_code == 0
@@ -383,7 +400,9 @@ class TestCLI:
     @pytest.mark.unit
     def test_create_dataset_no_input(self, runner):
         """Test create-dataset command without input file."""
-        result = runner.invoke(create_dataset, ["--name", "my_dataset"])
+        result = runner.invoke(
+            create_dataset, ["--name", "my_dataset", "--tenant-id", "acme:cli"]
+        )
 
         assert result.exit_code != 0
         assert "Either --csv or --queries-json must be provided" in result.output
@@ -398,7 +417,15 @@ class TestCLI:
                 f.write("query\ntest\n")
 
             result = runner.invoke(
-                create_dataset, ["--name", "my_dataset", "--csv", "queries.csv"]
+                create_dataset,
+                [
+                    "--name",
+                    "my_dataset",
+                    "--tenant-id",
+                    "acme:cli",
+                    "--csv",
+                    "queries.csv",
+                ],
             )
 
             assert result.exit_code == 1
@@ -489,7 +516,12 @@ class TestCLI:
 
     @pytest.mark.unit
     def test_test_command(
-        self, runner, mock_dataset_manager, mock_task, mock_inspect_eval
+        self,
+        runner,
+        mock_dataset_manager,
+        mock_dataset_manager_cls,
+        mock_task,
+        mock_inspect_eval,
     ):
         """Test the test command."""
         result = runner.invoke(test, [])
@@ -500,6 +532,14 @@ class TestCLI:
         assert "Testing experiment mode..." in result.output
         assert "Experiment mode test passed" in result.output
         assert "All tests complete" in result.output
+
+        # DatasetManager.__init__ requires tenant_id; a bare DatasetManager()
+        # call raises TypeError against the real class (masked here if the
+        # constructor call itself isn't asserted, since the mocked class
+        # accepts any arguments).
+        from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
+
+        mock_dataset_manager_cls.assert_called_once_with(tenant_id=SYSTEM_TENANT_ID)
 
         # Verify test dataset was created
         mock_dataset_manager.create_test_dataset.assert_called_once()
@@ -520,6 +560,21 @@ class TestCLI:
 
         assert result.exit_code == 1
         assert "Test failed: Test failed" in result.output
+
+    @pytest.mark.unit
+    def test_test_command_binds_real_dataset_manager_signature(self):
+        """Bind the CLI's actual constructor call against the REAL
+        DatasetManager class (not a mock). ``DatasetManager()`` with zero
+        args raised TypeError since tenant_id has no default — a bug the
+        mocked test_test_command could never surface because the mocked
+        class accepts any arguments."""
+        import inspect
+
+        from cogniverse_evaluation.data import DatasetManager
+        from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
+
+        sig = inspect.signature(DatasetManager.__init__)
+        sig.bind(None, tenant_id=SYSTEM_TENANT_ID)
 
     @pytest.mark.unit
     def test_main_entry_point(self):

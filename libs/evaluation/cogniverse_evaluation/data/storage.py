@@ -53,6 +53,7 @@ class ConnectionConfig:
     health_check_interval_seconds: float = 30.0
     max_batch_size: int = 512
     export_timeout_millis: int = 30000
+    # Gates ExportMetrics recording in MonitoredSpanExporter
     enable_metrics: bool = True
     enable_health_checks: bool = True
     environment: str = "production"
@@ -118,8 +119,9 @@ class MonitoredSpanExporter(SpanExporter):
                 result = self.exporter.export(spans)
 
                 if result == SpanExportResult.SUCCESS:
-                    latency_ms = (time.time() - start_time) * 1000
-                    self.metrics.record_success(num_spans, latency_ms)
+                    if self.config.enable_metrics:
+                        latency_ms = (time.time() - start_time) * 1000
+                        self.metrics.record_success(num_spans, latency_ms)
                     return result
 
                 if attempt < self.config.max_retries - 1:
@@ -152,7 +154,8 @@ class MonitoredSpanExporter(SpanExporter):
                         description="span export error retry",
                     )
 
-        self.metrics.record_failure(num_spans)
+        if self.config.enable_metrics:
+            self.metrics.record_failure(num_spans)
         logger.error(
             f"Failed to export {num_spans} spans after {self.config.max_retries} attempts"
         )
@@ -189,71 +192,83 @@ class TelemetryStorage:
     def _initialize_connection(self):
         """Initialize telemetry provider and OpenTelemetry with retry logic."""
         with self._lock:
-            self.connection_state = ConnectionState.CONNECTING
+            self._connect_locked()
 
-            for attempt in range(self.config.max_retries):
-                try:
-                    import asyncio
+    def _connect_locked(self):
+        """Connection body; caller must hold ``self._lock``.
 
-                    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-                    from cogniverse_evaluation.providers import (
-                        get_evaluation_provider,
-                    )
-                    from cogniverse_foundation.telemetry.manager import (
-                        get_telemetry_manager,
-                    )
+        Split out so the health-check thread (which already holds the lock)
+        can reconnect without re-acquiring the non-reentrant lock.
+        """
+        self.connection_state = ConnectionState.CONNECTING
 
-                    telemetry_manager = get_telemetry_manager()
-                    telemetry_manager.register_project(
-                        tenant_id=SYSTEM_TENANT_ID,
-                        project_name="evaluation",
-                        http_endpoint=self.config.http_endpoint,
-                        grpc_endpoint=self.config.otlp_endpoint,
-                    )
+        for attempt in range(self.config.max_retries):
+            try:
+                import asyncio
 
-                    self.provider = get_evaluation_provider(
-                        tenant_id=SYSTEM_TENANT_ID,
-                        config={
-                            "project_name": "evaluation",
-                            "http_endpoint": self.config.http_endpoint,
-                            "grpc_endpoint": self.config.otlp_endpoint,
-                        },
-                    )
+                from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+                from cogniverse_evaluation.providers import (
+                    get_evaluation_provider,
+                )
+                from cogniverse_foundation.telemetry.manager import (
+                    get_telemetry_manager,
+                )
 
-                    asyncio.run(
+                telemetry_manager = get_telemetry_manager()
+                telemetry_manager.register_project(
+                    tenant_id=SYSTEM_TENANT_ID,
+                    project_name="evaluation",
+                    http_endpoint=self.config.http_endpoint,
+                    grpc_endpoint=self.config.otlp_endpoint,
+                )
+
+                self.provider = get_evaluation_provider(
+                    tenant_id=SYSTEM_TENANT_ID,
+                    config={
+                        "project_name": "evaluation",
+                        "http_endpoint": self.config.http_endpoint,
+                        "grpc_endpoint": self.config.otlp_endpoint,
+                    },
+                )
+
+                async def _probe():
+                    await asyncio.wait_for(
                         self.provider.telemetry.traces.get_spans(
                             project="cogniverse-default", limit=1
-                        )
+                        ),
+                        timeout=self.config.connection_timeout_seconds,
                     )
 
-                    self._configure_opentelemetry()
+                asyncio.run(_probe())
 
-                    self.connection_state = ConnectionState.CONNECTED
-                    logger.info("Successfully connected to telemetry provider")
-                    return
+                self._configure_opentelemetry()
 
-                except Exception as e:
-                    logger.error(
-                        f"Failed to connect to telemetry provider (attempt {attempt + 1}): {e}"
+                self.connection_state = ConnectionState.CONNECTED
+                logger.info("Successfully connected to telemetry provider")
+                return
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to connect to telemetry provider (attempt {attempt + 1}): {e}"
+                )
+                if attempt < self.config.max_retries - 1:
+                    delay = self.config.retry_delay_seconds * (
+                        self.config.retry_backoff_factor**attempt
                     )
-                    if attempt < self.config.max_retries - 1:
-                        delay = self.config.retry_delay_seconds * (
-                            self.config.retry_backoff_factor**attempt
-                        )
-                        logger.warning(
-                            f"Telemetry connection failed, retrying in {delay:.1f}s (attempt {attempt + 1})"
-                        )
-                        wait_for_retry_backoff(
-                            attempt,
-                            base_delay=self.config.retry_delay_seconds,
-                            max_delay=60.0,
-                            description="Telemetry connection retry",
-                        )
+                    logger.warning(
+                        f"Telemetry connection failed, retrying in {delay:.1f}s (attempt {attempt + 1})"
+                    )
+                    wait_for_retry_backoff(
+                        attempt,
+                        base_delay=self.config.retry_delay_seconds,
+                        max_delay=60.0,
+                        description="Telemetry connection retry",
+                    )
 
-            self.connection_state = ConnectionState.FAILED
-            raise ConnectionError(
-                f"Failed to connect to telemetry provider after {self.config.max_retries} attempts"
-            )
+        self.connection_state = ConnectionState.FAILED
+        raise ConnectionError(
+            f"Failed to connect to telemetry provider after {self.config.max_retries} attempts"
+        )
 
     def _configure_opentelemetry(self):
         """Configure OpenTelemetry with monitoring wrapper."""
@@ -320,7 +335,8 @@ class TelemetryStorage:
             if self.connection_state != ConnectionState.CONNECTED:
                 logger.info("Telemetry disconnected, attempting reconnection...")
                 try:
-                    self._initialize_connection()
+                    # Already holding the lock — go straight to the body
+                    self._connect_locked()
                 except Exception as e:
                     logger.error(f"Reconnection failed: {e}")
                 return
@@ -442,7 +458,6 @@ class TelemetryStorage:
         self,
         trace_ids: Optional[List[str]] = None,
         start_time: Optional[datetime] = None,
-        filter_condition: Optional[str] = None,
         limit: int = 1000,
     ) -> pd.DataFrame:
         """
@@ -454,8 +469,10 @@ class TelemetryStorage:
             RuntimeError: If the fetch fails while connected.
         """
         if self.connection_state != ConnectionState.CONNECTED:
-            logger.warning("Telemetry not connected, returning empty DataFrame")
-            return pd.DataFrame()
+            raise ConnectionError(
+                "Telemetry backend not connected — trace read unavailable "
+                f"(state={self.connection_state.value})"
+            )
 
         import asyncio
         import concurrent.futures
