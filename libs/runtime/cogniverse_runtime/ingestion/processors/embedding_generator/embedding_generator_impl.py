@@ -991,6 +991,12 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         try:
             model_loader = self.profile_config.get("model_loader")
             if model_loader in ("colpali", "colqwen"):
+                # ColPali/ColQwen load lazily on first use — the chunk path is a
+                # first-use site, same as the frame path.
+                if not self.model:
+                    with self._model_load_lock:
+                        if not self.model:
+                            self._load_model()
                 # ColQwen/video-chunk model processes video chunks
                 import cv2
 
@@ -1173,6 +1179,16 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             else:
                 # Extract frames from time segment for other models
                 import cv2
+
+                # ColPali/ColQwen load lazily on first use; this frame-extraction
+                # path uses self.model/self.processor, so load them if needed.
+                if (
+                    self.profile_config.get("model_loader") in ("colpali", "colqwen")
+                    and not self.model
+                ):
+                    with self._model_load_lock:
+                        if not self.model:
+                            self._load_model()
 
                 cap = self._get_video_capture(video_path)
                 fps = cap.get(cv2.CAP_PROP_FPS)
