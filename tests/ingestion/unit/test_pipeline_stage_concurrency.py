@@ -104,6 +104,56 @@ async def test_segmentation_and_transcription_overlap_and_ordering(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stage_failure_does_not_orphan_the_sibling(monkeypatch):
+    """A stage failure must settle the concurrent sibling, not detach it.
+
+    Segmentation raises quickly while transcription is still in its (longer)
+    off-loop call. A bare ``asyncio.gather`` propagates segmentation's failure
+    the instant it raises and leaves transcription running detached — off this
+    video's ``max_concurrent`` limiter and writing (e.g. a cached transcript)
+    past the point the video was reported failed. ``process`` must instead hold
+    until both stages stop, then re-raise: when it raises, the sibling is done.
+    """
+    sset = ProcessingStrategySet()
+    monkeypatch.setattr(sset, "get_strategy", lambda name: SimpleNamespace())
+
+    class _Span:
+        def set_attribute(self, *a, **k):
+            pass
+
+    @contextmanager
+    def _span(*a, **k):
+        yield _Span()
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda: SimpleNamespace(span=_span),
+    )
+
+    transcription_finished = asyncio.Event()
+
+    async def flaky(strategy_name, strategy, vp, pm, ctx, results):
+        if strategy_name == "segmentation":
+            await asyncio.sleep(0.02)
+            raise RuntimeError("boom decoding video")
+        if strategy_name == "transcription":
+            await asyncio.sleep(0.2)  # outlives segmentation's fast failure
+            transcription_finished.set()
+            return _STAGE_RESULTS["transcription"]
+        return _STAGE_RESULTS[strategy_name]
+
+    monkeypatch.setattr(sset, "_process_strategy", flaky)
+
+    with pytest.raises(RuntimeError, match="boom decoding video"):
+        await sset.process(Path("/data/v.mp4"), SimpleNamespace(), _ctx())
+
+    # If the sibling were orphaned, its 0.2s call would still be running here —
+    # segmentation failed at ~0.02s. The event being set proves process() did
+    # not return control until transcription had also stopped.
+    assert transcription_finished.is_set()
+
+
+@pytest.mark.asyncio
 async def test_concurrent_stage_spans_are_siblings_not_nested(monkeypatch):
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
