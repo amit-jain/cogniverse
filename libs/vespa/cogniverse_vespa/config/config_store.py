@@ -765,6 +765,7 @@ class VespaConfigStore(ConfigStore):
 
         try:
             response = self.vespa_app.query(yql=yql)
+            _raise_if_degraded(response, f"export({tenant_id})")
 
             configs = []
             for hit in response.hits:
@@ -790,14 +791,12 @@ class VespaConfigStore(ConfigStore):
             }
 
         except Exception as e:
+            # A degraded or failed read must raise, not return an empty export
+            # a caller would persist as authoritative — matching get_config /
+            # list_configs / get_config_history. Only a genuinely empty tenant
+            # returns an empty configs list (via the no-error path above).
             logger.error(f"Failed to export configs from Vespa: {e}")
-            return {
-                "tenant_id": tenant_id,
-                "include_history": include_history,
-                "configs": [],
-                "exported_at": datetime.now().isoformat(),
-                "error": str(e),
-            }
+            raise
 
     def import_configs(
         self,
@@ -871,16 +870,11 @@ class VespaConfigStore(ConfigStore):
             }
 
         except Exception as e:
+            # An outage or degraded read must raise, not report zero configs /
+            # zero tenants — a dashboard keyed off these counts would show an
+            # empty store during a Vespa blip. Matches the raising sibling reads.
             logger.error(f"Failed to get stats from Vespa: {e}")
-            return {
-                "total_configs": 0,
-                "total_versions": 0,
-                "total_tenants": 0,
-                "configs_per_scope": {},
-                "storage_backend": "vespa",
-                "schema_name": self.schema_name,
-                "error": str(e),
-            }
+            raise
 
     def health_check(self) -> bool:
         """
