@@ -433,3 +433,29 @@ class TestVespaConnectionSessionReuse:
 
             conn.close()
             sync._close_http_client.assert_called_once()
+
+
+def test_initialize_honors_enable_metrics_false():
+    """initialize() must not override enable_metrics=False from __init__.
+
+    The registry construct-then-initialize path passes enable_metrics through
+    __init__; initialize() used to overwrite self.metrics with an unconditional
+    SearchMetrics(), silently re-enabling metrics for a backend that asked for
+    them off.
+    """
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
+    ):
+        backend = VespaSearchBackend(enable_metrics=False)
+        assert backend.metrics is None  # __init__ respected the knob
+        backend.initialize(
+            {"url": "http://localhost", "port": 8080, "schema_name": "s"}
+        )
+        assert backend.metrics is None  # initialize() still respects it
+
+        default_backend = VespaSearchBackend(enable_metrics=True)
+        default_backend.initialize(
+            {"url": "http://localhost", "port": 8080, "schema_name": "s"}
+        )
+        assert default_backend.metrics is not None  # default path keeps it on
