@@ -12,6 +12,7 @@ packages a trigger dataset and submits an Argo optimization workflow.
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -33,6 +34,20 @@ from cogniverse_foundation.common.tenant_utils import (
 from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_expected(value: Any) -> List[str]:
+    """Normalize a golden query's ``expected_videos`` to a list of ids.
+
+    Golden files carry it as a list, but the exported/round-tripped shape is a
+    comma-joined string; scoring that as a raw string turns IR membership into
+    substring matching. Always return a clean list of non-empty ids.
+    """
+    if isinstance(value, str):
+        return [v.strip() for v in value.split(",") if v.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return []
 
 
 class AgentType(str, Enum):
@@ -516,8 +531,14 @@ class QualityMonitor:
         client = self._get_http_client()
 
         async def _score_query(query_data: Dict[str, Any]) -> Dict[str, Any]:
-            query = query_data["query"]
-            expected_videos = query_data.get("expected_videos", [])
+            query = query_data.get("query")
+            if not query:
+                logger.warning("Golden entry has no 'query' field: %r", query_data)
+                return {"query": query or "<no-query>", "failed": True}
+            # expected_videos may be persisted comma-joined (the export shape);
+            # split into ids so IR scoring does list membership, not substring
+            # matching ("video" in "video1,video2").
+            expected_videos = _normalize_expected(query_data.get("expected_videos", []))
             try:
                 response = await client.post(
                     f"{self.runtime_url}/search/",
@@ -1339,24 +1360,47 @@ class QualityMonitor:
                 logger.error(f"Failed to update live baselines: {e}")
 
     async def grow_golden_set(self, new_queries: List[Dict[str, Any]]):
-        """Add high-scoring live queries to the golden dataset."""
+        """Add high-scoring live queries to the golden dataset.
+
+        Queries with no ground truth (empty ``expected_videos``) are skipped:
+        they can only ever score MRR 0, which would poison the golden mean,
+        spawn spurious optimization triggers, and permanently sit as
+        "low scoring" examples in every future trigger dataset.
+        """
         if not new_queries:
             return
 
         path = Path(self.golden_dataset_path)
-        existing = self._load_golden_queries()
+        # Work on a copy — a failed write must not mutate the in-memory cache.
+        existing = list(self._load_golden_queries())
 
         existing_query_set = {q["query"] for q in existing}
         added = 0
         for q in new_queries:
-            if q.get("query") not in existing_query_set:
-                existing.append(q)
-                existing_query_set.add(q["query"])
-                added += 1
+            query = q.get("query")
+            if not query or query in existing_query_set:
+                continue
+            if not q.get("expected_videos"):
+                logger.debug(
+                    "Skipping golden-set candidate without ground truth: %r", query
+                )
+                continue
+            existing.append(q)
+            existing_query_set.add(query)
+            added += 1
 
         if added > 0:
-            with open(path, "w") as f:
-                json.dump(existing, f, indent=2)
+            # Atomic write: a crash mid-write must not truncate the golden
+            # file (the next load would raise JSONDecodeError and kill golden
+            # eval). Write a sibling tmp then os.replace.
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            try:
+                with open(tmp, "w") as f:
+                    json.dump(existing, f, indent=2)
+                os.replace(tmp, path)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
             self._golden_queries = existing
             logger.info(f"Added {added} queries to golden set (total: {len(existing)})")
 

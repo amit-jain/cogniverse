@@ -544,12 +544,16 @@ class TestCLI:
         # Verify test dataset was created
         mock_dataset_manager.create_test_dataset.assert_called_once()
 
-        # Verify task was created
+        # Verify task was created against the name create_test_dataset
+        # RETURNED — not a name re-derived from a second clock read (which
+        # pointed at a dataset that was never created).
         mock_task.assert_called_once()
         call_kwargs = mock_task.call_args[1]
         assert call_kwargs["mode"] == "experiment"
+        assert call_kwargs["dataset_name"] == "test_dataset_789"
         assert call_kwargs["profiles"] == ["frame_based_colpali"]
         assert call_kwargs["strategies"] == ["binary_binary"]
+        assert "Created test dataset: test_dataset_789" in result.output
 
     @pytest.mark.unit
     def test_test_command_failure(self, runner, mock_dataset_manager):

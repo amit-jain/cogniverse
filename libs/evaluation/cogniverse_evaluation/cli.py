@@ -269,8 +269,10 @@ def test(tenant_id):
     dataset_manager = DatasetManager(tenant_id=tenant_id)
 
     try:
-        _ = dataset_manager.create_test_dataset()
-        dataset_name = f"test_dataset_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # Use the name create_test_dataset actually wrote — re-deriving it from
+        # a second (naive, local) clock read pointed at a dataset that was
+        # never created.
+        dataset_name = dataset_manager.create_test_dataset()
 
         click.echo(f"Created test dataset: {dataset_name}")
 
@@ -281,7 +283,7 @@ def test(tenant_id):
             dataset_name=dataset_name,
             profiles=["frame_based_colpali"],
             strategies=["binary_binary"],
-            config={"use_ragas": False, "use_custom": True},
+            config={"use_custom": True},
         )
 
         results = inspect_eval(task)

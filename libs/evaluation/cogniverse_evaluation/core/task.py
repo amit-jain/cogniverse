@@ -17,6 +17,26 @@ logger = logging.getLogger(__name__)
 _DATASET_FRAMES: dict[tuple[str, str], Any] = {}
 
 
+def _row_to_record(row: Any) -> dict[str, Any]:
+    """Flatten a Phoenix dataset row into one record.
+
+    Phoenix ``to_dataframe()`` splits a dataset into ``input`` / ``output`` /
+    ``metadata`` dict-columns keyed by the writer's ``input_keys`` /
+    ``output_keys``. ``DatasetManager`` writes ``expected_videos`` under
+    ``output_keys`` while ``ExperimentTracker`` writes everything under
+    ``input`` — so the reader must merge all three slots, or a
+    DatasetManager-created dataset yields an empty target for every sample.
+    """
+    record: dict[str, Any] = {}
+    for slot in ("metadata", "output", "input"):
+        if slot in getattr(row, "index", ()) and isinstance(row[slot], dict):
+            record.update(row[slot])
+    if not record:
+        # Flat column format (direct CSV columns, no nesting)
+        record = row.to_dict()
+    return record
+
+
 def evaluation_task(
     mode: str,
     dataset_name: str,
@@ -90,12 +110,7 @@ def evaluation_task(
         # Format: {'input': {'query': '...', 'expected_videos': '...', ...}}
         samples = []
         for _, row in dataset_data.iterrows():
-            # Handle Phoenix nested 'input' dict format
-            if "input" in row.index and isinstance(row["input"], dict):
-                record = row["input"]
-            else:
-                # Flat column format (direct CSV columns)
-                record = row.to_dict()
+            record = _row_to_record(row)
 
             query = str(record.get("query", ""))
             if not query:
@@ -110,12 +125,13 @@ def evaluation_task(
             else:
                 target = [str(expected_videos)] if expected_videos else []
 
+            # query_type is the canonical metadata key; category (the
+            # DatasetManager column) is the fallback.
+            query_type = record.get("query_type") or record.get("category") or "general"
             sample = Sample(
                 input=query,
                 target=target,
-                metadata={
-                    "query_type": str(record.get("query_type", "general")),
-                },
+                metadata={"query_type": str(query_type)},
             )
             samples.append(sample)
     else:

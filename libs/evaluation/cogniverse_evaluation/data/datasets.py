@@ -93,9 +93,24 @@ class DatasetManager:
 
     @staticmethod
     def _join_expected(value: Any) -> str:
+        """Comma-join expected ids into the persisted string form.
+
+        Phoenix serializes list cells to their Python repr, so lists are
+        joined; downstream (core.ground_truth._resolve_expected_items,
+        core.task) splits them back. A scalar is wrapped as a single id; a
+        mapping/None becomes empty — never a raw TypeError or a repr-leaked
+        nested structure.
+        """
+        if value is None:
+            return ""
         if isinstance(value, str):
             return value
-        return ",".join(str(v) for v in (value or []))
+        if isinstance(value, dict):
+            return ""
+        if isinstance(value, (list, tuple, set)):
+            return ",".join(str(v) for v in value)
+        # A bare scalar (int/float/bool) is a single expected id.
+        return str(value)
 
     def create_from_queries(
         self,
@@ -344,8 +359,12 @@ class DatasetManager:
         ]
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        return self.create_from_queries(
+        dataset_name = f"test_dataset_{timestamp}"
+        self.create_from_queries(
             queries=test_queries,
-            dataset_name=f"test_dataset_{timestamp}",
+            dataset_name=dataset_name,
             description="Test dataset for evaluation framework",
         )
+        # Return the NAME (not the backend id): callers evaluate by name, and
+        # re-deriving it from a second clock read races the UTC timestamp.
+        return dataset_name

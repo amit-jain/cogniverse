@@ -104,3 +104,51 @@ class TestEvaluationTaskRealPhoenix:
         # Real Phoenix reports the missing dataset by name rather than
         # silently yielding an empty task.
         assert "no_such_dataset_xyz" in str(exc_info.value)
+
+
+class TestDatasetManagerWriterReadByTask:
+    """A dataset written through the real DatasetManager (expected_videos in
+    the OUTPUT key slot) must yield non-empty Sample targets through
+    evaluation_task. The conftest test_dataset masks this by seeding the
+    opposite key classification."""
+
+    def test_manager_created_dataset_has_non_empty_targets(
+        self, search_evaluator_provider, phoenix_container
+    ):
+        import uuid
+
+        from cogniverse_evaluation.core import task as task_mod
+        from cogniverse_evaluation.data.datasets import DatasetManager
+        from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
+
+        name = f"dm-task-{uuid.uuid4().hex[:8]}"
+        store = PhoenixDatasetStore(
+            http_endpoint=phoenix_container["http_endpoint"], tenant_id="acme:t"
+        )
+        DatasetManager(tenant_id="acme:t", dataset_store=store).create_from_queries(
+            [
+                {
+                    "query": "red kite over the field",
+                    "expected_videos": ["kite1", "kite2"],
+                    "category": "visual",
+                }
+            ],
+            name,
+        )
+        # Bypass any process-cached frame from a prior name reuse.
+        task_mod._DATASET_FRAMES.clear()
+
+        task = evaluation_task(
+            mode="experiment",
+            dataset_name=name,
+            profiles=["colpali_prof"],
+            strategies=["float_float"],
+        )
+
+        samples = _samples_by_input(task)
+        assert "red kite over the field" in samples
+        sample = samples["red kite over the field"]
+        assert sample.target == ["kite1", "kite2"], (
+            f"expected_videos from the output slot were dropped: {sample.target}"
+        )
+        assert sample.metadata["query_type"] == "visual"
