@@ -329,19 +329,31 @@ async def increment_active(redis: aioredis.Redis, tenant_id: str) -> int:
     return int(new_val)
 
 
-async def decrement_active(redis: aioredis.Redis, tenant_id: str) -> int:
-    """DECR the per-tenant active counter, clamped at 0.
+# DECR and clamp-at-zero in one atomic script: with two round-trips, a
+# concurrent increment landing between the DECR (which saw <= 0) and the
+# trailing SET 0 was clobbered — the counter undercounted an in-flight job,
+# weakening per-tenant backpressure until the next increment.
+_DECR_FLOOR_LUA = """
+local v = redis.call('DECR', KEYS[1])
+if v < 0 then
+    redis.call('SET', KEYS[1], 0)
+    return 0
+end
+return v
+"""
 
-    Worker calls this on terminal state. Use a Lua-like floor at zero
-    so a stray double-decrement (e.g. duplicate terminal-event flush)
-    can't leave the counter negative and underflow the backpressure
-    check.
+
+async def decrement_active(redis: aioredis.Redis, tenant_id: str) -> int:
+    """Atomically DECR the per-tenant active counter, clamped at 0.
+
+    Worker calls this on terminal state. The atomic floor keeps a stray
+    double-decrement (e.g. duplicate terminal-event flush) from leaving the
+    counter negative and underflowing the backpressure check, without a
+    two-round-trip window a concurrent increment could be lost in.
     """
-    new_val = await redis.decr(f"{ACTIVE_KEY_PREFIX}{tenant_id}")
-    if new_val < 0:
-        await redis.set(f"{ACTIVE_KEY_PREFIX}{tenant_id}", 0)
-        return 0
-    return new_val
+    key = f"{ACTIVE_KEY_PREFIX}{tenant_id}"
+    new_val = await redis.eval(_DECR_FLOOR_LUA, 1, key)
+    return int(new_val)
 
 
 async def get_active(redis: aioredis.Redis, tenant_id: str) -> int:
