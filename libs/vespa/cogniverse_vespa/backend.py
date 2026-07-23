@@ -802,6 +802,7 @@ class VespaBackend(Backend):
 
             from vespa.package import ApplicationPackage
 
+            from cogniverse_core.registries.exceptions import BackendDeploymentError
             from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
             parser = JsonSchemaParser()
@@ -967,7 +968,7 @@ class VespaBackend(Backend):
                     # that is silent cross-tenant data loss. Refuse: a transient
                     # orphan clears on retry once the peer registers; a
                     # persistent one is a registry inconsistency to resolve.
-                    raise RuntimeError(
+                    raise BackendDeploymentError(
                         f"Refusing to deploy: {len(unresolved)} schema(s) live in "
                         f"Vespa have no registry entry and cannot be reconstructed "
                         f"({sorted(unresolved)}); proceeding would remove them and "
@@ -1003,6 +1004,12 @@ class VespaBackend(Backend):
             logger.info(f"Successfully deployed {len(schemas_to_deploy)} schemas")
             return True
 
+        except BackendDeploymentError:
+            # A data-loss refusal (unregistered, unreconstructable schemas that
+            # a redeploy would destroy) is NOT a transient failure — surface it
+            # so the caller does not mistake it for a retryable False and force
+            # the destructive deploy. Transient failures still return False.
+            raise
         except Exception as e:
             logger.error(f"Failed to deploy schemas: {e}")
             return False
