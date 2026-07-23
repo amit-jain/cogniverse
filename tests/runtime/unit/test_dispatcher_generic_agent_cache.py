@@ -114,6 +114,21 @@ def dispatcher(monkeypatch):
         cls.load_count = 0
         cls.load_delay = 0.0
 
+    # _execute_generic_agent now binds the tenant-routed LM, which reads the
+    # semantic-router config via get_config. Default it to router-disabled so
+    # these cache tests take the plain ambient-LM path; the routing test below
+    # overrides it to enabled.
+    from unittest.mock import MagicMock
+
+    from cogniverse_foundation.config.semantic_router import SemanticRouterConfig
+
+    _disabled_cfg = MagicMock()
+    _disabled_cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config",
+        lambda tenant_id, config_manager: _disabled_cfg,
+    )
+
     ad._GENERIC_AGENT_CLASSES.clear()
     monkeypatch.setitem(
         ConfigLoader.AGENT_CLASSES, "fakea", f"{_FAKE_MODULE_NAME}:FakeAgentA"
@@ -307,3 +322,58 @@ async def test_unknown_agent_still_raises(dispatcher):
     d = dispatcher
     with pytest.raises(ValueError, match="no supported execution path"):
         await d._execute_generic_agent("nope", "q", {}, "acme:acme")
+
+
+@pytest.mark.asyncio
+async def test_generic_dispatch_binds_tenant_routed_lm(dispatcher, monkeypatch):
+    """A direct dispatch of a generic agent (entity_extraction /
+    query_enhancement fall here) must run under the tenant's SEMANTIC_ROUTER
+    tier LM, not the process-global default — the same routing the orchestrated
+    path and answer agents apply."""
+    from unittest.mock import MagicMock
+
+    import dspy
+
+    from cogniverse_foundation.config.semantic_router import SemanticRouterConfig
+
+    d = dispatcher
+
+    seen: dict = {}
+
+    async def _capturing_process(self, typed_input):
+        seen["lm"] = dspy.settings.lm
+        return FakeOutput(echo=typed_input.query, tenant_id=typed_input.tenant_id)
+
+    monkeypatch.setattr(FakeAgentA, "process", _capturing_process)
+
+    sentinel_lm = MagicMock(name="tenant_routed_lm")
+    ambient_lm = MagicMock(name="ambient_default_lm")
+
+    cfg = MagicMock()
+    cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=True)
+    endpoint = MagicMock(name="endpoint")
+    cfg.get_llm_config.return_value.resolve.return_value = endpoint
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config",
+        lambda tenant_id, config_manager: cfg,
+    )
+
+    captured: dict = {}
+
+    def _fake_create_routed_lm(ep, router, tenant_id):
+        captured["tenant_id"] = tenant_id
+        return sentinel_lm
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.semantic_router.create_routed_lm",
+        _fake_create_routed_lm,
+    )
+
+    with dspy.context(lm=ambient_lm):
+        await d._execute_generic_agent("fakea", "q", {}, "acme:acme")
+
+    assert seen["lm"] is sentinel_lm, (
+        f"generic dispatch ran on {seen['lm']!r}, not the tenant-routed LM"
+    )
+    assert captured["tenant_id"] == "acme:acme"
