@@ -1347,6 +1347,12 @@ async def run_cleanup(
 _SPAN_QUERY_ATTEMPTS = 2
 _SPAN_QUERY_TIMEOUT_S = 60
 
+# Concurrency for the online-eval per-span scoring. Each span runs synchronous
+# structural evaluators then one Phoenix annotation write; the writes dominate
+# and are independent, so they overlap through a bounded pool instead of one
+# serial round-trip at a time.
+_ONLINE_EVAL_CONCURRENCY = 8
+
 
 async def _query_spans_by_name(
     telemetry_provider,
@@ -2217,6 +2223,26 @@ def _online_eval_agent_types() -> list[str]:
     ]
 
 
+async def _score_spans_bounded(evaluator, rows: list[dict]) -> int:
+    """Score ``rows`` through ``evaluator.evaluate_span`` concurrently, bounded
+    to ``_ONLINE_EVAL_CONCURRENCY`` in-flight, and return the total number of
+    scores persisted. Each span's structural evaluation is synchronous; the
+    per-span Phoenix annotation write is the awaited part, so overlapping them
+    cuts the wall-clock from N serial round-trips to ceil(N/bound). The
+    evaluator's counters are incremented in statements with no await between
+    read and write, so concurrent tasks cannot lose an increment.
+    """
+    sem = asyncio.Semaphore(_ONLINE_EVAL_CONCURRENCY)
+
+    async def _score(row_dict: dict) -> int:
+        async with sem:
+            return len(await evaluator.evaluate_span(row_dict))
+
+    if not rows:
+        return 0
+    return sum(await asyncio.gather(*(_score(r) for r in rows)))
+
+
 async def run_online_evaluation(
     tenant_id: str,
     lookback_hours: float | None = None,
@@ -2300,10 +2326,8 @@ async def run_online_evaluation(
             # agent type runs its own registry-defined structural set.
             evaluator.evaluator_names = list(entry.structural.keys())
 
-        scores_persisted = 0
-        for _, row in spans_df.iterrows():
-            results = await evaluator.evaluate_span(row.to_dict())
-            scores_persisted += len(results)
+        rows = [row.to_dict() for _, row in spans_df.iterrows()]
+        scores_persisted = await _score_spans_bounded(evaluator, rows)
 
         per_agent[agent_type] = {
             "spans_found": len(spans_df),
