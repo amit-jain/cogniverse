@@ -466,29 +466,29 @@ class VespaBackend(Backend):
         Returns:
             True if successful
         """
-        try:
-            if not schema_name:
-                schema_name = self.config.get("schema_name")
-            if not schema_name:
-                logger.error("No schema_name in config for update operation")
-                return False
+        if not schema_name:
+            schema_name = self.config.get("schema_name")
+        if not schema_name:
+            raise ValueError("No schema_name in config for update operation")
 
-            if document.id != document_id:
-                raise ValueError(
-                    f"update_document(document_id={document_id!r}) does not match "
-                    f"document.id={document.id!r}; the partial update would land "
-                    f"on the wrong doc id."
-                )
-
-            # Partial update (assign only present fields) so a metadata-only
-            # update does not wipe the stored embedding tensors via a full PUT.
-            results = self.ingest_documents(
-                [document], schema_name=schema_name, operation_type="update"
+        if document.id != document_id:
+            raise ValueError(
+                f"update_document(document_id={document_id!r}) does not match "
+                f"document.id={document.id!r}; the partial update would land "
+                f"on the wrong doc id."
             )
-            return results["success_count"] > 0
-        except Exception as e:
-            logger.error(f"Failed to update document {document_id}: {e}")
-            return False
+
+        # Partial update (assign only present fields) so a metadata-only
+        # update does not wipe the stored embedding tensors via a full PUT.
+        # A backend outage propagates (ingest_documents raises) rather than
+        # returning False the caller reads as "update rejected"; only a genuine
+        # zero-success partial update returns False. The broad except that used
+        # to swallow both an outage AND the id-mismatch programming error above
+        # into a silent False is gone.
+        results = self.ingest_documents(
+            [document], schema_name=schema_name, operation_type="update"
+        )
+        return results["success_count"] > 0
 
     def delete_document(
         self, document_id: str, schema_name: Optional[str] = None

@@ -72,19 +72,32 @@ class TestVespaPartialUpdate:
         assert ok is True
         assert backend.ingest_documents.call_args.kwargs["operation_type"] == "update"
 
-    def test_update_document_id_mismatch_returns_false(self):
+    def test_update_document_id_mismatch_raises(self):
         """If the caller's document_id disagrees with document.id, the partial
-        update would land on the wrong doc id — must fail loudly, not silently."""
+        update would land on the wrong doc id — a programming error that must
+        raise, not be swallowed into a silent False the caller reads as a
+        no-op."""
         backend = object.__new__(VespaBackend)
         backend.config = {"schema_name": "s"}
         backend.ingest_documents = MagicMock(return_value={"success_count": 1})
         doc = MagicMock()
         doc.id = "actual-doc-id"
 
-        ok = backend.update_document("wrong-id", doc, schema_name="s")
-
-        assert ok is False
+        with pytest.raises(ValueError, match="does not match"):
+            backend.update_document("wrong-id", doc, schema_name="s")
         backend.ingest_documents.assert_not_called()
+
+    def test_update_document_propagates_outage(self):
+        """A backend outage during the update must propagate, not be flattened
+        to False the caller reads as 'update rejected'."""
+        backend = object.__new__(VespaBackend)
+        backend.config = {"schema_name": "s"}
+        backend.ingest_documents = MagicMock(side_effect=ConnectionError("vespa down"))
+        doc = MagicMock()
+        doc.id = "d1"
+
+        with pytest.raises(ConnectionError, match="vespa down"):
+            backend.update_document("d1", doc, schema_name="s")
 
     def test_delete_metadata_document_returns_false_on_non_200(self, monkeypatch):
         """Belt-and-braces branch: real pyvespa delete_data raise_for_status
