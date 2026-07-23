@@ -130,8 +130,15 @@ class ProcessingStrategySet:
                     stage_span_name,
                 )
                 for strategy_name in ("segmentation", "transcription")
-            )
+            ),
+            return_exceptions=True,
         )
+        # Settle both stages before propagating — a bare gather raises the first
+        # failure while the sibling keeps running detached, off this video's
+        # concurrency limiter and past the point it is reported failed.
+        for stage_result in independent_results:
+            if isinstance(stage_result, BaseException):
+                raise stage_result
         for stage_result in independent_results:
             results.update(stage_result)
 
