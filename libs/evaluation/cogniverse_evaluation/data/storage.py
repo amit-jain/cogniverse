@@ -459,13 +459,19 @@ class TelemetryStorage:
         trace_ids: Optional[List[str]] = None,
         start_time: Optional[datetime] = None,
         limit: int = 1000,
+        project: Optional[str] = None,
     ) -> pd.DataFrame:
         """
-        Get traces from the telemetry backend.
+        Get traces from the telemetry backend for ``project``.
 
-        Returns an empty DataFrame when telemetry is not connected.
+        ``project`` MUST be a project that production agents write to (the
+        canonical ``cogniverse-{org:tenant}``); the historical
+        ``cogniverse-default`` fallback is a project no writer emits to, so
+        omitting it yields an always-empty read. Callers derive it from a
+        tenant.
 
         Raises:
+            ConnectionError: If telemetry is not connected.
             RuntimeError: If the fetch fails while connected.
         """
         if self.connection_state != ConnectionState.CONNECTED:
@@ -473,6 +479,8 @@ class TelemetryStorage:
                 "Telemetry backend not connected — trace read unavailable "
                 f"(state={self.connection_state.value})"
             )
+
+        project = project or "cogniverse-default"
 
         import asyncio
         import concurrent.futures
@@ -496,7 +504,7 @@ class TelemetryStorage:
                 # Fetch all spans and post-filter by trace_id since the provider
                 # does not accept filter_condition or root_spans_only parameters.
                 df = _fetch_spans(
-                    project="cogniverse-default",
+                    project=project,
                     start_time=start_time,
                     limit=limit,
                 )
@@ -511,7 +519,7 @@ class TelemetryStorage:
                 return df
 
             return _fetch_spans(
-                project="cogniverse-default",
+                project=project,
                 start_time=start_time,
                 limit=limit,
             )

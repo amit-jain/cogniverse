@@ -436,7 +436,9 @@ class TestCLI:
         """Test list-traces command with no traces."""
         mock_trace_manager.get_recent_traces.return_value = pd.DataFrame()
 
-        result = runner.invoke(list_traces, ["--hours", "2", "--limit", "50"])
+        result = runner.invoke(
+            list_traces, ["--tenant-id", "acme:acme", "--hours", "2", "--limit", "50"]
+        )
 
         assert result.exit_code == 0
         assert "No traces found" in result.output
@@ -467,7 +469,9 @@ class TestCLI:
         mock_trace_manager.get_recent_traces.return_value = pd.DataFrame(traces)
         mock_trace_manager.extract_trace_data.return_value = traces
 
-        result = runner.invoke(list_traces, ["--hours", "1", "--limit", "100"])
+        result = runner.invoke(
+            list_traces, ["--tenant-id", "acme:acme", "--hours", "1", "--limit", "100"]
+        )
 
         assert result.exit_code == 0
         assert "Found 2 traces:" in result.output
@@ -496,7 +500,7 @@ class TestCLI:
         mock_trace_manager.get_recent_traces.return_value = pd.DataFrame(traces)
         mock_trace_manager.extract_trace_data.return_value = traces
 
-        result = runner.invoke(list_traces, [])
+        result = runner.invoke(list_traces, ["--tenant-id", "acme:acme"])
 
         assert result.exit_code == 0
         assert "Found 15 traces:" in result.output
@@ -509,7 +513,7 @@ class TestCLI:
             "Connection failed"
         )
 
-        result = runner.invoke(list_traces, [])
+        result = runner.invoke(list_traces, ["--tenant-id", "acme:acme"])
 
         assert result.exit_code == 1
         assert "Failed to fetch traces: Connection failed" in result.output

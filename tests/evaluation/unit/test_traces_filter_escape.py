@@ -47,6 +47,8 @@ def _manager(frame: pd.DataFrame) -> TraceManager:
     storage.get_traces_for_evaluation = MagicMock(return_value=frame)
     manager = TraceManager.__new__(TraceManager)
     manager.storage = storage
+    manager.tenant_id = "acme:acme"
+    manager.project_name = "cogniverse-acme:acme"
     return manager
 
 

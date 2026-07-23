@@ -255,7 +255,7 @@ class TestTraceManager:
             mock_storage.connection_state = ConnectionState.CONNECTED
             mock_storage_class.return_value = mock_storage
 
-            manager = TraceManager()
+            manager = TraceManager(tenant_id="acme:acme")
             # Mock get_traces_for_evaluation to return the mock dataframe directly
             manager.storage.get_traces_for_evaluation = Mock(
                 return_value=mock_phoenix_client.spans.get_spans_dataframe()

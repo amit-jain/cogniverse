@@ -1661,7 +1661,11 @@ def _render_metrics_dashboard_tab():
         # Calculate routing metrics
         st.subheader("📊 Routing Optimization Metrics")
 
-        routing_evaluator = RoutingEvaluator(provider=provider)
+        # Scope to the tenant's canonical span project — the default project
+        # is one no agent writes to, so routing metrics would read zero spans.
+        routing_evaluator = RoutingEvaluator(
+            provider=provider, project_name=f"cogniverse-{tenant_id}"
+        )
 
         # query_routing_spans is async — it must be awaited via
         # run_async_in_streamlit (as the routing_evaluation tab does). Calling it

@@ -212,16 +212,17 @@ def create_dataset(name, tenant_id, csv, queries_json, description):
 
 
 @cli.command()
+@click.option("--tenant-id", required=True, help="Tenant whose span project to read")
 @click.option("--hours", type=int, default=1, help="Hours to look back")
 @click.option("--limit", type=int, default=100, help="Maximum number of traces")
-def list_traces(hours, limit):
+def list_traces(tenant_id, hours, limit):
     """
     List recent traces from Phoenix.
 
     Example:
-        cogniverse-eval list-traces --hours 2 --limit 50
+        cogniverse-eval list-traces --tenant-id acme:acme --hours 2 --limit 50
     """
-    trace_manager = TraceManager()
+    trace_manager = TraceManager(tenant_id=tenant_id)
 
     try:
         click.echo(f"Fetching traces from last {hours} hours...")
