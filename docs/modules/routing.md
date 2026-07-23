@@ -564,6 +564,13 @@ def batch_annotate(self, requests: List[AnnotationRequest]) -> List[AutoAnnotati
     Annotate a batch of requests via annotate(). If max_annotations_per_batch
     is set and requests exceeds it, the list is truncated to the cap before
     any LM call and the truncation is logged.
+
+    The per-request annotate() calls run concurrently through a bounded thread
+    pool; the returned list stays in request order. A transport/outage failure
+    (LM endpoint down, timeout, auth) propagates — the batch raises rather than
+    returning fabricated INSUFFICIENT_INFO verdicts the optimization loop would
+    consume as real signal. Only a well-formed response that fails the JSON
+    schema degrades to a per-span review-needed annotation.
     """
 ```
 

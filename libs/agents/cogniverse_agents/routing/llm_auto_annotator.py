@@ -10,6 +10,7 @@ Uses LLM to analyze routing spans and provide initial annotations:
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -103,48 +104,37 @@ class LLMAutoAnnotator:
         # Build prompt for LLM
         prompt = self._build_annotation_prompt(annotation_request)
 
-        try:
-            # Call LLM via LiteLLM
-            kwargs = {
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 1024,
-                "temperature": 0.3,  # Lower temperature for more consistent annotations
-            }
+        # Call LLM via LiteLLM. A transport/outage failure (endpoint down,
+        # timeout, auth) propagates: swallowing it into an INSUFFICIENT_INFO
+        # annotation would feed the optimization loop a fabricated verdict for
+        # every span while the LM is unreachable. Only a well-formed response
+        # that fails our JSON schema degrades to a per-span review-needed
+        # annotation, which _parse_llm_response handles.
+        kwargs = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1024,
+            "temperature": 0.3,  # Lower temperature for more consistent annotations
+        }
 
-            if self.api_key:
-                kwargs["api_key"] = self.api_key
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
 
-            if self.api_base:
-                kwargs["api_base"] = self.api_base
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
 
-            response = completion(**kwargs)
+        response = completion(**kwargs)
 
-            # Parse response
-            response_text = response.choices[0].message.content
-            annotation = self._parse_llm_response(
-                response_text, annotation_request.span_id
-            )
+        response_text = response.choices[0].message.content
+        annotation = self._parse_llm_response(response_text, annotation_request.span_id)
 
-            logger.info(
-                f"✅ Generated annotation: {annotation.label.value} "
-                f"(confidence: {annotation.confidence:.2f}, "
-                f"review_needed: {annotation.requires_human_review})"
-            )
+        logger.info(
+            f"✅ Generated annotation: {annotation.label.value} "
+            f"(confidence: {annotation.confidence:.2f}, "
+            f"review_needed: {annotation.requires_human_review})"
+        )
 
-            return annotation
-
-        except Exception as e:
-            logger.error(f"❌ Error generating annotation: {e}")
-            # Return fallback annotation
-            return AutoAnnotation(
-                span_id=annotation_request.span_id,
-                label=AnnotationLabel.INSUFFICIENT_INFO,
-                confidence=0.0,
-                reasoning=f"Error during annotation: {str(e)}",
-                suggested_correct_agent=None,
-                requires_human_review=True,
-            )
+        return annotation
 
     def _build_annotation_prompt(self, request: AnnotationRequest) -> str:
         """
@@ -296,24 +286,18 @@ Be conservative - if unsure, mark requires_human_review as true."""
 
         logger.info(f"🤖 Starting batch annotation of {len(requests)} spans")
 
-        annotations = []
-        for request in requests:
-            try:
-                annotation = self.annotate(request)
-                annotations.append(annotation)
-            except Exception as e:
-                logger.error(f"❌ Error annotating span {request.span_id}: {e}")
-                # Add error annotation
-                annotations.append(
-                    AutoAnnotation(
-                        span_id=request.span_id,
-                        label=AnnotationLabel.INSUFFICIENT_INFO,
-                        confidence=0.0,
-                        reasoning=f"Batch annotation error: {str(e)}",
-                        suggested_correct_agent=None,
-                        requires_human_review=True,
-                    )
-                )
+        if not requests:
+            return []
+
+        # Each annotate() is an independent, blocking LM round-trip with no
+        # shared mutable state, so they run through a bounded thread pool
+        # instead of serially. list() over the map preserves request order in
+        # the result and re-raises the first transport/outage failure — the
+        # batch fails loudly rather than returning a mix of real and fabricated
+        # annotations.
+        max_workers = min(8, len(requests))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            annotations = list(pool.map(self.annotate, requests))
 
         logger.info(
             f"✅ Completed batch annotation: {len(annotations)} annotations generated"
