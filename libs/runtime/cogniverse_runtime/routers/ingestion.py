@@ -34,6 +34,11 @@ router = APIRouter()
 MAX_UPLOAD_BYTES = 5 * 1024**3  # 5 GiB
 _UPLOAD_CHUNK = 8 * 1024 * 1024  # 8 MiB
 
+# Per-segment KG extraction fans GLiNER (pass 1) and the DSPy claim LLM (pass 2)
+# across segments. Bound the in-flight count so a long video's hundreds of
+# segments don't flood the sidecar / LM with unbounded concurrent requests.
+_KG_EXTRACT_CONCURRENCY = 8
+
 
 async def _read_capped(file: UploadFile, max_bytes: int) -> bytes:
     """Read an upload into memory, aborting with 413 once it exceeds
@@ -744,33 +749,74 @@ async def _extract_graph_per_segment_inner(
         if isinstance(processing_results.get("keyframes"), dict)
         else type(processing_results.get("keyframes")).__name__,
     )
-    for record in segments_list:
-        # GLiNER HTTP (up to 240s/call) + the DSPy claim LLM are blocking —
-        # run each segment's extraction in a worker thread so the loop (and
-        # the worker's SIGTERM handling / Redis claim) keeps breathing.
-        result = await asyncio.to_thread(
-            doc_ext.extract_from_text,
-            text=record.text,
-            tenant_id=tenant_id,
-            source_doc_id=source_doc_id,
-            segment_anchor=record.segment_anchor,
-            prior_entities=list(entity_pool),
-        )
-        accumulated_nodes.extend(result.nodes)
-        accumulated_edges.extend(result.edges)
-        for n in result.nodes:
+    # Two-pass extraction so the per-segment GLiNER + DSPy claim calls
+    # parallelise instead of running one segment at a time. Pass 1 (entities)
+    # has no cross-segment dependency; pass 2 (claims) needs the coreference
+    # prior pool, which is reconstructed from pass 1 in segment order — so the
+    # claim hints, and the extracted graph, are identical to the serial path.
+    sem = asyncio.Semaphore(_KG_EXTRACT_CONCURRENCY)
+
+    async def _entities(record):
+        # GLiNER HTTP (up to 240s/call) is blocking — run in a worker thread so
+        # the worker's SIGTERM handling / Redis claim keeps breathing.
+        async with sem:
+            return await asyncio.to_thread(
+                doc_ext.extract_entities_from_text,
+                text=record.text,
+                tenant_id=tenant_id,
+                source_doc_id=source_doc_id,
+                segment_anchor=record.segment_anchor,
+            )
+
+    segment_entities = await asyncio.gather(
+        *(_entities(record) for record in segments_list)
+    )
+
+    # Reconstruct each segment's prior-entity pool IN ORDER: segment N sees the
+    # deduped union of entity names from segments 0..N-1, exactly the serial
+    # entity_pool state when that segment was processed — so coreference (``She``
+    # → ``Marie Curie`` from an earlier segment) resolves identically.
+    priors: List[List[str]] = []
+    for ents in segment_entities:
+        priors.append(list(entity_pool))
+        for n in ents.nodes:
             if n.name.lower() not in entity_pool_seen:
                 entity_pool.append(n.name)
                 entity_pool_seen.add(n.name.lower())
+
+    async def _claims(record, ents, prior):
+        # The DSPy claim LLM call is blocking — same off-loop treatment.
+        async with sem:
+            return await asyncio.to_thread(
+                doc_ext.extract_claims_from_text,
+                text=record.text,
+                segment_entities=ents,
+                prior_entities=prior,
+                tenant_id=tenant_id,
+                source_doc_id=source_doc_id,
+                segment_anchor=record.segment_anchor,
+            )
+
+    segment_edges = await asyncio.gather(
+        *(
+            _claims(record, ents, prior)
+            for record, ents, prior in zip(segments_list, segment_entities, priors)
+        )
+    )
+
+    # Accumulate in segment order — identical ordering to the serial path.
+    for record, ents, edges in zip(segments_list, segment_entities, segment_edges):
+        accumulated_nodes.extend(ents.nodes)
+        accumulated_edges.extend(edges)
 
         bucket = backrefs_by_segment.setdefault(
             record.segment_anchor.segment_id,
             {"entity_ids": [], "relation_ids": [], "claim_ids": []},
         )
-        for node in result.nodes:
+        for node in ents.nodes:
             if node.node_id not in bucket["entity_ids"]:
                 bucket["entity_ids"].append(node.node_id)
-        for edge in result.edges:
+        for edge in edges:
             if edge.edge_id not in bucket["relation_ids"]:
                 bucket["relation_ids"].append(edge.edge_id)
             if edge.edge_id not in bucket["claim_ids"]:

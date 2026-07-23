@@ -129,16 +129,22 @@ async def test_kg_extraction_and_face_pipeline_offloaded(monkeypatch):
 
     monkeypatch.setattr(ingestion, "_write_backrefs_to_content", fake_backrefs)
 
-    extract_calls = []
+    entity_calls = []
+    claim_calls = []
 
     class StubDocExtractor:
         def __init__(self, **kwargs):
             pass
 
-        def extract_from_text(self, **kwargs):
-            extract_calls.append(kwargs["segment_anchor"].segment_id)
+        def extract_entities_from_text(self, **kwargs):
+            entity_calls.append(kwargs["segment_anchor"].segment_id)
             time.sleep(0.25)
-            return SimpleNamespace(nodes=[], edges=[])
+            return SimpleNamespace(nodes=[], per_chunk_entity_names=[])
+
+        def extract_claims_from_text(self, **kwargs):
+            claim_calls.append(kwargs["segment_anchor"].segment_id)
+            time.sleep(0.25)
+            return []
 
     class StubResult:
         def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
@@ -170,7 +176,10 @@ async def test_kg_extraction_and_face_pipeline_offloaded(monkeypatch):
         )
     )
 
-    assert extract_calls == ["s0", "s1"]
+    # Both passes ran for both segments; the two-pass fan-out completes them
+    # concurrently, so assert the set (call order is not deterministic).
+    assert set(entity_calls) == {"s0", "s1"}
+    assert set(claim_calls) == {"s0", "s1"}
     assert face_calls == ["doc1"]
     assert ticks >= 30, (
         f"event loop starved during KG extraction: only {ticks} ticks — "
