@@ -230,8 +230,9 @@ class VespaConnection:
     reuse app objects but never sockets. The pool hands a connection to
     one searcher at a time, so the client sees no concurrent use;
     ``health_check`` (which runs from the pool's background thread,
-    possibly while the connection is checked out) deliberately stays on
-    the per-call client path.
+    possibly while the connection is checked out) probes through that same
+    persistent fail-fast ``VespaSync`` session, so a hung Vespa cannot stall
+    the reaper's health sweep on pyvespa's minutes-long default timeout.
     """
 
     def __init__(self, url: str, connection_id: str):
@@ -531,10 +532,8 @@ class VespaSearchBackend(SearchBackend):
             )
         )
 
-        if enable_metrics:
-            self.metrics = SearchMetrics()
-        else:
-            self.metrics = None
+        self._enable_metrics = enable_metrics
+        self.metrics = SearchMetrics() if enable_metrics else None
 
         logger.info(
             f"VespaSearchBackend.__init__: schema_name='{schema_name}' (query-time mode), "
@@ -581,12 +580,14 @@ class VespaSearchBackend(SearchBackend):
             max_attempts=3, initial_delay=0.5, exceptions=(Exception,)
         )
 
-        # Initialize metrics
-        self.metrics = SearchMetrics()
+        # Honor the enable_metrics choice from __init__ — initialize() used to
+        # overwrite it with an unconditional SearchMetrics(), silently ignoring
+        # enable_metrics=False on the registry construct-then-initialize path.
+        self.metrics = SearchMetrics() if self._enable_metrics else None
 
         logger.info(
             f"VespaSearchBackend initialized for schema '{self.schema_name}' "
-            f"with pool=True, metrics=True, {len(self.profiles)} profiles "
+            f"with pool=True, metrics={self._enable_metrics}, {len(self.profiles)} profiles "
             f"(query-time mode)"
         )
 
