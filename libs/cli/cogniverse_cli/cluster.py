@@ -262,6 +262,42 @@ def create_cluster(
     subprocess.run(cmd, check=True, timeout=120)
 
 
+def stop_cluster(name: str = CLUSTER_NAME) -> None:
+    """Stop a k3d cluster's containers without deleting anything.
+
+    Frees the RAM/GPU its pods hold while volumes stay intact;
+    ``start_cluster`` resumes it. This is the supported way to pause one
+    cluster on a host that cannot run the dev and e2e stacks together.
+    """
+    subprocess.run(["k3d", "cluster", "stop", name], check=True, timeout=300)
+
+
+def start_cluster(name: str = CLUSTER_NAME) -> None:
+    """Start a previously stopped k3d cluster (volumes intact)."""
+    subprocess.run(["k3d", "cluster", "start", name], check=True, timeout=600)
+
+
+def list_cluster_states() -> list[dict]:
+    """Name and running-state of every k3d cluster on the host."""
+    import json
+
+    result = subprocess.run(
+        ["k3d", "cluster", "list", "-o", "json"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return [
+        {
+            "name": cluster.get("name", ""),
+            "servers_running": cluster.get("serversRunning", 0),
+            "servers_count": cluster.get("serversCount", 0),
+        }
+        for cluster in json.loads(result.stdout or "[]")
+    ]
+
+
 def delete_cluster(name: str = CLUSTER_NAME) -> None:
     """Delete a k3d cluster."""
     subprocess.run(

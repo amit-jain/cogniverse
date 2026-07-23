@@ -91,11 +91,19 @@ cogniverse up
 cogniverse up --llm external --llm-url http://my-llm:8000/v1
 cogniverse up --messaging  # also enable the Telegram gateway (needs TELEGRAM_BOT_TOKEN)
 
+# Pause / resume a cluster without losing data. Stopping frees the RAM/GPU
+# its pods hold — the supported way to switch between the dev cluster and
+# the self-booted e2e cluster on a host that cannot run both.
+cogniverse stop                        # stop the dev cluster
+cogniverse stop --name cogniverse-e2e  # stop the e2e cluster
+cogniverse start                       # resume dev (restores port-forwards)
+cogniverse start --name cogniverse-e2e
+
 # Tear down
 cogniverse down
 cogniverse down --keep-data  # keep PVCs, only remove workloads
 
-# Health of all services
+# Health of all services (also lists k3d clusters and their run state)
 cogniverse status
 
 # Tail logs for one service

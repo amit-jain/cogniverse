@@ -23,7 +23,7 @@ class TestCli:
         runner = CliRunner()
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
-        for cmd in ("up", "down", "status", "logs"):
+        for cmd in ("up", "down", "status", "logs", "stop", "start"):
             assert cmd in result.output
 
     def test_up_help(self) -> None:
@@ -463,3 +463,59 @@ class TestServiceConstants:
 
         expected_services = {"runtime", "dashboard", "vespa", "phoenix", "llm", "argo"}
         assert set(_SERVICE_KUBECTL_RESOURCE.keys()) == expected_services
+
+
+class TestStopStartCommands:
+    @patch("cogniverse_cli.main.stop_cluster")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    def test_stop_targets_named_cluster(
+        self, mock_exists: MagicMock, mock_stop: MagicMock
+    ) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["stop", "--name", "cogniverse-e2e"])
+
+        assert result.exit_code == 0
+        mock_stop.assert_called_once_with("cogniverse-e2e")
+
+    @patch("cogniverse_cli.main.stop_cluster")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=False)
+    def test_stop_unknown_cluster_fails(
+        self, mock_exists: MagicMock, mock_stop: MagicMock
+    ) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["stop", "--name", "nope"])
+
+        assert result.exit_code != 0
+        mock_stop.assert_not_called()
+
+    @patch("cogniverse_cli.main.start_port_forwards")
+    @patch("cogniverse_cli.main.start_cluster")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    def test_start_dev_cluster_restores_port_forwards(
+        self,
+        mock_exists: MagicMock,
+        mock_start: MagicMock,
+        mock_forwards: MagicMock,
+    ) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["start"])
+
+        assert result.exit_code == 0
+        mock_start.assert_called_once_with("cogniverse")
+        mock_forwards.assert_called_once()
+
+    @patch("cogniverse_cli.main.start_port_forwards")
+    @patch("cogniverse_cli.main.start_cluster")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    def test_start_e2e_cluster_skips_port_forwards(
+        self,
+        mock_exists: MagicMock,
+        mock_start: MagicMock,
+        mock_forwards: MagicMock,
+    ) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["start", "--name", "cogniverse-e2e"])
+
+        assert result.exit_code == 0
+        mock_start.assert_called_once_with("cogniverse-e2e")
+        mock_forwards.assert_not_called()

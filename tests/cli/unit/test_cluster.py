@@ -189,3 +189,48 @@ class TestHasExistingK8s:
         )
 
         assert has_existing_k8s() is False
+
+
+class TestStopStartCluster:
+    """stop/start wrap k3d so cluster pause/resume is a first-class CLI
+    operation instead of a raw k3d invocation."""
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_stop_cluster_invokes_k3d_stop(self, mock_run: object) -> None:
+        from cogniverse_cli.cluster import stop_cluster
+
+        stop_cluster("cogniverse-e2e")
+
+        args = mock_run.call_args
+        assert args.args[0] == ["k3d", "cluster", "stop", "cogniverse-e2e"]
+        assert args.kwargs["check"] is True
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_start_cluster_invokes_k3d_start(self, mock_run: object) -> None:
+        from cogniverse_cli.cluster import start_cluster
+
+        start_cluster()
+
+        args = mock_run.call_args
+        assert args.args[0] == ["k3d", "cluster", "start", "cogniverse"]
+        assert args.kwargs["check"] is True
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_list_cluster_states_parses_running_counts(self, mock_run: object) -> None:
+        from cogniverse_cli.cluster import list_cluster_states
+
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                '[{"name": "cogniverse", "serversRunning": 0, "serversCount": 1},'
+                ' {"name": "cogniverse-e2e", "serversRunning": 1, "serversCount": 1}]'
+            ),
+        )
+
+        states = list_cluster_states()
+
+        assert states == [
+            {"name": "cogniverse", "servers_running": 0, "servers_count": 1},
+            {"name": "cogniverse-e2e", "servers_running": 1, "servers_count": 1},
+        ]
