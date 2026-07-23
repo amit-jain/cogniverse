@@ -1176,12 +1176,18 @@ class RemoteGlinerClient:
             )
             resp.raise_for_status()
             data = resp.json()
-            return list(data.get("entities", []) or [])
         except Exception as exc:
+            # A sidecar outage (down / 5xx / timeout / connection reset) is NOT
+            # a genuine "no entities" result — swallowing it to [] made the
+            # gateway's entity_extraction_failed degrade branch unreachable on
+            # the remote path, so an outage read as a low-confidence route. Raise
+            # so the caller can flag the routing decision as sidecar-degraded; a
+            # real HTTP-200 with an empty entity list still returns [].
             self._logger.error(
                 "Remote GLiNER prediction failed (url=%s): %s", self._url, exc
             )
-            return []
+            raise
+        return list(data.get("entities", []) or [])
 
 
 def get_or_load_gliner(
