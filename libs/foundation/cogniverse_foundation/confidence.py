@@ -52,6 +52,14 @@ def parse_confidence(raw: object, default: float = 0.0) -> float:
     """Map an LM confidence output to a clamped float in ``[0.0, 1.0]``."""
     if raw is None:
         return default
+    # numpy scalars (np.bool_, np.float64, np.int64) read out of a pandas row
+    # are not Python bool/int/float subclasses; unwrap them so the checks
+    # below apply (np.bool_(True) otherwise str()'d to "True" -> default 0.0).
+    if not isinstance(raw, (str, bytes, bool)) and hasattr(raw, "item"):
+        try:
+            raw = raw.item()
+        except (ValueError, TypeError):
+            pass
     if isinstance(raw, bool):
         return 1.0 if raw else 0.0
     if isinstance(raw, (int, float)):

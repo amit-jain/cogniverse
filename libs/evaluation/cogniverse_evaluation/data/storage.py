@@ -286,7 +286,10 @@ class TelemetryStorage:
 
             base_exporter = OTLPSpanExporter(
                 endpoint=self.config.otlp_endpoint,
-                timeout=self.config.export_timeout_millis,
+                # OTLPSpanExporter.timeout is SECONDS; export_timeout_millis is
+                # millis, so pass it converted (the BatchSpanProcessor below
+                # correctly takes the millis value).
+                timeout=self.config.export_timeout_millis / 1000.0,
                 headers={"content-type": "application/json"},
             )
 

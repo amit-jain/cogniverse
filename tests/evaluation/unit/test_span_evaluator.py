@@ -414,24 +414,19 @@ class TestUploadEvaluations:
         await evaluator.upload_evaluations({"relevance": pd.DataFrame()})
         mock_annotations.add_annotation.assert_not_called()
 
+
+class TestUploadEvaluationsFaultContract:
     @pytest.mark.asyncio
-    async def test_upload_error_logged_not_raised(self, evaluator):
-        """Upload failure must not crash the pipeline. The fault is injected on
-        log_evaluations — the call upload_evaluations actually makes."""
+    async def test_upload_failure_raises_not_swallowed(self, evaluator):
+        """An annotation-store outage during upload must surface — swallowing
+        it made run_evaluation_pipeline return a success-shaped summary while
+        the evaluations were silently lost."""
         evaluator.provider.telemetry.annotations = MagicMock()
         evaluator.provider.telemetry.annotations.log_evaluations = AsyncMock(
-            side_effect=Exception("annotation api down")
+            side_effect=ConnectionError("annotation store down")
         )
-
         eval_df = pd.DataFrame(
-            [
-                {
-                    "span_id": "s1",
-                    "score": 0.5,
-                    "label": "relevant",
-                    "explanation": "ok",
-                },
-            ]
+            [{"span_id": "s1", "score": 0.5, "label": "relevant", "explanation": "ok"}]
         )
-        # Should not raise
-        await evaluator.upload_evaluations({"relevance": eval_df})
+        with pytest.raises(ConnectionError, match="annotation store down"):
+            await evaluator.upload_evaluations({"relevance": eval_df})

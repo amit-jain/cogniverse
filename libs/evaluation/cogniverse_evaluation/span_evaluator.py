@@ -440,7 +440,11 @@ class SpanEvaluator:
                 logger.info(f"Uploaded {len(eval_df)} evaluations for {eval_name}")
 
             except Exception as e:
+                # Raise, don't swallow: a swallowed outage let the pipeline
+                # return a success-shaped summary while the evaluations were
+                # silently lost.
                 logger.error(f"Failed to upload evaluations for {eval_name}: {e}")
+                raise
 
     async def run_evaluation_pipeline(
         self,
