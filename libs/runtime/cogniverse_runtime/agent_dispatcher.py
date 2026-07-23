@@ -1296,11 +1296,20 @@ class AgentDispatcher:
                 input_kwargs[key] = context[key]
 
         typed_input = input_cls(**input_kwargs)
+        # Bind the tenant-routed LM for the whole call so a direct dispatch of
+        # entity_extraction / query_enhancement / any generic agent honors the
+        # tenant's SEMANTIC_ROUTER tier instead of the process-global default —
+        # the same routing the orchestrated path and the answer agents apply.
+        from cogniverse_foundation.config.semantic_router import (
+            routed_lm_context_for,
+        )
+
         # EPHEMERAL_SESSION writes need metadata.session_id to pass schema
         # validation; mixin auto-stamps it from this field. Cleared on exit
         # so the next request on the same agent instance doesn't inherit it.
         with self._scoped_session(agent, context.get("session_id")):
-            result = await agent.process(typed_input)
+            with routed_lm_context_for(self._config_manager, tenant_id, agent_name):
+                result = await agent.process(typed_input)
 
         # Convert pydantic model to dict
         if hasattr(result, "model_dump"):
@@ -1584,7 +1593,15 @@ class AgentDispatcher:
             profiles=enrichment.get("profiles"),
         )
 
-        output = await search_agent._process_impl(input_data)
+        # Bind the tenant-routed LM so the SearchAgent's DSPy query enhancement
+        # honors the tenant's SEMANTIC_ROUTER tier on this direct-dispatch path,
+        # not the process-global default.
+        from cogniverse_foundation.config.semantic_router import (
+            routed_lm_context_for,
+        )
+
+        with routed_lm_context_for(self._config_manager, tenant_id, "search_agent"):
+            output = await search_agent._process_impl(input_data)
 
         result_list = output.results
         result_count = len(result_list)
