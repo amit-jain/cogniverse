@@ -8,6 +8,9 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.telemetry.config import TelemetryConfig
+
 from .storage import TelemetryStorage
 
 logger = logging.getLogger(__name__)
@@ -16,15 +19,23 @@ logger = logging.getLogger(__name__)
 class TraceManager:
     """
     Manages trace fetching and processing for batch evaluation.
+
+    Tenant-scoped: reads resolve the tenant's canonical span project
+    (``cogniverse-{org:tenant}``) — the project production agents actually
+    write to — instead of the historical ``cogniverse-default`` that no
+    writer emits to (an always-empty read).
     """
 
-    def __init__(self, storage: Optional[TelemetryStorage] = None):
+    def __init__(self, tenant_id: str, storage: Optional[TelemetryStorage] = None):
         """
         Initialize trace manager.
 
         Args:
-            storage: Phoenix storage instance
+            tenant_id: Tenant whose span project to read.
+            storage: Phoenix storage instance.
         """
+        self.tenant_id = canonical_tenant_id(tenant_id)
+        self.project_name = TelemetryConfig().get_project_name(self.tenant_id)
         self.storage = storage or TelemetryStorage()
 
     def get_recent_traces(self, hours_back: int = 1, limit: int = 100) -> pd.DataFrame:
@@ -42,7 +53,9 @@ class TraceManager:
 
         logger.info(f"Fetching traces from last {hours_back} hours")
 
-        df = self.storage.get_traces_for_evaluation(start_time=start_time, limit=limit)
+        df = self.storage.get_traces_for_evaluation(
+            start_time=start_time, limit=limit, project=self.project_name
+        )
 
         logger.info(f"Retrieved {len(df)} traces")
         return df
@@ -64,7 +77,9 @@ class TraceManager:
         all_traces = []
 
         for trace_id in trace_ids:
-            df = self.storage.get_traces_for_evaluation(trace_ids=[trace_id], limit=1)
+            df = self.storage.get_traces_for_evaluation(
+                trace_ids=[trace_id], limit=1, project=self.project_name
+            )
             if not df.empty:
                 all_traces.append(df)
 
@@ -135,7 +150,9 @@ class TraceManager:
         """
         start_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
 
-        df = self.storage.get_traces_for_evaluation(start_time=start_time, limit=1000)
+        df = self.storage.get_traces_for_evaluation(
+            start_time=start_time, limit=1000, project=self.project_name
+        )
 
         # Filter client-side on the flattened frame columns — the storage
         # layer takes no filter expression (values are matched literally, so

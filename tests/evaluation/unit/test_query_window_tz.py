@@ -25,7 +25,15 @@ def manager() -> TraceManager:
     import pandas as pd
 
     mock_storage.get_traces_for_evaluation = MagicMock(return_value=pd.DataFrame())
-    return TraceManager(storage=mock_storage)
+    return TraceManager(tenant_id="acme:acme", storage=mock_storage)
+
+
+def test_reads_scope_to_tenant_project(manager: TraceManager) -> None:
+    """Reads target the tenant's canonical span project, never the
+    no-writer cogniverse-default."""
+    manager.get_recent_traces(hours_back=1, limit=5)
+    call = manager.storage.get_traces_for_evaluation.call_args.kwargs
+    assert call["project"] == "cogniverse-acme:acme"
 
 
 def test_recent_traces_window_is_utc_aware(manager: TraceManager) -> None:
