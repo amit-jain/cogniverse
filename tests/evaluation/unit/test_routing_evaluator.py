@@ -16,6 +16,8 @@ from cogniverse_evaluation.evaluators.routing_evaluator import (
     RoutingOutcome,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def mock_provider():
@@ -25,7 +27,6 @@ def mock_provider():
     return provider
 
 
-@pytest.mark.unit
 class TestRoutingEvaluator:
     """Test RoutingEvaluator initialization and basic functionality"""
 
@@ -42,7 +43,6 @@ class TestRoutingEvaluator:
         assert evaluator.provider is custom_provider
 
 
-@pytest.mark.unit
 class TestRoutingDecisionEvaluation:
     """Test evaluation of individual routing decisions"""
 
@@ -141,7 +141,6 @@ class TestRoutingDecisionEvaluation:
             evaluator.evaluate_routing_decision(span_data)
 
 
-@pytest.mark.unit
 class TestMetricsCalculation:
     """Test calculation of aggregated routing metrics"""
 
@@ -252,7 +251,6 @@ class TestMetricsCalculation:
             evaluator.calculate_metrics(invalid_spans)
 
 
-@pytest.mark.unit
 class TestConfidenceCalibration:
     """Test confidence calibration metric calculation"""
 
@@ -292,7 +290,6 @@ class TestConfidenceCalibration:
         assert metrics.confidence_calibration > 0.5
 
 
-@pytest.mark.unit
 class TestPerAgentMetrics:
     """Test per-agent precision/recall/F1 calculation"""
 
@@ -360,7 +357,6 @@ class TestPerAgentMetrics:
         assert metrics.per_agent_precision["text_search"] == 1.0
 
 
-@pytest.mark.unit
 class TestProviderQuery:
     """Test telemetry provider span querying functionality"""
 
@@ -444,7 +440,6 @@ class TestProviderQuery:
             await evaluator.query_routing_spans()
 
 
-@pytest.mark.unit
 class TestQueryRoutingSpansAwaited:
     """query_routing_spans is async; the optimization dashboard tab must await
     it (via run_async_in_streamlit) before passing the result to

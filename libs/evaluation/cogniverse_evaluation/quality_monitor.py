@@ -994,8 +994,11 @@ class QualityMonitor:
                     verdicts[agent_type] = Verdict.OPTIMIZE
 
         except Exception as e:
-            logger.debug(
-                f"XGBoost training decision failed (using naive verdicts): {e}"
+            # WARNING, not DEBUG: this fallback silently disables the
+            # meta-model gate (e.g. an ImportError of cogniverse_agents leaves
+            # it dead on arrival), and it is invisible at the default level.
+            logger.warning(
+                f"XGBoost training decision unavailable, using naive verdicts: {e}"
             )
 
         return verdicts
@@ -1036,6 +1039,9 @@ class QualityMonitor:
             return ModelingContext(
                 modality=modality_map.get(agent_type, QueryModality.MIXED),
                 real_sample_count=sample_count,
+                # No synthetic corpus or per-agent training-recency signal is
+                # tracked here yet, so these two inputs are placeholders — the
+                # meta-model's staleness feature is not yet driven by real data.
                 synthetic_sample_count=0,
                 success_rate=score,
                 avg_confidence=score,
@@ -1043,7 +1049,7 @@ class QualityMonitor:
                 current_performance_score=score,
             )
         except Exception as e:
-            logger.debug(f"Failed to build ModelingContext: {e}")
+            logger.warning(f"Failed to build ModelingContext: {e}")
             return None
 
     @staticmethod

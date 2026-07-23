@@ -7,6 +7,8 @@ import pytest
 
 from cogniverse_evaluation.span_evaluator import SpanEvaluator
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def provider():
@@ -26,7 +28,6 @@ def evaluator(provider):
     )
 
 
-@pytest.mark.unit
 class TestSpanEvaluator:
     # `_create_mock_spans_df()` is a sample-data builder used by the
     # evaluate_spans tests below. It is NOT used on the live path: production
@@ -42,7 +43,6 @@ class TestSpanEvaluator:
         assert len(evaluator.reference_free_evaluators) > 0
 
 
-@pytest.mark.unit
 class TestGetRecentSpans:
     @pytest.mark.asyncio
     async def test_returns_empty_when_provider_returns_none(self, evaluator):
@@ -207,7 +207,6 @@ class TestGetRecentSpans:
         assert len(df) == 0
 
 
-@pytest.mark.unit
 class TestEvaluateSpans:
     @pytest.mark.asyncio
     async def test_runs_all_evaluators_by_default(self, evaluator):
@@ -276,7 +275,6 @@ class TestEvaluateSpans:
             assert -1.0 <= score <= 1.0
 
 
-@pytest.mark.unit
 class TestRunEvaluationPipeline:
     @pytest.mark.asyncio
     async def test_returns_error_when_no_spans(self, evaluator):
@@ -368,7 +366,6 @@ class TestRunEvaluationPipeline:
             mock_upload.assert_not_called()
 
 
-@pytest.mark.unit
 class TestUploadEvaluations:
     @pytest.mark.asyncio
     async def test_upload_calls_annotation_api(self, evaluator):

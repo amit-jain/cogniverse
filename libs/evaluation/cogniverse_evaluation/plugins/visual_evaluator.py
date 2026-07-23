@@ -5,7 +5,7 @@ This plugin provides visual judge and quality evaluators for video search result
 """
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from inspect_ai.scorer import Score, scorer
 
@@ -17,12 +17,21 @@ class VisualEvaluatorPlugin:
 
     @staticmethod
     @scorer(metrics=[])
-    def create_visual_judge_scorer(evaluator_name: str = "visual_judge"):
+    def create_visual_judge_scorer(
+        evaluator_name: str = "visual_judge",
+        tenant_id: Optional[str] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ):
         """
         Create a visual judge scorer for video evaluation.
 
         Args:
             evaluator_name: Name of the visual evaluator configuration
+            tenant_id: Tenant whose evaluator/media config to use (defaults to
+                the system tenant); threaded from the experiment config.
+            model: Optional model override (the experiment's --llm-model).
+            base_url: Optional base-URL override.
 
         Returns:
             Scorer function for Inspect AI
@@ -40,9 +49,10 @@ class VisualEvaluatorPlugin:
                 get_config,
             )
 
+            resolved_tenant = tenant_id or SYSTEM_TENANT_ID
             config_manager = create_default_config_manager()
             config = get_config(
-                tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+                tenant_id=resolved_tenant, config_manager=config_manager
             )
             evaluator_config = config.get("evaluators", {}).get(evaluator_name, {})
 
@@ -56,9 +66,13 @@ class VisualEvaluatorPlugin:
             media_config = (
                 MediaConfig.from_dict(media_section) if media_section else MediaConfig()
             )
-            locator = MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=media_config)
+            locator = MediaLocator(tenant_id=resolved_tenant, config=media_config)
             visual_judge = ConfigurableVisualJudge(
-                locator=locator, evaluator_name=evaluator_name
+                locator=locator,
+                evaluator_name=evaluator_name,
+                tenant_id=resolved_tenant,
+                model=model,
+                base_url=base_url,
             )
 
             query = (
@@ -203,7 +217,14 @@ def get_visual_scorers(config: dict[str, Any]) -> list:
 
     if config.get("enable_llm_evaluators", False):
         evaluator_name = config.get("evaluator_name", "visual_judge")
-        scorers.append(VisualEvaluatorPlugin.create_visual_judge_scorer(evaluator_name))
+        scorers.append(
+            VisualEvaluatorPlugin.create_visual_judge_scorer(
+                evaluator_name,
+                tenant_id=config.get("tenant_id"),
+                model=config.get("llm_model"),
+                base_url=config.get("llm_base_url"),
+            )
+        )
 
     if config.get("enable_quality_evaluators", False):
         scorers.append(VisualEvaluatorPlugin.create_quality_scorer())

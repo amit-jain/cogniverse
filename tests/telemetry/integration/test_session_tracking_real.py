@@ -7,6 +7,8 @@ fixture replaces the old hardcoded localhost endpoints and the
 "server not running" skip.
 """
 
+import uuid
+
 import pytest
 
 from cogniverse_foundation.telemetry.config import (
@@ -51,13 +53,22 @@ def phoenix_config(phoenix_container, reset_telemetry_manager):
 
 
 class TestSessionTrackingWithPhoenix:
-    def test_session_span_creates_traces_with_session_id(self, phoenix_config):
-        """session_span creates real (non-NoOp) spans carrying session.id."""
+    def test_session_span_creates_traces_with_session_id(
+        self, phoenix_config, phoenix_container
+    ):
+        """session_span spans actually LAND in Phoenix carrying session.id —
+        asserted by reading them back, not just by not-NoOp at emit time (a
+        total export failure would pass a client-side-only check)."""
+        import time
+
+        from phoenix.client import Client
+
         manager = TelemetryManager(phoenix_config)
-        session_id = "integration-test-session"
+        session_id = f"integration-session-{uuid.uuid4().hex[:8]}"
+        op_name = f"integration_op_{uuid.uuid4().hex[:8]}"
 
         with manager.session_span(
-            name="integration_test_operation",
+            name=op_name,
             tenant_id="test-tenant",
             session_id=session_id,
             attributes={"test": "session_tracking"},
@@ -74,7 +85,34 @@ class TestSessionTrackingWithPhoenix:
             ) as nested:
                 assert not isinstance(nested, NoOpSpan)
 
-        manager.force_flush(timeout_millis=5000)
+        manager.force_flush(timeout_millis=10000)
+
+        project = phoenix_config.get_project_name("test-tenant")
+        client = Client(base_url=phoenix_container["http_endpoint"])
+        deadline = time.monotonic() + 60
+        matched = None
+        while time.monotonic() < deadline:
+            df = client.spans.get_spans_dataframe(
+                project_identifier=project, timeout=30
+            )
+            if df is not None and not df.empty and "name" in df.columns:
+                hits = df[df["name"] == op_name]
+                if not hits.empty:
+                    matched = hits
+                    break
+            time.sleep(2)
+
+        assert matched is not None, (
+            f"span {op_name!r} never landed in Phoenix project {project}"
+        )
+        # session.id is stamped by OpenInference onto the flattened frame.
+        session_col = next(
+            (c for c in matched.columns if c.endswith("session.id")), None
+        )
+        assert session_col is not None, (
+            f"no session.id column in {list(matched.columns)}"
+        )
+        assert matched.iloc[0][session_col] == session_id
 
     def test_multiple_requests_grouped_by_session(self, phoenix_config):
         """Multiple session_span requests with the same session_id each

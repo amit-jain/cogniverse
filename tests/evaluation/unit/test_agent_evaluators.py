@@ -442,7 +442,7 @@ class TestQualityMonitorDispatchesThroughRegistry:
         )
 
         result = await monitor._evaluate_agent_spans(
-            AgentType.QUERY_ENHANCEMENT, spans_df
+            AgentType.QUERY_ENHANCEMENT, spans_df, None
         )
 
         assert result.sample_count == 1
@@ -476,7 +476,7 @@ class TestQualityMonitorDispatchesThroughRegistry:
             ]
         )
 
-        await monitor._evaluate_agent_spans(AgentType.SEARCH, spans_df)
+        await monitor._evaluate_agent_spans(AgentType.SEARCH, spans_df, None)
 
         assert captured["prompt"] == build_search_judge_prompt(
             "cats", [{"video_id": "v1", "score": 0.9}]

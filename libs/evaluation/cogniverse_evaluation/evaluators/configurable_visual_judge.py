@@ -2,7 +2,7 @@
 
 import base64
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import requests
 
@@ -30,6 +30,9 @@ class ConfigurableVisualJudge(Evaluator):
         self,
         locator: MediaLocator,
         evaluator_name: str = "visual_judge",
+        tenant_id: str = SYSTEM_TENANT_ID,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
     ):
         """
         Initialize visual judge from config.
@@ -39,23 +42,28 @@ class ConfigurableVisualJudge(Evaluator):
                 evaluated result. Required — callers must construct it from
                 the tenant's media config.
             evaluator_name: Name of evaluator config to use.
+            tenant_id: Tenant whose evaluator config to read (defaults to the
+                system tenant).
+            model: Optional model override (e.g. the experiment's --llm-model);
+                takes precedence over the config's model.
+            base_url: Optional base-URL override; takes precedence over config.
         """
         from cogniverse_foundation.config.utils import create_default_config_manager
 
         config_manager = create_default_config_manager()
-        config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+        config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         self.evaluator_name = evaluator_name
 
         evaluator_config = config.get("evaluators", {}).get(evaluator_name, {})
         if not evaluator_config:
             raise ValueError(
                 f"Evaluator '{evaluator_name}' is not configured. Add it to "
-                "the system-tenant 'evaluators' config section."
+                f"the '{tenant_id}' 'evaluators' config section."
             )
 
         self.provider = evaluator_config.get("provider", "openai")
-        self.model = evaluator_config["model"]
-        self.base_url = evaluator_config["base_url"]
+        self.model = model or evaluator_config["model"]
+        self.base_url = base_url or evaluator_config["base_url"]
         self.api_key = evaluator_config.get("api_key")
 
         self.locator = locator
