@@ -18,6 +18,10 @@ from inspect_ai import eval as inspect_eval
 from cogniverse_evaluation.cli import cli
 from cogniverse_evaluation.core.task import evaluation_task
 
+# No ci_fast: these drive a real ColPali embedding model, which is
+# remote-only (vLLM sidecar via inference_service_url) — not available in CI.
+pytestmark = [pytest.mark.integration]
+
 
 @pytest.mark.integration
 class TestEndToEnd:

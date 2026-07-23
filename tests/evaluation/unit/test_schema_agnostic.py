@@ -14,6 +14,8 @@ from cogniverse_evaluation.plugins.document_analyzer import (
 )
 from cogniverse_evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
 
+pytestmark = pytest.mark.unit
+
 
 class TestSchemaAgnosticEvaluation:
     """Test evaluation works with different schemas."""

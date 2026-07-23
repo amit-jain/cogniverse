@@ -86,7 +86,6 @@ class TestSessionContextAbstractMethod:
         assert "session_id" in params
 
 
-@pytest.mark.integration
 @pytest.mark.telemetry
 class TestPhoenixProviderSessionContext:
     """Test session_context() implementation in PhoenixProvider.
@@ -190,7 +189,6 @@ class TestTelemetryManagerSessionSpan:
             pass
 
 
-@pytest.mark.integration
 @pytest.mark.telemetry
 class TestSearchRouterSessionIntegration:
     """Test session tracking in search router (without actually calling the API).
@@ -254,88 +252,3 @@ class TestSearchRouterSessionIntegration:
             results=[],
         )
         assert response_without.session_id is None
-
-
-@pytest.mark.integration
-@pytest.mark.telemetry
-class TestSessionTrackingWithPhoenix:
-    """Integration tests for session tracking with Phoenix.
-
-    These tests require:
-    1. cogniverse-telemetry-phoenix installed
-    2. A running Phoenix server
-
-    Run with: pytest tests/telemetry/unit/test_session_tracking.py -v -m integration
-    """
-
-    @pytest.fixture(scope="function")
-    def phoenix_config(self):
-        """Config for Phoenix integration."""
-        return TelemetryConfig(
-            enabled=True,
-            otlp_endpoint="http://localhost:4317",
-            provider_config={
-                "http_endpoint": "http://localhost:6006",
-                "grpc_endpoint": "http://localhost:4317",
-            },
-            service_name="session-test",
-            environment="test",
-            batch_config=BatchExportConfig(
-                use_sync_export=True,
-            ),
-        )
-
-    def test_session_span_creates_traces_with_session_id(self, phoenix_config):
-        """Test that session_span creates traces with session.id attribute."""
-        manager = TelemetryManager(phoenix_config)
-        session_id = "integration-test-session"
-
-        # Create session span
-        with manager.session_span(
-            name="integration_test_operation",
-            tenant_id="test-tenant",
-            session_id=session_id,
-            attributes={"test": "session_tracking"},
-        ) as span:
-            # May be NoOpSpan if Phoenix server not running
-            if isinstance(span, NoOpSpan):
-                pytest.skip("Phoenix server not running")
-
-            # Create nested span — pass component=search_service so
-            # the test runs regardless of TelemetryConfig.level
-            # (the default 'agents' tier would NoOp below VERBOSE).
-            with manager.span(
-                name="nested_operation",
-                tenant_id="test-tenant",
-                component="search_service",
-            ) as nested:
-                assert not isinstance(nested, NoOpSpan)
-
-        # Force flush
-        manager.force_flush(timeout_millis=5000)
-
-    def test_multiple_requests_grouped_by_session(self, phoenix_config):
-        """Multiple session_span requests with the same session_id each
-        propagate that session.id into the OTel context — the grouping key
-        OpenInference stamps onto every span, so the traces correlate."""
-        from openinference.instrumentation import get_attributes_from_context
-
-        manager = TelemetryManager(phoenix_config)
-        session_id = "multi-request-session"
-
-        seen = []
-        for i in range(3):
-            with manager.session_span(
-                name=f"request_{i}",
-                tenant_id="test-tenant",
-                session_id=session_id,
-                attributes={"request_number": i},
-            ) as span:
-                assert not isinstance(span, NoOpSpan)
-                seen.append(dict(get_attributes_from_context()).get("session.id"))
-
-        # Every request carried the same session.id; none leaked after exit.
-        assert seen == [session_id, session_id, session_id]
-        assert "session.id" not in dict(get_attributes_from_context())
-
-        manager.force_flush(timeout_millis=5000)

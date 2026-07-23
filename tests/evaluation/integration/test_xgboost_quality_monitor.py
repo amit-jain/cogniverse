@@ -21,6 +21,8 @@ from cogniverse_evaluation.quality_monitor import (
 )
 from tests.utils.llm_config import get_llm_model
 
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
+
 logger = logging.getLogger(__name__)
 
 

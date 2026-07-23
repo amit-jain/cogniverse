@@ -447,7 +447,12 @@ class DatasetStore(ABC):
 
     @abstractmethod
     async def get_dataset(self, name: str) -> pd.DataFrame:
-        """Load dataset by name."""
+        """Load dataset by name.
+
+        Raises DatasetNotFoundError (a ValueError subclass) if no dataset by
+        that name exists; a backend outage raises the underlying transport
+        error instead of returning an empty/no-data result.
+        """
         pass
 
     @abstractmethod
@@ -460,8 +465,8 @@ class DatasetStore(ABC):
         """Append records to an existing dataset as a new version.
 
         ``metadata`` carries input_keys/output_keys/metadata_keys (same
-        shape as ``create_dataset``). Raises ValueError if the dataset
-        does not exist.
+        shape as ``create_dataset``). Raises DatasetNotFoundError if the
+        dataset does not exist.
         """
         pass
 
@@ -473,6 +478,10 @@ class DatasetStore(ABC):
         """
         raise NotImplementedError
 ```
+
+`DatasetNotFoundError` (`cogniverse_foundation.telemetry.providers.base`) subclasses
+`ValueError` so existing `except ValueError` callers keep working, while letting
+callers distinguish a genuinely missing dataset from a backend outage.
 
 The telemetry provider exposes only these three stores. Experiment tracking lives on the separate `EvaluationProvider` stack (`PhoenixEvaluationProvider.create_experiment`), and metric aggregation via `PhoenixAnalytics` — not on the telemetry provider.
 
@@ -2081,8 +2090,8 @@ def test_telemetry_throughput():
 - `test_session_tracking.py` — `session_context()` on `TelemetryProvider`/`PhoenixProvider`, `session_span()`, and session ID propagation to nested spans
 - `test_provider_project_cache.py` — `TelemetryRegistry` caches providers per (tenant, project), not just tenant
 - `test_span_export_config.py` — `BatchExportConfig` knobs and resource attributes actually reach the live `TracerProvider`/exporter, not just round-trip through serialization
-- `test_analytics_timestamp_tz.py` — `PhoenixAnalytics.get_traces` produces timezone-aware timestamps
-- `test_phoenix_circuit_breaker.py` — a down Phoenix trips the shared circuit breaker: `PhoenixAnalytics.get_traces` degrades to `[]` and `PhoenixTraceStore.get_spans` raises `CircuitOpenError` once open, both without repeatedly dialing a dead Phoenix
+- `test_analytics_timestamp_tz.py` — `PhoenixAnalytics.get_traces` produces timezone-aware timestamps (including UTC-normalizing naive `start_time`/`end_time` values)
+- `test_phoenix_circuit_breaker.py` — a down Phoenix trips the shared circuit breaker: `PhoenixAnalytics.get_traces` and `PhoenixTraceStore.get_spans` both RAISE (the transport error while the breaker is closed, `CircuitOpenError` once it trips open) rather than degrading to `[]` — an empty list would read as "no traces in range", indistinguishable from genuine empty data — both without repeatedly dialing a dead Phoenix
 
 **Integration Tests:**
 
@@ -2094,6 +2103,7 @@ def test_telemetry_throughput():
   - Graceful degradation
 - `tests/telemetry/integration/test_analytics_root_spans_real_phoenix.py` — `PhoenixAnalytics.get_traces` passes `root_spans_only=True` server-side so `limit` bounds traces (root spans), not raw spans; a trace's root would otherwise be crowded out of a small `limit` slice by its own newer children
 - `tests/telemetry/integration/test_dataset_store_event_loop.py` — `PhoenixDatasetStore.create_dataset`/`get_dataset`/`append_to_dataset` run their synchronous Phoenix HTTP calls via `asyncio.to_thread`, off the event-loop thread
+- `tests/telemetry/integration/test_session_tracking_real.py` — `session_span()` against a real managed Phoenix container: real (non-`NoOpSpan`) spans carry `session.id`, and multiple requests sharing a `session_id` each propagate it into OTel context without leaking across requests
 
 **Test Scenarios:**
 

@@ -42,6 +42,9 @@ GATED_DIRS = {
     "messaging/integration": "integration",
     "messaging/unit": "unit",
     "backends/integration": "integration",
+    "evaluation/unit": "unit",
+    "evaluation/integration": "integration",
+    "telemetry/integration": "integration",
 }
 
 

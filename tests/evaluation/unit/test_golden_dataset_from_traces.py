@@ -25,6 +25,8 @@ from create_golden_dataset_from_traces import (  # noqa: E402
     _span_query,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _generator(min_occurrences=1):
     gen = object.__new__(GoldenDatasetGenerator)

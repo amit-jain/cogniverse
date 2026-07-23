@@ -16,6 +16,8 @@ import pytest
 
 from cogniverse_evaluation.data.traces import TraceManager
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def manager() -> TraceManager:

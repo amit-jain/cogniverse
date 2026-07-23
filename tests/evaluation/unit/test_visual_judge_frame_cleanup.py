@@ -11,9 +11,13 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from cogniverse_evaluation.evaluators.configurable_visual_judge import (
     ConfigurableVisualJudge,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def _judge():

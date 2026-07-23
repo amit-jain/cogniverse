@@ -335,7 +335,7 @@ Backend-agnostic contract for querying telemetry data. Core has zero knowledge o
 - **`TelemetryProvider`** (ABC) — exposes exactly three store properties, `.traces`, `.annotations`, `.datasets`, plus `initialize(config)`, `configure_span_export(...)`, and `session_context(session_id)`
 - **`TraceStore`** (ABC) — `get_spans(project, start_time=None, end_time=None, filters=None, limit=1000)`, `get_span_by_id(span_id, project)`
 - **`AnnotationStore`** (ABC) — `add_annotation(...)`, `get_annotations(...)`, `log_evaluations(eval_name, evaluations_df, project)`
-- **`DatasetStore`** (ABC) — `create_dataset(...)`, `get_dataset(name)`, `append_to_dataset(...)`
+- **`DatasetStore`** (ABC) — `create_dataset(...)`, `get_dataset(name)` (raises `DatasetNotFoundError` if missing), `append_to_dataset(...)` (raises `DatasetNotFoundError` if missing), `delete_dataset(name)` (not abstract; default raises `NotImplementedError`), `replace_dataset(...)` (delete-then-create, default concrete method)
 - **`TelemetryRegistry`** — `EntryPointRegistry` subclass; providers register via the `cogniverse.telemetry.providers` entry-point group and are cached per `(tenant_id, project)` so distinct projects for one tenant don't share endpoints
 
 #### Usage
@@ -439,7 +439,7 @@ class TraceMetrics:
 Phoenix implementation of the generic `EvaluationProvider` / `EvaluatorFramework` interfaces from `cogniverse_evaluation.providers.base`, used by `ExperimentTracker` and the quality-monitor cycle.
 
 #### Key Classes
-- **`PhoenixEvaluationProvider`** — `initialize(config)` resolves HTTP/gRPC endpoints from the shared `TelemetryManager` config when not explicitly provided; keeps strong references to fire-and-forget annotation tasks (`_spawn_background`) so CPython doesn't garbage-collect them before completion
+- **`PhoenixEvaluationProvider`** — `initialize(config)` resolves HTTP/gRPC endpoints from the shared `TelemetryManager` config when not explicitly provided and raises if resolving the telemetry provider from the registry fails (a swallowed failure here previously left a provider that looked initialized but had `telemetry=None`, so every later call died with an unrelated `AttributeError`); keeps strong references to fire-and-forget annotation tasks (`_spawn_background`) so CPython doesn't garbage-collect them before completion; `create_experiment`/`log_evaluation` register/append to a durable `experiment-{name}` Phoenix dataset (see `docs/modules/evaluation.md` § Evaluation Provider System)
 - **`PhoenixEvaluatorFramework`** — `get_evaluator_base_class()` returns Phoenix's `BaseEvaluator`; `get_evaluation_result_type()` returns `EvaluationResult`
 - **`EvaluationResult`** — `dict` subclass with attribute access (`result.score`, `result.label`), bridging Phoenix v14's `TypedDict`-based `ExperimentEvaluation` with code that expects attribute access
 
@@ -454,7 +454,7 @@ Real-time sliding-window monitoring for retrieval quality, used by the quality-m
 #### Key Classes
 - **`AlertThresholds`** — `latency_p95_ms=1000.0`, `error_rate=0.05`, `mrr_drop=0.1`, `throughput_drop=0.3`
 - **`MetricWindow`** — fixed-size `deque` (default 100) with `add(value)`, `get_mean()`, `get_p95()`, `get_error_rate()`
-- **`RetrievalMonitor`** — per-profile `latency_windows` / `error_windows` / `mrr_windows`; `start()` launches a Phoenix session and a background monitoring thread; `log_retrieval_event(event)` feeds the windows; `get_metrics_summary()` returns aggregated stats; `stop()` shuts the thread down
+- **`RetrievalMonitor`** — per-profile `latency_windows` / `error_windows` / `mrr_windows`, all guarded by `windows_lock` (producer threads calling `log_retrieval_event` insert first-seen profile keys concurrently with the monitoring thread's `_check_alerts`/`get_metrics_summary` iterating them); `start()` launches a Phoenix session and a background monitoring thread; `log_retrieval_event(event)` feeds the windows; `get_metrics_summary()` returns aggregated stats; `stop()` shuts the thread down
 
 ### 9. Profile Routing Metrics Dashboard Tab
 

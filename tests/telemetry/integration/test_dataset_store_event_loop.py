@@ -18,7 +18,11 @@ import pytest
 
 from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.ci_fast,
+    pytest.mark.requires_docker,
+]
 
 
 @pytest.mark.asyncio

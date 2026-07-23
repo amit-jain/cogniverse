@@ -20,7 +20,7 @@ from cogniverse_evaluation.quality_monitor import (
     Verdict,
 )
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
 
 class _Resp:

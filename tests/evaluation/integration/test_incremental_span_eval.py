@@ -46,6 +46,7 @@ async def _wait_for_indexed_spans(
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_real_producers_emit_search_shape_evaluator_keeps(
     search_evaluator_provider,
@@ -286,6 +287,7 @@ async def test_get_recent_spans_keeps_non_search_agent_outputs(
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_get_recent_spans_survives_name_crowding(search_evaluator_provider):
     """A single target search span must not be crowded out of the limit slice
