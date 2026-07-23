@@ -417,7 +417,7 @@ class VideoIngestionPipeline:
                 "strategies": {
                     "segmentation": {
                         "class": "FrameSegmentationStrategy",
-                        "params": {"fps": 1.0},
+                        "params": {"fps": 0.5},
                     },
                     "transcription": {
                         "class": "AudioTranscriptionStrategy",
@@ -517,7 +517,7 @@ class VideoIngestionPipeline:
             "threshold": pipeline_config.get(
                 "keyframe_threshold", self.config.keyframe_threshold
             ),
-            "fps": pipeline_config.get("keyframe_fps", 1.0),
+            "fps": pipeline_config.get("keyframe_fps", 0.5),
             "max_frames": self.config.max_frames_per_video,
         }
 

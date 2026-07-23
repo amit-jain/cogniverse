@@ -264,7 +264,7 @@ Once boundary calculation is implemented, frame durations would exhibit these ch
   "strategies": {
     "segmentation": {
       "class": "FrameSegmentationStrategy",
-      "params": { "fps": 1.0, "threshold": 0.999, "max_frames": 3000 }
+      "params": { "fps": 0.5, "threshold": 0.999, "max_frames": 3000 }
     }
   }
 }
@@ -272,7 +272,7 @@ Once boundary calculation is implemented, frame durations would exhibit these ch
 
 Backend profiles are read and written through `ConfigManager.get_backend_profile(profile_name, tenant_id, service="backend")` / `add_backend_profile(...)` / `update_backend_profile(...)` (the `service` argument defaults to `"backend"` on all of `ConfigManager`'s profile methods), and are editable from the dashboard's backend-profile tab or the runtime admin API.
 
-As of this writing, `video_colpali_smol500_mv_frame` is the only shipped profile whose segmentation strategy is `FrameSegmentationStrategy` (all other video profiles use `ChunkSegmentationStrategy`, which already produces full `start_time`/`end_time`/`duration` boundaries — see the warning at the top of this document). That profile sets `fps: 1.0`, so in practice keyframe extraction currently runs in **FPS mode**, not histogram mode — the `histogram` extraction path described above is the code's default when `fps` is omitted, but no shipped profile currently selects it.
+As of this writing, `video_colpali_smol500_mv_frame` is the only shipped profile whose segmentation strategy is `FrameSegmentationStrategy` (all other video profiles use `ChunkSegmentationStrategy`, which already produces full `start_time`/`end_time`/`duration` boundaries — see the warning at the top of this document). That profile sets `fps: 0.5`, so in practice keyframe extraction currently runs in **FPS mode**, not histogram mode — the `histogram` extraction path described above is the code's default when `fps` is omitted, but no shipped profile currently selects it.
 
 ### Future Enhancement (NOT YET IMPLEMENTED)
 The sophisticated boundary detection described in this document (with `start_time`, `end_time`, `duration`) is a planned enhancement. The current system extracts keyframes at scene change points but does not calculate the temporal duration of each visual scene.

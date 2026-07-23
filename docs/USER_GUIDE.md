@@ -1337,7 +1337,7 @@ Configure embedding profiles in `configs/config.json`:
         "pipeline_config": {
           "extract_keyframes": true,
           "keyframe_strategy": "fps",
-          "keyframe_fps": 1.0,
+          "keyframe_fps": 0.5,
           "transcribe_audio": true,
           "generate_descriptions": true,
           "generate_embeddings": true
@@ -1346,7 +1346,7 @@ Configure embedding profiles in `configs/config.json`:
           "segmentation": {
             "class": "FrameSegmentationStrategy",
             "params": {
-              "fps": 1.0,
+              "fps": 0.5,
               "threshold": 0.999,
               "max_frames": 3000
             }

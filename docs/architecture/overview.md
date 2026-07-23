@@ -397,7 +397,7 @@ profile = BackendProfileConfig(
     embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
     pipeline_config={
         "extract_keyframes": True,
-        "keyframe_fps": 1.0,
+        "keyframe_fps": 0.5,
         "max_frames": 100,
         "transcribe_audio": True
     },

@@ -136,7 +136,7 @@ curl -X POST http://localhost:8000/admin/profiles \
     "strategies": {
       "segmentation": {
         "class": "FrameSegmentationStrategy",
-        "params": {"fps": 1.0, "max_frames": 100}
+        "params": {"fps": 0.5, "max_frames": 100}
       },
       "embedding": {
         "class": "MultiVectorEmbeddingStrategy",
@@ -270,7 +270,7 @@ curl "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tenant_id=acme
   "strategies": {
     "segmentation": {
       "class": "FrameSegmentationStrategy",
-      "params": {"fps": 1.0, "max_frames": 100}
+      "params": {"fps": 0.5, "max_frames": 100}
     },
     "embedding": {
       "class": "MultiVectorEmbeddingStrategy",
