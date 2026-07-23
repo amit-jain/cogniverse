@@ -1770,3 +1770,62 @@ class TestXGBoostVisibility:
             for r in caplog.records
             if r.levelno >= logging.WARNING
         )
+
+
+class TestRunLoop:
+    @pytest.mark.asyncio
+    async def test_one_iteration_dispatches_eval_threshold_submit(self, monitor):
+        """One run() iteration: both evals due, a degraded verdict is built
+        into a trigger dataset and submitted, then the loop sleeps. Pins the
+        loop's cadence dispatch, verdict gating and submission wiring."""
+        golden = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=CANON,
+            mean_mrr=0.4,
+            mean_ndcg=0.5,
+            mean_precision_at_5=0.3,
+            query_count=10,
+            baseline_mrr=0.9,  # 55% drop -> OPTIMIZE
+        )
+        live = LiveEvalResult(timestamp=datetime.utcnow(), tenant_id=CANON)
+
+        class _StopLoop(Exception):
+            pass
+
+        with (
+            patch.object(
+                monitor,
+                "evaluate_golden_set",
+                new_callable=AsyncMock,
+                return_value=golden,
+            ),
+            patch.object(
+                monitor,
+                "evaluate_live_traffic",
+                new_callable=AsyncMock,
+                return_value=live,
+            ),
+            patch.object(
+                monitor,
+                "_store_trigger_dataset",
+                new_callable=AsyncMock,
+                return_value="opt-trigger-ds",
+            ) as store,
+            patch.object(
+                monitor,
+                "submit_optimization",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as submit,
+            patch(
+                "cogniverse_evaluation.quality_monitor.asyncio.sleep",
+                new_callable=AsyncMock,
+                side_effect=_StopLoop,
+            ),
+        ):
+            with pytest.raises(_StopLoop):
+                await monitor.run()
+
+        store.assert_awaited_once()
+        submit.assert_awaited_once()
+        assert submit.await_args.kwargs["trigger_dataset"] == "opt-trigger-ds"

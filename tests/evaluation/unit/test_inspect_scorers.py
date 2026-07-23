@@ -85,3 +85,65 @@ class TestPrecisionRecallScorers:
             }
         }
         assert len(get_configured_scorers(nested)) == base + 2
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestDefaultScorerClosures:
+    """The relevance/diversity/result_count scorers only executed inside the
+    non-CI e2e tier; drive their score closures directly so a scoring
+    regression is caught in the fast lane."""
+
+    @pytest.mark.asyncio
+    async def test_relevance_scorer_scores_keyword_overlap(self):
+        from cogniverse_evaluation.core.inspect_scorers import relevance_scorer
+
+        results = [{"content": "a red kite flying over the green field"}]
+        packed = pack_solver_output(
+            query="red kite",
+            search_results={"cfg": {"success": True, "results": results}},
+        )
+        state = SimpleNamespace(
+            output=SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=packed))]
+            )
+        )
+        score = await relevance_scorer()(state, ["v1"])
+        assert 0.0 < score.value <= 1.0
+        assert "cfg" in score.metadata["individual_scores"]
+
+    @pytest.mark.asyncio
+    async def test_result_count_scorer_scales_with_count(self):
+        from cogniverse_evaluation.core.inspect_scorers import result_count_scorer
+
+        five = [{"video_id": f"v{i}"} for i in range(5)]
+        packed = pack_solver_output(
+            query="q", search_results={"cfg": {"success": True, "results": five}}
+        )
+        state = SimpleNamespace(
+            output=SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=packed))]
+            )
+        )
+        score = await result_count_scorer()(state, ["v1"])
+        # 5 results / 10 = 0.5
+        assert score.value == pytest.approx(0.5)
+
+    @pytest.mark.asyncio
+    async def test_diversity_scorer_runs_without_error(self):
+        from cogniverse_evaluation.core.inspect_scorers import diversity_scorer
+
+        results = [
+            {"content": "alpha beta"},
+            {"content": "gamma delta"},
+        ]
+        packed = pack_solver_output(
+            query="q", search_results={"cfg": {"success": True, "results": results}}
+        )
+        state = SimpleNamespace(
+            output=SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=packed))]
+            )
+        )
+        score = await diversity_scorer()(state, ["v1"])
+        assert 0.0 <= score.value <= 1.0
