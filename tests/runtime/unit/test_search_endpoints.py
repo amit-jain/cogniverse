@@ -246,6 +246,41 @@ class TestSearchEndpoint:
             )
             assert resp.status_code == 422, (bad, resp.text)
 
+    def test_search_degraded_returns_503_not_500(self, search_client):
+        """A Vespa soft-timeout (VespaSearchDegraded) is a transient, retryable
+        backend fault — the route must return 503, matching /agents/process,
+        not the opaque 500 the broad exception handler would otherwise give."""
+        from unittest.mock import MagicMock, patch
+
+        from cogniverse_agents.search.vespa_query import VespaSearchDegraded
+
+        with_profile = MagicMock()
+        with_profile.get.side_effect = lambda k, d=None: {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "backend": {},
+        }.get(k, d)
+
+        service = MagicMock()
+        service.search.side_effect = VespaSearchDegraded(
+            "Vespa query returned errors: [soft timeout]"
+        )
+
+        with (
+            patch(
+                "cogniverse_runtime.routers.search.get_config",
+                return_value=with_profile,
+            ),
+            patch(
+                "cogniverse_runtime.routers.search.SearchService",
+                return_value=service,
+            ),
+        ):
+            resp = search_client.post(
+                "/search", json={"query": "cats", "tenant_id": "acme"}
+            )
+        assert resp.status_code == 503, resp.text
+        assert "soft timeout" in resp.json()["detail"]
+
     def test_search_request_defaults(self):
         """SearchRequest model has correct defaults."""
         req = SearchRequest(query="test query")

@@ -56,3 +56,26 @@ def test_non_numeric_score_raises_named_item_error():
 
     with pytest.raises(ValueError, match="doc-7.*non-numeric score.*high"):
         _to_rsr({"id": "doc-7", "score": "high"})
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf", float("nan"), float("inf")])
+def test_non_finite_score_rejected(bad):
+    """'nan'/'inf' pass float() but poison rank ordering and break
+    allow_nan=False JSON — they must raise (surfaced as 400), not become a
+    200 response with a null score."""
+    from cogniverse_agents.search.rerank_service import _to_rsr
+
+    with pytest.raises(ValueError, match="doc-9.*non-finite score"):
+        _to_rsr({"id": "doc-9", "score": bad})
+
+
+def test_non_dict_metadata_does_not_crash():
+    """A caller-supplied result whose metadata is a non-dict (str/list) must
+    not raise AttributeError from .get — the route surfaced that as an opaque
+    500. Treat it as absent metadata."""
+    from cogniverse_agents.search.rerank_service import _to_rsr
+
+    for meta in ("oops", [1, 2], 5):
+        rsr = _to_rsr({"id": "doc-3", "score": 0.5, "metadata": meta})
+        assert rsr.metadata == {}
+        assert rsr.timestamp is None

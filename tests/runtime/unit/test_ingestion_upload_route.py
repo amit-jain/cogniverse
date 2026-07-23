@@ -160,6 +160,45 @@ def test_wait_and_force_as_form_fields_are_ignored(upload_client):
     assert captured["force"] is False
 
 
+def test_minio_outage_returns_503_not_500(upload_client, monkeypatch):
+    """A MinIO/S3 outage mid-transfer (botocore ClientError/connection error)
+    is a transient backend fault, not a server bug — the route must return 503,
+    not the opaque 500 the default handler gives for a non-RuntimeError."""
+    from botocore.exceptions import EndpointConnectionError
+
+    client, captured, _ = upload_client
+
+    def _boom(*a, **k):
+        raise EndpointConnectionError(endpoint_url="minio://stub")
+
+    monkeypatch.setattr(minio_client, "upload_bytes", _boom, raising=True)
+
+    resp = _post(client)
+
+    assert resp.status_code == 503, resp.text
+    assert "object store" in resp.json()["detail"]["message"]
+    # The object never made it to the queue.
+    assert captured == {}
+
+
+def test_redis_outage_during_enqueue_returns_503(upload_client, monkeypatch):
+    """The object uploaded but Redis is unreachable while enqueueing — a
+    retryable outage, not a 500. A retry re-enqueues idempotently."""
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    client, _captured, _ = upload_client
+
+    async def _boom(redis, **kwargs):
+        raise RedisConnectionError("connection refused")
+
+    monkeypatch.setattr(submit_api, "enqueue_ingestion", _boom, raising=True)
+
+    resp = _post(client)
+
+    assert resp.status_code == 503, resp.text
+    assert "queue" in resp.json()["detail"]["message"]
+
+
 def test_empty_profile_rejected_before_any_upload(upload_client, monkeypatch):
     """An empty profile used to fail only at idempotency hashing — AFTER the
     whole multipart body had been copied into the object store — and as a
