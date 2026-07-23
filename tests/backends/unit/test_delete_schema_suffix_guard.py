@@ -62,7 +62,7 @@ def _guard_manager(survivor_names: list, deployed_names: list) -> VespaSchemaMan
     mgr._get_existing_tenant_schemas = lambda: [
         Schema(name=n, document=Document()) for n in survivor_names
     ]
-    mgr.list_deployed_document_types = lambda: list(deployed_names)
+    mgr.list_deployed_document_types = lambda **_: list(deployed_names)
     mgr.deployed_packages = []
     mgr._deploy_package = lambda pkg, allow_schema_removal=False: (
         mgr.deployed_packages.append(pkg)
@@ -114,7 +114,7 @@ class TestDeleteSchemaLiveGuard:
             deployed_names=[],
         )
 
-        def _raise() -> list:
+        def _raise(**_) -> list:
             raise ConnectionError("config server down")
 
         mgr.list_deployed_document_types = _raise
