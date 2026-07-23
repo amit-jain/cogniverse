@@ -71,11 +71,12 @@ def _inflight_ttl_seconds() -> int:
     return int(os.environ.get("INGEST_INFLIGHT_TTL_SECONDS", "21600"))
 
 
-# A submit goes claim_inflight -> increment -> publish_status -> submit ->
-# mark_submitted in a handful of local Redis round-trips (tens of ms). An
-# inflight marker without a submitted marker that is older than this grace did
-# not merely lose a race with a concurrent winner mid-submit — it is a phantom
-# from a crash before submit. Far shorter than the 6h inflight TTL so a phantom
+# A submit goes claim_inflight -> increment -> publish_status -> submit, where
+# submit writes the committed marker in the SAME transaction as the XADD — a
+# handful of local Redis round-trips (tens of ms). An inflight marker without a
+# committed marker that is older than this grace did not merely lose a race with
+# a concurrent winner mid-submit — it is a phantom from a crash before the
+# submit transaction. Far shorter than the 6h inflight TTL so a phantom
 # self-heals in seconds, far longer than the real claim->submit window so a live
 # winner is never re-enqueued.
 _COMMIT_GRACE_SECONDS = 30.0
@@ -222,6 +223,9 @@ async def enqueue_ingestion(
                 "tenant_id": tenant_id,
             },
         )
+        # XADD and the committed marker commit in one transaction, so a crash
+        # cannot leave the job on the work stream without the marker a resubmit
+        # reads to tell a genuine in-flight run from a phantom.
         await queue.submit(
             redis,
             ingest_id=ingest_id,
@@ -229,11 +233,9 @@ async def enqueue_ingestion(
             profile=profile,
             tenant_id=tenant_id,
             sha=sha,
+            committed_key=f"{idempotency.SUBMITTED_KEY_PREFIX}{sha}",
+            committed_ttl_seconds=_inflight_ttl_seconds(),
         )
-        # The job is now in the work stream — mark it committed so a resubmit
-        # can tell a genuine in-flight run from a phantom left by a crash
-        # before this point.
-        await idempotency.mark_submitted(redis, sha, _inflight_ttl_seconds())
     except Exception:
         if incremented:
             try:

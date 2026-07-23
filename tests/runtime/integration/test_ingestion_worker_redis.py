@@ -496,6 +496,50 @@ class TestEnqueueCompensation:
         assert await idempotency.is_submitted(redis, sha) is True
 
     @pytest.mark.asyncio
+    async def test_committed_marker_is_atomic_with_submit(self, redis, monkeypatch):
+        """A crash between XADD and the committed marker must be impossible.
+
+        The old submit-then-mark sequence left a window: a hard crash after the
+        job reached the work stream but before the committed marker was written
+        produced a real queued job with no marker, which a resubmit past the
+        commit grace read as a phantom and duplicated. Writing the marker in the
+        same transaction as the XADD closes the window.
+
+        To prove the atomic marker — not the belt-and-braces — is what prevents
+        the dupe, we neutralise any separate post-XADD marker write and drop the
+        commit grace to zero, then assert the marker is still present and the
+        resubmit returns the same id without enqueuing a duplicate.
+        """
+        import cogniverse_runtime.ingestion_worker.submit_api as submit_api_mod
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        async def _noop_mark(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(idempotency, "mark_submitted", _noop_mark)
+        monkeypatch.setattr(submit_api_mod, "_COMMIT_GRACE_SECONDS", 0.0)
+
+        src, profile, tenant = "s3://bucket/atomic.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        first = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        assert first.existing is False
+        # Present even though the separate mark_submitted was a no-op — it was
+        # written inside the submit transaction.
+        assert await idempotency.is_submitted(redis, sha) is True
+
+        depth_after_first = await queue.queue_depth(redis)
+
+        second = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        assert second.existing is True
+        assert second.ingest_id == first.ingest_id
+        assert await queue.queue_depth(redis) == depth_after_first
+
+    @pytest.mark.asyncio
     async def test_aged_phantom_marker_is_cleared_and_re_enqueued(self, redis):
         """A hard crash (SIGKILL/OOM) between claim_inflight and submit runs no
         compensation, orphaning the inflight marker with no submitted marker.
