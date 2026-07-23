@@ -571,18 +571,28 @@ class VespaSearchBackend(SearchBackend):
         with self._profiles_lock:
             self.profiles.pop(profile_name, None)
 
-    def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
+    def batch_get_documents(
+        self, document_ids: List[str], schema_name: Optional[str] = None
+    ) -> List[Optional[Document]]:
         """
         Retrieve multiple documents by ID using batch search query (primary batch method).
 
         Args:
             document_ids: List of document IDs to retrieve
+            schema_name: Vespa schema to read from. This backend is shared across
+                all tenants and ``self.schema_name`` is rewritten by every search
+                request, so a caller MUST pass the schema it means to read —
+                relying on the shared attribute races concurrent requests and can
+                read another tenant's schema. Falls back to ``self.schema_name``
+                only for legacy callers.
 
         Returns:
             List of Document objects (None for not found), in the same order as document_ids
         """
         if not document_ids:
             return []
+
+        schema = schema_name or self.schema_name
 
         # Document v1 point GETs — an O(1) dictionary lookup per id. The
         # previous `id contains "<docid>"` YQL substring-matched the internal
@@ -591,7 +601,7 @@ class VespaSearchBackend(SearchBackend):
             results: Dict[str, Document] = {}
             for doc_id in document_ids:
                 response = handle.get_data(
-                    schema=self.schema_name,
+                    schema=schema,
                     data_id=doc_id,
                     namespace="content",
                     raise_on_not_found=False,
@@ -1456,18 +1466,22 @@ class VespaSearchBackend(SearchBackend):
 
         return health
 
-    def get_document(self, document_id: str) -> Optional[Document]:
+    def get_document(
+        self, document_id: str, schema_name: Optional[str] = None
+    ) -> Optional[Document]:
         """
         Retrieve a specific document by ID (uses batch method).
 
         Args:
             document_id: Document ID to retrieve
+            schema_name: Vespa schema to read from — pass it explicitly; this
+                backend is shared across tenants (see batch_get_documents).
 
         Returns:
             Document if found, None otherwise
         """
         # Use batch method for consistency and optimization
-        results = self.batch_get_documents([document_id])
+        results = self.batch_get_documents([document_id], schema_name=schema_name)
         return results[0] if results else None
 
     def export_embeddings(
