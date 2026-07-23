@@ -149,6 +149,22 @@ class TestSchemaAgnosticEvaluation:
         item = MockDocument(item_id="ITEM789", description="Test Item")
         assert default_analyzer.extract_item_id(item) == "ITEM789"
 
+    def test_id_extraction_dict_non_id_key(self):
+        """A dict keyed by video_id/source_id (no literal 'id' key) must
+        resolve, not raise. The real ground-truth harvest feeds exactly these
+        dict shapes, and a per-result exception there silently empties the
+        expected set."""
+        from cogniverse_evaluation.core.schema_analyzer import DefaultSchemaAnalyzer
+
+        analyzer = DefaultSchemaAnalyzer()
+
+        assert analyzer.extract_item_id({"video_id": "v1", "score": 0.9}) == "v1"
+        assert analyzer.extract_item_id({"source_id": "s2"}) == "s2"
+        # List-valued id resolves to its first element
+        assert analyzer.extract_item_id({"document_id": ["d1", "d2"]}) == "d1"
+        # A dict with none of the known id fields returns None, not a crash
+        assert analyzer.extract_item_id({"title": "no id here"}) is None
+
     @pytest.mark.asyncio
     async def test_ground_truth_with_different_schemas(self):
         """Test ground truth extraction works with any schema."""
