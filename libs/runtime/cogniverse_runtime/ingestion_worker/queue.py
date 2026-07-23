@@ -134,10 +134,49 @@ async def claim(
         for message_id, fields in entries:
             job = _parse_entry(message_id, fields)
             if job is None:
+                await settle_malformed_entry(redis, fields)
                 await ack(redis, group, message_id)
                 continue
             jobs.append(job)
     return jobs
+
+
+async def settle_malformed_entry(redis: aioredis.Redis, fields: dict) -> None:
+    """Best-effort resolve a client whose submission produced a malformed entry.
+
+    A version-skew entry can still carry ``ingest_id`` / ``sha`` even when a
+    newer required field is missing. Publish a failed terminal so a client
+    polling status stops waiting for a job that will never run, and release the
+    inflight idempotency marker so a resubmit is not blocked for the 6h TTL.
+    The active counter is intentionally left alone (it self-heals via its TTL,
+    and decrementing here could free a slot a different running job holds).
+    Every step is best-effort; missing fields are skipped.
+    """
+    ingest_id = fields.get("ingest_id")
+    if ingest_id:
+        try:
+            await publish_status(
+                redis,
+                ingest_id,
+                {
+                    "state": "failed",
+                    "ingest_id": ingest_id,
+                    "error": "malformed queue entry (producer/consumer version skew)",
+                    "error_type": "MalformedQueueEntry",
+                },
+            )
+        except Exception:
+            logger.exception(
+                "settle malformed: publish_status failed for %s", ingest_id
+            )
+    sha = fields.get("sha")
+    if sha:
+        try:
+            from cogniverse_runtime.ingestion_worker import idempotency
+
+            await idempotency.clear_inflight(redis, sha)
+        except Exception:
+            logger.exception("settle malformed: clear_inflight failed for %s", sha)
 
 
 def _parse_entry(message_id: str, fields: dict) -> Optional[IngestJob]:
@@ -147,7 +186,8 @@ def _parse_entry(message_id: str, fields: dict) -> Optional[IngestJob]:
     version skew) can never be processed; raising here used to abort the
     whole claim/reclaim batch — in the reaper's sweep that happened BEFORE
     the dead-letter check, so one malformed entry stalled orphan recovery
-    for every entry behind it. Callers ack the malformed entry away.
+    for every entry behind it. Callers settle the client (see
+    settle_malformed_entry) and ack the malformed entry away.
     """
     try:
         return IngestJob(
@@ -199,6 +239,7 @@ async def autoclaim(
             continue
         job = _parse_entry(message_id, fields)
         if job is None:
+            await settle_malformed_entry(redis, fields)
             await ack(redis, group, message_id)
             continue
         jobs.append(job)
