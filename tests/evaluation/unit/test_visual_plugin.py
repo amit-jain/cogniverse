@@ -191,3 +191,74 @@ class TestConfigurableVisualJudgeGetVideoPath:
         monkeypatch.chdir(tmp_path)
         judge = self._bare_judge(tmp_path / "cache")
         assert judge._get_video_path({"video_id": "does_not_exist"}) is None
+
+
+class TestVisualJudgeTenantAndModelOverride:
+    """The experiment's tenant and --llm-model must reach the visual judge —
+    they were dropped in favor of the system tenant and the config model."""
+
+    @pytest.mark.unit
+    def test_tenant_and_model_overrides_applied(self):
+        from unittest.mock import patch
+
+        from cogniverse_core.common.media import MediaLocator
+        from cogniverse_evaluation.evaluators.configurable_visual_judge import (
+            ConfigurableVisualJudge,
+        )
+
+        captured = {}
+
+        def fake_get_config(tenant_id, config_manager=None):
+            captured["tenant_id"] = tenant_id
+            return {
+                "evaluators": {
+                    "visual_judge": {
+                        "provider": "openai",
+                        "model": "config-model",
+                        "base_url": "http://config",
+                    }
+                }
+            }
+
+        locator = MediaLocator.__new__(MediaLocator)
+        with patch(
+            "cogniverse_evaluation.evaluators.configurable_visual_judge.get_config",
+            side_effect=fake_get_config,
+        ):
+            judge = ConfigurableVisualJudge(
+                locator=locator,
+                evaluator_name="visual_judge",
+                tenant_id="acme:acme",
+                model="override-model",
+                base_url="http://override",
+            )
+
+        # The experiment tenant was used for config resolution, and the
+        # explicit model/base_url won over the config values.
+        assert captured["tenant_id"] == "acme:acme"
+        assert judge.model == "override-model"
+        assert judge.base_url == "http://override"
+
+    @pytest.mark.unit
+    def test_falls_back_to_config_when_no_override(self):
+        from unittest.mock import patch
+
+        from cogniverse_core.common.media import MediaLocator
+        from cogniverse_evaluation.evaluators.configurable_visual_judge import (
+            ConfigurableVisualJudge,
+        )
+
+        cfg = {
+            "evaluators": {
+                "visual_judge": {"model": "config-model", "base_url": "http://config"}
+            }
+        }
+        locator = MediaLocator.__new__(MediaLocator)
+        with patch(
+            "cogniverse_evaluation.evaluators.configurable_visual_judge.get_config",
+            return_value=cfg,
+        ):
+            judge = ConfigurableVisualJudge(locator=locator)
+
+        assert judge.model == "config-model"
+        assert judge.base_url == "http://config"

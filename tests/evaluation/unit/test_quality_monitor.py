@@ -1738,3 +1738,35 @@ class TestLiveEvalOutageContracts:
         monitor._dataset_store = FailingDatasetStore()
         with pytest.raises(ConnectionError, match="connection refused"):
             await monitor.update_baseline(live_results={AgentType.SEARCH: 0.8})
+
+
+class TestXGBoostVisibility:
+    def test_meta_model_unavailable_logs_at_warning(self, monitor, caplog):
+        """A failing meta-model gate (e.g. ImportError of cogniverse_agents)
+        must be visible at the default log level, not hidden at DEBUG."""
+        import logging
+
+        monitor._telemetry_provider = MagicMock()
+        model = MagicMock()
+        model.should_train.side_effect = RuntimeError("model load failed")
+        monitor._training_decision_model = model
+
+        verdicts = {AgentType.SEARCH: Verdict.OPTIMIZE}
+        golden = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=CANON,
+            mean_mrr=0.5,
+            mean_ndcg=0.5,
+            mean_precision_at_5=0.4,
+            query_count=5,
+        )
+        with caplog.at_level(logging.WARNING):
+            result = monitor._apply_training_decision_model(verdicts, golden, None)
+
+        # Falls back to the naive verdict, and says so at WARNING.
+        assert result[AgentType.SEARCH] == Verdict.OPTIMIZE
+        assert any(
+            "XGBoost training decision unavailable" in r.message
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
