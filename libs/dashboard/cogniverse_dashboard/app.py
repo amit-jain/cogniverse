@@ -38,7 +38,10 @@ import httpx
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
-from cogniverse_dashboard.utils.traces import fetch_tenant_traces, filter_traces_df
+from cogniverse_dashboard.utils.traces import (
+    fetch_tenant_traces_safely,
+    filter_traces_df,
+)
 from cogniverse_evaluation.analysis.root_cause_analysis import (
     RootCauseAnalyzer,
 )
@@ -706,7 +709,7 @@ with main_tabs[0]:
     # quantized end time above keeps the key stable between reruns.
     @st.cache_data(ttl=30, show_spinner="Fetching traces...")
     def _fetch_traces(_analytics, start_iso: str, end_iso: str, op_filter, tenant_id):
-        return fetch_tenant_traces(
+        return fetch_tenant_traces_safely(
             _analytics,
             tenant_id,
             datetime.fromisoformat(start_iso),
@@ -714,13 +717,17 @@ with main_tabs[0]:
             op_filter,
         )
 
-    traces = _fetch_traces(
+    traces, fetch_error = _fetch_traces(
         st.session_state.analytics,
         start_datetime.isoformat(),
         end_datetime.isoformat(),
         operation_filter if operation_filter else None,
         st.session_state["current_tenant"],
     )
+    if fetch_error:
+        # Telemetry outage (or fetch bug) — show the failure instead of the
+        # indistinguishable "No traces found" empty state.
+        st.error(fetch_error)
 
     if not traces:
         st.warning("No traces found for the selected time range and filters.")

@@ -15,6 +15,8 @@ from cogniverse_telemetry_phoenix.evaluation.evaluation_provider import (
     PhoenixEvaluationProvider,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.unit
 def test_log_session_evaluation_passes_project_to_annotation_store():
@@ -223,3 +225,170 @@ class TestGetSpansServerSideNameFilter:
         await store.get_spans(project="proj")
 
         assert client.spans.get_spans_dataframe.await_args.kwargs["query"] is None
+
+
+@pytest.mark.unit
+def test_initialize_raises_when_telemetry_registry_fails():
+    """An init-time telemetry failure must surface, not leave a provider
+    that looks constructed but has telemetry=None (every later call would
+    AttributeError far from the root cause)."""
+    from unittest.mock import patch
+
+    provider = PhoenixEvaluationProvider()
+    with patch(
+        "cogniverse_foundation.telemetry.registry.get_telemetry_registry",
+        side_effect=ConnectionError("telemetry registry down"),
+    ):
+        with pytest.raises(ConnectionError, match="telemetry registry down"):
+            provider.initialize({"tenant_id": "acme:init"})
+
+    assert provider._initialized is False
+
+
+@pytest.mark.unit
+def test_sync_log_session_evaluation_propagates_annotation_failure():
+    """On the sync path (no running loop) an annotation-store failure must
+    raise — the dashboard catches it and shows the failure instead of
+    reporting 'Evaluation saved'."""
+    provider = PhoenixEvaluationProvider()
+    provider._initialized = True
+    provider._project_name = "cogniverse-search"
+    annotations = MagicMock()
+    annotations.add_annotation = AsyncMock(
+        side_effect=ConnectionError("annotation store down")
+    )
+    provider._telemetry_provider = MagicMock(annotations=annotations)
+
+    with pytest.raises(ConnectionError, match="annotation store down"):
+        provider.log_session_evaluation(
+            session_id="sess-1",
+            evaluation_name="dashboard_annotation",
+            session_score=0.5,
+            session_outcome="success",
+        )
+
+
+@pytest.mark.asyncio
+async def test_async_log_session_evaluation_logs_background_failure(caplog):
+    """On the async path the write is fire-and-forget; a failure must be
+    logged at ERROR (not silently discarded with the task reference)."""
+    import asyncio
+    import logging
+
+    provider = PhoenixEvaluationProvider()
+    provider._initialized = True
+    provider._project_name = "cogniverse-search"
+    annotations = MagicMock()
+    annotations.add_annotation = AsyncMock(
+        side_effect=ConnectionError("annotation store down")
+    )
+    provider._telemetry_provider = MagicMock(annotations=annotations)
+
+    with caplog.at_level(logging.ERROR):
+        provider.log_session_evaluation(
+            session_id="sess-2",
+            evaluation_name="dashboard_annotation",
+            session_score=0.5,
+            session_outcome="success",
+        )
+        # Let the background task run to completion
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+    assert any(
+        "session evaluation" in rec.message and "sess-2" in rec.message
+        for rec in caplog.records
+    ), f"background failure never logged: {[r.message for r in caplog.records]}"
+
+
+class _FakeTelemetry:
+    def __init__(self, datasets):
+        self.datasets = datasets
+
+
+class TestExperimentSurface:
+    """create_experiment / log_evaluation persist durable records — the prior
+    bodies returned a fabricated dict and logged a debug line, so nothing an
+    operator could ever read back existed."""
+
+    def _provider(self):
+        from tests.evaluation.fakes import InMemoryDatasetStore
+
+        provider = PhoenixEvaluationProvider()
+        provider._initialized = True
+        provider._project_name = "cogniverse-exp"
+        store = InMemoryDatasetStore()
+        provider._telemetry_provider = _FakeTelemetry(store)
+        return provider, store
+
+    @pytest.mark.unit
+    def test_create_experiment_persists_registry_record(self):
+        provider, store = self._provider()
+
+        result = provider.create_experiment(
+            "exp1", description="first experiment", metadata={"k": "v"}
+        )
+
+        assert result["id"] == "experiment-exp1"
+        assert result["name"] == "exp1"
+        df = store._frames["experiment-exp1"]
+        assert len(df) == 1
+        row = df.iloc[0]
+        assert row["event"] == "experiment_created"
+        assert row["experiment"] == "exp1"
+        assert row["description"] == "first experiment"
+
+    @pytest.mark.unit
+    def test_log_evaluation_appends_row(self):
+        provider, store = self._provider()
+        result = provider.create_experiment("exp2")
+
+        provider.log_evaluation(
+            experiment_id=result["id"],
+            evaluation_name="relevance",
+            score=0.85,
+            label="good",
+            explanation="matched",
+        )
+
+        df = store._frames["experiment-exp2"]
+        assert len(df) == 2
+        row = df.iloc[-1]
+        assert row["event"] == "evaluation"
+        assert row["evaluation_name"] == "relevance"
+        assert row["score"] == 0.85
+        assert row["label"] == "good"
+        assert row["explanation"] == "matched"
+
+    @pytest.mark.unit
+    def test_log_evaluation_unknown_experiment_raises(self):
+        provider, _ = self._provider()
+
+        with pytest.raises(ValueError):
+            provider.log_evaluation(
+                experiment_id="experiment-ghost",
+                evaluation_name="relevance",
+                score=0.5,
+            )
+
+    @pytest.mark.unit
+    def test_create_experiment_uninitialized_raises(self):
+        provider = PhoenixEvaluationProvider()
+
+        with pytest.raises(RuntimeError, match="not initialized"):
+            provider.create_experiment("nope")
+
+
+@pytest.mark.unit
+def test_log_session_evaluation_uninitialized_raises():
+    """Consistent with the sibling experiment methods: an uninitialized
+    provider raises instead of silently dropping the evaluation."""
+    provider = PhoenixEvaluationProvider()
+
+    with pytest.raises(RuntimeError, match="not initialized"):
+        provider.log_session_evaluation(
+            session_id="s",
+            evaluation_name="e",
+            session_score=0.5,
+            session_outcome="success",
+        )

@@ -16,6 +16,13 @@ from .base import Evaluator, create_evaluation_result
 logger = logging.getLogger(__name__)
 
 
+def _coerce_ts(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class ConfigurableVisualJudge(Evaluator):
     """Score query/result frame relevance via any OpenAI-compatible vision model."""
 
@@ -104,7 +111,7 @@ class ConfigurableVisualJudge(Evaluator):
                     # Use timestamp from result if available
                     timestamp = 0
                     if isinstance(result, dict):
-                        timestamp = result.get("start_time", 0)
+                        timestamp = _coerce_ts(result.get("start_time", 0))
 
                     extracted_frames = self._extract_frames_from_video(
                         video_path,

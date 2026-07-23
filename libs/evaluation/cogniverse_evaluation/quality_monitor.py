@@ -26,7 +26,11 @@ from cogniverse_evaluation.evaluators.agent_evaluators import (
     get_agent_evaluator,
 )
 from cogniverse_evaluation.metrics.custom import calculate_metrics_suite
-from cogniverse_foundation.common.tenant_utils import sanitize_k8s_label_value
+from cogniverse_foundation.common.tenant_utils import (
+    canonical_tenant_id,
+    sanitize_k8s_label_value,
+)
+from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +95,11 @@ class GoldenEvalResult:
     # measured current-vs-previous, not against the value this run just wrote.
     baseline_mrr: Optional[float] = None
     baseline_ndcg: Optional[float] = None
+    # Queries whose /search call failed this run. A partial run is persisted
+    # for the record but never used as a comparison baseline — its means are
+    # biased toward whichever queries happened to survive.
+    failed_query_count: int = 0
+    failed_queries: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -286,7 +295,9 @@ class QualityMonitor:
         search_profile: str = "video_colpali_smol500_mv_frame",
         workflow_pod_spec: Optional[OptimizationWorkflowPodSpec] = None,
     ):
-        self.tenant_id = tenant_id
+        # Canonical org:tenant form — span writers canonicalize at the request
+        # boundary, so every project/dataset name derived here must match.
+        self.tenant_id = canonical_tenant_id(tenant_id)
         self.runtime_url = runtime_url.rstrip("/")
         self.phoenix_http_endpoint = phoenix_http_endpoint.rstrip("/")
         self.llm_base_url = llm_base_url
@@ -391,12 +402,23 @@ class QualityMonitor:
         # Build a trigger covering ALL agents, not just those with verdicts.
         all_agents = list(AgentType)
         trigger = self._build_trigger(all_agents, golden_result, live_result)
-        await self._store_trigger_dataset(trigger)
+        dataset_name = await self._store_trigger_dataset(trigger)
+
+        if dataset_name is None:
+            return {
+                "status": "no_trigger_examples",
+                "agents_triggered": [a.value for a in all_agents],
+                "submitted_to_argo": False,
+            }
 
         submitted = False
         if self.argo_api_url:
             try:
-                submitted = bool(await self.submit_optimization(trigger))
+                submitted = bool(
+                    await self.submit_optimization(
+                        trigger, trigger_dataset=dataset_name
+                    )
+                )
             except Exception as e:
                 logger.error(f"Force cycle: Argo submission failed: {e}")
 
@@ -456,21 +478,34 @@ class QualityMonitor:
                 ]
 
                 if agents_to_optimize:
-                    trigger = self._build_trigger(
-                        agents_to_optimize, golden_result, live_result
-                    )
-                    await self._store_trigger_dataset(trigger)
+                    try:
+                        trigger = self._build_trigger(
+                            agents_to_optimize, golden_result, live_result
+                        )
+                        dataset_name = await self._store_trigger_dataset(trigger)
 
-                    if self.argo_api_url:
-                        if not await self.submit_optimization(trigger):
+                        if dataset_name is None:
+                            logger.error(
+                                f"Optimization needed for {agents_to_optimize} "
+                                f"but no trigger examples were collected; "
+                                f"skipping submission this cycle"
+                            )
+                        elif not self.argo_api_url:
+                            logger.warning(
+                                f"Optimization needed for {agents_to_optimize} "
+                                f"but no Argo API URL configured"
+                            )
+                        elif not await self.submit_optimization(
+                            trigger, trigger_dataset=dataset_name
+                        ):
                             logger.error(
                                 f"Optimization needed for {agents_to_optimize} "
                                 f"but Argo submission failed; retrying next cycle"
                             )
-                    else:
-                        logger.warning(
-                            f"Optimization needed for {agents_to_optimize} "
-                            f"but no Argo API URL configured"
+                    except Exception as e:
+                        logger.error(
+                            f"Optimization trigger cycle failed: {e}; "
+                            f"retrying next cycle"
                         )
 
             await asyncio.sleep(60)
@@ -480,7 +515,7 @@ class QualityMonitor:
         queries = self._load_golden_queries()
         client = self._get_http_client()
 
-        async def _score_query(query_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        async def _score_query(query_data: Dict[str, Any]) -> Dict[str, Any]:
             query = query_data["query"]
             expected_videos = query_data.get("expected_videos", [])
             try:
@@ -498,7 +533,7 @@ class QualityMonitor:
                     logger.warning(
                         f"Search failed for '{query}': {response.status_code}"
                     )
-                    return None
+                    return {"query": query, "failed": True}
 
                 results = response.json().get("results", [])
                 retrieved_ids = [
@@ -517,7 +552,7 @@ class QualityMonitor:
                 }
             except Exception as e:
                 logger.warning(f"Error evaluating golden query '{query}': {e}")
-                return None
+                return {"query": query, "failed": True}
 
         # Queries are independent /search calls — run them concurrently so eval
         # latency scales with the slowest query, not the sum. Classification
@@ -527,14 +562,22 @@ class QualityMonitor:
         per_query_scores = []
         low_scoring = []
         high_scoring = []
+        failed_queries = []
         for entry in entries:
-            if entry is None:
+            if entry.get("failed"):
+                failed_queries.append(entry["query"])
                 continue
             per_query_scores.append(entry)
             if entry["mrr"] < 0.3:
                 low_scoring.append(entry)
             elif entry["mrr"] >= 0.8:
                 high_scoring.append(entry)
+
+        if failed_queries:
+            logger.error(
+                f"Golden eval: {len(failed_queries)}/{len(queries)} queries "
+                f"failed: {failed_queries}; this run will not become a baseline"
+            )
 
         if not per_query_scores:
             raise RuntimeError("No golden queries evaluated successfully")
@@ -547,8 +590,8 @@ class QualityMonitor:
 
         # Read the prior baseline BEFORE storing this run, so the drop check
         # compares against the previous baseline, not the value stored below.
-        prior_baseline = self._last_golden_baseline_mrr
-        prior_baseline_ndcg = self._last_golden_baseline_ndcg
+        prior_baseline = await self._read_baseline_metric("mean_mrr")
+        prior_baseline_ndcg = await self._read_baseline_metric("mean_ndcg")
 
         result = GoldenEvalResult(
             timestamp=datetime.now(timezone.utc),
@@ -562,6 +605,8 @@ class QualityMonitor:
             high_scoring_queries=high_scoring,
             baseline_mrr=prior_baseline,
             baseline_ndcg=prior_baseline_ndcg,
+            failed_query_count=len(failed_queries),
+            failed_queries=failed_queries,
         )
 
         await self._store_golden_eval_result(result)
@@ -570,11 +615,17 @@ class QualityMonitor:
     def _make_span_evaluator(self):
         """SpanEvaluator wired to THIS monitor's Phoenix endpoint — the
         default provider resolves to localhost, which is wrong everywhere
-        but a dev laptop (silent context drop inside Argo workflow pods)."""
+        but a dev laptop (silent context drop inside Argo workflow pods).
+
+        The project is the tenant-only user-ops project: that is where every
+        production agent emits request spans (telemetry_manager.span with no
+        project_name). Reading any suffixed project scores zero live samples.
+        """
         from cogniverse_evaluation.providers import get_evaluation_provider
         from cogniverse_evaluation.span_evaluator import SpanEvaluator
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        project_name = f"cogniverse-{self.tenant_id}-runtime"
+        project_name = get_telemetry_manager().config.get_project_name(self.tenant_id)
         return SpanEvaluator(
             tenant_id=self.tenant_id,
             project_name=project_name,
@@ -598,27 +649,28 @@ class QualityMonitor:
 
         for agent_type in AgentType:
             span_name = SPAN_NAME_BY_AGENT[agent_type]
+            # Outside the per-agent guard: a telemetry outage must fail the
+            # whole cycle loudly, not read as "no traffic" for every agent.
+            spans_df = await span_evaluator.get_recent_spans(
+                hours=int(self.live_eval_interval / 3600) or 4,
+                operation_name=span_name,
+                limit=200,
+                # Summary/report/gateway outputs are strings / routing
+                # dicts, not search-result lists; keep them rather than
+                # dropping every non-search span (which scored 0 samples
+                # for 3 of the 4 agent types).
+                require_search_shape=False,
+            )
+
+            if spans_df.empty:
+                logger.debug(f"No spans found for {agent_type.value}")
+                continue
+
+            sampled = spans_df.sample(n=min(self.live_sample_count, len(spans_df)))
+
             try:
-                spans_df = await span_evaluator.get_recent_spans(
-                    hours=int(self.live_eval_interval / 3600) or 4,
-                    operation_name=span_name,
-                    limit=200,
-                    # Summary/report/gateway outputs are strings / routing
-                    # dicts, not search-result lists; keep them rather than
-                    # dropping every non-search span (which scored 0 samples
-                    # for 3 of the 4 agent types).
-                    require_search_shape=False,
-                )
-
-                if spans_df.empty:
-                    logger.debug(f"No spans found for {agent_type.value}")
-                    continue
-
-                sampled = spans_df.sample(n=min(self.live_sample_count, len(spans_df)))
-
                 agent_result = await self._evaluate_agent_spans(agent_type, sampled)
                 result.agent_results[agent_type] = agent_result
-
             except Exception as e:
                 logger.warning(f"Live eval failed for {agent_type.value}: {e}")
 
@@ -958,44 +1010,55 @@ class QualityMonitor:
             logger.debug(f"Failed to build ModelingContext: {e}")
             return None
 
-    def _read_baseline_metric(self, metric: str) -> Optional[float]:
-        """Load the last golden baseline value for ``metric`` (e.g. mean_mrr,
-        mean_ndcg) from the tenant's Phoenix baseline dataset."""
-        try:
-            from phoenix.client import Client as PhoenixSyncClient
-
-            sync_client = PhoenixSyncClient(base_url=self.phoenix_http_endpoint)
-            dataset_name = f"quality-baseline-{self.tenant_id}"
-            dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
-            df = dataset.to_dataframe()
-            if df.empty:
-                return None
-
-            # Phoenix may nest values under input/output dicts
-            if metric in df.columns:
-                return float(df[metric].iloc[-1])
-            elif "output" in df.columns:
-                last_row = df.iloc[-1]
-                output = last_row["output"]
-                if isinstance(output, dict) and metric in output:
-                    return float(output[metric])
-            # Try flattened Phoenix column names
-            for col in df.columns:
-                if metric in str(col):
-                    return float(df[col].iloc[-1])
-        except Exception as e:
-            logger.debug(f"Failed to read baseline {metric}: {e}")
+    @staticmethod
+    def _row_value(row, columns, key):
+        """Read ``key`` from a baseline row: nested output/input dict first
+        (real Phoenix example shape), then flat column, then flattened name."""
+        for slot in ("output", "input"):
+            if slot in columns:
+                nested = row[slot]
+                if isinstance(nested, dict) and key in nested:
+                    return nested[key]
+        if key in columns:
+            return row[key]
+        for col in columns:
+            if key in str(col):
+                return row[col]
         return None
 
-    @property
-    def _last_golden_baseline_mrr(self) -> Optional[float]:
-        """Load the last golden baseline MRR from Phoenix dataset."""
-        return self._read_baseline_metric("mean_mrr")
+    async def _read_baseline_metric(self, metric: str) -> Optional[float]:
+        """Load the last COMPLETE golden baseline value for ``metric`` from
+        the tenant's baseline dataset.
 
-    @property
-    def _last_golden_baseline_ndcg(self) -> Optional[float]:
-        """Load the last golden baseline nDCG from Phoenix dataset."""
-        return self._read_baseline_metric("mean_ndcg")
+        None means genuinely no baseline (first run, or only partial runs). A
+        backend outage raises — silently reading "no baseline" would skip the
+        regression check for the whole outage.
+        """
+        dataset_name = f"quality-baseline-{self.tenant_id}"
+        try:
+            df = await self._get_dataset_store().get_dataset(dataset_name)
+        except DatasetNotFoundError:
+            return None
+        if df.empty:
+            return None
+
+        columns = list(df.columns)
+        for i in range(len(df) - 1, -1, -1):
+            row = df.iloc[i]
+            failed = self._row_value(row, columns, "failed_query_count")
+            try:
+                if failed is not None and not pd.isna(failed) and int(failed) > 0:
+                    continue
+            except (TypeError, ValueError):
+                pass
+            value = self._row_value(row, columns, metric)
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
 
     def _build_trigger(
         self,
@@ -1031,7 +1094,11 @@ class QualityMonitor:
         )
 
     async def _store_golden_eval_result(self, result: GoldenEvalResult):
-        """Store golden eval as Phoenix dataset for baseline comparison."""
+        """Store golden eval as Phoenix dataset for baseline comparison.
+
+        Raises on a store failure: this dataset feeds every future drop
+        check, and a silently lost write freezes the baseline unnoticed.
+        """
         store = self._get_dataset_store()
         dataset_name = f"quality-baseline-{self.tenant_id}"
 
@@ -1043,23 +1110,26 @@ class QualityMonitor:
                     "mean_ndcg": result.mean_ndcg,
                     "mean_precision_at_5": result.mean_precision_at_5,
                     "query_count": result.query_count,
+                    "failed_query_count": result.failed_query_count,
                 }
             ]
         )
 
-        try:
-            await store.create_dataset(
-                name=dataset_name,
-                data=df,
-                metadata={
-                    "description": f"Golden eval baseline for tenant {self.tenant_id}",
-                    "input_keys": ["timestamp"],
-                    "output_keys": ["mean_mrr", "mean_ndcg", "mean_precision_at_5"],
-                },
-            )
-            logger.info(f"Stored golden eval baseline: {dataset_name}")
-        except Exception as e:
-            logger.error(f"Failed to store golden baseline: {e}")
+        await store.create_dataset(
+            name=dataset_name,
+            data=df,
+            metadata={
+                "description": f"Golden eval baseline for tenant {self.tenant_id}",
+                "input_keys": ["timestamp"],
+                "output_keys": [
+                    "mean_mrr",
+                    "mean_ndcg",
+                    "mean_precision_at_5",
+                    "failed_query_count",
+                ],
+            },
+        )
+        logger.info(f"Stored golden eval baseline: {dataset_name}")
 
     async def _store_live_eval_result(self, result: LiveEvalResult):
         """Store live eval results as Phoenix dataset."""
@@ -1097,8 +1167,15 @@ class QualityMonitor:
         except Exception as e:
             logger.error(f"Failed to store live eval: {e}")
 
-    async def _store_trigger_dataset(self, trigger: OptimizationTrigger):
-        """Store optimization trigger payload as Phoenix dataset."""
+    async def _store_trigger_dataset(
+        self, trigger: OptimizationTrigger
+    ) -> Optional[str]:
+        """Store optimization trigger payload as Phoenix dataset.
+
+        Returns the stored dataset name, or None when there are no example
+        records (nothing was created — the caller must not submit a workflow
+        referencing a dataset that does not exist). A store failure raises.
+        """
         store = self._get_dataset_store()
         timestamp = trigger.timestamp.strftime("%Y%m%d_%H%M%S")
         dataset_name = f"optimization-trigger-{self.tenant_id}-{timestamp}"
@@ -1129,56 +1206,70 @@ class QualityMonitor:
                 )
 
         if not records:
-            return
+            logger.warning(
+                "No trigger examples collected for "
+                f"{[a.value for a in trigger.agents_to_optimize]}; "
+                "no trigger dataset stored"
+            )
+            return None
 
         df = pd.DataFrame(records)
-        try:
-            await store.create_dataset(
-                name=dataset_name,
-                data=df,
-                metadata={
-                    "description": (
-                        f"Optimization trigger for {self.tenant_id}: "
-                        f"{[a.value for a in trigger.agents_to_optimize]}"
-                    ),
-                    "input_keys": ["agent", "category", "query"],
-                    "output_keys": ["score", "output"],
-                },
-            )
-            logger.info(
-                f"Stored trigger dataset: {dataset_name} "
-                f"({len(records)} examples for "
-                f"{[a.value for a in trigger.agents_to_optimize]})"
-            )
-        except Exception as e:
-            logger.error(f"Failed to store trigger dataset: {e}")
+        await store.create_dataset(
+            name=dataset_name,
+            data=df,
+            metadata={
+                "description": (
+                    f"Optimization trigger for {self.tenant_id}: "
+                    f"{[a.value for a in trigger.agents_to_optimize]}"
+                ),
+                "input_keys": ["agent", "category", "query"],
+                "output_keys": ["score", "output"],
+            },
+        )
+        logger.info(
+            f"Stored trigger dataset: {dataset_name} "
+            f"({len(records)} examples for "
+            f"{[a.value for a in trigger.agents_to_optimize]})"
+        )
+        return dataset_name
 
     async def _get_agent_baseline(self, agent_type: AgentType) -> Optional[float]:
-        """Load the last live eval baseline for an agent from Phoenix."""
+        """Load the last live eval baseline for an agent.
+
+        None means no baseline recorded for this agent; a backend outage
+        raises (same contract as ``_read_baseline_metric``).
+        """
+        dataset_name = f"quality-baseline-{self.tenant_id}"
         try:
-            from phoenix.client import Client as PhoenixSyncClient
-
-            sync_client = PhoenixSyncClient(base_url=self.phoenix_http_endpoint)
-            dataset_name = f"quality-baseline-{self.tenant_id}"
-            dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
-            df = dataset.to_dataframe()
-
-            if df.empty:
-                return None
-
-            # Filter to this agent if column exists
-            if "agent" in df.columns:
-                agent_df = df[df["agent"] == agent_type.value]
-                if not agent_df.empty and "score" in agent_df.columns:
-                    return float(agent_df["score"].iloc[-1])
-
+            df = await self._get_dataset_store().get_dataset(dataset_name)
+        except DatasetNotFoundError:
             return None
-        except Exception as e:
-            logger.debug(f"Failed to read agent baseline for {agent_type.value}: {e}")
+        if df.empty:
             return None
 
-    async def submit_optimization(self, trigger: OptimizationTrigger) -> bool:
+        columns = list(df.columns)
+        for i in range(len(df) - 1, -1, -1):
+            row = df.iloc[i]
+            agent = self._row_value(row, columns, "agent")
+            if agent != agent_type.value:
+                continue
+            score = self._row_value(row, columns, "score")
+            if score is None or (isinstance(score, float) and pd.isna(score)):
+                continue
+            try:
+                return float(score)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    async def submit_optimization(
+        self, trigger: OptimizationTrigger, trigger_dataset: str
+    ) -> bool:
         """Submit Argo optimization workflow via k8s API.
+
+        ``trigger_dataset`` is the name ``_store_trigger_dataset`` returned —
+        the workflow references exactly the dataset that was stored, never an
+        independently re-derived name that may not exist.
 
         Returns True when Argo accepted the workflow; the helper swallows
         connection failures into False, so callers must check the result
@@ -1201,13 +1292,7 @@ class QualityMonitor:
             parameters=[
                 {"name": "tenant-id", "value": self.tenant_id},
                 {"name": "agents", "value": agents_csv},
-                {
-                    "name": "trigger-dataset",
-                    "value": (
-                        f"optimization-trigger-{self.tenant_id}-"
-                        f"{trigger.timestamp.strftime('%Y%m%d_%H%M%S')}"
-                    ),
-                },
+                {"name": "trigger-dataset", "value": trigger_dataset},
             ],
             container_args=[
                 "--mode",

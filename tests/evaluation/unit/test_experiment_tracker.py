@@ -540,21 +540,49 @@ class TestExperimentTracker:
             mock_tracker.run_all_experiments.assert_called_once()
 
     @pytest.mark.unit
-    def test_main_function_no_args(self, mock_dependencies):
-        """Test main function with no arguments."""
+    def test_main_requires_parsed_args(self, mock_dependencies):
+        """main() takes the parsed argparse namespace — the old optional-args
+        form silently built a tracker without the required tenant_id and
+        crashed on every __main__ run."""
+        import inspect
+
         from cogniverse_evaluation.core.experiment_tracker import main
 
-        with patch(
-            "cogniverse_evaluation.core.experiment_tracker.ExperimentTracker"
-        ) as mock_tracker_class:
-            mock_tracker = Mock()
-            mock_tracker_class.return_value = mock_tracker
-            mock_tracker.get_experiment_configurations.return_value = []
-            mock_tracker.create_or_get_dataset.return_value = "test_dataset"
-            mock_tracker.run_all_experiments.return_value = []
-            mock_tracker.create_visualization_tables.return_value = {}
+        params = inspect.signature(main).parameters
+        assert list(params) == ["args"]
+        assert params["args"].default is inspect.Parameter.empty
 
-            # Should not raise exception
-            main(None)
 
-            mock_tracker_class.assert_called_once()
+class TestMainEntryPoint:
+    @pytest.mark.unit
+    def test_main_threads_tenant_into_tracker(self):
+        """The __main__ path must pass the required tenant_id through —
+        it previously omitted it and crashed with TypeError on every run."""
+        import argparse
+
+        from cogniverse_evaluation.core import experiment_tracker as mod
+
+        args = argparse.Namespace(
+            tenant_id="acme:exp",
+            dataset_name="d",
+            csv_path=None,
+            profiles=None,
+            strategies=None,
+            all_strategies=False,
+            quality_evaluators=False,
+            llm_evaluators=False,
+            evaluator="visual_judge",
+            llm_model=None,
+            llm_base_url=None,
+            force_new=False,
+        )
+
+        with patch.object(mod, "ExperimentTracker") as tracker_cls:
+            tracker = tracker_cls.return_value
+            tracker.create_or_get_dataset.return_value = "d"
+            tracker.run_all_experiments.return_value = []
+            tracker.create_visualization_tables.return_value = {}
+
+            mod.main(args)
+
+        assert tracker_cls.call_args.kwargs["tenant_id"] == "acme:exp"

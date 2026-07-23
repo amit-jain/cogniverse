@@ -193,3 +193,75 @@ def test_flattened_metadata_dotted_keys_resolved() -> None:
     metrics = analytics.get_traces()
     assert metrics[0].profile == "audio_clap_semantic"
     assert metrics[0].strategy == "default"
+
+
+def test_naive_start_time_is_normalized_to_utc() -> None:
+    """A present-but-naive start_time must come out UTC-aware. Mixed with the
+    aware fallback rows, naive timestamps made calculate_statistics and
+    resample raise TypeError — crashing the Analytics tab."""
+    spans = [
+        {
+            "context.trace_id": "t1",
+            "name": "op",
+            "parent_id": None,
+            "start_time": pd.Timestamp("2026-01-01 10:00:00"),  # naive
+            "end_time": pd.Timestamp("2026-01-01 10:00:01"),
+            "status_code": "OK",
+        },
+        {
+            "context.trace_id": "t2",
+            "name": "op",
+            "parent_id": None,
+            "start_time": None,  # falls back to aware now()
+            "end_time": None,
+            "status_code": "OK",
+        },
+    ]
+    analytics = PhoenixAnalytics.__new__(PhoenixAnalytics)
+    analytics.telemetry_url = "http://unused:6006"
+    analytics._cache = {}
+    analytics.client = MagicMock()
+    analytics.client.spans.get_spans_dataframe = MagicMock(
+        return_value=_build_spans_df(spans)
+    )
+    analytics._breaker = _disabled_breaker()
+
+    traces = analytics.get_traces()
+
+    assert len(traces) == 2
+    for t in traces:
+        assert t.timestamp.tzinfo is not None, "naive timestamp leaked through"
+
+    # The exact crash site: min()/comparison across the mixed rows
+    stats = analytics.calculate_statistics(traces)
+    assert stats["total_requests"] == 2
+
+
+def test_mixed_tz_within_row_still_yields_duration() -> None:
+    """An aware start with a naive end (or vice versa) must not silently drop
+    the whole trace from the analytics view."""
+    from datetime import datetime, timezone
+
+    spans = [
+        {
+            "context.trace_id": "t1",
+            "name": "op",
+            "parent_id": None,
+            "start_time": datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+            "end_time": pd.Timestamp("2026-01-01 10:00:02"),  # naive
+            "status_code": "OK",
+        },
+    ]
+    analytics = PhoenixAnalytics.__new__(PhoenixAnalytics)
+    analytics.telemetry_url = "http://unused:6006"
+    analytics._cache = {}
+    analytics.client = MagicMock()
+    analytics.client.spans.get_spans_dataframe = MagicMock(
+        return_value=_build_spans_df(spans)
+    )
+    analytics._breaker = _disabled_breaker()
+
+    traces = analytics.get_traces()
+
+    assert len(traces) == 1
+    assert traces[0].duration_ms == 2000.0

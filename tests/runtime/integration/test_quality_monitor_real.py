@@ -352,10 +352,16 @@ class TestGoldenEvalRealVespa:
     async def test_golden_eval_stores_baseline_in_phoenix(
         self, monitor_with_real_search, seeded_vespa
     ):
-        """Golden eval result persists in real Phoenix dataset."""
+        """Golden eval result persists in real Phoenix dataset.
+
+        After the run is stored, the baseline reader returns THIS run's MRR
+        (the newest complete row); the prior baseline captured on the result
+        itself predates the store (None on a first run).
+        """
         result = await monitor_with_real_search.evaluate_golden_set()
 
-        baseline = monitor_with_real_search._last_golden_baseline_mrr
+        assert result.failed_query_count == 0
+        baseline = await monitor_with_real_search._read_baseline_metric("mean_mrr")
         assert baseline is not None
         assert baseline == pytest.approx(result.mean_mrr, abs=0.01)
 
@@ -449,7 +455,9 @@ class TestForceOptimizationCycle:
             f"force_optimization_cycle must return a dict, got: {result!r}"
         )
         assert "status" in result, f"Result dict missing 'status' key: {result}"
-        assert result["status"] in ("ok", "no_data"), (
+        # no_trigger_examples: evals ran but produced zero triggerable
+        # examples, so no dataset was stored and nothing was submitted.
+        assert result["status"] in ("ok", "no_data", "no_trigger_examples"), (
             f"Unexpected status value: {result['status']!r}"
         )
         await monitor.close()
@@ -507,7 +515,9 @@ class TestForceOptimizationCycle:
         result = await monitor.force_optimization_cycle()
 
         assert isinstance(result, dict)
-        assert result["status"] in ("ok", "no_data"), f"Unexpected: {result}"
+        assert result["status"] in ("ok", "no_data", "no_trigger_examples"), (
+            f"Unexpected: {result}"
+        )
         if result["status"] == "ok":
             assert "agents_triggered" in result, (
                 f"status='ok' but missing 'agents_triggered': {result}"
@@ -821,9 +831,11 @@ class TestStoreOperationsRealPhoenix:
             },
             misrouted_queries=[],
         )
-        await m._store_trigger_dataset(trigger)
+        name = await m._store_trigger_dataset(trigger)
 
-        name = f"optimization-trigger-{m.tenant_id}-{ts.strftime('%Y%m%d_%H%M%S')}"
+        assert name == (
+            f"optimization-trigger-{m.tenant_id}-{ts.strftime('%Y%m%d_%H%M%S')}"
+        )
         store = m._get_dataset_store()
         df = await store.get_dataset(name)
         assert len(df) == 2
@@ -841,11 +853,11 @@ class TestStoreOperationsRealPhoenix:
 
 
 def _emit_agent_span(telemetry, tenant_id, span_name, query, output_value):
-    """Emit one agent span to the tenant's runtime project in real Phoenix."""
+    """Emit one agent span the way production agents do: to the tenant-only
+    user-ops project (no project_name suffix)."""
     with telemetry.span(
         name=span_name,
         tenant_id=tenant_id,
-        project_name="runtime",
         attributes={
             "input.value": query,
             "output.value": output_value,
@@ -887,10 +899,10 @@ class TestLiveTrafficRealPhoenix:
         required — the exact C4 boundary, no LLM judge involved."""
         from cogniverse_evaluation.span_evaluator import SpanEvaluator
 
-        tenant_id = "live_eval_shape_rt"
+        tenant_id = "qmrt:live-shape"
         real_telemetry.register_project(
             tenant_id=tenant_id,
-            project_name="runtime",
+            project_name=None,
             otlp_endpoint=real_telemetry.config.provider_config["grpc_endpoint"],
             http_endpoint=real_telemetry.config.provider_config["http_endpoint"],
             use_sync_export=True,
@@ -907,7 +919,7 @@ class TestLiveTrafficRealPhoenix:
 
         evaluator = SpanEvaluator(
             tenant_id=tenant_id,
-            project_name=f"cogniverse-{tenant_id}-runtime",
+            project_name=f"cogniverse-{tenant_id}",
         )
 
         kept = await _wait_for_span(evaluator, "SummarizerAgent.process")
@@ -939,10 +951,10 @@ class TestLiveTrafficRealPhoenix:
         dropped as a non-search shape."""
         import asyncio
 
-        tenant_id = "live_eval_score_rt"
+        tenant_id = "qmrt:live-score"
         real_telemetry.register_project(
             tenant_id=tenant_id,
-            project_name="runtime",
+            project_name=None,
             otlp_endpoint=real_telemetry.config.provider_config["grpc_endpoint"],
             http_endpoint=real_telemetry.config.provider_config["http_endpoint"],
             use_sync_export=True,
@@ -960,7 +972,7 @@ class TestLiveTrafficRealPhoenix:
         from cogniverse_evaluation.span_evaluator import SpanEvaluator
 
         probe = SpanEvaluator(
-            tenant_id=tenant_id, project_name=f"cogniverse-{tenant_id}-runtime"
+            tenant_id=tenant_id, project_name=f"cogniverse-{tenant_id}"
         )
         assert await _wait_for_span(probe, "SummarizerAgent.process") is not None, (
             "summary span never landed in Phoenix"

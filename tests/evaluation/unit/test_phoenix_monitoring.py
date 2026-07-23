@@ -349,3 +349,80 @@ class TestRetrievalMonitor:
         assert "latency_p95" in summary[profile_key]
         assert "error_rate" in summary[profile_key]
         assert "mrr_mean" in summary[profile_key]
+
+
+class TestConcurrentWindowAccess:
+    @pytest.mark.unit
+    def test_alert_iteration_survives_concurrent_first_seen_profiles(self):
+        """log_retrieval_event (producer threads) inserts new profile keys
+        while the monitoring thread iterates the same dicts in _check_alerts
+        and get_metrics_summary. Without shared locking the iteration raises
+        RuntimeError (dictionary changed size during iteration)."""
+        import threading
+        import time as _time
+
+        from cogniverse_telemetry_phoenix.evaluation.monitoring import (
+            RetrievalMonitor,
+        )
+
+        monitor = RetrievalMonitor()
+        stop = threading.Event()
+        errors = []
+
+        def producer():
+            i = 0
+            while not stop.is_set():
+                monitor.log_retrieval_event(
+                    {
+                        "profile": f"profile-{i}",
+                        "strategy": "s",
+                        "latency_ms": 5.0,
+                        "error": False,
+                        "mrr": 0.9,
+                    }
+                )
+                i += 1
+
+        def checker():
+            while not stop.is_set():
+                try:
+                    monitor._check_alerts()
+                    monitor.get_metrics_summary()
+                except Exception as e:
+                    errors.append(e)
+                    return
+
+        threads = [
+            threading.Thread(target=producer, daemon=True),
+            threading.Thread(target=checker, daemon=True),
+        ]
+        for t in threads:
+            t.start()
+        _time.sleep(2.0)
+        stop.set()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert errors == [], f"iteration raced a concurrent insert: {errors[0]!r}"
+
+
+class TestMonitorAccessors:
+    @pytest.mark.unit
+    def test_get_active_alerts_returns_triggered_alerts(self):
+        from cogniverse_telemetry_phoenix.evaluation.monitoring import (
+            AlertThresholds,
+            RetrievalMonitor,
+        )
+
+        monitor = RetrievalMonitor(AlertThresholds(latency_p95_ms=1.0))
+        for _ in range(5):
+            monitor.log_retrieval_event(
+                {"profile": "p", "strategy": "s", "latency_ms": 500.0}
+            )
+        monitor._check_alerts()
+
+        alerts = monitor.get_active_alerts()
+        assert len(alerts) == 1
+        assert alerts[0]["alert"]["type"] == "latency"
+        assert alerts[0]["alert"]["profile"] == "p_s"
+        assert alerts[0]["count"] == 1

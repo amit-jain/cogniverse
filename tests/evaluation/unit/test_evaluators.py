@@ -400,3 +400,25 @@ class TestReferenceFreeFunctions:
         composite = evaluators["composite"]
         assert len(composite.evaluators) == 3
         assert len(composite.weights) == 3
+
+
+class TestPhoenixEvaluatorFramework:
+    """The real framework class (unit suites elsewhere inject a MagicMock)."""
+
+    @pytest.mark.unit
+    def test_real_framework_surface(self):
+        from cogniverse_telemetry_phoenix.evaluation.framework import (
+            EvaluationResult,
+            PhoenixEvaluatorFramework,
+        )
+
+        framework = PhoenixEvaluatorFramework()
+
+        assert framework.get_evaluation_result_type() is EvaluationResult
+        result = framework.create_evaluation_result(
+            score=0.7, label="ok", explanation="fine"
+        )
+        assert isinstance(result, EvaluationResult)
+        assert result["score"] == 0.7
+        assert result["label"] == "ok"
+        assert result["explanation"] == "fine"

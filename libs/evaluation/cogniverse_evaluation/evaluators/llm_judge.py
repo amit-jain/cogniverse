@@ -162,6 +162,10 @@ class LLMJudgeCore:
                         score = raw_score / 10
                     else:
                         score = raw_score
+                    # LMs write "12/10" or "100/10"; anything outside [0, 1]
+                    # would skew persisted quality means and the 0.8/0.5
+                    # example-classification gates.
+                    score = max(0.0, min(1.0, score))
                     break
                 except Exception:
                     continue

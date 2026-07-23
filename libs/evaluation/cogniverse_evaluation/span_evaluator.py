@@ -5,6 +5,7 @@ This module evaluates existing spans using both reference-free and golden datase
 """
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -54,7 +55,6 @@ class SpanEvaluator:
             )
 
         self.provider = provider
-        self.tenant_id = tenant_id
         self.project_name = project_name
 
         # Initialize evaluators
@@ -79,11 +79,10 @@ class SpanEvaluator:
         import json
 
         # Embedding-dimension spans like "(19, 128)" are encoder internals,
-        # never an agent output — always skip.
-        if (
-            isinstance(output_value, str)
-            and output_value.startswith("(")
-            and output_value.endswith(")")
+        # never an agent output — always skip. Match the numeric-tuple shape
+        # only; a legitimate output wrapped in parentheses stays.
+        if isinstance(output_value, str) and re.fullmatch(
+            r"\(\s*\d+\s*(,\s*\d+\s*)*,?\s*\)", output_value.strip()
         ):
             return None
 
@@ -135,84 +134,78 @@ class SpanEvaluator:
                 of being silently dropped.
 
         Returns:
-            DataFrame with span information
+            DataFrame with span information. Empty means genuinely no
+            traffic in the window; a telemetry outage RAISES (the trace
+            store fails fast, and flattening that into an empty frame would
+            silently disable live quality monitoring for the whole outage).
         """
-        try:
-            # Use provider to get spans
-            # Timezone-aware UTC: the Phoenix trace store passes aware
-            # datetimes through unchanged but mislabels naive ones as UTC,
-            # which skews the window by the local offset and finds no spans
-            # off-UTC (then falls back to mock data).
-            end_time = datetime.now(timezone.utc)
-            start_time = end_time - timedelta(hours=hours)
+        # Timezone-aware UTC: the Phoenix trace store passes aware
+        # datetimes through unchanged but mislabels naive ones as UTC,
+        # which skews the window by the local offset and finds no spans
+        # off-UTC (then falls back to mock data).
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=hours)
 
-            # Get spans dataframe from telemetry provider. Filter by name
-            # server-side so an agent's spans aren't crowded out of the limit
-            # slice by higher-volume sibling spans (which scored 0 samples).
-            spans_df = await self.provider.telemetry.traces.get_spans(
-                project=self.project_name,
-                start_time=start_time,
-                end_time=end_time,
-                filters={"name": operation_name} if operation_name else None,
-                limit=limit,
-            )
+        # Filter by name server-side so an agent's spans aren't crowded out
+        # of the limit slice by higher-volume sibling spans (which scored 0
+        # samples).
+        spans_df = await self.provider.telemetry.traces.get_spans(
+            project=self.project_name,
+            start_time=start_time,
+            end_time=end_time,
+            filters={"name": operation_name} if operation_name else None,
+            limit=limit,
+        )
 
-            if spans_df is None or spans_df.empty:
-                # No traffic -> empty, never fabricated spans (QualityMonitor
-                # would persist them as live quality scores).
-                logger.info("No spans found for the window")
-                return pd.DataFrame()
-
-            # Filter by operation name if specified
-            if operation_name:
-                spans_df = spans_df[spans_df["name"] == operation_name]
-
-            # Limit results
-            if len(spans_df) > limit:
-                spans_df = spans_df.head(limit)
-
-            logger.info(f"Retrieved {len(spans_df)} spans from Phoenix")
-
-            # Convert to expected format
-            formatted_spans = []
-            for _, span in spans_df.iterrows():
-                # Read the canonical input/output slots every producer writes.
-                span_io = read_span_io(span)
-                query = span_io["input"] or span.get("attributes.query")
-
-                # Skip spans with no query input — every agent judge prompt
-                # needs the query, and a search span without one is unusable.
-                if not query:
-                    continue
-
-                attributes = {"query": query}
-
-                outputs = self._extract_span_outputs(
-                    span_io["output"], require_search_shape
-                )
-                if outputs is None:
-                    continue
-
-                formatted_span = {
-                    "span_id": span.get("context.span_id", ""),
-                    "trace_id": span.get("context.trace_id", ""),
-                    "operation_name": span.get("name", ""),
-                    "attributes": attributes,
-                    "outputs": outputs,
-                    # Preserve latency and status so downstream quality checks
-                    # can evaluate error-rate and p95-latency ceilings; without
-                    # these the reformatted frame drops them entirely.
-                    "latency_ms": self._span_latency_ms(span),
-                    "status_code": span.get("status_code", span.get("status", "OK")),
-                }
-
-                formatted_spans.append(formatted_span)
-
-            return pd.DataFrame(formatted_spans)
-
-        except Exception as e:
-            logger.error(f"Error retrieving spans from Phoenix: {e}")
+        if spans_df is None or spans_df.empty:
+            # No traffic -> empty, never fabricated spans (QualityMonitor
+            # would persist them as live quality scores).
+            logger.info("No spans found for the window")
             return pd.DataFrame()
+
+        if operation_name:
+            spans_df = spans_df[spans_df["name"] == operation_name]
+
+        if len(spans_df) > limit:
+            spans_df = spans_df.head(limit)
+
+        logger.info(f"Retrieved {len(spans_df)} spans from Phoenix")
+
+        formatted_spans = []
+        for _, span in spans_df.iterrows():
+            # Read the canonical input/output slots every producer writes.
+            span_io = read_span_io(span)
+            query = span_io["input"] or span.get("attributes.query")
+
+            # Skip spans with no query input — every agent judge prompt
+            # needs the query, and a search span without one is unusable.
+            if not query:
+                continue
+
+            attributes = {"query": query}
+
+            outputs = self._extract_span_outputs(
+                span_io["output"], require_search_shape
+            )
+            if outputs is None:
+                continue
+
+            formatted_span = {
+                "span_id": span.get("context.span_id", ""),
+                "trace_id": span.get("context.trace_id", ""),
+                "operation_name": span.get("name", ""),
+                "attributes": attributes,
+                "outputs": outputs,
+                # Preserve latency and status so downstream quality checks
+                # can evaluate error-rate and p95-latency ceilings; without
+                # these the reformatted frame drops them entirely.
+                "latency_ms": self._span_latency_ms(span),
+                "status_code": span.get("status_code", span.get("status", "OK")),
+            }
+
+            formatted_spans.append(formatted_span)
+
+        return pd.DataFrame(formatted_spans)
 
     @staticmethod
     def _span_latency_ms(span) -> Optional[float]:

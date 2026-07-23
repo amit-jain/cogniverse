@@ -54,7 +54,10 @@ def resolve_frame_from_result(
     video_path = resolve_video_from_result(result, locator)
     if video_path is None:
         return None
-    frame_id = int(result.get("frame_id", 0) or 0)
+    try:
+        frame_id = int(float(result.get("frame_id", 0) or 0))
+    except (TypeError, ValueError):
+        frame_id = 0
     frames = extract_frames(video_path, num_frames=1, frame_index=frame_id)
     return frames[0] if frames else None
 

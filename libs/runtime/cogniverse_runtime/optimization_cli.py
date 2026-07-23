@@ -404,7 +404,9 @@ async def run_triggered_optimization(
             "precision_at_5": post_eval.mean_precision_at_5,
         }
 
-        if post_eval.mean_mrr > (monitor._last_golden_baseline_mrr or 0):
+        # baseline_mrr is the prior baseline snapshotted BEFORE the run was
+        # stored — reading the store here would compare the run to itself.
+        if post_eval.mean_mrr > (post_eval.baseline_mrr or 0):
             await monitor.update_baseline(golden_result=post_eval)
             results["baseline_updated"] = True
 
