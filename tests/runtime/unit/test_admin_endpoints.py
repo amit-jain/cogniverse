@@ -20,6 +20,36 @@ from fastapi.testclient import TestClient
 from cogniverse_runtime.routers import admin as admin_router
 
 
+@pytest.fixture(autouse=True)
+def _stub_pin_quota_store(monkeypatch):
+    """Pin/promote enforcement now warms quotas from the durable artifact store
+    (real Phoenix in prod). These in-process route tests have no Phoenix, so
+    stub the factory with an in-memory blob store — the quota values are not
+    what these tests assert (the store round-trip is covered by
+    test_pin_quota_enforcement_reads_blob.py). Tests that need specific quota
+    values override this in their own body."""
+
+    class _InMemoryAM:
+        _blobs: dict = {}
+
+        def __init__(self, tenant):
+            self._tenant = tenant
+
+        async def load_blob(self, kind, key):
+            return self._blobs.get((self._tenant, kind, key))
+
+        async def save_blob(self, kind, key, raw):
+            self._blobs[(self._tenant, kind, key)] = raw
+
+    _InMemoryAM._blobs = {}
+    monkeypatch.setattr(
+        admin_router, "_build_artifact_manager", lambda key: _InMemoryAM(key)
+    )
+    admin_router._reset_admin_overrides_for_tests()
+    yield
+    admin_router._reset_admin_overrides_for_tests()
+
+
 def _make_stub_manager_class(delete_results=None):
     """Build a fresh Mem0MemoryManager stand-in class that records every
     constructor + method call. ``delete_results`` maps agent_name → bool."""

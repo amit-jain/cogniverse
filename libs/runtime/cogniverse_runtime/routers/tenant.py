@@ -147,7 +147,10 @@ async def set_instructions(tenant_id: str, body: InstructionsRequest):
     cm = _require_config_manager()
     now = datetime.now(timezone.utc).isoformat()
     value = {"text": body.text, "updated_at": now}
-    cm.set_config_value(
+    # The config store is a synchronous pyvespa call (60s timeout); offload it
+    # so a slow Vespa doesn't stall the whole pod's event loop.
+    await asyncio.to_thread(
+        cm.set_config_value,
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_INSTRUCTIONS_SERVICE,
@@ -162,7 +165,8 @@ async def set_instructions(tenant_id: str, body: InstructionsRequest):
 async def get_instructions(tenant_id: str):
     """Retrieve the stored tenant instructions."""
     cm = _require_config_manager()
-    entry = cm.store.get_config(
+    entry = await asyncio.to_thread(
+        cm.store.get_config,
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_INSTRUCTIONS_SERVICE,
@@ -183,7 +187,8 @@ async def get_instructions(tenant_id: str):
 async def delete_instructions(tenant_id: str):
     """Clear the stored tenant instructions."""
     cm = _require_config_manager()
-    cm.set_config_value(
+    await asyncio.to_thread(
+        cm.set_config_value,
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_INSTRUCTIONS_SERVICE,
@@ -972,7 +977,8 @@ async def create_job(tenant_id: str, body: JobCreateRequest):
         )
         await _submit_cron_workflow(manifest)
 
-    cm.set_config_value(
+    await asyncio.to_thread(
+        cm.set_config_value,
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,
@@ -1032,7 +1038,8 @@ async def delete_job(tenant_id: str, job_id: str):
     tombstones the ConfigStore entry. An already-deleted job returns 404.
     """
     cm = _require_config_manager()
-    entry = cm.store.get_config(
+    entry = await asyncio.to_thread(
+        cm.store.get_config,
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,
@@ -1049,7 +1056,8 @@ async def delete_job(tenant_id: str, job_id: str):
             _cron_workflow_name(tenant_id, job_id), get_workflow_settings().namespace
         )
 
-    cm.set_config_value(
+    await asyncio.to_thread(
+        cm.set_config_value,
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,
