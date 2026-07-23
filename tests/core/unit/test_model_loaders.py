@@ -520,15 +520,33 @@ class TestRemoteGlinerClientHTTPContract:
         finally:
             server.shutdown()
 
-    def test_server_error_degrades_to_empty_list(self):
+    def test_server_error_raises_not_empty_list(self):
+        """A 5xx (sidecar outage) must RAISE — swallowing it to [] made the
+        gateway's entity_extraction_failed degrade branch unreachable on the
+        remote path, so an outage read as a genuine no-entities routing signal.
+        A 200 with no entities (contract drift above) is the only [] case."""
+        import requests
+
         from cogniverse_core.common.models.model_loaders import RemoteGlinerClient
 
         server, url = self._serve(lambda p, b: (500, b"{}"))
         try:
             client = RemoteGlinerClient(url, "gliner_large-v2.1")
-            assert client.predict_entities("text", ["person"]) == []
+            with pytest.raises(requests.exceptions.HTTPError):
+                client.predict_entities("text", ["person"])
         finally:
             server.shutdown()
+
+    def test_connection_refused_raises(self):
+        """A dead sidecar (connection refused) is an outage, not empty."""
+        import requests
+
+        from cogniverse_core.common.models.model_loaders import RemoteGlinerClient
+
+        # Nothing listening on this port.
+        client = RemoteGlinerClient("http://127.0.0.1:1", "gliner_large-v2.1")
+        with pytest.raises(requests.exceptions.RequestException):
+            client.predict_entities("text", ["person"])
 
     def test_get_or_load_gliner_returns_remote_client_for_url(self):
         from cogniverse_core.common.models.model_loaders import (
