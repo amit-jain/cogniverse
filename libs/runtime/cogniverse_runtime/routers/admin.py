@@ -281,7 +281,8 @@ async def create_profile(
 
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-        config_entry = config_manager.store.get_config(
+        config_entry = await asyncio.to_thread(
+            config_manager.store.get_config,
             tenant_id=canonical_tenant_id(request.tenant_id),
             scope=ConfigScope.BACKEND,
             service="backend",
@@ -432,7 +433,8 @@ async def get_profile(
 
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-        config_entry = config_manager.store.get_config(
+        config_entry = await asyncio.to_thread(
+            config_manager.store.get_config,
             tenant_id=canonical_tenant_id(tenant_id),
             scope=ConfigScope.BACKEND,
             service="backend",
@@ -549,7 +551,8 @@ async def update_profile(
 
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-        config_entry = config_manager.store.get_config(
+        config_entry = await asyncio.to_thread(
+            config_manager.store.get_config,
             tenant_id=canonical_tenant_id(request.tenant_id),
             scope=ConfigScope.BACKEND,
             service="backend",
@@ -806,7 +809,8 @@ async def create_messaging_invite(
 
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-    config_manager.set_config_value(
+    await asyncio.to_thread(
+        config_manager.set_config_value,
         tenant_id="_system",
         scope=ConfigScope.SYSTEM,
         service="messaging_gateway",
@@ -1367,8 +1371,20 @@ async def _pin_service_for(tenant_id: str):
     served one enforced hardcoded defaults and ignored an admin PUT made on
     another replica. Loading here (bounded by the cache TTL) makes every
     replica enforce the persisted quotas.
+
+    The refresh is best-effort: if the quota store is unreachable, warn and
+    enforce the last-known cache / defaults rather than failing the pin — a
+    pin operation must not be coupled to the artifact store's availability.
     """
-    await _load_pin_quotas(tenant_id)
+    try:
+        await _load_pin_quotas(tenant_id)
+    except Exception as exc:
+        logger.warning(
+            "pin-quota refresh failed for tenant=%s (%s); enforcing "
+            "last-known/default quotas",
+            tenant_id,
+            exc,
+        )
     return await asyncio.to_thread(_get_pin_service, tenant_id)
 
 
