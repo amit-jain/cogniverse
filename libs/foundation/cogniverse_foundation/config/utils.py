@@ -255,7 +255,9 @@ class ConfigUtils:
         runtime container).
         """
         self._ensure_system_config()
-        return getattr(self._system_config, "inference_service_urls", {}) or {}
+        # Return a copy: this dict is handed to encoders/search; a caller
+        # mutating it would otherwise poison the shared cached SystemConfig.
+        return dict(getattr(self._system_config, "inference_service_urls", {}) or {})
 
     def get_llm_config(self) -> LLMConfig:
         """
