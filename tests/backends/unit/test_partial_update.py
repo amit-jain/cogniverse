@@ -211,6 +211,26 @@ class TestVespaTimestampOnPartialUpdate:
         )["fields"]
         assert fields["created_at"] == 12345
 
+    def test_string_supplied_created_at_honoured(self):
+        """A stringified epoch (a common JSON / mem0 shape) is not an int/float,
+        so it missed the timestamp gate the same way numpy did and was silently
+        stamped now() instead of the supplied value."""
+        client = self._memory_client()
+        fields = client.process(
+            self._doc(created_at="1700000000"), operation_type="feed"
+        )["fields"]
+        assert fields["created_at"] == 1700000000
+
+    def test_nonnumeric_string_created_at_falls_back_to_now(self):
+        """A non-numeric created_at cannot be an epoch — a full feed stamps an
+        int now() rather than writing the raw string into the timestamp field."""
+        client = self._memory_client()
+        fields = client.process(
+            self._doc(created_at="not-a-timestamp"), operation_type="feed"
+        )["fields"]
+        assert isinstance(fields["created_at"], int)
+        assert fields["created_at"] > 0
+
 
 @pytest.mark.unit
 class TestYqlQuote:

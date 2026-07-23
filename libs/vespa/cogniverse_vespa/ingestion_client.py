@@ -27,12 +27,28 @@ from .strategy_aware_processor import StrategyAwareProcessor
 
 
 def _native_epoch(value):
-    """Coerce a numpy epoch scalar to native — np.int64 is not an int
-    subclass, so the isinstance timestamp gates missed numpy values and
-    stamped now() instead of the supplied epoch."""
+    """Coerce a numpy or numeric-string epoch to a native number.
+
+    np.int64 is not an int subclass, so the isinstance timestamp gates missed
+    numpy values and stamped now() instead of the supplied epoch; a stringified
+    epoch (a common JSON / mem0 shape) missed them the same way. A non-numeric
+    string is returned unchanged so it falls through to the now() default, and
+    the s/ms magnitude validators still reject an out-of-band parsed value.
+    """
     import numpy as np
 
-    return value.item() if isinstance(value, np.generic) else value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, str):
+        s = value.strip()
+        try:
+            return int(s)
+        except ValueError:
+            try:
+                return float(s)
+            except ValueError:
+                return value
+    return value
 
 
 # Unix-epoch ms / s magnitude bands for sanity-checking caller stamps.
