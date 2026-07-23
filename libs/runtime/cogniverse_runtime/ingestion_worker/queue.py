@@ -93,8 +93,18 @@ async def submit(
     profile: str,
     tenant_id: str,
     sha: str,
+    committed_key: str | None = None,
+    committed_ttl_seconds: int = 0,
 ) -> str:
-    """XADD a new ingestion request. Returns the Redis message id."""
+    """XADD a new ingestion request. Returns the Redis message id.
+
+    When ``committed_key`` is given, the XADD and a SET of that marker run in
+    one MULTI/EXEC transaction, so a crash can never leave the job on the work
+    stream without its committed marker. A resubmit reads that marker to tell a
+    genuine in-flight run from a phantom; a two-step submit-then-mark left a
+    window where a crash between them orphaned the job and let a resubmit
+    enqueue a duplicate.
+    """
     fields = {
         "ingest_id": ingest_id,
         "source_url": source_url,
@@ -102,7 +112,16 @@ async def submit(
         "tenant_id": tenant_id,
         "sha": sha,
     }
-    return await redis.xadd(QUEUE_STREAM, fields)
+    if committed_key is None:
+        return await redis.xadd(QUEUE_STREAM, fields)
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.xadd(QUEUE_STREAM, fields)
+        if committed_ttl_seconds > 0:
+            pipe.set(committed_key, "1", ex=committed_ttl_seconds)
+        else:
+            pipe.set(committed_key, "1")
+        results = await pipe.execute()
+    return results[0]
 
 
 async def claim(
