@@ -701,7 +701,9 @@ class VespaBackend(Backend):
             },
         )
 
-    def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
+    def batch_get_documents(
+        self, document_ids: List[str], schema_name: Optional[str] = None
+    ) -> List[Optional[Document]]:
         """
         Retrieve multiple documents by ID.
 
@@ -710,6 +712,10 @@ class VespaBackend(Backend):
 
         Args:
             document_ids: List of document IDs
+            schema_name: Vespa schema to read from. Defaults to this backend's
+                configured schema. The shared search backend rewrites its own
+                schema attribute per request, so the schema is passed explicitly
+                rather than read off that shared state.
 
         Returns:
             List of Documents (None for not found)
@@ -717,11 +723,19 @@ class VespaBackend(Backend):
         if not document_ids:
             return []
 
+        if not schema_name:
+            schema_name = self.config.get("schema_name")
+
         if self._vespa_search_backend:
-            return self._vespa_search_backend.batch_get_documents(document_ids)
+            return self._vespa_search_backend.batch_get_documents(
+                document_ids, schema_name=schema_name
+            )
 
         # No search backend — retrieve individually via ingestion client
-        return [self.get_document(doc_id) for doc_id in document_ids]
+        return [
+            self.get_document(doc_id, schema_name=schema_name)
+            for doc_id in document_ids
+        ]
 
     def get_statistics(self) -> Dict[str, Any]:
         """
