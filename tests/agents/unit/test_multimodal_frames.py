@@ -184,6 +184,41 @@ class TestKeyframeImageResolver:
         imgs = r.collect([_video_hit(i) for i in range(5)], max_images=2)
         assert len(imgs) == 2
 
+    def test_bounds_fetches_to_candidate_buffer(self, jpg_path):
+        """collect() must not fetch every hit when it needs only a few — that
+        both over-fetches on the happy path and multiplies the stall against a
+        hung store. It fetches at most max_images x buffer candidates."""
+        loc = FakeLocator(jpg_path)
+        r = KeyframeImageResolver(loc)
+        imgs = r.collect([_video_hit(i) for i in range(40)], max_images=2)
+        assert len(imgs) == 2
+        assert len(loc.calls) <= 2 * KeyframeImageResolver._CANDIDATE_BUFFER
+
+    def test_hung_store_returns_within_deadline(self, jpg_path, monkeypatch):
+        """Against a hung object store collect() must return within its
+        deadline (degrading to fewer images), not hold the request for the sum
+        of every fetch's timeout."""
+        import time as _time
+
+        class _HangingLocator:
+            def __init__(self):
+                self.calls = []
+
+            def localize(self, uri):
+                self.calls.append(uri)
+                _time.sleep(30)  # never completes within the test deadline
+                return jpg_path
+
+        r = KeyframeImageResolver(_HangingLocator())
+        monkeypatch.setattr(KeyframeImageResolver, "_COLLECT_DEADLINE_S", 0.5)
+
+        start = _time.monotonic()
+        imgs = r.collect([_video_hit(i) for i in range(6)], max_images=2)
+        elapsed = _time.monotonic() - start
+
+        assert imgs == [], "no image should resolve from a hung store"
+        assert elapsed < 5.0, f"collect() blocked {elapsed:.1f}s past its deadline"
+
     def test_max_images_zero_returns_empty(self, jpg_path):
         r = KeyframeImageResolver(FakeLocator(jpg_path))
         assert r.collect([_video_hit(1)], max_images=0) == []
