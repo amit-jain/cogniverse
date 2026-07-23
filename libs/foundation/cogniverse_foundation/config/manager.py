@@ -7,6 +7,7 @@ import copy
 import logging
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -102,7 +103,12 @@ class ConfigManager:
         # TTL; entries are deep-copied on the way out so callers can't
         # mutate shared state.
         self._scoped_config_cache_ttl_s = scoped_config_cache_ttl_s
-        self._scoped_config_cache: Dict[tuple, tuple[float, Optional[dict]]] = {}
+        # Bounded LRU: without a cap this dict grew one entry per
+        # (scope, tenant, service, key) forever, so a many-tenant server (or a
+        # per-tenant e2e suite) accumulated entries for the process lifetime,
+        # and a deleted tenant's entries lingered.
+        self._scoped_config_cache: "OrderedDict[tuple, tuple[float, Optional[dict]]]" = OrderedDict()
+        self._scoped_config_cache_max = 512
         self._scoped_config_lock = threading.Lock()
 
         logger.info(
@@ -308,6 +314,7 @@ class ConfigManager:
         with self._scoped_config_lock:
             hit = self._scoped_config_cache.get(key)
             if hit is not None and now - hit[0] < self._scoped_config_cache_ttl_s:
+                self._scoped_config_cache.move_to_end(key)  # mark MRU
                 return copy.deepcopy(hit[1])
         entry = self.store.get_config(
             tenant_id=tenant_id,
@@ -318,6 +325,9 @@ class ConfigManager:
         value = entry.config_value if entry is not None else None
         with self._scoped_config_lock:
             self._scoped_config_cache[key] = (now, value)
+            self._scoped_config_cache.move_to_end(key)
+            while len(self._scoped_config_cache) > self._scoped_config_cache_max:
+                self._scoped_config_cache.popitem(last=False)
         return copy.deepcopy(value)
 
     def _invalidate_scoped_config(self, scope: ConfigScope, tenant_id: str) -> None:
