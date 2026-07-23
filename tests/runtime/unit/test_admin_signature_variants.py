@@ -1,10 +1,12 @@
-"""Admin signature-variant endpoints (in-memory override store, no persistence).
+"""Admin signature-variant route logic (canonicalization, merge, validation).
 
-GET/PUT ``/admin/tenants/{t}/signature_variants`` round-trip through the
-in-memory ``_signature_variant_overrides`` dict — no Vespa or Phoenix — so they
-belong in the fast gate rather than behind the integration suite's Docker
-fixtures. Both the write and the read canonicalize the tenant id, so a variant
-selection stored for one spelling resolves for the canonical form.
+GET/PUT ``/admin/tenants/{t}/signature_variants`` route serialization and
+validation, driven in-process with an in-memory artifact-store double so the
+route logic runs without Docker. The real Phoenix persistence round-trip +
+cold-replica dispatcher resolution live in
+tests/runtime/integration/test_signature_variant_persistence.py. Both the write
+and the read canonicalize the tenant id, so a selection stored for one spelling
+resolves for the canonical form.
 """
 
 from __future__ import annotations
@@ -18,10 +20,30 @@ from cogniverse_runtime.routers import admin
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
+class _InMemoryArtifactManager:
+    """Per-tenant in-memory blob store double for the route-logic unit tests."""
+
+    def __init__(self, blobs: dict, tenant: str):
+        self._blobs = blobs
+        self._tenant = tenant
+
+    async def save_blob(self, kind: str, key: str, raw: str) -> None:
+        self._blobs[(self._tenant, kind, key)] = raw
+
+    async def load_blob(self, kind: str, key: str):
+        return self._blobs.get((self._tenant, kind, key))
+
+
 @pytest.fixture
-def client() -> TestClient:
+def client(monkeypatch) -> TestClient:
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
+    blobs: dict = {}
+    monkeypatch.setattr(
+        admin,
+        "_build_artifact_manager",
+        lambda key: _InMemoryArtifactManager(blobs, key),
+    )
     admin._reset_admin_overrides_for_tests()
     return TestClient(app)
 

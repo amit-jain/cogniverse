@@ -68,7 +68,22 @@ def dispatcher(artifact_manager: ArtifactManager) -> AgentDispatcher:
 
 
 @pytest.fixture
-def admin_client() -> TestClient:
+def admin_client(phoenix_container, monkeypatch) -> TestClient:
+    # The signature-variant PUT now persists to the durable artifact store, so
+    # point the admin router's factory at the test's real Phoenix container.
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": "admin-sigvar",
+            "http_endpoint": phoenix_container["http_endpoint"],
+            "grpc_endpoint": phoenix_container["otlp_endpoint"],
+        }
+    )
+    monkeypatch.setattr(
+        admin,
+        "_build_artifact_manager",
+        lambda key: ArtifactManager(telemetry_provider=provider, tenant_id=key),
+    )
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
     admin._reset_admin_overrides_for_tests()
@@ -232,15 +247,33 @@ class TestResolveHelperBehavior:
         finally:
             admin._reset_admin_overrides_for_tests()
 
-    def test_put_and_resolve_agree_across_tenant_forms(self):
+    def test_put_and_resolve_agree_across_tenant_forms(self, monkeypatch):
         """A variant set via the admin PUT must resolve in dispatch regardless
         of whether the tenant arrives as simple ('acme') or canonical
         ('acme:acme') form. Pre-fix the PUT stored under the raw path key and
         the resolver looked up a differently-normalised key, so a tenant
         arriving in a different form than the PUT used got the default variant.
+
+        This pins the canonicalization logic, not real persistence, so it uses
+        an in-memory artifact-store double (the durable round-trip is covered by
+        test_signature_variant_persistence.py).
         """
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
+        blobs: dict = {}
+
+        class _AM:
+            def __init__(self, tenant):
+                self._t = tenant
+
+            async def save_blob(self, kind, key, raw):
+                blobs[(self._t, kind, key)] = raw
+
+            async def load_blob(self, kind, key):
+                return blobs.get((self._t, kind, key))
+
+        monkeypatch.setattr(admin, "_build_artifact_manager", lambda key: _AM(key))
 
         admin._reset_admin_overrides_for_tests()
         app = FastAPI()
