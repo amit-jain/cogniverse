@@ -142,7 +142,7 @@ class SpanEvaluator:
         # Timezone-aware UTC: the Phoenix trace store passes aware
         # datetimes through unchanged but mislabels naive ones as UTC,
         # which skews the window by the local offset and finds no spans
-        # off-UTC (then falls back to mock data).
+        # off-UTC.
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=hours)
 
