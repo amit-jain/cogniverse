@@ -885,7 +885,7 @@ strategy_set = ProcessingStrategySet(
 
 #### `async process(video_path: Path, processor_manager, pipeline_context) -> dict[str, Any]`
 
-Execute all strategies in defined order.
+Execute all strategies, respecting their data dependencies.
 
 ```python
 results = await strategy_set.process(
@@ -897,10 +897,15 @@ results = await strategy_set.process(
 ```
 
 **Execution Order**:
-1. **Segmentation** → Extract keyframes/chunks/segments
-2. **Transcription** → Audio-to-text (if enabled)
-3. **Description** → VLM descriptions (if enabled)
-4. **Embedding** → Generate and feed embeddings (if enabled)
+1. **Segmentation** (keyframes/chunks) and **Transcription** (audio-to-text) run
+   **concurrently** — they are independent, so the cv2 decode and Whisper
+   transcription overlap. Each stage runs in its own telemetry span; the two are
+   siblings under the pipeline span (`asyncio.gather` isolates their contexts).
+2. **Description** → VLM descriptions (needs the keyframes from segmentation)
+3. **Embedding** → Generate and feed embeddings (needs everything upstream)
+
+Steps 2 and 3 run serially after the concurrent pair because each depends on the
+prior stage's output.
 
 ### 4. ProcessorManager (processor_manager.py)
 
