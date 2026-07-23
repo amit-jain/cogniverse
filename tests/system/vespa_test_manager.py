@@ -162,7 +162,11 @@ class VespaTestManager:
                 backend_endpoint="http://localhost",
                 backend_port=self.config_port,
             )
-            schema_manager.upload_metadata_schemas(app_name="cogniverse")
+            # allow_schema_removal=True: this test manager reclaims a shared
+            # Vespa and deliberately drops any leftover schema from a prior run.
+            schema_manager.upload_metadata_schemas(
+                app_name="cogniverse", allow_schema_removal=True
+            )
 
             # Wait for application to be ready after schema deployment
             print("Waiting for metadata schemas to be ready...")

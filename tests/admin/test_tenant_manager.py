@@ -95,8 +95,12 @@ class TestTenantManagerAPI:
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
-        # Deploy metadata schemas explicitly (not done in VespaBackend.__init__)
-        system_backend.schema_manager.upload_metadata_schemas(app_name="cogniverse")
+        # Deploy metadata schemas explicitly (not done in VespaBackend.__init__).
+        # allow_schema_removal=True: a test harness reclaiming the shared Vespa
+        # deliberately drops any leftover schema from a prior test.
+        system_backend.schema_manager.upload_metadata_schemas(
+            app_name="cogniverse", allow_schema_removal=True
+        )
         logger.info("Backend created and metadata schemas deployed")
 
         # Wait for Vespa to be ready and for schemas to be fully activated

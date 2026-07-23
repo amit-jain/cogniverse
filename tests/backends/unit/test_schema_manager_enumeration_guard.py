@@ -68,3 +68,14 @@ def test_delete_schema_refuses_and_does_not_deploy_on_outage(monkeypatch):
 
     # The redeploy that would have dropped peer-tenant schemas never ran.
     deploy_spy.assert_not_called()
+
+
+def test_upload_metadata_schemas_defaults_to_removal_disabled():
+    """The metadata deploy must default to refusing a schema-dropping deploy:
+    a merge that misses a peer tenant's not-yet-registered schema fails loudly
+    rather than destroying its documents. Only a deliberate cleanup passes True.
+    """
+    import inspect
+
+    sig = inspect.signature(VespaSchemaManager.upload_metadata_schemas)
+    assert sig.parameters["allow_schema_removal"].default is False

@@ -618,7 +618,7 @@ class VespaSchemaManager:
             ) from e
 
     def upload_metadata_schemas(
-        self, app_name: str = "cogniverse", allow_schema_removal: bool = True
+        self, app_name: str = "cogniverse", allow_schema_removal: bool = False
     ) -> None:
         """
         Deploy organization and tenant metadata schemas for multi-tenant management.
@@ -632,10 +632,13 @@ class VespaSchemaManager:
 
         Args:
             app_name: Name of the application (default: "cogniverse" to match standard app name)
-            allow_schema_removal: Pass False when the caller cannot prove this
-                package covers every live schema (e.g. a registry-less
-                bootstrap) — Vespa then refuses a deploy that would drop
-                schemas instead of executing it and losing their documents.
+            allow_schema_removal: Defaults to False — Vespa refuses (rather
+                than executes) a deploy that would drop a live schema, so a
+                merge that misses a peer tenant's not-yet-registered schema
+                fails loudly instead of destroying its documents. Pass True
+                only from a deliberate cleanup path that can prove the merged
+                package is the authoritative full set (e.g. a test harness
+                reclaiming a shared cluster).
         """
         try:
             from vespa.package import ApplicationPackage
@@ -658,10 +661,10 @@ class VespaSchemaManager:
             # when tenant schemas already exist in the deployment.
             all_schemas = metadata_schemas + existing_schemas
 
-            # Deploy all schemas together. allow_schema_removal=True (the
-            # registry-aware default) handles the case where a test tenant was
-            # deleted via API but its schema still exists in Vespa — without
-            # this, Vespa blocks the deploy.
+            # Deploy metadata + the registry's known tenant schemas together.
+            # allow_schema_removal defaults to False so a deploy that would drop
+            # a schema the merge missed (a peer tenant's not-yet-registered one)
+            # is refused, not executed. A deliberate cleanup passes True.
             app_package = ApplicationPackage(name=app_name, schema=all_schemas)
             self._deploy_package(app_package, allow_schema_removal=allow_schema_removal)
 
