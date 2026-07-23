@@ -533,9 +533,10 @@ class AgentConfigUnified:
     tenant_id: str
     agent_config: AgentConfig
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
-        config_dict = self.agent_config.to_dict()
+    def to_dict(self, redact: bool = True) -> Dict[str, Any]:
+        """Convert to dictionary. ``redact=False`` on the persistence path so
+        the real llm_api_key is stored (see AgentConfig.to_dict)."""
+        config_dict = self.agent_config.to_dict(redact=redact)
         config_dict["tenant_id"] = self.tenant_id
         return config_dict
 

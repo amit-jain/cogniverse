@@ -81,8 +81,14 @@ class AgentConfig:
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert config to dictionary"""
+    def to_dict(self, redact: bool = True) -> Dict[str, Any]:
+        """Convert config to dictionary.
+
+        ``redact`` (default True) masks ``llm_api_key`` for display/API
+        responses. The persistence path passes ``redact=False`` so the real key
+        is stored — persisting the masked "***" would overwrite the secret with
+        a placeholder that reloads as the literal "***".
+        """
         return {
             "agent_name": self.agent_name,
             "agent_version": self.agent_version,
@@ -113,7 +119,9 @@ class AgentConfig:
             ),
             "llm_model": self.llm_model,
             "llm_base_url": self.llm_base_url,
-            "llm_api_key": "***" if self.llm_api_key else None,
+            "llm_api_key": (
+                ("***" if self.llm_api_key else None) if redact else self.llm_api_key
+            ),
             "llm_temperature": self.llm_temperature,
             "llm_max_tokens": self.llm_max_tokens,
             "thinking_enabled": self.thinking_enabled,

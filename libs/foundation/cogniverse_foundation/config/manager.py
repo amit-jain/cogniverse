@@ -258,7 +258,8 @@ class ConfigManager:
             scope=ConfigScope.AGENT,
             service=agent_name,
             config_key="agent_config",
-            config_value=unified.to_dict(),
+            # Persist the real key, not the display-redacted "***".
+            config_value=unified.to_dict(redact=False),
         )
         self._invalidate_scoped_config(ConfigScope.AGENT, tenant_id)
 
