@@ -27,6 +27,10 @@ from cogniverse_cli.cluster import (
     get_install_commands,
     has_existing_k8s,
     install_missing_prerequisites,
+    list_cluster_states,
+    start_cluster,
+    start_port_forwards,
+    stop_cluster,
 )
 from cogniverse_cli.config import (
     get_chart_path,
@@ -546,7 +550,67 @@ def down(keep_data: bool) -> None:
 @cli.command()
 def status() -> None:
     """Show status of the Cogniverse stack."""
+    try:
+        clusters = list_cluster_states()
+    except Exception:
+        clusters = []
+    if clusters:
+        cluster_table = Table(title="k3d Clusters")
+        cluster_table.add_column("Cluster", style="bold")
+        cluster_table.add_column("State")
+        for cluster in clusters:
+            running = cluster["servers_running"] >= max(cluster["servers_count"], 1)
+            state = "[green]running[/green]" if running else "[yellow]stopped[/yellow]"
+            cluster_table.add_row(cluster["name"], state)
+        console.print(cluster_table)
     _print_status_table()
+
+
+@cli.command()
+@click.option(
+    "--name",
+    default=CLUSTER_NAME,
+    show_default=True,
+    help="k3d cluster to stop (e.g. cogniverse-e2e).",
+)
+def stop(name: str) -> None:
+    """Stop a cluster's containers, keeping all data (frees RAM/GPU)."""
+    if not cluster_exists(name):
+        console.print(f"[red]No k3d cluster named {name!r}.[/red]")
+        raise SystemExit(1)
+    console.print(f"[cyan]Stopping cluster {name}...[/cyan]")
+    stop_cluster(name)
+    console.print(
+        f"[green]Cluster {name} stopped — data preserved; "
+        f"resume with `cogniverse start --name {name}`.[/green]"
+    )
+
+
+@cli.command()
+@click.option(
+    "--name",
+    default=CLUSTER_NAME,
+    show_default=True,
+    help="k3d cluster to start.",
+)
+def start(name: str) -> None:
+    """Start a previously stopped cluster (volumes intact)."""
+    if not cluster_exists(name):
+        console.print(f"[red]No k3d cluster named {name!r}.[/red]")
+        raise SystemExit(1)
+    console.print(f"[cyan]Starting cluster {name}...[/cyan]")
+    start_cluster(name)
+    if name == CLUSTER_NAME:
+        # The dev stack is reached through kubectl port-forwards (29xxx);
+        # the e2e cluster maps NodePorts directly (33xxx) and needs none.
+        try:
+            start_port_forwards()
+        except Exception as exc:
+            console.print(
+                f"[yellow]Cluster started but port-forwards failed ({exc}); "
+                "re-run `cogniverse start` once pods are ready.[/yellow]"
+            )
+    console.print(f"[green]Cluster {name} started.[/green]")
 
 
 @cli.group()
