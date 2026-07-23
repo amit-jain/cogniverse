@@ -130,31 +130,61 @@ class KeyframeImageResolver:
         # localize and the last write wins, which is idempotent.
         self._cache_lock = threading.Lock()
 
+    # A collect() must never hold the request past this budget: against a hung
+    # object store each fetch rides the locator's ~60s deadline, and fetching
+    # every derivable URI in 4-wide waves could stall a report for minutes
+    # before degrading to text-only. Bound the candidate set (we only need
+    # max_images successes, plus a buffer for misses) and cap the total wall
+    # clock; hung fetches are abandoned, not awaited (same tradeoff the locator
+    # makes for a single fetch).
+    _CANDIDATE_BUFFER = 3
+    _COLLECT_DEADLINE_S = 90.0
+
     def collect(
         self, hits: Iterable[dict[str, Any]], max_images: int
     ) -> list[dspy.Image]:
-        images: list[dspy.Image] = []
         if max_images <= 0:
-            return images
+            return []
         derivable = [
             uri for uri in (hit_keyframe_uri(hit) for hit in hits) if uri is not None
         ]
         if not derivable:
-            return images
-        # Fetch in a small pool instead of serially: the whole collect runs
-        # inside one to_thread worker, so four sequential object-store
-        # round-trips held that worker (and the request) for 4x the
-        # per-download latency. Order is preserved, and the first
-        # ``max_images`` successes win exactly as the serial loop did.
-        from concurrent.futures import ThreadPoolExecutor
+            return []
+        # Only fetch as many as we could need — not every hit. Fetching all N
+        # when we need a few both over-fetches on the happy path and multiplies
+        # the stall on a hung store.
+        candidates = derivable[: max_images * self._CANDIDATE_BUFFER]
 
-        with ThreadPoolExecutor(max_workers=min(4, len(derivable))) as pool:
-            for img in pool.map(self._image_for, derivable):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        results: dict[int, dspy.Image] = {}
+        pool = ThreadPoolExecutor(max_workers=min(4, len(candidates)))
+        futures = {
+            pool.submit(self._image_for, uri): i for i, uri in enumerate(candidates)
+        }
+        try:
+            for fut in as_completed(futures, timeout=self._COLLECT_DEADLINE_S):
+                img = fut.result()
                 if img is not None:
-                    images.append(img)
-                    if len(images) >= max_images:
+                    results[futures[fut]] = img
+                    if len(results) >= max_images:
                         break
-        return images
+        except TimeoutError:
+            logger.warning(
+                "keyframe collect() exceeded %.0fs (object store slow/hung); "
+                "returning %d image(s), degrading to text-only for the rest",
+                self._COLLECT_DEADLINE_S,
+                len(results),
+            )
+        finally:
+            for fut in futures:
+                fut.cancel()
+            # Do not block the request on fetches still running against a hung
+            # store; the locator bounds each abandoned fetch on its own.
+            pool.shutdown(wait=False)
+
+        # Preserve the hits' order among the successes.
+        return [results[i] for i in sorted(results)][:max_images]
 
     def _image_for(self, uri: str) -> Optional[dspy.Image]:
         with self._cache_lock:
