@@ -332,6 +332,43 @@ class TestActiveCounter:
         assert await queue.get_active(redis, "acme") == 0
 
     @pytest.mark.asyncio
+    async def test_decrement_atomic_against_concurrent_increment(self, redis):
+        """A clamping decrement must not clobber a concurrent increment.
+
+        The counter is at logical zero, so a decrement floors. The old
+        two-step DECR-then-SET(0) left a window: an increment landing between
+        the DECR and the SET was overwritten back to 0. The single atomic
+        ``eval`` closes it. We gate the client's ``set`` to force exactly that
+        window — the atomic path performs its clamp server-side inside the Lua,
+        so it never calls the client's ``set`` and the gate simply never fires.
+        """
+        assert await queue.get_active(redis, "acme") == 0
+
+        release = asyncio.Event()
+        orig_set = redis.set
+
+        async def gated_set(*args, **kwargs):
+            await release.wait()
+            return await orig_set(*args, **kwargs)
+
+        redis.set = gated_set
+        try:
+            dec_task = asyncio.create_task(queue.decrement_active(redis, "acme"))
+            # Atomic decrement returns now; the racy two-step version blocks in
+            # gated_set until released.
+            await asyncio.wait({dec_task}, timeout=0.5)
+            # A real job starts concurrently, inside the decrement's set window.
+            assert await queue.increment_active(redis, "acme") == 1
+            release.set()
+            await dec_task
+        finally:
+            redis.set = orig_set
+
+        # The floored spurious decrement is absorbed and the new active job is
+        # counted; the two-step version overwrites this back to 0.
+        assert await queue.get_active(redis, "acme") == 1
+
+    @pytest.mark.asyncio
     async def test_per_tenant_isolation(self, redis):
         await queue.increment_active(redis, "acme")
         await queue.increment_active(redis, "acme")
