@@ -1018,6 +1018,149 @@ class TestEmbeddingGeneratorImpl:
         mock_cap.release.assert_called_once()
 
     @patch("cogniverse_core.common.models.get_or_load_model")
+    @patch("torch.no_grad")
+    @patch("cv2.cvtColor")
+    @patch("PIL.Image.fromarray")
+    @patch("cv2.VideoCapture")
+    def test_chunk_path_lazy_loads_colqwen_model(
+        self,
+        mock_video_capture,
+        mock_from_array,
+        mock_cvt_color,
+        mock_no_grad,
+        mock_get_model,
+        frame_based_config,
+        mock_logger,
+        mock_backend_client,
+    ):
+        """The chunk path must lazy-load ColQwen, exactly like the frame path.
+
+        ColQwen/ColPali defer loading past __init__ (``_should_load_model``);
+        the chunk path uses ``self.model``/``self.processor``, so it must trigger
+        ``_load_model`` on first use. Without the guard ``self.model`` stays
+        ``None`` → ``process_images`` on ``None`` → the shipped
+        ``video_colqwen_omni_mv_chunk_30s`` profile feeds zero documents and
+        every video is marked failed. This differs from
+        ``test_generate_chunk_embeddings_colqwen``, which pre-sets the model and
+        so cannot catch a missing load. Here the model is left unloaded and the
+        guard is what populates it.
+        """
+        fake_model = Mock()
+        fake_model.device = "cpu"
+        fake_processor = Mock()
+        mock_get_model.return_value = (fake_model, fake_processor)
+
+        config = {
+            **frame_based_config,
+            "fps": 1.0,
+            "embedding_type": "multi_vector",
+            "model_loader": "colqwen",
+        }
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+        generator.model_name = "colqwen_test"
+
+        # Precondition: ColQwen defers the load, so __init__ leaves these None.
+        assert generator.model is None
+        assert generator.processor is None
+        assert mock_get_model.call_count == 0
+
+        mock_cap = Mock()
+        mock_cap.get.side_effect = [25.0, 100]  # fps, total_frames
+        mock_cap.read.return_value = (True, np.random.rand(100, 100, 3))
+        mock_video_capture.return_value = mock_cap
+        mock_from_array.return_value = Mock()
+        mock_cvt_color.return_value = np.random.rand(100, 100, 3)
+
+        batch_inputs = {"input_ids": Mock()}
+        wrapper = Mock()
+        wrapper.to.return_value = batch_inputs
+        fake_processor.process_images.return_value = wrapper
+        embs = Mock()
+        embs.cpu.return_value.numpy.return_value = np.random.rand(10, 128)
+        fake_model.return_value = embs
+        ctx = Mock()
+        ctx.__enter__ = Mock(return_value=None)
+        ctx.__exit__ = Mock(return_value=None)
+        mock_no_grad.return_value = ctx
+
+        result = generator._generate_chunk_embeddings(Path("/path/to/chunk.mp4"))
+
+        # The guard fired exactly once and populated the model from the chunk
+        # path; embeddings were produced (not the zero-document failure).
+        mock_get_model.assert_called_once()
+        assert generator.model is fake_model
+        assert generator.processor is fake_processor
+        assert result is not None
+        assert result.shape == (128,)
+
+    @patch("cogniverse_core.common.models.get_or_load_model")
+    @patch("torch.no_grad")
+    @patch("cv2.cvtColor")
+    @patch("PIL.Image.fromarray")
+    def test_time_segment_path_lazy_loads_colqwen_model(
+        self,
+        mock_from_array,
+        mock_cvt_color,
+        mock_no_grad,
+        mock_get_model,
+        frame_based_config,
+        mock_logger,
+        mock_backend_client,
+    ):
+        """The time-segment path must lazy-load ColQwen, like the frame path.
+
+        Time-based (single-vector) segments with a ColQwen/ColPali loader take
+        the non-VideoPrism branch, which uses ``self.model``/``self.processor``.
+        Without the guard the model stays ``None`` and the segment yields no
+        embedding. This pins that ``_load_model`` fires from this path too.
+        """
+        fake_model = Mock()
+        fake_model.device = "cpu"
+        fake_processor = Mock()
+        mock_get_model.return_value = (fake_model, fake_processor)
+
+        config = {
+            **frame_based_config,
+            "fps": 1.0,
+            "embedding_type": "multi_vector",
+            "model_loader": "colqwen",
+        }
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+        generator.model_name = "colqwen_test"
+
+        assert generator.model is None
+        assert generator.videoprism_loader is None  # non-VideoPrism else branch
+
+        mock_cap = Mock()
+        mock_cap.get.return_value = 25.0  # fps
+        mock_cap.read.return_value = (True, np.random.rand(100, 100, 3))
+        generator._get_video_capture = Mock(return_value=mock_cap)
+        mock_from_array.return_value = Mock()
+        mock_cvt_color.return_value = np.random.rand(100, 100, 3)
+
+        batch_inputs = {"input_ids": Mock()}
+        wrapper = Mock()
+        wrapper.to.return_value = batch_inputs
+        fake_processor.process_images.return_value = wrapper
+        embs = Mock()
+        embs.cpu.return_value.numpy.return_value = np.random.rand(10, 128)
+        fake_model.return_value = embs
+        ctx = Mock()
+        ctx.__enter__ = Mock(return_value=None)
+        ctx.__exit__ = Mock(return_value=None)
+        mock_no_grad.return_value = ctx
+
+        result = generator._generate_time_segment_embeddings(
+            Path("/path/to/video.mp4"), 0.0, 30.0
+        )
+
+        mock_get_model.assert_called_once()
+        assert generator.model is fake_model
+        assert generator.processor is fake_processor
+        assert result is not None
+        assert result.shape == (128,)
+
+    @patch("cogniverse_core.common.models.get_or_load_model")
     @patch("subprocess.run")
     def test_generate_chunk_embeddings_videoprism(
         self,
