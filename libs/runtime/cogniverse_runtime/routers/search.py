@@ -131,8 +131,14 @@ async def search(
     schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> Union[StreamingResponse, SearchResponse]:
     """Execute a search query. Returns SSE stream if stream=True, else JSON."""
+    # Combine a separately-supplied org_id with a simple tenant_id into the
+    # canonical org:tenant form (matching the admin tenant route); org_id was
+    # otherwise silently dropped and the search hit the wrong namespace.
+    combined_tenant = request.tenant_id
+    if request.org_id and request.tenant_id and ":" not in request.tenant_id:
+        combined_tenant = f"{request.org_id}:{request.tenant_id}"
     try:
-        tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
+        tenant_id = require_tenant_id(combined_tenant, source="SearchRequest")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

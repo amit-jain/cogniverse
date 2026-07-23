@@ -219,3 +219,33 @@ def test_empty_profile_rejected_before_any_upload(upload_client, monkeypatch):
     assert "profile" in resp.json()["detail"]
     assert uploads == []
     assert captured == {}
+
+
+def test_org_id_combined_with_simple_tenant(upload_client):
+    """A separately-supplied org_id must combine with a simple tenant_id into
+    the canonical org:tenant form, not be silently dropped (which routed the
+    upload into the wrong namespace)."""
+    client, captured, _ = upload_client
+
+    resp = client.post(
+        "/ingestion/upload",
+        files={"file": ("v.mp4", b"video-bytes", "video/mp4")},
+        data={"tenant_id": "research", "org_id": "acme"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert captured["tenant_id"] == "acme:research"
+
+
+def test_org_id_ignored_when_tenant_already_qualified(upload_client):
+    """An org_id is ignored when the tenant_id is already org:tenant form."""
+    client, captured, _ = upload_client
+
+    resp = client.post(
+        "/ingestion/upload",
+        files={"file": ("v.mp4", b"video-bytes", "video/mp4")},
+        data={"tenant_id": "acme:research", "org_id": "globex"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert captured["tenant_id"] == "acme:research"

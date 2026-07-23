@@ -281,6 +281,38 @@ class TestSearchEndpoint:
         assert resp.status_code == 503, resp.text
         assert "soft timeout" in resp.json()["detail"]
 
+    def test_org_id_combined_into_canonical_tenant(self, search_client):
+        """A separately-supplied org_id must combine with a simple tenant_id
+        into org:tenant, not be silently dropped (which searched the wrong
+        namespace). The service must be called with 'acme:research'."""
+        from unittest.mock import MagicMock, patch
+
+        with_profile = MagicMock()
+        with_profile.get.side_effect = lambda k, d=None: {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "backend": {},
+        }.get(k, d)
+
+        service = MagicMock()
+        service.search.return_value = []
+
+        with (
+            patch(
+                "cogniverse_runtime.routers.search.get_config",
+                return_value=with_profile,
+            ),
+            patch(
+                "cogniverse_runtime.routers.search.SearchService",
+                return_value=service,
+            ),
+        ):
+            resp = search_client.post(
+                "/search",
+                json={"query": "cats", "tenant_id": "research", "org_id": "acme"},
+            )
+        assert resp.status_code == 200, resp.text
+        assert service.search.call_args.kwargs["tenant_id"] == "acme:research"
+
     def test_search_request_defaults(self):
         """SearchRequest model has correct defaults."""
         req = SearchRequest(query="test query")
