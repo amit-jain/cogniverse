@@ -570,10 +570,19 @@ async def _process_job(
                 job_span.set_attribute("job.outcome", "success")
             except Exception as exc:
                 logger.exception("Ingest job %s failed", job.ingest_id)
+                # Guard str(exc): an exception whose __str__ itself raises would
+                # otherwise propagate here before terminal_event is built, so no
+                # failed terminal is published and the cleanup below never runs —
+                # the client sees "running" until the reaper dead-letters it and
+                # the tenant slot leaks for the active-counter TTL.
+                try:
+                    error_text = str(exc)
+                except Exception:
+                    error_text = f"<unprintable {type(exc).__name__}>"
                 terminal_event = {
                     "state": "failed",
                     "ingest_id": job.ingest_id,
-                    "error": str(exc),
+                    "error": error_text,
                     "error_type": type(exc).__name__,
                 }
                 job_span.set_attribute("job.outcome", "failed")

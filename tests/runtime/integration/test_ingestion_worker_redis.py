@@ -763,6 +763,39 @@ class TestTerminalCleanupBestEffort:
         terminal = self._terminal_event(await queue.read_status_since(redis, ingest_id))
         assert "clear_inflight" in terminal["cleanup_error"]
 
+    @pytest.mark.asyncio
+    async def test_pipeline_exception_with_raising_str_still_publishes_terminal(
+        self, redis, redis_container, monkeypatch
+    ):
+        """A pipeline exception whose __str__ itself raises must not stop the
+        failed terminal from being built and published: otherwise no terminal
+        is emitted, the client sees 'running' forever, and the tenant slot leaks
+        until the active-counter TTL. The error text falls back to the type."""
+        from cogniverse_runtime.ingestion_worker import worker
+
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        config = worker.WorkerConfig()
+        tenant, sha, ingest_id = "acme:acme", "sha_rstr", "ing_rstr"
+        await queue.increment_active(redis, tenant)
+        job = await self._submit_and_claim(redis, config, tenant, sha, ingest_id)
+
+        class _RaisingStr(Exception):
+            def __str__(self):
+                raise RuntimeError("boom in __str__")
+
+        async def _explode(job):
+            raise _RaisingStr()
+
+        await worker._process_job(redis, job, config, processor=_explode)
+
+        terminal = self._terminal_event(await queue.read_status_since(redis, ingest_id))
+        assert terminal["state"] == "failed"
+        assert terminal["error_type"] == "_RaisingStr"
+        assert "unprintable" in terminal["error"]
+        # Cleanup still ran: slot freed, inflight cleared, entry acked.
+        assert await queue.get_active(redis, tenant) == 0
+        assert await redis.get(f"{idempotency.INFLIGHT_KEY_PREFIX}{sha}") is None
+
 
 class TestColdBuildOffload:
     @pytest.mark.asyncio
@@ -1009,3 +1042,34 @@ class TestClaimLoopSurvivesPublishFault:
         finally:
             stop.set()
             await asyncio.wait_for(loop_task, timeout=5)
+
+
+class TestMalformedEntrySettlement:
+    @pytest.mark.asyncio
+    async def test_malformed_entry_settles_the_client(self, redis):
+        """A version-skew entry (missing a required field but carrying its
+        ingest_id + sha) is dropped, but the client polling that ingest_id must
+        not wait forever: a failed terminal is published and the inflight marker
+        released so a resubmit is not blocked for the 6h TTL."""
+        await queue.ensure_consumer_group(redis, "ingestors")
+        sha = idempotency.compute_sha("s3://b/skew.mp4", "video", "acme:acme")
+        await idempotency.mark_inflight(redis, sha, "ingest_skew", ttl_seconds=3600)
+
+        # An entry missing source_url + profile (producer wrote a newer shape).
+        await redis.xadd(
+            queue.QUEUE_STREAM,
+            {"ingest_id": "ingest_skew", "tenant_id": "acme:acme", "sha": sha},
+        )
+
+        jobs = await queue.claim(redis, "ingestors", "consumer_skew", block_ms=1000)
+        assert jobs == [], "malformed entry must not be returned as a job"
+
+        # The client's status resolved to failed.
+        events = await queue.read_status_since(
+            redis, "ingest_skew", last_id="0-0", block_ms=500
+        )
+        states = [e[1]["state"] for e in events]
+        assert "failed" in states, f"no failed terminal published: {states}"
+
+        # The inflight marker was released so a resubmit is not blocked.
+        assert await idempotency.get_existing_ingest_id(redis, sha) is None
