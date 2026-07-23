@@ -10,6 +10,7 @@ reranking silently broke before).
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -24,7 +25,11 @@ def _parse_timestamp(d: Dict[str, Any]) -> Optional[datetime]:
     always falling back to the neutral 0.5 score (the timestamp was never set)."""
     raw = d.get("creation_timestamp")
     if raw is None:
-        raw = (d.get("metadata") or {}).get("creation_timestamp")
+        meta = d.get("metadata")
+        # Caller-supplied results may carry a non-dict metadata value; treat
+        # anything that isn't a dict as "no metadata" rather than crashing on
+        # .get (which the route would surface as an opaque 500).
+        raw = meta.get("creation_timestamp") if isinstance(meta, dict) else None
     if raw is None:
         return None
     try:
@@ -46,6 +51,7 @@ def _parse_timestamp(d: Dict[str, Any]) -> Optional[datetime]:
 
 def _to_rsr(d: Dict[str, Any]) -> RerankerSearchResult:
     raw_score = d.get("score", 0.0) or 0.0
+    item_id = d.get("id") or d.get("document_id") or "?"
     try:
         score = float(raw_score)
     except (TypeError, ValueError) as exc:
@@ -53,16 +59,21 @@ def _to_rsr(d: Dict[str, Any]) -> RerankerSearchResult:
         # this too, and a bare float() traceback doesn't say which result
         # was malformed.
         raise ValueError(
-            f"result {d.get('id') or d.get('document_id') or '?'!s} has a "
-            f"non-numeric score {raw_score!r}"
+            f"result {item_id!s} has a non-numeric score {raw_score!r}"
         ) from exc
+    if not math.isfinite(score):
+        # "nan"/"inf"/"-inf" pass float() but poison rank ordering and break
+        # allow_nan=False JSON serialization — reject as bad input, not a 200
+        # with a null score.
+        raise ValueError(f"result {item_id!s} has a non-finite score {raw_score!r}")
+    meta = d.get("metadata")
     return RerankerSearchResult(
         id=str(d.get("id") or d.get("source_id") or d.get("document_id") or ""),
         title=d.get("title", "") or "",
         content=d.get("content", "") or d.get("description", "") or "",
         modality=d.get("modality", "") or d.get("content_type", "") or "",
         score=score,
-        metadata=d.get("metadata", {}) or {},
+        metadata=meta if isinstance(meta, dict) else {},
         timestamp=_parse_timestamp(d),
     )
 

@@ -288,6 +288,9 @@ async def upload_video(
             },
         )
 
+    from botocore.exceptions import BotoCoreError, ClientError
+    from redis.exceptions import RedisError
+
     from cogniverse_runtime.ingestion_worker import minio_client
     from cogniverse_runtime.ingestion_worker.redis_client import get_redis
     from cogniverse_runtime.ingestion_worker.submit_api import (
@@ -311,6 +314,13 @@ async def upload_video(
         # credentials (config/env drift) — retryable deployment problem,
         # not a client error or a 500.
         raise HTTPException(status_code=503, detail={"message": str(exc)})
+    except (BotoCoreError, ClientError) as exc:
+        # MinIO/S3 down, throttling, or 5xx mid-transfer — a transient backend
+        # outage, retryable. Surface 503, not an opaque 500. put_object is a
+        # single PUT so there is no partial object to clean up.
+        raise HTTPException(
+            status_code=503, detail={"message": f"object store unavailable: {exc}"}
+        )
 
     redis = await get_redis(redis_url)
     try:
@@ -332,6 +342,12 @@ async def upload_video(
                 "limit": exc.rejection.limit,
                 "message": exc.rejection.message,
             },
+        )
+    except RedisError as exc:
+        # Redis unreachable while enqueueing — the object is already uploaded;
+        # a retry re-enqueues idempotently (content-addressed key). 503, not 500.
+        raise HTTPException(
+            status_code=503, detail={"message": f"ingest queue unavailable: {exc}"}
         )
 
     response: Dict[str, Any] = {

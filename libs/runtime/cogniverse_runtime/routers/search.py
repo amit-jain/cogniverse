@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from cogniverse_agents.search.service import SearchService
+from cogniverse_agents.search.vespa_query import VespaSearchDegraded
 from cogniverse_core.common.tenant_utils import (
     assert_tenant_exists,
     require_tenant_id,
@@ -252,6 +253,13 @@ async def search(
             # Client errors raised above (e.g. 400 "no profile") must keep their
             # status — the broad handler below would otherwise mask them as 500.
             raise
+        except VespaSearchDegraded as e:
+            # Vespa soft-timeout / partial coverage — a transient, retryable
+            # backend fault, not a server bug. 503 tells the caller to retry,
+            # matching /agents/{name}/process; the broad handler below would
+            # otherwise mask it as an opaque 500.
+            logger.warning(f"Search degraded: {e}")
+            raise HTTPException(status_code=503, detail=str(e))
         except ValueError as e:
             # Bad request input (unknown profile/strategy, missing schema) — a
             # client error, not a server fault. 400, not 500.
