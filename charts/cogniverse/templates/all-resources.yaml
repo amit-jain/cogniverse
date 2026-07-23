@@ -433,6 +433,10 @@ spec:
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
+        {{- if .Values.runtime.startupProbe }}
+        startupProbe:
+          {{- toYaml .Values.runtime.startupProbe | nindent 10 }}
+        {{- end }}
         livenessProbe:
           {{- toYaml .Values.runtime.livenessProbe | nindent 10 }}
         readinessProbe:
