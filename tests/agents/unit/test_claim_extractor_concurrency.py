@@ -116,7 +116,8 @@ def test_rlm_module_builds_once_under_concurrent_first_touch(monkeypatch):
     builds: list[object] = []
     build_lock = threading.Lock()
 
-    def counting_factory(_signature):
+    def counting_factory(_signature, *, max_output_chars):
+        assert max_output_chars == 16_000
         with build_lock:
             builds.append(object())
         return object()

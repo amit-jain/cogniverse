@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import subprocess
 import time
 from pathlib import Path
@@ -75,10 +76,23 @@ def _spawn(device: str, gpu_utilization: float = 0.25) -> None:
         f"{HOST_PORT}:8000",
         "-v",
         f"{_HF_CACHE}:/root/.cache/huggingface",
+        # The host resolv.conf can point at a dead resolver (k3d node DNS
+        # breakage) — pin public resolvers so a fresh model download works.
+        "--dns",
+        "1.1.1.1",
+        "--dns",
+        "8.8.8.8",
         # Short-lived relative to the session Vespa — prefer killing this
         # over the shared containers under memory pressure.
         "--oom-score-adj=400",
     ]
+    # Serve straight from the mounted cache when the model is already
+    # present — vLLM's startup hub check otherwise needs egress and dies
+    # on a host with broken DNS even though every weight is local.
+    model_dir = pathlib.Path(_HF_CACHE) / "hub" / f"models--{MODEL.replace('/', '--')}"
+    if model_dir.exists():
+        cmd += ["-e", "HF_HUB_OFFLINE=1"]
+
     if device == "rocm":
         cmd += [
             "--device",
@@ -92,15 +106,18 @@ def _spawn(device: str, gpu_utilization: float = 0.25) -> None:
             "--security-opt",
             "seccomp=unconfined",
         ]
+        # 16384: the RLM long-doc tests carry a ~7400-token REPL prompt
+        # plus an 800-token output budget — smaller windows overflow by
+        # design of the tier's own consumers.
         engine_args = [
             "--max-model-len",
-            "4096",
+            "16384",
             "--gpu-memory-utilization",
             str(gpu_utilization),
         ]
     else:
         cmd += ["-e", "VLLM_CPU_KVCACHE_SPACE=4"]
-        engine_args = ["--max-model-len", "4096"]
+        engine_args = ["--max-model-len", "16384"]
     cmd += [_IMAGES[device], "--model", MODEL, *engine_args]
     subprocess.run(cmd, check=True, timeout=120)
 

@@ -23,14 +23,8 @@ import pytest
 
 from cogniverse_foundation.config.unified_config import DurableExecutionConfig
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-from tests.fixtures.llm import is_test_lm_available
 
 pytestmark = pytest.mark.integration
-
-skip_if_no_lm = pytest.mark.skipif(
-    not is_test_lm_available(),
-    reason="Test LM not available for the real-compile durable resume test",
-)
 
 _AGENTS = ["search", "detailed_report", "summarizer"]
 
@@ -190,7 +184,6 @@ async def test_resume_skips_already_compiled_agents(
     assert done is not None and done.status == "completed"
 
 
-@skip_if_no_lm
 @pytest.mark.asyncio
 async def test_resume_skips_a_real_dspy_compile(
     multi_agent_trigger_dataset,
