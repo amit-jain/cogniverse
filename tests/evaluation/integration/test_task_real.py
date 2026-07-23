@@ -13,7 +13,7 @@ import pytest
 
 from cogniverse_evaluation.core.task import evaluation_task
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
 
 def _samples_by_input(task):

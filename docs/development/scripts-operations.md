@@ -68,7 +68,7 @@ scripts/
 │   └── auto_optimization_trigger.py  # Automated optimization trigger
 │
 ├── Dataset Management
-│   ├── manage_datasets.py            # Dataset CRUD operations
+│   ├── manage_datasets.py            # Create/list/inspect datasets (tenant-scoped)
 │   ├── manage_golden_datasets.py     # Golden dataset management
 │   ├── create_golden_dataset_from_traces.py  # Golden dataset from traces
 │   └── seed_bright_corpus.py         # Seed corpus data
@@ -563,7 +563,7 @@ def init_telemetry(tenant_id: str) -> None:
 
 **Purpose:** Per-agent optimization CLI, cluster maintenance sweep, and reporting jobs, all driven by DSPy `BootstrapFewShot` over Phoenix spans
 
-**Location:** `libs/runtime/cogniverse_runtime/optimization_cli.py` (2592 lines)
+**Location:** `libs/runtime/cogniverse_runtime/optimization_cli.py` (3598 lines)
 
 **What Gets Optimized (`--mode`):**
 
@@ -761,13 +761,13 @@ python scripts/run_experiments_with_visualization.py \
 
 **Purpose:** CLI tool for managing evaluation datasets
 
-**Location:** `scripts/manage_datasets.py` (59 lines)
+**Location:** `scripts/manage_datasets.py` (62 lines)
 
 **Operations:**
 
 **List Datasets:**
 ```bash
-python scripts/manage_datasets.py --list
+python scripts/manage_datasets.py --tenant-id acme:acme --list
 
 # Output:
 # Registered datasets:
@@ -782,6 +782,7 @@ python scripts/manage_datasets.py --list
 **Create Dataset:**
 ```bash
 python scripts/manage_datasets.py \
+  --tenant-id acme:acme \
   --create my_dataset \
   --csv data/queries.csv
 
@@ -791,7 +792,7 @@ python scripts/manage_datasets.py \
 
 **Get Dataset Info:**
 ```bash
-python scripts/manage_datasets.py --info golden_eval_v1
+python scripts/manage_datasets.py --tenant-id acme:acme --info golden_eval_v1
 
 # Output:
 # Dataset: golden_eval_v1
@@ -806,7 +807,7 @@ python scripts/manage_datasets.py --info golden_eval_v1
 def main():
     from cogniverse_evaluation.data import DatasetManager
 
-    dm = DatasetManager()
+    dm = DatasetManager(tenant_id=args.tenant_id)
 
     if args.list:
         dataset_names = dm.list_datasets()  # Returns List[str]
@@ -844,11 +845,11 @@ def main():
 
 **Purpose:** Interactive Streamlit dashboard for analytics, configuration, and system management
 
-**Location:** `libs/dashboard/cogniverse_dashboard/app.py` (3013 lines, multi-tab)
+**Location:** `libs/dashboard/cogniverse_dashboard/app.py` (3041 lines, multi-tab)
 
 **Dashboard Tabs:** `app.py` builds one `st.tabs([...])` call with all 16 tabs (in this order); each is either rendered inline in `app.py` or delegates to a `render_*_tab()` function under `cogniverse_dashboard.tabs`:
 
-1. **📊 Analytics** — inline. Sub-tabs (its own nested `st.tabs`): Overview, Time Series, Distributions, Heatmaps, Outliers, Trace Explorer, and (if RCA is enabled) Root Cause Analysis. Pulls traces via `st.session_state.analytics.get_traces()` and renders Plotly charts (latency distribution, error rate, throughput).
+1. **📊 Analytics** — inline. Sub-tabs (its own nested `st.tabs`): Overview, Time Series, Distributions, Heatmaps, Outliers, Trace Explorer, and (if RCA is enabled) Root Cause Analysis. Pulls traces via `st.session_state.analytics.get_traces()` and renders Plotly charts (latency distribution, error rate, throughput). `get_traces()` now raises on a Phoenix outage (see `docs/modules/telemetry.md`); the tab catches that and shows `st.error(...)` naming the failure, distinct from the `st.warning("No traces found...")` shown for a genuinely empty result.
 2. **🧪 Evaluation** (`cogniverse_dashboard.tabs.evaluation.render_evaluation_tab`) — experiment list, side-by-side comparison, metric visualization, dataset management.
 3. **🗺️ Embedding Atlas** (`cogniverse_dashboard.tabs.embedding_atlas.render_embedding_atlas_tab`) — lazy-imports `umap` + `embedding-atlas` inside the tab module so the base dashboard image stays lean when those optional libraries aren't installed.
 4. **🎯 Routing Evaluation** (`cogniverse_dashboard.tabs.routing_evaluation.render_routing_evaluation_tab`) — routing accuracy, confusion matrix, golden-dataset comparison, per-query analysis.
@@ -1249,7 +1250,7 @@ uv run python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retent
 
 ```bash
 # List all datasets
-python scripts/manage_datasets.py --list
+python scripts/manage_datasets.py --tenant-id acme:acme --list
 
 # Output:
 # Registered datasets:
@@ -1268,6 +1269,7 @@ python scripts/manage_datasets.py --list
 
 # Create new dataset
 python scripts/manage_datasets.py \
+  --tenant-id acme:acme \
   --create my_queries \
   --csv data/my_queries.csv
 
@@ -1275,7 +1277,7 @@ python scripts/manage_datasets.py \
 # Dataset 'my_queries' created with ID: ds_ghi789
 
 # Get dataset info
-python scripts/manage_datasets.py --info golden_eval_v1
+python scripts/manage_datasets.py --tenant-id acme:acme --info golden_eval_v1
 
 # Output:
 # Dataset: golden_eval_v1

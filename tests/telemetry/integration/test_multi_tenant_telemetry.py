@@ -390,6 +390,7 @@ class TestMultiTenantTelemetryIntegration:
 
 @pytest.mark.integration
 @pytest.mark.telemetry
+@pytest.mark.ci_fast
 class TestPhoenixIntegrationWithRealServer:
     """
     Integration tests with real Phoenix server.
@@ -521,6 +522,7 @@ class TestPhoenixIntegrationWithRealServer:
 
 @pytest.mark.integration
 @pytest.mark.telemetry
+@pytest.mark.ci_fast
 class TestGetSpansNameFilterRealPhoenix:
     """The ``{"name": ...}`` filter on PhoenixTraceStore.get_spans must run
     server-side against real Phoenix and return exactly the matching spans —

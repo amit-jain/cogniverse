@@ -8,6 +8,8 @@ import pytest
 
 from cogniverse_evaluation.core.reranking import apply_reranking_to_traces
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.asyncio
 async def test_apply_reranking_reorders_trace_results():

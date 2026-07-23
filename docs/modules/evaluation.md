@@ -881,12 +881,17 @@ Extract and evaluate a single routing decision.
 ```python
 {
     "chosen_agent": str,        # Agent selected by routing
-    "confidence": float,        # Routing confidence score
+    "confidence": float,        # Routing confidence score, in [0, 1]
     "latency_ms": float,        # Routing processing time
     "success": bool,            # Whether routing succeeded
     "downstream_status": str    # Status description
 }
 ```
+
+`confidence` is coerced through `cogniverse_foundation.confidence.parse_confidence`,
+which accepts whatever shape a router emits — a float already in `[0, 1]`, a
+label (`"high"`/`"medium"`/`"low"`), or a percent string (`"85%"` or `"85"`) —
+and always returns a clamped `[0, 1]` float.
 
 **Example:**
 ```python
@@ -1176,24 +1181,34 @@ print(f"Outliers: {report['summary']['outlier_percentage']:.1f}%")
 **Key Attributes:**
 ```python
 provider: EvaluationProvider                   # Evaluation provider
-tenant_id: str                                 # Tenant identifier
 project_name: str                              # Project name for telemetry
 reference_free_evaluators: dict                # Reference-free evaluators
 golden_evaluator: GoldenDatasetEvaluator       # Golden dataset evaluator
 ```
 
+Note: `SpanEvaluator` does not store the `tenant_id` constructor argument as
+an attribute — it is only used to resolve the default `EvaluationProvider`
+when `provider` is not passed in.
+
 **Main Methods:**
 
-#### `async get_recent_spans(hours: int = 6, operation_name: str | None = "search_service.search", limit: int = 1000) -> pd.DataFrame`
-Retrieve recent spans from Phoenix.
+#### `async get_recent_spans(hours: int = 6, operation_name: str | None = "search_service.search", limit: int = 1000, require_search_shape: bool = True) -> pd.DataFrame`
+Retrieve recent spans from Phoenix. An empty frame means genuinely no traffic
+in the window; a telemetry outage raises (never flattened into an empty frame).
 
 **Parameters:**
 
 - `hours`: Hours to look back
 
-- `operation_name`: Filter by operation name
+- `operation_name`: Filter by operation name (matched server-side)
 
 - `limit`: Max spans
+
+- `require_search_shape`: When `True` (default), only spans whose output is a
+  search-result list survive — what the golden/search evaluators consume.
+  `QualityMonitor.evaluate_live_traffic` passes `False` so summary/report
+  strings and gateway/routing dicts are returned too, under
+  `outputs["value"]`, instead of being dropped.
 
 **Returns:** DataFrame with span information
 
@@ -1376,7 +1391,10 @@ The evaluation module provides LLM-based evaluators for video retrieval quality:
 
 Scores query-result relevance via an OAI-compatible LLM endpoint. Used by the
 quality monitor for live-traffic relevance scoring; `_extract_score_from_response`
-parses an `X/10` or `0.x` rating (or `None` for an unscored/failed reply).
+parses an `X/10` or `0.x` rating (or `None` for an unscored/failed reply),
+clamped to `[0, 1]` — an LM reply like "12/10" or "100/10" is capped rather
+than skewing persisted quality means and the 0.8/0.5 example-classification
+gates.
 
 ```python
 from cogniverse_evaluation.evaluators.llm_judge import LLMJudgeCore
@@ -1538,6 +1556,19 @@ today (`PhoenixEvaluationProvider` in `cogniverse_telemetry_phoenix`).
 `PhoenixAnalytics` and future monitoring providers follow, but are not
 literally subclassed by them.
 
+`PhoenixEvaluationProvider.create_experiment(name, ...)` registers a durable
+`experiment-{name}` dataset holding the creation record (`event`,
+`experiment`, `description`, `created_at`, `metadata`) and returns
+`{"id": dataset_name, "name", "description", "metadata", "created_at"}`.
+`log_evaluation(experiment_id, ...)` appends an evaluation row to that same
+dataset — so an experiment's full history (creation + every logged
+evaluation) is readable back from Phoenix — and raises `DatasetNotFoundError`
+(a `ValueError`) if `experiment_id` was never registered via
+`create_experiment`, rather than silently dropping the evaluation. Both are
+sync facades over the async `telemetry.datasets` store; calling them from
+inside a running event loop raises `RuntimeError` telling the caller to use
+`telemetry.datasets` directly instead.
+
 **Registry (`providers/registry.py`):**
 
 `EvaluationRegistry` subclasses `cogniverse_foundation.registry.EntryPointRegistry`,
@@ -1599,7 +1630,7 @@ timestamp: datetime
 
 **Main Methods:**
 
-- `async evaluate_span(span_data: dict) -> list[OnlineEvalResult]` — dispatches to `_eval_routing_outcome` and/or `_eval_confidence_calibration` per configured evaluator name, respecting `sampling_rate`; empty list if disabled or not sampled.
+- `async evaluate_span(span_data: dict) -> list[OnlineEvalResult]` — dispatches to `_eval_routing_outcome` and/or `_eval_confidence_calibration` per configured evaluator name, respecting `sampling_rate`; empty list if disabled or not sampled. When `persist_scores=True` and any result fails to persist as a telemetry annotation, raises `RuntimeError` naming every failed `(span_id, evaluator_name)` pair — a silently dropped write would vanish from the drift-detection signal while the caller counted it as persisted.
 - `get_statistics() -> dict` — returns `total_evaluated`, `total_skipped`, `sampling_rate`, `effective_rate`, `evaluators`.
 
 **Example:**
@@ -1635,7 +1666,7 @@ success (`well_calibrated` / `moderately_calibrated` / `poorly_calibrated`).
 
 **Purpose:** Continuous, scheduled quality monitor across all agents. Runs two evaluation strategies and decides whether to trigger an Argo optimization workflow — it composes `SpanEvaluator`, `GoldenDatasetEvaluator`, `LLMJudgeCore`, and `PhoenixDatasetStore` rather than reimplementing them.
 
-**`AgentType` enum:** `SEARCH`, `SUMMARY`, `REPORT`, `GATEWAY` — mapped to span names via `SPAN_NAME_BY_AGENT` (e.g. `"SearchAgent.process"`), matching the `f"{ClassName}.process"` convention emitted by `AgentBase._process_span()`.
+**`AgentType` enum:** `SEARCH`, `SUMMARY`, `REPORT`, `GATEWAY`, `ROUTING`, `QUERY_ENHANCEMENT`, `ENTITY_EXTRACTION`, `PROFILE_SELECTION` — mapped to span names via `SPAN_NAME_BY_AGENT` (e.g. `"SearchAgent.process"`), matching the `f"{ClassName}.process"` convention emitted by `AgentBase._process_span()`.
 
 **`Verdict` enum:** `SKIP = 0`, `OPTIMIZE = 1`, `FULL = 2`.
 
@@ -1661,6 +1692,13 @@ QualityMonitor(
 )
 ```
 
+`tenant_id` is canonicalized to the `org:tenant` form at construction — every
+derived name (the Phoenix project live eval reads, `quality-baseline-*` /
+`optimization-trigger-*` dataset names, Argo workflow parameters) uses the
+canonical form, matching what production span writers emit. Live-traffic
+evaluation reads the tenant-only user-ops project
+(`cogniverse-{org:tenant}`) — the project agents actually write spans to.
+
 **`QualityThresholds` dataclass (defaults):**
 
 ```python
@@ -1674,9 +1712,21 @@ min_samples_for_verdict: int = 10
 
 **Result dataclasses:** `AgentEvalResult` (per-agent score/baseline/degradation),
 `GoldenEvalResult` (mean_mrr, mean_ndcg, mean_precision_at_5, per-query scores,
-`baseline_mrr` captured before the new result is stored), `LiveEvalResult`
-(per-`AgentType` `AgentEvalResult` map), `OptimizationTrigger` (payload
-submitted to the Argo optimization workflow).
+`baseline_mrr` captured before the new result is stored, plus
+`failed_query_count`/`failed_queries` naming the `/search` calls that failed —
+a partial run is persisted for the record but never used as a comparison
+baseline), `LiveEvalResult` (per-`AgentType` `AgentEvalResult` map),
+`OptimizationTrigger` (payload submitted to the Argo optimization workflow).
+
+**Fault contracts:** baseline reads (`_read_baseline_metric`,
+`_get_agent_baseline`) return `None` only for a genuinely absent baseline
+(first run / only partial runs) and raise on a telemetry outage; the golden
+baseline write raises on failure (a silently lost write would freeze the
+baseline); `_store_trigger_dataset` returns the stored dataset name (or `None`
+when there were no example records) and `submit_optimization(trigger,
+trigger_dataset)` references exactly that name, so a workflow is never
+submitted pointing at a dataset that was not created; a span-read outage
+during `evaluate_live_traffic` propagates instead of reading as "no traffic".
 
 **`OptimizationWorkflowPodSpec` dataclass (defaults):** `image: str =
 "cogniverse-runtime:latest"`, `env: Dict[str, str] = {}`, `config_map:
@@ -1689,7 +1739,11 @@ the spawned pod runs the fallback image with no env and no config mount. See
 for the chart-rendered env vars that populate it.
 
 **Key methods:** `check_thresholds(...)` decides the `Verdict` from golden/live
-results against `QualityThresholds`; `_build_trigger(...)` assembles an
+results against `QualityThresholds`, then (when `telemetry_provider` was
+passed to the constructor) consults `cogniverse_agents.routing.xgboost_meta_models.TrainingDecisionModel.should_train(...)`
+per agent to confirm or override the naive threshold verdict — logged as an
+override, never silent — falling back to the naive verdicts if the model
+can't be built or scored; `_build_trigger(...)` assembles an
 `OptimizationTrigger` when optimization is warranted.
 
 **Example:**
@@ -1714,21 +1768,32 @@ monitor = QualityMonitor(
 
 **Files:** `libs/evaluation/cogniverse_evaluation/data/{datasets,storage,traces}.py`
 
-**`DatasetManager`** (`data/datasets.py`) — Phoenix dataset CRUD used by the CLI's `create-dataset` command:
+**`DatasetManager`** (`data/datasets.py`) — sync facade over the telemetry provider's async `DatasetStore`, used by the CLI's `create-dataset` command, the dashboard optimization tab, and `scripts/manage_datasets.py`:
 
 ```python
-DatasetManager(storage: TelemetryStorage | None = None)
+DatasetManager(tenant_id: str, dataset_store: DatasetStore | None = None)
+# tenant_id is canonicalized; the store defaults to the tenant's evaluation
+# provider's telemetry.datasets
 
 manager.create_from_csv(csv_path: str, dataset_name: str, description: str | None = None) -> str
 manager.create_from_queries(queries: list[dict], dataset_name: str, description: str | None = None) -> str
 manager.create_from_json(...) -> str
-manager.get_dataset(dataset_name: str) -> dict
-manager.list_datasets() -> list[str]
-manager.update_dataset(...)
+manager.get_dataset(dataset_name: str) -> dict | None   # None = not found; outage raises
+manager.list_datasets() -> list[str]                    # local cache only
+manager.update_dataset(dataset_name: str, new_queries: list[dict]) -> bool  # raises ValueError if missing
 manager.delete_dataset(dataset_name: str) -> bool
-manager.export_dataset(dataset_name: str, output_path: str) -> bool
+manager.export_dataset(dataset_name: str, output_path: str) -> bool  # raises if missing
 manager.create_test_dataset() -> str
 ```
+
+`expected_videos` lists are persisted comma-joined (`"v1,v2"`) — the form that
+`core.ground_truth._resolve_expected_items` and `core.task` split back into
+item lists. The store raises `DatasetNotFoundError`
+(`cogniverse_foundation.telemetry.providers.base`, a `ValueError` subclass)
+for a missing dataset; `get_dataset` catches it and returns `None`, while
+`update_dataset`/`export_dataset` surface it (or their own `ValueError`) to
+the caller. A backend outage raises the underlying transport error instead
+of masquerading as no-data.
 
 **`TelemetryStorage`** (`data/storage.py`) — connection/health-check management for the telemetry backend, plus `MonitoredSpanExporter` (an OTel `SpanExporter` wrapping export success/failure metrics via `ExportMetrics`):
 
@@ -1736,15 +1801,25 @@ manager.create_test_dataset() -> str
 TelemetryStorage(config: ConnectionConfig | None = None)
 
 storage.log_experiment_results(...)
-storage.get_traces_for_evaluation(...)
+storage.get_traces_for_evaluation(trace_ids: list[str] | None = None, start_time: datetime | None = None, limit: int = 1000) -> pd.DataFrame
 storage.get_metrics() -> dict
 storage.shutdown()
 # Context-manager: `with TelemetryStorage() as storage: ...`
 ```
 
+`get_traces_for_evaluation` takes no `filter_condition` — the underlying
+provider's `get_spans` doesn't accept one, so `trace_ids` filtering happens by
+fetching the window and matching `trace_id`/`context.trace_id` client-side.
+When the storage isn't connected it raises `ConnectionError` (it used to
+degrade to an empty DataFrame, which read as "no traces" indistinguishable
+from a real outage); once connected, a fetch failure raises `RuntimeError`.
+
 `ConnectionConfig` (defaults: `http_endpoint="http://localhost:6006"`,
-`otlp_endpoint="localhost:4317"`, `max_retries=3`, `max_batch_size=512`,
-`export_timeout_millis=30000`) tracks connection health via the
+`otlp_endpoint="localhost:4317"`, `max_retries=3`,
+`connection_timeout_seconds=10.0` (bounds the initial connection probe against
+the telemetry backend), `max_batch_size=512`, `export_timeout_millis=30000`,
+`enable_metrics=True` (gates whether `MonitoredSpanExporter` records
+success/failure into `ExportMetrics` at all)) tracks connection health via the
 `ConnectionState` enum (`DISCONNECTED` / `CONNECTING` / `CONNECTED` / `FAILED`).
 
 **`TraceManager`** (`data/traces.py`) — used by the CLI's `list-traces` command:
@@ -1755,10 +1830,16 @@ TraceManager(storage: TelemetryStorage | None = None)
 manager.get_recent_traces(hours_back: int = 1, limit: int = 100) -> pd.DataFrame
 manager.get_traces_by_ids(trace_ids: list[str]) -> pd.DataFrame
 manager.extract_trace_data(trace_df: pd.DataFrame) -> list[dict]
-manager.get_traces_by_experiment(...) -> pd.DataFrame
+manager.get_traces_by_experiment(profile: str, strategy: str, hours_back: int = 24) -> pd.DataFrame
 manager.get_trace_statistics(hours_back: int = 24) -> dict
 manager.export_traces(output_path: str, hours_back: int = 24) -> bool
 ```
+
+`get_traces_by_experiment` fetches the window unfiltered, then matches
+`profile`/`strategy` against the flattened `attributes.metadata.profile` /
+`attributes.metadata.strategy` columns client-side — the storage layer takes
+no filter expression, so values are matched literally (no query-injection
+surface from profile/strategy names).
 
 ---
 
@@ -1794,6 +1875,24 @@ the generic fallback, and `SchemaAnalyzerRegistry` / `register_analyzer(...)`
 is how the video/document/image plugins (see Plugin System below) plug in
 their own analyzers. Exceptions raised during extraction subclass
 `GroundTruthError` (`SchemaDiscoveryError`, `BackendError`).
+
+`SchemaAwareGroundTruthStrategy` caches discovered schema fields per schema
+name on the strategy instance (`self.schema_cache`) — discovery costs several
+backend round-trips (`get_schema_info` / `get_field_mappings` / a sample
+search / `list_fields`) and the fields are stable for the strategy's
+lifetime, so only the first trace against a given schema pays that cost.
+In the `get_schema_info`-provided path (`_parse_schema_info`), id-field
+categorization matches `id` as a whole token (`field == "id"`, or `_id`/`id_`
+as a prefix/suffix) rather than a bare substring, so a field like `paid_amount`
+or `raid_count` (both contain `"id"` as a substring) is never misclassified as
+an id field the way it would be under plain `"id" in field_name`.
+
+`BackendGroundTruthStrategy` delegates to a fresh `SchemaAwareGroundTruthStrategy`
+with `metadata["high_precision"] = True` set on a copy of the trace data (never
+mutating the caller's dict, so sibling strategies run on the same trace inside
+`HybridGroundTruthStrategy` are unaffected). That flag halves the analyzer's
+`max_results` search budget (`max(1, max_results // 2)`), trading recall for
+precision on the harvested ground truth.
 
 ---
 
@@ -1879,18 +1978,20 @@ cogniverse-eval evaluate --mode batch --dataset test_dataset \
 cogniverse-eval evaluate --mode live --dataset test_dataset
 
 # Create a dataset from CSV
-cogniverse-eval create-dataset --name my_dataset --csv queries.csv
+cogniverse-eval create-dataset --name my_dataset --tenant-id acme:acme --csv queries.csv
 
 # List recent traces
 cogniverse-eval list-traces --hours 2 --limit 50
 
-# Quick smoke test
+# Quick smoke test (optionally --tenant-id, defaults to the system tenant)
 cogniverse-eval test
 ```
 
 `evaluate --mode experiment` requires both `--profiles`/`-p` and
-`--strategies`/`-s`; `create-dataset` requires either `--csv` or
-`--queries-json`. All commands accept `-v`/`--verbose` for debug logging.
+`--strategies`/`-s`; `create-dataset` requires `--tenant-id` and either
+`--csv` or `--queries-json`; `test` accepts an optional `--tenant-id`
+(defaults to `SYSTEM_TENANT_ID`) so the smoke test runs with zero flags. All
+commands accept `-v`/`--verbose` for debug logging.
 
 ---
 
@@ -2866,14 +2967,14 @@ result = evaluator.evaluate(
 
 **Unit Tests (`tests/evaluation/unit/`):**
 
-- `test_experiment_tracker.py` — experiment configuration, dataset management, result formatting
-- `test_routing_evaluator.py` — routing outcome classification, metric calculation
+- `test_experiment_tracker.py` — experiment configuration, dataset management, result formatting, `main(args)`'s required-args signature
+- `test_routing_evaluator.py` — routing outcome classification, metric calculation, `parse_confidence` label/percent coercion
 - `test_span_evaluator.py` — span evaluation dispatch, evaluator resolution
-- `test_quality_monitor.py` — threshold checks, verdict decisions
+- `test_quality_monitor.py` — threshold checks, verdict decisions, baseline read/write fault contracts (`_read_baseline_metric`/`_get_agent_baseline` raise on outage, `None` only when genuinely absent), `_store_trigger_dataset`/`submit_optimization` dataset-name wiring
 - `test_online_evaluator_confidence.py` — confidence calibration scoring
 - `test_data_managers.py` — `DatasetManager` / `TraceManager`
-- `test_storage.py` — `TelemetryStorage` connection/health-check handling
-- `test_ground_truth.py` — ground truth strategy dispatch
+- `test_storage.py` — `TelemetryStorage` connection/health-check handling, `get_traces_for_evaluation` raising `ConnectionError` when disconnected
+- `test_ground_truth.py` — ground truth strategy dispatch, per-schema discovery caching, `BackendGroundTruthStrategy`'s tighter `top_k`
 - `test_metrics.py` — MRR/nDCG/precision/recall/F1/MAP
 - `test_evaluators.py` — `Evaluator` base class, reference-free evaluators
 - `test_inspect_scorers.py`, `test_solvers.py`, `test_task.py`, `test_reranking.py` — Inspect AI integration
@@ -2883,6 +2984,14 @@ result = evaluator.evaluate(
 - `test_cli.py`, `test_cli_simple.py` — CLI command behavior
 - `test_root_cause_analysis.py` — `analysis/root_cause_analysis.py`
 - `test_query_window_tz.py`, `test_traces_filter_escape.py` — timezone/query-window and YQL-escaping edge cases
+- `test_phoenix_monitoring.py` — `RetrievalMonitor`/`AlertThresholds`/`MetricWindow`, including `windows_lock`-guarded concurrent `log_retrieval_event`/`get_metrics_summary` access
+- `test_evaluation_provider_session.py` — `PhoenixEvaluationProvider.log_session_evaluation` passes `project` through to `add_annotation`
+
+`tests/evaluation/fakes.py` provides `InMemoryDatasetStore`/`FailingDatasetStore`
+— real `DatasetStore` subclasses (not `MagicMock`s) backed by an in-process
+dict, shared by `test_quality_monitor.py` and others to exercise the
+not-found/outage contract through the same method signatures production code
+calls, without a live Phoenix.
 
 **Integration Tests (`tests/evaluation/integration/`):**
 
@@ -2895,6 +3004,8 @@ result = evaluator.evaluate(
 - `test_storage_integration.py` — `TelemetryStorage` against a real telemetry backend
 - `test_task_real.py` — `evaluation_task` against a real Phoenix dataset
 - `test_visual_judge_e2e.py` — `ConfigurableVisualJudge` end-to-end
+- `test_dataset_manager_roundtrip.py` — `DatasetManager` create/get/update/delete/export against a real Phoenix dataset store, concurrent creates, and the not-found/outage fault contract
+- `test_provider_experiment_roundtrip.py` — `PhoenixEvaluationProvider.create_experiment`/`log_evaluation` round-trip through a real Phoenix dataset store: the registry dataset and evaluation rows are readable back with exact values, and logging into a never-created experiment raises
 
 **Test Scenarios:**
 

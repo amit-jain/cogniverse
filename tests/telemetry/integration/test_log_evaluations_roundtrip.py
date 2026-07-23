@@ -19,7 +19,11 @@ from uuid import uuid4
 import pandas as pd
 import pytest
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.ci_fast,
+    pytest.mark.requires_docker,
+]
 
 
 @pytest.fixture(scope="module")

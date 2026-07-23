@@ -17,6 +17,8 @@ from cogniverse_evaluation.data.storage import (
 )
 from tests.utils.async_polling import wait_for_telemetry_processing
 
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
+
 
 @pytest.mark.integration
 class TestTelemetryStorageIntegration:

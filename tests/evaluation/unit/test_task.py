@@ -82,6 +82,7 @@ class TestEvaluationTask:
                         mock_register.assert_called_once()
 
 
+@pytest.mark.unit
 class TestCustomPluginRegistration:
     """auto_register_plugins resolves custom plugins under the real package.
 

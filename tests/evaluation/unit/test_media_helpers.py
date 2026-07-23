@@ -12,6 +12,8 @@ from cogniverse_evaluation.evaluators._media_helpers import (
     resolve_video_from_result,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def locator(tmp_path):
