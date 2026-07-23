@@ -96,9 +96,7 @@ class ProcessingStrategySet:
             f"🎯 ProcessingStrategySet.process() starting for {video_path.name} [Schema: {schema_name}]"
         )
 
-        results = {}
-
-        strategy_order = ["segmentation", "transcription", "description", "embedding"]
+        results: dict[str, Any] = {}
 
         # One span per stage, component=pipeline so the TelemetryLevel
         # filter admits at DETAILED+. Attributes carry the input shape
@@ -109,62 +107,117 @@ class ProcessingStrategySet:
             "description": "pipeline.descriptions",
             "embedding": "pipeline.embeddings",
         }
-        for strategy_name in strategy_order:
-            strategy = self.get_strategy(strategy_name)
-            if strategy:
-                pipeline_context.logger.info(
-                    f"Processing {strategy_name} strategy: {type(strategy).__name__}"
+
+        # Segmentation (cv2 decode -> keyframes) and transcription
+        # (audio -> Whisper) are independent — neither reads the other's output —
+        # so run them concurrently and overlap the two expensive off-loop calls.
+        # Each stage runs inside its own tm.span; asyncio.gather gives each task
+        # its own copy of the context, so the two spans are correct siblings of
+        # the surrounding pipeline span rather than nesting one inside the other.
+        # Their result keys are disjoint (keyframes vs transcript), so merging
+        # them at the barrier below cannot collide.
+        independent_results = await asyncio.gather(
+            *(
+                self._run_stage(
+                    strategy_name,
+                    video_path,
+                    processor_manager,
+                    pipeline_context,
+                    results,
+                    tm,
+                    tenant_id,
+                    schema_name,
+                    stage_span_name,
                 )
+                for strategy_name in ("segmentation", "transcription")
+            )
+        )
+        for stage_result in independent_results:
+            results.update(stage_result)
 
-                span_attrs = {
-                    "pipeline.stage": strategy_name,
-                    "pipeline.strategy_class": type(strategy).__name__,
-                    "pipeline.video_id": video_path.stem,
-                    "pipeline.schema_name": schema_name,
-                }
-                stage_started = time.time()
-                with tm.span(
-                    stage_span_name[strategy_name],
-                    tenant_id=tenant_id,
-                    attributes=span_attrs,
-                    component="pipeline",
-                ) as span:
-                    strategy_result = await self._process_strategy(
-                        strategy_name,
-                        strategy,
-                        video_path,
-                        processor_manager,
-                        pipeline_context,
-                        results,
-                    )
-
-                    if isinstance(strategy_result, dict):
-                        results.update(strategy_result)
-                        pipeline_context.logger.info(
-                            f"  ✅ {strategy_name} completed: {list(strategy_result.keys())}"
-                        )
-                        # Per-stage output cardinality — best signal for
-                        # cost attribution and perf regressions.
-                        for k in (
-                            "keyframes",
-                            "transcript",
-                            "descriptions",
-                            "documents",
-                        ):
-                            if k in strategy_result and hasattr(
-                                strategy_result[k], "__len__"
-                            ):
-                                span.set_attribute(
-                                    f"pipeline.{k}_count", len(strategy_result[k])
-                                )
-                    span.set_attribute(
-                        "duration_ms", int((time.time() - stage_started) * 1000)
-                    )
+        # Description depends on the keyframes segmentation produced, and
+        # embedding on everything upstream, so these stay serial and run after
+        # the concurrent pair with the merged results available to them.
+        for strategy_name in ("description", "embedding"):
+            stage_result = await self._run_stage(
+                strategy_name,
+                video_path,
+                processor_manager,
+                pipeline_context,
+                results,
+                tm,
+                tenant_id,
+                schema_name,
+                stage_span_name,
+            )
+            results.update(stage_result)
 
         pipeline_context.logger.info(
             f"🏁 ProcessingStrategySet completed with: {list(results.keys())}"
         )
         return results
+
+    async def _run_stage(
+        self,
+        strategy_name: str,
+        video_path: Path,
+        processor_manager,
+        pipeline_context,
+        results: dict[str, Any],
+        tm,
+        tenant_id: str,
+        schema_name: str,
+        stage_span_name: dict[str, str],
+    ) -> dict[str, Any]:
+        """Run one pipeline stage inside its own telemetry span and return the
+        stage's result dict (empty if the stage isn't configured).
+
+        Kept span-local so segmentation and transcription can be gathered as
+        concurrent sibling spans; the caller merges the returned dict.
+        """
+        strategy = self.get_strategy(strategy_name)
+        if not strategy:
+            return {}
+
+        pipeline_context.logger.info(
+            f"Processing {strategy_name} strategy: {type(strategy).__name__}"
+        )
+        span_attrs = {
+            "pipeline.stage": strategy_name,
+            "pipeline.strategy_class": type(strategy).__name__,
+            "pipeline.video_id": video_path.stem,
+            "pipeline.schema_name": schema_name,
+        }
+        stage_started = time.time()
+        with tm.span(
+            stage_span_name[strategy_name],
+            tenant_id=tenant_id,
+            attributes=span_attrs,
+            component="pipeline",
+        ) as span:
+            strategy_result = await self._process_strategy(
+                strategy_name,
+                strategy,
+                video_path,
+                processor_manager,
+                pipeline_context,
+                results,
+            )
+
+            if isinstance(strategy_result, dict):
+                pipeline_context.logger.info(
+                    f"  ✅ {strategy_name} completed: {list(strategy_result.keys())}"
+                )
+                # Per-stage output cardinality — best signal for
+                # cost attribution and perf regressions.
+                for k in ("keyframes", "transcript", "descriptions", "documents"):
+                    if k in strategy_result and hasattr(strategy_result[k], "__len__"):
+                        span.set_attribute(
+                            f"pipeline.{k}_count", len(strategy_result[k])
+                        )
+            span.set_attribute("duration_ms", int((time.time() - stage_started) * 1000))
+
+        return strategy_result if isinstance(strategy_result, dict) else {}
 
     async def _process_strategy(
         self,
