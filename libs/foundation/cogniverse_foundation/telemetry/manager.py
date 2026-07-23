@@ -50,37 +50,44 @@ class TelemetryManager:
     def __init__(self, config: Optional[TelemetryConfig] = None):
         if self._initialized:
             return
+        # Guard the init body with the CLASS lock (self._lock is created inside
+        # this method): two threads that both pass __new__ would otherwise both
+        # run the body and the second's fresh {} caches would clobber the
+        # providers the first already populated. Class lock, not self._lock.
+        with TelemetryManager._lock:
+            if self._initialized:
+                return
 
-        if config is None:
-            raise ValueError(
-                "TelemetryConfig is required. Use get_telemetry_manager() "
-                "which loads config from ConfigManager automatically."
-            )
-        self.config = config
-        self.config.validate()
+            if config is None:
+                raise ValueError(
+                    "TelemetryConfig is required. Use get_telemetry_manager() "
+                    "which loads config from ConfigManager automatically."
+                )
+            self.config = config
+            self.config.validate()
 
-        # Thread-safe caches
-        self._tenant_providers: Dict[str, TracerProvider] = {}
-        self._tenant_tracers: Dict[str, Tracer] = {}
-        # cache_key -> the _tenant_providers key that tracer was built from.
-        # Lets eviction drop providers no live tracer still references,
-        # without parsing the (colon-bearing) tenant id out of cache_key.
-        self._tracer_provider_keys: Dict[str, str] = {}
-        # cache_key -> time.monotonic() at insert; entries older than
-        # config.tenant_cache_ttl_seconds are rebuilt on access.
-        self._tracer_created_at: Dict[str, float] = {}
-        self._lock = threading.RLock()
+            # Thread-safe caches
+            self._tenant_providers: Dict[str, TracerProvider] = {}
+            self._tenant_tracers: Dict[str, Tracer] = {}
+            # cache_key -> the _tenant_providers key that tracer was built from.
+            # Lets eviction drop providers no live tracer still references,
+            # without parsing the (colon-bearing) tenant id out of cache_key.
+            self._tracer_provider_keys: Dict[str, str] = {}
+            # cache_key -> time.monotonic() at insert; entries older than
+            # config.tenant_cache_ttl_seconds are rebuilt on access.
+            self._tracer_created_at: Dict[str, float] = {}
+            self._lock = threading.RLock()
 
-        # Per-project configs (single source of truth for project-specific settings)
-        self._project_configs: Dict[str, Dict[str, Any]] = {}
+            # Per-project configs (single source of truth for project settings)
+            self._project_configs: Dict[str, Dict[str, Any]] = {}
 
-        # Metrics
-        self._cache_hits = 0
-        self._cache_misses = 0
-        self._failed_initializations = 0
+            # Metrics
+            self._cache_hits = 0
+            self._cache_misses = 0
+            self._failed_initializations = 0
 
-        self._initialized = True
-        logger.info(f"TelemetryManager initialized with config: {self.config}")
+            self._initialized = True
+            logger.info(f"TelemetryManager initialized with config: {self.config}")
 
     def get_tracer(
         self, tenant_id: str, project_name: Optional[str] = None
@@ -709,6 +716,10 @@ class NoOpSpan:
 
 # Global singleton instance
 _telemetry_manager: Optional[TelemetryManager] = None
+# A module lock for the process-global first-touch, distinct from the class
+# lock (which __new__/__init__ acquire) so building the singleton under this
+# lock cannot deadlock against it.
+_telemetry_manager_lock = threading.Lock()
 
 
 def get_telemetry_manager(config_manager=None) -> TelemetryManager:
@@ -728,25 +739,30 @@ def get_telemetry_manager(config_manager=None) -> TelemetryManager:
 
     global _telemetry_manager
     if _telemetry_manager is None:
-        if config_manager is None:
-            from cogniverse_foundation.config.utils import (
-                create_default_config_manager,
-            )
+        with _telemetry_manager_lock:
+            if _telemetry_manager is None:
+                if config_manager is None:
+                    from cogniverse_foundation.config.utils import (
+                        create_default_config_manager,
+                    )
 
-            config_manager = create_default_config_manager()
-        config = config_manager.get_telemetry_config(SYSTEM_TENANT_ID)
-        _telemetry_manager = TelemetryManager(config)
+                    config_manager = create_default_config_manager()
+                config = config_manager.get_telemetry_config(SYSTEM_TENANT_ID)
+                mgr = TelemetryManager(config)
 
-        # Apply TELEMETRY_OTLP_ENDPOINT env var override (set by Helm chart
-        # in k3d deployments, pointing to cogniverse-phoenix:4317).
-        # Without this, the config defaults to localhost:4317 which is wrong
-        # inside a pod. This mirrors what main.py does at startup.
-        import os
+                # Apply TELEMETRY_OTLP_ENDPOINT env var override (set by Helm
+                # chart in k3d deployments, pointing to cogniverse-phoenix:4317).
+                # Without this, the config defaults to localhost:4317 which is
+                # wrong inside a pod. Mirrors what main.py does at startup.
+                import os
 
-        otlp_override = os.environ.get("TELEMETRY_OTLP_ENDPOINT")
-        if otlp_override and otlp_override != _telemetry_manager.config.otlp_endpoint:
-            _telemetry_manager.config.otlp_endpoint = otlp_override
-            _telemetry_manager._tenant_providers.clear()
-            _telemetry_manager._tenant_tracers.clear()
-            _telemetry_manager._tracer_provider_keys.clear()
+                otlp_override = os.environ.get("TELEMETRY_OTLP_ENDPOINT")
+                if otlp_override and otlp_override != mgr.config.otlp_endpoint:
+                    mgr.config.otlp_endpoint = otlp_override
+                    mgr._tenant_providers.clear()
+                    mgr._tenant_tracers.clear()
+                    mgr._tracer_provider_keys.clear()
+                # Publish only after fully built + configured so a concurrent
+                # reader never sees a half-initialized singleton.
+                _telemetry_manager = mgr
     return _telemetry_manager
