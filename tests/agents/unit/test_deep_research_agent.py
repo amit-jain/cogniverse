@@ -38,6 +38,45 @@ async def test_one_failed_subsearch_does_not_abort_the_rest():
     assert "backend down" in by_q["boom"]["error"]
 
 
+@pytest.mark.asyncio
+async def test_total_search_outage_raises_not_synthesizes():
+    """When EVERY sub-question search errors (search backend down), the run
+    must raise — not synthesize a confident summary over zero evidence, which
+    reads as a genuine answer. A partial failure still proceeds (above)."""
+    agent = object.__new__(DeepResearchAgent)
+
+    async def failing_search(query, tenant_id):
+        raise RuntimeError("vespa down")
+
+    agent._search_fn = failing_search
+
+    # Isolate the search-outage guard from the pre-search context stack + LM.
+    agent.set_tenant_for_context = lambda t: None
+
+    async def _enrich(a, b):
+        return a
+
+    agent.inject_context_into_prompt_async = _enrich
+    agent.emit_progress = lambda *a, **k: None
+
+    async def _decompose(q):
+        return ["q1", "q2"]
+
+    agent._decompose = _decompose
+
+    async def _must_not_run(*a, **k):
+        raise AssertionError("synthesized/evaluated over zero evidence")
+
+    agent._evaluate_evidence = _must_not_run
+    agent._synthesize = _must_not_run
+
+    inp = DeepResearchInput(
+        query="what happened?", max_iterations=2, tenant_id="acme:acme"
+    )
+    with pytest.raises(RuntimeError, match="search backend unavailable"):
+        await agent._research(inp)
+
+
 def test_result_count_handles_non_list_shapes():
     assert DeepResearchAgent._result_count([{"a": 1}, {"b": 2}]) == 2
     assert DeepResearchAgent._result_count([]) == 0

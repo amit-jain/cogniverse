@@ -222,6 +222,20 @@ class DeepResearchAgent(
             all_evidence.extend(new_evidence)
             all_citations.extend(self._extract_citations(new_evidence))
 
+            # If every sub-question searched so far errored, the search backend
+            # is down — a total outage, not a genuine "no evidence" finding.
+            # Synthesizing a confident summary over zero evidence would read as
+            # a real answer. Raise so the caller sees the outage; a partial
+            # failure (any sub-question succeeded, even with empty results) still
+            # proceeds to synthesize over what was found. Mirrors the search
+            # ensemble, which raises when every leg fails.
+            if all_evidence and all("error" in e for e in all_evidence):
+                errors = "; ".join(e["error"] for e in all_evidence if e.get("error"))
+                raise RuntimeError(
+                    f"DeepResearchAgent: every sub-question search failed "
+                    f"(search backend unavailable): {errors[:500]}"
+                )
+
             self.emit_progress(
                 "evaluate", f"Evaluating evidence (iteration {iteration})..."
             )
