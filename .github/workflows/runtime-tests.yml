@@ -185,3 +185,13 @@ jobs:
           tests/runtime/integration/ \
           -m "integration and ci_fast" \
           -v --tb=short
+
+    - name: Run admin integration tests
+      timeout-minutes: 20
+      env:
+        TEST_LLM_MODEL: "qwen2.5:0.5b"
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/admin/ \
+          -m "integration" \
+          -v --tb=short

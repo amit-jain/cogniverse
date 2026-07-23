@@ -33,6 +33,8 @@ from tests.utils.async_polling import (
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.integration]
+
 
 @pytest.fixture
 def test_tenant_id():
