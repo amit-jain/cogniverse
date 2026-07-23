@@ -37,7 +37,6 @@ from cogniverse_sdk.document import (
 from cogniverse_sdk.interfaces.backend import SearchBackend
 from cogniverse_vespa._vespa_factory import apply_failfast_timeouts, make_vespa_app
 from cogniverse_vespa._yql import yql_quote
-from cogniverse_vespa.embedding_processor import _is_single_vector_schema
 
 logger = logging.getLogger(__name__)
 
@@ -54,24 +53,28 @@ _TRANSIENT_SEARCH_ERRORS = (
 )
 
 
-def _format_query_vector_param(arr: np.ndarray, schema_name: str):
+def _format_query_vector_param(arr: np.ndarray, input_type: str):
     """Format a query embedding for a Vespa query-tensor input.
 
-    Single-vector schemas bind a dense ``tensor(v[dim])``; multi-vector schemas
-    bind a ``{token: vector}`` mapping. A ``(1, dim)`` array is a single vector
-    either way, so flatten it for the dense case and only dict-ify a genuine
-    multi-row input.
+    Classifies by the input's declared tensor TYPE, not the schema name: a
+    mapped dimension (``querytoken{}``) means a multi-vector ``{token: vector}``
+    input; otherwise it is a dense ``tensor(v[dim])`` single vector. The type is
+    authoritative per input, so a mixed schema (dense ``acoustic_query`` + mapped
+    ``qt``) and a dense schema whose name lacks an ``_sv_``/``_lvt_`` token both
+    encode correctly, where a schema-name heuristic misclassified one of them. A
+    ``(1, dim)`` array is a single vector either way, so flatten it for the dense
+    case and only dict-ify a genuine multi-row input.
     """
-    if _is_single_vector_schema(schema_name):
+    if "{" not in input_type:  # dense tensor(v[dim]) — no mapped dimension
         if arr.ndim == 2:
             if arr.shape[0] == 0:
                 raise ValueError(
-                    f"Single-vector schema '{schema_name}' received an empty "
+                    f"Dense single-vector input '{input_type}' received an empty "
                     "query embedding (no vectors)."
                 )
             if arr.shape[0] > 1:
                 raise ValueError(
-                    f"Single-vector schema '{schema_name}' received "
+                    f"Dense single-vector input '{input_type}' received "
                     f"{arr.shape[0]} query vectors but binds exactly one. "
                     "Refusing to silently drop rows."
                 )
@@ -1282,7 +1285,7 @@ class VespaSearchBackend(SearchBackend):
                         f"[{correlation_id}] Adding float embeddings for {vespa_param_name}"
                     )
                     query_params[vespa_param_name] = _format_query_vector_param(
-                        query_embeddings, schema_name
+                        query_embeddings, input_type
                     )
 
                 elif input_name == "qtb" and "int8" in input_type:
@@ -1296,7 +1299,7 @@ class VespaSearchBackend(SearchBackend):
                         f"[{correlation_id}] Binary embeddings shape: {binary_embeddings.shape}, dtype: {binary_embeddings.dtype}"
                     )
                     query_params[vespa_param_name] = _format_query_vector_param(
-                        binary_embeddings, schema_name
+                        binary_embeddings, input_type
                     )
 
                 elif input_name == "q":
