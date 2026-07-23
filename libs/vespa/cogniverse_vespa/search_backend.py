@@ -289,6 +289,11 @@ class ConnectionPool:
         self.config = config
         self._connections: List[VespaConnection] = []
         self._available: List[VespaConnection] = []
+        # Connections the health reaper wants gone but that are checked out —
+        # closing them mid-query would break the holder's request and re-add a
+        # closed connection when the holder returns it. Marked here instead and
+        # closed on return by get_connection's finally.
+        self._removing: set = set()
         self._lock = threading.Lock()
         # Signalled whenever a connection returns to the pool, so waiters
         # wake immediately instead of polling on a sleep loop.
@@ -339,10 +344,22 @@ class ConnectionPool:
 
         finally:
             # Return connection to pool
+            close_on_return = False
             if conn is not None:
                 with self._returned:
-                    self._available.append(conn)
-                    self._returned.notify()
+                    if conn in self._removing:
+                        # The reaper marked it unhealthy while we held it —
+                        # drop and close it now instead of handing a bad
+                        # connection to the next searcher.
+                        self._removing.discard(conn)
+                        if conn in self._connections:
+                            self._connections.remove(conn)
+                        close_on_return = True
+                    else:
+                        self._available.append(conn)
+                        self._returned.notify()
+            if close_on_return:
+                conn.close()
 
     def _health_check_loop(self):
         """Periodic health check for all connections"""
@@ -378,14 +395,28 @@ class ConnectionPool:
             self._stop_health_check.wait(self.config.health_check_interval)
 
     def _remove_connection(self, conn: VespaConnection):
-        """Remove a connection from the pool"""
+        """Remove a connection from the pool.
+
+        Only closes a connection that is NOT checked out. A checked-out
+        connection (in ``_connections`` but not ``_available``) is marked for
+        removal and closed by ``get_connection``'s finally when its holder
+        returns it — closing it here would break the in-flight query and re-add
+        a closed connection to the available list.
+        """
+        close_now = False
         with self._lock:
-            if conn in self._connections:
-                self._connections.remove(conn)
             if conn in self._available:
                 self._available.remove(conn)
-        conn.close()
-        logger.info(f"Removed connection {conn.connection_id}")
+                if conn in self._connections:
+                    self._connections.remove(conn)
+                self._removing.discard(conn)
+                close_now = True
+            elif conn in self._connections:
+                # Checked out — defer the close to the holder's return.
+                self._removing.add(conn)
+        if close_now:
+            conn.close()
+            logger.info(f"Removed connection {conn.connection_id}")
 
     def close(self):
         """Close all connections and stop health checks"""
