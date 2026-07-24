@@ -5,7 +5,7 @@ Stores configurations directly in Vespa backend for unified storage.
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from vespa.application import Vespa
@@ -187,8 +187,9 @@ class VespaConfigStore(ConfigStore):
         )
         new_version = current_version + 1
 
-        # Create timestamps
-        now = datetime.now()
+        # Create timestamps (tz-aware UTC — a naive now() reads as local time
+        # on whichever host writes the row)
+        now = datetime.now(timezone.utc)
         created_at = now if new_version == 1 else None  # Only set on first version
         updated_at = now
 
@@ -742,7 +743,7 @@ class VespaConfigStore(ConfigStore):
                     }
                     for c in configs
                 ],
-                "exported_at": datetime.now().isoformat(),
+                "exported_at": datetime.now(timezone.utc).isoformat(),
             }
 
         try:
@@ -769,7 +770,7 @@ class VespaConfigStore(ConfigStore):
                 "tenant_id": tenant_id,
                 "include_history": True,
                 "configs": configs,
-                "exported_at": datetime.now().isoformat(),
+                "exported_at": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as e:

@@ -123,12 +123,11 @@ class TestVespaPartialUpdate:
         assert ok is False
         client.delete_data.assert_called_once()
 
-    def test_delete_metadata_document_returns_false_when_pyvespa_raises(
-        self, monkeypatch
-    ):
+    def test_delete_metadata_document_raises_when_pyvespa_raises(self, monkeypatch):
         """The REAL error shape: pyvespa raise_for_status raises VespaError on
-        4xx/5xx — the raise path must map to False, same as the status check.
-        Previously only the unreal returns-non-200 shape was covered."""
+        4xx/5xx — that is a backend failure and must PROPAGATE. Mapping it to
+        the same False as a rejected write let callers report a delete that
+        never happened."""
         from vespa.exceptions import VespaError
 
         from cogniverse_vespa import backend as vespa_backend_mod
@@ -145,9 +144,8 @@ class TestVespaPartialUpdate:
             vespa_backend_mod, "make_persistent_vespa_ops", lambda **_kw: client
         )
 
-        ok = backend.delete_metadata_document(schema="s", doc_id="d1")
-
-        assert ok is False
+        with pytest.raises(VespaError, match="500 backend error"):
+            backend.delete_metadata_document(schema="s", doc_id="d1")
         client.delete_data.assert_called_once()
 
 

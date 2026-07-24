@@ -610,13 +610,13 @@ operations:
 | `put_document_fields` / `get_document_fields` / `update_document_fields` / `delete_document_fields` | Namespace-aware raw-fields document CRUD (the primitives wiki/graph/ingestion use) |
 | `feed(document, schema_name)` | Feed a single document |
 | `ingest_stream(documents, schema_name)` | Stream ingestion for large datasets |
-| `update_document(document_id, document, schema_name)` | Partial or full document update |
+| `update_document(document_id, document, schema_name)` | Partial or full document update; raises on backend failure or id mismatch (False means the write was rejected, never that the backend was unreachable) |
 | `delete_document(document_id, schema_name)` | Delete a single document |
 | `get_document(document_id, schema_name)` / `batch_get_documents(document_ids)` | Point lookups |
 | `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package |
 | `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
-| `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD |
+| `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend) |
 | `add_profile(profile_name, profile_config)` / `remove_profile(profile_name)` | Runtime profile management |
 | `health_check()` / `close()` | Lifecycle management |
 
@@ -1362,9 +1362,11 @@ schema_manager = backend.schema_manager  # Already has schema_registry, schema_l
 ```python
 # Deploy metadata schemas (organization/tenant) for multi-tenant management.
 # Schema-aware: preserves existing tenant schemas to avoid Vespa removal errors.
-# Pass allow_schema_removal=False when the caller cannot prove the package
-# covers every live schema (e.g. the registry-less first-install bootstrap) —
-# Vespa then refuses a deploy that would drop schemas instead of executing it.
+# allow_schema_removal defaults to False — Vespa refuses a deploy that would
+# drop schemas instead of executing it. Only a registry-aware caller that
+# needs deleted-tenant schema cleanup (the runtime startup deploy) passes
+# True; schema enumeration raises on any registry entry it cannot rebuild,
+# so a True deploy never silently drops a live schema.
 schema_manager.upload_metadata_schemas(app_name="cogniverse")
 
 # Deploy content-type schemas together in one application package
