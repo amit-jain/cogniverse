@@ -348,9 +348,12 @@ other schema in Vespa with no registry record, it refuses by raising
 tenant's data — the caller must escalate to the bulk path.
 `delete_tenant_schemas_bulk(tenant_ids)` is the escalation: given the
 full list of orphan-implicated tenants (e.g. from the dry-run below),
-it unions every tenant's targets, absorbs whatever orphans remain
-unresolved (logging warnings instead of raising), and drops everything
-in one atomic redeploy.
+it unions every tenant's targets — matching only genuine Vespa orphans,
+never a registered peer that shares a suffix (a legacy `_acme` orphan
+must not sweep in the live `_acme_acme`) — and drops them in one atomic
+redeploy. Like the single-tenant path it **refuses** (raises
+`BackendDeploymentError`) rather than absorbing a survivor outside the
+named tenants that it cannot confirm is an orphan.
 
 ```python
 # schema_manager is a VespaSchemaManager (backend.schema_manager),
@@ -361,8 +364,8 @@ in one atomic redeploy.
 # unrelated peer-tenant orphan would be left dangling by the redeploy.
 schema_manager.delete_tenant_schemas("acme:prod")
 
-# Multi-tenant atomic delete — absorbs unresolved orphans across the
-# given tenant set instead of refusing (the operator-confirmed path).
+# Multi-tenant atomic delete — refuses (does not absorb) an unconfirmable
+# survivor outside the named tenants; drops only genuine orphans.
 schema_manager.delete_tenant_schemas_bulk(["acme:prod", "globex:dev"])
 ```
 

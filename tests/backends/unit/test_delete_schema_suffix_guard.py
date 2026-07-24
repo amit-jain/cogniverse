@@ -16,6 +16,7 @@ know.
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -164,3 +165,83 @@ class TestBackendDeleteSchemaWiring:
 
         with pytest.raises(ValueError, match="Refusing to delete"):
             backend.delete_schema(schema_name="video_x", tenant_id="acme:acme")
+
+
+class _BulkRegistry:
+    """Registry stub for delete_tenant_schemas_bulk: exposes the registered
+    full-name set (``_get_all_schemas``) and per-tenant bases."""
+
+    def __init__(self, registered_full_names: list, tenant_bases: dict):
+        self._registered = registered_full_names
+        self._tenant_bases = tenant_bases
+        self.unregistered: list = []
+
+    def _get_all_schemas(self):
+        return [
+            SimpleNamespace(full_schema_name=n, schema_definition="{}")
+            for n in self._registered
+        ]
+
+    def get_tenant_schemas(self, tid: str):
+        return [
+            SimpleNamespace(base_schema_name=b)
+            for b in self._tenant_bases.get(tid, [])
+        ]
+
+    def unregister_schema(self, tid: str, base: str) -> None:
+        self.unregistered.append((tid, base))
+
+
+class TestBulkDeleteSuffixAndAbsorbGuards:
+    """delete_tenant_schemas_bulk must not sweep a registered peer in via a
+    proper-suffix match, and must refuse (never absorb) an unconfirmable
+    survivor — the two reconcile-orphans data-loss paths."""
+
+    def _capture_manager(self, registered, deployed, tenant_bases):
+        mgr = object.__new__(VespaSchemaManager)
+        mgr._PROTECTED_SCHEMAS = frozenset(METADATA_SCHEMAS)
+        mgr._schema_registry = _BulkRegistry(registered, tenant_bases)
+        mgr._logger = logging.getLogger("test_bulk_guard")
+        mgr.list_deployed_document_types = lambda **_: list(deployed)
+        mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid.replace(':', '_')}"
+        captured: dict = {}
+
+        def _capture(targets, *, allow_absorb_unresolved):
+            captured["targets"] = set(targets)
+            captured["absorb"] = allow_absorb_unresolved
+            return sorted(set(targets) & set(deployed))
+
+        mgr._redeploy_dropping = _capture
+        return mgr, captured
+
+    def test_registered_peer_excluded_from_suffix_match(self):
+        # Legacy single-suffix orphan 'knowledge_graph_acme' (unregistered)
+        # coexists with the registered, live 'knowledge_graph_acme_acme'.
+        registered = ["knowledge_graph_acme_acme", *METADATA_SCHEMAS]
+        deployed = [
+            "knowledge_graph_acme",  # the orphan, token 'acme'
+            "knowledge_graph_acme_acme",  # healthy peer, tenant 'acme_acme'
+            *METADATA_SCHEMAS,
+        ]
+        mgr, captured = self._capture_manager(
+            registered, deployed, tenant_bases={"acme": []}
+        )
+
+        mgr.delete_tenant_schemas_bulk(["acme"])
+
+        assert "knowledge_graph_acme" in captured["targets"]  # orphan dropped
+        # The registered peer for a DIFFERENT tenant must survive.
+        assert "knowledge_graph_acme_acme" not in captured["targets"]
+
+    def test_bulk_requests_refuse_not_absorb(self):
+        registered = [*METADATA_SCHEMAS]
+        deployed = ["knowledge_graph_acme", *METADATA_SCHEMAS]
+        mgr, captured = self._capture_manager(
+            registered, deployed, tenant_bases={"acme": []}
+        )
+
+        mgr.delete_tenant_schemas_bulk(["acme"])
+
+        # Never absorb an unconfirmable survivor into the deletion — refuse, the
+        # same contract as the per-tenant path.
+        assert captured["absorb"] is False
