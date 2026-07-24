@@ -1967,16 +1967,30 @@ class CanaryActionResponse(BaseModel):
     state: Dict[str, Any]
 
 
-def _build_artifact_manager(tenant_id: str):
-    """Construct an ArtifactManager for an admin canary action.
+# Phoenix endpoints the admin canary actions build ArtifactManagers against.
+# Wired once at startup from the entrypoint (set_phoenix_endpoints) so this
+# router reads no environment at request time. The defaults match the historic
+# env fallbacks so a router constructed without wiring (unit tests) still works.
+_phoenix_endpoints = {
+    "http_endpoint": "http://localhost:6006",
+    "grpc_endpoint": "localhost:4317",
+}
 
-    Uses ``PHOENIX_HTTP_ENDPOINT`` / ``PHOENIX_GRPC_ENDPOINT`` env vars
-    so admin endpoints work the same way the rollback CLI does:
-    cluster-default Phoenix in production, docker-managed Phoenix in
-    integration tests.
+
+def set_phoenix_endpoints(http_endpoint: str, grpc_endpoint: str) -> None:
+    """Wire the Phoenix endpoints used by admin canary actions.
+
+    Called at startup from the entrypoint (env belongs at the entrypoint, not
+    in a request handler): cluster-default Phoenix in production, docker-managed
+    Phoenix in integration tests.
     """
-    import os as _os
+    _phoenix_endpoints["http_endpoint"] = http_endpoint
+    _phoenix_endpoints["grpc_endpoint"] = grpc_endpoint
 
+
+def _build_artifact_manager(tenant_id: str):
+    """Construct an ArtifactManager for an admin canary action, targeting the
+    Phoenix endpoints wired at startup (see ``set_phoenix_endpoints``)."""
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
     from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
@@ -1984,10 +1998,8 @@ def _build_artifact_manager(tenant_id: str):
     provider.initialize(
         {
             "tenant_id": tenant_id,
-            "http_endpoint": _os.environ.get(
-                "PHOENIX_HTTP_ENDPOINT", "http://localhost:6006"
-            ),
-            "grpc_endpoint": _os.environ.get("PHOENIX_GRPC_ENDPOINT", "localhost:4317"),
+            "http_endpoint": _phoenix_endpoints["http_endpoint"],
+            "grpc_endpoint": _phoenix_endpoints["grpc_endpoint"],
         }
     )
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
