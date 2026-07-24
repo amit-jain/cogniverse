@@ -240,6 +240,16 @@ grep -rnPA3 'except Exception' libs/agents/ --include="*.py" \
 # on arrival with only a warning log; a sibling that works via another seam is
 # the tell
 grep -rnP 'get_config\([^)]*config_manager=None' libs/ --include="*.py"
+
+# Log-only swallow — an `except` whose body only logs (no re-raise, no
+# meaningful return), so the function falls through as if the failed op
+# succeeded. Generalizes the return-[]/None/{} flatten above to the case
+# where the flatten IS the fall-through: catch every handler that logs and
+# neither re-raises nor returns an error object. Writes that log-and-continue
+# report success for a lost write; reads fall through to a stale/empty value.
+grep -rnPA3 'except (Exception|BaseException)' libs/ --include="*.py" \
+  | grep -PB3 '^\S+[:-]\s*(logger|logging|log|self\._log\w*)\.\w+\(' \
+  | grep -vP 'raise|return .+[^)]$'
 ```
 
 **Concurrency, caches, locks**
@@ -272,8 +282,13 @@ grep -rnP 'if cls\._\w+ is None.*and|cls\._shared\w+ = ' libs/ --include="*.py" 
 
 # Module-level memo with NO eviction and/or returning the SHARED mutable value
 # — keys accumulate forever; caller mutation poisons the cache. Require
-# bounded/replace-on-write semantics + defensive copy on return.
-grep -rnP '^_[A-Z_]+(CACHE|MEMO)\b\s*[:=]' libs/ --include="*.py"
+# bounded/replace-on-write semantics + defensive copy on return. Match ANY
+# module-level dict/mapping used as a cache, not only names ending CACHE|MEMO
+# (an unbounded `_DATASET_FRAMES: dict = {}` evaded the suffix form): flag every
+# module-global dict annotated/initialized as a mapping, then confirm at its
+# read sites there is an eviction/invalidation path and a copy-on-return.
+grep -rnP '^_[A-Za-z][A-Za-z0-9_]*\s*(:\s*[Dd]ict\b|:\s*[A-Za-z_.]*[Cc]ache)?\s*=\s*(\{\}|weakref\.|dict\(|\{)' libs/ --include="*.py" \
+  | grep -vP '=\s*\{[^}]+\}'  # skip populated literals (constants), keep empty-init caches
 
 # Single-instance TTL/request cache invalidated only by same-instance writes —
 # out-of-band writers converge only when the TTL lapses; flag any consumer
@@ -419,6 +434,53 @@ grep -rnP 'session_state\[.?current_tenant|st\.session_state\.get\("current_tena
 grep -rnP '"tenant[^"]*":\s*[a-z_]*tenant' libs/ --include="*.py" | grep -viE 'replace|sanitize|params|parameters'
 ```
 
+**Identifier namespace — reader without a producer**
+
+```bash
+# A read scoped to a derived namespace (project / dataset / index / collection /
+# schema name) whose literal value NO write site produces — the backend answers
+# an unknown namespace with 200+empty, so the read "succeeds" and is always
+# empty, and any guard keyed off the emptiness silently opens (e.g. a span
+# reader on `cogniverse-{tenant}-<suffix>` while every writer emits the bare
+# tenant project). Generic: for every namespace-derived read, demand a write to
+# the same derivation. Enumerate reader-side namespace derivations, then for
+# each confirm a writer emits the identical form.
+grep -rnP '(project|dataset|index|collection|namespace|schema)[_a-z]*\s*=\s*f?"[^"]*\{[^"}]+\}[^"]*"' libs/ --include="*.py" \
+  | grep -iP 'get_spans|get_traces|get_dataset|read|fetch|query|list_'
+# For each hit's literal suffix/template, grep the repo for a WRITE producing it
+# (span emit, create_dataset, feed, register_project); a reader with no matching
+# writer is the finding. `-default` / hardcoded fallback namespaces are the
+# canonical tell — nothing writes to a "default" that real traffic never uses.
+grep -rnP '"[a-z][a-z0-9-]*-default[a-z0-9-]*"|project\s*=\s*"cogniverse-default' libs/ --include="*.py"
+
+# Error classification by exception-message substring — control flow branched on
+# `"<phrase>" in str(exc)` / `.lower()` (e.g. "not found", "already exists",
+# "404") instead of the typed exception or an HTTP status. The message often
+# embeds the request URL, the resource NAME, or the server body, so an outage
+# whose URL/port/name contains the phrase is misclassified (a 404 from a down
+# proxy read as "resource missing" → silent no-data; a 500 whose body says
+# "already exists" rerouted to an append reported as success). Classify by
+# exception TYPE or `e.response.status_code`, not by text.
+grep -rnP 'in str\(\w*(err|exc|e)\w*\)(\.lower\(\))?' libs/ --include="*.py" \
+  | grep -iP 'not found|already exists|does not exist|409|404|conflict|timeout|refused'
+```
+
+**Guarded-assign / unguarded-use mis-indent**
+
+```bash
+# A name assigned UNDER a nested guard but used/returned at the guard's OUTER
+# indent, so it is unbound whenever the guard is false — an UnboundLocalError
+# that a per-item `except` upstream can silently swallow (dropping every
+# non-matching item). The tell: a `for`/`if`-guarded `x = ...` followed by a
+# `return`/use of `x` dedented to the loop/guard level. Greppable precursor;
+# confirm by reading — flag any guarded assignment whose only user sits at a
+# shallower indent than the assignment.
+grep -rnPzo 'for [^\n]+:\n\s+if [^\n]+:\n(\s+)\w+ = [^\n]+\n(?!\1\s)\s*(return|[a-z_]+ =)' libs/ --include="*.py"
+# Companion executable check for the class: any function that iterates and
+# returns/uses a loop-local — run it with an input that misses every guard
+# branch and assert it does not raise UnboundLocalError.
+```
+
 **Confinement and construction**
 
 ```bash
@@ -453,6 +515,23 @@ grep -rlP '"docker",\s*$|docker run' tests/ --include="*.py" | while read f; do 
 # silently booting duplicate infra mid-sweep. Fixture re-exports belong in
 # conftest.py ONLY.
 grep -rn "from tests.conftest import" tests/ --include="*.py" | grep -v "conftest.py:"
+```
+
+**Comment hygiene**
+
+```bash
+# A comment (or docstring) NARRATING CHANGE HISTORY instead of describing what
+# the code does now — "X was removed because ...", "used to ...", "formerly ...",
+# "renamed from/to ...", "no longer ...", "in favor of ...", "previously
+# was/had/used ...". A comment explains current behavior; why it changed belongs
+# in the commit message, not an inline changelog that drifts and misleads. The
+# fix is to DELETE the narration (not rewrite it). Generic — fires on any future
+# such comment, not a memorial of one instance. Class-C-noisy: a few legitimate
+# "no longer held here" state comments will match; verify each by reading.
+grep -rnP '^\s*#.*\b((were|was|been) removed|used to\b|formerly\b|renamed (from|to)\b|no longer\b|in favor of\b|previously (was|had|used|returned|lived))' libs/ --include="*.py"
+# Docstring form — same narration inside a triple-quoted block (drop the leading
+# `#` anchor; still verify by reading, higher false-positive rate).
+grep -rnP '^\s+.*\b((were|was) removed because|used to\b|formerly\b|renamed (from|to)\b|deprecated in favor of\b)' libs/ --include="*.py" | grep -vP ':\s*#'
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
