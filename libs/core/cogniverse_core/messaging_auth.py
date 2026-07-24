@@ -1,4 +1,4 @@
-"""Invite token authentication and user-tenant mapping.
+"""Invite token authentication and user-tenant mapping for messaging surfaces.
 
 Tokens stored in ConfigStore (VespaConfigStore). User→tenant mappings
 stored in Mem0 with agent_name="_messaging_gateway".

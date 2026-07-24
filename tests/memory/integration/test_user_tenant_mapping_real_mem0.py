@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from cogniverse_messaging.auth import GATEWAY_AGENT_NAME, UserTenantMapper
+from cogniverse_core.messaging_auth import GATEWAY_AGENT_NAME, UserTenantMapper
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.memory.manager import Mem0MemoryManager
