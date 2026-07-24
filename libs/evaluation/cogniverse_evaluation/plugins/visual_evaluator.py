@@ -80,7 +80,13 @@ class VisualEvaluatorPlugin:
                 if hasattr(state.input, "get")
                 else str(state.input)
             )
+            # Genuine zeros (no results / no video id) score 0.0; judge
+            # FAILURES are excluded from the mean and surfaced in metadata —
+            # folding them in as 0.0 would make a judge outage read as a
+            # uniform quality collapse across every configuration.
             all_scores = {}
+            failed = {}
+            judged_ok = 0
 
             for config_key, output in state.outputs.items():
                 if not output.get("success", False):
@@ -94,21 +100,37 @@ class VisualEvaluatorPlugin:
 
                 top_result = results[0]
                 video_id = top_result.get("video_id", "")
-
-                if video_id:
-                    try:
-                        eval_result = visual_judge.evaluate(
-                            input={"query": query},
-                            output={"video_id": video_id, "results": results},
-                        )
-                        all_scores[config_key] = (
-                            eval_result.score if eval_result else 0.0
-                        )
-                    except Exception as e:
-                        logger.error(f"Visual evaluation failed: {e}")
-                        all_scores[config_key] = 0.0
-                else:
+                if not video_id:
                     all_scores[config_key] = 0.0
+                    continue
+
+                try:
+                    eval_result = visual_judge.evaluate(
+                        input={"query": query},
+                        output={"video_id": video_id, "results": results},
+                    )
+                except Exception as e:
+                    logger.error(f"Visual evaluation failed: {e}")
+                    failed[config_key] = str(e)
+                    continue
+
+                if (
+                    eval_result is None
+                    or getattr(eval_result, "label", None) == "evaluation_failed"
+                ):
+                    failed[config_key] = getattr(
+                        eval_result, "explanation", "evaluator returned no result"
+                    )
+                    continue
+
+                all_scores[config_key] = eval_result.score
+                judged_ok += 1
+
+            if failed and not judged_ok:
+                raise RuntimeError(
+                    "visual judge failed for every attempted configuration — "
+                    f"refusing to report a score for a judge outage: {failed}"
+                )
 
             avg_score = (
                 sum(all_scores.values()) / len(all_scores) if all_scores else 0.0
@@ -120,6 +142,7 @@ class VisualEvaluatorPlugin:
                 metadata={
                     "evaluator": evaluator_name,
                     "individual_scores": all_scores,
+                    "failed_evaluations": failed,
                     "plugin": "visual_evaluator",
                 },
             )
