@@ -631,3 +631,72 @@ class TestStatusClusterOutage:
         assert result.exit_code == 0
         assert "Could not list k3d clusters" in result.output
         assert "docker daemon unreachable" in result.output
+
+
+class TestUpImageSource:
+    _PATCHES = [
+        ("cogniverse_cli.main._print_status_table", {}),
+        ("cogniverse_cli.main.deploy_workflow_templates", {}),
+        ("cogniverse_cli.main.install_argo_controller", {}),
+        ("cogniverse_cli.main.subprocess.run", {}),
+        ("cogniverse_cli.main.wait_for_url", {"return_value": True}),
+        ("cogniverse_cli.main.helm_install", {}),
+        ("cogniverse_cli.main.pull_and_import_third_party", {}),
+        ("cogniverse_cli.main.get_values_file", {"return_value": Path("/v.yaml")}),
+        ("cogniverse_cli.main.get_chart_path", {"return_value": Path("/chart")}),
+        ("cogniverse_cli.main.get_workflows_path", {"return_value": Path("/wf")}),
+        ("cogniverse_cli.main._probe_host_llm", {"return_value": False}),
+        (
+            "cogniverse_cli.main.resolve_project_root",
+            {"return_value": Path("/checkout")},
+        ),
+        ("cogniverse_cli.main.cluster_exists", {"return_value": True}),
+        ("cogniverse_cli.main.check_prerequisites", {"return_value": []}),
+        ("cogniverse_cli.main.has_existing_k8s", {"return_value": False}),
+        ("cogniverse_cli.main.prune_superseded_images", {}),
+        ("cogniverse_cli.main.import_images", {}),
+        ("cogniverse_cli.main.dev_version", {"return_value": "0.1.dev1"}),
+        ("cogniverse_cli.main.dev_image_set_values", {"return_value": {}}),
+    ]
+
+    def _invoke(self, args, workspace_ok=True):
+        import contextlib
+
+        with contextlib.ExitStack() as stack:
+            mocks = {
+                target.rsplit(".", 1)[1]: stack.enter_context(patch(target, **kwargs))
+                for target, kwargs in self._PATCHES
+            }
+            mocks["has_workspace_source"] = stack.enter_context(
+                patch(
+                    "cogniverse_cli.main.has_workspace_source",
+                    return_value=workspace_ok,
+                )
+            )
+            mocks["build_images"] = stack.enter_context(
+                patch("cogniverse_cli.main.build_images", return_value=["t:1"])
+            )
+            result = CliRunner().invoke(cli, args)
+        return result, mocks
+
+    def test_image_source_overrides_build_root(self, tmp_path: Path) -> None:
+        """`up --image-source <dir>` builds from <dir> — the option was
+        parsed and silently ignored, always building from the checkout."""
+        result, mocks = self._invoke(["up", "--image-source", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        built_from = mocks["build_images"].call_args.args[0]
+        assert built_from == tmp_path.resolve()
+        assert mocks["dev_version"].call_args.args[0] == tmp_path.resolve()
+
+    def test_default_builds_from_checkout(self) -> None:
+        result, mocks = self._invoke(["up"])
+        assert result.exit_code == 0, result.output
+        assert mocks["build_images"].call_args.args[0] == Path("/checkout")
+
+    def test_image_source_without_workspace_errors(self, tmp_path: Path) -> None:
+        result, mocks = self._invoke(
+            ["up", "--image-source", str(tmp_path)], workspace_ok=False
+        )
+        assert result.exit_code == 1
+        assert "no buildable workspace" in " ".join(result.output.split())
+        mocks["build_images"].assert_not_called()
