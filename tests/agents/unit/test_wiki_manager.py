@@ -3,6 +3,8 @@ Unit tests for wiki page dataclasses, slug generation, and WikiManager.
 """
 
 import json
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -1048,3 +1050,111 @@ class TestWikiPageDocumentMapping:
         doc.add_embedding("embedding", [0.1, 0.2])
         fields = doc.to_schema_fields(self._mapping())
         assert fields["embedding"] == [0.1, 0.2]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestTopicMergeConcurrency:
+    """Two concurrent save_session upserts of the SAME tenant+entity must not
+    lose each other's content. Without a lock both read the same base page,
+    each appends only its own text, and the second feed overwrites the first —
+    one interaction's content silently gone. The per-topic lock serializes the
+    read-merge-write so both survive."""
+
+    def test_concurrent_upserts_of_one_topic_keep_both_writes(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        mapping = _wiki_mapping()
+
+        class _StatefulBackend:
+            """Round-trips a fed page's fields so the next read sees it — the
+            real Vespa contract, in-process. A read delay widens the
+            read-modify-write window so an unlocked merge would race."""
+
+            def __init__(self):
+                self.store = {}
+                self.read_delay = 0.0
+
+            def get_document_fields(self, doc_id, schema_name=None, namespace=None):
+                if self.read_delay:
+                    time.sleep(self.read_delay)
+                return dict(self.store.get(doc_id) or {})
+
+            def put_document(
+                self, document, schema_name=None, base_schema_name=None, namespace=None
+            ):
+                self.store[document.id] = document.to_schema_fields(mapping)
+
+        backend = _StatefulBackend()
+        mgr = WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+        doc_id = "wiki_topic_acme_production_paris"
+
+        with patch.object(mgr, "_generate_embedding", return_value=[0.1] * 768):
+            # Seed a base topic so both concurrent calls hit the merge path.
+            mgr._get_or_create_topic(entity="Paris", new_content="BASE", sources=["s0"])
+            assert backend.store[doc_id]["update_count"] == 1
+
+            backend.read_delay = 0.1  # both reads land before either write
+            gate = threading.Barrier(2)
+
+            def worker(content, source):
+                gate.wait()
+                mgr._get_or_create_topic(
+                    entity="Paris", new_content=content, sources=[source]
+                )
+
+            t1 = threading.Thread(target=worker, args=("ALPHA", "s_a"))
+            t2 = threading.Thread(target=worker, args=("BETA", "s_b"))
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+        final = backend.store[doc_id]
+        content = final["content"]
+        # Both concurrent writes survived on top of the base — neither lost.
+        assert "BASE" in content
+        assert "ALPHA" in content
+        assert "BETA" in content
+        # base(1) + two serialized merges
+        assert final["update_count"] == 3
+        assert set(json.loads(final["sources"])) == {"s0", "s_a", "s_b"}
+
+    def test_index_rebuild_failure_names_the_saved_session(self):
+        """When the index rebuild fails after the session page was already fed,
+        the raised error names the saved page and says the index self-heals —
+        so a caller can tell the page persisted, not that nothing was saved."""
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        backend = MagicMock()
+        mgr = WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+        with (
+            patch.object(mgr, "_generate_embedding", return_value=[0.1] * 768),
+            patch.object(mgr, "_feed_page") as mock_feed,
+            patch.object(
+                mgr, "_rebuild_index", side_effect=RuntimeError("index feed 500")
+            ),
+        ):
+            with pytest.raises(
+                RuntimeError, match="was saved but the index"
+            ) as excinfo:
+                mgr.save_session(
+                    query="what is paris",
+                    response="Paris is a city.",
+                    entities=[],
+                    agent_name="deep_research_agent",
+                )
+        # the session page WAS fed before the index rebuild failed
+        assert mock_feed.called
+        msg = str(excinfo.value)
+        assert "index feed 500" in msg  # original cause preserved
+        assert "self-heal" in msg
+        assert "wiki_session" in msg  # names the saved session doc

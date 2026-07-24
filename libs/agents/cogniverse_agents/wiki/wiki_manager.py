@@ -3,9 +3,10 @@ WikiManager — persists wiki pages to Vespa and maintains a per-tenant index.
 """
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from cogniverse_agents.inference.rlm_inference import RLMInference, route_rlm_endpoint
 from cogniverse_agents.wiki.wiki_schema import WikiIndex, WikiPage, generate_slug
@@ -23,6 +24,25 @@ _WIKI_NAMESPACE = "wiki_content"
 
 _AUTO_FILE_AGENTS = {"detailed_report_agent", "deep_research_agent"}
 _CONTENT_SEPARATOR = "\n\n---\n\n"
+
+# Serialize a topic's read-merge-write per (tenant, doc_id). Two concurrent
+# save_session calls for the same tenant+entity would otherwise both read the
+# same base page, each append their own content, and the second feed would
+# overwrite the first — silently losing one interaction's text. The lock makes
+# the merge atomic within this process; cross-replica correctness would need a
+# conditional put (a single runtime process per tenant is the guarantee here).
+_TOPIC_LOCKS: Dict[Tuple[str, str], threading.Lock] = {}
+_TOPIC_LOCKS_GUARD = threading.Lock()
+
+
+def _topic_lock(tenant_id: str, doc_id: str) -> threading.Lock:
+    key = (tenant_id, doc_id)
+    with _TOPIC_LOCKS_GUARD:
+        lock = _TOPIC_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _TOPIC_LOCKS[key] = lock
+        return lock
 
 
 class WikiManager:
@@ -146,7 +166,16 @@ class WikiManager:
         embedding = self._generate_embedding(response)
         self._feed_page(session, embedding)
 
-        self._rebuild_index()
+        try:
+            self._rebuild_index()
+        except Exception as exc:
+            # The session page IS persisted at this point; only the index
+            # rebuild failed (it self-heals on the next save, which re-lists
+            # all pages). Name the saved page so callers can tell what landed.
+            raise RuntimeError(
+                f"Wiki session page {session.doc_id} was saved but the index "
+                f"rebuild failed (index will self-heal on the next save): {exc}"
+            ) from exc
         return session
 
     def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
@@ -337,6 +366,16 @@ class WikiManager:
         safe = self._tenant_id.replace(":", "_")
         doc_id = f"wiki_topic_{safe}_{slug}"
 
+        # Serialize this topic's read-merge-write so concurrent upserts of the
+        # same topic don't overwrite each other's content (see _topic_lock).
+        with _topic_lock(self._tenant_id, doc_id):
+            return self._upsert_topic_locked(entity, new_content, sources, doc_id)
+
+    def _upsert_topic_locked(
+        self, entity: str, new_content: str, sources: List[str], doc_id: str
+    ) -> WikiPage:
+        """Read-merge-write body of ``_get_or_create_topic``, run under the
+        per-topic lock so concurrent upserts of one topic serialize."""
         existing = self._get_document_http(doc_id)
 
         if existing is not None:
