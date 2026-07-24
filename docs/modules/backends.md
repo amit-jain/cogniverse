@@ -1691,8 +1691,11 @@ doc = Document(
 
 # Process converts to Vespa format automatically:
 # 1. Extracts embeddings and converts to hex/binary (VespaEmbeddingProcessor)
-# 2. Maps Document fields to schema fields
-# 3. Adds creation timestamp
+# 2. Passes metadata keys through to matching schema fields, and applies the
+#    schema's document_mapping.metadata_fields renames for values carried under
+#    a different name (segment_index -> segment_id, description ->
+#    segment_description); a rename whose target the schema lacks is dropped
+# 3. Adds a millisecond creation timestamp (feed only; omitted on update)
 # 4. Creates proper Vespa document structure
 vespa_doc = client.process(doc)
 

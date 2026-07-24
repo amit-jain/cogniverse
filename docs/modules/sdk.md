@@ -920,6 +920,8 @@ names:
 
 Backends apply this automatically: `VespaBackend.put_document(document, schema_name=..., base_schema_name=...)` loads the base schema's `document_mapping`, serializes, and feeds — raising `ValueError` when the schema declares no mapping rather than guessing field names.
 
+Both write paths load the block through one helper — `DocumentFieldMapping.from_schema_json(schema_json, schema_name=..., required=...)` — so they cannot drift. The ingestion serializer (`VespaPyClient.process`, used by `ingest_documents`) applies the `metadata_fields` renames to the per-segment metadata a video Document carries (e.g. `segment_index` → `segment_id`); editing a schema's `metadata_fields` changes what ingestion feeds. It does not require a mapping — a schema without one (memory, graph) still feeds by passing metadata keys straight through to matching schema fields.
+
 ### SearchResult Class
 
 Pairs a `Document` with a relevance score for search-response construction:

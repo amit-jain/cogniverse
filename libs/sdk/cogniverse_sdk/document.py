@@ -151,6 +151,33 @@ class DocumentFieldMapping:
                     )
         return cls(**data)
 
+    @classmethod
+    def from_schema_json(
+        cls,
+        schema_json: Optional[Dict[str, Any]],
+        *,
+        schema_name: Optional[str] = None,
+        required: bool = False,
+    ) -> Optional["DocumentFieldMapping"]:
+        """Load the ``document_mapping`` block from a schema definition dict.
+
+        One loader for both write paths — the ingestion serializer
+        (``VespaPyClient.process``) and ``VespaBackend.put_document`` — so the
+        two cannot read the mapping differently and drift. Returns None when the
+        schema declares no mapping and ``required`` is False; raises ValueError
+        naming the schema when ``required`` and the block is absent.
+        """
+        mapping_cfg = (schema_json or {}).get("document_mapping")
+        if not mapping_cfg:
+            if required:
+                raise ValueError(
+                    f"Schema {schema_name!r} declares no document_mapping — "
+                    f"add one to its schema JSON or feed schema-specific "
+                    f"fields via put_document_fields"
+                )
+            return None
+        return cls.from_dict(mapping_cfg)
+
 
 class ContentType(Enum):
     """Types of content the pipeline can process."""

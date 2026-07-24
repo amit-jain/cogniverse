@@ -20,7 +20,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
-from cogniverse_sdk.document import Document
+from cogniverse_sdk.document import Document, DocumentFieldMapping
 from cogniverse_vespa._vespa_factory import make_vespa_app
 
 from .embedding_processor import VespaEmbeddingProcessor, schema_is_single_vector
@@ -237,6 +237,14 @@ class VespaPyClient:
             self.logger.debug(
                 f"Loaded {len(self.schema_fields)} fields from base schema {self.base_schema_name}"
             )
+
+            # Declared metadata-key -> field renames for this schema's write
+            # path (e.g. segment_index -> segment_id). None when the schema
+            # declares no document_mapping — process() then relies on the
+            # schema-gated metadata passthrough alone.
+            self._doc_mapping = DocumentFieldMapping.from_schema_json(
+                schema_def, schema_name=self.base_schema_name, required=False
+            )
         except Exception as e:
             self.logger.error(f"Failed to load schema fields from {schema_path}: {e}")
             raise
@@ -387,9 +395,6 @@ class VespaPyClient:
         if "end_time" in doc.metadata and "end_time" in self.schema_fields:
             fields["end_time"] = float(doc.metadata["end_time"])
 
-        # Add segment info from metadata (new Document structure)
-        if "segment_index" in doc.metadata and "segment_id" in self.schema_fields:
-            fields["segment_id"] = doc.metadata["segment_index"]
         if "total_segments" in doc.metadata and "total_segments" in self.schema_fields:
             fields["total_segments"] = doc.metadata["total_segments"]
 
@@ -400,12 +405,17 @@ class VespaPyClient:
         ):
             fields["audio_transcript"] = doc.metadata["audio_transcript"]
 
-        # Handle description from metadata if schema has segment_description
-        if (
-            "description" in doc.metadata
-            and "segment_description" in self.schema_fields
-        ):
-            fields["segment_description"] = doc.metadata["description"]
+        # Apply the schema's declared metadata-key -> field renames (the values
+        # a segment Document carries under a name that differs from the schema
+        # field, e.g. segment_index -> segment_id, description ->
+        # segment_description). Schema-gated: a rename whose target this schema
+        # lacks is dropped, exactly like the generic passthrough below. Editing
+        # a schema's document_mapping.metadata_fields changes this output — the
+        # rename is not hardcoded here.
+        if self._doc_mapping is not None:
+            for src_key, schema_field in self._doc_mapping.metadata_fields.items():
+                if src_key in doc.metadata and schema_field in self.schema_fields:
+                    fields[schema_field] = doc.metadata[src_key]
 
         # Add other metadata fields that directly match schema fields
         for key, value in doc.metadata.items():

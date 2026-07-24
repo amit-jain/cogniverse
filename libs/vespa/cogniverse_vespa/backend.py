@@ -1403,14 +1403,9 @@ class VespaBackend(Backend):
         schema_name = schema_name or self.config.get("schema_name")
         base_name = base_schema_name or schema_name
         schema_json = self._schema_loader_instance.load_schema(base_name)
-        mapping_cfg = (schema_json or {}).get("document_mapping")
-        if not mapping_cfg:
-            raise ValueError(
-                f"Schema {base_name!r} declares no document_mapping — "
-                f"add one to its schema JSON or feed schema-specific "
-                f"fields via put_document_fields"
-            )
-        mapping = DocumentFieldMapping.from_dict(mapping_cfg)
+        mapping = DocumentFieldMapping.from_schema_json(
+            schema_json, schema_name=base_name, required=True
+        )
         self.put_document_fields(
             document.id,
             document.to_schema_fields(mapping),

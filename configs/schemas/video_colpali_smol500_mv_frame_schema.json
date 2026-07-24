@@ -472,6 +472,10 @@
     "embeddings": {
       "embedding": "embedding"
     },
-    "description": "segment_description"
+    "description": "segment_description",
+    "metadata_fields": {
+      "segment_index": "segment_id",
+      "description": "segment_description"
+    }
   }
 }
