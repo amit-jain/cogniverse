@@ -19,7 +19,6 @@ from rich.table import Table
 from cogniverse_cli.argo import deploy_workflow_templates, install_argo_controller
 from cogniverse_cli.cluster import (
     CLUSTER_NAME,
-    NAMESPACE,
     check_prerequisites,
     cluster_exists,
     create_cluster,
@@ -39,6 +38,7 @@ from cogniverse_cli.config import (
     get_workflows_path,
     resolve_project_root,
 )
+from cogniverse_cli.constants import NAMESPACE
 from cogniverse_cli.deploy import helm_install, helm_uninstall
 from cogniverse_cli.health import check_service_health, wait_for_url
 from cogniverse_cli.images import (
