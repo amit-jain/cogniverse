@@ -380,22 +380,49 @@ class VLMDescriptor:
         model = self._resolve_openai_model()
         chat_url = f"{self._openai_base()}/chat/completions"
         descriptions: dict[str, str] = {}
+        if not keyframes:
+            return descriptions
+
+        def _describe(kf: dict):
+            # Best-effort per frame: a transient error on one keyframe must not
+            # abort the whole video's description stage. Carry the outcome so the
+            # caller can keep successes and report the failures by name.
+            try:
+                return ("ok", self._describe_one_openai(kf, model, chat_url))
+            except Exception as exc:  # noqa: BLE001 - recorded, re-raised if total
+                return ("err", kf.get("path", "?"), exc)
+
         if len(keyframes) <= 1:
-            results = [
-                self._describe_one_openai(kf, model, chat_url) for kf in keyframes
-            ]
+            results = [_describe(kf) for kf in keyframes]
         else:
             workers = min(self.vlm_concurrency, len(keyframes))
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                results = list(
-                    pool.map(
-                        lambda kf: self._describe_one_openai(kf, model, chat_url),
-                        keyframes,
-                    )
-                )
+                results = list(pool.map(_describe, keyframes))
+
+        failures: list[tuple[str, Exception]] = []
         for r in results:
-            if r is not None:
-                descriptions[r[0]] = r[1]
+            if r[0] == "ok":
+                pair = r[1]
+                if pair is not None:  # None = missing frame file, skip silently
+                    descriptions[pair[0]] = pair[1]
+            else:
+                failures.append((r[1], r[2]))
+
+        if failures:
+            self.logger.warning(
+                "VLM description failed for %d/%d keyframes: %s",
+                len(failures),
+                len(keyframes),
+                "; ".join(f"{path}: {exc}" for path, exc in failures[:5]),
+            )
+        # A total outage (errors on every keyframe, nothing salvaged) must not
+        # return an empty map the pipeline reads as "no descriptions" success —
+        # raise so the description stage reports the failure.
+        if failures and not descriptions:
+            raise RuntimeError(
+                f"VLM description failed for all {len(keyframes)} keyframes; "
+                f"first error: {failures[0][1]}"
+            )
         self.logger.info(
             f"VLM (vision chat) described {len(descriptions)}/{len(keyframes)} frames"
         )
