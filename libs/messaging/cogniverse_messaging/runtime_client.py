@@ -17,6 +17,10 @@ class RuntimeClient:
     """Async HTTP client for the Cogniverse runtime API."""
 
     def __init__(self, runtime_url: str, timeout: float = 300.0):
+        # timeout bounds agent dispatch and event-stream reads; every other
+        # call (CRUD, drain, health) is a fast route and uses the client
+        # default below. connect stays short everywhere so an unreachable
+        # runtime fails in seconds instead of hanging out the read budget.
         self.runtime_url = runtime_url.rstrip("/")
         self.timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
@@ -24,7 +28,8 @@ class RuntimeClient:
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                base_url=self.runtime_url, timeout=self.timeout
+                base_url=self.runtime_url,
+                timeout=httpx.Timeout(30.0, connect=5.0),
             )
         return self._client
 
@@ -73,6 +78,7 @@ class RuntimeClient:
         resp = await client.post(
             f"/agents/{agent_name}/process",
             json=payload,
+            timeout=httpx.Timeout(self.timeout, connect=5.0),
         )
 
         if resp.status_code != 200:
@@ -90,7 +96,11 @@ class RuntimeClient:
         """Subscribe to SSE events for a streaming task."""
         client = await self._get_client()
 
-        async with client.stream("GET", f"/events/workflows/{task_id}") as response:
+        async with client.stream(
+            "GET",
+            f"/events/workflows/{task_id}",
+            timeout=httpx.Timeout(self.timeout, connect=5.0),
+        ) as response:
             async for line in response.aiter_lines():
                 if line.startswith("data: "):
                     data = line[6:]

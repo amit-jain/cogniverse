@@ -87,6 +87,8 @@ MessagingGateway(
 
 Registration and conversation history are both optional: without `config_manager`, `/start <token>` replies that registration is unavailable; without `memory_manager`, the gateway skips history lookup/storage and every user is treated as unregistered (`_handle_message` short-circuits to "please register").
 
+`build_app()` registers a `CommandHandler` for every slash command (`start`, `help`, and all nine command families) — the plain-text `MessageHandler` filters with `~filters.COMMAND`, so a command without its own handler would be silently dropped by Telegram dispatch. Updates process concurrently (up to 32 in parallel) so one slow agent dispatch cannot stall other chats, and a registered error handler replies "Something went wrong handling that — please try again." when a handler raises (runtime unreachable, malformed response) instead of leaving the user in silence.
+
 **Usage:**
 ```python
 from cogniverse_messaging.gateway import MessagingGateway
@@ -158,6 +160,8 @@ Thin async `httpx` wrapper around the runtime's HTTP API — the gateway never i
 ```python
 RuntimeClient(runtime_url: str, timeout: float = 300.0)
 ```
+
+The constructor `timeout` bounds only agent dispatch (`dispatch_agent`) and SSE event-stream reads; every other call (CRUD, drain, health) uses the shared client's 30s read default, and all connects fail within 5s so an unreachable runtime surfaces in seconds rather than hanging out the read budget.
 
 **Key methods:**
 
