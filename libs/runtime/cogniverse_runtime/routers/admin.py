@@ -861,7 +861,22 @@ class RegisterRequest(BaseModel):
     token: str
 
 
-_register_lock = asyncio.Lock()
+_register_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _register_lock(token: str) -> asyncio.Lock:
+    """Return the per-token registration lock (created on first use).
+
+    Serializing per token makes a concurrent second register of the SAME token
+    lose at validation, while registrations for DIFFERENT tokens run in
+    parallel instead of convoying behind one process-global lock. Runs on the
+    event loop with no await between get and set, so the lookup is atomic.
+    """
+    lock = _register_locks.get(token)
+    if lock is None:
+        lock = asyncio.Lock()
+        _register_locks[token] = lock
+    return lock
 
 
 @router.post("/messaging/register")
@@ -879,7 +894,7 @@ async def register_messaging_user(
     from cogniverse_core.messaging_auth import InviteTokenManager, UserTenantMapper
 
     token_manager = InviteTokenManager(config_manager)
-    async with _register_lock:
+    async with _register_lock(request.token):
         try:
             tenant_id = await asyncio.to_thread(
                 token_manager.validate_token, request.token
@@ -2032,3 +2047,4 @@ def _reset_admin_overrides_for_tests() -> None:
     _signature_variant_overrides.clear()
     _signature_variant_cache_ts.clear()
     _signature_variant_write_locks.clear()
+    _register_locks.clear()

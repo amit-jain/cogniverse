@@ -11,6 +11,7 @@ under concurrent registration attempts.
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import httpx
 import pytest
@@ -48,6 +49,34 @@ class _PartitionedMemory:
 class _OutageStore(InMemoryConfigStore):
     def get_config(self, *args, **kwargs):
         raise ConnectionError("config store unreachable")
+
+
+class _BarrierOnValidateStore(InMemoryConfigStore):
+    """Blocks the two DIFFERENT-token validate reads on one 2-party barrier.
+
+    Per-token locks let the two registrations run concurrently, so both
+    validate threads reach the barrier and pass. A single process-global lock
+    would serialize them: the second registration can't start its validate
+    until the first fully finishes, so only one thread reaches the barrier and
+    it trips ``BrokenBarrierError`` after the timeout — turning the parallel
+    case into a 503. Armed only after minting so mint reads don't trip it.
+    """
+
+    def __init__(self, barrier: threading.Barrier):
+        super().__init__()
+        self._barrier = barrier
+        self._seen: set = set()
+        self.armed = False
+
+    def get_config(self, tenant_id, scope, service, config_key, version=None):
+        if (
+            self.armed
+            and config_key.startswith("invite_token_")
+            and config_key not in self._seen
+        ):
+            self._seen.add(config_key)
+            self._barrier.wait(timeout=5)
+        return super().get_config(tenant_id, scope, service, config_key, version)
 
 
 @pytest.fixture
@@ -222,3 +251,55 @@ async def test_concurrent_registers_consume_the_token_once(harness):
 
     # The winner resolves; validate agrees the token is spent.
     assert InviteTokenManager(cm).validate_token(token) is None
+
+
+@pytest.mark.asyncio
+async def test_different_tokens_register_in_parallel():
+    """Registrations for DIFFERENT tokens must not convoy behind one global
+    lock. Both validate reads meet on a 2-party barrier; the per-token lock
+    lets them run concurrently so both pass and return 200. A single global
+    lock would serialize them and the barrier would trip (503)."""
+    barrier = threading.Barrier(2)
+    store = _BarrierOnValidateStore(barrier)
+    store.initialize()
+    cm = ConfigManager(store=store)
+    memory = _PartitionedMemory()
+    admin_router.set_system_memory_factory(lambda: memory)
+    admin_router._register_locks.clear()
+
+    app = FastAPI()
+    app.include_router(admin_router.router, prefix="/admin")
+    app.dependency_overrides[admin_router.get_config_manager_dependency] = lambda: cm
+    try:
+        async with _client(app) as client:
+            token_a = await _mint(client, tenant="acme:alice")
+            token_b = await _mint(client, tenant="beta:bob")
+            store.armed = True  # only the two concurrent validates hit the barrier
+
+            ra, rb = await asyncio.gather(
+                client.post(
+                    "/admin/messaging/register",
+                    json={
+                        "platform": "telegram",
+                        "external_user_id": "1",
+                        "token": token_a,
+                    },
+                ),
+                client.post(
+                    "/admin/messaging/register",
+                    json={
+                        "platform": "telegram",
+                        "external_user_id": "2",
+                        "token": token_b,
+                    },
+                ),
+            )
+        # Both cleared the barrier concurrently — different tokens ran in
+        # parallel, not serialized behind one lock.
+        assert ra.status_code == 200
+        assert rb.status_code == 200
+        assert ra.json()["tenant_id"] == "acme:alice"
+        assert rb.json()["tenant_id"] == "beta:bob"
+    finally:
+        admin_router.set_system_memory_factory(None)
+        admin_router._register_locks.clear()
