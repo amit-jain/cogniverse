@@ -25,6 +25,7 @@ import asyncio
 import logging
 import math
 import sys
+import threading
 
 import httpx
 
@@ -70,12 +71,29 @@ def _cosine_sim(a: list, b: list) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
+_delivery_embeddings_lock = threading.Lock()
+
+
 def _ensure_delivery_embeddings(denseon_url: str) -> None:
-    """Lazily compute embeddings for known delivery destinations."""
+    """Lazily compute embeddings for known delivery destinations.
+
+    Builds into a local dict and publishes atomically under a lock — a
+    key-by-key fill of the module global lets a concurrent caller see a
+    truthy-but-partial map and silently miss a delivery destination.
+    """
+    global _delivery_embeddings
     if _delivery_embeddings:
         return
-    for dest, desc in _DELIVERY_DESCRIPTIONS.items():
-        _delivery_embeddings[dest] = _embed_text(desc, denseon_url, is_query=False)
+    with _delivery_embeddings_lock:
+        if _delivery_embeddings:
+            return
+        built = {
+            dest: _embed_text(desc, denseon_url, is_query=False)
+            for dest, desc in _DELIVERY_DESCRIPTIONS.items()
+        }
+        # Rebind (atomic) rather than fill in place — readers see either the
+        # empty map or the complete one, never a partial fill.
+        _delivery_embeddings = built
     logger.info(
         "Computed delivery embeddings for %d destinations", len(_delivery_embeddings)
     )
