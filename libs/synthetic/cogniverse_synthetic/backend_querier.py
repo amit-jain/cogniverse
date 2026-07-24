@@ -137,8 +137,10 @@ class BackendQuerier:
         except TypeError:
             raise
         except Exception as e:
+            # A backend outage is not "no matching documents" — flattening it
+            # to [] silently produces empty/degraded synthetic datasets.
             logger.error(f"Query failed for {schema_name}: {e}")
-            return []
+            raise
 
     def _build_yql(self, schema_name: str, sample_size: int, strategy: str) -> str:
         """
@@ -383,5 +385,6 @@ class BackendQuerier:
                 results, {"schema_name": "default", "embedding_type": "mixed"}
             )
         except Exception as e:
+            # Same contract as query_sample_documents: outages propagate.
             logger.error(f"Query by modality failed: {e}")
-            return []
+            raise

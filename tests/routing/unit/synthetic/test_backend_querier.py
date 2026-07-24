@@ -66,15 +66,16 @@ async def test_temporal_recent_strategy_forwards_sorting_param() -> None:
     assert "yql" not in backend.calls[0]["kwargs"]
 
 
-async def test_query_profile_returns_empty_on_backend_runtime_error() -> None:
-    """A genuine backend failure still degrades to [] (graceful path kept)."""
+async def test_query_profile_raises_on_backend_runtime_error() -> None:
+    """A backend outage propagates — flattening it to [] reads as "no
+    matching documents" and silently produces empty synthetic datasets."""
 
     class _Boom:
         def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
             raise RuntimeError("vespa unreachable")
 
-    result = await _querier(_Boom())._query_profile({"schema_name": "s"}, 5, "diverse")
-    assert result == []
+    with pytest.raises(RuntimeError, match="vespa unreachable"):
+        await _querier(_Boom())._query_profile({"schema_name": "s"}, 5, "diverse")
 
 
 async def test_query_profile_propagates_signature_typeerror() -> None:
