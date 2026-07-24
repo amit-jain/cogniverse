@@ -654,13 +654,21 @@ def main():
         logger.error("TELEGRAM_BOT_TOKEN environment variable is required")
         sys.exit(1)
 
+    def _env_number(name: str, default: str, cast):
+        raw = os.environ.get(name, default)
+        try:
+            return cast(raw)
+        except ValueError:
+            logger.error("Invalid %s=%r — must be a number", name, raw)
+            sys.exit(1)
+
     runtime_url = os.environ.get("RUNTIME_URL", "http://localhost:28000")
     mode = os.environ.get("GATEWAY_MODE", "polling")
     webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL", "")
     webhook_listen = os.environ.get("GATEWAY_WEBHOOK_LISTEN", "0.0.0.0")
-    webhook_port = int(os.environ.get("GATEWAY_WEBHOOK_PORT", "8443"))
+    webhook_port = _env_number("GATEWAY_WEBHOOK_PORT", "8443", int)
     webhook_path = os.environ.get("GATEWAY_WEBHOOK_PATH", "")
-    outbound_poll_seconds = float(os.environ.get("GATEWAY_OUTBOUND_POLL_SECONDS", "5"))
+    outbound_poll_seconds = _env_number("GATEWAY_OUTBOUND_POLL_SECONDS", "5", float)
 
     if mode == "webhook" and not webhook_url:
         logger.error("TELEGRAM_WEBHOOK_URL required for webhook mode")

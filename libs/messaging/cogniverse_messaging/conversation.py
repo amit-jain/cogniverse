@@ -39,16 +39,23 @@ class ConversationManager:
                 top_k=max_turns,
             )
 
+            # Parse by exact prefix, not substring: "[chat:1]" in memory also
+            # matched chat 12's turns, and a turn whose CONTENT contains
+            # "[user]" was misclassified regardless of its real role.
+            chat_prefix = f"[chat:{chat_id}] "
             turns = []
             for r in results:
                 memory = r.get("memory", "")
-                if f"[chat:{chat_id}]" in memory:
-                    if "[user]" in memory:
-                        content = memory.split("[user] ", 1)[-1]
-                        turns.append({"role": "user", "content": content})
-                    elif "[assistant]" in memory:
-                        content = memory.split("[assistant] ", 1)[-1]
-                        turns.append({"role": "assistant", "content": content})
+                if not memory.startswith(chat_prefix):
+                    continue
+                rest = memory[len(chat_prefix) :]
+                for role in ("user", "assistant"):
+                    role_prefix = f"[{role}] "
+                    if rest.startswith(role_prefix):
+                        turns.append(
+                            {"role": role, "content": rest[len(role_prefix) :]}
+                        )
+                        break
 
             return turns
 
