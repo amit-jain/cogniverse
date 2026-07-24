@@ -177,33 +177,6 @@ class Document:
         """Get metadata value."""
         return self.metadata.get(key, default)
 
-    def to_backend_document(self, schema_name: str) -> Dict[str, Any]:
-        """Convert to backend document format (Vespa, ElasticSearch, etc.)."""
-        # Base document structure
-        doc = {
-            "id": self.id,
-            "content_id": self.content_id or "",
-            "title": self.title or "",
-            "text_content": self.text_content or "",
-            "description": self.description or "",
-            "content_type": self.content_type.value,
-            "created_at": self.created_at,
-        }
-
-        # Add embeddings — tolerate both the wrapped add_embedding shape
-        # ({"data": ..., "metadata": ...}) and a raw vector, which external
-        # payloads deserialized via from_dict can carry.
-        for emb_name, emb_data in self.embeddings.items():
-            if isinstance(emb_data, dict) and "data" in emb_data:
-                doc[emb_name] = emb_data["data"]
-            else:
-                doc[emb_name] = emb_data
-
-        # Add custom metadata (this is where content-specific fields go)
-        doc.update(self.metadata)
-
-        return doc
-
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {

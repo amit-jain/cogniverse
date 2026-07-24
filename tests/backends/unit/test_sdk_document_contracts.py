@@ -53,27 +53,6 @@ class TestDocumentLifecycleSetters:
         assert doc.error_message is None
 
 
-class TestToBackendDocument:
-    def test_wrapped_and_raw_embeddings_both_feed(self):
-        doc = Document(id="d1", title="t", metadata={"camera": "A"})
-        doc.add_embedding("colpali", [1, 2, 3])
-        doc.embeddings["raw_vec"] = [4, 5]  # from_dict-shaped external payload
-
-        out = doc.to_backend_document("video_frames")
-
-        assert out["id"] == "d1"
-        assert out["colpali"] == [1, 2, 3]
-        assert out["raw_vec"] == [4, 5]
-        assert out["camera"] == "A"
-
-    def test_from_dict_payload_feeds_without_crash(self):
-        doc = Document.from_dict(
-            {"id": "d2", "embeddings": {"vec": [0.1, 0.2]}, "title": "x"}
-        )
-        out = doc.to_backend_document("s")
-        assert out["vec"] == [0.1, 0.2]
-
-
 class TestDocumentFromDictContract:
     def test_round_trip_preserves_all_fields(self):
         doc = Document(
