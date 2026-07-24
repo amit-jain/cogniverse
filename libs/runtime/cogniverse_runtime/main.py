@@ -1399,12 +1399,12 @@ app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 
-# Queue-driven ingestion (Step 5). When REDIS_URL is set, the existing
-# /ingestion/upload endpoint streams uploaded bytes to MinIO and submits
-# to the redis queue (instead of running the pipeline in-process). The
-# new /ingestion/{id}/events SSE + /ingestion/{id}/status snapshot are
-# mounted under the same prefix. Without REDIS_URL, /ingestion/upload
-# falls back to the in-process pipeline.
+# Queue-driven ingestion. When REDIS_URL is set, /ingestion/upload
+# streams uploaded bytes to MinIO and submits to the redis queue, and
+# the /ingestion/{id}/events SSE + /ingestion/{id}/status snapshot
+# routes are mounted under the same prefix. Without REDIS_URL (and a
+# MinIO endpoint) /ingestion/upload responds 503 — it has no
+# in-process fallback — and the status routes are simply absent.
 if os.environ.get("REDIS_URL"):
     from cogniverse_runtime.ingestion_worker import status_api as ingest_v2_status
 
