@@ -199,30 +199,39 @@ class TestRetrievalSolver:
 
 
 def _populated_traces_df():
-    """A two-row spans DataFrame matching the columns the solver reads."""
+    """A two-row spans DataFrame in the shape ``get_spans_dataframe`` emits.
+
+    Trace identity lives in ``context.trace_id``, timing in ``start_time``/
+    ``end_time`` (there are no ``trace_id``/``timestamp``/``duration_ms``
+    columns), and ``attributes.output.value`` is a JSON string.
+    """
+    import json
+
     import pandas as pd
 
     return pd.DataFrame(
         [
             {
-                "trace_id": "trace-a",
+                "context.span_id": "span-a",
+                "context.trace_id": "trace-a",
+                "name": "search_service.search",
+                "start_time": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "end_time": pd.Timestamp("2026-01-01T00:00:01.100Z"),
                 "attributes.input.value": "what is a quark",
-                "attributes.output.value": ["v1", "v2"],
+                "attributes.output.value": json.dumps(["v1", "v2"]),
                 "attributes.metadata.profile": "frame_based_colpali",
                 "attributes.metadata.strategy": "binary_binary",
-                "attributes.metadata": {"profile": "frame_based_colpali"},
-                "timestamp": "2026-01-01T00:00:00Z",
-                "duration_ms": 1100,
             },
             {
-                "trace_id": "trace-b",
+                "context.span_id": "span-b",
+                "context.trace_id": "trace-b",
+                "name": "search_service.search",
+                "start_time": pd.Timestamp("2026-01-01T00:00:30Z"),
+                "end_time": pd.Timestamp("2026-01-01T00:00:30.900Z"),
                 "attributes.input.value": "explain entanglement",
-                "attributes.output.value": ["v3"],
+                "attributes.output.value": json.dumps(["v3"]),
                 "attributes.metadata.profile": "videoprism_global",
                 "attributes.metadata.strategy": "float_float",
-                "attributes.metadata": {"profile": "videoprism_global"},
-                "timestamp": "2026-01-01T00:00:30Z",
-                "duration_ms": 900,
             },
         ]
     )
@@ -238,10 +247,14 @@ def _seed_solver_provider(monkeypatch, df):
     mock_provider.telemetry = MagicMock()
     mock_provider.telemetry.traces = MagicMock()
 
-    async def _spans(**_kwargs):
+    get_spans_calls = []
+
+    async def _spans(**kwargs):
+        get_spans_calls.append(kwargs)
         return df
 
     mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=_spans)
+    mock_provider.get_spans_calls = get_spans_calls
 
     monkeypatch.setattr(
         "cogniverse_evaluation.providers.get_evaluation_provider",
@@ -277,30 +290,27 @@ class TestBatchSolver:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_trace_loader_with_ids_loads_exact_matches(self, monkeypatch):
-        _seed_solver_provider(monkeypatch, _populated_traces_df())
-        solver = create_batch_solver(trace_ids=["trace-a"], config={})
+        provider = _seed_solver_provider(monkeypatch, _populated_traces_df())
+        solver = create_batch_solver(
+            trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
+        )
 
         state = Mock()
         state.outputs = {}
         state.metadata = {}
         result = await solver(state, Mock())
 
+        # The span project is derived from the tenant, matching the writers.
+        assert provider.get_spans_calls[0]["project"] == "cogniverse-acme:acme"
+
         assert [t["trace_id"] for t in result.metadata["loaded_traces"]] == ["trace-a"]
         loaded = result.metadata["loaded_traces"][0]
-        for key in (
-            "trace_id",
-            "query",
-            "results",
-            "profile",
-            "strategy",
-            "timestamp",
-            "duration_ms",
-            "metadata",
-            "ground_truth",
-            "ground_truth_confidence",
-            "ground_truth_source",
-        ):
-            assert key in loaded
+        assert loaded["query"] == "what is a quark"
+        assert loaded["results"] == ["v1", "v2"]
+        assert loaded["profile"] == "frame_based_colpali"
+        assert loaded["strategy"] == "binary_binary"
+        assert str(loaded["timestamp"]) == "2026-01-01 00:00:00+00:00"
+        assert loaded["duration_ms"] == 1100.0
         assert loaded["ground_truth"] == ["gt-trace-a"]
         assert loaded["ground_truth_confidence"] == 0.9
         assert loaded["ground_truth_source"] == "fixture"
@@ -313,7 +323,9 @@ class TestBatchSolver:
     @pytest.mark.asyncio
     async def test_trace_loader_recent_traces_loads_full_set(self, monkeypatch):
         _seed_solver_provider(monkeypatch, _populated_traces_df())
-        solver = create_batch_solver(trace_ids=None, config={"hours_back": 1})
+        solver = create_batch_solver(
+            trace_ids=None, config={"hours_back": 1, "tenant_id": "acme:acme"}
+        )
 
         state = Mock()
         state.outputs = {}
@@ -322,6 +334,10 @@ class TestBatchSolver:
 
         ids = sorted(t["trace_id"] for t in result.metadata["loaded_traces"])
         assert ids == ["trace-a", "trace-b"]
+        durations = {
+            t["trace_id"]: t["duration_ms"] for t in result.metadata["loaded_traces"]
+        }
+        assert durations == {"trace-a": 1100.0, "trace-b": 900.0}
         stats = result.metadata["ground_truth_stats"]
         assert stats["total_traces"] == 2
         assert stats["traces_with_ground_truth"] == 2
@@ -335,7 +351,9 @@ class TestBatchSolver:
         import pandas as pd
 
         _seed_solver_provider(monkeypatch, pd.DataFrame())
-        solver = create_batch_solver(trace_ids=None, config={"hours_back": 1})
+        solver = create_batch_solver(
+            trace_ids=None, config={"hours_back": 1, "tenant_id": "acme:acme"}
+        )
 
         state = Mock()
         state.outputs = {}
@@ -345,6 +363,51 @@ class TestBatchSolver:
         assert result.output.completion == "No traces found"
         assert "loaded_traces" not in result.metadata
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_trace_loader_requires_project_or_tenant(self, monkeypatch):
+        _seed_solver_provider(monkeypatch, _populated_traces_df())
+        solver = create_batch_solver(trace_ids=["trace-a"], config={})
+
+        state = Mock()
+        state.outputs = {}
+        state.metadata = {}
+        with pytest.raises(ValueError, match="project_name.*tenant_id"):
+            await solver(state, Mock())
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_trace_loader_explicit_project_name_wins(self, monkeypatch):
+        provider = _seed_solver_provider(monkeypatch, _populated_traces_df())
+        solver = create_batch_solver(
+            trace_ids=None,
+            config={"project_name": "cogniverse-custom", "tenant_id": "acme:acme"},
+        )
+
+        state = Mock()
+        state.outputs = {}
+        state.metadata = {}
+        await solver(state, Mock())
+
+        assert provider.get_spans_calls[0]["project"] == "cogniverse-custom"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_trace_loader_missing_trace_id_column_raises(self, monkeypatch):
+        # A non-empty frame with no trace-id column must fail loudly instead
+        # of silently evaluating the whole project window.
+        df = _populated_traces_df().drop(columns=["context.trace_id"])
+        _seed_solver_provider(monkeypatch, df)
+        solver = create_batch_solver(
+            trace_ids=["trace-a"], config={"tenant_id": "acme:acme"}
+        )
+
+        state = Mock()
+        state.outputs = {}
+        state.metadata = {}
+        with pytest.raises(ValueError, match="no trace-id column"):
+            await solver(state, Mock())
+
 
 class TestLiveSolver:
     """Live solver collects bounded iterations."""
@@ -352,9 +415,14 @@ class TestLiveSolver:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_single_poll_collects_documented_trace_data_shape(self, monkeypatch):
-        _seed_solver_provider(monkeypatch, _populated_traces_df())
+        provider = _seed_solver_provider(monkeypatch, _populated_traces_df())
         solver = create_live_solver(
-            config={"continuous": False, "max_iterations": 1, "poll_interval": 0}
+            config={
+                "continuous": False,
+                "max_iterations": 1,
+                "poll_interval": 0,
+                "tenant_id": "acme:acme",
+            }
         )
 
         state = Mock()
@@ -362,8 +430,12 @@ class TestLiveSolver:
         state.metadata = {}
         result = await solver(state, Mock())
 
+        assert provider.get_spans_calls[0]["project"] == "cogniverse-acme:acme"
         traces = result.metadata["live_traces"]
         assert [t["trace_id"] for t in traces] == ["trace-a", "trace-b"]
+        assert traces[0]["query"] == "what is a quark"
+        assert traces[0]["results"] == ["v1", "v2"]
+        assert traces[0]["duration_ms"] == 1100.0
         for t in traces:
             assert set(t.keys()) >= {"trace_id", "query", "results", "timestamp"}
         assert "2" in result.output.completion
@@ -377,7 +449,12 @@ class TestLiveSolver:
 
         _seed_solver_provider(monkeypatch, pd.DataFrame())
         solver = create_live_solver(
-            config={"continuous": False, "max_iterations": 3, "poll_interval": 0}
+            config={
+                "continuous": False,
+                "max_iterations": 3,
+                "poll_interval": 0,
+                "tenant_id": "acme:acme",
+            }
         )
 
         state = Mock()

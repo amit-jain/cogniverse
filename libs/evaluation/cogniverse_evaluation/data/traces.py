@@ -2,6 +2,7 @@
 Trace management for batch evaluation.
 """
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -14,6 +15,93 @@ from cogniverse_foundation.telemetry.config import TelemetryConfig
 from .storage import TelemetryStorage
 
 logger = logging.getLogger(__name__)
+
+_METADATA_PREFIX = "attributes.metadata."
+
+
+def _is_missing(value: Any) -> bool:
+    """Scalar NA check that never trips on list/array cells."""
+    if value is None:
+        return True
+    try:
+        result = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    return result if isinstance(result, bool) else False
+
+
+def span_duration_ms(row: Any) -> Optional[float]:
+    """Wall-clock duration of one span-frame row from start_time/end_time.
+
+    The span frame has no duration column; returns ``None`` when either bound
+    is missing or NaT rather than fabricating a zero.
+    """
+    start = row.get("start_time")
+    end = row.get("end_time")
+    if _is_missing(start) or _is_missing(end):
+        return None
+    try:
+        delta_ms = (end - start).total_seconds() * 1000.0
+    except (TypeError, AttributeError):
+        return None
+    return None if pd.isna(delta_ms) else float(delta_ms)
+
+
+def trace_dict_from_span_row(row: Any) -> Dict[str, Any]:
+    """Flatten one row of the Phoenix span frame into a trace dict.
+
+    Reads the columns ``get_spans_dataframe`` actually emits: trace identity
+    in ``context.trace_id``, timing in ``start_time``/``end_time``, and
+    attributes flattened to ``attributes.*`` with ``output.value`` as a JSON
+    string. There are no ``trace_id``/``timestamp``/``duration_ms`` columns
+    in the real frame.
+    """
+    trace_id = row.get("context.trace_id")
+    if _is_missing(trace_id):
+        trace_id = row.get("trace_id")
+
+    query = row.get("attributes.input.value")
+    if _is_missing(query):
+        query = ""
+
+    results = row.get("attributes.output.value")
+    if _is_missing(results):
+        results = []
+    elif isinstance(results, str):
+        try:
+            results = json.loads(results)
+        except (json.JSONDecodeError, ValueError):
+            results = []
+
+    metadata = row.get("attributes.metadata")
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (json.JSONDecodeError, ValueError):
+            metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {
+            key[len(_METADATA_PREFIX) :]: row[key]
+            for key in getattr(row, "index", ())
+            if isinstance(key, str)
+            and key.startswith(_METADATA_PREFIX)
+            and not _is_missing(row[key])
+        }
+
+    profile = row.get("attributes.metadata.profile")
+    strategy = row.get("attributes.metadata.strategy")
+    timestamp = row.get("start_time")
+
+    return {
+        "trace_id": None if _is_missing(trace_id) else trace_id,
+        "query": query,
+        "results": results,
+        "profile": "unknown" if _is_missing(profile) else profile,
+        "strategy": "unknown" if _is_missing(strategy) else strategy,
+        "timestamp": None if _is_missing(timestamp) else timestamp,
+        "duration_ms": span_duration_ms(row),
+        "metadata": metadata,
+    }
 
 
 class TraceManager:
@@ -105,28 +193,7 @@ class TraceManager:
 
         for _, row in trace_df.iterrows():
             try:
-                # Extract key fields from trace
-                data = {
-                    "trace_id": row.get("trace_id", ""),
-                    "query": row.get("attributes.input.value", ""),
-                    "results": row.get("attributes.output.value", []),
-                    "profile": row.get("attributes.metadata.profile", "unknown"),
-                    "strategy": row.get("attributes.metadata.strategy", "unknown"),
-                    "timestamp": row.get("timestamp", ""),
-                    "duration_ms": row.get("duration_ms", 0),
-                }
-
-                # Parse results if they're in string format
-                if isinstance(data["results"], str):
-                    try:
-                        import json
-
-                        data["results"] = json.loads(data["results"])
-                    except (json.JSONDecodeError, ValueError):
-                        data["results"] = []
-
-                trace_data.append(data)
-
+                trace_data.append(trace_dict_from_span_row(row))
             except Exception as e:
                 logger.error(f"Failed to extract data from trace: {e}")
                 continue
@@ -187,10 +254,17 @@ class TraceManager:
                 "strategies": {},
             }
 
-        # Calculate statistics
+        # Duration comes from the frame's start_time/end_time bounds; rows
+        # with a missing bound are excluded rather than averaged in as zero.
+        durations = pd.Series(
+            [span_duration_ms(row) for _, row in df.iterrows()], dtype="float64"
+        ).dropna()
+
         stats = {
             "total_traces": len(df),
-            "average_duration_ms": df.get("duration_ms", pd.Series([0])).mean(),
+            "average_duration_ms": float(durations.mean())
+            if not durations.empty
+            else 0,
             "profiles": {},
             "strategies": {},
         }
