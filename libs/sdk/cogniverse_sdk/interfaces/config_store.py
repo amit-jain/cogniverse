@@ -68,17 +68,28 @@ class ConfigEntry:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ConfigEntry":
-        """Create from dictionary"""
-        return cls(
-            tenant_id=data["tenant_id"],
-            scope=ConfigScope(data["scope"]),
-            service=data["service"],
-            config_key=data["config_key"],
-            config_value=data["config_value"],
-            version=data.get("version", 1),
-            created_at=datetime.fromisoformat(data["created_at"]),
-            updated_at=datetime.fromisoformat(data["updated_at"]),
-        )
+        """Create from dictionary.
+
+        A corrupt stored entry raises ValueError naming the offending
+        field instead of a bare KeyError/ValueError with no context.
+        """
+        try:
+            return cls(
+                tenant_id=data["tenant_id"],
+                scope=ConfigScope(data["scope"]),
+                service=data["service"],
+                config_key=data["config_key"],
+                config_value=data["config_value"],
+                version=data.get("version", 1),
+                created_at=datetime.fromisoformat(data["created_at"]),
+                updated_at=datetime.fromisoformat(data["updated_at"]),
+            )
+        except KeyError as e:
+            raise ValueError(
+                f"ConfigEntry.from_dict: missing required field {e.args[0]!r}"
+            ) from None
+        except ValueError as e:
+            raise ValueError(f"ConfigEntry.from_dict: {e}") from None
 
 
 class ConfigStore(ABC):

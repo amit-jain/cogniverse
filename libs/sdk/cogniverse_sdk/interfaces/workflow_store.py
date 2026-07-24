@@ -17,11 +17,18 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _known_fields(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop unknown keys so a payload written by a newer schema still
+    deserializes — cls(**data) raised TypeError on the first extra key."""
+    names = {f.name for f in fields(cls)}
+    return {k: v for k, v in data.items() if k in names}
 
 
 @dataclass
@@ -49,7 +56,7 @@ class WorkflowExecution:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowExecution":
-        data = dict(data)
+        data = _known_fields(cls, data)
         ts = data.get("timestamp")
         if isinstance(ts, str):
             data["timestamp"] = datetime.fromisoformat(ts)
@@ -77,7 +84,7 @@ class AgentPerformance:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AgentPerformance":
-        data = dict(data)
+        data = _known_fields(cls, data)
         lu = data.get("last_updated")
         if isinstance(lu, str):
             data["last_updated"] = datetime.fromisoformat(lu)
@@ -107,7 +114,7 @@ class WorkflowTemplate:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowTemplate":
-        data = dict(data)
+        data = _known_fields(cls, data)
         ca = data.get("created_at")
         if isinstance(ca, str):
             data["created_at"] = datetime.fromisoformat(ca)
