@@ -14,9 +14,14 @@ from tests.utils.async_polling import wait_for_vespa_indexing
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def memory_manager(shared_memory_vespa, shared_denseon):
-    """Create and initialize Mem0 memory manager with shared Vespa + denseon"""
+    """Create and initialize Mem0 memory manager with shared Vespa + denseon.
+
+    Function-scoped: sibling tests clear the tenant LRU (and build other
+    tenants that evict this one), and eviction nulls the instance's memory.
+    A per-test manager can't be de-initialized out from under a later test.
+    """
     # Clear Mem0 singleton to ensure fresh state
     Mem0MemoryManager._instances.clear()
 
@@ -40,7 +45,10 @@ def memory_manager(shared_memory_vespa, shared_denseon):
     from cogniverse_foundation.config.unified_config import SystemConfig
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
-    manager = Mem0MemoryManager(tenant_id="test_tenant")
+    # Canonical org:tenant form so the derived schema matches the single
+    # suffix the shared fixture deploys (agent_memories_test_tenant); the bare
+    # "test_tenant" derives the never-deployed double-suffix schema.
+    manager = Mem0MemoryManager(tenant_id="test:tenant")
 
     config_store = VespaConfigStore(
         backend_url="http://localhost",
