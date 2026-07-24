@@ -50,20 +50,20 @@ class InviteTokenManager:
         """Validate an invite token and return the tenant_id if valid.
 
         Returns None if token is invalid, expired, or already used.
-        Searches the _system tenant's config store for invite tokens.
+        Reads through the ConfigManager so the lookup key gets the same
+        tenant canonicalization as generate_token's write — a raw store
+        read with "_system" looks up a key nobody writes.
         """
         try:
-            entry = self.config_manager.store.get_config(
+            value = self.config_manager.get_config_value(
                 tenant_id="_system",
                 scope=ConfigScope.SYSTEM,
                 service="messaging_gateway",
                 config_key=f"invite_token_{token}",
             )
 
-            if entry is None:
+            if value is None:
                 return None
-
-            value = entry.config_value
             if isinstance(value, str):
                 import json
 
