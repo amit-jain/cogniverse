@@ -456,3 +456,33 @@ class TestUploadEvaluationsFaultContract:
         )
         with pytest.raises(ConnectionError, match="annotation store down"):
             await evaluator.upload_evaluations({"relevance": eval_df})
+
+
+class TestSpanLatencyMs:
+    """Every missing/NaT case returns None — a NaT bound subtracts to NaN,
+    which poisons downstream aggregation as a value."""
+
+    @pytest.mark.unit
+    def test_nat_bounds_return_none_not_nan(self):
+        row = pd.Series({"start_time": pd.NaT, "end_time": pd.NaT})
+        assert SpanEvaluator._span_latency_ms(row) is None
+
+    @pytest.mark.unit
+    def test_nan_latency_column_returns_none(self):
+        row = pd.Series({"latency_ms": float("nan")})
+        assert SpanEvaluator._span_latency_ms(row) is None
+
+    @pytest.mark.unit
+    def test_valid_bounds_compute_exact_ms(self):
+        row = pd.Series(
+            {
+                "start_time": pd.Timestamp("2026-01-01T00:00:00Z"),
+                "end_time": pd.Timestamp("2026-01-01T00:00:00.250Z"),
+            }
+        )
+        assert SpanEvaluator._span_latency_ms(row) == 250.0
+
+    @pytest.mark.unit
+    def test_explicit_latency_column_wins(self):
+        row = pd.Series({"latency_ms": 42.5})
+        assert SpanEvaluator._span_latency_ms(row) == 42.5

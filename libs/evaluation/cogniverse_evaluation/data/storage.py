@@ -183,6 +183,7 @@ class TelemetryStorage:
         self._health_check_thread: Optional[threading.Thread] = None
         self._stop_health_check = threading.Event()
         self._lock = threading.Lock()
+        self._shutting_down = False
 
         self._initialize_connection()
 
@@ -200,6 +201,8 @@ class TelemetryStorage:
         Split out so the health-check thread (which already holds the lock)
         can reconnect without re-acquiring the non-reentrant lock.
         """
+        if self._shutting_down:
+            return
         self.connection_state = ConnectionState.CONNECTING
 
         for attempt in range(self.config.max_retries):
@@ -335,6 +338,8 @@ class TelemetryStorage:
     def _perform_health_check(self):
         """Perform health check and reconnect if needed."""
         with self._lock:
+            if self._shutting_down:
+                return
             if self.connection_state != ConnectionState.CONNECTED:
                 logger.info("Telemetry disconnected, attempting reconnection...")
                 try:
@@ -551,17 +556,25 @@ class TelemetryStorage:
         }
 
     def shutdown(self):
-        """Gracefully shutdown storage."""
+        """Gracefully shutdown storage.
+
+        Clears provider/state under ``_lock`` — the health-check reconnect
+        builds and commits the provider under the same lock, so shutdown
+        waits out any in-flight reconnect instead of racing it (an unlocked
+        clear let the reconnect re-install a provider and the process-global
+        tracer AFTER shutdown returned). ``_shutting_down`` fences any
+        straggler health-check thread that outlives the bounded join.
+        """
         logger.info("Shutting down Telemetry storage...")
 
         if self._health_check_thread:
             self._stop_health_check.set()
             self._health_check_thread.join(timeout=5)
 
-        if self.provider:
+        with self._lock:
+            self._shutting_down = True
             self.provider = None
-
-        self.connection_state = ConnectionState.DISCONNECTED
+            self.connection_state = ConnectionState.DISCONNECTED
         logger.info("Telemetry storage shutdown complete")
 
     def __enter__(self):
