@@ -94,3 +94,51 @@ async def test_get_traces_returns_root_not_children(analytics_telemetry):
     assert len(metrics) == 1, [m.operation for m in metrics]
     assert metrics[0].operation == "root_op"
     assert metrics[0].timestamp.tzinfo is not None
+
+
+@pytest.mark.asyncio
+async def test_get_traces_timestamps_are_exact_emitted_times(analytics_telemetry):
+    import pandas as pd
+
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
+
+    tenant = canonical_tenant_id("acme:analyticsts")
+    op = "ts_root_op"
+
+    with analytics_telemetry.span(op, tenant_id=tenant):
+        pass
+    analytics_telemetry.force_flush()
+
+    project = analytics_telemetry.config.get_project_name(tenant)
+    http = analytics_telemetry.config.provider_config["http_endpoint"]
+    analytics = PhoenixAnalytics(telemetry_url=http)
+
+    # Independent source of truth: pull the RAW Phoenix span frame and read the
+    # exact start_time Phoenix recorded for our emitted root span.
+    emitted_start = None
+    for _ in range(30):
+        raw = analytics.client.spans.get_spans_dataframe(
+            project_identifier=project, timeout=60
+        )
+        if raw is not None and not raw.empty and (raw["name"] == op).any():
+            emitted_start = pd.Timestamp(
+                raw.loc[raw["name"] == op, "start_time"].iloc[0]
+            )
+            break
+        await asyncio.sleep(1)
+    assert emitted_start is not None, f"span {op} never landed in {project}"
+    if emitted_start.tzinfo is None:
+        emitted_start = emitted_start.tz_localize("UTC")
+
+    # The analytics path preserves that exact instant (datetime64 column path).
+    metrics = analytics.get_traces(project_name=project)
+    ours = [m for m in metrics if m.operation == op]
+    assert len(ours) == 1, [m.operation for m in metrics]
+    assert ours[0].timestamp == emitted_start
+
+    # The SAME real instant, delivered as a bare seconds epoch (the object-dtype
+    # defensive branch), must resolve to that exact emitted second — not 1970,
+    # which pd.Timestamp assigns to a raw number read as nanoseconds.
+    epoch_seconds = int(emitted_start.timestamp())
+    assert PhoenixAnalytics._ensure_utc(epoch_seconds) == emitted_start.floor("s")

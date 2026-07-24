@@ -7,6 +7,8 @@ including request statistics, response time analysis, and outlier detection.
 
 import json
 import logging
+import math
+import numbers
 from datetime import datetime, timezone
 from typing import Any
 
@@ -27,6 +29,32 @@ from cogniverse_evaluation.providers.base import TraceMetrics
 logger = logging.getLogger(__name__)
 
 __all__ = ["PhoenixAnalytics", "TraceMetrics"]
+
+# Unix-epoch magnitude bands, matching the seconds-vs-ms house pattern the
+# Vespa ingestion client validates against. A bare numeric epoch is seconds
+# below _MAX_S_EPOCH and milliseconds within [_MIN_MS_EPOCH, _MAX_MS_EPOCH];
+# the two bands do not overlap.
+_MAX_S_EPOCH = 4_102_444_800  # 2100-01-01 UTC in seconds
+_MIN_MS_EPOCH = 100_000_000_000  # below this a value cannot be a real ms epoch
+_MAX_MS_EPOCH = 4_102_444_800_000  # 2100-01-01 UTC in milliseconds
+
+
+def _epoch_to_utc_timestamp(value: float):
+    """Interpret a bare numeric epoch as seconds or milliseconds by magnitude.
+
+    ``pd.Timestamp(number)`` reads a bare value as NANOSECONDS, landing every
+    real epoch in 1970. Distinguish seconds from milliseconds by the same bands
+    the ingestion client validates against; a value in neither plausible band
+    (or non-finite) returns ``None`` so the caller drops that cell rather than
+    fabricating a 1970 timestamp.
+    """
+    if math.isnan(value) or math.isinf(value):
+        return None
+    if 0 <= value <= _MAX_S_EPOCH:
+        return pd.Timestamp(value, unit="s")
+    if _MIN_MS_EPOCH <= value <= _MAX_MS_EPOCH:
+        return pd.Timestamp(value, unit="ms")
+    return None
 
 
 class PhoenixAnalytics:
@@ -55,11 +83,13 @@ class PhoenixAnalytics:
     def _ensure_utc(value):
         """Coerce a timestamp to UTC-aware; None/NaT pass through unchanged.
 
-        Object-dtype cells may be str / np.datetime64 / epoch, not just
-        datetimes — coerce those via pd.Timestamp rather than assuming a
-        ``.tz_localize`` / ``.replace(tzinfo=...)`` method (which crashed
-        get_traces). An uncoercible value is returned unchanged so the
-        per-span duration guard drops just that trace, not the whole read.
+        Object-dtype cells may be str / np.datetime64 / numeric epoch, not just
+        datetimes. Strings and np.datetime64 coerce via pd.Timestamp; a bare
+        numeric epoch is interpreted as seconds or milliseconds by magnitude
+        (``_epoch_to_utc_timestamp``) because pd.Timestamp reads a raw number as
+        nanoseconds and would land every real epoch in 1970. An uncoercible or
+        out-of-band value is returned unchanged so the per-span duration guard
+        drops just that trace, not the whole read.
         """
         if value is None or (isinstance(value, float) and pd.isna(value)):
             return value
@@ -69,7 +99,11 @@ class PhoenixAnalytics:
         except (TypeError, ValueError):
             pass
         ts = value
-        if not isinstance(ts, (datetime, pd.Timestamp)):
+        if isinstance(ts, numbers.Real) and not isinstance(ts, bool):
+            ts = _epoch_to_utc_timestamp(float(ts))
+            if ts is None:
+                return value
+        elif not isinstance(ts, (datetime, pd.Timestamp)):
             try:
                 ts = pd.Timestamp(ts)
             except (ValueError, TypeError):

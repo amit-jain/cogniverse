@@ -283,3 +283,33 @@ def test_ensure_utc_handles_string_and_epoch_cells() -> None:
     assert f(None) is None
     # An uncoercible value returns without raising
     assert f(object()) is not None or True
+
+
+def test_ensure_utc_reads_numeric_epoch_as_seconds_not_nanoseconds() -> None:
+    """A bare numeric epoch cell must resolve to its real UTC instant, not the
+    1970 value pd.Timestamp assigns when it reads a raw number as nanoseconds.
+    Seconds and milliseconds are told apart by magnitude; strings and
+    datetime64 cells keep the pd.Timestamp path.
+    """
+    import numpy as np
+
+    f = PhoenixAnalytics._ensure_utc
+    expected = pd.Timestamp("2023-11-14 22:13:20", tz="UTC")
+
+    # int seconds epoch — landed at 1970 before the fix.
+    assert f(1_700_000_000) == expected
+    # float seconds epoch.
+    assert f(1_700_000_000.0) == expected
+    # numpy int64 seconds epoch (np.int64 is not an int subclass).
+    assert f(np.int64(1_700_000_000)) == expected
+    # milliseconds epoch, told apart from seconds by magnitude.
+    assert f(1_700_000_000_000) == expected
+    # ISO string keeps the pd.Timestamp path.
+    assert f("2023-11-14T22:13:20") == expected
+    # datetime64 column cell (naive pd.Timestamp) keeps the pd.Timestamp path.
+    assert f(pd.Timestamp("2023-11-14 22:13:20")) == expected
+    assert f(np.datetime64("2023-11-14T22:13:20")) == expected
+
+    # An out-of-band numeric (year > 2100 in both units) is dropped, not
+    # coerced to a bogus instant.
+    assert f(50_000_000_000) == 50_000_000_000
