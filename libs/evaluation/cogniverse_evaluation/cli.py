@@ -55,10 +55,17 @@ def cli(verbose):
 @click.option(
     "--trace-ids", "-t", multiple=True, help="Specific trace IDs (for batch mode)"
 )
+@click.option(
+    "--tenant-id",
+    help="Tenant whose span project to read (required for batch/live modes "
+    "unless the config file sets project_name or tenant_id)",
+)
 @click.option("--config", type=click.Path(exists=True), help="Configuration file path")
 @click.option("--output", "-o", type=click.Path(), help="Output file for results")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-def evaluate(mode, dataset, profiles, strategies, trace_ids, config, output, verbose):
+def evaluate(
+    mode, dataset, profiles, strategies, trace_ids, tenant_id, config, output, verbose
+):
     """
     Run evaluation in specified mode.
 
@@ -69,10 +76,11 @@ def evaluate(mode, dataset, profiles, strategies, trace_ids, config, output, ver
 
         # Evaluate existing traces
         cogniverse-eval evaluate --mode batch --dataset test_dataset \\
-            -t trace_id_1 -t trace_id_2
+            --tenant-id acme:acme -t trace_id_1 -t trace_id_2
 
         # Live evaluation
-        cogniverse-eval evaluate --mode live --dataset test_dataset
+        cogniverse-eval evaluate --mode live --dataset test_dataset \\
+            --tenant-id acme:acme
     """
     # Validate mode-specific requirements
     if mode == "experiment":
@@ -94,6 +102,19 @@ def evaluate(mode, dataset, profiles, strategies, trace_ids, config, output, ver
                 import yaml
 
                 eval_config = yaml.safe_load(f)
+
+    if tenant_id:
+        eval_config["tenant_id"] = tenant_id
+
+    # batch/live read spans from the tenant's project; fail here rather than
+    # inside the solver so the requirement surfaces as a usage error.
+    if mode in ("batch", "live") and not (
+        eval_config.get("tenant_id") or eval_config.get("project_name")
+    ):
+        raise click.UsageError(
+            "--tenant-id (or project_name/tenant_id in --config) is required "
+            "for batch/live modes to resolve the span project"
+        )
 
     click.echo(f"Starting {mode} evaluation with dataset '{dataset}'")
 
@@ -238,11 +259,14 @@ def list_traces(tenant_id, hours, limit):
         click.echo("-" * 80)
 
         for trace in traces[:10]:  # Show first 10
-            click.echo(f"ID: {trace['trace_id'][:8]}...")
-            click.echo(f"  Query: {trace['query'][:50]}...")
+            trace_id = trace["trace_id"] or ""
+            duration_ms = trace["duration_ms"]
+            duration = f"{duration_ms:.0f}ms" if duration_ms is not None else "n/a"
+            click.echo(f"ID: {trace_id[:8]}...")
+            click.echo(f"  Query: {str(trace['query'])[:50]}...")
             click.echo(f"  Profile: {trace['profile']}, Strategy: {trace['strategy']}")
             click.echo(
-                f"  Results: {len(trace.get('results', []))}, Duration: {trace['duration_ms']}ms"
+                f"  Results: {len(trace.get('results', []))}, Duration: {duration}"
             )
             click.echo("-" * 80)
 
@@ -266,10 +290,12 @@ def test(tenant_id):
     """
     click.echo("Running test evaluation...")
 
-    # Create test dataset
-    dataset_manager = DatasetManager(tenant_id=tenant_id)
-
     try:
+        # Constructed inside the try so a configuration error (e.g.
+        # BACKEND_URL unset) reports through the clean failure path below
+        # instead of a raw traceback.
+        dataset_manager = DatasetManager(tenant_id=tenant_id)
+
         # Use the name create_test_dataset actually wrote — re-deriving it from
         # a second (naive, local) clock read pointed at a dataset that was
         # never created.

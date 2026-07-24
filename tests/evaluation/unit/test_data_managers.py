@@ -303,26 +303,32 @@ class TestTraceManager:
 
     @pytest.mark.unit
     def test_extract_trace_data(self, manager):
-        """Test extracting trace data from dataframe."""
+        """Extracts trace dicts from the columns get_spans_dataframe emits:
+        context.trace_id for identity, start_time/end_time for timing, and
+        output.value as a JSON string."""
+        import json
+
         df = pd.DataFrame(
             [
                 {
-                    "trace_id": "trace1",
+                    "context.span_id": "span1",
+                    "context.trace_id": "trace1",
+                    "start_time": pd.Timestamp("2026-01-01T00:00:00Z"),
+                    "end_time": pd.Timestamp("2026-01-01T00:00:00.100Z"),
                     "attributes.input.value": "query 1",
-                    "attributes.output.value": [{"video_id": "v1"}],
+                    "attributes.output.value": json.dumps([{"video_id": "v1"}]),
                     "attributes.metadata.profile": "profile1",
                     "attributes.metadata.strategy": "strategy1",
-                    "timestamp": datetime.now(),
-                    "duration_ms": 100,
                 },
                 {
-                    "trace_id": "trace2",
+                    "context.span_id": "span2",
+                    "context.trace_id": "trace2",
+                    "start_time": pd.Timestamp("2026-01-01T00:00:10Z"),
+                    "end_time": pd.Timestamp("2026-01-01T00:00:10.200Z"),
                     "attributes.input.value": "query 2",
-                    "attributes.output.value": [{"video_id": "v2"}],
+                    "attributes.output.value": json.dumps([{"video_id": "v2"}]),
                     "attributes.metadata.profile": "profile2",
                     "attributes.metadata.strategy": "strategy2",
-                    "timestamp": datetime.now(),
-                    "duration_ms": 200,
                 },
             ]
         )
@@ -333,17 +339,26 @@ class TestTraceManager:
         assert traces[0]["trace_id"] == "trace1"
         assert traces[0]["query"] == "query 1"
         assert traces[0]["profile"] == "profile1"
-        assert traces[1]["duration_ms"] == 200
+        assert traces[0]["results"] == [{"video_id": "v1"}]
+        assert traces[0]["duration_ms"] == 100.0
+        assert str(traces[0]["timestamp"]) == "2026-01-01 00:00:00+00:00"
+        assert traces[1]["trace_id"] == "trace2"
+        assert traces[1]["duration_ms"] == 200.0
+        assert traces[1]["metadata"] == {
+            "profile": "profile2",
+            "strategy": "strategy2",
+        }
 
     @pytest.mark.unit
     def test_extract_trace_data_missing_fields(self, manager):
-        """Test extracting trace data with missing fields."""
+        """Missing output/metadata/timing columns yield explicit defaults —
+        no fabricated zero duration, no crash."""
         df = pd.DataFrame(
             [
                 {
-                    "trace_id": "trace1",
+                    "context.trace_id": "trace1",
                     "attributes.input.value": "query 1",
-                    # Missing output and metadata
+                    # Missing output, metadata, and timing columns
                 }
             ]
         )
@@ -351,9 +366,12 @@ class TestTraceManager:
         traces = manager.extract_trace_data(df)
 
         assert len(traces) == 1
+        assert traces[0]["trace_id"] == "trace1"
         assert traces[0]["results"] == []
         assert traces[0]["profile"] == "unknown"
         assert traces[0]["strategy"] == "unknown"
+        assert traces[0]["duration_ms"] is None
+        assert traces[0]["timestamp"] is None
 
     @pytest.mark.unit
     def test_get_traces_by_experiment(self, manager):
@@ -386,24 +404,28 @@ class TestTraceManager:
 
     @pytest.mark.unit
     def test_get_trace_statistics(self, manager):
-        """Test getting trace statistics."""
-        # Mock dataframe with various traces
+        """Average duration is derived from the frame's start_time/end_time
+        bounds; a row with a missing bound is excluded, not averaged as 0."""
+        base = pd.Timestamp("2026-01-01T00:00:00Z")
         df = pd.DataFrame(
             [
                 {
-                    "trace_id": "t1",
+                    "context.trace_id": "t1",
                     "attributes.metadata.profile": "p1",
-                    "duration_ms": 100,
+                    "start_time": base,
+                    "end_time": base + pd.Timedelta(milliseconds=100),
                 },
                 {
-                    "trace_id": "t2",
+                    "context.trace_id": "t2",
                     "attributes.metadata.profile": "p1",
-                    "duration_ms": 200,
+                    "start_time": base,
+                    "end_time": base + pd.Timedelta(milliseconds=200),
                 },
                 {
-                    "trace_id": "t3",
+                    "context.trace_id": "t3",
                     "attributes.metadata.profile": "p2",
-                    "duration_ms": 150,
+                    "start_time": base,
+                    "end_time": pd.NaT,
                 },
             ]
         )
@@ -412,7 +434,7 @@ class TestTraceManager:
         stats = manager.get_trace_statistics(hours_back=1)
 
         assert stats["total_traces"] == 3
-        assert stats["average_duration_ms"] == 150
+        assert stats["average_duration_ms"] == 150.0
         assert "profiles" in stats
         assert stats["profiles"]["p1"] == 2
         assert stats["profiles"]["p2"] == 1

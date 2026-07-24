@@ -148,6 +148,8 @@ class TestCLI:
                 "batch",
                 "--dataset",
                 "test_dataset",
+                "--tenant-id",
+                "acme:acme",
                 "-t",
                 "trace1",
                 "-t",
@@ -162,21 +164,35 @@ class TestCLI:
         call_kwargs = mock_task.call_args[1]
         assert call_kwargs["mode"] == "batch"
         assert call_kwargs["trace_ids"] == ["trace1", "trace2"]
+        assert call_kwargs["config"]["tenant_id"] == "acme:acme"
 
     @pytest.mark.unit
     def test_evaluate_batch_mode_no_traces(self, runner, mock_task, mock_inspect_eval):
         """Test evaluate command in batch mode without trace IDs."""
         result = runner.invoke(
-            evaluate, ["--mode", "batch", "--dataset", "test_dataset"]
+            evaluate,
+            ["--mode", "batch", "--dataset", "test_dataset", "--tenant-id", "a:a"],
         )
 
         assert result.exit_code == 0
         assert "Warning: No trace IDs provided" in result.output
 
     @pytest.mark.unit
+    def test_evaluate_batch_mode_requires_tenant_or_project(self, runner, mock_task):
+        """batch/live without a tenant or project is a usage error — the
+        solver would otherwise have no span project to read."""
+        for mode in ("batch", "live"):
+            result = runner.invoke(evaluate, ["--mode", mode, "--dataset", "d"])
+            assert result.exit_code != 0
+            assert "--tenant-id" in result.output
+        mock_task.assert_not_called()
+
+    @pytest.mark.unit
     def test_evaluate_with_config_json(self, runner, mock_task, mock_inspect_eval):
-        """Test evaluate command with JSON config file."""
-        config_data = {"test": "config", "value": 123}
+        """Test evaluate command with JSON config file. The config file's
+        tenant_id satisfies the batch/live project requirement without the
+        --tenant-id flag."""
+        config_data = {"test": "config", "value": 123, "tenant_id": "acme:acme"}
 
         with runner.isolated_filesystem():
             # Create config file
@@ -273,7 +289,8 @@ class TestCLI:
         mock_inspect_eval.return_value = results
 
         result = runner.invoke(
-            evaluate, ["--mode", "live", "--dataset", "test_dataset"]
+            evaluate,
+            ["--mode", "live", "--dataset", "test_dataset", "--tenant-id", "a:a"],
         )
 
         assert result.exit_code == 0
@@ -305,6 +322,8 @@ class TestCLI:
                     "live",
                     "--dataset",
                     "test_dataset",
+                    "--tenant-id",
+                    "a:a",
                     "--output",
                     "results.json",
                 ],
@@ -327,7 +346,8 @@ class TestCLI:
         mock_task.side_effect = Exception("Task creation failed")
 
         result = runner.invoke(
-            evaluate, ["--mode", "live", "--dataset", "test_dataset"]
+            evaluate,
+            ["--mode", "live", "--dataset", "test_dataset", "--tenant-id", "a:a"],
         )
 
         assert result.exit_code == 1

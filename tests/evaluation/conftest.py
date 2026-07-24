@@ -9,7 +9,6 @@ import logging
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -197,17 +196,23 @@ def mock_phoenix_client():
         mock_client.datasets.get_dataset.return_value = mock_dataset
         mock_client.datasets.create_dataset.return_value = mock_dataset
 
-        # Mock spans dataframe
+        # Spans dataframe in the shape get_spans_dataframe emits: trace
+        # identity in context.trace_id, timing in start_time/end_time, and
+        # output.value as a JSON string.
         mock_df = pd.DataFrame(
             [
                 {
-                    "trace_id": "trace1",
+                    "context.span_id": "span1",
+                    "context.trace_id": "trace1",
+                    "name": "search_service.search",
+                    "start_time": pd.Timestamp("2026-01-01T00:00:00Z"),
+                    "end_time": pd.Timestamp("2026-01-01T00:00:00.100Z"),
                     "attributes.input.value": "test query 1",
-                    "attributes.output.value": [{"item_id": "item1", "score": 0.9}],
+                    "attributes.output.value": json.dumps(
+                        [{"item_id": "item1", "score": 0.9}]
+                    ),
                     "attributes.metadata.profile": "test_profile",
                     "attributes.metadata.strategy": "test_strategy",
-                    "timestamp": datetime.now().isoformat(),
-                    "duration_ms": 100,
                 }
             ]
         )

@@ -16,6 +16,51 @@ from inspect_ai.solver import Solver, solver
 logger = logging.getLogger(__name__)
 
 
+def _resolve_project(config: dict[str, Any]) -> str:
+    """Span project for batch/live trace reads.
+
+    An explicit ``project_name`` wins; otherwise the project is derived from
+    ``tenant_id`` (canonicalized, same derivation the span writers use).
+    Raises when neither is configured — no writer emits to a default project,
+    so falling back to one would read an empty namespace and report success
+    on zero traces.
+    """
+    project = config.get("project_name")
+    if project:
+        return project
+    tenant_id = config.get("tenant_id")
+    if tenant_id:
+        from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
+
+        return TelemetryConfig().get_project_name(canonical_tenant_id(tenant_id))
+    raise ValueError(
+        "batch/live evaluation requires 'project_name' or 'tenant_id' in the "
+        "evaluation config to resolve the span project to read"
+    )
+
+
+def _filter_by_trace_ids(df, trace_ids: list[str], project: str):
+    """Restrict the span frame to the requested trace ids.
+
+    Trace identity lives in ``context.trace_id`` in the Phoenix span frame;
+    raises when a non-empty frame carries no trace-id column rather than
+    silently evaluating the whole project window.
+    """
+    if df.empty:
+        return df
+    id_col = next(
+        (c for c in ("context.trace_id", "trace_id") if c in df.columns), None
+    )
+    if id_col is None:
+        raise ValueError(
+            f"span frame from project '{project}' has no trace-id column "
+            f"(columns: {list(df.columns)[:10]}); cannot filter the "
+            "requested trace_ids"
+        )
+    return df[df[id_col].isin(trace_ids)]
+
+
 @solver
 def create_retrieval_solver(
     profiles: list[str], strategies: list[str], config: dict[str, Any] | None = None
@@ -210,15 +255,15 @@ def create_batch_solver(
             backend = search_service.backend
 
         # Get traces
+        project = _resolve_project(config)
         if trace_ids:
             logger.info(f"Loading {len(trace_ids)} specific traces")
             # Get spans and filter by trace_ids client-side
             df = await provider.telemetry.traces.get_spans(
-                project=config.get("project_name", "cogniverse-default"),
+                project=project,
                 limit=config.get("limit", 1000),
             )
-            if not df.empty and "trace_id" in df.columns:
-                df = df[df["trace_id"].isin(trace_ids)]
+            df = _filter_by_trace_ids(df, trace_ids, project)
         else:
             # Get recent traces
             hours_back = config.get("hours_back", 24)
@@ -228,7 +273,7 @@ def create_batch_solver(
 
             start_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
             df = await provider.telemetry.traces.get_spans(
-                project=config.get("project_name", "cogniverse-default"),
+                project=project,
                 start_time=start_time,
                 limit=limit,
             )
@@ -241,18 +286,11 @@ def create_batch_solver(
             return state
 
         # Extract trace data and ground truth
+        from cogniverse_evaluation.data.traces import trace_dict_from_span_row
+
         traces = []
         for _, row in df.iterrows():
-            trace_data = {
-                "trace_id": row.get("trace_id"),
-                "query": row.get("attributes.input.value", ""),
-                "results": row.get("attributes.output.value", []),
-                "profile": row.get("attributes.metadata.profile", "unknown"),
-                "strategy": row.get("attributes.metadata.strategy", "unknown"),
-                "timestamp": row.get("timestamp"),
-                "duration_ms": row.get("duration_ms", 0),
-                "metadata": row.get("attributes.metadata", {}),
-            }
+            trace_data = trace_dict_from_span_row(row)
 
             # Extract ground truth for this trace
             ground_truth_result = await ground_truth_strategy.extract_ground_truth(
@@ -318,12 +356,14 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
 
     async def solve(state, generate):
         """Monitor and evaluate live traces."""
+        from cogniverse_evaluation.data.traces import trace_dict_from_span_row
         from cogniverse_evaluation.providers import get_evaluation_provider
 
         provider = get_evaluation_provider()
 
         poll_interval = config.get("poll_interval", 10)
         max_iterations = config.get("max_iterations", 10)
+        project = _resolve_project(config)
 
         logger.info(f"Starting live monitoring (interval: {poll_interval}s)")
 
@@ -333,7 +373,7 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
         for iteration in range(max_iterations):
             # Get new traces since last check
             df = await provider.telemetry.traces.get_spans(
-                project=config.get("project_name", "cogniverse-default"),
+                project=project,
                 start_time=last_check,
                 limit=100,
             )
@@ -342,13 +382,7 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
                 logger.info(f"Found {len(df)} new traces")
 
                 for _, row in df.iterrows():
-                    trace_data = {
-                        "trace_id": row.get("trace_id"),
-                        "query": row.get("attributes.input.value", ""),
-                        "results": row.get("attributes.output.value", []),
-                        "timestamp": row.get("timestamp"),
-                    }
-                    all_traces.append(trace_data)
+                    all_traces.append(trace_dict_from_span_row(row))
 
             last_check = datetime.now(timezone.utc)
 
