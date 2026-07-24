@@ -969,10 +969,10 @@ async def create_job(tenant_id: str, body: JobCreateRequest):
         "post_actions": body.post_actions,
         "created_at": now,
     }
-    # Submit the CronWorkflow first when Argo is available — a failure here
-    # used to be swallowed, leaving the ConfigStore row visible but no
-    # schedule firing. Now we let _submit_cron_workflow propagate, and only
-    # persist the job once the cluster has accepted it.
+    # Submit the CronWorkflow first when Argo is available: _submit_cron_workflow
+    # propagates a submit failure, so the ConfigStore job row is persisted only
+    # once the cluster has accepted the schedule — no visible row with nothing
+    # firing.
     if get_workflow_settings().api_url:
         manifest = _build_cron_workflow(
             tenant_id, job_id, body.schedule, get_workflow_settings().namespace

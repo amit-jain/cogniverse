@@ -1933,7 +1933,7 @@ async def run_workflow_optimization(
 
     # Persist through the workflow store — the same registry-resolved store
     # WorkflowIntelligence reads back at orchestrator startup. Stale demos
-    # (agents no longer in the live config) are dropped first; the store owns
+    # (agents absent from the live config) are dropped first; the store owns
     # serialization and the demonstration/blob layout.
     from cogniverse_core.registries import WorkflowStoreRegistry
 

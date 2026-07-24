@@ -108,7 +108,7 @@ def extract_faces_per_keyframe(
     try:
         keyframes = list(_iter_keyframes(processing_results))
         # POST keyframes concurrently — the sidecar calls are independent and
-        # httpx.Client is thread-safe, so face extraction no longer scales
+        # httpx.Client is thread-safe, so face extraction does not scale
         # linearly in keyframe count. Output stays deterministic (sorted below);
         # executor.map surfaces a sidecar failure as the first-by-order error,
         # matching the serial contract.

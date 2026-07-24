@@ -222,9 +222,9 @@ class VespaEmbeddingProcessor:
             embeddings = embeddings.reshape(1, -1)
 
         # Reject NaN / Inf rather than silently binarizing them to 0. ``NaN >
-        # 0`` is False in numpy, so a corrupted upstream embedding used to be
-        # accepted into the index as an all-zero (or partly-zero) bitmap with
-        # no signal that anything went wrong.
+        # 0`` is False in numpy, so a corrupted upstream embedding would
+        # otherwise land in the index as an all-zero (or partly-zero) bitmap
+        # with no signal that anything went wrong.
         if not np.all(np.isfinite(embeddings)):
             raise ValueError(
                 "Embeddings contain non-finite values (NaN / Inf); "

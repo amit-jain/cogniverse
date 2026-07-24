@@ -44,8 +44,8 @@ SIDECAR_BUILDS = {
     "clap_embed": ("cogniverse/clap-embed", "deploy/clap_embed/Dockerfile", "."),
     "face_embed": ("cogniverse/face-embed", "deploy/face_embed/Dockerfile", "."),
 }
-# colpali, whisper, and the LateOn/DenseOn text embedders are no longer
-# built by us — vLLM serves them all:
+# colpali, whisper, and the LateOn/DenseOn text embedders are served by vLLM,
+# not built here:
 # TomoroAI/tomoro-colqwen3-embed-4b via inference.vllm_colpali (vllm/vllm-openai-cpu)
 # openai/whisper-large-v3-turbo via inference.vllm_asr (vllm/vllm-openai-cpu)
 # lightonai/LateOn + lightonai/DenseOn via inference.colbert_pylate / denseon
