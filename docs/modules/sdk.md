@@ -889,7 +889,18 @@ doc_dict = doc.to_dict()
 
 # From dict
 doc = Document.from_dict(doc_dict)
+
+# Serialize into one schema's field names via its declared mapping.
+# Schemas opt in with a "document_mapping" block in their schema JSON
+# (see configs/schemas/document_text_schema.json); unmapped generic
+# fields are omitted, metadata keys pass through verbatim.
+from cogniverse_sdk.document import DocumentFieldMapping
+
+mapping = DocumentFieldMapping.from_dict(schema_json["document_mapping"])
+fields = doc.to_schema_fields(mapping)   # {"document_id": ..., "full_text": ...}
 ```
+
+Backends apply this automatically: `VespaBackend.put_document(document, schema_name=..., base_schema_name=...)` loads the base schema's `document_mapping`, serializes, and feeds — raising `ValueError` when the schema declares no mapping rather than guessing field names.
 
 ### SearchResult Class
 

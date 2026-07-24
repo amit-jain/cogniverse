@@ -3,12 +3,16 @@
 Generic Document - Universal document structure for all content types.
 
 A single Document class that can represent any piece of content (video, image, text)
-with flexible metadata and embedding storage.
+with flexible metadata and embedding storage. ``DocumentFieldMapping`` +
+``Document.to_schema_fields`` translate the generic fields into one concrete
+schema's field names for feeding — schemas declare their mapping, the
+serializer stays pure.
 """
 
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -42,6 +46,61 @@ def _as_epoch_seconds(value: Any, field_name: str) -> int:
     if value >= 1_000_000_000_000:  # milliseconds epoch
         value //= 1000
     return value
+
+
+@dataclass
+class DocumentFieldMapping:
+    """Write-side translation of generic Document fields to one schema's
+    field names.
+
+    Declared per schema (a ``document_mapping`` block in the schema JSON).
+    A generic field left unmapped (None) is OMITTED from the feed — schemas
+    only receive fields they declare, which is what makes a generic
+    Document feedable at all.
+    """
+
+    id: Optional[str] = None
+    title: Optional[str] = None
+    text_content: Optional[str] = None
+    description: Optional[str] = None
+    content_type: Optional[str] = None
+    content_id: Optional[str] = None
+    created_at: Optional[str] = None
+    created_at_format: str = "epoch"  # "epoch" (int seconds) or "iso" (UTC)
+    embeddings: Dict[str, str] = field(default_factory=dict)
+    include_metadata: bool = True
+
+    _FORMATS = ("epoch", "iso")
+
+    def __post_init__(self):
+        if self.created_at_format not in self._FORMATS:
+            raise ValueError(
+                f"DocumentFieldMapping: created_at_format must be one of "
+                f"{self._FORMATS}, got {self.created_at_format!r}"
+            )
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DocumentFieldMapping":
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"document_mapping must be a dict, got {type(data).__name__}"
+            )
+        known = {
+            "id",
+            "title",
+            "text_content",
+            "description",
+            "content_type",
+            "content_id",
+            "created_at",
+            "created_at_format",
+            "embeddings",
+            "include_metadata",
+        }
+        unknown = set(data) - known
+        if unknown:
+            raise ValueError(f"document_mapping has unknown keys: {sorted(unknown)}")
+        return cls(**data)
 
 
 class ContentType(Enum):
@@ -176,6 +235,53 @@ class Document:
     def get_metadata(self, key: str, default: Any = None) -> Any:
         """Get metadata value."""
         return self.metadata.get(key, default)
+
+    def to_schema_fields(self, mapping: DocumentFieldMapping) -> Dict[str, Any]:
+        """Serialize into one schema's field names per *mapping*.
+
+        Metadata keys pass through verbatim (they are schema-specific by
+        contract); mapped core fields overwrite a colliding metadata key so
+        the Document's own values win deterministically. Embedding values
+        unwrap both the wrapped ``add_embedding`` shape and raw vectors.
+        Fields whose generic value is None are omitted, as are generic
+        fields the mapping does not name.
+        """
+        fields_out: Dict[str, Any] = {}
+        if mapping.include_metadata:
+            fields_out.update(self.metadata)
+
+        core: Dict[str, Any] = {}
+        if mapping.id:
+            core[mapping.id] = self.id
+        if mapping.title and self.title is not None:
+            core[mapping.title] = self.title
+        if mapping.text_content and self.text_content is not None:
+            core[mapping.text_content] = self.text_content
+        if mapping.description and self.description is not None:
+            core[mapping.description] = self.description
+        if mapping.content_type:
+            core[mapping.content_type] = self.content_type.value
+        if mapping.content_id and self.content_id is not None:
+            core[mapping.content_id] = self.content_id
+        if mapping.created_at:
+            if mapping.created_at_format == "iso":
+                core[mapping.created_at] = datetime.fromtimestamp(
+                    self.created_at, tz=timezone.utc
+                ).isoformat()
+            else:
+                core[mapping.created_at] = self.created_at
+        fields_out.update(core)
+
+        for emb_name, schema_field in mapping.embeddings.items():
+            if emb_name not in self.embeddings:
+                continue
+            emb_data = self.embeddings[emb_name]
+            if isinstance(emb_data, dict) and "data" in emb_data:
+                fields_out[schema_field] = emb_data["data"]
+            else:
+                fields_out[schema_field] = emb_data
+
+        return fields_out
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
