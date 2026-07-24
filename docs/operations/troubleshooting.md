@@ -9,8 +9,9 @@
 3. [Model Loading Issues](#model-loading-issues)
 4. [Memory and Performance](#memory-and-performance)
 5. [Vespa Issues](#vespa-issues)
-6. [Agent Communication](#agent-communication)
-7. [Quick Reference](#quick-reference)
+6. [Deployment and Rollout](#deployment-and-rollout)
+7. [Agent Communication](#agent-communication)
+8. [Quick Reference](#quick-reference)
 
 ---
 
@@ -471,6 +472,84 @@ curl "http://localhost:8000/admin/profiles/my_profile?tenant_id=acme_corp"
   both go through the same `service="backend"` config namespace)
 
 - List profiles for a tenant before assuming one is missing vs. misnamed
+
+---
+
+## Deployment and Rollout
+
+### Runtime Pod Stuck 0/1 NotReady After Deploy
+
+**Symptoms:**
+```text
+NAME                       READY   STATUS    RESTARTS   AGE
+cogniverse-runtime-xxxxx   0/1     Running   0          12m
+```
+
+**Cause:**
+The runtime's FastAPI lifespan waits for Vespa, bootstraps the metadata
+schemas, and blocks on deploy convergence before binding port 8000 —
+worst case ~810s on a loaded cluster. The startupProbe budget
+(30s initial delay + 80 × 15s = 1230s, ~21 min) is sized for exactly
+this, so `Running` + `0/1 Ready` inside that window is a pod doing its
+job, not a hung one.
+
+**Solution:**
+Wait. Deleting the pod restarts schema convergence from zero and makes
+the rollout strictly slower. Only once the startup budget is exhausted —
+the probe itself restarts the pod — is it genuinely stuck:
+
+```bash
+# Watch startup progress (Vespa wait, schema bootstrap, convergence)
+kubectl logs -n cogniverse deploy/cogniverse-runtime -f
+
+# Check whether the startupProbe has started killing the pod
+kubectl describe pod -n cogniverse \
+  -l app.kubernetes.io/component=runtime | grep -A5 Events
+```
+
+### Ingestion Jobs in the Dead-Letter Stream
+
+**Symptoms:**
+```text
+# Submit reports a terminal failure without pipeline errors in the logs
+{"state": "failed", ...}
+
+# The dead stream is non-empty
+kubectl exec -n cogniverse deploy/cogniverse-redis -- \
+  redis-cli XLEN ingest:queue:dead
+```
+
+**Cause:**
+A job redelivered more than `INGEST_REAPER_MAX_DELIVERIES` (default 5)
+times without completing is moved to `ingest:queue:dead`. The delivery
+counter never resets and cannot distinguish two very different causes:
+
+1. **Genuine poison** — the job crashes its worker every run (e.g. an
+   OOM-sized video). Worker logs show a crash/OOM per delivery.
+2. **Operational restarts** — each worker restart (rollout, node drain,
+   manual delete) while the job was mid-processing costs one redelivery
+   after the reaper's idle threshold (`INGEST_REAPER_MIN_IDLE_MS`,
+   default 5 min). Enough restarts in a row dead-letter a healthy job.
+
+**Solution:**
+Inspect the dead entries — each carries `ingest_id`, `source_url`,
+`profile`, `tenant_id`, `sha`, and `times_delivered`:
+
+```bash
+kubectl exec -n cogniverse deploy/cogniverse-redis -- \
+  redis-cli XRANGE ingest:queue:dead - +
+```
+
+For poison jobs, fix the cause first (raise worker memory, cap video
+size). For restart-victims, no fix is needed. Either way,
+dead-lettering clears the job's in-flight idempotency marker and writes
+no done marker, so re-submitting the same source through
+`POST /ingestion/upload` re-enqueues it as a fresh job with a fresh
+delivery count.
+
+**Prevention:**
+Avoid repeated worker restarts while long jobs are in flight — one
+rollout is one redelivery, but restart loops burn through the cap.
 
 ---
 
