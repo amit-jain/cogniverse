@@ -424,11 +424,14 @@ class DocExtractor:
         nodes: List[Node] = []
         seen: Set[str] = set()
         per_chunk_entity_names: List[List[str]] = []
+        gliner_chunks = 0
+        gliner_failures = 0
 
         for chunk in self._chunk_text(text):
             entities_in_chunk: List[Tuple[str, str]] = []
 
             if gliner is not None:
+                gliner_chunks += 1
                 try:
                     # 0.3 chosen empirically against the production
                     # gliner_large-v2.1 sidecar: at 0.5 the model
@@ -463,6 +466,7 @@ class DocExtractor:
                         entities_in_chunk[:8],
                     )
                 except Exception as exc:
+                    gliner_failures += 1
                     logger.warning("GLiNER prediction failed on chunk: %s", exc)
 
             if not entities_in_chunk:
@@ -497,6 +501,17 @@ class DocExtractor:
             # Record the chunk's raw entity names (pre node-dedup), which are the
             # hints the claim pass merges with prior_entities for this chunk.
             per_chunk_entity_names.append([name for name, _ in entities_in_chunk])
+
+        # A total GLiNER outage — configured, but every chunk's prediction
+        # failed — would otherwise return a knowledge graph built entirely from
+        # regex-fallback noise while the ingest reports success. Fail loud so the
+        # outage surfaces instead of silently degrading KG quality.
+        if gliner is not None and gliner_chunks > 0 and gliner_failures == gliner_chunks:
+            raise RuntimeError(
+                f"GLiNER entity extraction failed on all {gliner_chunks} "
+                f"chunk(s) (sidecar outage); refusing to return a regex-only "
+                f"knowledge graph."
+            )
 
         return SegmentEntities(
             nodes=nodes, per_chunk_entity_names=per_chunk_entity_names

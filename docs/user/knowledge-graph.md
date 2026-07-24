@@ -188,7 +188,7 @@ All code edges are `EXTRACTED` — these are structural facts, not LLM guesses.
 Supported extensions: `.md`, `.txt`, `.rst`, `.html`, `.htm`, `.pdf`.
 
 - **Primary path:** GLiNER (`urchade/gliner_large-v2.1`) predicts entities with labels: Person, Organization, Location, Date, Substance, Award, Field, Event, Concept, Technology, Product, Algorithm, Model, Framework, Language
-- **Fallback path:** regex for capitalized multi-word phrases when GLiNER is unavailable (stripping leading articles like "The")
+- **Fallback path:** regex for capitalized multi-word phrases when GLiNER is not configured, returns nothing for a chunk, or fails on *some* (not all) chunks (stripping leading articles like "The"). A **total GLiNER outage** — configured but failing on every chunk — instead raises, so the ingest surfaces the outage rather than returning a regex-only knowledge graph
 - Text is chunked into paragraph-aware blocks of ~2000 chars before extraction
 
 | Node type | Source |
