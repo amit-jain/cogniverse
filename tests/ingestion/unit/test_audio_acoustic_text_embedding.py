@@ -14,7 +14,9 @@ from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
 
-pytestmark = [pytest.mark.requires_models, pytest.mark.slow]
+# local_only: loads the real CLAP model (weights download) — deliberately
+# excluded from the CI unit selection, run locally with the models present.
+pytestmark = [pytest.mark.requires_models, pytest.mark.slow, pytest.mark.local_only]
 
 
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:

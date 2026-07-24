@@ -25,6 +25,8 @@ from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
 from tests.system.minio_test_manager import MinIOTestManager
 
+pytestmark = pytest.mark.integration
+
 
 def _docker_available() -> bool:
     try:
