@@ -239,6 +239,98 @@ async def test_concurrent_dispatches_persist_all_turns_real_mem0(
     ]
 
 
+@pytest.mark.asyncio
+async def test_gateway_simple_persists_downstream_answer_to_real_mem0(
+    shared_memory_vespa, shared_denseon
+):
+    """A gateway 'simple' route persists the DOWNSTREAM agent's answer as the
+    assistant turn in real Mem0 — not the routing breadcrumb. Reloaded from real
+    Mem0, the stored assistant turn is the exact answer the response path
+    rendered. Pre-fix the stored turn was ``Routed '<q>' to search_agent
+    (simple)``, which then fed the next turn's anaphora rewrite."""
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from cogniverse_runtime.agent_dispatcher import _GatewayAgentEntry
+
+    mm = _build_manager(
+        shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
+    )
+
+    config_manager = MagicMock()
+    config_manager.get_system_config.return_value = SystemConfig(
+        backend_url="http://localhost",
+        backend_port=shared_memory_vespa["http_port"],
+    )
+    d = AgentDispatcher(
+        agent_registry=MagicMock(),
+        config_manager=config_manager,
+        schema_loader=MagicMock(),
+    )
+    d._conversation_store_factory = lambda tenant_id: ConversationStore(mm, tenant_id)
+    d._spawn_background = lambda coro: coro.close()
+
+    gw = MagicMock()
+    gw.capabilities = {"gateway"}
+    se = MagicMock()
+    se.capabilities = {"search"}
+    d._registry.get_agent.side_effect = lambda name: {
+        "gateway_agent": gw,
+        "search_agent": se,
+    }.get(name)
+
+    # Force a 'simple' classification without building the real GatewayAgent.
+    gwout = SimpleNamespace(
+        complexity="simple",
+        modality="video",
+        generation_type="raw_results",
+        routed_to="search_agent",
+        confidence=0.9,
+    )
+    d._gateway_agents.set(
+        TENANT,
+        _GatewayAgentEntry(
+            agent=SimpleNamespace(_process_impl=AsyncMock(return_value=gwout)),
+            loaded_at=time.monotonic(),
+        ),
+    )
+
+    # Stub ONLY the downstream agent's answer at its execution boundary.
+    answer = "Found 2 results for 'kubernetes storage'"
+
+    async def _fake_search(
+        query, tenant_id, top_k, conversation_history=None, **kwargs
+    ):
+        return {
+            "status": "success",
+            "agent": "search_agent",
+            "message": answer,
+            "results_count": 2,
+            "results": [{"document_id": "v1"}, {"document_id": "v2"}],
+            "profile": "p",
+            "search_mode": "hybrid",
+        }
+
+    d._execute_search_task = _fake_search
+
+    ctx = f"chat{uuid.uuid4().hex[:10]}"
+    result = await d.dispatch(
+        agent_name="gateway_agent",
+        query="show kubernetes storage",
+        context={"tenant_id": TENANT, "context_id": ctx},
+    )
+    assert result["message"] == answer
+
+    # Reloaded from REAL Mem0: the stored assistant turn is the answer, not the
+    # routing breadcrumb.
+    persisted = ConversationStore(mm, TENANT).get_history(ctx)
+    assert persisted == [
+        {"role": "user", "content": "show kubernetes storage"},
+        {"role": "assistant", "content": answer},
+    ]
+
+
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio

@@ -173,7 +173,13 @@ class TestGatewaySimpleRouting:
         )
 
     def test_message_field_present(self):
-        """Gateway response includes a human-readable message.
+        """Gateway response surfaces the downstream agent's answer as `message`.
+
+        A simple route returns the execution agent's user-facing answer (its
+        message + hits) as the response, not a routing breadcrumb — the
+        breadcrumb, persisted as the assistant turn, corrupted multi-turn
+        rewrite and replaced the answer in the messaging display. Routing/triage
+        metadata lives under `gateway`.
 
         Query chosen for GLiNER score 0.446 (above 0.4 threshold) on the
         deployed 7-label model.
@@ -192,17 +198,26 @@ class TestGatewaySimpleRouting:
         assert resp.status_code == 200
         data = resp.json()
 
-        # Message must name the target agent and indicate simple routing
+        # The message is the downstream agent's answer, not a routing breadcrumb.
         msg = data["message"]
-        assert "search_agent" in msg or "cooking" in msg.lower(), (
-            f"Message for 'cooking videos' should mention search_agent or cooking, got: {msg!r}"
+        assert msg and not msg.startswith("Routed "), (
+            f"Message should be the downstream answer, not a routing breadcrumb, "
+            f"got: {msg!r}"
         )
-        assert "simple" in msg.lower() or "routed" in msg.lower(), (
-            f"Message should indicate simple routing, got: {msg!r}"
+        # The search answer surfaces its hit count + results at the top level so
+        # the messaging display renders them.
+        assert isinstance(data.get("results_count"), int), (
+            f"Simple search route should surface results_count, got keys: "
+            f"{list(data.keys())}"
         )
+        assert "results" in data, f"got keys: {list(data.keys())}"
 
-        # Gateway classification for cooking videos: video modality, simple
+        # Routing/triage metadata lives under `gateway`.
         gw = data.get("gateway", {})
+        assert gw.get("routed_to") == "search_agent", (
+            f"'cooking videos' should route to search_agent, got: "
+            f"{gw.get('routed_to')!r}"
+        )
         assert gw.get("modality") == "video", (
             f"'cooking videos' should be video modality, got: {gw.get('modality')!r}"
         )

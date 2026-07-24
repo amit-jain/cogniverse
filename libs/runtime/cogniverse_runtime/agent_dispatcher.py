@@ -2091,19 +2091,23 @@ class AgentDispatcher:
                 enrichment=enrichment or None,
                 image_b64=context.get("media_content_b64"),
             )
-            final = {
-                "status": "success",
-                "agent": "gateway_agent",
-                "message": f"Routed '{query[:50]}' to {result.routed_to} (simple)",
-                "gateway": {
-                    "complexity": result.complexity,
-                    "modality": result.modality,
-                    "generation_type": result.generation_type,
-                    "routed_to": result.routed_to,
-                    "confidence": result.confidence,
-                },
-                "downstream_result": downstream,
+            # Surface the downstream agent's answer as the gateway response so
+            # the rendered reply and the persisted assistant turn are the answer
+            # (its user-facing message + hits), not a routing breadcrumb. The
+            # breadcrumb, saved as the assistant turn, fed the anaphora rewriter
+            # on the next turn and replaced the answer in the messaging display.
+            # Gateway triage is stamped under "gateway"; the raw downstream
+            # payload stays under "downstream_result".
+            final = dict(downstream)
+            final["agent"] = "gateway_agent"
+            final["gateway"] = {
+                "complexity": result.complexity,
+                "modality": result.modality,
+                "generation_type": result.generation_type,
+                "routed_to": result.routed_to,
+                "confidence": result.confidence,
             }
+            final["downstream_result"] = downstream
 
         # Output rails on the final user-facing response (front-door exit).
         if rail_chains is not None and isinstance(final, dict):
