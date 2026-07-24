@@ -822,37 +822,18 @@ class VespaSchemaManager:
 
         return target
 
-    def _redeploy_dropping(
-        self, deletion_targets: set, *, allow_absorb_unresolved: bool = False
-    ) -> list:
+    def _redeploy_dropping(self, deletion_targets: set) -> list:
         """Redeploy the application package without ``deletion_targets``.
 
-        Enumerates every Vespa-deployed schema, excludes the deletion
-        targets and metadata schemas, reconstructs each remaining
-        survivor from the registry by full name, and raises
-        ``BackendDeploymentError`` if any survivor is unreconstructable.
-        Returns the sorted list of names that were dropped from the
-        running package.
+        Enumerates every Vespa-deployed schema, excludes the deletion targets
+        and metadata schemas, reconstructs each remaining survivor from the
+        registry by full name, and raises ``BackendDeploymentError`` if any
+        survivor is unreconstructable — a schema we cannot confirm is an orphan
+        may be a peer tenant's live data, so we refuse rather than drop it.
+        Returns the sorted list of names dropped from the running package.
 
-        Used by both single-tenant and bulk-tenant delete paths so the
+        Used by both the single-tenant and bulk-tenant delete paths so the
         peer-orphan safeguard is shared.
-
-        ``allow_absorb_unresolved`` (default ``False``) controls how an
-        unreconstructable peer-tenant orphan is handled:
-
-        * ``False`` (the per-tenant delete contract): refuse the
-          redeploy with ``BackendDeploymentError`` listing the
-          unresolved names. The caller's intended delete is aborted
-          rather than silently cascading into a peer-tenant orphan
-          drop. This is the safeguard
-          ``test_delete_tenant_does_not_drop_peer_tenant_orphan``
-          pins.
-        * ``True`` (the bulk-recovery path,
-          ``delete_tenant_schemas_bulk``): absorb the unresolved
-          names into ``deletion_targets`` and let the redeploy drop
-          them in the same call. The bulk path is the operator's
-          explicit reconciliation tool — every orphan in the bulk
-          input is already an intended target.
         """
         import json
 
@@ -909,41 +890,23 @@ class VespaSchemaManager:
                 unresolved.append(full_name)
 
         if unresolved:
-            if not allow_absorb_unresolved:
-                # Refuse rather than drop a schema we cannot confirm is an
-                # orphan — it may be a peer tenant's live data hidden by a
-                # transient registry read failure. Both the per-tenant and bulk
-                # reconcile paths take this branch.
-                from cogniverse_core.registries.exceptions import (
-                    BackendDeploymentError,
-                )
-
-                raise BackendDeploymentError(
-                    f"refusing to redeploy: {len(unresolved)} deployed schema(s) "
-                    f"have no registry record and cannot be confirmed as orphans "
-                    f"(they may be a peer tenant's live data hidden by a registry "
-                    f"read failure): {sorted(unresolved)}. Redeploying without "
-                    f"them could drop live data. Resolve each — restore its "
-                    f"registry record, add its base schema to the reconciler's "
-                    f"KNOWN_BASES so it is attributed to a tenant, or remove it "
-                    f"explicitly — then retry."
-                )
-
-            # Bulk reconcile path: absorb unresolved into deletion so
-            # the redeploy drops every orphan in one operator-confirmed
-            # call. Without this, a stuck cluster with stale orphans
-            # would refuse every later deploy.
-            self._logger.warning(
-                f"_redeploy_dropping: absorbing {len(unresolved)} "
-                f"unresolved orphan schemas into deletion "
-                f"(bulk reconcile path): {sorted(unresolved)}"
+            # Refuse rather than drop a schema we cannot confirm is an orphan —
+            # it may be a peer tenant's live data hidden by a transient registry
+            # read failure.
+            from cogniverse_core.registries.exceptions import (
+                BackendDeploymentError,
             )
-            deletion_targets = set(deletion_targets) | set(unresolved)
-            deleted_schemas = sorted(deletion_targets & set(deployed))
-            survivor_names = [n for n in survivor_names if n not in unresolved]
-            survivors = [
-                s for s in survivors if getattr(s, "name", None) not in unresolved
-            ]
+
+            raise BackendDeploymentError(
+                f"refusing to redeploy: {len(unresolved)} deployed schema(s) "
+                f"have no registry record and cannot be confirmed as orphans "
+                f"(they may be a peer tenant's live data hidden by a registry "
+                f"read failure): {sorted(unresolved)}. Redeploying without "
+                f"them could drop live data. Resolve each — restore its "
+                f"registry record, add its base schema to the reconciler's "
+                f"KNOWN_BASES so it is attributed to a tenant, or remove it "
+                f"explicitly — then retry."
+            )
 
         metadata_schemas = [
             create_organization_metadata_schema(),
@@ -992,12 +955,9 @@ class VespaSchemaManager:
         vespa_orphan_names = [name for name in deployed if name.endswith(tenant_suffix)]
         deletion_targets = set(registry_full_names) | set(vespa_orphan_names)
 
-        # Single-tenant delete: do NOT absorb peer-tenant orphans.
-        # Refuse with BackendDeploymentError when peer orphans exist so
-        # the operator escalates to delete_tenant_schemas_bulk instead.
-        deleted = self._redeploy_dropping(
-            deletion_targets, allow_absorb_unresolved=False
-        )
+        # Refuse (via _redeploy_dropping) rather than cascade into dropping a
+        # peer-tenant orphan we cannot confirm is dead.
+        deleted = self._redeploy_dropping(deletion_targets)
         if not deleted:
             return deleted
         self._logger.info(
@@ -1063,14 +1023,11 @@ class VespaSchemaManager:
                 if name.endswith(suffix) and name not in registered_full_names:
                     deletion_targets.add(name)
 
-        # Bulk reconcile path: operator-confirmed orphan recovery. Refuse (do
-        # not absorb) when a survivor outside the named tenants cannot be
-        # reconstructed — absorbing it would drop a schema we cannot confirm is
-        # an orphan, wiping a healthy peer tenant. Same contract as the
+        # Refuse (via _redeploy_dropping) when a survivor outside the named
+        # tenants cannot be reconstructed — dropping a schema we cannot confirm
+        # is an orphan would wipe a healthy peer. Same contract as the
         # per-tenant path.
-        deleted = self._redeploy_dropping(
-            deletion_targets, allow_absorb_unresolved=False
-        )
+        deleted = self._redeploy_dropping(deletion_targets)
         if not deleted:
             return deleted
         self._logger.info(

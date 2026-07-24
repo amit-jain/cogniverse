@@ -584,7 +584,7 @@ class TestDeleteMatchesCanonicalSuffixOnly:
         mgr.list_deployed_document_types = MagicMock(return_value=deployed)
         dropped: dict = {}
 
-        def _capture(targets, allow_absorb_unresolved=False):
+        def _capture(targets):
             dropped["targets"] = set(targets)
             return sorted(targets)
 

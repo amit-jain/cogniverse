@@ -184,18 +184,17 @@ class _BulkRegistry:
 
     def get_tenant_schemas(self, tid: str):
         return [
-            SimpleNamespace(base_schema_name=b)
-            for b in self._tenant_bases.get(tid, [])
+            SimpleNamespace(base_schema_name=b) for b in self._tenant_bases.get(tid, [])
         ]
 
     def unregister_schema(self, tid: str, base: str) -> None:
         self.unregistered.append((tid, base))
 
 
-class TestBulkDeleteSuffixAndAbsorbGuards:
+class TestBulkDeleteSuffixAndRefuseGuards:
     """delete_tenant_schemas_bulk must not sweep a registered peer in via a
-    proper-suffix match, and must refuse (never absorb) an unconfirmable
-    survivor — the two reconcile-orphans data-loss paths."""
+    proper-suffix match, and must refuse an unconfirmable survivor — the two
+    reconcile-orphans data-loss paths."""
 
     def _capture_manager(self, registered, deployed, tenant_bases):
         mgr = object.__new__(VespaSchemaManager)
@@ -206,9 +205,8 @@ class TestBulkDeleteSuffixAndAbsorbGuards:
         mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid.replace(':', '_')}"
         captured: dict = {}
 
-        def _capture(targets, *, allow_absorb_unresolved):
+        def _capture(targets):
             captured["targets"] = set(targets)
-            captured["absorb"] = allow_absorb_unresolved
             return sorted(set(targets) & set(deployed))
 
         mgr._redeploy_dropping = _capture
@@ -233,15 +231,31 @@ class TestBulkDeleteSuffixAndAbsorbGuards:
         # The registered peer for a DIFFERENT tenant must survive.
         assert "knowledge_graph_acme_acme" not in captured["targets"]
 
-    def test_bulk_requests_refuse_not_absorb(self):
-        registered = [*METADATA_SCHEMAS]
-        deployed = ["knowledge_graph_acme", *METADATA_SCHEMAS]
-        mgr, captured = self._capture_manager(
-            registered, deployed, tenant_bases={"acme": []}
+    def test_bulk_refuses_on_unresolved_survivor(self):
+        # A deployed schema with no registry record and outside the named
+        # tenants is an unconfirmable survivor — the real redeploy must refuse
+        # rather than drop it (it could be a peer tenant's live data).
+        from cogniverse_core.registries.exceptions import BackendDeploymentError
+
+        registered = [*METADATA_SCHEMAS]  # neither orphan nor survivor registered
+        deployed = [
+            "knowledge_graph_acme",  # the named tenant's orphan -> deletion target
+            "video_other_globex_globex",  # unregistered survivor, NOT named
+            *METADATA_SCHEMAS,
+        ]
+        mgr = object.__new__(VespaSchemaManager)
+        mgr._PROTECTED_SCHEMAS = frozenset(METADATA_SCHEMAS)
+        mgr._schema_registry = _BulkRegistry(registered, tenant_bases={"acme": []})
+        mgr._logger = logging.getLogger("test_bulk_refuse")
+        mgr.list_deployed_document_types = lambda **_: list(deployed)
+        mgr.get_tenant_schema_name = lambda tid, base: f"{base}_{tid.replace(':', '_')}"
+        deployed_packages: list = []
+        mgr._deploy_package = lambda pkg, allow_schema_removal=False: (
+            deployed_packages.append(pkg)
         )
 
-        mgr.delete_tenant_schemas_bulk(["acme"])
+        with pytest.raises(BackendDeploymentError, match="no registry record"):
+            mgr.delete_tenant_schemas_bulk(["acme"])
 
-        # Never absorb an unconfirmable survivor into the deletion — refuse, the
-        # same contract as the per-tenant path.
-        assert captured["absorb"] is False
+        # Refused before any redeploy — nothing was deployed.
+        assert deployed_packages == []
