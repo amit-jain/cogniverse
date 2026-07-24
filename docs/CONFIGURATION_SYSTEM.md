@@ -356,10 +356,13 @@ through a registry-less schema manager with `allow_schema_removal=False` so
 Vespa refuses a package that would drop any existing tenant schema — a
 populated cluster whose read merely failed raises instead of bootstrapping
 blind. Once the config store is queryable, startup unconditionally calls
-`system_backend.schema_manager.upload_metadata_schemas()` again on every run;
-that manager is schema-registry-aware, so its default
-`allow_schema_removal=True` is safe — existing tenant schemas are fetched from
-the registry and merged into the deployed package rather than dropped.
+`system_backend.schema_manager.upload_metadata_schemas(...,
+allow_schema_removal=True)` again on every run; that explicit opt-in is safe
+only there — the manager is schema-registry-aware, existing tenant schemas
+are fetched from the registry and merged into the deployed package, and
+enumeration raises on any entry it cannot rebuild rather than handing back a
+partial package. Every other caller keeps the default
+`allow_schema_removal=False`.
 
 **Backend Features:**
 
