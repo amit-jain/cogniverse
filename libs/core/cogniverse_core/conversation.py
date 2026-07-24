@@ -14,6 +14,7 @@ context's turns. Reads and writes RAISE on a backend outage — the caller
 no-history, so the outage is a logged degrade there, not a silent [] here.
 """
 
+import json
 import logging
 import time
 from typing import Dict, List
@@ -50,11 +51,19 @@ class ConversationStore:
         collected: List = []
         for row in rows:
             meta = row.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except (ValueError, TypeError):
+                    continue
             if meta.get("type") != "conversation":
                 continue
             if str(meta.get("context_id")) != ctx:
                 continue
-            role = meta.get("role")
+            # "role" is a Mem0-reserved metadata key (hoisted to a top-level
+            # field and overwritten with the message role) — the turn's role
+            # is stored under turn_role.
+            role = meta.get("turn_role")
             if role not in ("user", "assistant"):
                 continue
             text = row.get("memory", "")
@@ -78,7 +87,9 @@ class ConversationStore:
             metadata={
                 "type": "conversation",
                 "context_id": ctx,
-                "role": role,
+                # not "role": Mem0 reserves it and overwrites with the
+                # message role, so the turn's role would be lost on read.
+                "turn_role": role,
                 "seq": time.time(),
             },
             infer=False,
