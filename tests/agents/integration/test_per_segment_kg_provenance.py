@@ -121,16 +121,19 @@ def assert_golden(actual: Any, name: str) -> None:
 # (per project convention — no per-test skips for infra deps).                #
 # --------------------------------------------------------------------------- #
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not is_test_lm_available(),
-        reason=(
+pytestmark = [pytest.mark.integration]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _require_test_lm():
+    """Runtime LM gate. An import-time skipif latches the PRE-session-fixture
+    endpoint state — ``ensure_host_ollama`` provisions the LM only at session
+    setup, so the gate must probe after fixtures run, not at collection."""
+    if not is_test_lm_available():
+        pytest.skip(
             "Test LM endpoint not reachable at "
             f"{resolve_base_url()} — ClaimExtractor needs a live LM"
-        ),
-    ),
-]
+        )
 
 
 # --------------------------------------------------------------------------- #

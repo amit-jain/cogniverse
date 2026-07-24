@@ -493,10 +493,10 @@ def _is_llm_available() -> bool:
     return is_test_lm_available()
 
 
-skip_if_no_lm = pytest.mark.skipif(
-    not _is_llm_available(),
-    reason="Configured LLM endpoint not reachable",
-)
+# Runtime LM gate: the requires_lm marker is enforced per test by
+# ``pytest_runtest_setup`` in tests/conftest.py (an import-time skipif
+# latches the pre-session-fixture endpoint state).
+skip_if_no_lm = pytest.mark.requires_lm
 
 
 def _build_dspy_lm(max_tokens: int):

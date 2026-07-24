@@ -98,6 +98,9 @@ def _real_config_manager():
 
 
 def _config_json_primary_api_base() -> str:
+    """Primary api_base from the EFFECTIVE config — the session fixture
+    materializes a rewritten clone via COGNIVERSE_CONFIG when the production
+    LM endpoint is not live, and that clone is what get_llm_config() reads."""
     import json
     import os
     from pathlib import Path

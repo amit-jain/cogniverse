@@ -32,7 +32,10 @@ def _llm_available():
     return is_test_lm_available()
 
 
-skip_if_no_lm = pytest.mark.skipif(not _llm_available(), reason="LLM not available")
+# Runtime LM gate: the requires_lm marker is enforced per test by
+# ``pytest_runtest_setup`` in tests/conftest.py (an import-time skipif
+# latches the pre-session-fixture endpoint state).
+skip_if_no_lm = pytest.mark.requires_lm
 
 
 @pytest.fixture(scope="module")
