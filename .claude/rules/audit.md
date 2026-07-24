@@ -152,6 +152,13 @@ grep -rn "isinstance(.*, (int, float))" libs/vespa/ libs/core/
 # within ~3 lines (*1000, //1000, >1e11 check)
 grep -rnP 'return int\((v|ts|value|timestamp|raw|created_at)\)\s*$' libs/ --include="*.py"
 
+# ONE-DIRECTIONAL magnitude guard — a validator whose lower bound is 0 (or
+# absent) cannot catch the smaller-unit confusion its error message claims to
+# (a seconds epoch is always a "valid" small ms value). For every magnitude
+# validator, check the bound that would catch each unit confusion EXISTS; an
+# error message naming a case the bounds cannot reach is the tell.
+grep -rnPA6 'def _validate_\w*(timestamp|epoch|_ms|_s)\w*\(' libs/ --include="*.py" | grep -P '_MIN_\w+\s*=\s*0|< 0 or|>= 0'
+
 # numpy scalar reaching a scalar serializer un-coerced — np.float64 IS a float
 # subclass (repr leaks into the query), np.int64 is NOT an int subclass (falls
 # to the string branch). Confirm .item() coercion or np.integer/np.floating
@@ -333,6 +340,14 @@ grep -rniP 'proceeding anyway|continuing anyway|proceed despite' libs/ --include
 # (an infra skip = a bug). The canonical gate probes both /api/tags and
 # /v1/models after stripping a trailing /v1 (see tests/fixtures/llm.py).
 grep -rnP '/api/tags(?!.*v1/models)' tests/ --include="*.py" | grep -iE 'available|skip|reachable'
+
+# Infra-availability gate evaluated at IMPORT time — a module-level
+# `pytest.mark.skipif(not is_X_available(), ...)` latches the PRE-session-
+# fixture state (session fixtures provision the LM/infra only at setup), so
+# the suite silently skips even in environments where the fixture would have
+# provided the dependency. Gates must probe at runtime (an autouse fixture
+# calling pytest.skip), never in a decorator argument.
+grep -rnP 'skipif\(\s*$|skipif\(\s*not \w+_available\(\)' tests/ --include="*.py" -A2 | grep -P 'not (is_)?\w*(_available|_ready|_reachable)\(\)'
 ```
 
 **Multi-step writes, durable state**
