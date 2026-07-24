@@ -31,9 +31,11 @@ def _resolve_project(config: dict[str, Any]) -> str:
     tenant_id = config.get("tenant_id")
     if tenant_id:
         from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-        return TelemetryConfig().get_project_name(canonical_tenant_id(tenant_id))
+        return get_telemetry_manager().config.get_project_name(
+            canonical_tenant_id(tenant_id)
+        )
     raise ValueError(
         "batch/live evaluation requires 'project_name' or 'tenant_id' in the "
         "evaluation config to resolve the span project to read"

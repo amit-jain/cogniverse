@@ -1816,6 +1816,12 @@ success/failure into `ExportMetrics` at all)) tracks connection health via the
 
 **`TraceManager`** (`data/traces.py`) — used by the CLI's `list-traces` command:
 
+`tenant_id` is canonicalized at construction and the span project is resolved
+from the loaded telemetry config (`get_telemetry_manager().config.get_project_name`)
+— the same `tenant_project_template` the span writers use — so a template
+override reads the project production agents actually write to. Batch/live
+solvers resolve the same way via `core/solvers._resolve_project`.
+
 ```python
 TraceManager(tenant_id: str, storage: TelemetryStorage | None = None)
 
