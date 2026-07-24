@@ -20,22 +20,36 @@ def _phoenix_base_url() -> str:
     return st.session_state.get("phoenix_url") or "http://localhost:6006"
 
 
+_PHOENIX_REQUEST_TIMEOUT_S = 15
+
+
+class PhoenixUnavailableError(RuntimeError):
+    """Phoenix could not be reached or answered with an error status."""
+
+
 def query_phoenix_graphql(query: str) -> Dict[str, Any]:
-    """Execute a GraphQL query against Phoenix"""
+    """Execute a GraphQL query against Phoenix.
+
+    Raises :class:`PhoenixUnavailableError` on connection failure or a
+    non-200 — a Phoenix outage must render as an error, not as an empty
+    dataset list indistinguishable from a fresh project. The timeout bounds
+    a hung Phoenix so the tab never freezes.
+    """
+    url = f"{_phoenix_base_url()}/graphql"
     try:
         response = requests.post(
-            f"{_phoenix_base_url()}/graphql",
+            url,
             json={"query": query},
             headers={"Content-Type": "application/json"},
+            timeout=_PHOENIX_REQUEST_TIMEOUT_S,
         )
-
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {}
-
-    except Exception:
-        return {}
+    except requests.RequestException as exc:
+        raise PhoenixUnavailableError(f"Phoenix unreachable at {url}: {exc}") from exc
+    if response.status_code != 200:
+        raise PhoenixUnavailableError(
+            f"Phoenix returned HTTP {response.status_code} for {url}"
+        )
+    return response.json()
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -80,15 +94,21 @@ def get_phoenix_datasets() -> List[Dict[str, Any]]:
 
 
 def get_experiment_runs(experiment_id: str) -> Dict[str, Any]:
-    """Get experiment runs using Phoenix REST API"""
+    """Get experiment runs using Phoenix REST API.
+
+    Raises :class:`PhoenixUnavailableError` on connection failure or a
+    non-200, matching :func:`query_phoenix_graphql`.
+    """
+    url = f"{_phoenix_base_url()}/v1/experiments/{experiment_id}"
     try:
-        response = requests.get(f"{_phoenix_base_url()}/v1/experiments/{experiment_id}")
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {}
-    except Exception:
-        return {}
+        response = requests.get(url, timeout=_PHOENIX_REQUEST_TIMEOUT_S)
+    except requests.RequestException as exc:
+        raise PhoenixUnavailableError(f"Phoenix unreachable at {url}: {exc}") from exc
+    if response.status_code != 200:
+        raise PhoenixUnavailableError(
+            f"Phoenix returned HTTP {response.status_code} for {url}"
+        )
+    return response.json()
 
 
 def calculate_metrics(results: List[str], expected: List[str]) -> Dict[str, float]:
@@ -273,6 +293,12 @@ def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
                             }
                         )
 
+        except requests.RequestException as exc:
+            # A Phoenix outage mid-load must not silently truncate the
+            # experiment list — surface it instead of skipping.
+            raise PhoenixUnavailableError(
+                f"Phoenix unreachable while loading experiment {exp_id}: {exc}"
+            ) from exc
         except Exception:
             continue
 
@@ -292,8 +318,13 @@ def render_evaluation_tab():
     """Render the evaluation tab with EXACT tabbed format"""
     st.subheader("🧪 Evaluation Experiments Dashboard")
 
-    # Get datasets
-    datasets = get_phoenix_datasets()
+    # Get datasets — a Phoenix outage renders as an error, never as the
+    # same empty state a fresh project shows.
+    try:
+        datasets = get_phoenix_datasets()
+    except PhoenixUnavailableError as exc:
+        st.error(f"Cannot load datasets: {exc}")
+        return
     if not datasets:
         st.warning("No datasets found in Phoenix.")
         return
@@ -338,7 +369,13 @@ def render_evaluation_tab():
 
     # Load all experiment data for this dataset
     with st.spinner("Loading experiments..."):
-        experiment_data = get_all_experiment_data_for_dataset(selected_dataset["id"])
+        try:
+            experiment_data = get_all_experiment_data_for_dataset(
+                selected_dataset["id"]
+            )
+        except PhoenixUnavailableError as exc:
+            st.error(f"Cannot load experiments: {exc}")
+            return
 
     st.markdown("---")
 
