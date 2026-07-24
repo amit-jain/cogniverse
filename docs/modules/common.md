@@ -568,6 +568,11 @@ def search_memory(
         include_archived: When False (default), soft-deleted memories
             (metadata.archived=true) are filtered out post-fetch
 
+    Raises:
+        On a backend outage — an outage is never flattened to [] (which
+        would read as "no relevant memories"), matching get_all_memories.
+        Callers that treat memory as best-effort catch at their own layer.
+
     Returns:
         List of memories with scores:
         [
@@ -1035,6 +1040,9 @@ The cache is content-addressed by `sha256(uri || etag)`, tenant-scoped via
 `<base>/<tenant>/media/<key[:2]>/<key>/<basename>`. The original basename is
 preserved so cv2 / ffmpeg can sniff codec by extension. Writes go through
 `<base>/.staging/<uuid>` and are promoted via `os.replace` for atomicity.
+Staging files orphaned by a hard kill (invisible to eviction and the byte
+budget) are reaped once older than an hour — on cache construction and
+during each eviction pass — so they cannot accumulate across restarts.
 Entries older than `ttl_days` (by `atime`) are dropped first, then LRU by
 `atime` while total bytes exceed `max_bytes_gb`. A running byte total keeps
 under-budget puts walk-free; the tree is walked only on the first put, when

@@ -306,3 +306,63 @@ class TestTtlEviction:
 
         # No TTL => the ancient entry stays (only size eviction applies).
         assert cache.get(MediaCache.make_key("s3://b/old"), "old.mp4") is not None
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestStagingOrphanReaper:
+    """Staging files orphaned by a hard kill (SIGKILL/OOM between the staging
+    write and os.replace) must be reaped once they age past the orphan gate —
+    they are invisible to eviction and the byte budget, so without a reaper
+    they accumulate unboundedly on a persistent base_dir. Fresh staging files
+    (in-flight downloads) must never be touched."""
+
+    ORPHAN_AGE = 3700.0  # past the 1h gate
+
+    def _orphan(
+        self, cache: MediaCache, age_s: float, size: int = 1024
+    ) -> "os.PathLike":
+        p = cache.staging_path()
+        p.write_bytes(b"x" * size)
+        old = time.time() - age_s
+        os.utime(p, (old, old))
+        return p
+
+    def test_construction_reaps_aged_orphans(self, tmp_path):
+        first = MediaCache(base_dir=tmp_path / "cache", max_bytes=10_000)
+        orphan = self._orphan(first, self.ORPHAN_AGE)
+        assert orphan.exists()
+
+        # A process restart constructs a fresh cache over the same base_dir.
+        MediaCache(base_dir=tmp_path / "cache", max_bytes=10_000)
+        assert not orphan.exists()
+
+    def test_construction_keeps_fresh_staging_files(self, tmp_path):
+        first = MediaCache(base_dir=tmp_path / "cache", max_bytes=10_000)
+        inflight = self._orphan(first, age_s=5.0)
+
+        MediaCache(base_dir=tmp_path / "cache", max_bytes=10_000)
+        assert inflight.exists()
+
+    def test_eviction_pass_reaps_aged_orphans(self, tmp_path):
+        cache = MediaCache(base_dir=tmp_path / "cache", max_bytes=2_000)
+        orphan = self._orphan(cache, self.ORPHAN_AGE, size=5_000)
+
+        # Push the cache over budget so put() runs an eviction pass.
+        for i in range(3):
+            src = tmp_path / f"src{i}.bin"
+            src.write_bytes(b"y" * 1_000)
+            cache.put(MediaCache.make_key(f"uri://{i}"), f"f{i}.bin", src)
+
+        assert not orphan.exists()
+
+    def test_eviction_pass_keeps_fresh_staging_files(self, tmp_path):
+        cache = MediaCache(base_dir=tmp_path / "cache", max_bytes=2_000)
+        inflight = self._orphan(cache, age_s=5.0, size=5_000)
+
+        for i in range(3):
+            src = tmp_path / f"src{i}.bin"
+            src.write_bytes(b"y" * 1_000)
+            cache.put(MediaCache.make_key(f"uri://{i}"), f"f{i}.bin", src)
+
+        assert inflight.exists()

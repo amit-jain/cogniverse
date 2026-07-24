@@ -13,6 +13,11 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Staging files older than this are orphans from a hard-killed process (the
+# unlink-on-failure path never ran) — in-flight downloads are seconds old, so
+# an hour gate never races a live write.
+_STAGING_ORPHAN_MAX_AGE_S = 3600.0
+
 
 class MediaCache:
     """Tenant-scoped, content-addressed local cache.
@@ -54,6 +59,10 @@ class MediaCache:
         self._last_ttl_sweep = 0.0
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.staging_dir.mkdir(parents=True, exist_ok=True)
+        # A killed process orphans its staging file (invisible to eviction
+        # and the byte budget); the next construction over the same base_dir
+        # reaps aged orphans so they can't accumulate across restarts.
+        self._reap_staging_orphans()
 
     @staticmethod
     def make_key(uri: str, etag: Optional[str] = None) -> str:
@@ -139,11 +148,31 @@ class MediaCache:
             pass
         return True
 
-    def _evict_if_needed(self) -> None:
-        """Full-walk pass: expire TTL-stale entries, then LRU-evict while
-        over budget. Resyncs the running byte total from the walk and stamps
-        the sweep time so put() amortizes TTL walks to once per TTL period.
+    def _reap_staging_orphans(self) -> None:
+        """Unlink staging files older than the orphan gate.
+
+        Age-gated so an in-flight download's staging file is never touched.
         """
+        cutoff = time.time() - _STAGING_ORPHAN_MAX_AGE_S
+        try:
+            entries = list(self.staging_dir.iterdir())
+        except OSError:
+            return
+        for p in entries:
+            try:
+                if p.is_file() and p.stat().st_mtime < cutoff:
+                    p.unlink()
+                    logger.info("reaped orphaned staging file %s", p)
+            except OSError as exc:
+                logger.debug("staging reap failed for %s: %s", p, exc)
+
+    def _evict_if_needed(self) -> None:
+        """Full-walk pass: reap aged staging orphans, expire TTL-stale
+        entries, then LRU-evict while over budget. Resyncs the running byte
+        total from the walk and stamps the sweep time so put() amortizes TTL
+        walks to once per TTL period.
+        """
+        self._reap_staging_orphans()
         files: list[tuple[float, int, Path]] = []
         total = 0
         now = time.time()
