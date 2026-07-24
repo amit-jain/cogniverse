@@ -517,3 +517,112 @@ class TestHandleHelp:
         await g._handle_help(update, context=None)
 
         update.message.reply_text.assert_awaited_once_with(format_help())
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestBuildAppCommandRegistration:
+    """The live dispatch layer: every slash-command family must have its own
+    CommandHandler on the real Application. The plain-text MessageHandler
+    filters with ``~filters.COMMAND``, so a command without a CommandHandler
+    matches no handler at all and Telegram silently drops it — /wiki,
+    /instructions, /memories and /jobs were dead in every deployed chat."""
+
+    def _build_app(self):
+        g = MessagingGateway(bot_token="123:FAKE", runtime_url="http://x")
+        return g, g.build_app()
+
+    def test_every_command_family_has_a_command_handler(self):
+        from telegram.ext import CommandHandler
+
+        _, app = self._build_app()
+        registered: set = set()
+        for group in app.handlers.values():
+            for handler in group:
+                if isinstance(handler, CommandHandler):
+                    registered |= set(handler.commands)
+        assert {
+            "start",
+            "help",
+            "search",
+            "summarize",
+            "report",
+            "research",
+            "code",
+            "wiki",
+            "instructions",
+            "memories",
+            "jobs",
+        } <= registered
+
+    def test_command_updates_are_excluded_from_message_handlers(self):
+        """Executed with the real PTB filters: a bot_command update is
+        rejected by every MessageHandler, so only a CommandHandler can
+        route it — that is why the registration set above must be complete."""
+        from datetime import datetime, timezone
+
+        from telegram import Chat, Message, MessageEntity, Update, User
+        from telegram.ext import MessageHandler
+
+        message = Message(
+            message_id=1,
+            date=datetime.now(timezone.utc),
+            chat=Chat(id=100, type="private"),
+            from_user=User(id=42, first_name="u", is_bot=False),
+            text="/wiki search foo",
+            entities=[
+                MessageEntity(type=MessageEntity.BOT_COMMAND, offset=0, length=5)
+            ],
+        )
+        update = Update(update_id=1, message=message)
+
+        _, app = self._build_app()
+        message_handlers = [
+            h
+            for group in app.handlers.values()
+            for h in group
+            if isinstance(h, MessageHandler)
+        ]
+        assert message_handlers
+        assert not any(h.filters.check_update(update) for h in message_handlers)
+
+    def test_concurrent_updates_enabled(self):
+        _, app = self._build_app()
+        assert app.concurrent_updates == 32
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestErrorHandler:
+    def test_error_handler_registered(self):
+        g = MessagingGateway(bot_token="123:FAKE", runtime_url="http://x")
+        app = g.build_app()
+        assert g._handle_error in app.error_handlers
+
+    @pytest.mark.asyncio
+    async def test_error_handler_replies_to_the_user(self):
+        from types import SimpleNamespace
+
+        g = MessagingGateway(bot_token="123:FAKE", runtime_url="http://x")
+        reply = AsyncMock()
+        update = SimpleNamespace(effective_message=SimpleNamespace(reply_text=reply))
+        await g._handle_error(update, SimpleNamespace(error=RuntimeError("boom")))
+
+        reply.assert_awaited_once()
+        assert "went wrong" in reply.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_error_handler_survives_missing_message(self):
+        from types import SimpleNamespace
+
+        g = MessagingGateway(bot_token="123:FAKE", runtime_url="http://x")
+        await g._handle_error(None, SimpleNamespace(error=RuntimeError("boom")))
+
+    @pytest.mark.asyncio
+    async def test_error_handler_survives_failing_reply(self):
+        from types import SimpleNamespace
+
+        g = MessagingGateway(bot_token="123:FAKE", runtime_url="http://x")
+        reply = AsyncMock(side_effect=RuntimeError("telegram down"))
+        update = SimpleNamespace(effective_message=SimpleNamespace(reply_text=reply))
+        await g._handle_error(update, SimpleNamespace(error=ValueError("x")))

@@ -457,14 +457,31 @@ class MessagingGateway:
         return schedule, name, query
 
     def build_app(self) -> Application:
-        """Build the Telegram Application with handlers."""
-        builder = Application.builder().token(self.bot_token)
+        """Build the Telegram Application with handlers.
+
+        Every slash-command family needs its own CommandHandler: the text
+        MessageHandler filters with ``~filters.COMMAND``, so a command
+        without one matches nothing and Telegram silently drops it.
+        Updates process concurrently so one slow agent dispatch cannot
+        stall every other chat behind it.
+        """
+        builder = Application.builder().token(self.bot_token).concurrent_updates(32)
         self._app = builder.build()
 
         self._app.add_handler(CommandHandler("start", self._handle_start))
         self._app.add_handler(CommandHandler("help", self._handle_help))
 
-        for command in ["search", "summarize", "report", "research", "code"]:
+        for command in [
+            "search",
+            "summarize",
+            "report",
+            "research",
+            "code",
+            "wiki",
+            "instructions",
+            "memories",
+            "jobs",
+        ]:
             self._app.add_handler(CommandHandler(command, self._handle_message))
 
         self._app.add_handler(
@@ -473,8 +490,27 @@ class MessagingGateway:
         self._app.add_handler(
             MessageHandler(filters.PHOTO | filters.VIDEO, self._handle_message)
         )
+        self._app.add_error_handler(self._handle_error)
 
         return self._app
+
+    async def _handle_error(self, update: object, context) -> None:
+        """Tell the user a handler failed instead of leaving silence.
+
+        Without an error handler, an exception in any handler (runtime
+        unreachable, malformed response) is only logged server-side and the
+        user sees "typing…" followed by nothing.
+        """
+        logger.error("Handler error: %s", context.error, exc_info=context.error)
+        message = getattr(update, "effective_message", None)
+        if message is None:
+            return
+        try:
+            await message.reply_text(
+                "Something went wrong handling that — please try again."
+            )
+        except Exception:  # noqa: BLE001 — the notice itself is best-effort
+            logger.exception("Failed to send error notice")
 
     async def _outbound_drain_loop(self) -> None:
         """Deliver messages the runtime enqueued for this tenant's chats.
