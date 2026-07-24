@@ -14,12 +14,17 @@ import uuid
 
 import pytest
 
+from cogniverse_foundation.telemetry import manager as manager_mod
 from cogniverse_foundation.telemetry.config import (
     BatchExportConfig,
     TelemetryConfig,
     TelemetryLevel,
 )
-from cogniverse_foundation.telemetry.manager import NoOpSpan, TelemetryManager
+from cogniverse_foundation.telemetry.manager import (
+    NoOpSpan,
+    TelemetryManager,
+    get_telemetry_manager,
+)
 from tests.utils.async_polling import wait_for_phoenix_processing
 
 
@@ -593,3 +598,91 @@ class TestGetSpansNameFilterRealPhoenix:
 
         manager.shutdown()
         TelemetryManager._instance = None
+
+
+@pytest.mark.integration
+@pytest.mark.telemetry
+@pytest.mark.ci_fast
+class TestManagerResetRebuildRealPhoenix:
+    """After ``reset()``, ``get_telemetry_manager()`` must hand back a fresh,
+    live manager — not the shut-down one — that still emits to real Phoenix.
+    """
+
+    class _Cfg:
+        def __init__(self, phoenix_container) -> None:
+            self._pc = phoenix_container
+
+        def get_telemetry_config(self, tenant_id: str) -> TelemetryConfig:
+            return TelemetryConfig(
+                enabled=True,
+                level=TelemetryLevel.VERBOSE,
+                otlp_endpoint=self._pc["grpc_endpoint"],
+                provider_config={
+                    "http_endpoint": self._pc["http_endpoint"],
+                    "grpc_endpoint": self._pc["grpc_endpoint"],
+                },
+                service_name="reset-rebuild-test",
+                environment="test",
+                batch_config=BatchExportConfig(use_sync_export=True),
+            )
+
+    def test_reset_rebuilds_a_live_manager_that_emits(self, phoenix_container):
+        TelemetryManager.reset()
+        manager_mod._telemetry_manager = None
+
+        cfg = self._Cfg(phoenix_container)
+        cfg_obj = cfg.get_telemetry_config("system")
+        run_id = uuid.uuid4().hex[:8]
+
+        try:
+            m1 = get_telemetry_manager(cfg)
+            for i in range(3):
+                with m1.span(
+                    name=f"pre_{run_id}_{i}",
+                    tenant_id="tenant-alpha",
+                    project_name="routing",
+                    attributes={"phase": "pre-reset", "run_id": run_id},
+                ) as span:
+                    span.set_attribute("i", i)
+            assert m1.force_flush(timeout_millis=10000)
+
+            TelemetryManager.reset()
+            m2 = get_telemetry_manager(cfg)
+
+            # The fix: a brand-new, live instance — not the shut-down m1.
+            assert m2 is not m1
+            assert m2._initialized is True
+
+            for i in range(3):
+                with m2.span(
+                    name=f"post_{run_id}_{i}",
+                    tenant_id="tenant-beta",
+                    project_name="routing",
+                    attributes={"phase": "post-reset", "run_id": run_id},
+                ) as span:
+                    span.set_attribute("i", i)
+            assert m2.force_flush(timeout_millis=10000)
+
+            wait_for_phoenix_processing(delay=2, description="Phoenix processing")
+
+            from phoenix.client import Client
+
+            client = Client(base_url=phoenix_container["http_endpoint"])
+
+            alpha_project = cfg_obj.get_project_name("tenant-alpha", "routing")
+            alpha_df = client.spans.get_spans_dataframe(
+                project_identifier=alpha_project
+            )
+            assert alpha_df is not None
+            pre = alpha_df[alpha_df["name"].str.startswith(f"pre_{run_id}_")]
+            assert len(pre) == 3, f"pre-reset spans in {alpha_project}: {len(pre)}"
+
+            # The rebuilt manager emitted its spans to the live instance.
+            beta_project = cfg_obj.get_project_name("tenant-beta", "routing")
+            beta_df = client.spans.get_spans_dataframe(project_identifier=beta_project)
+            assert beta_df is not None
+            post = beta_df[beta_df["name"].str.startswith(f"post_{run_id}_")]
+            assert len(post) == 3, f"post-reset spans in {beta_project}: {len(post)}"
+        finally:
+            TelemetryManager.reset()
+            manager_mod._telemetry_manager = None
