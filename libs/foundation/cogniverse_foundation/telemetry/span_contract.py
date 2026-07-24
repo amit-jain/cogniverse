@@ -159,8 +159,13 @@ def _reconstruct_attributes(row: Any) -> dict:
 def _first(attrs: Mapping, *keys: str, default: Any = None) -> Any:
     for k in keys:
         v = attrs.get(k)
-        if v is not None and v != "":
-            return v
+        if v is None:
+            continue
+        # Only strings are "empty" — comparing a numpy array against ""
+        # yields an elementwise result whose truthiness raises.
+        if isinstance(v, str) and v == "":
+            continue
+        return v
     return default
 
 
