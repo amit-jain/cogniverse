@@ -27,6 +27,13 @@ def _as_epoch_seconds(value: Any, field_name: str) -> int:
     """
     if value is None:
         return int(time.time())
+    # numpy scalars first: np.float64 IS a float subclass (handled below) but
+    # np.int64 is NOT an int subclass and np.bool_ is NOT a bool subclass, so a
+    # created_at read from a pandas/parquet row (naturally np.int64) would fall
+    # through to the raise. Coerce to the Python scalar so the checks apply
+    # uniformly (and np.bool_ still gets rejected as a bool below).
+    if type(value).__module__ == "numpy" and hasattr(value, "item"):
+        value = value.item()
     if isinstance(value, bool):
         raise TypeError(f"Document.from_dict: {field_name} must be a timestamp")
     if isinstance(value, str):
@@ -104,6 +111,23 @@ class DocumentFieldMapping:
         unknown = set(data) - known
         if unknown:
             raise ValueError(f"document_mapping has unknown keys: {sorted(unknown)}")
+        # embeddings must be a dict of {embedding_name: schema_field}; a
+        # list-typed block would otherwise pass load and crash later at
+        # ``mapping.embeddings.items()`` during the feed.
+        embeddings = data.get("embeddings")
+        if embeddings is not None:
+            if not isinstance(embeddings, dict):
+                raise ValueError(
+                    "document_mapping.embeddings must be a dict of "
+                    f"{{embedding_name: schema_field}}, got "
+                    f"{type(embeddings).__name__}"
+                )
+            for name, target in embeddings.items():
+                if not isinstance(name, str) or not isinstance(target, str):
+                    raise ValueError(
+                        "document_mapping.embeddings must map str to str, got "
+                        f"{name!r} -> {target!r}"
+                    )
         return cls(**data)
 
 
@@ -264,16 +288,24 @@ class Document:
         if mapping.description and self.description is not None:
             core[mapping.description] = self.description
         if mapping.content_type:
-            core[mapping.content_type] = self.content_type.value
+            # content_type is normally a ContentType enum, but a caller may set
+            # it to a raw string ("video"); coerce through the enum so a bad
+            # value raises a clear ValueError instead of an opaque AttributeError.
+            ct = self.content_type
+            if not isinstance(ct, ContentType):
+                ct = ContentType(ct)
+            core[mapping.content_type] = ct.value
         if mapping.content_id and self.content_id is not None:
             core[mapping.content_id] = self.content_id
         if mapping.content_path and self.content_path is not None:
             core[mapping.content_path] = str(self.content_path)
 
         def _stamp(value: int) -> Any:
+            # created_at is an epoch (seconds); a float value must land as an
+            # int in the schema's long field, not a fractional float.
             if mapping.created_at_format == "iso":
-                return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
-            return value
+                return datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat()
+            return int(value)
 
         if mapping.created_at:
             core[mapping.created_at] = _stamp(self.created_at)
