@@ -5,8 +5,10 @@ Tests the gateway→orchestration handoff via AgentDispatcher, and HTTP-level
 round-trip tests for the annotation queue endpoints.
 """
 
+import time
 from contextlib import contextmanager
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -20,7 +22,7 @@ from cogniverse_agents.routing.annotation_agent import (
 )
 from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.agent_dispatcher import AgentDispatcher, _GatewayAgentEntry
 from cogniverse_runtime.routers import agents as agents_router
 
 
@@ -154,6 +156,92 @@ class TestGatewayOrchestrationHandoff:
         assert ds["agent"] == "search_agent"
         assert "results_count" in ds and isinstance(ds["results_count"], int)
         assert "profile" in ds
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_gateway_simple_persists_downstream_answer_not_breadcrumb(
+        self, dispatcher
+    ):
+        """A gateway 'simple' route persists the downstream agent's user-facing
+        answer as the assistant turn — the value the response path renders —
+        not the routing breadcrumb. The breadcrumb, stored as the prior reply,
+        was fed to the anaphora rewriter on the next turn and shown by the
+        messaging display in place of the real answer.
+        """
+        gateway_output = _make_gateway_output(
+            complexity="simple", routed_to="search_agent", modality="video"
+        )
+        # Force a simple classification without building the real GatewayAgent:
+        # seed the per-tenant gateway cache with a fake whose _process_impl
+        # returns the simple triage. The real _get_or_build_gateway_agent
+        # returns it on the cache hit.
+        fake_gateway = SimpleNamespace(
+            _process_impl=AsyncMock(return_value=gateway_output)
+        )
+        dispatcher._gateway_agents.set(
+            "acme:acme",
+            _GatewayAgentEntry(agent=fake_gateway, loaded_at=time.monotonic()),
+        )
+
+        gateway_ep = MagicMock()
+        gateway_ep.capabilities = ["gateway"]
+        search_ep = MagicMock()
+        search_ep.capabilities = ["search"]
+
+        def _get_agent(name):
+            return {"gateway_agent": gateway_ep, "search_agent": search_ep}.get(name)
+
+        dispatcher._registry.get_agent.side_effect = _get_agent
+
+        # The downstream agent's answer at its execution boundary — the exact
+        # shape _execute_search_task returns for three hits.
+        downstream_answer = {
+            "status": "success",
+            "agent": "search_agent",
+            "message": "Found 3 results for 'find videos of cats'",
+            "results_count": 3,
+            "results": [
+                {"document_id": "v1"},
+                {"document_id": "v2"},
+                {"document_id": "v3"},
+            ],
+            "profile": "video_colpali_smol500_mv_frame",
+            "search_mode": "hybrid",
+        }
+        dispatcher._execute_downstream_agent = AsyncMock(return_value=downstream_answer)
+
+        # Capture the turns the runtime persists via the conversation-store seam.
+        stored: list[tuple[str, str]] = []
+
+        class _CaptureStore:
+            def get_history(self, ctx):
+                return []
+
+            def store_turn(self, ctx, role, content):
+                stored.append((role, content))
+
+        dispatcher._conversation_store_factory = lambda tenant: _CaptureStore()
+
+        result = await dispatcher.dispatch(
+            agent_name="gateway_agent",
+            query="find videos of cats",
+            context={"tenant_id": "acme:acme", "context_id": "chat-1"},
+        )
+
+        # The persisted assistant turn is the answer, not the breadcrumb.
+        assert ("user", "find videos of cats") in stored
+        assistant_turns = [c for (r, c) in stored if r == "assistant"]
+        assert assistant_turns == ["Found 3 results for 'find videos of cats'"]
+
+        # The response the caller/display consumes carries the answer as
+        # `message` and surfaces the hits at top level, gateway triage kept.
+        assert result["message"] == "Found 3 results for 'find videos of cats'"
+        assert not result["message"].startswith("Routed")
+        assert result["agent"] == "gateway_agent"
+        assert result["gateway"]["routed_to"] == "search_agent"
+        assert result["results_count"] == 3
+        assert result["results"] == downstream_answer["results"]
+        assert result["downstream_result"] == downstream_answer
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast

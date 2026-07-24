@@ -258,7 +258,7 @@ sequenceDiagram
     SearchAgent-->>Runtime: SearchOutput{results: [...]}
     deactivate SearchAgent
 
-    Runtime-->>User: {status: "success", agent: "gateway_agent",<br/>downstream_result: {...}}
+    Runtime-->>User: {status, agent: "gateway_agent", message: <answer>,<br/>results: [...], gateway: {...}, downstream_result: {...}}
 ```
 
 ### Scenario 2: Multi-Modal Query with Fusion
