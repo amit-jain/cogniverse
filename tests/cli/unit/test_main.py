@@ -394,6 +394,7 @@ class TestLogsCommand:
     @patch("cogniverse_cli.main.subprocess.run")
     def test_logs_runtime(self, mock_run: MagicMock) -> None:
         """Logs for runtime uses deployment resource."""
+        mock_run.return_value.returncode = 0
         runner = CliRunner()
         result = runner.invoke(cli, ["logs", "runtime"])
         assert result.exit_code == 0
@@ -404,6 +405,7 @@ class TestLogsCommand:
     @patch("cogniverse_cli.main.subprocess.run")
     def test_logs_vespa_follow(self, mock_run: MagicMock) -> None:
         """Logs for vespa with -f uses statefulset and follow flag."""
+        mock_run.return_value.returncode = 0
         runner = CliRunner()
         result = runner.invoke(cli, ["logs", "vespa", "-f"])
         assert result.exit_code == 0
@@ -425,6 +427,7 @@ class TestLogsCommand:
         self, mock_exists: MagicMock, mock_run: MagicMock
     ) -> None:
         """When LLM statefulset exists, shows logs from it."""
+        mock_run.return_value.returncode = 0
         runner = CliRunner()
         result = runner.invoke(cli, ["logs", "llm"])
         assert result.exit_code == 0
@@ -434,6 +437,7 @@ class TestLogsCommand:
     @patch("cogniverse_cli.main.subprocess.run")
     def test_logs_argo_uses_argo_namespace(self, mock_run: MagicMock) -> None:
         """Argo logs use the 'argo' namespace, not 'cogniverse'."""
+        mock_run.return_value.returncode = 0
         runner = CliRunner()
         result = runner.invoke(cli, ["logs", "argo"])
         assert result.exit_code == 0
@@ -559,3 +563,29 @@ class TestIndexCommandGate:
         assert result.exit_code == 0
         assert "not yet implemented" in result.output
         assert record == {}
+
+
+class TestLogsExitCode:
+    def test_logs_propagates_kubectl_failure(self) -> None:
+        """`cogniverse logs` exits with kubectl's code — a NotFound
+        previously exited 0, invisible to wrapping scripts."""
+        failing = MagicMock()
+        failing.returncode = 1
+        with patch("cogniverse_cli.main.subprocess.run", return_value=failing):
+            result = CliRunner().invoke(cli, ["logs", "runtime"])
+        assert result.exit_code == 1
+
+    def test_logs_success_exits_0(self) -> None:
+        ok = MagicMock()
+        ok.returncode = 0
+        with patch("cogniverse_cli.main.subprocess.run", return_value=ok):
+            result = CliRunner().invoke(cli, ["logs", "runtime"])
+        assert result.exit_code == 0
+
+    def test_logs_missing_kubectl_exits_127(self) -> None:
+        with patch(
+            "cogniverse_cli.main.subprocess.run",
+            side_effect=FileNotFoundError("kubectl"),
+        ):
+            result = CliRunner().invoke(cli, ["logs", "runtime"])
+        assert result.exit_code == 127

@@ -36,14 +36,21 @@ console = Console()
 def _kubectl(
     args: list[str], input_data: Optional[str] = None
 ) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["kubectl", *args],
-        input=input_data,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            ["kubectl", *args],
+            input=input_data,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError:
+        raise SystemExit(
+            "kubectl not found on PATH — install kubectl to sync secrets"
+        ) from None
+    except subprocess.TimeoutExpired:
+        raise SystemExit("kubectl timed out after 30s") from None
 
 
 def _read_hf_token() -> Optional[str]:

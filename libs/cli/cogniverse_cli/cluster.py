@@ -150,17 +150,29 @@ def has_existing_k8s() -> bool:
 
 
 def cluster_exists(name: str = CLUSTER_NAME) -> bool:
-    """Check if a k3d cluster with the given name exists."""
-    result = subprocess.run(
-        ["k3d", "cluster", "list", name],
-        capture_output=True,
-        timeout=10,
-    )
+    """Check if a k3d cluster with the given name exists.
+
+    A missing or hung k3d binary reads as "no cluster" — the same guard
+    has_existing_k8s uses — so `up` reaches its install-prerequisites
+    prompt instead of dying on a FileNotFoundError traceback.
+    """
+    try:
+        result = subprocess.run(
+            ["k3d", "cluster", "list", name],
+            capture_output=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
     return result.returncode == 0
 
 
 def _parse_port_csv(value: str | None) -> list[int]:
-    """Parse a comma-separated list of integer ports, ignoring blanks."""
+    """Parse a comma-separated list of integer ports, ignoring blanks.
+
+    A non-numeric entry aborts with a one-line config error instead of a
+    bare ValueError traceback mid-`cogniverse up`.
+    """
     if not value:
         return []
     out: list[int] = []
@@ -168,7 +180,13 @@ def _parse_port_csv(value: str | None) -> list[int]:
         raw = raw.strip()
         if not raw:
             continue
-        out.append(int(raw))
+        try:
+            out.append(int(raw))
+        except ValueError:
+            raise SystemExit(
+                f"Invalid port {raw!r} in {value!r} — "
+                f"COGNIVERSE_K3D_*PORTS entries must be integers"
+            ) from None
     return out
 
 

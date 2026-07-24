@@ -146,6 +146,16 @@ def _llm_statefulset_exists() -> bool:
     return result.returncode == 0
 
 
+def _run_kubectl_logs(cmd: list[str]) -> int:
+    """Run kubectl logs, mapping a missing binary to a clear exit."""
+    try:
+        result = subprocess.run(cmd, check=False)
+    except FileNotFoundError:
+        console.print("[red]kubectl not found on PATH[/red]")
+        return 127
+    return result.returncode
+
+
 def _print_status_table() -> None:
     """Print a Rich table showing health of all services."""
     health = check_service_health(SERVICE_HEALTH_URLS)
@@ -772,12 +782,16 @@ def sandbox_status() -> None:
         f"  Running: {'[green]yes[/green]' if gateway_running() else '[red]no[/red]'}"
     )
 
-    result = subprocess.run(
-        ["kubectl", "get", "secret", "openshell-mtls", "-n", NAMESPACE],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    try:
+        result = subprocess.run(
+            ["kubectl", "get", "secret", "openshell-mtls", "-n", NAMESPACE],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        console.print(f"  Synced to cluster: [red]unknown (kubectl: {exc})[/red]")
+        return
     synced = result.returncode == 0
     console.print(
         f"  Synced to cluster: {'[green]yes[/green]' if synced else '[red]no[/red]'}"
@@ -856,4 +870,8 @@ def logs(service: str, follow: bool) -> None:
     cmd = ["kubectl", "logs", resource, "-n", namespace]
     if follow:
         cmd.append("-f")
-    subprocess.run(cmd, check=False)
+    # Propagate kubectl's exit code — a NotFound previously exited 0, so
+    # scripts wrapping `cogniverse logs` could not detect failure.
+    code = _run_kubectl_logs(cmd)
+    if code:
+        raise SystemExit(code)
