@@ -562,7 +562,11 @@ def status() -> None:
     """Show status of the Cogniverse stack."""
     try:
         clusters = list_cluster_states()
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — degrade, but say why
+        # Rendering a docker/k3d outage as "no clusters" hid the actual
+        # problem — an operator cannot tell "nothing deployed" from
+        # "docker daemon down".
+        console.print(f"[yellow]Could not list k3d clusters: {exc}[/yellow]")
         clusters = []
     if clusters:
         cluster_table = Table(title="k3d Clusters")

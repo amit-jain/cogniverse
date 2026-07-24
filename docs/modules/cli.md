@@ -129,7 +129,7 @@ cogniverse index ./my-repo --type code --tenant acme
 cogniverse index ./my-repo --type code --tenant acme --profile code_lateon_mv
 ```
 
-Only `--type code` is currently implemented; `docs` and `video` are accepted but print a not-yet-implemented notice. Each file is uploaded to `/ingestion/upload` and polled to a terminal state, then a knowledge-graph extraction pass runs locally (tree-sitter for code) and POSTs the resulting nodes/edges to `/graph/upsert`.
+`--type code` and `--type docs` are implemented (`docs` maps each extension to its ingestion profile and runs markdown/text graph extraction); `video` is accepted but prints a not-yet-implemented notice. Each file is uploaded to `/ingestion/upload` and polled to a terminal state, then a knowledge-graph extraction pass runs locally (tree-sitter for code, GLiNER for text) and POSTs the resulting nodes/edges to `/graph/upsert`. Per-file graph-extraction failures are counted and listed in the run summary as graph errors rather than silently producing zero nodes.
 
 ### Knowledge graph
 
@@ -140,7 +140,7 @@ cogniverse graph neighbors <node_id> --tenant acme --depth 1
 cogniverse graph path <source_node> <target_node> --tenant acme --max-depth 4
 ```
 
-Every `graph` subcommand resolves the tenant from `--tenant`, falling back to `$COGNIVERSE_TENANT_ID`; if neither is set the command exits with an error pointing at `POST /admin/tenants`.
+Every `graph` subcommand resolves the tenant from `--tenant`, falling back to `$COGNIVERSE_TENANT_ID`; if neither is set the command exits with an error pointing at `POST /admin/tenants`. Failures use the same exit codes as `cogniverse admin`: 2 when the runtime is unreachable, 3 on a non-200 or non-JSON response — so scripts can branch on failure instead of parsing output.
 
 ### Admin
 

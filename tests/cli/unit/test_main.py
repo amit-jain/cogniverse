@@ -589,3 +589,45 @@ class TestLogsExitCode:
         ):
             result = CliRunner().invoke(cli, ["logs", "runtime"])
         assert result.exit_code == 127
+
+
+class TestResolveCliTenant:
+    def test_explicit_flag_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cogniverse_cli.main import _resolve_cli_tenant
+
+        monkeypatch.setenv("COGNIVERSE_TENANT_ID", "env:tenant")
+        assert _resolve_cli_tenant("flag:tenant") == "flag:tenant"
+
+    def test_env_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from cogniverse_cli.main import _resolve_cli_tenant
+
+        monkeypatch.setenv("COGNIVERSE_TENANT_ID", "env:tenant")
+        assert _resolve_cli_tenant(None) == "env:tenant"
+
+    def test_missing_tenant_is_a_clear_click_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import click
+        from cogniverse_cli.main import _resolve_cli_tenant
+
+        monkeypatch.delenv("COGNIVERSE_TENANT_ID", raising=False)
+        with pytest.raises(click.ClickException) as exc:
+            _resolve_cli_tenant(None)
+        assert "--tenant" in str(exc.value)
+
+
+class TestStatusClusterOutage:
+    def test_docker_outage_is_named_not_flattened(self) -> None:
+        """A docker/k3d outage prints why cluster listing failed instead of
+        rendering as "no clusters"."""
+        with (
+            patch(
+                "cogniverse_cli.main.list_cluster_states",
+                side_effect=RuntimeError("docker daemon unreachable"),
+            ),
+            patch("cogniverse_cli.main._print_status_table"),
+        ):
+            result = CliRunner().invoke(cli, ["status"])
+        assert result.exit_code == 0
+        assert "Could not list k3d clusters" in result.output
+        assert "docker daemon unreachable" in result.output
