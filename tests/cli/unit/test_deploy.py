@@ -221,6 +221,24 @@ class TestReleaseExistsContract:
                 release_exists()
         assert "unreachable" in str(se.value)
 
+    def test_connection_error_mentioning_not_found_aborts(self):
+        # A connection failure whose body merely contains "not found" (here the
+        # API server URL) is not an absent release: it must abort, not read as
+        # "no release" the way a bare "not found" substring would.
+        from cogniverse_cli.deploy import release_exists
+
+        stderr = (
+            "Error: Kubernetes cluster unreachable: Get "
+            '"https://127.0.0.1:6443/version": dial tcp 127.0.0.1:6443: '
+            'connect: connection refused; server "not found"'
+        )
+        with patch(
+            "cogniverse_cli.deploy.subprocess.run",
+            return_value=self._completed(1, stderr),
+        ):
+            with pytest.raises(SystemExit):
+                release_exists()
+
     def test_missing_helm_aborts_with_clear_message(self):
         from cogniverse_cli.deploy import release_exists
 

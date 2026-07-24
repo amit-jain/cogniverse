@@ -40,7 +40,7 @@ def release_exists(name: str = RELEASE_NAME, namespace: str = NAMESPACE) -> bool
     if result.returncode == 0:
         return True
     stderr = (result.stderr or "").lower()
-    if "not found" in stderr:
+    if "release: not found" in stderr:
         return False
     raise SystemExit(
         f"helm status failed ({result.returncode}): "

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import signal
 import subprocess
 import time
 
@@ -444,12 +445,81 @@ def _start_single_port_forward(
     )
 
 
+# Grace given to a SIGTERM'd daemon group before it is SIGKILLed. The daemon
+# is a shell restart-loop that stays blocked in its child and does not exit on
+# SIGTERM, so the group must be force-killed to actually reap it.
+_REAP_GRACE_SECONDS = 3.0
+
+
+def _pgroup_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _terminate_recorded_daemons() -> None:
+    """Terminate the port-forward daemons recorded in ``PID_FILE``.
+
+    Each daemon is spawned as its own session leader (``start_new_session``),
+    so its PID is also its process-group id. The daemon's shell restart-loop
+    survives ``SIGTERM`` while blocked on its child, so each group is sent
+    ``SIGTERM``, given ``_REAP_GRACE_SECONDS`` to exit, then ``SIGKILL``ed. The
+    file is removed once the recorded daemons are gone.
+    """
+    if not os.path.exists(PID_FILE):
+        return
+
+    with open(PID_FILE) as f:
+        recorded = [line.strip() for line in f if line.strip()]
+
+    pgids: list[int] = []
+    for entry in recorded:
+        try:
+            pid = int(entry)
+        except ValueError:
+            continue
+        try:
+            pgids.append(os.getpgid(pid))
+        except (ProcessLookupError, PermissionError):
+            continue
+
+    for pgid in pgids:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    deadline = time.monotonic() + _REAP_GRACE_SECONDS
+    while time.monotonic() < deadline:
+        pgids = [pgid for pgid in pgids if _pgroup_alive(pgid)]
+        if not pgids:
+            break
+        time.sleep(0.05)
+
+    for pgid in pgids:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    os.unlink(PID_FILE)
+
+
 def start_port_forwards() -> None:
     """Start kubectl port-forward for all services as detached daemons.
 
     Uses ``start_new_session=True`` so processes survive after the CLI exits.
-    PIDs are written to ``PID_FILE`` for cross-process cleanup.
+    Daemons recorded from a prior start are reaped first so a repeated start
+    never orphans an earlier restart-loop still retrying its bind. PIDs are
+    written to ``PID_FILE`` for cross-process cleanup.
     """
+
+    _terminate_recorded_daemons()
+    _port_forward_procs.clear()
 
     pids: list[int] = []
 
@@ -496,12 +566,10 @@ def restart_dead_port_forwards() -> None:
 def stop_port_forwards() -> None:
     """Stop all background port-forward processes.
 
-    Kills the entire process group (shell wrapper + kubectl children).
+    Kills the entire process group (shell wrapper + kubectl children) for the
+    in-process daemons, then reaps any recorded in ``PID_FILE`` so a fresh CLI
+    process (empty in-process list) still tears down daemons a prior run left.
     """
-    import os
-    import signal
-
-    # Kill process groups from in-process list
     for proc in _port_forward_procs:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -516,15 +584,4 @@ def stop_port_forwards() -> None:
                 pass
     _port_forward_procs.clear()
 
-    # Also kill from PID file (for cross-process cleanup)
-    if os.path.exists(PID_FILE):
-        with open(PID_FILE) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        pgid = os.getpgid(int(line))
-                        os.killpg(pgid, signal.SIGTERM)
-                    except (ProcessLookupError, ValueError, PermissionError):
-                        pass
-        os.unlink(PID_FILE)
+    _terminate_recorded_daemons()

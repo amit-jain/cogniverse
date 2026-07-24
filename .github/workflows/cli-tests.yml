@@ -61,10 +61,12 @@ jobs:
         uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
 
     # No -m marker filter: a file lacking the marker would silently stop
-    # running in CI while still passing locally.
-    - name: Run unit tests
+    # running in CI while still passing locally. The integration suite is
+    # real-process/real-subprocess (no cluster/Docker) so it runs here too.
+    - name: Run unit and integration tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/cli/unit/ \
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+          tests/cli/unit/ tests/cli/integration/ \
           -v --tb=short
 
   lint:

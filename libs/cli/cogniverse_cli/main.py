@@ -30,6 +30,7 @@ from cogniverse_cli.cluster import (
     start_cluster,
     start_port_forwards,
     stop_cluster,
+    stop_port_forwards,
 )
 from cogniverse_cli.config import (
     get_chart_path,
@@ -508,7 +509,13 @@ def up(
         )
         console.print(f"[yellow]Some pods not ready:[/yellow]\n{result.stdout}")
 
-    # 10. Verify services via HTTP health checks
+    # 10. Bridge services with no NodePort (argo runs in its own namespace) to
+    # localhost. Reaps any daemon a prior up left so repeated runs don't orphan
+    # a restart-loop still retrying its bind.
+    console.print("[cyan]Starting service port-forwards...[/cyan]")
+    start_port_forwards()
+
+    # 11. Verify services via HTTP health checks
     # With NodePort services on k3d, ports are directly reachable via loadbalancer.
     console.print("[cyan]Verifying service health...[/cyan]")
     health_urls = {
@@ -536,6 +543,9 @@ def up(
 )
 def down(keep_data: bool) -> None:
     """Tear down the Cogniverse stack."""
+    console.print("[cyan]Stopping service port-forwards...[/cyan]")
+    stop_port_forwards()
+
     console.print("[cyan]Removing Helm release...[/cyan]")
     helm_uninstall()
 
@@ -611,6 +621,10 @@ def stop(name: str) -> None:
         raise SystemExit(1)
     console.print(f"[cyan]Stopping cluster {name}...[/cyan]")
     stop_cluster(name)
+    if name == CLUSTER_NAME:
+        # The dev stack's kubectl port-forwards are dead once the cluster
+        # halts; reap their restart-loops so a later start rebinds cleanly.
+        stop_port_forwards()
     console.print(
         f"[green]Cluster {name} stopped — data preserved; "
         f"resume with `cogniverse start --name {name}`.[/green]"

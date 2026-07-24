@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import signal
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,8 @@ from cogniverse_cli.cluster import (
     has_existing_k8s,
     install_missing_prerequisites,
     install_prerequisite,
+    start_port_forwards,
+    stop_port_forwards,
 )
 
 
@@ -438,6 +441,8 @@ class TestInstallMissingPrerequisites:
         monkeypatch.setattr(cluster, "install_prerequisite", lambda tool: True)
         monkeypatch.setattr(cluster.shutil, "which", lambda tool: "/usr/bin/" + tool)
         assert install_missing_prerequisites(["k3d", "helm"]) == []
+
+
 class TestPinCorednsUpstreams:
     """k3d's CoreDNS forwards to the host's resolv.conf; a dead host resolver
     fails every pod's external DNS (vLLM crashloops, flapping NodePorts).
@@ -544,3 +549,150 @@ class TestPinCorednsUpstreams:
         calls = [c[0][0] for c in mock_run.call_args_list]
         assert calls[0] == ["k3d", "cluster", "start", "cogniverse"]
         assert any("configmap" in c for c in calls[1:])
+
+
+class _FakeProc:
+    """Stand-in for a spawned port-forward daemon."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.args = ["sh", "-c", "while true; do kubectl port-forward ...; done"]
+
+    def poll(self) -> None:
+        return None
+
+
+@pytest.fixture
+def _isolated_pid_file(tmp_path, monkeypatch):
+    """Point PID_FILE at a temp file and clear the in-process daemon list."""
+    pid_file = tmp_path / "port-forwards.pids"
+    monkeypatch.setattr(cluster, "PID_FILE", str(pid_file))
+    cluster._port_forward_procs.clear()
+    yield pid_file
+    cluster._port_forward_procs.clear()
+
+
+class _FakeGroups:
+    """Simulate process groups: SIGTERM/SIGKILL end a group, signal 0 probes it.
+
+    Groups in ``survive_sigterm`` ignore SIGTERM (like the real dash restart
+    loop), so reaping must escalate to SIGKILL to end them.
+    """
+
+    def __init__(self, alive, survive_sigterm=()) -> None:
+        self.alive = set(alive)
+        self.survive_sigterm = set(survive_sigterm)
+        self.term: list[int] = []
+        self.kill: list[int] = []
+        self.on_term = None
+
+    def getpgid(self, pid: int) -> int:
+        if pid not in self.alive:
+            raise ProcessLookupError
+        return pid
+
+    def killpg(self, pgid: int, sig: int) -> None:
+        if sig == 0:
+            if pgid not in self.alive:
+                raise ProcessLookupError
+            return
+        if sig == signal.SIGTERM:
+            self.term.append(pgid)
+            if self.on_term is not None:
+                self.on_term(pgid)
+            if pgid not in self.survive_sigterm:
+                self.alive.discard(pgid)
+        elif sig == signal.SIGKILL:
+            self.kill.append(pgid)
+            self.alive.discard(pgid)
+
+    def install(self, monkeypatch) -> None:
+        monkeypatch.setattr(cluster.os, "getpgid", self.getpgid)
+        monkeypatch.setattr(cluster.os, "killpg", self.killpg)
+
+
+class TestPortForwardReaping:
+    """Tests for orphan-free (re)start and stop of port-forward daemons."""
+
+    def test_start_reaps_prior_daemon_before_writing_new_pid(
+        self, _isolated_pid_file, monkeypatch
+    ) -> None:
+        """A prior recorded daemon's process group is signalled before the new
+        PID lands on disk, so a second start never orphans the first."""
+        pid_file = _isolated_pid_file
+        pid_file.write_text("4242")
+
+        groups = _FakeGroups(alive=[4242])
+        disk_at_term: list[str] = []
+        groups.on_term = lambda pgid: disk_at_term.append(
+            pid_file.read_text() if pid_file.exists() else ""
+        )
+        groups.install(monkeypatch)
+        monkeypatch.setattr(
+            cluster.subprocess, "Popen", lambda *a, **k: _FakeProc(9999)
+        )
+
+        start_port_forwards()
+
+        assert groups.term == [4242]
+        assert groups.kill == []  # exited on SIGTERM, no escalation needed
+        # The prior PID was still the only thing on disk at reap time.
+        assert disk_at_term == ["4242"]
+        # The new daemon's PID overwrote it only after the reap.
+        assert pid_file.read_text().strip() == "9999"
+
+    def test_reap_escalates_to_sigkill_when_sigterm_ignored(
+        self, _isolated_pid_file, monkeypatch
+    ) -> None:
+        """A daemon that ignores SIGTERM (the real shell loop) is SIGKILLed."""
+        pid_file = _isolated_pid_file
+        pid_file.write_text("777")
+        monkeypatch.setattr(cluster, "_REAP_GRACE_SECONDS", 0.1)
+
+        groups = _FakeGroups(alive=[777], survive_sigterm=[777])
+        groups.install(monkeypatch)
+        monkeypatch.setattr(
+            cluster.subprocess, "Popen", lambda *a, **k: _FakeProc(9999)
+        )
+
+        start_port_forwards()
+
+        assert groups.term == [777]
+        assert groups.kill == [777]
+        assert pid_file.read_text().strip() == "9999"
+
+    def test_start_survives_dead_prior_daemon(
+        self, _isolated_pid_file, monkeypatch
+    ) -> None:
+        """A prior daemon that already exited does not abort the restart."""
+        pid_file = _isolated_pid_file
+        pid_file.write_text("4242")
+
+        groups = _FakeGroups(alive=[])  # prior daemon already gone
+        groups.install(monkeypatch)
+        monkeypatch.setattr(
+            cluster.subprocess, "Popen", lambda *a, **k: _FakeProc(9999)
+        )
+
+        start_port_forwards()
+
+        assert groups.term == []
+        assert groups.kill == []
+        assert pid_file.read_text().strip() == "9999"
+
+    def test_stop_reaps_recorded_pids_cross_process(
+        self, _isolated_pid_file, monkeypatch
+    ) -> None:
+        """stop reaps daemons recorded in PID_FILE with an empty in-process
+        list (the fresh-process case) and removes the file."""
+        pid_file = _isolated_pid_file
+        pid_file.write_text("111\n222")
+
+        groups = _FakeGroups(alive=[111, 222])
+        groups.install(monkeypatch)
+
+        stop_port_forwards()
+
+        assert sorted(groups.term) == [111, 222]
+        assert groups.kill == []
+        assert not pid_file.exists()
