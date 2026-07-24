@@ -288,3 +288,103 @@ class TestDocumentSchemaFieldMapping:
 
         with pytest.raises(ValueError, match="created_at_format"):
             DocumentFieldMapping(created_at_format="unix")
+
+
+class TestMappingPathAndUpdatedAt:
+    def test_content_path_and_updated_at_map(self):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        doc = Document(
+            id="d",
+            content_path="/data/report.txt",
+            created_at=1700000000,
+            updated_at=1700000600,
+        )
+        out = doc.to_schema_fields(
+            DocumentFieldMapping(
+                id="doc_id",
+                content_path="file_path",
+                created_at="created_at",
+                updated_at="updated_at",
+                created_at_format="iso",
+            )
+        )
+        assert out["file_path"] == "/data/report.txt"
+        assert out["created_at"] == "2023-11-14T22:13:20+00:00"
+        assert out["updated_at"] == "2023-11-14T22:23:20+00:00"
+
+
+class TestDeclaredSchemaMappings:
+    """Every document_mapping block in configs/schemas must parse and refer
+    only to fields its schema actually declares, with timestamp formats
+    matching the field types — a typo here means feeds 400 at runtime."""
+
+    def _schemas_with_mappings(self):
+        import json
+        from pathlib import Path
+
+        for path in sorted(Path("configs/schemas").glob("*_schema.json")):
+            data = json.loads(path.read_text())
+            if "document_mapping" in data:
+                yield path.name, data
+
+    def _field_types(self, schema_json):
+        types = {}
+
+        def walk(node):
+            if isinstance(node, dict):
+                name = node.get("name")
+                if name and "type" in node and not str(name).startswith("query("):
+                    types[name] = node["type"]
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(schema_json.get("document", {}))
+        return types
+
+    def test_all_declared_mappings_are_valid(self):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        checked = 0
+        for name, schema_json in self._schemas_with_mappings():
+            mapping = DocumentFieldMapping.from_dict(schema_json["document_mapping"])
+            types = self._field_types(schema_json)
+
+            targets = {
+                key: getattr(mapping, key)
+                for key in (
+                    "id",
+                    "title",
+                    "text_content",
+                    "description",
+                    "content_type",
+                    "content_id",
+                    "content_path",
+                    "created_at",
+                    "updated_at",
+                )
+                if getattr(mapping, key)
+            }
+            for generic, target in targets.items():
+                assert target in types, f"{name}: {generic} -> {target} not in schema"
+            for target in mapping.embeddings.values():
+                assert target in types, f"{name}: embedding target {target} missing"
+
+            for stamp_field in ("created_at", "updated_at"):
+                target = getattr(mapping, stamp_field)
+                if not target:
+                    continue
+                if mapping.created_at_format == "epoch":
+                    assert types[target] in ("long", "int"), (
+                        f"{name}: {target} is {types[target]}, epoch needs long/int"
+                    )
+                else:
+                    assert types[target] == "string", (
+                        f"{name}: {target} is {types[target]}, iso needs string"
+                    )
+            checked += 1
+
+        assert checked >= 13, f"expected all declared mappings, found {checked}"

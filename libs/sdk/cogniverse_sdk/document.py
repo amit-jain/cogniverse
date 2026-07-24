@@ -65,7 +65,9 @@ class DocumentFieldMapping:
     description: Optional[str] = None
     content_type: Optional[str] = None
     content_id: Optional[str] = None
+    content_path: Optional[str] = None
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
     created_at_format: str = "epoch"  # "epoch" (int seconds) or "iso" (UTC)
     embeddings: Dict[str, str] = field(default_factory=dict)
     include_metadata: bool = True
@@ -92,7 +94,9 @@ class DocumentFieldMapping:
             "description",
             "content_type",
             "content_id",
+            "content_path",
             "created_at",
+            "updated_at",
             "created_at_format",
             "embeddings",
             "include_metadata",
@@ -263,13 +267,18 @@ class Document:
             core[mapping.content_type] = self.content_type.value
         if mapping.content_id and self.content_id is not None:
             core[mapping.content_id] = self.content_id
-        if mapping.created_at:
+        if mapping.content_path and self.content_path is not None:
+            core[mapping.content_path] = str(self.content_path)
+
+        def _stamp(value: int) -> Any:
             if mapping.created_at_format == "iso":
-                core[mapping.created_at] = datetime.fromtimestamp(
-                    self.created_at, tz=timezone.utc
-                ).isoformat()
-            else:
-                core[mapping.created_at] = self.created_at
+                return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+            return value
+
+        if mapping.created_at:
+            core[mapping.created_at] = _stamp(self.created_at)
+        if mapping.updated_at:
+            core[mapping.updated_at] = _stamp(self.updated_at)
         fields_out.update(core)
 
         for emb_name, schema_field in mapping.embeddings.items():
