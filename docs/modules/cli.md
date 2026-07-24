@@ -116,6 +116,8 @@ cogniverse logs runtime --follow
 
 `up` accepts `--llm {auto,builtin,external}` (default `auto`, which probes `localhost:11434` for a host LLM before falling back to the chart's builtin model) and `--image-source` to override the workspace directory used for image builds. `logs` targets one of `runtime`, `dashboard`, `vespa`, `phoenix`, `llm`, `argo`; `logs llm` checks for the `cogniverse-llm` statefulset first and prints a notice instead of erroring when the stack is running in external-LLM mode (no builtin pod).
 
+Services with no NodePort — currently the Argo server (it runs in its own namespace) reachable at `localhost:2746` — are bridged by detached, self-restarting `kubectl port-forward` daemons recorded in `/tmp/cogniverse-port-forwards.pids`. `up` and `start` (dev cluster only) establish them; each first reaps the daemons a prior run recorded, so repeated runs never orphan an earlier restart-loop still retrying its bind. `down` and `stop` (dev cluster only) reap them.
+
 ### Coding agent
 
 ```bash
@@ -232,7 +234,7 @@ Environment variables read across CLI commands:
 uv run pytest tests/cli/unit/ -v --tb=long
 ```
 
-One test module per source module: `test_main.py` (`up`/`down`/`status`/`logs`, host-LLM probing), `test_cluster.py` (prerequisite checks, k3d lifecycle), `test_config.py` (chart/workflow path resolution in dev vs. installed mode), `test_deploy.py` (Helm install/upgrade/uninstall), `test_images.py` (torch-backend detection, image build/import), `test_argo.py` (WorkflowTemplate/CronWorkflow filtering), `test_health.py` (URL polling and health snapshots), `test_secrets_sync.py` (hf-token sync), `test_sandbox_cli.py` (OpenShell gateway install/sync/status), `test_code_cli.py` (A2A request building, SSE event parsing, the REPL session, slash commands, and `index.py`'s `collect_files` filtering), and `test_admin_and_graph_cli.py` (orphan reconciliation, graph stats/search/upsert payloads) — each against a mocked `subprocess`/`kubectl`/`helm`/`httpx` boundary.
+One test module per source module: `test_main.py` (`up`/`down`/`status`/`logs`/`start`/`stop`, host-LLM probing, port-forward start/reap wiring), `test_cluster.py` (prerequisite checks, k3d lifecycle, orphan-free port-forward restart/stop), `test_config.py` (chart/workflow path resolution in dev vs. installed mode), `test_deploy.py` (Helm install/upgrade/uninstall, release-existence classification), `test_images.py` (torch-backend detection, image build/import), `test_argo.py` (WorkflowTemplate/CronWorkflow filtering), `test_health.py` (URL polling and health snapshots), `test_secrets_sync.py` (hf-token sync), `test_sandbox_cli.py` (OpenShell gateway install/sync/status), `test_code_cli.py` (A2A request building, SSE event parsing, the REPL session, slash commands, and `index.py`'s `collect_files` filtering), and `test_admin_and_graph_cli.py` (orphan reconciliation, graph stats/search/upsert payloads) — each against a mocked `subprocess`/`kubectl`/`helm`/`httpx` boundary.
 
 `tests/e2e/test_coding_cli_e2e.py` and `tests/e2e/test_graph_cli_e2e.py` exercise the `index`, `code`, and `graph` commands against a real running runtime (upload → ingest → graph upsert round-trip).
 

@@ -106,8 +106,10 @@ class TestUpCommand:
     @patch("cogniverse_cli.main.cluster_exists", return_value=True)
     @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
+    @patch("cogniverse_cli.main.start_port_forwards")
     def test_up_k3d_builtin_llm(
         self,
+        mock_start_pf: MagicMock,
         mock_k8s: MagicMock,
         mock_prereq: MagicMock,
         mock_cluster: MagicMock,
@@ -156,8 +158,10 @@ class TestUpCommand:
     @patch("cogniverse_cli.main.cluster_exists", return_value=True)
     @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
+    @patch("cogniverse_cli.main.start_port_forwards")
     def test_up_k3d_auto_detects_host_llm(
         self,
+        mock_start_pf: MagicMock,
         mock_k8s: MagicMock,
         mock_prereq: MagicMock,
         mock_cluster: MagicMock,
@@ -206,8 +210,10 @@ class TestUpCommand:
     @patch("cogniverse_cli.main.cluster_exists", return_value=False)
     @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
     @patch("cogniverse_cli.main.has_existing_k8s", return_value=True)
+    @patch("cogniverse_cli.main.start_port_forwards")
     def test_up_existing_k8s_uses_prod_values(
         self,
+        mock_start_pf: MagicMock,
         mock_k8s: MagicMock,
         mock_prereq: MagicMock,
         mock_cluster: MagicMock,
@@ -249,6 +255,49 @@ class TestUpCommand:
         result = runner.invoke(cli, ["up", "--llm", "external"])
         assert result.exit_code != 0
         assert "--llm-url is required" in result.output
+
+    @patch("cogniverse_cli.main.start_port_forwards")
+    @patch("cogniverse_cli.main._print_status_table")
+    @patch("cogniverse_cli.main.deploy_workflow_templates")
+    @patch("cogniverse_cli.main.install_argo_controller")
+    @patch("cogniverse_cli.main.subprocess.run")
+    @patch("cogniverse_cli.main.wait_for_url", return_value=True)
+    @patch("cogniverse_cli.main.helm_install")
+    @patch("cogniverse_cli.main.pull_and_import_third_party")
+    @patch("cogniverse_cli.main.get_values_file", return_value=Path("/v.yaml"))
+    @patch("cogniverse_cli.main.get_chart_path", return_value=Path("/chart"))
+    @patch("cogniverse_cli.main.get_workflows_path", return_value=Path("/wf"))
+    @patch("cogniverse_cli.main._probe_host_llm", return_value=False)
+    @patch("cogniverse_cli.main.has_workspace_source", return_value=False)
+    @patch("cogniverse_cli.main.resolve_project_root", return_value=Path("/root"))
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    @patch("cogniverse_cli.main.check_prerequisites", return_value=[])
+    @patch("cogniverse_cli.main.has_existing_k8s", return_value=False)
+    def test_up_starts_port_forwards(
+        self,
+        mock_k8s: MagicMock,
+        mock_prereq: MagicMock,
+        mock_cluster: MagicMock,
+        mock_root: MagicMock,
+        mock_ws: MagicMock,
+        mock_probe: MagicMock,
+        mock_wf_path: MagicMock,
+        mock_chart: MagicMock,
+        mock_values: MagicMock,
+        mock_pull: MagicMock,
+        mock_helm: MagicMock,
+        mock_wait: MagicMock,
+        mock_subprocess: MagicMock,
+        mock_argo: MagicMock,
+        mock_deploy_wf: MagicMock,
+        mock_status: MagicMock,
+        mock_start_pf: MagicMock,
+    ) -> None:
+        """A full up establishes the Argo port-forward exactly once."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["up"])
+        assert result.exit_code == 0
+        mock_start_pf.assert_called_once()
 
 
 class TestUpImagePrune:
@@ -346,8 +395,10 @@ class TestDownCommand:
     @patch("cogniverse_cli.main.delete_cluster")
     @patch("cogniverse_cli.main.subprocess.run")
     @patch("cogniverse_cli.main.helm_uninstall")
+    @patch("cogniverse_cli.main.stop_port_forwards")
     def test_down_full_teardown(
         self,
+        mock_stop_pf: MagicMock,
         mock_uninstall: MagicMock,
         mock_run: MagicMock,
         mock_delete: MagicMock,
@@ -366,6 +417,7 @@ class TestDownCommand:
         assert "cogniverse" in namespaces_deleted
         assert "argo" in namespaces_deleted
 
+    @patch("cogniverse_cli.main.stop_port_forwards")
     @patch("cogniverse_cli.main.cluster_exists", return_value=False)
     @patch("cogniverse_cli.main.subprocess.run")
     @patch("cogniverse_cli.main.helm_uninstall")
@@ -374,6 +426,7 @@ class TestDownCommand:
         mock_uninstall: MagicMock,
         mock_run: MagicMock,
         mock_exists: MagicMock,
+        mock_stop_pf: MagicMock,
     ) -> None:
         """A failed `kubectl delete namespace` surfaces stderr and exits
         nonzero — it previously printed "stack removed" and exited 0."""
@@ -390,13 +443,27 @@ class TestDownCommand:
         assert mock_run.call_count == 2
         assert "Cogniverse stack removed." not in result.output
 
+    @patch("cogniverse_cli.main.stop_port_forwards")
     @patch("cogniverse_cli.main.helm_uninstall")
-    def test_down_keep_data(self, mock_uninstall: MagicMock) -> None:
+    def test_down_keep_data(
+        self, mock_uninstall: MagicMock, mock_stop_pf: MagicMock
+    ) -> None:
         """With --keep-data, only removes the Helm release."""
         runner = CliRunner()
         result = runner.invoke(cli, ["down", "--keep-data"])
         assert result.exit_code == 0
         mock_uninstall.assert_called_once()
+
+    @patch("cogniverse_cli.main.stop_port_forwards")
+    @patch("cogniverse_cli.main.helm_uninstall")
+    def test_down_reaps_port_forwards(
+        self, mock_uninstall: MagicMock, mock_stop_pf: MagicMock
+    ) -> None:
+        """Teardown reaps any running port-forward daemons exactly once."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["down", "--keep-data"])
+        assert result.exit_code == 0
+        mock_stop_pf.assert_called_once()
 
 
 class TestStatusCommand:
@@ -516,6 +583,22 @@ class TestStopStartCommands:
 
         assert result.exit_code != 0
         mock_stop.assert_not_called()
+
+    @patch("cogniverse_cli.main.stop_port_forwards")
+    @patch("cogniverse_cli.main.stop_cluster")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    def test_stop_dev_cluster_reaps_port_forwards(
+        self,
+        mock_exists: MagicMock,
+        mock_stop: MagicMock,
+        mock_forwards: MagicMock,
+    ) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["stop"])
+
+        assert result.exit_code == 0
+        mock_stop.assert_called_once_with("cogniverse")
+        mock_forwards.assert_called_once()
 
     @patch("cogniverse_cli.main.start_port_forwards")
     @patch("cogniverse_cli.main.start_cluster")
