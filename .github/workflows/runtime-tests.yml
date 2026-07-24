@@ -68,6 +68,8 @@ jobs:
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
           tests/runtime/unit/ \
           tests/admin/unit/ \
+          tests/foundation/unit/ \
+          tests/events/unit/ \
           -v --tb=short \
           --cov=libs/runtime/cogniverse_runtime \
           --cov-report=term-missing \
@@ -194,4 +196,14 @@ jobs:
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/admin/ \
           -m "integration" \
+          -v --tb=short
+
+    - name: Run platform integration tests
+      timeout-minutes: 10
+      run: |
+        # Small self-contained suites (no heavy model sidecars); memory
+        # integration needs the vLLM DenseOn sidecar and stays local-tier.
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/events/integration/ \
+          tests/foundation/integration/ \
           -v --tb=short

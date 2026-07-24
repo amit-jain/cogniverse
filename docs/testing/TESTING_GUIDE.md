@@ -748,13 +748,13 @@ workflows not tied to a single module:
 |----------|--------|-------|-----------------|
 | `agents-tests.yml` | cogniverse-agents | unit + integration | Vespa (ci_fast subset) |
 | `chart-validation.yml` | Helm chart (`charts/cogniverse`) | lint + template + kubeconform | None |
-| `core-tests.yml` | cogniverse-core | unit + integration | Vespa |
+| `core-tests.yml` | cogniverse-core (incl. `tests/memory/unit`; memory integration is local-tier — it needs the vLLM DenseOn sidecar) | unit + integration | Vespa |
 | `dashboard-tests.yml` | cogniverse-dashboard | unit + integration | None (TestClient) |
 | `evaluation-tests.yml` | cogniverse-evaluation | unit + integration | Phoenix |
 | `finetuning-tests.yml` | cogniverse-finetuning | unit + integration | Vespa |
 | `ingestion-tests.yml` | cogniverse-runtime (ingestion) | unit + integration | Vespa |
 | `routing-tests.yml` | cogniverse-agents (routing) | unit + integration | Vespa |
-| `runtime-tests.yml` | cogniverse-runtime, cogniverse-core, cogniverse-foundation | unit + integration | Vespa |
+| `runtime-tests.yml` | cogniverse-runtime, cogniverse-foundation, cogniverse-cli, events, cogniverse-messaging (unit for all; integration for runtime + the small events/foundation/messaging suites) | unit + integration | Vespa |
 | `synthetic-tests.yml` | cogniverse-synthetic | unit + integration | Phoenix |
 | `telemetry-tests.yml` | cogniverse-telemetry-phoenix | unit + integration | Phoenix |
 | `vespa-tests.yml` | cogniverse-vespa | unit + integration | Vespa |
