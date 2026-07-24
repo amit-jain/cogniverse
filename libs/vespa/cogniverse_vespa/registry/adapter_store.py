@@ -11,7 +11,10 @@ from typing import Any, Dict, List, Optional
 from vespa.application import Vespa
 
 from cogniverse_sdk.interfaces.adapter_store import AdapterStore
-from cogniverse_vespa._vespa_factory import make_persistent_vespa_ops
+from cogniverse_vespa._vespa_factory import (
+    make_persistent_vespa_ops,
+    raise_if_degraded,
+)
 from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
@@ -152,6 +155,9 @@ class VespaAdapterStore(AdapterStore):
 
         try:
             response = self.vespa_app.query(yql=yql)
+            # A soft-timeout is HTTP 200 with empty hits — reading it as
+            # "no adapter" masks the degradation.
+            raise_if_degraded(response, f"adapter {adapter_id}")
 
             if not response.hits or len(response.hits) == 0:
                 return None
@@ -201,6 +207,7 @@ class VespaAdapterStore(AdapterStore):
 
         try:
             response = self.vespa_app.query(yql=yql)
+            raise_if_degraded(response, f"adapters for tenant {tenant_id}")
 
             results = []
             for hit in response.hits:
@@ -238,6 +245,9 @@ class VespaAdapterStore(AdapterStore):
 
         try:
             response = self.vespa_app.query(yql=yql)
+            # Degraded 200 + empty hits read as "no active adapter" silently
+            # reverts the tenant's finetuned LoRA to the base model — raise.
+            raise_if_degraded(response, f"active adapter for {tenant_id}/{agent_type}")
 
             if not response.hits or len(response.hits) == 0:
                 return None
@@ -412,9 +422,10 @@ class VespaAdapterStore(AdapterStore):
         Returns:
             Dictionary with storage statistics
         """
+        yql = f"select adapter_id, tenant_id, status from {self.schema_name} where true limit 1000"
         try:
-            yql = f"select adapter_id, tenant_id, status from {self.schema_name} where true limit 1000"
             response = self.vespa_app.query(yql=yql)
+            raise_if_degraded(response, "adapter stats")
 
             total_adapters = len(response.hits)
             unique_tenants = len(
@@ -436,12 +447,7 @@ class VespaAdapterStore(AdapterStore):
             }
 
         except Exception as e:
-            logger.error(f"Failed to get stats from Vespa: {e}")
-            return {
-                "total_adapters": 0,
-                "total_tenants": 0,
-                "adapters_by_status": {},
-                "storage_backend": "vespa",
-                "schema_name": self.schema_name,
-                "error": str(e),
-            }
+            # Zero-counts on an outage read as "no adapters registered" —
+            # raise, matching every other read in this store.
+            logger.error(f"Failed to get stats from Vespa: {e!r}")
+            raise

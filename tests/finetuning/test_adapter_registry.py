@@ -358,6 +358,17 @@ class TestAdapterRegistry:
 class TestVespaAdapterStore:
     """Tests for VespaAdapterStore with mocked Vespa client."""
 
+    @staticmethod
+    def _healthy_response(hits):
+        """Query response modeling the real pyvespa shape: ``hits`` mirrors
+        ``root.children`` and ``get_json`` exposes a clean body (no
+        root.errors, no degraded coverage) so the degraded-read guard sees
+        the healthy contract."""
+        response = MagicMock()
+        response.hits = hits
+        response.get_json.return_value = {"root": {"children": hits}}
+        return response
+
     @pytest.fixture
     def mock_vespa_app(self):
         """Create a mocked Vespa application."""
@@ -395,16 +406,17 @@ class TestVespaAdapterStore:
 
     def test_get_adapter(self, adapter_store, mock_vespa_app):
         """Test getting adapter from Vespa."""
-        mock_response = MagicMock()
-        mock_response.hits = [
-            {
-                "fields": {
-                    "adapter_id": "test-adapter-123",
-                    "tenant_id": "tenant1",
-                    "name": "routing_sft",
+        mock_response = self._healthy_response(
+            [
+                {
+                    "fields": {
+                        "adapter_id": "test-adapter-123",
+                        "tenant_id": "tenant1",
+                        "name": "routing_sft",
+                    }
                 }
-            }
-        ]
+            ]
+        )
         mock_vespa_app.query.return_value = mock_response
 
         result = adapter_store.get_adapter("test-adapter-123")
@@ -414,8 +426,7 @@ class TestVespaAdapterStore:
 
     def test_get_adapter_not_found(self, adapter_store, mock_vespa_app):
         """Test getting non-existent adapter returns None."""
-        mock_response = MagicMock()
-        mock_response.hits = []
+        mock_response = self._healthy_response([])
         mock_vespa_app.query.return_value = mock_response
 
         result = adapter_store.get_adapter("nonexistent")
@@ -424,11 +435,12 @@ class TestVespaAdapterStore:
 
     def test_list_adapters(self, adapter_store, mock_vespa_app):
         """Test listing adapters with filters."""
-        mock_response = MagicMock()
-        mock_response.hits = [
-            {"fields": {"adapter_id": "adapter-1", "tenant_id": "tenant1"}},
-            {"fields": {"adapter_id": "adapter-2", "tenant_id": "tenant1"}},
-        ]
+        mock_response = self._healthy_response(
+            [
+                {"fields": {"adapter_id": "adapter-1", "tenant_id": "tenant1"}},
+                {"fields": {"adapter_id": "adapter-2", "tenant_id": "tenant1"}},
+            ]
+        )
         mock_vespa_app.query.return_value = mock_response
 
         results = adapter_store.list_adapters(
@@ -444,15 +456,16 @@ class TestVespaAdapterStore:
 
     def test_get_active_adapter(self, adapter_store, mock_vespa_app):
         """Test getting active adapter."""
-        mock_response = MagicMock()
-        mock_response.hits = [
-            {
-                "fields": {
-                    "adapter_id": "active-adapter",
-                    "is_active": 1,
+        mock_response = self._healthy_response(
+            [
+                {
+                    "fields": {
+                        "adapter_id": "active-adapter",
+                        "is_active": 1,
+                    }
                 }
-            }
-        ]
+            ]
+        )
         mock_vespa_app.query.return_value = mock_response
 
         result = adapter_store.get_active_adapter("tenant1", "routing")
@@ -802,6 +815,58 @@ class TestInferenceHelpers:
         assert info.adapter_id == "test-123"
         assert info.adapter_uri == "hf://myorg/routing-adapter"
         assert info.adapter_path == "/local/path"
+
+    def test_get_active_adapter_for_inference_raises_on_registry_outage(self):
+        """A registry outage must propagate — returning None reads as "no
+        fine-tuned adapter" and silently routes inference to the base model."""
+        from unittest.mock import patch
+
+        import pytest
+
+        from cogniverse_finetuning.registry.inference import (
+            get_active_adapter_for_inference,
+        )
+
+        with patch(
+            "cogniverse_finetuning.registry.AdapterRegistry"
+        ) as mock_registry_cls:
+            mock_registry_cls.return_value.get_active_adapter.side_effect = (
+                ConnectionError("registry down")
+            )
+            with pytest.raises(ConnectionError):
+                get_active_adapter_for_inference("tenant1", "routing")
+
+    def test_get_active_adapter_for_inference_none_when_genuinely_absent(self):
+        from unittest.mock import patch
+
+        from cogniverse_finetuning.registry.inference import (
+            get_active_adapter_for_inference,
+        )
+
+        with patch(
+            "cogniverse_finetuning.registry.AdapterRegistry"
+        ) as mock_registry_cls:
+            mock_registry_cls.return_value.get_active_adapter.return_value = None
+            assert get_active_adapter_for_inference("tenant1", "routing") is None
+
+    def test_list_available_adapters_raises_on_registry_outage(self):
+        """An outage must not read as "no adapters available"."""
+        from unittest.mock import patch
+
+        import pytest
+
+        from cogniverse_finetuning.registry.inference import (
+            list_available_adapters,
+        )
+
+        with patch(
+            "cogniverse_finetuning.registry.AdapterRegistry"
+        ) as mock_registry_cls:
+            mock_registry_cls.return_value.list_adapters.side_effect = ConnectionError(
+                "registry down"
+            )
+            with pytest.raises(ConnectionError):
+                list_available_adapters("tenant1")
 
 
 class TestConvenienceFunctions:

@@ -117,3 +117,29 @@ def make_persistent_vespa_ops(
         connections=connections,
         timeout_s=timeout_s,
     )
+
+
+def raise_if_degraded(response, context: str) -> None:
+    """Raise on a Vespa soft-timeout (degraded) query response.
+
+    A soft timeout arrives as HTTP 200 with ``root.errors`` and/or degraded
+    coverage plus empty/partial hits — pyvespa does NOT raise on it.
+    Consuming ``response.hits`` without this check turns a degraded backend
+    into an empty result the caller reads as genuinely-absent data. Raise
+    instead, joining the outage-raises contract every store read follows.
+    """
+    root = {}
+    get_json = getattr(response, "get_json", None)
+    if callable(get_json):
+        root = (get_json() or {}).get("root", {})
+    else:
+        raw = getattr(response, "json", None)
+        if isinstance(raw, dict):
+            root = raw.get("root", {})
+    errors = root.get("errors") or []
+    coverage = root.get("coverage") or {}
+    if errors or coverage.get("degraded"):
+        raise RuntimeError(
+            f"Vespa returned a degraded/soft-timeout response for {context}: "
+            f"errors={errors} coverage={coverage}"
+        )
