@@ -884,9 +884,6 @@ embedding = doc.get_embedding("colpali")
 # Get embedding metadata
 emb_meta = doc.get_embedding_metadata("colpali")
 
-# Convert to backend document format
-backend_doc = doc.to_backend_document(schema_name="video_frames")
-
 # To dict
 doc_dict = doc.to_dict()
 
