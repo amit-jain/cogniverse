@@ -810,6 +810,67 @@ class TestJobExecutor:
         assert _is_pure_delivery("summarize and save to wiki") is False
         assert _is_pure_delivery("create a report and send on telegram") is False
 
+    def test_run_job_reads_the_canonicalized_job_key(self, monkeypatch):
+        """run_job must find a job created through the manager when the
+        CronWorkflow hands it the same raw tenant id the create route
+        received — the write canonicalizes, so a raw store read misses the
+        key and every scheduled run dies with "not found"."""
+        import asyncio
+        import json
+
+        import httpx as _httpx
+
+        from cogniverse_foundation.config import utils as config_utils
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_runtime import job_executor
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+        store.initialize()
+        cm = ConfigManager(store=store)
+
+        sys_cfg = SystemConfig()
+        sys_cfg.inference_service_urls["denseon"] = "http://denseon"
+        cm.set_system_config(sys_cfg)
+
+        cm.set_config_value(
+            tenant_id="jobexec",
+            scope=ConfigScope.SYSTEM,
+            service="tenant_jobs",
+            config_key="job_j1",
+            config_value={
+                "job_id": "j1",
+                "query": "latest papers",
+                "post_actions": [],
+            },
+        )
+
+        monkeypatch.setattr(config_utils, "create_default_config_manager", lambda: cm)
+
+        requests = []
+
+        def _handler(request):
+            requests.append(request)
+            return _httpx.Response(200, json={"message": "done"})
+
+        real_async_client = _httpx.AsyncClient
+
+        def _client_factory(*args, **kwargs):
+            kwargs["transport"] = _httpx.MockTransport(_handler)
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr(job_executor.httpx, "AsyncClient", _client_factory)
+
+        asyncio.run(job_executor.run_job("j1", "jobexec", "http://runtime"))
+
+        assert len(requests) == 1
+        assert requests[0].url.path == "/agents/orchestrator_agent/process"
+        payload = json.loads(requests[0].content)
+        assert payload["query"] == "latest papers"
+        assert payload["context"] == {"tenant_id": "jobexec"}
+
 
 @pytest.mark.integration
 class TestJobExecutorRoundTrip:

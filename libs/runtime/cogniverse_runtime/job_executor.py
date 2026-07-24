@@ -272,18 +272,20 @@ async def run_job(job_id: str, tenant_id: str, runtime_url: str) -> None:
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
     cm = create_default_config_manager()
-    entry = cm.store.get_config(
+    # Manager read for the same canonicalized key create_job wrote — the
+    # CronWorkflow carries the raw tenant id, and a raw store read misses
+    # the canonical key on every scheduled run.
+    job = cm.get_config_value(
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service="tenant_jobs",
         config_key=f"job_{job_id}",
     )
-    if entry is None or not entry.config_value:
+    if not job:
         raise RuntimeError(
             f"Job {job_id} not found in ConfigStore for tenant {tenant_id}"
         )
 
-    job = entry.config_value
     query: str = job["query"]
     post_actions: list = job.get("post_actions", [])
 

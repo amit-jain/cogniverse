@@ -124,3 +124,46 @@ def test_system_config_outage_disables_editing(tmp_path: Path) -> None:
     assert not any("Save System Configuration" in b.label for b in at.button)
     assert any("unavailable" in e.value.lower() for e in at.error)
     assert not any("No system config found" in w.value for w in at.warning)
+
+
+def _canonical_tenant_app(tmp_path: Path) -> AppTest:
+    script = textwrap.dedent(
+        """
+        import streamlit as st
+        import cogniverse_dashboard.tabs.config_management as cm_tab
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        mgr = st.session_state.setdefault(
+            "_mgr", ConfigManager(store=InMemoryConfigStore())
+        )
+        mgr.set_config_value(
+            tenant_id="acme",
+            scope=ConfigScope.AGENT,
+            service="search_agent",
+            config_key="agent_config",
+            config_value={"model": "test-model"},
+        )
+        st.session_state["current_tenant"] = "acme"
+        st.session_state["config_manager"] = mgr
+        cm_tab.render_config_management_tab()
+        """
+    ).strip()
+    path = tmp_path / "app_canonical_tenant.py"
+    path.write_text(script)
+    return AppTest.from_file(str(path), default_timeout=30)
+
+
+def test_tab_canonicalizes_typed_tenant_before_reads(tmp_path: Path) -> None:
+    """A bare tenant id typed into the selector must be canonicalized before
+    any read: the manager canonicalizes writes internally, so listing with
+    the raw id reads an empty parallel namespace and configs saved through
+    this same tab appear to vanish."""
+    at = _canonical_tenant_app(tmp_path)
+    at.run()
+
+    assert not at.exception, [str(e) for e in at.exception]
+    assert at.session_state["current_tenant"] == "acme:acme"
+    rendered = " ".join(str(m.value) for m in at.markdown)
+    assert "Existing Agent Configurations" in rendered
