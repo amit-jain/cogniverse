@@ -1256,3 +1256,52 @@ class TestVLMOpenAIConcurrency:
         # ...and every frame still described.
         assert server.chat_request_count == 12
         assert set(result.keys()) == {f"f{i}" for i in range(12)}
+
+    def _openai_descriptor(self, monkeypatch) -> VLMDescriptor:
+        d = VLMDescriptor(vlm_endpoint="http://vlm/v1", auto_start=False)
+        monkeypatch.setattr(d, "_resolve_openai_model", lambda: "m")
+        monkeypatch.setattr(d, "_openai_base", lambda: "http://vlm/v1")
+        return d
+
+    def test_openai_batch_best_effort_keeps_successes(self, monkeypatch):
+        """One keyframe's transient error must not abort the whole video — the
+        successful frames' descriptions are kept and the failure is reported,
+        rather than pool.map re-raising and failing the entire batch."""
+        import requests
+
+        d = self._openai_descriptor(monkeypatch)
+
+        def fake_one(kf, model, chat_url):
+            if kf["frame_id"] == "f2":
+                raise requests.HTTPError("500 on f2")
+            return (kf["frame_id"], f"desc-{kf['frame_id']}")
+
+        monkeypatch.setattr(d, "_describe_one_openai", fake_one)
+
+        keyframes = [
+            {"frame_id": "f1", "path": "/x/f1.jpg"},
+            {"frame_id": "f2", "path": "/x/f2.jpg"},
+            {"frame_id": "f3", "path": "/x/f3.jpg"},
+        ]
+        out = d._process_vlm_batch_openai(keyframes)
+
+        assert out == {"f1": "desc-f1", "f3": "desc-f3"}  # f2 dropped, rest kept
+
+    def test_openai_batch_raises_when_all_frames_fail(self, monkeypatch):
+        """A total VLM outage (every keyframe errors, nothing salvaged) must
+        raise, not return an empty map the pipeline reads as a no-op success."""
+        import requests
+
+        d = self._openai_descriptor(monkeypatch)
+
+        def always_fail(kf, model, chat_url):
+            raise requests.HTTPError(f"503 on {kf['frame_id']}")
+
+        monkeypatch.setattr(d, "_describe_one_openai", always_fail)
+
+        keyframes = [
+            {"frame_id": "f1", "path": "/x/f1.jpg"},
+            {"frame_id": "f2", "path": "/x/f2.jpg"},
+        ]
+        with pytest.raises(RuntimeError, match="all 2 keyframes"):
+            d._process_vlm_batch_openai(keyframes)
