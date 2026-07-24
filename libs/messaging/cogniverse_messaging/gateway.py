@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import signal
 import sys
 
 from telegram import Update
@@ -623,23 +624,46 @@ class MessagingGateway:
             with contextlib.suppress(asyncio.CancelledError):
                 await drain_task
             await app.updater.stop()
-            await app.bot.delete_webhook()
+            # delete_webhook talks to Telegram — if it fails during shutdown
+            # the local teardown (stop/shutdown/close) must still run, or
+            # the app and httpx client leak on every failed shutdown.
+            try:
+                await app.bot.delete_webhook()
+            except Exception as exc:  # noqa: BLE001 — best-effort teardown
+                logger.error("delete_webhook failed during shutdown: %s", exc)
             await app.stop()
             await app.shutdown()
             await self.runtime_client.close()
 
     async def run(self) -> None:
-        """Run the gateway in the configured mode."""
-        if self.mode == "webhook":
-            await self.run_webhook()
-        elif self.mode == "polling":
-            await self.run_polling()
-        else:
-            # A typo'd GATEWAY_MODE silently running polling binds no webhook
-            # server — the deployment receives zero messages with no error.
-            raise ValueError(
-                f"Unknown gateway mode {self.mode!r}; expected 'polling' or 'webhook'"
-            )
+        """Run the gateway in the configured mode.
+
+        Installs a SIGTERM handler that cancels this task: orchestrators
+        stop containers with SIGTERM, whose default disposition kills the
+        process without running any ``finally`` — the webhook stayed
+        registered at a dead endpoint and nothing was closed. Cancellation
+        routes shutdown through the same path as Ctrl+C.
+        """
+        loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+        with contextlib.suppress(NotImplementedError, RuntimeError):
+            loop.add_signal_handler(signal.SIGTERM, task.cancel)
+        try:
+            if self.mode == "webhook":
+                await self.run_webhook()
+            elif self.mode == "polling":
+                await self.run_polling()
+            else:
+                # A typo'd GATEWAY_MODE silently running polling binds no
+                # webhook server — the deployment receives zero messages
+                # with no error.
+                raise ValueError(
+                    f"Unknown gateway mode {self.mode!r}; "
+                    f"expected 'polling' or 'webhook'"
+                )
+        finally:
+            with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
+                loop.remove_signal_handler(signal.SIGTERM)
 
 
 def main():

@@ -231,3 +231,51 @@ class TestReleaseExistsContract:
             with pytest.raises(SystemExit) as se:
                 release_exists()
         assert "helm not found" in str(se.value)
+
+
+class TestHelmTimeouts:
+    def test_uninstall_passes_helm_timeout_and_is_bounded(self):
+        from cogniverse_cli.deploy import helm_uninstall
+
+        ok = MagicMock()
+        ok.returncode = 0
+        with (
+            patch("cogniverse_cli.deploy.release_exists", return_value=True),
+            patch("cogniverse_cli.deploy.subprocess.run", return_value=ok) as run,
+        ):
+            helm_uninstall()
+        args, kwargs = run.call_args
+        assert "--timeout" in args[0]
+        assert kwargs.get("timeout") == 660
+
+    def test_uninstall_hang_aborts_with_message(self):
+        import subprocess as sp
+
+        from cogniverse_cli.deploy import helm_uninstall
+
+        with (
+            patch("cogniverse_cli.deploy.release_exists", return_value=True),
+            patch(
+                "cogniverse_cli.deploy.subprocess.run",
+                side_effect=sp.TimeoutExpired(cmd="helm", timeout=660),
+            ),
+        ):
+            with pytest.raises(SystemExit) as se:
+                helm_uninstall()
+        assert "timed out" in str(se.value)
+
+    def test_install_hang_aborts_with_message(self, tmp_path: Path):
+        import subprocess as sp
+
+        from cogniverse_cli.deploy import helm_install
+
+        with (
+            patch("cogniverse_cli.deploy.release_exists", return_value=False),
+            patch(
+                "cogniverse_cli.deploy.subprocess.run",
+                side_effect=sp.TimeoutExpired(cmd="helm", timeout=1500),
+            ),
+        ):
+            with pytest.raises(SystemExit) as se:
+                helm_install(tmp_path / "chart", tmp_path / "v.yaml")
+        assert "timed out" in str(se.value)
