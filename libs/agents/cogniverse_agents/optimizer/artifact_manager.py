@@ -413,6 +413,19 @@ class ArtifactManager:
         )
         return demos
 
+    async def clear_demonstrations(self, agent_type: str) -> None:
+        """Replace the stored demonstrations with the empty set.
+
+        The counterpart to ``save_demonstrations`` for an empty list: deletes
+        the demo dataset so a subsequent ``load_demonstrations`` returns None.
+        ``create_dataset`` cannot persist a zero-row frame, so an empty set is
+        represented by the dataset's absence rather than an empty dataset.
+        No-op when no dataset exists.
+        """
+        await self._provider.datasets.delete_dataset(
+            self._demo_dataset_name(agent_type)
+        )
+
     @staticmethod
     def _extract_demos_from_dataframe(
         df: pd.DataFrame,
@@ -776,9 +789,7 @@ class ArtifactManager:
 
     async def _clear_active_demonstrations(self, agent_type: str) -> None:
         """Delete the un-versioned active demos dataset (no-op if absent)."""
-        await self._provider.datasets.delete_dataset(
-            self._demo_dataset_name(agent_type)
-        )
+        await self.clear_demonstrations(agent_type)
 
     async def promote_canary_to_active(self, agent_type: str) -> Dict[str, Any]:
         """Promote the current canary to active. Previous active retired."""

@@ -94,8 +94,11 @@ class TelemetryWorkflowStore(WorkflowStore):
             }
             for e in executions
         ]
+        am = self._am(tenant_id)
         if demos:
-            await self._am(tenant_id).save_demonstrations(_EXECUTIONS_KIND, demos)
+            await am.save_demonstrations(_EXECUTIONS_KIND, demos)
+        else:
+            await am.clear_demonstrations(_EXECUTIONS_KIND)
 
     async def load_executions(self, tenant_id: str) -> List[WorkflowExecution]:
         demos = await self._am(tenant_id).load_demonstrations(_EXECUTIONS_KIND)
@@ -113,8 +116,11 @@ class TelemetryWorkflowStore(WorkflowStore):
             }
             for p in profiles
         ]
+        am = self._am(tenant_id)
         if demos:
-            await self._am(tenant_id).save_demonstrations(_PROFILES_KIND, demos)
+            await am.save_demonstrations(_PROFILES_KIND, demos)
+        else:
+            await am.clear_demonstrations(_PROFILES_KIND)
 
     async def load_agent_profiles(self, tenant_id: str) -> List[AgentPerformance]:
         demos = await self._am(tenant_id).load_demonstrations(_PROFILES_KIND)
