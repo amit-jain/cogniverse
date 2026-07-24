@@ -141,6 +141,14 @@ class VespaEmbeddingProcessor:
             processed = {}
             for key, value in raw_embeddings.items():
                 if isinstance(value, np.ndarray):
+                    # Same zero-width guard as the ndarray path — an empty
+                    # last dimension encodes to empty hex strings and lands
+                    # malformed in Vespa.
+                    if value.ndim > 0 and value.shape[-1] == 0:
+                        raise ValueError(
+                            f"zero-width embedding for '{key}': shape "
+                            f"{value.shape} has no embedding dimension"
+                        )
                     if "binary" in key:
                         processed[key] = self._convert_to_binary_dict(value)
                     else:

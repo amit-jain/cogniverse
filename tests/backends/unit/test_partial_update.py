@@ -368,3 +368,94 @@ class TestVisibilitySweep:
         assert probes == ["d1", "d2", "d3", "d3", "d3"]
         # Two backoffs total — shared by the sweep, not one loop per doc.
         assert sleeps == [0.5, 0.5]
+
+
+@pytest.mark.unit
+class TestFeedCallbackTallyThreadSafety:
+    """pyvespa invokes the feed callback from worker threads; the success
+    tally must be exact under concurrent callbacks. An unguarded ``+= 1``
+    loses increments and under-reports ingested documents."""
+
+    class _ConcurrentFeedApp:
+        """Stub feeder that drains the iterator and fires the callback from
+        N threads simultaneously — the interleaving pyvespa's worker pool
+        produces."""
+
+        def __init__(self, workers: int = 8, fail_ids: frozenset = frozenset()):
+            self.workers = workers
+            self.fail_ids = fail_ids
+
+        def feed_iterable(self, iter, callback, **kwargs):
+            import threading
+
+            docs = list(iter)
+            chunks = [docs[i :: self.workers] for i in range(self.workers)]
+            barrier = threading.Barrier(self.workers)
+
+            def run(chunk):
+                barrier.wait()
+                for doc in chunk:
+                    response = MagicMock()
+                    ok = doc["id"] not in self.fail_ids
+                    response.is_successful.return_value = ok
+                    if not ok:
+                        response.get_json.return_value = {"message": "boom"}
+                        response.get_status_code.return_value = 400
+                    callback(response, doc["id"])
+
+            threads = [
+                __import__("threading").Thread(target=run, args=(chunk,))
+                for chunk in chunks
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+    def _client(self, app):
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        client = VespaPyClient(
+            {
+                "schema_name": "video_colpali_smol500_mv_frame",
+                "url": "http://localhost",
+                "port": 8080,
+                "schema_loader": FilesystemSchemaLoader(Path("configs/schemas")),
+            }
+        )
+        client.app = app
+        client._connected = True
+        client._use_async_feed = False
+        return client
+
+    def test_success_count_exact_under_concurrent_callbacks(self):
+        import sys
+
+        docs = [
+            {"put": f"id:content:s::d{i}", "fields": {"video_id": f"v{i}"}}
+            for i in range(400)
+        ]
+        client = self._client(self._ConcurrentFeedApp(workers=8))
+
+        original = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)  # maximize interleaving pressure
+        try:
+            success_count, failed = client._feed_prepared_batch(docs, batch_size=400)
+        finally:
+            sys.setswitchinterval(original)
+
+        assert success_count == 400
+        assert failed == []
+
+    def test_failed_ids_exact_under_concurrent_callbacks(self):
+        fail_ids = frozenset({"d3", "d77", "d199"})
+        docs = [
+            {"put": f"id:content:s::d{i}", "fields": {"video_id": f"v{i}"}}
+            for i in range(200)
+        ]
+        client = self._client(self._ConcurrentFeedApp(workers=8, fail_ids=fail_ids))
+
+        success_count, failed = client._feed_prepared_batch(docs, batch_size=200)
+
+        assert success_count == 197
+        assert set(failed) == fail_ids

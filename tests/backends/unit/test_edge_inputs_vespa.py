@@ -71,12 +71,15 @@ def test_finite_embeddings_still_binarize() -> None:
 def test_ms_timestamp_seconds_value_rejected() -> None:
     """A seconds-shaped value (e.g. 1_700_000_000) passed to a ms field is a
     common bug — reject it so the document doesn't land at 1970-01-20."""
-    # 1_700_000_000 = November 2023 in seconds; in ms it's < 1971. Both are
-    # accepted as valid ms; the boundary above year 2100 in ms is the trip.
-    _validate_ms_timestamp(1_700_000_000, "creation_timestamp")  # OK as ms (1970)
-    # An obviously-out-of-band ms value is rejected.
-    with pytest.raises(ValueError, match="seconds by mistake"):
+    # 1_700_000_000 = November 2023 in seconds; as ms it would land in 1970.
+    with pytest.raises(ValueError, match="MILLISECONDS"):
+        _validate_ms_timestamp(1_700_000_000, "creation_timestamp")
+    # An out-of-band large value (us/ns magnitude) is also rejected.
+    with pytest.raises(ValueError, match="microseconds or nanoseconds"):
         _validate_ms_timestamp(10**14, "creation_timestamp")
+    # A genuine modern ms epoch passes; zero (epoch-start sentinel) stays OK.
+    _validate_ms_timestamp(1_700_000_000_000, "creation_timestamp")
+    _validate_ms_timestamp(0, "creation_timestamp")
 
 
 def test_s_timestamp_milliseconds_value_rejected() -> None:
@@ -172,3 +175,49 @@ def test_inf_rejected_by_float_encoder_single_vector() -> None:
     arr = np.array([float("inf"), 0.5, -0.5, 0.2], dtype=np.float32)
     with pytest.raises(ValueError, match="non-finite values"):
         p._convert_to_float_dict(arr)
+
+
+def test_dict_payload_rejects_zero_width_embedding() -> None:
+    """The dict branch of process_embeddings enforces the same zero-width
+    guard as the ndarray branch — an empty last dimension would encode to
+    empty hex strings and land malformed in Vespa."""
+    import numpy as np
+
+    from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
+
+    processor = VespaEmbeddingProcessor(schema_name="video_test_mv_frame")
+    with pytest.raises(ValueError, match="zero-width"):
+        processor.process_embeddings({"embedding": np.zeros((3, 0), dtype=np.float32)})
+
+
+def test_get_document_data_raises_on_outage_and_none_on_404() -> None:
+    """Outage and absence must not collapse into the same None — pyvespa
+    raises on every 4xx/5xx except 404, so an exception is an outage."""
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_vespa.ingestion_client import VespaPyClient
+
+    client = VespaPyClient(
+        {
+            "schema_name": "video_colpali_smol500_mv_frame",
+            "url": "http://localhost",
+            "port": 8080,
+            "schema_loader": FilesystemSchemaLoader(Path("configs/schemas")),
+        }
+    )
+    client._connected = True
+
+    app = MagicMock()
+    app.get_data.side_effect = ConnectionError("vespa down")
+    client.app = app
+    with pytest.raises(ConnectionError):
+        client.get_document_data("doc-1")
+
+    not_found = MagicMock()
+    not_found.status_code = 404
+    app404 = MagicMock()
+    app404.get_data.return_value = not_found
+    client.app = app404
+    assert client.get_document_data("doc-1") is None
