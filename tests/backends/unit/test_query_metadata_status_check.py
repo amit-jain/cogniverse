@@ -23,6 +23,12 @@ backend-failure contract the config/adapter stores enforce
 (ProvenanceStore.fetch, BackendVectorStore.list) catch and log; everyone
 else fails loudly instead of misreading an outage as "no rows".
 
+A soft timeout or degraded content-node coverage is the sneakier case: it
+returns HTTP 200 with ``root.errors`` (and only partial children) or a
+``root.coverage.degraded`` marker. Consuming the children then returns a
+partial listing recorded as success. Both now raise, matching the
+convergence probe and ``vespa_search_children``.
+
 These tests mock pyvespa's response object directly (the CONTRACT side
 of the boundary, not the SUT side).
 """
@@ -193,4 +199,43 @@ def test_vespa_error_propagates(backend: VespaBackend) -> None:
             backend.query_metadata_documents(
                 schema="organization_metadata",
                 yql="select * from organization_metadata where true",
+            )
+
+
+def test_200_with_root_errors_raises(backend: VespaBackend) -> None:
+    """A soft timeout returns HTTP 200 with root.errors and only partial
+    children — it must raise, not return the partial list as a complete
+    result that a caller reads as the full set of tenants/memories."""
+    body = {
+        "root": {
+            "errors": [
+                {"code": 12, "summary": "Timeout", "message": "Timed out 1 of 3 groups"}
+            ],
+            "children": [{"fields": {"org_id": "acme", "name": "Acme"}}],
+        }
+    }
+    fake = _FakeVespaClient(status_code=200, body=body)
+    with patch("cogniverse_vespa.backend.make_persistent_vespa_ops", return_value=fake):
+        with pytest.raises(RuntimeError, match="Timed out 1 of 3 groups"):
+            backend.query_metadata_documents(
+                schema="organization_metadata",
+                yql="select * from organization_metadata where true",
+            )
+
+
+def test_200_with_degraded_coverage_raises(backend: VespaBackend) -> None:
+    """Degraded content-node coverage on a 200 (a partial scan) must raise —
+    a partial scan is not a complete result, even with no root.errors."""
+    body = {
+        "root": {
+            "coverage": {"coverage": 42, "full": False, "degraded": {"timeout": True}},
+            "children": [{"fields": {"org_id": "acme"}}],
+        }
+    }
+    fake = _FakeVespaClient(status_code=200, body=body)
+    with patch("cogniverse_vespa.backend.make_persistent_vespa_ops", return_value=fake):
+        with pytest.raises(RuntimeError, match="coverage degraded"):
+            backend.query_metadata_documents(
+                schema="tenant_metadata",
+                yql="select * from tenant_metadata where true",
             )
