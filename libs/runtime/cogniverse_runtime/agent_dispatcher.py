@@ -240,6 +240,9 @@ class AgentDispatcher:
         self._sandbox_manager = sandbox_manager
         # When None, no canary routing — every request gets active artefacts.
         self._artifact_manager_factory = artifact_manager_factory
+        # Test seam: build a ConversationStore for a tenant. None → the real
+        # per-tenant Mem0-backed store (built lazily in _build_conversation_store).
+        self._conversation_store_factory: Optional[Callable[[str], Any]] = None
         self._query_rewriter = None
         self._gateway_agents: TenantLRUCache[_GatewayAgentEntry] = (
             _new_gateway_agent_cache()
@@ -1013,7 +1016,22 @@ class AgentDispatcher:
                 context["_artefact_overlay"] = artefact
         capabilities = set(agent.capabilities)
 
-        conversation_history = context.get("conversation_history", [])
+        # Server-managed conversation memory: when a caller supplies a
+        # context_id but no explicit history (the messaging gateway), the
+        # runtime loads the context's recent turns here and saves the two
+        # new turns after the agent runs — so history works without the
+        # caller holding a Mem0 connection. A caller passing its own
+        # conversation_history (the A2A coding path) is respected as-is and
+        # never double-managed.
+        context_id = context.get("context_id")
+        manage_history = bool(context_id) and "conversation_history" not in context
+        if manage_history:
+            conversation_history = await self._load_conversation_history(
+                tenant_id, str(context_id)
+            )
+            context["conversation_history"] = conversation_history
+        else:
+            conversation_history = context.get("conversation_history", [])
 
         enrichment = {
             k: context[k]
@@ -1065,6 +1083,11 @@ class AgentDispatcher:
                 agent_name, query, context, tenant_id
             )
 
+        if manage_history:
+            await self._save_conversation_turns(
+                tenant_id, str(context_id), query, result
+            )
+
         entities = result.get("entities", [])
         turn_count = len(conversation_history or []) // 2 + 1
         self._spawn_background(
@@ -1073,6 +1096,81 @@ class AgentDispatcher:
             )
         )
         return result
+
+    def _build_conversation_store(self, tenant_id: str):
+        """Build a per-tenant ConversationStore, or None if Mem0 is unwired.
+
+        Uses the test seam when set; otherwise builds a Mem0 manager and
+        lazily initialises it from system config (as the tenant router does).
+        A None result means memory is not configured — history degrades off.
+        """
+        if self._conversation_store_factory is not None:
+            return self._conversation_store_factory(tenant_id)
+        from cogniverse_core.conversation import ConversationStore
+        from cogniverse_core.memory.manager import Mem0MemoryManager
+
+        mgr = Mem0MemoryManager(tenant_id)
+        if not mgr.memory:
+            from cogniverse_runtime.memory_init import lazy_init_memory
+
+            lazy_init_memory(
+                mgr, tenant_id, self._config_manager, auto_create_schema=False
+            )
+        if not mgr.memory:
+            return None
+        return ConversationStore(mgr, tenant_id)
+
+    async def _load_conversation_history(
+        self, tenant_id: str, context_id: str
+    ) -> List[Dict[str, str]]:
+        """Load a context's recent turns off the event loop.
+
+        History is enrichment, not a hard dependency: a Mem0 outage or an
+        unconfigured backend degrades to no history (logged), so the agent
+        still answers — it just loses prior-turn context, never the reply.
+        """
+        try:
+            store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
+            if store is None:
+                return []
+            return await asyncio.to_thread(store.get_history, context_id)
+        except Exception as exc:  # noqa: BLE001 — enrichment degrade, logged
+            logger.warning(
+                "Conversation history unavailable for context %s: %s",
+                context_id,
+                exc,
+            )
+            return []
+
+    async def _save_conversation_turns(
+        self, tenant_id: str, context_id: str, query: str, result: Dict[str, Any]
+    ) -> None:
+        """Append the user + assistant turns off the event loop.
+
+        Best-effort: a save failure is logged and swallowed — the answer
+        was already produced and returned, so failing here would turn a
+        successful reply into an error. The assistant turn is skipped when
+        the agent produced no human-readable message.
+        """
+        assistant_text = result.get("message")
+        if not isinstance(assistant_text, str) or not assistant_text:
+            candidate = result.get("result")
+            assistant_text = candidate if isinstance(candidate, str) else ""
+        try:
+            store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
+            if store is None:
+                return
+            await asyncio.to_thread(store.store_turn, context_id, "user", query)
+            if assistant_text:
+                await asyncio.to_thread(
+                    store.store_turn, context_id, "assistant", assistant_text
+                )
+        except Exception as exc:  # noqa: BLE001 — best-effort, answer already sent
+            logger.warning(
+                "Failed to persist conversation turns for context %s: %s",
+                context_id,
+                exc,
+            )
 
     def _spawn_background(self, coro) -> asyncio.Task:
         """Schedule a fire-and-forget coroutine while keeping a strong
