@@ -688,3 +688,34 @@ class TestDispatchDegradesGracefully:
 
         sent = [c.args[0] for c in update.message.reply_text.await_args_list]
         assert any("temporarily unavailable" in s for s in sent), sent
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestRuntimeReachabilityProbe:
+    @pytest.mark.asyncio
+    async def test_probe_false_when_runtime_dead(self):
+        from cogniverse_messaging.runtime_client import RuntimeClient
+
+        g = MessagingGateway(bot_token="123:FAKE", runtime_url="http://127.0.0.1:29071")
+        g.runtime_client = RuntimeClient("http://127.0.0.1:29071")
+        try:
+            assert await g._log_runtime_reachability() is False
+        finally:
+            await g.runtime_client.close()
+
+    @pytest.mark.asyncio
+    async def test_probe_true_when_runtime_healthy(self):
+        import httpx
+        from cogniverse_messaging.runtime_client import RuntimeClient
+
+        g = MessagingGateway(bot_token="123:FAKE", runtime_url="http://runtime")
+        g.runtime_client = RuntimeClient("http://runtime")
+        g.runtime_client._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200)),
+            base_url="http://runtime",
+        )
+        try:
+            assert await g._log_runtime_reachability() is True
+        finally:
+            await g.runtime_client.close()

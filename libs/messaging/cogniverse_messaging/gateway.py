@@ -101,9 +101,10 @@ class MessagingGateway:
         the token in that order, so "unavailable" always means the token
         survived for a retry.
         """
-        text = update.message.text or ""
-        parts = text.split(maxsplit=1)
-        token = parts[1].strip() if len(parts) > 1 else None
+        # Parse through the shared router so /start uses one parser with the
+        # rest of the commands (its is_registration / registration_token fields).
+        parsed = parse_message(update.message.text or "")
+        token = parsed.registration_token if parsed.is_registration else None
 
         if not token:
             await update.message.reply_text(
@@ -608,6 +609,24 @@ class MessagingGateway:
             await app.shutdown()
             await self.runtime_client.close()
 
+    async def _log_runtime_reachability(self) -> bool:
+        """Probe the runtime once at startup and log the outcome.
+
+        A fail-fast diagnostic, not a hard gate: the gateway must still start
+        during a runtime deploy so it is ready when the runtime comes up.
+        Returns whether the runtime was reachable.
+        """
+        reachable = await self.runtime_client.health()
+        if reachable:
+            logger.info("Runtime reachable at %s", self.runtime_client.runtime_url)
+        else:
+            logger.warning(
+                "Runtime not reachable at %s at startup — messages degrade until "
+                "it is available",
+                self.runtime_client.runtime_url,
+            )
+        return reachable
+
     async def run(self) -> None:
         """Run the gateway in the configured mode.
 
@@ -621,6 +640,7 @@ class MessagingGateway:
         task = asyncio.current_task()
         with contextlib.suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(signal.SIGTERM, task.cancel)
+        await self._log_runtime_reachability()
         try:
             if self.mode == "webhook":
                 await self.run_webhook()
