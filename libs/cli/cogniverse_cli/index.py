@@ -327,8 +327,10 @@ def _extract_and_upsert_graph(
             result = CodeExtractor().extract(file_path, tenant_id, source_doc_id)
         elif ext in GRAPH_TEXT_EXTENSIONS:
             result = DocExtractor().extract(file_path, tenant_id, source_doc_id)
-    except Exception:
-        return None
+    except Exception as exc:  # noqa: BLE001 — surfaced in the run summary
+        # Swallowing this made a broken extractor read as "no graph in any
+        # file": every file silently contributed zero nodes.
+        return {"error": f"graph extraction failed: {exc}"}
 
     if result is None or (not result.nodes and not result.edges):
         return None
@@ -378,6 +380,7 @@ def index_files(
     total_nodes = 0
     total_edges = 0
     errors: List = []
+    graph_errors: List = []
 
     with Progress(
         SpinnerColumn(),
@@ -431,6 +434,10 @@ def index_files(
                 if graph_result and "error" not in graph_result:
                     total_nodes += graph_result.get("nodes_upserted", 0)
                     total_edges += graph_result.get("edges_upserted", 0)
+                elif graph_result:
+                    graph_errors.append(
+                        (str(rel_path), str(graph_result.get("error", "")))
+                    )
 
                 progress.advance(task)
 
@@ -442,6 +449,7 @@ def index_files(
         "graph_nodes": total_nodes,
         "graph_edges": total_edges,
         "errors": len(errors),
+        "graph_errors": len(graph_errors),
     }
 
     console.print()
@@ -454,5 +462,9 @@ def index_files(
         console.print(f"  [red]Errors: {len(errors)}[/red]")
         for path, code, msg in errors[:5]:
             console.print(f"    {path}: {code} {msg[:100]}")
+    if graph_errors:
+        console.print(f"  [red]Graph errors: {len(graph_errors)}[/red]")
+        for path, msg in graph_errors[:5]:
+            console.print(f"    {path}: {msg[:100]}")
 
     return summary

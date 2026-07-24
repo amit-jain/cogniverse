@@ -10,6 +10,7 @@ from cogniverse_cli.index import collect_files
 from cogniverse_cli.streaming import (
     CodingResult,
     _build_a2a_request,
+    _handle_event,
     _parse_coding_result,
 )
 
@@ -250,3 +251,127 @@ class TestFileCollector:
             assert "readme.md" in names
             assert "guide.txt" in names
             assert "main.py" not in names
+
+
+class TestApplyFailureIsolation:
+    def _session_with_changes(self, changes):
+        s = CodingSession(
+            tenant_id="acme:acme",
+            language="python",
+            max_iterations=3,
+            codebase_path="",
+            runtime_url="http://runtime.test",
+        )
+        s.last_result = CodingResult(code_changes=changes, summary="s")
+        return s
+
+    def test_apply_reports_failed_file_and_continues(self, tmp_path: Path):
+        """One unwritable target degrades to a per-file failure report — it
+        previously raised out of /apply, killing the REPL with part of the
+        change set already on disk and no summary of what landed."""
+        blocker = tmp_path / "blocker"
+        blocker.write_text("i am a file, not a directory")
+
+        ok1 = tmp_path / "a.py"
+        bad = blocker / "nested" / "b.py"  # parent mkdir fails: blocker is a file
+        ok2 = tmp_path / "c.py"
+
+        s = self._session_with_changes(
+            [
+                {"file_path": str(ok1), "content": "A", "change_type": "new"},
+                {"file_path": str(bad), "content": "B", "change_type": "new"},
+                {"file_path": str(ok2), "content": "C", "change_type": "new"},
+            ]
+        )
+        applied = s.apply()
+
+        assert applied == 2
+        assert ok1.read_text() == "A"
+        assert ok2.read_text() == "C"
+        assert not bad.exists()
+
+    def test_show_diff_survives_unreadable_file(self, tmp_path: Path):
+        target = tmp_path / "x.py"
+        target.write_text("old")
+        s = self._session_with_changes(
+            [{"file_path": str(target), "content": "new", "change_type": "modify"}]
+        )
+        with patch.object(Path, "read_text", side_effect=OSError("EACCES")):
+            s.show_diff()  # must not raise
+
+
+class TestRunReplStartupContract:
+    def test_dead_runtime_exits_2(self):
+        """An unreachable runtime exits 2 (script-detectable) — previously
+        printed a message and exited 0. ConnectTimeout (SYN blackhole) is
+        covered too, not just ConnectError."""
+        import httpx
+        from cogniverse_cli.code import run_repl
+
+        for exc in (
+            httpx.ConnectError("refused"),
+            httpx.ConnectTimeout("blackhole"),
+        ):
+            with patch("httpx.get", side_effect=exc):
+                with pytest.raises(SystemExit) as se:
+                    run_repl(tenant_id="acme:acme", runtime_url="http://runtime.test")
+                assert se.value.code == 2
+
+    def test_unhealthy_runtime_exits_2(self):
+        import httpx
+        from cogniverse_cli.code import run_repl
+
+        resp = httpx.Response(503, request=httpx.Request("GET", "http://x/health"))
+        with patch("httpx.get", return_value=resp):
+            with pytest.raises(SystemExit) as se:
+                run_repl(tenant_id="acme:acme", runtime_url="http://runtime.test")
+            assert se.value.code == 2
+
+
+class TestHandleEventShapeGuards:
+    """Malformed SSE events degrade to "keep current phase" — each of these
+    shapes previously raised AttributeError/TypeError and aborted the REPL
+    stream mid-session."""
+
+    def test_non_dict_result(self):
+        assert _handle_event({"result": "just a string"}, "plan") == "plan"
+
+    def test_non_dict_status(self):
+        assert _handle_event({"result": {"status": "running"}}, "plan") == "plan"
+
+    def test_null_parts(self):
+        event = {"result": {"status": {"state": "working", "message": {"parts": None}}}}
+        assert _handle_event(event, "plan") == "plan"
+
+    def test_scalar_json_part_text(self):
+        event = {
+            "result": {
+                "status": {
+                    "state": "working",
+                    "message": {"parts": [{"kind": "text", "text": "42"}]},
+                }
+            }
+        }
+        assert _handle_event(event, "plan") == "plan"
+
+    def test_final_with_null_data(self):
+        event = {
+            "result": {
+                "status": {
+                    "state": "completed",
+                    "message": {
+                        "parts": [
+                            {"kind": "text", "text": '{"type": "final", "data": null}'}
+                        ]
+                    },
+                }
+            }
+        }
+        out = _handle_event(event, "plan")
+        assert isinstance(out, CodingResult)
+        assert out.summary == ""
+
+    def test_parse_coding_result_non_dict_nested_result(self):
+        out = _parse_coding_result({"result": [1, 2, 3]})
+        assert isinstance(out, CodingResult)
+        assert "1" in out.summary
