@@ -25,13 +25,16 @@ from tests.fixtures.llm import (
     resolve_prefixed_model,
 )
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not is_test_lm_available(),
-        reason=f"Test LM endpoint not reachable at {resolve_base_url()}",
-    ),
-]
+pytestmark = [pytest.mark.integration]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _require_test_lm():
+    """Runtime LM gate. An import-time skipif latches the PRE-session-fixture
+    endpoint state — ``ensure_host_ollama`` provisions the LM only at session
+    setup, so the gate must probe after fixtures run, not at collection."""
+    if not is_test_lm_available():
+        pytest.skip(f"Test LM endpoint not reachable at {resolve_base_url()}")
 
 
 def _llm_config() -> LLMEndpointConfig:

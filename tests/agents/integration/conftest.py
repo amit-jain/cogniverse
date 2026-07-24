@@ -36,9 +36,9 @@ def is_llm_available() -> bool:
     """Cheap reachability probe for the test LM.
 
     The LM is provisioned by the session-scoped ``ensure_host_ollama``
-    fixture (tests/conftest.py); this only probes whether it answers. It
-    MUST NOT spawn — module-level ``skipif`` markers call it at collection
-    time, so a model-loading call here would block the whole collection.
+    fixture (tests/conftest.py); this only probes whether it answers.
+    Called per test by ``pytest_runtest_setup`` for ``requires_lm``-marked
+    tests, so it must stay cheap (no model loading, no spawning).
     """
     from tests.fixtures.llm import is_test_lm_available
 
@@ -52,10 +52,11 @@ def is_teacher_api_available() -> bool:
     return bool(os.getenv("ROUTER_OPTIMIZER_TEACHER_KEY"))
 
 
-skip_if_no_lm = pytest.mark.skipif(
-    not is_llm_available(),
-    reason="Configured LLM endpoint not reachable",
-)
+# Runtime LM gate: the requires_lm marker is enforced per test by
+# ``pytest_runtest_setup`` in tests/conftest.py (an import-time skipif
+# latches the pre-session-fixture endpoint state).
+skip_if_no_lm = pytest.mark.requires_lm
+
 
 skip_if_no_teacher_api = pytest.mark.skipif(
     not is_teacher_api_available(),

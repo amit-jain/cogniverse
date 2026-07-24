@@ -32,10 +32,14 @@ from cogniverse_agents.query_enhancement_agent import (
 )
 from tests.fixtures.llm import is_test_lm_available, make_dspy_lm
 
-skip_if_no_lm = pytest.mark.skipif(
-    not is_test_lm_available(),
-    reason="Test LM not available",
-)
+
+@pytest.fixture(scope="module", autouse=True)
+def _require_test_lm():
+    """Runtime LM gate. An import-time skipif latches the PRE-session-fixture
+    endpoint state — ``ensure_host_ollama`` provisions the LM only at session
+    setup, so the gate must probe after fixtures run, not at collection."""
+    if not is_test_lm_available():
+        pytest.skip("Test LM not available")
 
 
 @pytest.fixture
@@ -169,7 +173,6 @@ def orchestrator_with_real_agents(vespa_with_schema, dspy_lm):
 
 
 @pytest.mark.integration
-@skip_if_no_lm
 class TestEntityExtractionAgentIntegration:
     """Integration tests validating EntityExtractionAgent correctness"""
 
@@ -286,7 +289,6 @@ class TestEntityExtractionAgentIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_lm
 class TestProfileSelectionAgentIntegration:
     """Integration tests validating ProfileSelectionAgent correctness"""
 
@@ -401,7 +403,6 @@ class TestProfileSelectionAgentIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_lm
 class TestQueryEnhancementAgentIntegration:
     """Integration tests validating QueryEnhancementAgent correctness"""
 
@@ -510,7 +511,6 @@ class TestQueryEnhancementAgentIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_lm
 class TestOrchestratorAgentIntegration:
     """Integration tests validating OrchestratorAgent correctness"""
 
@@ -723,7 +723,6 @@ class TestOrchestratorAgentIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_lm
 class TestAgentCoordinationIntegration:
     """Integration tests validating agent coordination correctness"""
 
@@ -828,7 +827,6 @@ class TestAgentCoordinationIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_lm
 class TestOrchestratorComplexPatterns:
     """Advanced orchestration patterns: multiple parallel groups, cascading failures, edge cases"""
 

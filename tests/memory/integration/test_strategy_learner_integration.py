@@ -314,12 +314,10 @@ class TestTwoLevelScoping:
         assert calls[1].kwargs["tenant_id"] == "acme"
 
 
-from tests.fixtures.llm import is_test_lm_available
-
-skip_if_no_lm = pytest.mark.skipif(
-    not is_test_lm_available(),
-    reason="Test LM not available for LLM distillation",
-)
+# Runtime LM gate: the requires_lm marker is enforced per test by
+# ``pytest_runtest_setup`` in tests/conftest.py (an import-time skipif
+# latches the pre-session-fixture endpoint state).
+skip_if_no_lm = pytest.mark.requires_lm
 
 
 @pytest.mark.integration

@@ -14,15 +14,13 @@ import logging
 import pandas as pd
 import pytest
 
-from tests.fixtures.llm import is_test_lm_available
-
 logger = logging.getLogger(__name__)
 
 
-skip_if_no_lm = pytest.mark.skipif(
-    not is_test_lm_available(),
-    reason="Test LM not available for reflective recompile",
-)
+# Runtime LM gate: the requires_lm marker is enforced per test by
+# ``pytest_runtest_setup`` in tests/conftest.py (an import-time skipif
+# latches the pre-session-fixture endpoint state).
+skip_if_no_lm = pytest.mark.requires_lm
 
 
 @pytest.mark.integration

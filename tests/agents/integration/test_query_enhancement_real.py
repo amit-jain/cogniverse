@@ -12,16 +12,16 @@ import pytest
 
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.agents.integration.conftest import is_llm_available
 
 logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.integration]
 
 
-skip_if_no_lm = pytest.mark.skipif(
-    not is_llm_available(), reason="Configured LLM endpoint not reachable"
-)
+# Runtime gate via the requires_lm marker — see
+# tests/agents/integration/conftest.py (an import-time skipif latches the
+# pre-session-fixture endpoint state).
+from tests.agents.integration.conftest import skip_if_no_lm  # noqa: F401
 
 
 @pytest.fixture(scope="module")
