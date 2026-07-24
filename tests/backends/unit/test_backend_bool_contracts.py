@@ -8,11 +8,14 @@ status DICT — always truthy, even when degraded.
 
 from __future__ import annotations
 
+import socket
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from cogniverse_vespa.backend import VespaBackend
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -22,6 +25,15 @@ def _bare_backend():
     backend.schema_manager = MagicMock()
     backend._vespa_search_backend = None
     return backend
+
+
+def _dead_port() -> int:
+    """A local TCP port with nothing listening on it."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
 
 
 def test_validate_schema_checks_deployed_document_types():
@@ -37,14 +49,42 @@ def test_validate_schema_checks_deployed_document_types():
 
 def test_validate_schema_raises_on_listing_failure():
     """An enumeration outage is not "schema invalid" — flattening it to False
-    collapses the two for every caller keying off the bool."""
-    backend = _bare_backend()
-    backend.schema_manager.list_deployed_document_types.side_effect = RuntimeError(
-        "config server down"
+    collapses the two for every caller keying off the bool.
+
+    The failure is injected at the real config-server HTTP seam (a dead port)
+    rather than via a mock side_effect: the mock raises regardless of how
+    ``list_deployed_document_types`` is called, hiding that the real method
+    swallows the probe failure to ``[]`` unless ``raise_on_failure=True`` is
+    passed. Against the real seam the pre-fix default-arg call returns False,
+    so this fails until ``validate_schema`` opts into the raising contract.
+    """
+    backend = object.__new__(VespaBackend)
+    backend._vespa_search_backend = None
+    backend.schema_manager = VespaSchemaManager(
+        backend_endpoint="http://127.0.0.1", backend_port=_dead_port()
     )
 
-    with pytest.raises(RuntimeError, match="config server down"):
+    with pytest.raises(requests.exceptions.ConnectionError):
         backend.validate_schema("agent_memories")
+
+
+def test_schema_exists_tenant_branch_raises_on_lookup_failure():
+    """The tenant branch must surface a lookup/enumeration failure, not flatten
+    it to a 'schema missing' False that a caller (e.g. the deploy route) acts on.
+
+    A real ``VespaSchemaManager`` with no registry raises ``ValueError`` from
+    ``tenant_schema_exists``; the branch must propagate it, not mask it.
+    """
+    backend = object.__new__(VespaBackend)
+    backend._tenant_id = "acme:acme"
+    backend.schema_manager = VespaSchemaManager(
+        backend_endpoint="http://127.0.0.1",
+        backend_port=19071,
+        schema_registry=None,
+    )
+
+    with pytest.raises(ValueError, match="schema_registry required"):
+        backend.schema_exists("video_colpali_smol500_mv_frame", tenant_id="acme:acme")
 
 
 def test_health_check_coerces_status_dict_to_bool():

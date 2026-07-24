@@ -6,14 +6,25 @@ Requires Docker to be running.
 """
 
 import logging
+import socket
 from pathlib import Path
 
 import pytest
+import requests
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 logger = logging.getLogger(__name__)
+
+
+def _dead_port() -> int:
+    """A local TCP port with nothing listening on it."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
 
 
 @pytest.fixture(scope="module")
@@ -811,3 +822,72 @@ class TestDeleteFailureSemantics:
             )
         except Exception:
             pass
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
+class TestSchemaExistenceContract:
+    """schema_exists / validate_schema report an honest bool against real Vespa
+    and RAISE (not return False) when the config-server enumeration or the
+    tenant registry lookup fails.
+
+    A masked enumeration outage reads as "schema missing" and lets the deploy
+    route redeploy over live data, so the failure must surface, not flatten to
+    False. No MagicMock stands in for the schema manager in any of these.
+    """
+
+    def test_deployed_true_absent_false_against_real_vespa(self, get_backend):
+        backend = get_backend("schema_existence")
+        backend.schema_registry.deploy_schema("schema_existence", "agent_memories")
+
+        # Tenant registry lookup: deployed base -> True, never-deployed -> False.
+        assert (
+            backend.schema_exists("agent_memories", tenant_id="schema_existence")
+            is True
+        )
+        assert backend.schema_exists("wiki", tenant_id="schema_existence") is False
+
+        # validate_schema enumerates the real config-server doctypes.
+        full_name = backend.get_tenant_schema_name("schema_existence", "agent_memories")
+        assert backend.validate_schema(full_name) is True
+        assert backend.validate_schema("schema_that_was_never_deployed") is False
+
+    def test_validate_schema_raises_on_dead_config_server(self):
+        from cogniverse_vespa.backend import VespaBackend
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        backend = object.__new__(VespaBackend)
+        backend._vespa_search_backend = None
+        backend.schema_manager = VespaSchemaManager(
+            backend_endpoint="http://127.0.0.1", backend_port=_dead_port()
+        )
+        with pytest.raises(requests.exceptions.ConnectionError):
+            backend.validate_schema("agent_memories")
+
+    def test_nontenant_schema_exists_raises_on_dead_config_server(self):
+        from cogniverse_vespa.backend import VespaBackend
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        backend = object.__new__(VespaBackend)
+        backend._vespa_search_backend = None
+        backend._tenant_id = None
+        backend.schema_manager = VespaSchemaManager(
+            backend_endpoint="http://127.0.0.1", backend_port=_dead_port()
+        )
+        # No tenant -> schema_exists delegates to validate_schema -> real probe.
+        with pytest.raises(requests.exceptions.ConnectionError):
+            backend.schema_exists("agent_memories")
+
+    def test_tenant_schema_exists_raises_on_lookup_failure(self):
+        from cogniverse_vespa.backend import VespaBackend
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        backend = object.__new__(VespaBackend)
+        backend._tenant_id = "acme:acme"
+        backend.schema_manager = VespaSchemaManager(
+            backend_endpoint="http://127.0.0.1",
+            backend_port=19071,
+            schema_registry=None,
+        )
+        with pytest.raises(ValueError, match="schema_registry required"):
+            backend.schema_exists("agent_memories", tenant_id="acme:acme")

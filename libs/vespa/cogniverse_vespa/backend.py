@@ -24,6 +24,32 @@ from .vespa_schema_manager import DEPLOY_REQUEST_TIMEOUT_S, VespaSchemaManager
 logger = logging.getLogger(__name__)
 
 
+def _http_status_of(exc: BaseException) -> Optional[int]:
+    """Best-effort HTTP status from a pyvespa client exception.
+
+    A 412 test-and-set rejection surfaces as a ``VespaError`` wrapping an
+    ``HTTPError``; depending on the underlying HTTP client the status rides on
+    a ``.response`` object (requests/httpx) or only in the message pyvespa
+    builds as ``"HTTP <code>: ..."`` (its httpr client), so walk the
+    cause/context chain checking both.
+    """
+    node: Optional[BaseException] = exc
+    for _ in range(5):
+        if node is None:
+            return None
+        status = getattr(getattr(node, "response", None), "status_code", None)
+        if isinstance(status, int):
+            return status
+        status = getattr(node, "status_code", None)
+        if isinstance(status, int):
+            return status
+        match = re.match(r"HTTP (\d{3})\b", str(node))
+        if match:
+            return int(match.group(1))
+        node = node.__cause__ or node.__context__
+    return None
+
+
 class VespaBackend(Backend):
     """
     Vespa backend implementation supporting both ingestion and search.
@@ -577,11 +603,15 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            deployed = self.schema_manager.list_deployed_document_types()
+            deployed = self.schema_manager.list_deployed_document_types(
+                raise_on_failure=True
+            )
             return schema_name in deployed
         except Exception as e:
             # An enumeration failure is a backend outage, not "schema
-            # invalid" — flattening it to False collapses the two.
+            # invalid" — flattening it to False collapses the two. The probe
+            # must raise (raise_on_failure=True); the default swallows it to
+            # [], which returns False and never reaches this re-raise.
             logger.error(f"Failed to validate schema {schema_name}: {e}")
             raise
 
@@ -1288,10 +1318,13 @@ class VespaBackend(Backend):
                 effective_tenant_id, schema_name
             )
         except Exception as e:
+            # A lookup failure is a backend/registry outage, not "schema
+            # missing" — flattening it to False lets the deploy route treat an
+            # outage as "not deployed" and redeploy. Surface it instead.
             logger.error(
                 f"Failed to check schema existence for '{schema_name}' tenant '{effective_tenant_id}': {e}"
             )
-            return False
+            raise
 
     def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
         """
@@ -1411,6 +1444,87 @@ class VespaBackend(Backend):
             schema_name=schema_name,
             namespace=namespace,
         )
+
+    def conditional_put_document(
+        self,
+        document,
+        *,
+        condition: str,
+        schema_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+        base_schema_name: Optional[str] = None,
+        create: bool = True,
+    ) -> bool:
+        """Test-and-set full-field write of a generic ``Document``.
+
+        Serializes ``document`` through the schema's declared
+        ``document_mapping`` (like :meth:`put_document`) and issues a Document
+        v1 conditional partial update. With ``create=True`` a missing document
+        is inserted (Vespa ignores the condition when the target does not
+        exist) and an existing one is overwritten only while ``condition``
+        still holds against it, so a caller's read-modify-write is safe against
+        a racing writer. Returns True when the write applied, False when Vespa
+        rejected the condition (HTTP 412) because another writer advanced the
+        document since it was read. Raises on transport failure or any other
+        non-2xx status so a lost write is never mistaken for a successful one.
+        """
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        schema_name = schema_name or self.config.get("schema_name")
+        base_name = base_schema_name or schema_name
+        schema_json = self._schema_loader_instance.load_schema(base_name)
+        mapping_cfg = (schema_json or {}).get("document_mapping")
+        if not mapping_cfg:
+            raise ValueError(
+                f"Schema {base_name!r} declares no document_mapping — "
+                f"add one to its schema JSON or feed schema-specific "
+                f"fields via put_document_fields"
+            )
+        mapping = DocumentFieldMapping.from_dict(mapping_cfg)
+        return self._conditional_update_fields(
+            document.id,
+            document.to_schema_fields(mapping),
+            condition=condition,
+            schema_name=schema_name,
+            namespace=namespace,
+            create=create,
+        )
+
+    def _conditional_update_fields(
+        self,
+        document_id: str,
+        fields: Dict[str, Any],
+        *,
+        condition: str,
+        schema_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+        create: bool = False,
+    ) -> bool:
+        """Partial-update guarded by a Vespa test-and-set ``condition``.
+
+        Returns True when applied, False on an HTTP 412 condition mismatch.
+        Raises on transport failure or any other non-2xx status — a rejected
+        condition is the only non-raising failure, and it is a real Vespa
+        response, not a masked outage.
+        """
+        schema_name = schema_name or self.config.get("schema_name")
+        try:
+            resp = self._metadata_vespa_app().update_data(
+                schema=schema_name,
+                data_id=document_id,
+                fields=self._coerce_field_values(fields),
+                namespace=namespace,
+                create=create,
+                condition=condition,
+            )
+        except Exception as exc:
+            if _http_status_of(exc) == 412:
+                return False
+            raise
+        if getattr(resp, "status_code", None) == 412:
+            return False
+        self._check_document_response(resp, "conditional update", document_id)
+        return True
 
     def put_document_fields(
         self,

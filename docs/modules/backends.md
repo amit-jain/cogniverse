@@ -607,6 +607,7 @@ operations:
 | `search(query_dict)` | Tenant-scoped search (delegates to `VespaSearchBackend`) |
 | `ingest_documents(documents, schema_name)` | Batch ingest via a per-tenant `VespaPyClient` |
 | `put_document(document, schema_name, namespace=None, base_schema_name=None)` | Full-put a generic `cogniverse_sdk` `Document`, serialized through the base schema's declared `document_mapping` block; raises `ValueError` when the schema declares no mapping |
+| `conditional_put_document(document, *, condition, schema_name=None, namespace=None, base_schema_name=None, create=True)` | Test-and-set variant of `put_document`: issues a Document v1 conditional partial update so a read-modify-write only lands while `condition` still holds. Returns `True` when applied, `False` on a 412 condition mismatch (a racing writer advanced the doc), and raises on transport/other errors. `create=True` inserts a missing doc (Vespa ignores the condition when the target is absent) |
 | `put_document_fields` / `get_document_fields` / `update_document_fields` / `delete_document_fields` | Namespace-aware raw-fields document CRUD (the primitives wiki/graph/ingestion use) |
 | `feed(document, schema_name)` | Feed a single document |
 | `ingest_stream(documents, schema_name)` | Stream ingestion for large datasets |
@@ -614,7 +615,7 @@ operations:
 | `delete_document(document_id, schema_name)` | Delete a single document |
 | `get_document(document_id, schema_name)` / `batch_get_documents(document_ids)` | Point lookups |
 | `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package |
-| `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle |
+| `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False` — a masked outage reads as "schema missing" and lets the deploy route redeploy over live data |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
 | `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend) |
 | `add_profile(profile_name, profile_config)` / `remove_profile(profile_name)` | Runtime profile management |
