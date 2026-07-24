@@ -1,10 +1,11 @@
 """RuntimeClient fault contracts against unreachable and hung runtimes.
 
 A real listening-but-silent socket and a real dead port stand in for the
-runtime. Dispatch reads are bounded by the constructor timeout, everything
-else by the 30s client default, and connects fail within seconds — a hung
-runtime must surface as a prompt TimeoutException in the handler (where the
-gateway's error handler answers the user), never an unbounded stall.
+runtime. dispatch_agent degrades a dead / hung / non-JSON runtime to a status
+dict (so the gateway renders a graceful "unavailable" reply instead of raising
+into the global error handler), bounded by ``dispatch_timeout``; CRUD calls are
+bounded by the 30s client default; connects fail within seconds — never an
+unbounded stall.
 """
 
 import asyncio
@@ -42,13 +43,16 @@ async def hung_server():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_read_bounded_by_constructor_timeout(hung_server):
-    rc = RuntimeClient(f"http://127.0.0.1:{hung_server}", timeout=1.0)
+async def test_dispatch_hung_runtime_degrades_within_budget(hung_server):
+    """A hung runtime must not stall the chat: dispatch returns an 'unavailable'
+    status dict within the dispatch budget, not raise or hang."""
+    rc = RuntimeClient(f"http://127.0.0.1:{hung_server}", dispatch_timeout=1.0)
     start = time.monotonic()
     try:
-        with pytest.raises(httpx.TimeoutException):
-            await rc.dispatch_agent("gateway_agent", "q", "acme:alice")
+        result = await rc.dispatch_agent("gateway_agent", "q", "acme:alice")
         assert time.monotonic() - start < 10
+        assert result["status"] == "unavailable"
+        assert "unreachable" in result["message"]
     finally:
         await rc.close()
 
@@ -70,30 +74,53 @@ async def test_crud_read_bounded_by_client_default(hung_server):
 
 
 @pytest.mark.asyncio
-async def test_dead_port_raises_connect_error_fast():
-    rc = RuntimeClient(f"http://127.0.0.1:{DEAD_PORT}", timeout=1.0)
+async def test_dead_port_dispatch_degrades_fast():
+    """A dead runtime port degrades dispatch to an 'unavailable' status dict
+    fast (connect fails in seconds), never raising ConnectError at the caller."""
+    rc = RuntimeClient(f"http://127.0.0.1:{DEAD_PORT}", dispatch_timeout=1.0)
     start = time.monotonic()
     try:
-        with pytest.raises(httpx.ConnectError):
-            await rc.dispatch_agent("gateway_agent", "q", "acme:alice")
+        result = await rc.dispatch_agent("gateway_agent", "q", "acme:alice")
         assert time.monotonic() - start < 10
+        assert result["status"] == "unavailable"
+        assert "unreachable" in result["message"]
     finally:
         await rc.close()
 
 
 @pytest.mark.asyncio
-async def test_dispatch_timeout_overrides_client_default(hung_server):
-    """The per-call dispatch timeout (constructor value) governs the agent
-    call even though the shared client default is 30s — a 0.5s constructor
-    timeout must fire in well under the client default."""
-    rc = RuntimeClient(f"http://127.0.0.1:{hung_server}", timeout=0.5)
+async def test_dispatch_timeout_governs_the_agent_call(hung_server):
+    """dispatch_timeout (not the 300s stream timeout) governs the agent call —
+    a 0.5s dispatch budget degrades in well under the client default."""
+    rc = RuntimeClient(f"http://127.0.0.1:{hung_server}", dispatch_timeout=0.5)
     start = time.monotonic()
     try:
-        with pytest.raises(httpx.TimeoutException):
-            await rc.dispatch_agent("gateway_agent", "q", "acme:alice")
+        result = await rc.dispatch_agent("gateway_agent", "q", "acme:alice")
         assert time.monotonic() - start < 5
+        assert result["status"] == "unavailable"
     finally:
         await rc.close()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_non_json_200_is_an_error():
+    """A 200 whose body is not JSON (proxy error page) must degrade to an error
+    status dict, not raise a JSONDecodeError into the handler."""
+
+    def _handler(request):
+        return httpx.Response(200, text="<html>Bad Gateway</html>")
+
+    rc = RuntimeClient("http://runtime")
+    rc._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler), base_url="http://runtime"
+    )
+    try:
+        result = await rc.dispatch_agent("gateway_agent", "q", "acme:alice")
+    finally:
+        await rc.close()
+
+    assert result["status"] == "error"
+    assert "non-JSON" in result["message"]
 
 
 @pytest.mark.asyncio

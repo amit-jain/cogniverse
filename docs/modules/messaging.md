@@ -145,10 +145,10 @@ Conversation history is **server-side**: the gateway sends only `context_id` (th
 Thin async `httpx` wrapper around the runtime's HTTP API — the gateway never imports agent or core code directly.
 
 ```python
-RuntimeClient(runtime_url: str, timeout: float = 300.0)
+RuntimeClient(runtime_url: str, timeout: float = 300.0, dispatch_timeout: float = 120.0)
 ```
 
-The constructor `timeout` bounds only agent dispatch (`dispatch_agent`) and SSE event-stream reads; every other call (CRUD, drain, health) uses the shared client's 30s read default, and all connects fail within 5s so an unreachable runtime surfaces in seconds rather than hanging out the read budget.
+`timeout` bounds SSE event-stream reads; `dispatch_timeout` is the interactive-chat read budget for `dispatch_agent` (a hung runtime must not hold a gateway worker for the full stream timeout). Every other call (CRUD, drain, health) uses the shared client's 30s read default, and all connects fail within 5s so an unreachable runtime surfaces in seconds. `dispatch_agent` degrades a dead / hung / non-JSON runtime to a status dict (`{"status": "unavailable"|"error"}`) rather than raising — the gateway renders it as a "Service temporarily unavailable" reply, matching how `register_user` / `resolve_tenant` already behave.
 
 **Key methods:**
 
