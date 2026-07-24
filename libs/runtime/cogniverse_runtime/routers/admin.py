@@ -828,6 +828,124 @@ async def create_messaging_invite(
 
 _MESSAGING_GATEWAY_AGENT = "_messaging_gateway"
 
+_system_memory_factory = None
+
+
+def set_system_memory_factory(factory) -> None:
+    """Test seam: override how the SYSTEM-partition Mem0 manager is built."""
+    global _system_memory_factory
+    _system_memory_factory = factory
+
+
+def _system_memory_manager():
+    """Mem0 manager for the SYSTEM partition (user-tenant mappings)."""
+    if _system_memory_factory is not None:
+        return _system_memory_factory()
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+
+    mgr = Mem0MemoryManager(SYSTEM_TENANT_ID)
+    if not mgr.memory:
+        from cogniverse_runtime.memory_init import lazy_init_memory
+        from cogniverse_runtime.routers.tenant import _require_config_manager
+
+        lazy_init_memory(
+            mgr, SYSTEM_TENANT_ID, _require_config_manager(), auto_create_schema=False
+        )
+    return mgr
+
+
+class RegisterRequest(BaseModel):
+    platform: str
+    external_user_id: str
+    token: str
+
+
+_register_lock = asyncio.Lock()
+
+
+@router.post("/messaging/register")
+async def register_messaging_user(
+    request: RegisterRequest,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> Dict[str, Any]:
+    """Validate an invite token, store the user-tenant mapping, consume the
+    token — in that order, so a failed registration never burns the token.
+
+    404 = invalid/expired/used token. 503 = config store or Mem0 outage,
+    with the token intact for retry. The sequence is serialized per process
+    so a concurrent second register of the same token loses at validation.
+    """
+    from cogniverse_core.messaging_auth import InviteTokenManager, UserTenantMapper
+
+    token_manager = InviteTokenManager(config_manager)
+    async with _register_lock:
+        try:
+            tenant_id = await asyncio.to_thread(
+                token_manager.validate_token, request.token
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503, detail=f"registration unavailable: {exc}"
+            ) from exc
+        if not tenant_id:
+            raise HTTPException(status_code=404, detail="invalid_token")
+
+        try:
+            mapper = UserTenantMapper(_system_memory_manager())
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"registration unavailable: {exc}; token intact",
+            ) from exc
+        registered = await asyncio.to_thread(
+            mapper.register_user,
+            request.platform,
+            request.external_user_id,
+            tenant_id,
+        )
+        if not registered:
+            raise HTTPException(
+                status_code=503,
+                detail="registration unavailable: mapping store failed; token intact",
+            )
+
+        consumed = await asyncio.to_thread(
+            token_manager.mark_token_used, request.token, tenant_id
+        )
+        if not consumed:
+            logger.error(
+                "User %s registered but token %s... not consumed; "
+                "it stays live until expiry",
+                request.external_user_id,
+                request.token[:8],
+            )
+    return {"tenant_id": tenant_id}
+
+
+@router.get("/messaging/resolve")
+async def resolve_messaging_user(
+    platform: str = Query(...),
+    external_user_id: str = Query(...),
+) -> Dict[str, Any]:
+    """Resolve a messaging user to their tenant.
+
+    ``{"tenant_id": null}`` = genuinely unregistered. A Mem0 outage is 503,
+    never null — the gateway must not read an outage as "please register".
+    """
+    from cogniverse_core.messaging_auth import UserTenantMapper
+
+    try:
+        mapper = UserTenantMapper(_system_memory_manager())
+        tenant_id = await asyncio.to_thread(
+            mapper.get_tenant_id, platform, external_user_id
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"resolve unavailable: {exc}"
+        ) from exc
+    return {"tenant_id": tenant_id}
+
 
 class SendMessageRequest(BaseModel):
     tenant_id: str
