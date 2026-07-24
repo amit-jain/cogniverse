@@ -287,7 +287,9 @@ class QualityMonitor:
     - GoldenDatasetEvaluator for scoring against golden set
     - LLMJudgeCore for live traffic relevance scoring
     - PhoenixDatasetStore for baseline storage
-    - RetrievalMonitor for latency/error windows
+
+    Derives operational health (error rate, p95 latency) directly from the
+    sampled span frame via ``_operational_health``.
 
     Does NOT reimplement any of these — orchestrates them on schedule.
     """
