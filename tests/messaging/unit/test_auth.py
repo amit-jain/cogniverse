@@ -1,128 +1,136 @@
-"""Unit tests for invite token auth and user-tenant mapping."""
+"""Unit tests for invite token auth and user-tenant mapping.
 
+InviteTokenManager runs against a real in-memory ConfigStore through the
+real ConfigManager: generate/mark-used (writes) and validate (read) must
+agree on the stored key. The previous mocked store returned a canned entry
+for any key, which hid a write/read key mismatch that invalidated every
+token.
+"""
+
+import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
 
 import pytest
 from cogniverse_messaging.auth import InviteTokenManager, UserTenantMapper
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+
+@pytest.fixture
+def token_manager(config_manager_memory):
+    return InviteTokenManager(config_manager_memory)
+
+
+def _write_token_value(config_manager, token: str, value) -> None:
+    """Store a token value through the same manager path generate_token uses."""
+    config_manager.set_config_value(
+        tenant_id="_system",
+        scope=ConfigScope.SYSTEM,
+        service="messaging_gateway",
+        config_key=f"invite_token_{token}",
+        config_value=value,
+    )
 
 
 class TestInviteTokenManager:
-    @pytest.fixture
-    def config_manager(self):
-        cm = MagicMock()
-        cm.set_config_value = MagicMock()
-        cm.store = MagicMock()
-        cm.store.get_config = MagicMock(return_value=None)
-        return cm
-
-    def test_generate_token(self, config_manager):
-        manager = InviteTokenManager(config_manager)
-        token = manager.generate_token("acme:alice")
-
+    def test_generate_token_shape(self, token_manager):
+        token = token_manager.generate_token("acme:alice")
         assert len(token) == 32
-        config_manager.set_config_value.assert_called_once()
+        assert all(c in "0123456789abcdef" for c in token)
 
-        call_kwargs = config_manager.set_config_value.call_args.kwargs
-        assert call_kwargs["tenant_id"] == "_system"
-        assert "invite_token_" in call_kwargs["config_key"]
+    def test_generate_then_validate_round_trip(self, token_manager):
+        token = token_manager.generate_token("acme:alice")
+        assert token_manager.validate_token(token) == "acme:alice"
 
-    def test_validate_valid_token(self, config_manager):
-        token = "abc123"
-        mock_entry = MagicMock()
-        mock_entry.config_value = {
-            "token": token,
-            "tenant_id": "acme:alice",
-            "used": False,
-            "expires_at": "2099-12-31T23:59:59",
-        }
-        config_manager.store.get_config.return_value = mock_entry
+    def test_validate_unknown_token(self, token_manager):
+        assert token_manager.validate_token("nonexistent") is None
 
-        manager = InviteTokenManager(config_manager)
-        result = manager.validate_token(token)
-        assert result == "acme:alice"
+    def test_mark_used_then_validate_rejects(self, token_manager):
+        token = token_manager.generate_token("acme:alice")
+        assert token_manager.validate_token(token) == "acme:alice"
 
-    def test_validate_token_with_tz_aware_expiry(self, config_manager):
-        """A tz-aware stored expiry must validate without error; the old naive
-        utcnow comparison raised TypeError and rejected a valid token."""
-        token = "abc123"
-        mock_entry = MagicMock()
-        mock_entry.config_value = {
-            "token": token,
-            "tenant_id": "acme:alice",
-            "used": False,
-            "expires_at": "2099-12-31T23:59:59+00:00",
-        }
-        config_manager.store.get_config.return_value = mock_entry
+        token_manager.mark_token_used(token, "acme:alice")
+        assert token_manager.validate_token(token) is None
 
-        manager = InviteTokenManager(config_manager)
-        assert manager.validate_token(token) == "acme:alice"
-
-    def test_validate_used_token(self, config_manager):
-        mock_entry = MagicMock()
-        mock_entry.config_value = {
-            "token": "abc123",
-            "tenant_id": "acme:alice",
-            "used": True,
-        }
-        config_manager.store.get_config.return_value = mock_entry
-
-        manager = InviteTokenManager(config_manager)
-        result = manager.validate_token("abc123")
-        assert result is None
-
-    def test_validate_expired_token(self, config_manager):
-        mock_entry = MagicMock()
-        mock_entry.config_value = {
-            "token": "abc123",
-            "tenant_id": "acme:alice",
-            "used": False,
-            "expires_at": "2020-01-01T00:00:00",
-        }
-        config_manager.store.get_config.return_value = mock_entry
-
-        manager = InviteTokenManager(config_manager)
-        result = manager.validate_token("abc123")
-        assert result is None
-
-    def test_validate_unknown_token(self, config_manager):
-        config_manager.store.get_config.return_value = None
-
-        manager = InviteTokenManager(config_manager)
-        result = manager.validate_token("nonexistent")
-        assert result is None
-
-    def test_mark_token_used(self, config_manager):
-        manager = InviteTokenManager(config_manager)
-        manager.mark_token_used("abc123", "acme:alice")
-
-        config_manager.set_config_value.assert_called_once()
-        call_value = config_manager.set_config_value.call_args.kwargs["config_value"]
-        assert call_value["used"] is True
-        assert call_value["tenant_id"] == "acme:alice"
-        assert call_value["token"] == "abc123"
-
-    def test_mark_token_used_writes_tz_aware_used_at(self, config_manager):
-        """used_at must be stored tz-aware in UTC, matching the aware
-        datetimes generate_token/validate_token use. A naive utcnow()
-        timestamp cannot be compared against those without TypeError."""
+    def test_mark_used_stores_tz_aware_used_at(
+        self, token_manager, config_manager_memory
+    ):
         before = datetime.now(timezone.utc)
-        manager = InviteTokenManager(config_manager)
-        manager.mark_token_used("abc123", "acme:alice")
+        token = token_manager.generate_token("acme:alice")
+        token_manager.mark_token_used(token, "acme:alice")
         after = datetime.now(timezone.utc)
 
-        call_value = config_manager.set_config_value.call_args.kwargs["config_value"]
-        used_at = datetime.fromisoformat(call_value["used_at"])
+        value = config_manager_memory.get_config_value(
+            tenant_id="_system",
+            scope=ConfigScope.SYSTEM,
+            service="messaging_gateway",
+            config_key=f"invite_token_{token}",
+        )
+        assert value["used"] is True
+        assert value["tenant_id"] == "acme:alice"
+        used_at = datetime.fromisoformat(value["used_at"])
         assert used_at.tzinfo is not None
         assert used_at.utcoffset() == timedelta(0)
         assert before <= used_at <= after
+
+    def test_expired_token_rejected(self, token_manager):
+        token = token_manager.generate_token("acme:alice", expires_in_hours=-1)
+        assert token_manager.validate_token(token) is None
+
+    def test_naive_expiry_compared_as_utc(self, token_manager, config_manager_memory):
+        """A naive stored expiry is treated as UTC; the old naive-vs-aware
+        comparison raised TypeError and rejected a valid token."""
+        _write_token_value(
+            config_manager_memory,
+            "naivetok",
+            {
+                "tenant_id": "acme:alice",
+                "token": "naivetok",
+                "expires_at": "2099-12-31T23:59:59",
+                "used": False,
+            },
+        )
+        assert token_manager.validate_token("naivetok") == "acme:alice"
+
+    def test_json_string_value_parsed(self, token_manager, config_manager_memory):
+        """VespaConfigStore can hand back config_value as a JSON string;
+        validate must parse it rather than reject the token."""
+        _write_token_value(
+            config_manager_memory,
+            "strtok",
+            json.dumps(
+                {
+                    "tenant_id": "acme:alice",
+                    "token": "strtok",
+                    "expires_at": "2099-12-31T23:59:59+00:00",
+                    "used": False,
+                }
+            ),
+        )
+        assert token_manager.validate_token("strtok") == "acme:alice"
+
+    def test_validate_fails_closed_on_store_outage(self):
+        """A config-store outage validates to None (token treated as not
+        valid) instead of crashing the /start handler."""
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        class OutageStore(InMemoryConfigStore):
+            def get_config(self, *args, **kwargs):
+                raise ConnectionError("config store unreachable")
+
+        store = OutageStore()
+        store.initialize()
+        manager = InviteTokenManager(ConfigManager(store=store))
+        assert manager.validate_token("anytoken") is None
 
 
 class TestUserTenantMapper:
     @pytest.fixture
     def memory_manager(self):
+        from unittest.mock import MagicMock
+
         mm = MagicMock()
         mm.add_memory.return_value = "mem_123"
         mm.search_memory.return_value = []
