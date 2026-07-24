@@ -384,6 +384,13 @@ Production runtimes do not auto-drop orphans (they may represent
 half-completed deploys of real customer data). Recovery is operator-
 triggered.
 
+Run the dry-run as a **rollout preflight** and before offboarding a
+tenant: with all three response lists empty, no delete can hit the
+refuse guard. Any name in `unrecovered_schemas` blocks every tenant
+delete and reconcile — the redeploy refuses rather than risk dropping a
+peer tenant's live data — so resolve it while there is slack, not when
+an offboarding fails.
+
 ### `cogniverse admin reconcile-orphans`
 
 ```bash

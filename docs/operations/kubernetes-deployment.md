@@ -240,6 +240,62 @@ helm install cogniverse ./charts/cogniverse \
 kubectl get all -n cogniverse
 ```
 
+### Rolling Out a New Version
+
+```bash
+helm upgrade cogniverse ./charts/cogniverse \
+  --namespace cogniverse \
+  --values values.prod.yaml
+```
+
+Three behaviors to know during a rollout — each is deliberate and easy
+to misread as a failure:
+
+**Preflight: confirm the cluster has no orphan schemas.**
+
+```bash
+curl -sfX POST "$RUNTIME_URL/admin/reconcile-orphans?dry_run=true" | jq .
+```
+
+All three response lists (`orphan_schemas`, `orphan_tenants`,
+`unrecovered_schemas`) empty means nothing to do. Any name in
+`unrecovered_schemas` must be resolved before the next tenant delete:
+the schema redeploy refuses (raises rather than drops) while a deployed
+schema cannot be confirmed as an orphan, so one unattributable schema
+blocks every tenant delete and reconcile until an operator resolves it.
+See [Orphan reconciliation](multi-tenant-ops.md#orphan-reconciliation).
+
+**Runtime pods legitimately sit `0/1 Ready` for up to ~20 minutes.**
+The FastAPI lifespan waits for Vespa, bootstraps the metadata schemas,
+and blocks on deploy convergence before binding port 8000 — worst case
+~810s on a loaded cluster. The startupProbe budget (30s initial delay +
+80 × 15s = 1230s) covers this, and the liveness probe only begins once
+startup succeeds. `Running` + `0/1 Ready` inside that window is normal;
+deleting the pod to "unstick" it restarts convergence from zero.
+Investigate the pod logs only once the budget is exhausted and the
+probe itself has restarted the pod.
+
+**Worker restarts spend a job's redelivery budget.** Killing an
+ingestion worker mid-job — which every rollout does — strands the job
+until the reaper reclaims it (`INGEST_REAPER_MIN_IDLE_MS`, default
+5 min) and redelivers it to a live worker, incrementing a per-job
+delivery counter that never resets. Past `INGEST_REAPER_MAX_DELIVERIES`
+(default 5) the job is presumed poison and moved to the
+`ingest:queue:dead` stream with a `failed` terminal event. One rollout
+costs one redelivery; repeated restarts while long jobs are in flight
+can dead-letter healthy jobs. After repeated restarts, check the dead
+stream:
+
+```bash
+kubectl exec -n cogniverse deploy/cogniverse-redis -- \
+  redis-cli XRANGE ingest:queue:dead - +
+```
+
+Dead-lettering clears the job's in-flight idempotency marker and writes
+no done marker, so re-submitting the same source through
+`POST /ingestion/upload` re-enqueues it as a fresh job. See
+[Troubleshooting → Deployment and Rollout](troubleshooting.md#deployment-and-rollout).
+
 ---
 
 ## K3s Local Deployment
