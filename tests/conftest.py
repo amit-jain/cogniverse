@@ -1383,6 +1383,36 @@ def _vespa_wait_for_data_port_ready(data_port: int, timeout: int = 120) -> bool:
     return False
 
 
+def _vespa_wait_for_query_ready(data_port: int, timeout: int = 120) -> bool:
+    """Poll until the content cluster can actually serve a query.
+
+    ``/state/v1/health`` flips to 200 as soon as the container process is up,
+    but the content node can still report zero ready nodes — a query then comes
+    back 503 with "Connection failure on nodes with distribution-keys". Config
+    seeding queries the store immediately, so gate the yield on a real query
+    returning 200 with no ``root.errors`` to keep it from racing convergence.
+    """
+    start = time.monotonic()
+    while time.monotonic() - start < timeout:
+        try:
+            resp = requests.get(
+                f"http://localhost:{data_port}/search/",
+                params={
+                    "yql": "select * from sources * where true limit 0",
+                    "timeout": "1s",
+                },
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                errors = resp.json().get("root", {}).get("errors", [])
+                if not errors:
+                    return True
+        except requests.RequestException:
+            pass
+        time.sleep(2)
+    return False
+
+
 def _vespa_cleanup_my_container(container_name: str) -> None:
     """Remove only OUR container by exact name, not any container that
     happens to share the prefix.
@@ -1528,6 +1558,14 @@ def shared_vespa():
         if not _vespa_wait_for_data_port_ready(http_port, timeout=120):
             pytest.fail(
                 f"shared_vespa data port {http_port} not ready 120s after metadata deploy"
+            )
+
+        # Health-200 != query-ready: the content node may still have zero ready
+        # nodes. Gate on a real query so config seeding never races convergence.
+        if not _vespa_wait_for_query_ready(http_port, timeout=120):
+            pytest.fail(
+                f"shared_vespa content cluster (port {http_port}) not query-ready "
+                f"120s after metadata deploy"
             )
 
         yield {
