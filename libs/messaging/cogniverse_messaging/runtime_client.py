@@ -128,6 +128,64 @@ class RuntimeClient:
             return resp.json().get("token")
         return None
 
+    async def register_user(
+        self, platform: str, external_user_id: str, token: str
+    ) -> Dict[str, Any]:
+        """Register a messaging user via POST /admin/messaging/register.
+
+        Returns ``{"status": "registered", "tenant_id": ...}``,
+        ``{"status": "invalid_token"}``, or ``{"status": "unavailable",
+        "message": ...}`` — never raises; the gateway branches on status.
+        The runtime validates, stores the mapping, and consumes the token
+        in that order, so "unavailable" always means the token survived.
+        """
+        client = await self._get_client()
+        try:
+            resp = await client.post(
+                "/admin/messaging/register",
+                json={
+                    "platform": platform,
+                    "external_user_id": external_user_id,
+                    "token": token,
+                },
+            )
+        except httpx.TransportError as exc:
+            return {"status": "unavailable", "message": str(exc)}
+        if resp.status_code == 200:
+            try:
+                body = resp.json()
+            except ValueError:
+                return {"status": "unavailable", "message": "non-JSON response"}
+            return {"status": "registered", "tenant_id": body.get("tenant_id")}
+        if resp.status_code == 404:
+            return {"status": "invalid_token"}
+        return {"status": "unavailable", "message": resp.text[:300]}
+
+    async def resolve_tenant(
+        self, platform: str, external_user_id: str
+    ) -> Dict[str, Any]:
+        """Resolve a messaging user's tenant via GET /admin/messaging/resolve.
+
+        ``{"status": "ok", "tenant_id": str | None}`` (None = unregistered)
+        or ``{"status": "unavailable", "message": ...}`` — a runtime/Mem0
+        outage must never read as "unregistered".
+        """
+        client = await self._get_client()
+        try:
+            resp = await client.get(
+                "/admin/messaging/resolve",
+                params={"platform": platform, "external_user_id": external_user_id},
+            )
+        except httpx.TransportError as exc:
+            return {"status": "unavailable", "message": str(exc)}
+        if resp.status_code == 200:
+            try:
+                body = resp.json()
+            except ValueError:
+                return {"status": "unavailable", "message": "non-JSON response"}
+            return {"status": "ok", "tenant_id": body.get("tenant_id")}
+        return {"status": "unavailable", "message": resp.text[:300]}
+
     async def drain_outbound(self) -> List[Dict[str, Any]]:
         """Drain the runtime's pending outbound messages for delivery.
 

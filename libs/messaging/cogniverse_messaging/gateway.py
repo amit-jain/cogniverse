@@ -14,6 +14,7 @@ import logging
 import os
 import signal
 import sys
+import time
 
 from telegram import Update
 from telegram.ext import (
@@ -40,9 +41,14 @@ class MessagingGateway:
     """Telegram messaging gateway for Cogniverse.
 
     Translates Telegram messages to runtime API calls and sends
-    formatted responses back. Manages user registration via invite
-    tokens and conversation history via Mem0.
+    formatted responses back. Registration and tenant resolution go
+    through the runtime's HTTP API (the runtime owns the token store and
+    the user-tenant mappings); conversation history is Mem0-backed and
+    only active when a memory_manager is injected.
     """
+
+    _TENANT_CACHE_TTL_SECONDS = 60.0
+    _TENANT_CACHE_MAX_ENTRIES = 10000
 
     def __init__(
         self,
@@ -54,7 +60,6 @@ class MessagingGateway:
         webhook_port: int = 8443,
         webhook_path: str = "",
         memory_manager=None,
-        config_manager=None,
         outbound_poll_seconds: float = 5.0,
     ):
         self.bot_token = bot_token
@@ -67,22 +72,28 @@ class MessagingGateway:
         self._outbound_poll_seconds = outbound_poll_seconds
 
         self._memory_manager = memory_manager
-        self._config_manager = config_manager
-        self._token_manager = None
-        self._user_mapper = None
         self._app: Application = None
+        # user_id -> (tenant_id, expiry). Only positive resolves are cached
+        # so a fresh registration is visible on the user's next message.
+        self._tenant_cache: dict = {}
 
-    def _init_auth(self):
-        """Lazy-initialize auth components."""
-        if self._token_manager is None and self._config_manager is not None:
-            from cogniverse_core.messaging_auth import (
-                InviteTokenManager,
-                UserTenantMapper,
+    async def _resolve_tenant(self, user_id: str) -> dict:
+        """Resolve a Telegram user's tenant via the runtime, with a short
+        positive-only cache so it costs one HTTP hop per user per minute
+        instead of one per message."""
+        now = time.monotonic()
+        cached = self._tenant_cache.get(user_id)
+        if cached and cached[1] > now:
+            return {"status": "ok", "tenant_id": cached[0]}
+        result = await self.runtime_client.resolve_tenant("telegram", user_id)
+        if result.get("status") == "ok" and result.get("tenant_id"):
+            if len(self._tenant_cache) >= self._TENANT_CACHE_MAX_ENTRIES:
+                self._tenant_cache.clear()
+            self._tenant_cache[user_id] = (
+                result["tenant_id"],
+                now + self._TENANT_CACHE_TTL_SECONDS,
             )
-
-            self._token_manager = InviteTokenManager(self._config_manager)
-            if self._memory_manager is not None:
-                self._user_mapper = UserTenantMapper(self._memory_manager)
+        return result
 
     def _get_conversation_manager(self, tenant_id: str):
         """Create a ConversationManager for a tenant."""
@@ -93,8 +104,12 @@ class MessagingGateway:
         return ConversationManager(self._memory_manager, tenant_id)
 
     async def _handle_start(self, update: Update, context) -> None:
-        """Handle /start command — user registration."""
-        self._init_auth()
+        """Handle /start command — user registration via the runtime.
+
+        The runtime validates the token, stores the mapping, and consumes
+        the token in that order, so "unavailable" always means the token
+        survived for a retry.
+        """
         text = update.message.text or ""
         parts = text.split(maxsplit=1)
         token = parts[1].strip() if len(parts) > 1 else None
@@ -107,46 +122,25 @@ class MessagingGateway:
             )
             return
 
-        if self._token_manager is None:
-            await update.message.reply_text(
-                "Registration not available — config_manager not initialized."
-            )
+        user_id = str(update.effective_user.id)
+        result = await self.runtime_client.register_user("telegram", user_id, token)
+        status = result.get("status")
+        if status == "invalid_token":
+            await update.message.reply_text(format_invalid_token())
             return
-
-        try:
-            tenant_id = self._token_manager.validate_token(token)
-        except Exception as exc:  # noqa: BLE001 — store outage, not a bad token
-            logger.error("Token validation unavailable: %s", exc)
+        if status != "registered" or not result.get("tenant_id"):
+            logger.error("Registration unavailable: %s", result.get("message"))
             await update.message.reply_text(
                 "Registration is temporarily unavailable — your token was not "
                 "consumed, please try again shortly."
             )
             return
-        if not tenant_id:
-            await update.message.reply_text(format_invalid_token())
-            return
 
-        user_id = str(update.effective_user.id)
-
-        # Register BEFORE consuming the token, and only consume on success —
-        # burning the token around a failed registration locks the user out
-        # until an admin mints a new one, while telling them "Registered".
-        if self._user_mapper and not self._user_mapper.register_user(
-            "telegram", user_id, tenant_id
-        ):
-            await update.message.reply_text(
-                "Registration failed — your invite token is still valid, "
-                "please try again in a moment."
-            )
-            return
-
-        if not self._token_manager.mark_token_used(token, tenant_id):
-            logger.error(
-                "User %s registered but token %s... could not be consumed; "
-                "it stays live until it expires",
-                user_id,
-                token[:8],
-            )
+        tenant_id = result["tenant_id"]
+        self._tenant_cache[user_id] = (
+            tenant_id,
+            time.monotonic() + self._TENANT_CACHE_TTL_SECONDS,
+        )
         await update.message.reply_text(format_registration_success(tenant_id))
 
     async def _handle_help(self, update: Update, context) -> None:
@@ -155,22 +149,18 @@ class MessagingGateway:
 
     async def _handle_message(self, update: Update, context) -> None:
         """Handle all messages — text, commands, and media."""
-        self._init_auth()
-
         user_id = str(update.effective_user.id)
         chat_id = str(update.effective_chat.id)
 
-        tenant_id = None
-        if self._user_mapper:
-            try:
-                tenant_id = self._user_mapper.get_tenant_id("telegram", user_id)
-            except Exception as exc:  # noqa: BLE001 — outage ≠ unregistered
-                logger.error("Tenant lookup unavailable: %s", exc)
-                await update.message.reply_text(
-                    "Service temporarily unavailable — please try again shortly."
-                )
-                return
+        resolved = await self._resolve_tenant(user_id)
+        if resolved.get("status") != "ok":
+            logger.error("Tenant lookup unavailable: %s", resolved.get("message"))
+            await update.message.reply_text(
+                "Service temporarily unavailable — please try again shortly."
+            )
+            return
 
+        tenant_id = resolved.get("tenant_id")
         if not tenant_id:
             await update.message.reply_text(format_registration_required())
             return

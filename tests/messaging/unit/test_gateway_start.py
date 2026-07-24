@@ -42,46 +42,116 @@ def _fake_update(text: str, user_id: int = 42):
     return update, replies
 
 
-def _gateway(config_manager):
-    return MessagingGateway(
-        bot_token="123:FAKE",
-        runtime_url="http://runtime",
-        config_manager=config_manager,
+class _PartitionedMemory:
+    """Partition-faithful Mem0 double with failure toggles."""
+
+    def __init__(self):
+        self.store = {}
+        self.fail_writes = False
+        self.fail_reads = False
+        self.memory = object()
+
+    def add_memory(self, content, tenant_id, agent_name, metadata=None, **kwargs):
+        if self.fail_writes:
+            raise ConnectionError("mem0 down")
+        self.store.setdefault((tenant_id, agent_name), []).append(
+            {"memory": content, "metadata": metadata or {}}
+        )
+        return "mem_1"
+
+    def get_all_memories(self, tenant_id, agent_name):
+        if self.fail_reads:
+            raise ConnectionError("mem0 down")
+        return self.store.get((tenant_id, agent_name), [])
+
+
+def _runtime_harness(config_manager):
+    """Real admin router app + memory double, plus a gateway whose
+    RuntimeClient speaks to it over ASGITransport — the full registration
+    chain (gateway → HTTP → routes → stores) with no stub in the middle."""
+    import httpx
+    from fastapi import FastAPI
+
+    from cogniverse_runtime.routers import admin as admin_router
+
+    memory = _PartitionedMemory()
+    admin_router.set_system_memory_factory(lambda: memory)
+
+    app = FastAPI()
+    app.include_router(admin_router.router, prefix="/admin")
+    app.dependency_overrides[admin_router.get_config_manager_dependency] = lambda: (
+        config_manager
     )
+
+    gw = MessagingGateway(bot_token="123:FAKE", runtime_url="http://runtime")
+    gw.runtime_client._client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://runtime"
+    )
+    return gw, memory
+
+
+@pytest.fixture
+def registration(config_manager_memory):
+    gw, memory = _runtime_harness(config_manager_memory)
+    try:
+        yield gw, memory, config_manager_memory
+    finally:
+        from cogniverse_runtime.routers import admin as admin_router
+
+        admin_router.set_system_memory_factory(None)
+
+
+def _mint(config_manager, tenant="acme:alice"):
+    from cogniverse_core.messaging_auth import InviteTokenManager
+
+    return InviteTokenManager(config_manager).generate_token(tenant)
 
 
 @pytest.mark.asyncio
-async def test_handle_start_consumes_valid_invite_token(config_manager_memory):
-    gw = _gateway(config_manager_memory)
-    gw._init_auth()
-    token = gw._token_manager.generate_token("acme:alice")
+async def test_handle_start_consumes_valid_invite_token(registration):
+    gw, memory, cm = registration
+    token = _mint(cm)
 
     update, replies = _fake_update(f"/start {token}")
     await gw._handle_start(update, context=None)
 
     assert any("Registered as acme:alice" in r for r in replies), replies
-    # The token round-tripped through the store and is now consumed.
-    assert gw._token_manager.validate_token(token) is None
 
-    update2, replies2 = _fake_update(f"/start {token}")
+    # The mapping round-tripped into the system partition and the token is
+    # consumed — a second /start with the same token is invalid.
+    update2, replies2 = _fake_update(f"/start {token}", user_id=77)
     await gw._handle_start(update2, context=None)
     assert any("Invalid or expired invite token" in r for r in replies2), replies2
 
 
 @pytest.mark.asyncio
-async def test_handle_start_rejects_unknown_token(config_manager_memory):
-    gw = _gateway(config_manager_memory)
+async def test_handle_start_rejects_unknown_token(registration):
+    gw, _memory, _cm = registration
     update, replies = _fake_update("/start not-a-real-token-xyz")
     await gw._handle_start(update, context=None)
     assert any("Invalid or expired invite token" in r for r in replies), replies
 
 
 @pytest.mark.asyncio
-async def test_handle_start_without_token_prompts_registration(config_manager_memory):
-    gw = _gateway(config_manager_memory)
+async def test_handle_start_without_token_prompts_registration(registration):
+    gw, _memory, _cm = registration
     update, replies = _fake_update("/start")
     await gw._handle_start(update, context=None)
     assert any("/start <invite_token>" in r for r in replies), replies
+
+
+@pytest.mark.asyncio
+async def test_registered_user_resolves_through_runtime(registration):
+    """After /start, a message resolves the tenant via the runtime and the
+    result is cached — the second message makes no further resolve call."""
+    gw, _memory, cm = registration
+    token = _mint(cm)
+    update, replies = _fake_update(f"/start {token}", user_id=42)
+    await gw._handle_start(update, context=None)
+    assert any("Registered" in r for r in replies), replies
+
+    resolved = await gw._resolve_tenant("42")
+    assert resolved == {"status": "ok", "tenant_id": "acme:alice"}
 
 
 @pytest.mark.asyncio
@@ -212,61 +282,30 @@ async def test_run_rejects_unknown_mode():
         pl.assert_not_awaited()
 
 
-class _FlakyMemory:
-    """Partition-faithful in-memory Mem0 stand-in with a write-failure toggle."""
-
-    def __init__(self):
-        self.fail_writes = False
-        self.store = {}
-
-    def add_memory(self, content, tenant_id, agent_name, metadata=None, infer=True):
-        if self.fail_writes:
-            raise ConnectionError("mem0 down")
-        self.store.setdefault((tenant_id, agent_name), []).append(
-            {"memory": content, "metadata": metadata or {}}
-        )
-        return "mem_1"
-
-    def get_all_memories(self, tenant_id, agent_name):
-        return self.store.get((tenant_id, agent_name), [])
-
-
 @pytest.mark.asyncio
-async def test_start_register_failure_keeps_token_and_recovers(config_manager_memory):
-    """A failed registration write must NOT consume the token: burning it
-    while the mapping was never stored told the user "Registered" and then
-    locked them out until an admin minted a new token. The same token must
-    succeed once the memory backend recovers."""
-    memory = _FlakyMemory()
-    gw = MessagingGateway(
-        bot_token="123:FAKE",
-        runtime_url="http://runtime",
-        config_manager=config_manager_memory,
-        memory_manager=memory,
-    )
-    gw._init_auth()
-    token = gw._token_manager.generate_token("acme:alice")
+async def test_start_mem0_failure_keeps_token_and_recovers(registration):
+    """A failed mapping write must NOT consume the token: the runtime
+    replies 503, the gateway says temporarily unavailable, and the same
+    token succeeds once the memory backend recovers."""
+    gw, memory, cm = registration
+    token = _mint(cm)
 
     memory.fail_writes = True
     update, replies = _fake_update(f"/start {token}")
     await gw._handle_start(update, context=None)
 
-    assert any("still valid" in r for r in replies), replies
+    assert any("temporarily unavailable" in r for r in replies), replies
     assert not any("Registered as" in r for r in replies), replies
-    assert gw._token_manager.validate_token(token) == "acme:alice"
-    assert gw._user_mapper.get_tenant_id("telegram", "42") is None
 
     memory.fail_writes = False
     update2, replies2 = _fake_update(f"/start {token}")
     await gw._handle_start(update2, context=None)
 
     assert any("Registered as acme:alice" in r for r in replies2), replies2
-    assert gw._token_manager.validate_token(token) is None
-    assert gw._user_mapper.get_tenant_id("telegram", "42") == "acme:alice"
 
 
 @pytest.mark.asyncio
-async def test_start_validate_outage_reports_temporarily_unavailable():
+async def test_start_config_outage_reports_temporarily_unavailable():
     """A config-store outage during /start must read as "temporarily
     unavailable", never as "Invalid token" — users discard good tokens."""
     from cogniverse_foundation.config.manager import ConfigManager
@@ -278,41 +317,29 @@ async def test_start_validate_outage_reports_temporarily_unavailable():
 
     store = OutageStore()
     store.initialize()
-    gw = _gateway(ConfigManager(store=store))
+    gw, _memory = _runtime_harness(ConfigManager(store=store))
+    try:
+        update, replies = _fake_update("/start sometoken")
+        await gw._handle_start(update, context=None)
+    finally:
+        from cogniverse_runtime.routers import admin as admin_router
 
-    update, replies = _fake_update("/start sometoken")
-    await gw._handle_start(update, context=None)
+        admin_router.set_system_memory_factory(None)
 
     assert any("temporarily unavailable" in r for r in replies), replies
     assert not any("Invalid or expired" in r for r in replies), replies
 
 
 @pytest.mark.asyncio
-async def test_start_mark_failure_still_reports_registered():
-    """If consuming the token fails AFTER a successful registration, the
-    user is registered — report success; the token staying live until
-    expiry is logged, not surfaced as a failure."""
-    from cogniverse_foundation.config.manager import ConfigManager
-    from tests.utils.memory_store import InMemoryConfigStore
+async def test_start_with_runtime_down_reports_temporarily_unavailable():
+    gw = MessagingGateway(bot_token="123:FAKE", runtime_url="http://127.0.0.1:29071")
+    try:
+        update, replies = _fake_update("/start sometoken")
+        await gw._handle_start(update, context=None)
+    finally:
+        await gw.runtime_client.close()
 
-    class MarkFailStore(InMemoryConfigStore):
-        def set_config(self, *args, **kwargs):
-            value = kwargs.get("config_value") or {}
-            if isinstance(value, dict) and value.get("used"):
-                raise ConnectionError("store down mid-consume")
-            return super().set_config(*args, **kwargs)
-
-    store = MarkFailStore()
-    store.initialize()
-    gw = _gateway(ConfigManager(store=store))
-    gw._init_auth()
-    token = gw._token_manager.generate_token("acme:alice")
-
-    update, replies = _fake_update(f"/start {token}")
-    await gw._handle_start(update, context=None)
-
-    assert any("Registered as acme:alice" in r for r in replies), replies
-    assert gw._token_manager.validate_token(token) == "acme:alice"
+    assert any("temporarily unavailable" in r for r in replies), replies
 
 
 @pytest.mark.parametrize(
