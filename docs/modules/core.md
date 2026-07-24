@@ -52,7 +52,7 @@ All concrete agent implementations (OrchestratorAgent, SearchAgent, etc.) inheri
 
 ## Package Structure
 
-`cogniverse_core/conversation.py` — `ConversationStore`: per-context conversation turns in Mem0, keyed by `(tenant_id, context_id)`, stored verbatim and retrieved by metadata filter. The agent dispatcher uses it to load/save history around each agent call so callers (the messaging gateway) need no Mem0 connection.
+`cogniverse_core/conversation.py` — `ConversationStore`: per-context conversation turns in Mem0, keyed by `(tenant_id, context_id)`, stored verbatim and retrieved by metadata filter. `get_history` treats every stored row as untrusted — a row whose metadata is not a dict, or whose `seq` is not a number, is skipped rather than allowed to crash the read, so one malformed row can never drop a context's whole history. The agent dispatcher uses it to load/save history around each agent call so callers (the messaging gateway) need no Mem0 connection; each load and save is time-bounded (`CONVERSATION_IO_TIMEOUT_S`) so a hung Mem0 degrades to no-history rather than stalling the reply.
 
 `cogniverse_core/messaging_auth.py` — `InviteTokenManager` (invite tokens in the system config store, canonicalized through the ConfigManager) and `UserTenantMapper` (Telegram-user→tenant mappings in the Mem0 system partition). Lives in core so both the messaging gateway and the runtime's registration routes share one implementation.
 

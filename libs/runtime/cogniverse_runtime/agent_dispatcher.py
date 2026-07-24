@@ -43,6 +43,12 @@ logger = logging.getLogger(__name__)
 # artifact read on the per-request path.
 GATEWAY_ARTIFACT_TTL_S = 300.0
 
+# Conversation history is enrichment on the dispatch critical path — each Mem0
+# load/save is bounded so a hung backend can never stall a user's reply. On
+# timeout the load degrades to no history and the save drops its turns (both
+# logged); memory I/O never delays the reply past this budget.
+CONVERSATION_IO_TIMEOUT_S = 5.0
+
 # Bound on cached per-tenant GatewayAgents. Least-recently-dispatched tenants
 # rebuild on their next request; tenant delete evicts eagerly via the
 # registered-cache hook.
@@ -1123,17 +1129,24 @@ class AgentDispatcher:
     async def _load_conversation_history(
         self, tenant_id: str, context_id: str
     ) -> List[Dict[str, str]]:
-        """Load a context's recent turns off the event loop.
+        """Load a context's recent turns off the event loop, time-bounded.
 
-        History is enrichment, not a hard dependency: a Mem0 outage or an
-        unconfigured backend degrades to no history (logged), so the agent
-        still answers — it just loses prior-turn context, never the reply.
+        History is enrichment, not a hard dependency: a Mem0 outage, an
+        unconfigured backend, or a load that exceeds CONVERSATION_IO_TIMEOUT_S
+        degrades to no history (logged), so the agent still answers — it just
+        loses prior-turn context, never the reply. A hung backend cannot stall
+        the reply past the budget (the offloaded thread may run on, but the
+        dispatch stops waiting).
         """
-        try:
+
+        async def _load() -> List[Dict[str, str]]:
             store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
             if store is None:
                 return []
             return await asyncio.to_thread(store.get_history, context_id)
+
+        try:
+            return await asyncio.wait_for(_load(), timeout=CONVERSATION_IO_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — enrichment degrade, logged
             logger.warning(
                 "Conversation history unavailable for context %s: %s",
@@ -1145,18 +1158,21 @@ class AgentDispatcher:
     async def _save_conversation_turns(
         self, tenant_id: str, context_id: str, query: str, result: Dict[str, Any]
     ) -> None:
-        """Append the user + assistant turns off the event loop.
+        """Append the user + assistant turns off the event loop, time-bounded.
 
-        Best-effort: a save failure is logged and swallowed — the answer
-        was already produced and returned, so failing here would turn a
-        successful reply into an error. The assistant turn is skipped when
-        the agent produced no human-readable message.
+        Awaited so the next turn reads its own writes, but bounded by
+        CONVERSATION_IO_TIMEOUT_S: a save that fails or exceeds the budget is
+        logged and dropped — the answer was already produced, so persisting a
+        turn must never turn a successful reply into an error or a stall. The
+        assistant turn is skipped when the agent produced no human-readable
+        message.
         """
         assistant_text = result.get("message")
         if not isinstance(assistant_text, str) or not assistant_text:
             candidate = result.get("result")
             assistant_text = candidate if isinstance(candidate, str) else ""
-        try:
+
+        async def _save() -> None:
             store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
             if store is None:
                 return
@@ -1165,6 +1181,9 @@ class AgentDispatcher:
                 await asyncio.to_thread(
                     store.store_turn, context_id, "assistant", assistant_text
                 )
+
+        try:
+            await asyncio.wait_for(_save(), timeout=CONVERSATION_IO_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — best-effort, answer already sent
             logger.warning(
                 "Failed to persist conversation turns for context %s: %s",
