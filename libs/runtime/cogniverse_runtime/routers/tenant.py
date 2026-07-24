@@ -165,18 +165,20 @@ async def set_instructions(tenant_id: str, body: InstructionsRequest):
 async def get_instructions(tenant_id: str):
     """Retrieve the stored tenant instructions."""
     cm = _require_config_manager()
-    entry = await asyncio.to_thread(
-        cm.store.get_config,
+    # Read through the manager so the key gets the same tenant
+    # canonicalization as set_instructions' write — a raw store read looks
+    # up a key the write never produced and 404s on every stored value.
+    value = await asyncio.to_thread(
+        cm.get_config_value,
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_INSTRUCTIONS_SERVICE,
         config_key=_INSTRUCTIONS_KEY,
     )
-    if entry is None or not entry.config_value:
+    if not value:
         raise HTTPException(
             status_code=404, detail="No instructions found for this tenant"
         )
-    value = entry.config_value
     return InstructionsResponse(
         text=value.get("text", ""),
         updated_at=value.get("updated_at", ""),
@@ -1004,8 +1006,11 @@ async def create_job(tenant_id: str, body: JobCreateRequest):
 async def list_jobs(tenant_id: str):
     """List all scheduled jobs for a tenant."""
     cm = _require_config_manager()
+    # The manager has no list-by-service read, so canonicalize explicitly —
+    # create_job writes through the manager, and listing with the raw path
+    # param would read an empty namespace for any non-canonical tenant id.
     entries = cm.store.list_configs(
-        tenant_id=tenant_id,
+        tenant_id=canonical_tenant_id(tenant_id),
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,
     )
@@ -1038,14 +1043,15 @@ async def delete_job(tenant_id: str, job_id: str):
     tombstones the ConfigStore entry. An already-deleted job returns 404.
     """
     cm = _require_config_manager()
-    entry = await asyncio.to_thread(
-        cm.store.get_config,
+    # Manager read for the same canonicalized key create_job wrote —
+    # a raw store read never finds the job, so every delete 404s.
+    value = await asyncio.to_thread(
+        cm.get_config_value,
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,
         config_key=f"job_{job_id}",
     )
-    value = entry.config_value if entry is not None else None
     if not isinstance(value, dict) or not value or value.get("deleted"):
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
