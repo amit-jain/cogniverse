@@ -72,7 +72,7 @@ jobs:
 
     - name: Run core unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/core/unit -m unit \
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/core/unit tests/memory/unit -m unit \
           -v --tb=short \
           --cov=libs/core/cogniverse_core \
           --cov-append \
