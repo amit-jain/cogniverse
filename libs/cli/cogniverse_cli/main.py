@@ -625,7 +625,9 @@ def graph_stats(tenant: str | None) -> None:
     from cogniverse_cli.graph import cmd_stats
 
     tenant_id = _resolve_cli_tenant(tenant)
-    cmd_stats(tenant_id)
+    code = cmd_stats(tenant_id)
+    if code:
+        raise SystemExit(code)
 
 
 @graph.command(name="search")
@@ -637,7 +639,9 @@ def graph_search(query: str, tenant: str | None, top_k: int) -> None:
     from cogniverse_cli.graph import cmd_search
 
     tenant_id = _resolve_cli_tenant(tenant)
-    cmd_search(tenant_id, query, top_k=top_k)
+    code = cmd_search(tenant_id, query, top_k=top_k)
+    if code:
+        raise SystemExit(code)
 
 
 @graph.command(name="neighbors")
@@ -649,7 +653,9 @@ def graph_neighbors(node: str, tenant: str | None, depth: int) -> None:
     from cogniverse_cli.graph import cmd_neighbors
 
     tenant_id = _resolve_cli_tenant(tenant)
-    cmd_neighbors(tenant_id, node, depth=depth)
+    code = cmd_neighbors(tenant_id, node, depth=depth)
+    if code:
+        raise SystemExit(code)
 
 
 @graph.command(name="path")
@@ -662,7 +668,9 @@ def graph_path(source: str, target: str, tenant: str | None, max_depth: int) -> 
     from cogniverse_cli.graph import cmd_path
 
     tenant_id = _resolve_cli_tenant(tenant)
-    cmd_path(tenant_id, source, target, max_depth=max_depth)
+    code = cmd_path(tenant_id, source, target, max_depth=max_depth)
+    if code:
+        raise SystemExit(code)
 
 
 @cli.group()
@@ -813,9 +821,10 @@ def index(
 
     from cogniverse_cli.index import index_files
 
-    if content_type != "code":
+    if content_type == "video":
         console.print(
-            f"[yellow]--type {content_type} is not yet implemented. Only 'code' is supported.[/yellow]"
+            "[yellow]--type video is not yet implemented. "
+            "Use 'code' or 'docs'.[/yellow]"
         )
         return
 
