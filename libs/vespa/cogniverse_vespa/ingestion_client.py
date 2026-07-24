@@ -16,6 +16,7 @@ conversions, keeping the backend-specific logic encapsulated.
 
 import logging
 import math
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -58,6 +59,9 @@ def _native_epoch(value):
 # than write a 1970 document to the index.
 _MIN_MS_EPOCH = 0
 _MAX_MS_EPOCH = 4_102_444_800_000  # 2100-01-01 UTC in ms
+# Below this a value cannot be a real ms epoch (1973-03) — but it IS exactly
+# where a modern seconds epoch lands, so treat it as unit confusion.
+_MIN_PLAUSIBLE_MS_EPOCH = 100_000_000_000
 _MIN_S_EPOCH = 0
 _MAX_S_EPOCH = 4_102_444_800  # 2100-01-01 UTC in s
 
@@ -68,7 +72,14 @@ def _validate_ms_timestamp(ts: float, field: str) -> None:
     if ts < _MIN_MS_EPOCH or ts > _MAX_MS_EPOCH:
         raise ValueError(
             f"{field}={ts!r} is outside [0, year-2100] in milliseconds. "
-            "Did you pass seconds by mistake? Vespa stores this field in ms."
+            "Did you pass microseconds or nanoseconds? Vespa stores this "
+            "field in ms."
+        )
+    if 0 < ts < _MIN_PLAUSIBLE_MS_EPOCH:
+        raise ValueError(
+            f"{field}={ts!r} is in the seconds range for any modern date "
+            "(it would land in 1970-1973 as ms). Vespa stores this field in "
+            "MILLISECONDS — multiply a seconds epoch by 1000."
         )
 
 
@@ -509,24 +520,30 @@ class VespaPyClient:
                     for doc in batch:
                         yield doc
 
-                # Track results with callback
+                # Track results with callback. pyvespa invokes the callback
+                # from its feeder worker threads, so every counter mutation
+                # sits under a lock — an unguarded ``+= 1`` loses increments
+                # under concurrent callbacks and under-reports successes.
                 batch_success = 0
                 batch_failed = []
                 batch_retries = {}  # Track retries per document
+                tally_lock = threading.Lock()
 
                 def callback(response, doc_id):
                     nonlocal batch_success, batch_failed, batch_retries
                     if response.is_successful():
-                        batch_success += 1
-                        if doc_id in batch_retries:
+                        with tally_lock:
+                            batch_success += 1
+                            retries = batch_retries.get(doc_id, 0)
+                        if retries:
                             self.logger.info(
-                                f"Document {doc_id} succeeded after {batch_retries[doc_id]} retries"
+                                f"Document {doc_id} succeeded after {retries} retries"
                             )
                     else:
                         # Track retry attempts
-                        if doc_id not in batch_retries:
-                            batch_retries[doc_id] = 0
-                        batch_retries[doc_id] += 1
+                        with tally_lock:
+                            batch_retries[doc_id] = batch_retries.get(doc_id, 0) + 1
+                            attempt = batch_retries[doc_id]
 
                         # Log detailed error
                         try:
@@ -534,17 +551,18 @@ class VespaPyClient:
                             status = response.get_status_code()
                             self.logger.error(
                                 f"Failed to feed {doc_id} to schema '{self.schema_name}' "
-                                f"(attempt {batch_retries[doc_id]}): HTTP {status} - {error_msg}"
+                                f"(attempt {attempt}): HTTP {status} - {error_msg}"
                             )
                         except Exception:
                             status = getattr(response, "status_code", "unknown")
                             self.logger.error(
                                 f"Failed to feed {doc_id} to schema '{self.schema_name}' "
-                                f"(attempt {batch_retries[doc_id]}): HTTP {status}"
+                                f"(attempt {attempt}): HTTP {status}"
                             )
 
                         # Add to failed list after max retries (handled by pyvespa internally)
-                        batch_failed.append(doc_id)
+                        with tally_lock:
+                            batch_failed.append(doc_id)
 
                 # Feed with production-ready configuration. feed_async_iterable
                 # is pyvespa's HTTP/2 async feeder (I/O-bound throughput) and
@@ -616,21 +634,30 @@ class VespaPyClient:
             return False
 
     def get_document_data(self, doc_id: str) -> Optional[Dict[str, Any]]:
-        """Get document data using pyvespa. Returns raw fields dict or None."""
+        """Get document data using pyvespa.
+
+        Returns the raw fields dict, or ``None`` only for a genuine
+        not-found (404). pyvespa raises on every other 4xx/5xx — that is an
+        outage and propagates; flattening it to ``None`` collapsed outage
+        and absence into the same value for existence-checking callers.
+        """
         if not self._connected:
             if not self.connect():
-                return None
+                raise ConnectionError(
+                    f"Cannot get document {doc_id}: Vespa connection at "
+                    f"{self.url}:{self.port} is unavailable"
+                )
 
         try:
             response = self.app.get_data(
                 schema=self.schema_name, data_id=doc_id, namespace=self.namespace
             )
-            if response is not None and response.status_code == 200:
-                return response.json.get("fields", {})
-            return None
         except Exception as e:
             self.logger.error(f"Error getting document: {e}")
-            return None
+            raise
+        if response is not None and response.status_code == 200:
+            return response.json.get("fields", {})
+        return None
 
     def delete_document(self, doc_id: str) -> bool:
         """Delete document using pyvespa"""
