@@ -7,6 +7,7 @@ double that mirrors the real channels: ``save_demonstrations``/
 Phoenix/ArtifactManager round-trip is covered by the integration suite.
 """
 
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -35,6 +36,9 @@ class _FakeArtifactManager:
 
     async def load_demonstrations(self, kind):
         return self._demos.get((self._tenant, kind))
+
+    async def clear_demonstrations(self, kind):
+        self._demos.pop((self._tenant, kind), None)
 
     async def save_blob(self, kind, key, content):
         self._blobs[(self._tenant, kind, key)] = content
@@ -276,3 +280,79 @@ class TestSaveLearningCorpus:
             "agent_a"
         ]
         assert await store.load_query_patterns(tenant) == {"s": ["q0"]}
+
+    async def test_write_failure_with_empty_prior_clears_leaked_patterns(self, store):
+        tenant = "acme:staging"
+        # First-run tenant: the prior corpus is empty on every channel.
+        assert await store.load_query_patterns(tenant) == {}
+        assert await store.load_executions(tenant) == []
+
+        # Fail only the FORWARD executions save; the restore's save succeeds.
+        real_save_exec = store.save_executions
+        calls = {"n": 0}
+
+        async def failing_then_ok(tenant_id, executions):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("phoenix down on executions save")
+            return await real_save_exec(tenant_id, executions)
+
+        store.save_executions = failing_then_ok
+        try:
+            with pytest.raises(ConnectionError):
+                await store.save_learning_corpus(
+                    tenant,
+                    [_execution(workflow_id="new")],
+                    [_profile("agent_b")],
+                    {"s": ["q1"]},
+                )
+        finally:
+            store.save_executions = real_save_exec
+
+        # The forward pattern write ({"s": ["q1"]}) is undone back to the empty
+        # prior — patterns must not leak just because the prior was empty, so the
+        # orchestrator never template-matches against a query type whose
+        # executions were rolled back. The failed forward save persists no
+        # executions either.
+        assert await store.load_query_patterns(tenant) == {}
+        assert await store.load_executions(tenant) == []
+
+    async def test_concurrent_failing_writes_leave_no_leaked_patterns(self, store):
+        tenants = ["acme:a", "acme:b"]
+        for t in tenants:
+            assert await store.load_query_patterns(t) == {}
+
+        real_save_exec = store.save_executions
+        barrier = asyncio.Barrier(len(tenants))
+        calls: dict[str, int] = {}
+
+        async def barriered_forward_fails(tenant_id, executions):
+            calls[tenant_id] = calls.get(tenant_id, 0) + 1
+            if calls[tenant_id] == 1:
+                # Rendezvous so every tenant's forward executions save is
+                # simultaneously in flight before any of them fails.
+                await barrier.wait()
+                raise ConnectionError(f"phoenix down for {tenant_id}")
+            return await real_save_exec(tenant_id, executions)
+
+        store.save_executions = barriered_forward_fails
+
+        async def save_one(t):
+            with pytest.raises(ConnectionError):
+                await store.save_learning_corpus(
+                    t,
+                    [_execution(workflow_id=f"new_{t}")],
+                    [_profile(f"agent_{t}")],
+                    {t: [f"pat_{t}"]},
+                )
+
+        try:
+            await asyncio.gather(*(save_one(t) for t in tenants))
+        finally:
+            store.save_executions = real_save_exec
+
+        # Every tenant restores to its own empty prior; no tenant keeps its
+        # forward pattern write and none leaks another tenant's key.
+        for t in tenants:
+            assert await store.load_query_patterns(t) == {}
+            assert await store.load_executions(t) == []
