@@ -8,9 +8,16 @@ convention the CI selections rely on.
 
 The map mirrors the ``-m`` filters in .github/workflows/*.yml. Directories
 whose jobs select with ``"unit or not integration"`` or with no ``-m`` at all
-tolerate unmarked files and are deliberately absent here. ``ci_fast`` remains
-a per-file judgment (heavy container suites may legitimately omit it), so only
-the base gate marker is enforced.
+tolerate unmarked files and are deliberately absent here (``backends/*`` is
+one such — its jobs run unmarked files). ``ci_fast`` remains a per-file
+judgment (heavy container suites may legitimately omit it), so only the base
+gate marker is enforced.
+
+``memory/unit`` runs in the core workflow's ``-m "unit and ci_fast"`` step, so
+an unmarked file there is silently dropped — it is gated. ``memory/integration``
+needs a vLLM DenseOn sidecar and runs in the local pre-push lane rather than a
+standing GitHub job; it is gated anyway so every file keeps its ``integration``
+marker and cannot drift out of that lane unnoticed.
 """
 
 from pathlib import Path
@@ -28,6 +35,8 @@ GATED_DIRS = {
     "agents/unit": "unit",
     "core/unit": "unit",
     "routing/unit": "unit",
+    "memory/unit": "unit",
+    "memory/integration": "integration",
 }
 
 

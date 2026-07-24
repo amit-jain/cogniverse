@@ -8,6 +8,8 @@ import pytest
 
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class TestMem0MemoryManager:
     """Test Mem0MemoryManager"""

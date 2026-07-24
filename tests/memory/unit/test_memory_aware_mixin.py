@@ -8,6 +8,8 @@ import pytest
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 class MockAgentWithMemory(MemoryAwareMixin):
     """Mock agent class using memory mixin for testing"""
