@@ -137,3 +137,34 @@ async def test_crud_204_empty_body_stays_ok():
         await rc.close()
 
     assert result == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_context_cannot_override_tenant():
+    """A caller-supplied context["tenant_id"] must lose to the authoritative
+    tenant argument — the old merge order let any context dict silently
+    redirect the request to another tenant."""
+    seen = {}
+
+    def _handler(request):
+        import json
+
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"message": "ok"})
+
+    rc = RuntimeClient("http://runtime")
+    rc._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler), base_url="http://runtime"
+    )
+    try:
+        await rc.dispatch_agent(
+            "gateway_agent",
+            "q",
+            tenant_id="acme:alice",
+            context={"tenant_id": "evil:other", "media_type": "photo"},
+        )
+    finally:
+        await rc.close()
+
+    assert seen["context"]["tenant_id"] == "acme:alice"
+    assert seen["context"]["media_type"] == "photo"
