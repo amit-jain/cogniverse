@@ -392,3 +392,116 @@ def test_log_session_evaluation_uninitialized_raises():
             session_score=0.5,
             session_outcome="success",
         )
+
+
+class TestLogExperimentEvent:
+    """log_experiment_event records the experiment lifecycle event as an
+    OpenTelemetry span named after the event, carrying the event data as span
+    attributes. The prior code built a throwaway monitor and emitted a span
+    named "retrieval" with retrieval-shaped (all-zero) attributes, dropping the
+    event identity entirely."""
+
+    @pytest.fixture
+    def captured_spans(self, monkeypatch):
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        # The provider calls trace.get_tracer(__name__), which reads the global
+        # provider; redirect it to a real in-memory-backed provider. The span
+        # still flows through the real OTel SDK — only the provider is swapped.
+        monkeypatch.setattr(
+            trace, "get_tracer", lambda *_a, **_kw: provider.get_tracer("test")
+        )
+        return exporter
+
+    @pytest.mark.unit
+    def test_emits_span_named_after_event_with_data_attributes(self, captured_spans):
+        provider = PhoenixEvaluationProvider()
+        provider._initialized = True
+
+        provider.log_experiment_event(
+            event_type="experiment_start",
+            data={
+                "profile": "frame_based_colpali",
+                "strategy": "binary_binary",
+                "description": "golden run",
+                "dataset": "golden_eval_v1",
+            },
+        )
+
+        spans = captured_spans.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "experiment_start"
+        assert span.attributes["profile"] == "frame_based_colpali"
+        assert span.attributes["strategy"] == "binary_binary"
+        assert span.attributes["description"] == "golden run"
+        assert span.attributes["dataset"] == "golden_eval_v1"
+
+    @pytest.mark.unit
+    def test_complete_event_carries_numeric_and_bool_attributes(self, captured_spans):
+        provider = PhoenixEvaluationProvider()
+        provider._initialized = True
+
+        provider.log_experiment_event(
+            event_type="experiment_complete",
+            data={"profile": "p", "strategy": "s", "mrr": 0.42, "error": False},
+        )
+
+        spans = captured_spans.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "experiment_complete"
+        assert span.attributes["mrr"] == 0.42
+        assert span.attributes["error"] is False
+
+    @pytest.mark.unit
+    def test_non_primitive_values_coerced_and_none_skipped(self, captured_spans):
+        # A nested list/dict value would make span.set_attribute raise; it must
+        # be stringified. A None value must be dropped rather than passed to
+        # set_attribute (which rejects None).
+        provider = PhoenixEvaluationProvider()
+        provider._initialized = True
+
+        provider.log_experiment_event(
+            event_type="experiment_start",
+            data={"profile": "p", "tags": ["a", "b"], "notes": None},
+        )
+
+        span = captured_spans.get_finished_spans()[0]
+        assert span.name == "experiment_start"
+        assert span.attributes["profile"] == "p"
+        assert span.attributes["tags"] == "['a', 'b']"
+        assert "notes" not in span.attributes
+
+    @pytest.mark.unit
+    def test_telemetry_unconfigured_is_noop_not_error(self, monkeypatch):
+        # Fault contract: with no exporting tracer configured, get_tracer
+        # returns a no-op tracer; the call must not raise. Telemetry being down
+        # never breaks the experiment run.
+        from opentelemetry import trace
+
+        monkeypatch.setattr(trace, "get_tracer", lambda *_a, **_kw: trace.NoOpTracer())
+        provider = PhoenixEvaluationProvider()
+        provider._initialized = True
+
+        provider.log_experiment_event(
+            event_type="experiment_start", data={"profile": "p"}
+        )
+
+    @pytest.mark.unit
+    def test_uninitialized_provider_emits_no_span(self, captured_spans):
+        provider = PhoenixEvaluationProvider()
+
+        provider.log_experiment_event(
+            event_type="experiment_start", data={"profile": "p"}
+        )
+
+        assert captured_spans.get_finished_spans() == ()

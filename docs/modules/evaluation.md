@@ -2984,8 +2984,7 @@ result = evaluator.evaluate(
 - `test_cli.py`, `test_cli_simple.py` — CLI command behavior
 - `test_root_cause_analysis.py` — `analysis/root_cause_analysis.py`
 - `test_query_window_tz.py`, `test_traces_filter_escape.py` — timezone/query-window and YQL-escaping edge cases
-- `test_phoenix_monitoring.py` — `RetrievalMonitor`/`AlertThresholds`/`MetricWindow`, including `windows_lock`-guarded concurrent `log_retrieval_event`/`get_metrics_summary` access
-- `test_evaluation_provider_session.py` — `PhoenixEvaluationProvider.log_session_evaluation` passes `project` through to `add_annotation`
+- `test_evaluation_provider_session.py` — `PhoenixEvaluationProvider.log_session_evaluation` passes `project` through to `add_annotation`, and `log_experiment_event` emits an OpenTelemetry span named after the event with the event data as span attributes
 
 `tests/evaluation/fakes.py` provides `InMemoryDatasetStore`/`FailingDatasetStore`
 — real `DatasetStore` subclasses (not `MagicMock`s) backed by an in-process

@@ -405,7 +405,6 @@ flowchart TB
         PhoenixEvaluationProvider["<span style='color:#000'>PhoenixEvaluationProvider<br/>evaluation_provider.py</span>"]
         PhoenixEvaluatorFramework["<span style='color:#000'>PhoenixEvaluatorFramework<br/>framework.py</span>"]
         PhoenixAnalytics["<span style='color:#000'>PhoenixAnalytics<br/>analytics.py</span>"]
-        RetrievalMonitor["<span style='color:#000'>RetrievalMonitor<br/>monitoring.py</span>"]
     end
 
     PhoenixPkg --> PhoenixProviderCls
@@ -415,7 +414,6 @@ flowchart TB
     PhoenixPkg --> PhoenixEvaluationProvider
     PhoenixPkg --> PhoenixEvaluatorFramework
     PhoenixPkg --> PhoenixAnalytics
-    PhoenixPkg --> RetrievalMonitor
 
     style PhoenixPkg fill:#ce93d8,stroke:#7b1fa2,stroke-width:3px,color:#000
     style PhoenixProviderCls fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -425,7 +423,6 @@ flowchart TB
     style PhoenixEvaluationProvider fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PhoenixEvaluatorFramework fill:#ce93d8,stroke:#7b1fa2,color:#000
     style PhoenixAnalytics fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style RetrievalMonitor fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ### cogniverse_synthetic Package Structure (Core Layer)

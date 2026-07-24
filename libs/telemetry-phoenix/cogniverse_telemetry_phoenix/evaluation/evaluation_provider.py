@@ -367,28 +367,34 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         data: Dict[str, Any],
     ) -> None:
         """
-        Log a generic experiment event to Phoenix.
+        Record an experiment lifecycle event as an OpenTelemetry span.
+
+        Emits a span named after ``event_type`` carrying ``data`` as span
+        attributes. When the runtime has configured the Phoenix OTLP tracer
+        this exports to the tenant's project; otherwise ``get_tracer`` returns
+        a no-op tracer and the call is a no-op — telemetry being unconfigured
+        never breaks the experiment run.
 
         Args:
-            event_type: Type of event (e.g., "experiment_start", "experiment_complete")
-            data: Event data
+            event_type: Type of event (e.g. "experiment_start",
+                "experiment_complete").
+            data: Event data attached to the span as attributes.
         """
         if not self._initialized:
             logger.warning("Provider not initialized, skipping event logging")
             return
 
-        try:
-            logger.debug(f"Logging experiment event: {event_type}")
-            # Phoenix event logging logic
-            # This could use Phoenix's monitoring/RetrievalMonitor under the hood
-            from cogniverse_telemetry_phoenix.evaluation.monitoring import (
-                RetrievalMonitor,
-            )
+        from opentelemetry import trace as _otel_trace
 
-            monitor = RetrievalMonitor()
-            monitor.log_retrieval_event({**data, "event_type": event_type})
-        except Exception as e:
-            logger.error(f"Failed to log experiment event: {e}")
+        tracer = _otel_trace.get_tracer(__name__)
+        with tracer.start_as_current_span(event_type) as span:
+            for key, value in data.items():
+                if value is None:
+                    continue
+                if isinstance(value, (str, bool, int, float)):
+                    span.set_attribute(key, value)
+                else:
+                    span.set_attribute(key, str(value))
 
     def log_session_evaluation(
         self,

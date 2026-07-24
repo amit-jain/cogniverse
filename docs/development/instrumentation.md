@@ -28,7 +28,6 @@ The Instrumentation module provides production-grade observability through:
 - **Session Tracking**: Multi-turn conversation tracking with `session_span()` method
 - **Phoenix Sessions View**: Grouped trace visualization for conversation trajectories
 - **Provider Abstraction**: `TelemetryProvider` and its three store interfaces (`TraceStore`, `AnnotationStore`, `DatasetStore`) define a backend-agnostic contract; `PhoenixProvider` is the shipped implementation, auto-discovered via the `cogniverse.telemetry.providers` entry-point group
-- **Real-Time Monitoring**: `RetrievalMonitor` sliding-window latency/error/MRR tracking with configurable alert thresholds, used by the quality-monitor cycle
 
 ---
 
@@ -443,20 +442,7 @@ Phoenix implementation of the generic `EvaluationProvider` / `EvaluatorFramework
 - **`PhoenixEvaluatorFramework`** — `get_evaluator_base_class()` returns Phoenix's `BaseEvaluator`; `get_evaluation_result_type()` returns `EvaluationResult`
 - **`EvaluationResult`** — `dict` subclass with attribute access (`result.score`, `result.label`), bridging Phoenix v14's `TypedDict`-based `ExperimentEvaluation` with code that expects attribute access
 
-### 8. RetrievalMonitor
-
-**File:** `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/monitoring.py`
-
-**Package:** `cogniverse-telemetry-phoenix` (implementation layer)
-
-Real-time sliding-window monitoring for retrieval quality, used by the quality-monitor cycle (`libs/evaluation/cogniverse_evaluation/quality_monitor.py`).
-
-#### Key Classes
-- **`AlertThresholds`** — `latency_p95_ms=1000.0`, `error_rate=0.05`, `mrr_drop=0.1`, `throughput_drop=0.3`
-- **`MetricWindow`** — fixed-size `deque` (default 100) with `add(value)`, `get_mean()`, `get_p95()`, `get_error_rate()`
-- **`RetrievalMonitor`** — per-profile `latency_windows` / `error_windows` / `mrr_windows`, all guarded by `windows_lock` (producer threads calling `log_retrieval_event` insert first-seen profile keys concurrently with the monitoring thread's `_check_alerts`/`get_metrics_summary` iterating them); `start()` launches a Phoenix session and a background monitoring thread; `log_retrieval_event(event)` feeds the windows; `get_metrics_summary()` returns aggregated stats; `stop()` shuts the thread down
-
-### 9. Profile Routing Metrics Dashboard Tab
+### 8. Profile Routing Metrics Dashboard Tab
 
 **File:** `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`
 
@@ -679,7 +665,6 @@ Queue-full drop behaviour is handled natively by OTel's `BatchSpanProcessor`
 (created by `phoenix.otel.register(batch=True)` inside `PhoenixProvider`).
 
 **Memory Management**
-- `RetrievalMonitor.MetricWindow` sliding window (default 100 samples) per profile/strategy for latency, error, and MRR tracking; the buffered-for-Phoenix `metrics_buffer` deque is capped at 10,000 entries
 - LRU eviction for tenant tracers (default 100 tenants, `TelemetryConfig.max_cached_tenants`), plus TTL-based expiry (`tenant_cache_ttl_seconds`, default 3600s)
 - Span processors automatically clean up exported spans
 
@@ -743,14 +728,6 @@ async def fetch_profile_selection_spans(tenant_id: str, project_name: str):
         filters={"name": "cogniverse.profile_selection"},
         limit=1000,
     )
-
-# Real-time sliding-window alerting for retrieval quality
-from cogniverse_telemetry_phoenix.evaluation.monitoring import RetrievalMonitor
-
-monitor = RetrievalMonitor()
-monitor.start()
-monitor.log_retrieval_event({"profile": "video_search", "latency_ms": 120, "error": False})
-summary = monitor.get_metrics_summary()
 ```
 
 **Health Checks**
@@ -898,7 +875,6 @@ def test_real_phoenix_multi_tenant_isolation(self, phoenix_container):
 - `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/analytics.py` - `PhoenixAnalytics`, re-exported `TraceMetrics`
 - `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/evaluation_provider.py` - `PhoenixEvaluationProvider`
 - `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/framework.py` - `PhoenixEvaluatorFramework`, `EvaluationResult`
-- `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/monitoring.py` - `RetrievalMonitor`, `AlertThresholds`, `MetricWindow`
 
 ### Core Layer - Evaluation & Experiment Tracking
 - `libs/evaluation/cogniverse_evaluation/core/experiment_tracker.py` - `ExperimentTracker`
