@@ -22,10 +22,8 @@ def _adapter_workspace() -> str:
 
     Returns a unique mkdtemp path so two concurrent training jobs
     (even running in the same Modal container if Modal ever reuses
-    one) write to distinct directories. Replaces the hardcoded
-    ``/tmp/adapter`` literal that used to be sprinkled through the
-    training functions — production code should not hardcode
-    process-shared paths.
+    one) write to distinct directories instead of a shared hardcoded
+    path.
     """
     return tempfile.mkdtemp(prefix="adapter_")
 

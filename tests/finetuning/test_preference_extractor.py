@@ -209,22 +209,24 @@ class TestPropertyAccess:
             )
         )
 
+        # Real Phoenix annotation frames are INDEXED by span_id (no span_id
+        # column) with metadata as a single dict column — model that shape so
+        # the extractor is exercised against the boundary's actual contract.
         mock_provider.annotations.get_annotations = AsyncMock(
             return_value=pd.DataFrame(
                 [
                     {
-                        "span_id": "span1",
                         "result.label": "approved",
                         "result.score": 1.0,
-                        "metadata.response": "good route",
+                        "metadata": {"response": "good route"},
                     },
                     {
-                        "span_id": "span1",
                         "result.label": "rejected",
                         "result.score": 0.0,
-                        "metadata.response": "bad route",
+                        "metadata": {"response": "bad route"},
                     },
-                ]
+                ],
+                index=pd.Index(["span1", "span1"], name="span_id"),
             )
         )
 
@@ -285,22 +287,24 @@ class TestPropertyAccess:
                 ]
             )
         )
+        # Real Phoenix annotation frames are INDEXED by span_id (no span_id
+        # column) with metadata as a single dict column — model that shape so
+        # the extractor is exercised against the boundary's actual contract.
         mock_provider.annotations.get_annotations = AsyncMock(
             return_value=pd.DataFrame(
                 [
                     {
-                        "span_id": "span1",
                         "result.label": "approved",
                         "result.score": 1.0,
-                        "metadata.response": "good route",
+                        "metadata": {"response": "good route"},
                     },
                     {
-                        "span_id": "span1",
                         "result.label": "rejected",
                         "result.score": 0.0,
-                        "metadata.response": "bad route",
+                        "metadata": {"response": "bad route"},
                     },
-                ]
+                ],
+                index=pd.Index(["span1", "span1"], name="span_id"),
             )
         )
 

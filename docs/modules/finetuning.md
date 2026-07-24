@@ -641,7 +641,10 @@ from cogniverse_finetuning.registry import (
     resolve_adapter_path
 )
 
-# Get active adapter info for vLLM
+# Get active adapter info for vLLM. Returns None only for a genuine
+# "no active adapter"; a registry outage RAISES (it must not silently
+# route inference to the base model). list_available_adapters follows
+# the same contract.
 adapter_info = get_active_adapter_for_inference("acme_corp", "routing")
 if adapter_info:
     # cache_dir is required — source it from SystemConfig.adapter_cache_dir,
