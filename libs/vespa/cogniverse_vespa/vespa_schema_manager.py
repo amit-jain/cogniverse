@@ -910,21 +910,23 @@ class VespaSchemaManager:
 
         if unresolved:
             if not allow_absorb_unresolved:
-                # Per-tenant delete contract: refuse rather than silently
-                # cascading into a peer-tenant orphan drop. The caller
-                # (delete_tenant_schemas) must escalate to the bulk
-                # reconcile path for operator-confirmed orphan recovery.
+                # Refuse rather than drop a schema we cannot confirm is an
+                # orphan — it may be a peer tenant's live data hidden by a
+                # transient registry read failure. Both the per-tenant and bulk
+                # reconcile paths take this branch.
                 from cogniverse_core.registries.exceptions import (
                     BackendDeploymentError,
                 )
 
                 raise BackendDeploymentError(
-                    f"refusing to redeploy: {len(unresolved)} schema(s) "
-                    f"have no registry entry and would be silently dropped "
-                    f"by allow_schema_removal=True: {sorted(unresolved)}. "
-                    f"Use the bulk reconcile path "
-                    f"(delete_tenant_schemas_bulk / POST /admin/reconcile-orphans) "
-                    f"to recover them in one atomic redeploy."
+                    f"refusing to redeploy: {len(unresolved)} deployed schema(s) "
+                    f"have no registry record and cannot be confirmed as orphans "
+                    f"(they may be a peer tenant's live data hidden by a registry "
+                    f"read failure): {sorted(unresolved)}. Redeploying without "
+                    f"them could drop live data. Resolve each — restore its "
+                    f"registry record, add its base schema to the reconciler's "
+                    f"KNOWN_BASES so it is attributed to a tenant, or remove it "
+                    f"explicitly — then retry."
                 )
 
             # Bulk reconcile path: absorb unresolved into deletion so
