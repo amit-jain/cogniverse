@@ -1013,19 +1013,15 @@ class VespaSchemaManager:
         return deleted
 
     def delete_tenant_schemas_bulk(self, tenant_ids: list) -> list:
-        """Atomically drop the schemas of multiple tenants in one redeploy.
+        """Atomically drop the schemas of multiple named tenants in one redeploy.
 
-        Single-tenant ``delete_tenant_schemas`` refuses when an
-        unreconstructable peer orphan exists. When the recovery scenario
-        IS multiple peer orphans (the operator's reconciliation case),
-        the safe path is to add every orphan tenant to the deletion set
-        and redeploy once — every orphan is now in ``deletion_targets``
-        and the survivor reconstruction succeeds.
-
-        For each input tenant, unions registry-known schemas with
-        Vespa-side suffix-matched orphans, redeploys once, then
-        tombstones the registry per tenant. Returns the full list of
-        schemas dropped.
+        For each input tenant, unions registry-known schemas with genuine
+        Vespa-side orphans (suffix-matched, EXCLUDING any registered schema so a
+        proper-suffix match cannot pull in a healthy peer), redeploys once, then
+        tombstones the registry per tenant. Refuses (raises) when a survivor
+        outside the named tenants cannot be reconstructed rather than absorbing
+        it into the deletion — a schema that cannot be confirmed an orphan is
+        never dropped. Returns the full list of schemas dropped.
         """
         if not self._schema_registry:
             raise ValueError("schema_registry required for tenant schema operations")
@@ -1039,6 +1035,11 @@ class VespaSchemaManager:
                 f"Cannot enumerate Vespa-deployed schemas before bulk delete: {e}"
             ) from e
 
+        registered_full_names = {
+            info.full_schema_name
+            for info in (self._schema_registry._get_all_schemas() or [])
+        }
+
         deletion_targets: set = set()
         registry_bases_by_tenant: Dict[str, list] = {}
         for tid in tenant_ids:
@@ -1051,16 +1052,22 @@ class VespaSchemaManager:
             registry_bases_by_tenant[tid] = bases
             suffix = "_" + tid.replace(":", "_")
             for name in deployed:
-                if name.endswith(suffix):
+                # Suffix-match genuine Vespa orphans only. A registered schema
+                # caught by a proper-suffix match — the healthy '..._acme_acme'
+                # matching the '_acme' of a legacy single-suffix orphan token —
+                # is live data for a DIFFERENT tenant and must never be swept in.
+                # The named tenant's own registered schemas are already added
+                # above via the registry loop.
+                if name.endswith(suffix) and name not in registered_full_names:
                     deletion_targets.add(name)
 
-        # Bulk reconcile path: operator-confirmed orphan recovery.
-        # Allow absorbing unresolved orphans into the redeploy so the
-        # cluster un-sticks in one call. The single-tenant path refuses
-        # for this same case so a routine per-tenant delete cannot
-        # cascade into peer-orphan data loss.
+        # Bulk reconcile path: operator-confirmed orphan recovery. Refuse (do
+        # not absorb) when a survivor outside the named tenants cannot be
+        # reconstructed — absorbing it would drop a schema we cannot confirm is
+        # an orphan, wiping a healthy peer tenant. Same contract as the
+        # per-tenant path.
         deleted = self._redeploy_dropping(
-            deletion_targets, allow_absorb_unresolved=True
+            deletion_targets, allow_absorb_unresolved=False
         )
         if not deleted:
             return deleted
