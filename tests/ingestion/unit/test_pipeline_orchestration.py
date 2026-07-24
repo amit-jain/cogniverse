@@ -15,8 +15,51 @@ from cogniverse_runtime.ingestion.strategies import (
     AudioEmbeddingStrategy,
     ChunkSegmentationStrategy,
     FrameSegmentationStrategy,
+    NoDescriptionStrategy,
     SingleVectorEmbeddingStrategy,
+    VLMDescriptionStrategy,
 )
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestChunkVLMIncompatibility:
+    """A chunk-based segmentation emits video-file segments, not keyframe
+    images, so pairing it with a VLM description strategy cannot produce
+    descriptions. ``ProcessingStrategySet`` rejects that pairing at construction
+    instead of reporting success while describing nothing."""
+
+    def test_chunk_segmentation_with_vlm_description_raises(self):
+        with pytest.raises(
+            ValueError,
+            match=(
+                "chunk-based segmentation does not produce keyframes; VLM "
+                "description requires keyframe segmentation"
+            ),
+        ):
+            ProcessingStrategySet(
+                segmentation=ChunkSegmentationStrategy(chunk_duration=30.0),
+                description=VLMDescriptionStrategy(
+                    vlm_endpoint="http://vlm.invalid/v1"
+                ),
+            )
+
+    def test_frame_segmentation_with_vlm_description_ok(self):
+        """The compatible pairing (keyframes + VLM) must still construct."""
+        pss = ProcessingStrategySet(
+            segmentation=FrameSegmentationStrategy(max_frames=10, fps=1.0),
+            description=VLMDescriptionStrategy(vlm_endpoint="http://vlm.invalid/v1"),
+        )
+        assert pss.get_strategy("description") is not None
+
+    def test_chunk_segmentation_without_vlm_description_ok(self):
+        """Chunk segmentation with no VLM description (the real chunk profiles,
+        which use NoDescriptionStrategy) constructs cleanly."""
+        pss = ProcessingStrategySet(
+            segmentation=ChunkSegmentationStrategy(chunk_duration=30.0),
+            description=NoDescriptionStrategy(),
+        )
+        assert pss.get_strategy("segmentation") is not None
 
 
 @pytest.mark.unit

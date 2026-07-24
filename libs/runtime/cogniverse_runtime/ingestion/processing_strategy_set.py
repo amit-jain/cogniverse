@@ -32,6 +32,24 @@ class ProcessingStrategySet:
             else:
                 raise ValueError(f"Strategy '{name}' must extend BaseStrategy")
 
+        # A chunk-based segmentation emits video-file segments (``video_chunks``),
+        # not the keyframe images a VLM description strategy consumes. Pairing
+        # them hands chunk metadata to the keyframe VLM, which cannot describe
+        # video files — so the run would report success while producing no
+        # descriptions. Reject the incompatible pairing at construction.
+        seg = self._strategies.get("segmentation")
+        desc = self._strategies.get("description")
+        if (
+            seg is not None
+            and desc is not None
+            and "chunk" in seg.get_required_processors()
+            and "vlm" in desc.get_required_processors()
+        ):
+            raise ValueError(
+                "chunk-based segmentation does not produce keyframes; VLM "
+                "description requires keyframe segmentation"
+            )
+
     def get_all_strategies(self) -> list[BaseStrategy]:
         """Get all strategies - simple and explicit."""
         return list(self._strategies.values())
