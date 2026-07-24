@@ -489,3 +489,45 @@ async def test_events_rejects_malformed_last_event_id(client):
     resp = await client.get("/ingestion/ing-x/events", params={"last-event-id": "abc"})
     assert resp.status_code == 400
     assert "stream id" in resp.json()["detail"]
+
+
+class TestStatusApiRedisOutage:
+    """Redis down is a dependency outage: the status routes answer 503 with a
+    descriptive detail — never an opaque 500, and never a 200 SSE stream that
+    dies mid-flight."""
+
+    def _app(self):
+        app = FastAPI()
+        app.include_router(ingest_status.router, prefix="/ingestion")
+        return app
+
+    @pytest.mark.asyncio
+    async def test_status_route_maps_redis_outage_to_503(self, monkeypatch):
+        monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:29071/0")
+        # A fresh client per URL: drop any cached healthy client.
+        from cogniverse_runtime.ingestion_worker import redis_client
+
+        await redis_client.close_redis()
+
+        transport = httpx.ASGITransport(app=self._app())
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://t"
+        ) as client:
+            response = await client.get("/ingestion/job-1/status")
+        assert response.status_code == 503
+        assert "status store unavailable" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_events_route_maps_redis_outage_to_503(self, monkeypatch):
+        monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:29071/0")
+        from cogniverse_runtime.ingestion_worker import redis_client
+
+        await redis_client.close_redis()
+
+        transport = httpx.ASGITransport(app=self._app())
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://t"
+        ) as client:
+            response = await client.get("/ingestion/job-1/events")
+        assert response.status_code == 503
+        assert "status store unavailable" in response.json()["detail"]

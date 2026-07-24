@@ -1405,7 +1405,14 @@ async def _load_pin_quotas(tenant_id: str) -> Dict[str, int]:
 @router.get("/tenants/{tenant_id}/pin_quotas", response_model=PinQuotasResponse)
 async def get_pin_quotas(tenant_id: str) -> PinQuotasResponse:
     """return effective pin quotas for a tenant."""
-    quotas = await _load_pin_quotas(tenant_id)
+    try:
+        quotas = await _load_pin_quotas(tenant_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # The blob read raises on a store outage (never masquerades as
+        # "unset"); map it to 503 rather than an opaque 500.
+        raise HTTPException(503, f"pin-quota store unavailable: {exc}") from exc
     return PinQuotasResponse(tenant_id=tenant_id, quotas=quotas)
 
 
@@ -1437,18 +1444,23 @@ async def set_pin_quotas(
     # override dict with different values (a wrong pin-quota limit) until a
     # restart reconciles from the blob.
     async with _pin_quota_write_lock(key):
-        current = await _load_pin_quotas(tenant_id)
-        if body.user is not None:
-            current["user"] = body.user
-        if body.tenant_admin is not None:
-            current["tenant_admin"] = body.tenant_admin
-        if body.org_admin is not None:
-            current["org_admin"] = body.org_admin
+        try:
+            current = await _load_pin_quotas(tenant_id)
+            if body.user is not None:
+                current["user"] = body.user
+            if body.tenant_admin is not None:
+                current["tenant_admin"] = body.tenant_admin
+            if body.org_admin is not None:
+                current["org_admin"] = body.org_admin
 
-        am = _build_artifact_manager(key)
-        await am.save_blob(
-            _PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY, json.dumps(current)
-        )
+            am = _build_artifact_manager(key)
+            await am.save_blob(
+                _PIN_QUOTA_BLOB_KIND, _PIN_QUOTA_BLOB_KEY, json.dumps(current)
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(503, f"pin-quota store unavailable: {exc}") from exc
         _pin_quota_overrides[key] = current
         _pin_quota_cache_ts[key] = time.monotonic()
         logger.info("Updated + persisted pin quotas for tenant=%s: %s", key, current)

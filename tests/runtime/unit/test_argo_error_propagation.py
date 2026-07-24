@@ -24,6 +24,10 @@ class _FakeAsyncClient:
     ``async with`` block in the SUT works.
     """
 
+    # Faithful httpx surface: the shared-client cache checks ``is_closed``
+    # before reuse.
+    is_closed = False
+
     def __init__(self, *, post_status=None, delete_status=None, raise_on_call=False):
         self._post_status = post_status
         self._delete_status = delete_status
@@ -139,3 +143,33 @@ async def test_delete_cron_workflow_404_is_success(
     _patch_httpx(monkeypatch, _FakeAsyncClient(delete_status=404))
     # Must not raise.
     await tenant_router._delete_cron_workflow("tenant-job-acme-abc", "argo")
+
+
+def test_shared_argo_client_never_crosses_loops(monkeypatch) -> None:
+    """A new event loop must never inherit another loop's cached client —
+    an ``id(loop)``-keyed cache collides when a torn-down loop's id is
+    reused, handing out a client bound to a dead loop (in the sweep, a
+    previous test's fake)."""
+    import asyncio
+    import gc
+
+    created = []
+
+    class _TrackingFake(_FakeAsyncClient):
+        def __call__(self, *args, **kwargs):
+            instance = _FakeAsyncClient(delete_status=404)
+            created.append(instance)
+            return instance
+
+    _set_argo_endpoint(monkeypatch)
+    _patch_httpx(monkeypatch, _TrackingFake())
+
+    async def _get():
+        return await tenant_router._shared_argo_client()
+
+    first = asyncio.run(_get())
+    gc.collect()  # tear down the first loop so its id can be reused
+    second = asyncio.run(_get())
+
+    assert first is not second
+    assert len(created) == 2
