@@ -94,3 +94,46 @@ async def test_dispatch_timeout_overrides_client_default(hung_server):
         assert time.monotonic() - start < 5
     finally:
         await rc.close()
+
+
+@pytest.mark.asyncio
+async def test_crud_2xx_with_non_json_body_is_an_error():
+    """A 200 whose body is not JSON (proxy error page, wrong port) must
+    surface as an error — reporting "ok" turned it into false success
+    messages like "Instructions updated." for writes that never happened."""
+    handler_responses = {"n": 0}
+
+    def _handler(request):
+        handler_responses["n"] += 1
+        return httpx.Response(200, text="<html>Bad Gateway</html>")
+
+    rc = RuntimeClient("http://runtime")
+    rc._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler), base_url="http://runtime"
+    )
+    try:
+        result = await rc.set_instructions(tenant_id="acme:alice", text="be brief")
+    finally:
+        await rc.close()
+
+    assert result["status"] == "error"
+    assert "non-JSON" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_crud_204_empty_body_stays_ok():
+    """A 204 No Content is a legitimate empty success, not a broken body."""
+
+    def _handler(request):
+        return httpx.Response(204)
+
+    rc = RuntimeClient("http://runtime")
+    rc._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler), base_url="http://runtime"
+    )
+    try:
+        result = await rc.delete_job(tenant_id="acme:alice", job_id="j1")
+    finally:
+        await rc.close()
+
+    assert result == {"status": "ok"}

@@ -136,7 +136,20 @@ class RuntimeClient:
         client = await self._get_client()
         resp = await client.get("/admin/messaging/outbound/drain")
         resp.raise_for_status()
-        return resp.json().get("messages", [])
+        payload = resp.json()
+        messages = payload.get("messages", []) if isinstance(payload, dict) else None
+        if not isinstance(messages, list):
+            # Never hand the drain loop a non-list — iterating it kills the
+            # delivery task permanently while the process stays up.
+            logger.error("Outbound drain returned unexpected shape: %r", payload)
+            return []
+        kept = [m for m in messages if isinstance(m, dict)]
+        if len(kept) != len(messages):
+            logger.error(
+                "Outbound drain skipped %d malformed entries",
+                len(messages) - len(kept),
+            )
+        return kept
 
     # ------------------------------------------------------------------
     # wiki / instructions / memories / jobs CRUD methods
@@ -289,7 +302,16 @@ class RuntimeClient:
             try:
                 return resp.json()
             except ValueError:
-                return {"status": "ok"}
+                if resp.status_code in (204, 205):
+                    return {"status": "ok"}
+                # A 200 with a non-JSON body is a broken response, not a
+                # success — reporting "ok" turned e.g. a proxied error page
+                # into "Instructions updated." / "Cleared all user memories."
+                return {
+                    "status": "error",
+                    "status_code": resp.status_code,
+                    "message": "runtime returned a non-JSON success response",
+                }
         return {
             "status": "error",
             "status_code": resp.status_code,
