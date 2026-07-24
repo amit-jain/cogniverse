@@ -725,3 +725,99 @@ class TestUpImageSource:
         assert result.exit_code == 1
         assert "no buildable workspace" in " ".join(result.output.split())
         mocks["build_images"].assert_not_called()
+
+
+class TestCodeCommand:
+    """`cogniverse code` resolves the tenant, then hands off to the REPL loop
+    with the parsed options."""
+
+    def test_invokes_repl_with_parsed_args(self) -> None:
+        with patch("cogniverse_cli.code.run_repl") as mock_repl:
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "code",
+                    "--tenant",
+                    "acme:acme",
+                    "-l",
+                    "rust",
+                    "-n",
+                    "7",
+                    "-c",
+                    "/src/proj",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        mock_repl.assert_called_once_with(
+            tenant_id="acme:acme",
+            language="rust",
+            max_iterations=7,
+            codebase_path="/src/proj",
+        )
+
+    def test_defaults_flow_through_to_repl(self) -> None:
+        with patch("cogniverse_cli.code.run_repl") as mock_repl:
+            result = CliRunner().invoke(cli, ["code", "--tenant", "acme:acme"])
+        assert result.exit_code == 0, result.output
+        mock_repl.assert_called_once_with(
+            tenant_id="acme:acme",
+            language="python",
+            max_iterations=5,
+            codebase_path="",
+        )
+
+    def test_missing_tenant_errors_before_repl(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("COGNIVERSE_TENANT_ID", raising=False)
+        with patch("cogniverse_cli.code.run_repl") as mock_repl:
+            result = CliRunner().invoke(cli, ["code"])
+        assert result.exit_code != 0
+        assert "--tenant" in result.output
+        mock_repl.assert_not_called()
+
+
+class TestGraphWrappers:
+    """The `graph` click wrappers forward parsed options to the cmd_*
+    functions and propagate their exit codes to the shell."""
+
+    def test_search_forwards_top_k_and_query(self) -> None:
+        with patch("cogniverse_cli.graph.cmd_search", return_value=0) as m:
+            result = CliRunner().invoke(
+                cli,
+                ["graph", "search", "my query", "--tenant", "acme:acme", "-k", "25"],
+            )
+        assert result.exit_code == 0
+        m.assert_called_once_with("acme:acme", "my query", top_k=25)
+
+    def test_search_propagates_nonzero_exit(self) -> None:
+        with patch("cogniverse_cli.graph.cmd_search", return_value=3):
+            result = CliRunner().invoke(
+                cli, ["graph", "search", "q", "--tenant", "acme:acme"]
+            )
+        assert result.exit_code == 3
+
+    def test_neighbors_forwards_node_and_depth(self) -> None:
+        with patch("cogniverse_cli.graph.cmd_neighbors", return_value=0) as m:
+            result = CliRunner().invoke(
+                cli,
+                ["graph", "neighbors", "Alice", "--tenant", "acme:acme", "-d", "3"],
+            )
+        assert result.exit_code == 0
+        m.assert_called_once_with("acme:acme", "Alice", depth=3)
+
+    def test_path_forwards_source_target_and_max_depth(self) -> None:
+        with patch("cogniverse_cli.graph.cmd_path", return_value=0) as m:
+            result = CliRunner().invoke(
+                cli,
+                ["graph", "path", "Alice", "Carol", "--tenant", "acme:acme", "-d", "6"],
+            )
+        assert result.exit_code == 0
+        m.assert_called_once_with("acme:acme", "Alice", "Carol", max_depth=6)
+
+    def test_path_propagates_nonzero_exit(self) -> None:
+        with patch("cogniverse_cli.graph.cmd_path", return_value=4):
+            result = CliRunner().invoke(
+                cli, ["graph", "path", "A", "B", "--tenant", "acme:acme"]
+            )
+        assert result.exit_code == 4

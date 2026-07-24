@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import cogniverse_cli.cluster as cluster
+import pytest
 from cogniverse_cli.cluster import (
     DEFAULT_PORTS,
     check_prerequisites,
     cluster_exists,
     create_cluster,
+    delete_cluster,
     has_existing_k8s,
+    install_missing_prerequisites,
+    install_prerequisite,
 )
 
 
@@ -268,10 +273,169 @@ class TestParsePortCsv:
         assert _parse_port_csv(None) == []
 
     def test_non_numeric_entry_aborts_with_clear_message(self):
-        import pytest
         from cogniverse_cli.cluster import _parse_port_csv
 
         with pytest.raises(SystemExit) as se:
             _parse_port_csv("80,abc")
         assert "abc" in str(se.value)
         assert "integer" in str(se.value)
+
+
+class TestDeleteCluster:
+    """`delete_cluster` runs `k3d cluster delete <name>` bounded and
+    propagating — a failed delete must not read as success."""
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_invokes_k3d_delete_for_named_cluster(self, mock_run: object) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+
+        delete_cluster("cogniverse-e2e")
+
+        assert mock_run.call_args.args[0] == [  # type: ignore[attr-defined]
+            "k3d",
+            "cluster",
+            "delete",
+            "cogniverse-e2e",
+        ]
+        assert mock_run.call_args.kwargs["check"] is True  # type: ignore[attr-defined]
+        assert mock_run.call_args.kwargs["timeout"] == 60  # type: ignore[attr-defined]
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_defaults_to_the_cogniverse_cluster(self, mock_run: object) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+
+        delete_cluster()
+
+        assert mock_run.call_args.args[0] == [  # type: ignore[attr-defined]
+            "k3d",
+            "cluster",
+            "delete",
+            "cogniverse",
+        ]
+
+    @patch(
+        "cogniverse_cli.cluster.subprocess.run",
+        side_effect=subprocess.CalledProcessError(1, "k3d"),
+    )
+    def test_propagates_delete_failure(self, mock_run: object) -> None:
+        with pytest.raises(subprocess.CalledProcessError):
+            delete_cluster()
+
+
+class TestStartPortForwards:
+    """`start_port_forwards` spawns one detached kubectl port-forward per
+    spec and records their PIDs for cross-process cleanup."""
+
+    def test_spawns_kubectl_port_forward_and_writes_pids(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        pid_file = tmp_path / "pf.pids"
+        monkeypatch.setattr(cluster, "PID_FILE", str(pid_file))
+        monkeypatch.setattr(cluster, "_port_forward_procs", [])
+
+        popen_calls: list[tuple[list[str], dict]] = []
+
+        def fake_popen(cmd, **kwargs):
+            popen_calls.append((cmd, kwargs))
+            proc = MagicMock()
+            proc.pid = 4001
+            return proc
+
+        monkeypatch.setattr(cluster.subprocess, "Popen", fake_popen)
+
+        cluster.start_port_forwards()
+
+        # One forward per spec; argo-server is the only spec today.
+        assert len(popen_calls) == len(cluster.PORT_FORWARD_SPECS)
+        cmd, kwargs = popen_calls[0]
+        assert cmd[:2] == ["sh", "-c"]
+        assert "kubectl port-forward svc/argo-server 2746:2746 -n argo" in cmd[2]
+        # Detached so the forwards survive the CLI exiting.
+        assert kwargs["start_new_session"] is True
+        assert pid_file.read_text() == "4001"
+        assert len(cluster._port_forward_procs) == 1
+
+
+class TestInstallPrerequisite:
+    """`install_prerequisite` shells out the platform install command and
+    maps its exit code to a success bool."""
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    @patch("cogniverse_cli.cluster.platform.system", return_value="Linux")
+    def test_runs_bash_install_and_reports_success(
+        self, mock_sys: object, mock_run: object
+    ) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+
+        assert install_prerequisite("k3d") is True
+
+        cmd = mock_run.call_args.args[0]  # type: ignore[attr-defined]
+        assert cmd[:2] == ["bash", "-c"]
+        assert "k3d" in cmd[2]
+        assert mock_run.call_args.kwargs["timeout"] == 300  # type: ignore[attr-defined]
+        assert mock_run.call_args.kwargs["check"] is False  # type: ignore[attr-defined]
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    @patch("cogniverse_cli.cluster.platform.system", return_value="Linux")
+    def test_nonzero_exit_reports_failure(
+        self, mock_sys: object, mock_run: object
+    ) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=1
+        )
+        assert install_prerequisite("helm") is False
+
+    @patch("cogniverse_cli.cluster.platform.system", return_value="Linux")
+    def test_unknown_tool_returns_false_without_running(self, mock_sys: object) -> None:
+        with patch("cogniverse_cli.cluster.subprocess.run") as mock_run:
+            assert install_prerequisite("mystery-tool") is False
+            mock_run.assert_not_called()
+
+    @patch(
+        "cogniverse_cli.cluster.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="bash", timeout=300),
+    )
+    @patch("cogniverse_cli.cluster.platform.system", return_value="Linux")
+    def test_install_timeout_reports_failure(
+        self, mock_sys: object, mock_run: object
+    ) -> None:
+        assert install_prerequisite("k3d") is False
+
+
+class TestInstallMissingPrerequisites:
+    """`install_missing_prerequisites` never auto-installs docker, and only
+    drops a tool from the missing list once it is both installed AND on PATH."""
+
+    def test_docker_is_never_auto_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cluster, "install_prerequisite", lambda tool: True)
+        monkeypatch.setattr(cluster.shutil, "which", lambda tool: "/usr/bin/" + tool)
+        assert install_missing_prerequisites(["docker", "k3d"]) == ["docker"]
+
+    def test_failed_install_stays_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cluster, "install_prerequisite", lambda tool: False)
+        monkeypatch.setattr(cluster.shutil, "which", lambda tool: None)
+        assert install_missing_prerequisites(["k3d", "helm"]) == ["k3d", "helm"]
+
+    def test_installed_but_not_on_path_stays_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cluster, "install_prerequisite", lambda tool: True)
+        monkeypatch.setattr(cluster.shutil, "which", lambda tool: None)
+        assert install_missing_prerequisites(["k3d"]) == ["k3d"]
+
+    def test_successful_install_drops_from_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cluster, "install_prerequisite", lambda tool: True)
+        monkeypatch.setattr(cluster.shutil, "which", lambda tool: "/usr/bin/" + tool)
+        assert install_missing_prerequisites(["k3d", "helm"]) == []
