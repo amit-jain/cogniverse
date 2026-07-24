@@ -15,36 +15,18 @@ from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
     ConfigStore,
 )
-from cogniverse_vespa._vespa_factory import make_persistent_vespa_ops
+from cogniverse_vespa._vespa_factory import (
+    make_persistent_vespa_ops,
+    raise_if_degraded,
+)
 from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
 
 
 def _raise_if_degraded(response: Any, config_id: str) -> None:
-    """Raise on a Vespa soft-timeout (degraded) query response.
-
-    A soft timeout arrives as HTTP 200 with ``root.errors`` and/or degraded
-    coverage plus empty/partial hits. Consuming ``response.hits`` without this
-    check turns a degraded backend into an empty result the caller reads as a
-    genuinely-absent config — so a transient outage silently looks like
-    "first run". Raise instead, joining the existing outage-raises contract.
-    """
-    root: Dict[str, Any] = {}
-    get_json = getattr(response, "get_json", None)
-    if callable(get_json):
-        root = (get_json() or {}).get("root", {})
-    else:
-        raw = getattr(response, "json", None)
-        if isinstance(raw, dict):
-            root = raw.get("root", {})
-    errors = root.get("errors") or []
-    coverage = root.get("coverage") or {}
-    if errors or coverage.get("degraded"):
-        raise RuntimeError(
-            f"Vespa returned a degraded/soft-timeout response for config "
-            f"{config_id}: errors={errors} coverage={coverage}"
-        )
+    """Raise on a degraded query response — shared guard, config context."""
+    raise_if_degraded(response, f"config {config_id}")
 
 
 class VespaConfigStore(ConfigStore):
