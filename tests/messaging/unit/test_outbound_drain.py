@@ -145,3 +145,81 @@ async def test_run_polling_starts_and_cancels_the_drain_task():
     assert drain_cancelled["v"] is True  # the finally cancelled the drain task
     app.updater.stop.assert_awaited_once()
     gw.runtime_client.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_drain_loop_skips_malformed_entries_and_keeps_going():
+    """A non-dict entry in one batch must not kill the delivery loop — the
+    exception previously ended the task silently while the process stayed
+    up, so runtime→user delivery was dead until a restart."""
+    sends: list = []
+    gw = _gateway_with_bot(sends)
+
+    batches = [
+        ["junk-string", {"chat_id": "good", "text": "first"}],
+        [{"chat_id": "good", "text": "second"}],
+    ]
+    calls = {"n": 0}
+
+    class _RC:
+        async def drain_outbound(self):
+            i = calls["n"]
+            calls["n"] += 1
+            if i < len(batches):
+                return batches[i]
+            raise asyncio.CancelledError
+
+    gw.runtime_client = _RC()
+
+    with pytest.raises(asyncio.CancelledError):
+        await gw._outbound_drain_loop()
+
+    assert sends == [("good", "first"), ("good", "second")]
+
+
+@pytest.mark.asyncio
+async def test_drain_loop_survives_a_none_batch():
+    """messages=None (a regressed client) must be treated as an empty tick,
+    not a TypeError that kills the loop."""
+    sends: list = []
+    gw = _gateway_with_bot(sends)
+
+    seq = [None, [{"chat_id": "good", "text": "hi"}]]
+    calls = {"n": 0}
+
+    class _RC:
+        async def drain_outbound(self):
+            i = calls["n"]
+            calls["n"] += 1
+            if i < len(seq):
+                return seq[i]
+            raise asyncio.CancelledError
+
+    gw.runtime_client = _RC()
+
+    with pytest.raises(asyncio.CancelledError):
+        await gw._outbound_drain_loop()
+
+    assert sends == [("good", "hi")]
+
+
+@pytest.mark.asyncio
+async def test_drain_outbound_normalizes_shapes():
+    """The client never hands the loop a non-list, and non-dict entries are
+    dropped with an error log — {"messages": null} previously came back as
+    None and the loop died iterating it."""
+    rc = RuntimeClient("http://runtime")
+    http = AsyncMock()
+    http.is_closed = False
+    rc._client = http
+
+    http.get = AsyncMock(return_value=_response({"messages": None}))
+    assert await rc.drain_outbound() == []
+
+    http.get = AsyncMock(
+        return_value=_response({"messages": ["garbage", {"chat_id": "1", "text": "a"}]})
+    )
+    assert await rc.drain_outbound() == [{"chat_id": "1", "text": "a"}]
+
+    http.get = AsyncMock(return_value=_response(["not", "a", "dict"]))
+    assert await rc.drain_outbound() == []

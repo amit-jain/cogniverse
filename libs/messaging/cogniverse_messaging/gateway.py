@@ -547,9 +547,10 @@ class MessagingGateway:
 
         Every ``self._outbound_poll_seconds`` the loop drains the runtime's
         outbound queue and sends each message via the bot. A drain failure
-        (runtime blip) is logged and retried next tick; a per-message send
-        failure is logged and skipped so one bad chat never stops the others
-        or the loop. Runs until cancelled on shutdown.
+        (runtime blip) is logged and retried next tick; a malformed message
+        is logged and skipped; a per-message send failure is logged and
+        skipped so one bad chat never stops the others or the loop. Runs
+        until cancelled on shutdown.
         """
         while True:
             try:
@@ -557,7 +558,10 @@ class MessagingGateway:
             except Exception as exc:  # noqa: BLE001 — retry next tick, never die
                 logger.error("Outbound drain failed: %s", exc)
                 messages = []
-            for msg in messages:
+            for msg in messages or []:
+                if not isinstance(msg, dict):
+                    logger.error("Malformed outbound message skipped: %r", msg)
+                    continue
                 chat_id = msg.get("chat_id")
                 text = msg.get("text")
                 if not chat_id or not text:
