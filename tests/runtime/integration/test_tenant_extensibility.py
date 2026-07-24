@@ -402,3 +402,79 @@ class TestJobExecutorRealLLM:
         # Should produce an enhanced query that's different from the original
         enhanced = getattr(result, "enhanced_query", "")
         assert len(str(enhanced)) > 0, "Should produce an enhanced query"
+
+
+@pytest.mark.integration
+class TestTenantRoutesRealVespaRoundTrip:
+    """Bare-tenant PUT->GET and create->list through the REAL tenant routes
+    against a real Vespa ConfigStore. The routes canonicalize the tenant id
+    before keying the store; a read that used the raw path param would miss
+    every value the write just stored. This drives the real routes (not the
+    store directly) with a bare, non-canonical tenant id — the true-boundary
+    proof of the canonical-key contract."""
+
+    @pytest.fixture
+    def route_app(self, tenant_config_manager):
+        from fastapi import FastAPI
+
+        from cogniverse_runtime.config_loader import (
+            WorkflowSettings,
+            get_workflow_settings,
+        )
+        from cogniverse_runtime.routers import tenant as tenant_router
+
+        saved_cm = tenant_router._config_manager
+        tenant_router.set_config_manager(tenant_config_manager)
+        # No Argo configured, so create_job just persists to the config store.
+        get_workflow_settings._instance = WorkflowSettings(api_url=None)
+        app = FastAPI()
+        app.include_router(tenant_router.router)
+        try:
+            yield app
+        finally:
+            tenant_router._config_manager = saved_cm
+            if hasattr(get_workflow_settings, "_instance"):
+                del get_workflow_settings._instance
+
+    @pytest.mark.asyncio
+    async def test_instructions_round_trip_bare_tenant(self, route_app):
+        import httpx
+
+        bare = "roundtrip_org"  # bare, non-canonical form
+        transport = httpx.ASGITransport(app=route_app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://runtime"
+        ) as client:
+            put = await client.put(
+                f"/{bare}/instructions",
+                json={"text": "always cite the source video"},
+            )
+            assert put.status_code == 200
+            got = await client.get(f"/{bare}/instructions")
+            assert got.status_code == 200
+            assert got.json()["text"] == "always cite the source video"
+
+    @pytest.mark.asyncio
+    async def test_jobs_round_trip_bare_tenant(self, route_app):
+        import httpx
+
+        bare = "roundtrip_jobs_org"
+        transport = httpx.ASGITransport(app=route_app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://runtime"
+        ) as client:
+            created = await client.post(
+                f"/{bare}/jobs",
+                json={
+                    "name": "nightly summary",
+                    "schedule": "0 2 * * *",
+                    "query": "summarize new videos",
+                    "post_actions": [],
+                },
+            )
+            assert created.status_code == 200
+            job_id = created.json()["job_id"]
+
+            listed = await client.get(f"/{bare}/jobs")
+            assert listed.status_code == 200
+            assert job_id in [j["job_id"] for j in listed.json()["jobs"]]
