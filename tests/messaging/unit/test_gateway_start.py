@@ -208,3 +208,106 @@ async def test_run_rejects_unknown_mode():
             await g.run()
         wh.assert_not_awaited()
         pl.assert_not_awaited()
+
+
+class _FlakyMemory:
+    """Partition-faithful in-memory Mem0 stand-in with a write-failure toggle."""
+
+    def __init__(self):
+        self.fail_writes = False
+        self.store = {}
+
+    def add_memory(self, content, tenant_id, agent_name, metadata=None, infer=True):
+        if self.fail_writes:
+            raise ConnectionError("mem0 down")
+        self.store.setdefault((tenant_id, agent_name), []).append(
+            {"memory": content, "metadata": metadata or {}}
+        )
+        return "mem_1"
+
+    def get_all_memories(self, tenant_id, agent_name):
+        return self.store.get((tenant_id, agent_name), [])
+
+
+@pytest.mark.asyncio
+async def test_start_register_failure_keeps_token_and_recovers(config_manager_memory):
+    """A failed registration write must NOT consume the token: burning it
+    while the mapping was never stored told the user "Registered" and then
+    locked them out until an admin minted a new token. The same token must
+    succeed once the memory backend recovers."""
+    memory = _FlakyMemory()
+    gw = MessagingGateway(
+        bot_token="123:FAKE",
+        runtime_url="http://runtime",
+        config_manager=config_manager_memory,
+        memory_manager=memory,
+    )
+    gw._init_auth()
+    token = gw._token_manager.generate_token("acme:alice")
+
+    memory.fail_writes = True
+    update, replies = _fake_update(f"/start {token}")
+    await gw._handle_start(update, context=None)
+
+    assert any("still valid" in r for r in replies), replies
+    assert not any("Registered as" in r for r in replies), replies
+    assert gw._token_manager.validate_token(token) == "acme:alice"
+    assert gw._user_mapper.get_tenant_id("telegram", "42") is None
+
+    memory.fail_writes = False
+    update2, replies2 = _fake_update(f"/start {token}")
+    await gw._handle_start(update2, context=None)
+
+    assert any("Registered as acme:alice" in r for r in replies2), replies2
+    assert gw._token_manager.validate_token(token) is None
+    assert gw._user_mapper.get_tenant_id("telegram", "42") == "acme:alice"
+
+
+@pytest.mark.asyncio
+async def test_start_validate_outage_reports_temporarily_unavailable():
+    """A config-store outage during /start must read as "temporarily
+    unavailable", never as "Invalid token" — users discard good tokens."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    class OutageStore(InMemoryConfigStore):
+        def get_config(self, *args, **kwargs):
+            raise ConnectionError("store down")
+
+    store = OutageStore()
+    store.initialize()
+    gw = _gateway(ConfigManager(store=store))
+
+    update, replies = _fake_update("/start sometoken")
+    await gw._handle_start(update, context=None)
+
+    assert any("temporarily unavailable" in r for r in replies), replies
+    assert not any("Invalid or expired" in r for r in replies), replies
+
+
+@pytest.mark.asyncio
+async def test_start_mark_failure_still_reports_registered():
+    """If consuming the token fails AFTER a successful registration, the
+    user is registered — report success; the token staying live until
+    expiry is logged, not surfaced as a failure."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    class MarkFailStore(InMemoryConfigStore):
+        def set_config(self, *args, **kwargs):
+            value = kwargs.get("config_value") or {}
+            if isinstance(value, dict) and value.get("used"):
+                raise ConnectionError("store down mid-consume")
+            return super().set_config(*args, **kwargs)
+
+    store = MarkFailStore()
+    store.initialize()
+    gw = _gateway(ConfigManager(store=store))
+    gw._init_auth()
+    token = gw._token_manager.generate_token("acme:alice")
+
+    update, replies = _fake_update(f"/start {token}")
+    await gw._handle_start(update, context=None)
+
+    assert any("Registered as acme:alice" in r for r in replies), replies
+    assert gw._token_manager.validate_token(token) == "acme:alice"

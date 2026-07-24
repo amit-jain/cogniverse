@@ -626,3 +626,35 @@ class TestErrorHandler:
         reply = AsyncMock(side_effect=RuntimeError("telegram down"))
         update = SimpleNamespace(effective_message=SimpleNamespace(reply_text=reply))
         await g._handle_error(update, SimpleNamespace(error=ValueError("x")))
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestTenantLookupOutage:
+    @pytest.mark.asyncio
+    async def test_message_during_memory_outage_says_unavailable(
+        self, config_manager_memory
+    ):
+        """A Mem0 outage during tenant lookup must read as "temporarily
+        unavailable", never as "please register" — every registered user
+        looked unregistered for the outage's duration."""
+
+        class _DownMemory:
+            def add_memory(self, *args, **kwargs):
+                raise ConnectionError("mem0 down")
+
+            def get_all_memories(self, *args, **kwargs):
+                raise ConnectionError("mem0 down")
+
+        g = MessagingGateway(
+            bot_token="123:FAKE",
+            runtime_url="http://x",
+            config_manager=config_manager_memory,
+            memory_manager=_DownMemory(),
+        )
+        update = _message_update(text="hello there")
+        await g._handle_message(update, context=None)
+
+        sent = [c.args[0] for c in update.message.reply_text.await_args_list]
+        assert any("temporarily unavailable" in s for s in sent), sent
+        assert not any("register" in s.lower() for s in sent), sent
