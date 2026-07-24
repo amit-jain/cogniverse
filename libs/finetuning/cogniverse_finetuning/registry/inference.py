@@ -64,28 +64,26 @@ def get_active_adapter_for_inference(
         ...     llm = LLM(model=adapter.base_model, enable_lora=True)
         ...     output = llm.generate(prompts, lora_request=LoRARequest("adapter", 1, lora_path))
     """
-    try:
-        from cogniverse_finetuning.registry import AdapterRegistry
+    from cogniverse_finetuning.registry import AdapterRegistry
 
-        registry = AdapterRegistry()
-        adapter = registry.get_active_adapter(tenant_id, agent_type)
+    # A registry outage must propagate — flattening it to None reads as
+    # "no fine-tuned adapter" and silently routes inference to the base
+    # model. Only a genuine absence returns None.
+    registry = AdapterRegistry()
+    adapter = registry.get_active_adapter(tenant_id, agent_type)
 
-        if adapter is None:
-            logger.debug(f"No active adapter for {tenant_id}/{agent_type}")
-            return None
-
-        return AdapterInfo(
-            adapter_id=adapter.adapter_id,
-            name=adapter.name,
-            version=adapter.version,
-            base_model=adapter.base_model,
-            adapter_uri=adapter.get_effective_uri(),
-            adapter_path=adapter.adapter_path,
-        )
-
-    except Exception as e:
-        logger.warning(f"Failed to get active adapter: {e}")
+    if adapter is None:
+        logger.debug(f"No active adapter for {tenant_id}/{agent_type}")
         return None
+
+    return AdapterInfo(
+        adapter_id=adapter.adapter_id,
+        name=adapter.name,
+        version=adapter.version,
+        base_model=adapter.base_model,
+        adapter_uri=adapter.get_effective_uri(),
+        adapter_path=adapter.adapter_path,
+    )
 
 
 def list_available_adapters(
@@ -111,32 +109,29 @@ def list_available_adapters(
         >>> for adapter in adapters:
         ...     print(f"{adapter.name} v{adapter.version}: {adapter.adapter_uri}")
     """
-    try:
-        from cogniverse_finetuning.registry import AdapterRegistry
+    from cogniverse_finetuning.registry import AdapterRegistry
 
-        registry = AdapterRegistry()
-        adapters = registry.list_adapters(
-            tenant_id=tenant_id,
-            agent_type=agent_type,
-            model_type=model_type,
-            status="active",  # Only active adapters
+    # A registry outage must propagate — an empty list on an outage reads
+    # as "no adapters available" and inference servers pre-load nothing.
+    registry = AdapterRegistry()
+    adapters = registry.list_adapters(
+        tenant_id=tenant_id,
+        agent_type=agent_type,
+        model_type=model_type,
+        status="active",  # Only active adapters
+    )
+
+    return [
+        AdapterInfo(
+            adapter_id=a.adapter_id,
+            name=a.name,
+            version=a.version,
+            base_model=a.base_model,
+            adapter_uri=a.get_effective_uri(),
+            adapter_path=a.adapter_path,
         )
-
-        return [
-            AdapterInfo(
-                adapter_id=a.adapter_id,
-                name=a.name,
-                version=a.version,
-                base_model=a.base_model,
-                adapter_uri=a.get_effective_uri(),
-                adapter_path=a.adapter_path,
-            )
-            for a in adapters
-        ]
-
-    except Exception as e:
-        logger.warning(f"Failed to list adapters: {e}")
-        return []
+        for a in adapters
+    ]
 
 
 def resolve_adapter_path(adapter_uri: str, cache_dir: str) -> str:
