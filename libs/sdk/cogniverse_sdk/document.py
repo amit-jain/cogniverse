@@ -75,11 +75,17 @@ class DocumentFieldMapping:
     content_path: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-    created_at_format: str = "epoch"  # "epoch" (int seconds) or "iso" (UTC)
+    # "epoch" (int seconds), "epoch_ms" (int milliseconds), or "iso" (UTC string)
+    created_at_format: str = "epoch"
     embeddings: Dict[str, str] = field(default_factory=dict)
+    # Rename specific metadata keys to schema field names on the way out
+    # (e.g. {"segment_index": "segment_id"}) — for values a Document carries in
+    # metadata rather than a core field. The renamed value wins over a raw
+    # metadata passthrough of the same source key.
+    metadata_fields: Dict[str, str] = field(default_factory=dict)
     include_metadata: bool = True
 
-    _FORMATS = ("epoch", "iso")
+    _FORMATS = ("epoch", "epoch_ms", "iso")
 
     def __post_init__(self):
         if self.created_at_format not in self._FORMATS:
@@ -106,11 +112,26 @@ class DocumentFieldMapping:
             "updated_at",
             "created_at_format",
             "embeddings",
+            "metadata_fields",
             "include_metadata",
         }
         unknown = set(data) - known
         if unknown:
             raise ValueError(f"document_mapping has unknown keys: {sorted(unknown)}")
+        metadata_fields = data.get("metadata_fields")
+        if metadata_fields is not None:
+            if not isinstance(metadata_fields, dict):
+                raise ValueError(
+                    "document_mapping.metadata_fields must be a dict of "
+                    f"{{metadata_key: schema_field}}, got "
+                    f"{type(metadata_fields).__name__}"
+                )
+            for src, target in metadata_fields.items():
+                if not isinstance(src, str) or not isinstance(target, str):
+                    raise ValueError(
+                        "document_mapping.metadata_fields must map str to str, "
+                        f"got {src!r} -> {target!r}"
+                    )
         # embeddings must be a dict of {embedding_name: schema_field}; a
         # list-typed block would otherwise pass load and crash later at
         # ``mapping.embeddings.items()`` during the feed.
@@ -278,6 +299,14 @@ class Document:
         if mapping.include_metadata:
             fields_out.update(self.metadata)
 
+        # Explicit metadata-key -> schema-field renames (e.g. segment_index ->
+        # segment_id). These win over a raw passthrough of the same source key
+        # and let a schema whose values live in metadata be fed without a blanket
+        # passthrough (set include_metadata false to feed ONLY the declared set).
+        for src_key, schema_field in mapping.metadata_fields.items():
+            if src_key in self.metadata:
+                fields_out[schema_field] = self.metadata[src_key]
+
         core: Dict[str, Any] = {}
         if mapping.id:
             core[mapping.id] = self.id
@@ -301,10 +330,13 @@ class Document:
             core[mapping.content_path] = str(self.content_path)
 
         def _stamp(value: int) -> Any:
-            # created_at is an epoch (seconds); a float value must land as an
-            # int in the schema's long field, not a fractional float.
+            # created_at is an epoch in SECONDS; land it as the schema field
+            # wants: an ISO string, milliseconds, or seconds — always an int for
+            # the numeric forms (a float must not reach a Vespa long field).
             if mapping.created_at_format == "iso":
                 return datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat()
+            if mapping.created_at_format == "epoch_ms":
+                return int(value) * 1000
             return int(value)
 
         if mapping.created_at:

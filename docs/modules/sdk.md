@@ -893,12 +893,30 @@ doc = Document.from_dict(doc_dict)
 # Serialize into one schema's field names via its declared mapping.
 # Schemas opt in with a "document_mapping" block in their schema JSON
 # (see configs/schemas/document_text_schema.json); unmapped generic
-# fields are omitted, metadata keys pass through verbatim.
+# fields are omitted.
 from cogniverse_sdk.document import DocumentFieldMapping
 
 mapping = DocumentFieldMapping.from_dict(schema_json["document_mapping"])
 fields = doc.to_schema_fields(mapping)   # {"document_id": ..., "full_text": ...}
 ```
+
+A `document_mapping` block maps generic `Document` fields to one schema's field
+names:
+
+- Core fields — `id`, `title`, `text_content`, `description`, `content_type`,
+  `content_id`, `content_path` map a generic field to a schema field name.
+- `created_at` / `updated_at` with `created_at_format`: `"epoch"` (int seconds),
+  `"epoch_ms"` (int milliseconds — for fields like `creation_timestamp`), or
+  `"iso"` (UTC string).
+- `metadata_fields`: `{metadata_key: schema_field}` renames a value carried in
+  `Document.metadata` to a schema field name (e.g. `{"segment_index":
+  "segment_id"}`).
+- `embeddings`: `{embedding_name: schema_field}` maps a stored embedding to its
+  field. Backends that hex/binary-encode embeddings (the ingestion path)
+  override these with their processed vectors.
+- `include_metadata`: when `false`, only the explicitly mapped/renamed fields
+  are fed (no blanket passthrough of every metadata key) — used by schemas whose
+  values all live in metadata under non-matching names.
 
 Backends apply this automatically: `VespaBackend.put_document(document, schema_name=..., base_schema_name=...)` loads the base schema's `document_mapping`, serializes, and feeds — raising `ValueError` when the schema declares no mapping rather than guessing field names.
 
