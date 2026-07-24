@@ -1087,3 +1087,68 @@ class TestGatewayComplexHandoff:
         assert orchestration_called is False
         assert result["gateway"]["complexity"] == "simple"
         assert result["gateway"]["routed_to"] == "video_search_agent"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestClientSuppliedHistory:
+    """A stateful A2A client (the code REPL) sends its own turns in the message
+    metadata; the executor must read them from there — the server otherwise
+    only saw task.history and dropped a fresh-context client's history."""
+
+    def test_reads_wellformed_turns_from_message_metadata(self):
+        from types import SimpleNamespace
+
+        from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+
+        ctx = SimpleNamespace(
+            message=SimpleNamespace(
+                metadata={
+                    "conversation_history": [
+                        {"role": "user", "content": "cats"},
+                        {"role": "assistant", "content": "3 clips"},
+                        {"role": "user", "content": "keep", "extra": "dropped"},
+                        "not-a-dict",  # skipped
+                        {"role": "user"},  # missing content, skipped
+                    ]
+                }
+            )
+        )
+        assert CogniverseAgentExecutor._client_history(ctx) == [
+            {"role": "user", "content": "cats"},
+            {"role": "assistant", "content": "3 clips"},
+            {"role": "user", "content": "keep"},
+        ]
+
+    def test_none_when_absent_or_malformed(self):
+        from types import SimpleNamespace
+
+        from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+
+        e = CogniverseAgentExecutor
+        assert e._client_history(SimpleNamespace(message=None)) is None
+        assert (
+            e._client_history(SimpleNamespace(message=SimpleNamespace(metadata=None)))
+            is None
+        )
+        assert (
+            e._client_history(SimpleNamespace(message=SimpleNamespace(metadata={})))
+            is None
+        )
+        assert (
+            e._client_history(
+                SimpleNamespace(
+                    message=SimpleNamespace(metadata={"conversation_history": "x"})
+                )
+            )
+            is None
+        )
+        # An empty list falls back to task-derived history (returns None).
+        assert (
+            e._client_history(
+                SimpleNamespace(
+                    message=SimpleNamespace(metadata={"conversation_history": []})
+                )
+            )
+            is None
+        )

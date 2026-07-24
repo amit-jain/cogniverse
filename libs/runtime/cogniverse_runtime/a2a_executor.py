@@ -158,10 +158,16 @@ class CogniverseAgentExecutor(AgentExecutor):
         if not agent_name:
             agent_name = self._infer_agent_from_text(user_text)
 
+        # A stateful client (the code REPL) that tracks its own turns sends them
+        # in the message metadata; prefer that. Otherwise derive history from the
+        # task's a2a-sdk accumulation (keyed by contextId + taskId).
+        conversation_history = self._client_history(context)
+        if conversation_history is None:
+            conversation_history = self._extract_conversation_history(context)
         task_context: Dict[str, Any] = {
             "tenant_id": tenant_id,
             "context_id": context.context_id,
-            "conversation_history": self._extract_conversation_history(context),
+            "conversation_history": conversation_history,
             # Session-sticky seed for canary/variant bucketing; the dispatcher
             # reads context["request_id"]. context_id keeps a conversation in
             # one bucket, task_id falls back for one-shot tasks.
@@ -362,6 +368,33 @@ class CogniverseAgentExecutor(AgentExecutor):
         both simple and complex queries.
         """
         return "orchestrator_agent"
+
+    @staticmethod
+    def _client_history(
+        context: RequestContext,
+    ) -> Optional[List[Dict[str, str]]]:
+        """Return a client-supplied conversation history from the message
+        metadata, or None if absent/malformed.
+
+        A stateful A2A client (the code REPL) tracks its own turns and sends
+        them under ``message.metadata["conversation_history"]``; the server
+        otherwise accumulates ``task.history`` itself. Only well-formed
+        ``{role, content}`` turns are kept; an empty/absent list returns None so
+        the caller falls back to task-derived history.
+        """
+        message = context.message
+        metadata = getattr(message, "metadata", None) if message else None
+        if not isinstance(metadata, dict):
+            return None
+        history = metadata.get("conversation_history")
+        if not isinstance(history, list):
+            return None
+        turns = [
+            {"role": turn["role"], "content": turn["content"]}
+            for turn in history
+            if isinstance(turn, dict) and "role" in turn and "content" in turn
+        ]
+        return turns or None
 
     def _extract_conversation_history(
         self, context: RequestContext
