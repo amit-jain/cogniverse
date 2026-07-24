@@ -311,3 +311,22 @@ async def test_start_mark_failure_still_reports_registered():
 
     assert any("Registered as acme:alice" in r for r in replies), replies
     assert gw._token_manager.validate_token(token) == "acme:alice"
+
+
+@pytest.mark.parametrize(
+    ("var", "value"),
+    [
+        ("GATEWAY_WEBHOOK_PORT", "not-a-port"),
+        ("GATEWAY_OUTBOUND_POLL_SECONDS", "fast"),
+    ],
+)
+def test_main_rejects_non_numeric_env(monkeypatch, var, value):
+    """A malformed numeric env var exits 1 with a logged config error —
+    previously a bare ValueError traceback out of main()."""
+    from cogniverse_messaging import gateway as gw_mod
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:FAKE")
+    monkeypatch.setenv(var, value)
+    with pytest.raises(SystemExit) as exc:
+        gw_mod.main()
+    assert exc.value.code == 1

@@ -458,6 +458,22 @@ class TestHandleMessage:
         assert kwargs["query"] == "what is in this image"
 
     @pytest.mark.asyncio
+    async def test_video_with_caption_threads_media_context(self):
+        g = self._gateway()
+        video = MagicMock()
+        video.file_id = "video-file-456"
+        update = _message_update(caption="what happens in this clip", video=video)
+
+        await g._handle_message(update, context=None)
+
+        kwargs = g.runtime_client.dispatch_agent.await_args.kwargs
+        assert kwargs["context"] == {
+            "media_type": "video",
+            "media_file_id": "video-file-456",
+        }
+        assert kwargs["query"] == "what happens in this clip"
+
+    @pytest.mark.asyncio
     async def test_empty_query_prompts_for_usage(self):
         g = self._gateway()
         update = _message_update(text="/search")
