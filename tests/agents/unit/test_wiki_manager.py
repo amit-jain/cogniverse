@@ -338,6 +338,9 @@ class TestSaveSession:
             patch.object(mgr, "_generate_embedding", return_value=[0.1] * 768),
             patch.object(mgr, "_rebuild_index") as mock_rebuild,
             patch.object(mgr, "_feed_page") as mock_feed,
+            patch.object(
+                mgr, "_conditional_feed_topic", return_value=True
+            ) as mock_topic_feed,
         ):
             session = mgr.save_session(
                 query="What is machine learning?",
@@ -347,20 +350,20 @@ class TestSaveSession:
                 sources=["doc1"],
             )
 
-        # 2 fresh topics + 1 session = exactly 3 feed calls
-        assert mock_feed.call_count == 3
-        fed_pages = [c.args[0] for c in mock_feed.call_args_list]
-        topic_pages = [p for p in fed_pages if p.page_type == "topic"]
+        # Two fresh topics via the conditional test-and-set write.
+        topic_pages = [c.args[0] for c in mock_topic_feed.call_args_list]
         assert {p.doc_id for p in topic_pages} == {
             "wiki_topic_acme_production_machine_learning",
             "wiki_topic_acme_production_ai",
         }
         for topic in topic_pages:
+            assert topic.page_type == "topic"
             assert topic.content == "Machine learning is a subset of AI."
             assert topic.sources == ["doc1"]
             assert topic.update_count == 1
-        # The session page is fed after the topics.
-        assert fed_pages[-1] is session
+        # The session page goes through the unconditional feed, exactly once.
+        assert mock_feed.call_count == 1
+        assert mock_feed.call_args.args[0] is session
         mock_rebuild.assert_called_once()
         assert isinstance(session, WikiPage)
         assert session.page_type == "session"
@@ -422,14 +425,15 @@ class TestSaveSession:
             schema_name="wiki_pages_acme_production",
             namespace="wiki_content",
         )
-        backend.put_document.assert_called_once()
-        (fed_doc,), put_kwargs = backend.put_document.call_args
+        backend.conditional_put_document.assert_called_once()
+        (fed_doc,), put_kwargs = backend.conditional_put_document.call_args
         assert fed_doc.id == "wiki_topic_acme_production_machine_learning"
-        assert put_kwargs == {
-            "schema_name": "wiki_pages_acme_production",
-            "base_schema_name": "wiki_pages",
-            "namespace": "wiki_content",
-        }
+        assert put_kwargs["schema_name"] == "wiki_pages_acme_production"
+        assert put_kwargs["base_schema_name"] == "wiki_pages"
+        assert put_kwargs["namespace"] == "wiki_content"
+        assert put_kwargs["create"] is True
+        # The write is conditioned on the update_count read (2), not the new one.
+        assert put_kwargs["condition"] == "wiki_pages_acme_production.update_count==2"
         fields = _schema_fields_from_document(fed_doc)
         assert fields["content"] == (
             "Older notes on ML.\n\n---\n\nMachine learning is a subset of AI."
@@ -479,7 +483,9 @@ class TestTopicMergeIdempotency:
 
         with (
             patch.object(mgr, "_get_document_http", return_value=existing),
-            patch.object(mgr, "_feed_page") as mock_feed,
+            patch.object(
+                mgr, "_conditional_feed_topic", return_value=True
+            ) as mock_feed,
         ):
             page = mgr._get_or_create_topic(
                 entity="Machine Learning", new_content=response, sources=[]
@@ -497,7 +503,7 @@ class TestTopicMergeIdempotency:
         with (
             patch.object(mgr, "_get_document_http", return_value=existing),
             patch.object(mgr, "_should_use_rlm_for_merge", return_value=False),
-            patch.object(mgr, "_feed_page"),
+            patch.object(mgr, "_conditional_feed_topic", return_value=True),
         ):
             page = mgr._get_or_create_topic(
                 entity="Machine Learning",
@@ -508,6 +514,72 @@ class TestTopicMergeIdempotency:
         assert "Older content only." in page.content
         assert "A genuinely new fact." in page.content
         assert page.update_count == 3
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestTopicCasRetry:
+    """The read-modify-write retries when the conditional feed reports a
+    concurrent writer (condition rejected), and gives up loudly rather than
+    silently dropping content when the condition never clears.
+
+    These pin the retry control flow with a stubbed conditional feed; the real
+    Vespa test-and-set is exercised in the integration suite."""
+
+    def _make_manager(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        return WikiManager(
+            backend=MagicMock(),
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+    def test_retries_and_rereads_on_condition_miss(self):
+        mgr = self._make_manager()
+        reads = [
+            None,  # first attempt: topic absent -> create, condition update_count==0
+            SimpleNamespace(
+                text_content="Winner content.",
+                metadata={
+                    "content": "Winner content.",
+                    "sources": "[]",
+                    "update_count": 1,
+                    "created_at": "2026-01-01T00:00:00Z",
+                },
+            ),
+        ]
+        expected_conditions = []
+
+        def feed(page, embedding, expected_update_count):
+            expected_conditions.append(expected_update_count)
+            return len(expected_conditions) > 1  # reject the first, accept the second
+
+        with (
+            patch.object(mgr, "_get_document_http", side_effect=reads),
+            patch.object(mgr, "_generate_embedding", return_value=[0.0] * 768),
+            patch.object(mgr, "_conditional_feed_topic", side_effect=feed),
+        ):
+            page = mgr._get_or_create_topic(
+                entity="Race", new_content="Loser content.", sources=[]
+            )
+
+        # First attempt conditioned on the empty state (0); the retry re-read
+        # the winner (update_count 1) and merged into it.
+        assert expected_conditions == [0, 1]
+        assert "Winner content." in page.content
+        assert "Loser content." in page.content
+        assert page.update_count == 2
+
+    def test_raises_after_exhausting_retries(self):
+        mgr = self._make_manager()
+        with (
+            patch.object(mgr, "_get_document_http", return_value=None),
+            patch.object(mgr, "_generate_embedding", return_value=[0.0] * 768),
+            patch.object(mgr, "_conditional_feed_topic", return_value=False),
+        ):
+            with pytest.raises(RuntimeError, match="could not merge content after"):
+                mgr._get_or_create_topic(entity="Race", new_content="body", sources=[])
 
 
 @pytest.mark.unit
@@ -1091,6 +1163,26 @@ class TestTopicMergeConcurrency:
                 self, document, schema_name=None, base_schema_name=None, namespace=None
             ):
                 self.store[document.id] = document.to_schema_fields(mapping)
+
+            def conditional_put_document(
+                self,
+                document,
+                condition=None,
+                schema_name=None,
+                base_schema_name=None,
+                namespace=None,
+                create=False,
+            ):
+                """Vespa's test-and-set: apply only while the stored
+                ``update_count`` still equals the one the condition names,
+                otherwise reject so the caller re-reads and retries."""
+                expected = int(condition.rsplit("==", 1)[1])
+                stored = self.store.get(document.id)
+                current = int(stored["update_count"]) if stored else 0
+                if current != expected:
+                    return False
+                self.store[document.id] = document.to_schema_fields(mapping)
+                return True
 
         backend = _StatefulBackend()
         mgr = WikiManager(

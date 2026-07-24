@@ -2,6 +2,7 @@
 WikiManager — persists wiki pages to Vespa and maintains a per-tenant index.
 """
 
+import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +25,7 @@ _WIKI_NAMESPACE = "wiki_content"
 
 _AUTO_FILE_AGENTS = {"detailed_report_agent", "deep_research_agent"}
 _CONTENT_SEPARATOR = "\n\n---\n\n"
+_MAX_CAS_ATTEMPTS = 6
 
 # Serialize a topic's read-merge-write per (tenant, doc_id). Two concurrent
 # save_session calls for the same tenant+entity would otherwise both read the
@@ -358,68 +360,53 @@ class WikiManager:
     ) -> WikiPage:
         """Upsert a topic page for *entity*.
 
-        If the page already exists its content is appended and update_count
-        incremented.  The (new or updated) page is fed to Vespa.
+        Read the current page, merge *new_content* into it, and write it back
+        under a Vespa test-and-set on ``update_count`` so two overlapping
+        filings of the same entity never lose each other's content. A rejected
+        condition means a concurrent writer advanced the document, so the
+        read/merge/write is retried against the fresh state.
         """
         slug = generate_slug(entity)
         safe = self._tenant_id.replace(":", "_")
         doc_id = f"wiki_topic_{safe}_{slug}"
 
-        # Serialize this topic's read-merge-write so concurrent upserts of the
-        # same topic don't overwrite each other's content (see _topic_lock).
+        # The conditional feed keeps the merge correct across processes; the
+        # per-topic lock keeps same-process filings from burning CAS retries
+        # against each other.
         with _topic_lock(self._tenant_id, doc_id):
-            return self._upsert_topic_locked(entity, new_content, sources, doc_id)
+            return self._upsert_topic(entity, new_content, sources, doc_id)
 
-    def _upsert_topic_locked(
+    def _upsert_topic(
         self, entity: str, new_content: str, sources: List[str], doc_id: str
     ) -> WikiPage:
-        """Read-merge-write body of ``_get_or_create_topic``, run under the
-        per-topic lock so concurrent upserts of one topic serialize."""
-        existing = self._get_document_http(doc_id)
-
-        if existing is not None:
-            # Merge: use RLM for large content, otherwise simple append.
-            old_content = existing.text_content or existing.metadata.get("content", "")
-            # Idempotency: save_session runs the whole topic merge again on a
-            # client retry (natural after a partial-save 500), which appended the
-            # SAME response a second time — the topic body duplicated and
-            # update_count double-incremented. If this content is already merged,
-            # re-feed the existing doc unchanged instead of re-appending.
-            already_merged = bool(new_content) and new_content in old_content
-            if already_merged:
-                merged_content = old_content
-            elif self._should_use_rlm_for_merge(old_content, new_content):
-                merged_content = self._merge_with_rlm(old_content, new_content, entity)
-            else:
-                merged_content = old_content + _CONTENT_SEPARATOR + new_content
-            old_sources = existing.metadata.get("sources", "[]")
-            try:
-                import json
-
-                existing_sources = (
-                    json.loads(old_sources)
-                    if isinstance(old_sources, str)
-                    else old_sources
-                )
-            except Exception:
-                existing_sources = []
-            merged_sources = list(dict.fromkeys(existing_sources + sources))
-            base_count = int(existing.metadata.get("update_count", 1))
-            update_count = base_count if already_merged else base_count + 1
-
-            page = WikiPage(
-                tenant_id=self._tenant_id,
-                page_type="topic",
-                title=entity,
-                content=merged_content,
-                entities=[entity],
-                sources=merged_sources,
-                cross_references=[],
-                update_count=update_count,
+        """Read-merge-write body of ``_get_or_create_topic``, retried until the
+        test-and-set applies against the state the merge was built from."""
+        for _ in range(_MAX_CAS_ATTEMPTS):
+            existing = self._get_document_http(doc_id)
+            page, expected_update_count = self._build_topic_page(
+                entity, new_content, sources, existing
             )
-            # Preserve original timestamps from the existing doc.
-            page.created_at = existing.metadata.get("created_at", page.created_at)
-        else:
+            embedding = self._generate_embedding(page.content)
+            if self._conditional_feed_topic(page, embedding, expected_update_count):
+                return page
+
+        raise RuntimeError(
+            f"Wiki topic {doc_id!r}: could not merge content after "
+            f"{_MAX_CAS_ATTEMPTS} attempts due to concurrent updates"
+        )
+
+    def _build_topic_page(
+        self,
+        entity: str,
+        new_content: str,
+        sources: List[str],
+        existing: Optional["Document"],
+    ) -> "tuple[WikiPage, int]":
+        """Build the topic page to write and the ``update_count`` its write is
+        conditioned on. ``expected`` is the currently stored count — 0 when the
+        topic does not exist yet — and the built page carries the next count.
+        """
+        if existing is None:
             page = WikiPage(
                 tenant_id=self._tenant_id,
                 page_type="topic",
@@ -429,10 +416,69 @@ class WikiManager:
                 sources=sources,
                 cross_references=[],
             )
+            return page, 0
 
-        embedding = self._generate_embedding(page.content)
-        self._feed_page(page, embedding)
-        return page
+        # Merge: use RLM for large content, otherwise simple append.
+        old_content = existing.text_content or existing.metadata.get("content", "")
+        # Idempotency: save_session runs the whole topic merge again on a
+        # client retry (natural after a partial-save 500), which appended the
+        # SAME response a second time — the topic body duplicated and
+        # update_count double-incremented. If this content is already merged,
+        # re-feed the existing doc unchanged instead of re-appending.
+        already_merged = bool(new_content) and new_content in old_content
+        if already_merged:
+            merged_content = old_content
+        elif self._should_use_rlm_for_merge(old_content, new_content):
+            merged_content = self._merge_with_rlm(old_content, new_content, entity)
+        else:
+            merged_content = old_content + _CONTENT_SEPARATOR + new_content
+        old_sources = existing.metadata.get("sources", "[]")
+        try:
+            existing_sources = (
+                json.loads(old_sources) if isinstance(old_sources, str) else old_sources
+            )
+        except Exception:
+            existing_sources = []
+        merged_sources = list(dict.fromkeys(existing_sources + sources))
+        base_count = int(existing.metadata.get("update_count", 1))
+        update_count = base_count if already_merged else base_count + 1
+
+        page = WikiPage(
+            tenant_id=self._tenant_id,
+            page_type="topic",
+            title=entity,
+            content=merged_content,
+            entities=[entity],
+            sources=merged_sources,
+            cross_references=[],
+            update_count=update_count,
+        )
+        # Preserve original timestamps from the existing doc.
+        page.created_at = existing.metadata.get("created_at", page.created_at)
+        return page, base_count
+
+    def _conditional_feed_topic(
+        self, page: WikiPage, embedding: List[float], expected_update_count: int
+    ) -> bool:
+        """Feed *page* under a Vespa test-and-set on ``update_count``.
+
+        Delegates to the backend's conditional put: the write applies only
+        while the stored ``update_count`` still equals *expected_update_count*
+        (0 for a not-yet-created topic). Returns True when applied and False
+        when Vespa rejects the condition (a concurrent writer advanced the
+        document); a transport failure raises so a lost write never reads as a
+        successful save.
+        """
+        doc = page.to_document()
+        doc.add_embedding("embedding", embedding)
+        return self._backend.conditional_put_document(
+            doc,
+            condition=f"{self._schema_name}.update_count=={expected_update_count}",
+            schema_name=self._schema_name,
+            base_schema_name="wiki_pages",
+            namespace=_WIKI_NAMESPACE,
+            create=True,
+        )
 
     def _should_use_rlm_for_merge(self, old_content: str, new_content: str) -> bool:
         """Return True when combined content length exceeds 50,000 characters."""
