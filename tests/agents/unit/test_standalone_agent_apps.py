@@ -571,17 +571,46 @@ def test_detailed_report_lifespan_starts_and_agent_card_lists_skills(
 def test_search_lifespan_builds_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     """Entering the app lifespan builds the real SearchAgent. Pre-fix the
     lifespan imported cogniverse_core.schemas.schema_loader (nonexistent) and
-    crashed with ModuleNotFoundError before the agent was ever built."""
+    crashed with ModuleNotFoundError before the agent was ever built.
+
+    The shipped profile routes embedding through the ``vllm_colpali`` sidecar
+    and the encoder factory fails loud when no URL is configured. In production
+    ``main.py`` bridges the ``INFERENCE_SERVICE_URLS`` env into
+    ``SystemConfig.inference_service_urls`` at startup; mirror that bridge here
+    with a loopback URL — the remote encoder stores the URL without contacting
+    it, so the real construction path runs hermetically.
+    """
     import cogniverse_foundation.config.utils as config_utils
+    from cogniverse_core.query.encoders import QueryEncoderFactory
 
     monkeypatch.setenv("BACKEND_URL", "http://localhost")
     monkeypatch.setenv("BACKEND_PORT", "8080")
     monkeypatch.setattr(
         config_utils, "create_default_config_manager", lambda *a, **k: MagicMock()
     )
+
+    real_get_config = config_utils.get_config
+
+    def get_config_with_sidecar_urls(*args, **kwargs):
+        cfg = real_get_config(*args, **kwargs)
+        cfg._ensure_system_config()
+        cfg._system_config.inference_service_urls = {
+            **(cfg._system_config.inference_service_urls or {}),
+            "vllm_colpali": "http://127.0.0.1:9",
+        }
+        return cfg
+
+    monkeypatch.setattr(config_utils, "get_config", get_config_with_sidecar_urls)
     monkeypatch.setattr(sa_module, "search_agent", None)
 
-    with TestClient(sa_module.app):
-        assert sa_module.search_agent is not None
-
-    monkeypatch.setattr(sa_module, "search_agent", None)
+    try:
+        with TestClient(sa_module.app):
+            assert sa_module.search_agent is not None
+            # The encoder resolved the sidecar URL (remote mode) instead of
+            # crashing on the missing-URL fail-loud or loading a local model.
+            assert sa_module.search_agent.query_encoder is not None
+    finally:
+        # Don't leak the loopback-URL encoder to later tests via the
+        # process-wide factory cache.
+        QueryEncoderFactory._encoder_cache.clear()
+        monkeypatch.setattr(sa_module, "search_agent", None)
