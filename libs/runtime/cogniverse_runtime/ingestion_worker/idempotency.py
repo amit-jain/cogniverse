@@ -119,24 +119,15 @@ async def clear_inflight(redis: aioredis.Redis, sha: str) -> None:
     await redis.delete(f"{INFLIGHT_KEY_PREFIX}{sha}", f"{SUBMITTED_KEY_PREFIX}{sha}")
 
 
-async def mark_submitted(redis: aioredis.Redis, sha: str, ttl_seconds: int) -> None:
-    """Record that the job for ``sha`` actually reached the work stream.
-
-    Set right after ``queue.submit`` succeeds. Distinguishes a genuine
-    in-flight run from a phantom: a hard crash (SIGKILL / OOM) between
-    ``claim_inflight`` and ``queue.submit`` orphans the inflight marker with
-    no compensation, and without this every resubmit for the inflight TTL
-    (6h) returns an id whose job was never queued. Cleared with the inflight
-    marker on terminal state.
-    """
-    if ttl_seconds > 0:
-        await redis.set(f"{SUBMITTED_KEY_PREFIX}{sha}", "1", ex=ttl_seconds)
-    else:
-        await redis.set(f"{SUBMITTED_KEY_PREFIX}{sha}", "1")
-
-
 async def is_submitted(redis: aioredis.Redis, sha: str) -> bool:
-    """True if the job for ``sha`` reached the work stream (see mark_submitted)."""
+    """True if the job for ``sha`` reached the work stream.
+
+    The committed marker is written atomically with the XADD by ``queue.submit``
+    (its ``committed_key``), so a crash cannot leave the job queued without it. A
+    resubmit reads this to tell a genuine in-flight run from a phantom left by a
+    crash before the submit transaction. Cleared with the inflight marker on
+    terminal state.
+    """
     return bool(await redis.get(f"{SUBMITTED_KEY_PREFIX}{sha}"))
 
 
