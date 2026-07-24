@@ -217,5 +217,17 @@
       },
       "timeout": 2.0
     }
-  ]
+  ],
+
+  "document_mapping": {
+    "id": "text_id",
+    "title": "title",
+    "text_content": "full_text",
+    "content_id": "source_id",
+    "created_at": "creation_timestamp",
+    "created_at_format": "epoch",
+    "embeddings": {
+      "embedding": "embedding"
+    }
+  }
 }

@@ -291,5 +291,18 @@
       "first_phase": "0.5 * acoustic_score + 0.5 * text_score",
       "timeout": 2.0
     }
-  ]
+  ],
+
+  "document_mapping": {
+    "id": "audio_id",
+    "title": "audio_title",
+    "text_content": "audio_transcript",
+    "content_path": "audio_path",
+    "created_at": "creation_timestamp",
+    "created_at_format": "epoch",
+    "embeddings": {
+      "acoustic_embedding": "acoustic_embedding",
+      "semantic_embedding": "semantic_embedding"
+    }
+  }
 }

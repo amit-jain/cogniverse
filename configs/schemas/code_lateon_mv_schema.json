@@ -138,5 +138,15 @@
       },
       "timeout": 2.0
     }
-  ]
+  ],
+
+  "document_mapping": {
+    "id": "code_id",
+    "title": "chunk_name",
+    "text_content": "source_code",
+    "content_path": "file_path",
+    "embeddings": {
+      "embedding": "embedding"
+    }
+  }
 }
