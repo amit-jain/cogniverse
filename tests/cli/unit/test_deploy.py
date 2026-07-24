@@ -178,3 +178,56 @@ class TestChartVersionStamping:
         helm_install(Path("/charts/cogniverse"), Path("/v.yaml"))
         cmd = mock_run.call_args[0][0]  # type: ignore[attr-defined]
         assert cmd[3] == "/charts/cogniverse"
+
+
+class TestReleaseExistsContract:
+    """Only a genuine "release: not found" is False — any other helm
+    failure aborts, because reading it as "no release" made `down`
+    silently no-op while reporting the stack removed."""
+
+    def _completed(self, rc: int, stderr: str = ""):
+        cp = MagicMock()
+        cp.returncode = rc
+        cp.stderr = stderr
+        cp.stdout = ""
+        return cp
+
+    def test_release_present(self):
+        from cogniverse_cli.deploy import release_exists
+
+        with patch(
+            "cogniverse_cli.deploy.subprocess.run",
+            return_value=self._completed(0),
+        ):
+            assert release_exists() is True
+
+    def test_release_genuinely_absent(self):
+        from cogniverse_cli.deploy import release_exists
+
+        with patch(
+            "cogniverse_cli.deploy.subprocess.run",
+            return_value=self._completed(1, "Error: release: not found"),
+        ):
+            assert release_exists() is False
+
+    def test_broken_helm_aborts_instead_of_no_release(self):
+        from cogniverse_cli.deploy import release_exists
+
+        with patch(
+            "cogniverse_cli.deploy.subprocess.run",
+            return_value=self._completed(1, "Error: Kubernetes cluster unreachable"),
+        ):
+            with pytest.raises(SystemExit) as se:
+                release_exists()
+        assert "unreachable" in str(se.value)
+
+    def test_missing_helm_aborts_with_clear_message(self):
+        from cogniverse_cli.deploy import release_exists
+
+        with patch(
+            "cogniverse_cli.deploy.subprocess.run",
+            side_effect=FileNotFoundError("helm"),
+        ):
+            with pytest.raises(SystemExit) as se:
+                release_exists()
+        assert "helm not found" in str(se.value)

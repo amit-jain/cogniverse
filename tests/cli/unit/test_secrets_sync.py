@@ -127,3 +127,29 @@ def test_sync_returns_false_on_apply_failure(monkeypatch, tmp_path):
         from cogniverse_cli.secrets import sync_hf_token_to_cluster
 
         assert sync_hf_token_to_cluster() is False
+
+
+class TestKubectlBinaryGuard:
+    def test_missing_kubectl_aborts_with_clear_message(self):
+        import pytest
+        from cogniverse_cli.secrets import _kubectl
+
+        with patch(
+            "cogniverse_cli.secrets.subprocess.run",
+            side_effect=FileNotFoundError("kubectl"),
+        ):
+            with pytest.raises(SystemExit) as se:
+                _kubectl(["get", "secret", "x"])
+        assert "kubectl not found" in str(se.value)
+
+    def test_hung_kubectl_aborts(self):
+        import pytest
+        from cogniverse_cli.secrets import _kubectl
+
+        with patch(
+            "cogniverse_cli.secrets.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="kubectl", timeout=30),
+        ):
+            with pytest.raises(SystemExit) as se:
+                _kubectl(["get", "secret", "x"])
+        assert "timed out" in str(se.value)

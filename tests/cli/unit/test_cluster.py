@@ -234,3 +234,44 @@ class TestStopStartCluster:
             {"name": "cogniverse", "servers_running": 0, "servers_count": 1},
             {"name": "cogniverse-e2e", "servers_running": 1, "servers_count": 1},
         ]
+
+
+class TestClusterExistsBinaryGuard:
+    def test_missing_k3d_reads_as_no_cluster(self):
+        """A missing k3d binary means "no cluster" (same guard as
+        has_existing_k8s) so `up` reaches its install prompt — it
+        previously died with a FileNotFoundError traceback first."""
+        from cogniverse_cli.cluster import cluster_exists
+
+        with patch(
+            "cogniverse_cli.cluster.subprocess.run",
+            side_effect=FileNotFoundError("k3d"),
+        ):
+            assert cluster_exists("anything") is False
+
+    def test_hung_k3d_reads_as_no_cluster(self):
+        from cogniverse_cli.cluster import cluster_exists
+
+        with patch(
+            "cogniverse_cli.cluster.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="k3d", timeout=10),
+        ):
+            assert cluster_exists("anything") is False
+
+
+class TestParsePortCsv:
+    def test_valid_list_with_blanks(self):
+        from cogniverse_cli.cluster import _parse_port_csv
+
+        assert _parse_port_csv("80, 90,,443") == [80, 90, 443]
+        assert _parse_port_csv("") == []
+        assert _parse_port_csv(None) == []
+
+    def test_non_numeric_entry_aborts_with_clear_message(self):
+        import pytest
+        from cogniverse_cli.cluster import _parse_port_csv
+
+        with pytest.raises(SystemExit) as se:
+            _parse_port_csv("80,abc")
+        assert "abc" in str(se.value)
+        assert "integer" in str(se.value)

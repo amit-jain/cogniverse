@@ -13,13 +13,39 @@ from cogniverse_cli.constants import NAMESPACE  # noqa: F401
 
 
 def release_exists(name: str = RELEASE_NAME, namespace: str = NAMESPACE) -> bool:
-    """Check if a Helm release exists."""
-    result = subprocess.run(
-        ["helm", "status", name, "-n", namespace],
-        capture_output=True,
-        check=False,
+    """Check if a Helm release exists.
+
+    Only a genuine "release: not found" maps to False. Any other helm
+    failure (missing binary, broken kubeconfig, unreachable API) aborts —
+    reading it as "no release" made `cogniverse down` silently no-op while
+    reporting the stack removed, and made install/upgrade misselect.
+    """
+    try:
+        result = subprocess.run(
+            ["helm", "status", name, "-n", namespace],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except FileNotFoundError:
+        raise SystemExit(
+            "helm not found on PATH — install helm to manage the stack"
+        ) from None
+    except subprocess.TimeoutExpired:
+        raise SystemExit(
+            "helm status timed out after 60s — is the cluster reachable?"
+        ) from None
+
+    if result.returncode == 0:
+        return True
+    stderr = (result.stderr or "").lower()
+    if "not found" in stderr:
+        return False
+    raise SystemExit(
+        f"helm status failed ({result.returncode}): "
+        f"{(result.stderr or result.stdout or '').strip()[:300]}"
     )
-    return result.returncode == 0
 
 
 def semver_chart_version(version: str) -> str:
