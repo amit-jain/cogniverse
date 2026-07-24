@@ -71,9 +71,7 @@ def test_run_per_call_does_not_leak_loops_or_sockets(stub_endpoint):
         PhoenixTraceStore,
     )
 
-    store = PhoenixTraceStore(
-        http_endpoint=stub_endpoint, tenant_id="acme:acme", project_template="x"
-    )
+    store = PhoenixTraceStore(http_endpoint=stub_endpoint)
 
     gc.collect()
     base_sockets = _socket_fds()
@@ -102,9 +100,7 @@ async def test_same_loop_reuses_one_client(stub_endpoint):
         _client_for_current_loop,
     )
 
-    store = PhoenixTraceStore(
-        http_endpoint=stub_endpoint, tenant_id="acme:acme", project_template="x"
-    )
+    store = PhoenixTraceStore(http_endpoint=stub_endpoint)
     await store.get_spans(project="p", limit=1)
     c1 = _client_for_current_loop(stub_endpoint)
     await store.get_spans(project="p", limit=1)

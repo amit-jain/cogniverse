@@ -112,14 +112,16 @@ def _client_for_current_loop(http_endpoint: str) -> AsyncClient:
 class PhoenixTraceStore(TraceStore):
     """Phoenix implementation of TraceStore using AsyncClient."""
 
-    def __init__(self, http_endpoint: str, tenant_id: str, project_template: str):
+    def __init__(self, http_endpoint: str):
         """
         Initialize Phoenix trace store.
 
+        Tenant scoping is caller-side: every read takes an explicit
+        ``project`` name derived by the caller, so the store holds no
+        tenant state.
+
         Args:
             http_endpoint: Phoenix HTTP API endpoint
-            tenant_id: Tenant identifier
-            project_template: Template for project naming (e.g., "cogniverse-{tenant_id}-{service}")
         """
         self.http_endpoint = http_endpoint
         # Telemetry is integral (auto-optimization, eval) but not on the user
@@ -262,13 +264,14 @@ class PhoenixTraceStore(TraceStore):
 class PhoenixAnnotationStore(AnnotationStore):
     """Phoenix implementation of AnnotationStore using annotations API."""
 
-    def __init__(self, http_endpoint: str, tenant_id: str):
+    def __init__(self, http_endpoint: str):
         """
         Initialize Phoenix annotation store.
 
+        Tenant scoping is caller-side (explicit ``project`` per call).
+
         Args:
             http_endpoint: Phoenix HTTP API endpoint
-            tenant_id: Tenant identifier
         """
         self.http_endpoint = http_endpoint
 
@@ -430,13 +433,14 @@ class PhoenixAnnotationStore(AnnotationStore):
 class PhoenixDatasetStore(DatasetStore):
     """Phoenix implementation of DatasetStore using dataset API."""
 
-    def __init__(self, http_endpoint: str, tenant_id: str):
+    def __init__(self, http_endpoint: str):
         """
         Initialize Phoenix dataset store.
 
+        Tenant scoping is caller-side (dataset names carry the tenant).
+
         Args:
             http_endpoint: Phoenix HTTP API endpoint
-            tenant_id: Tenant identifier
         """
         self.http_endpoint = http_endpoint
 
@@ -657,9 +661,7 @@ class PhoenixProvider(TelemetryProvider):
     def __init__(self):
         """Initialize Phoenix provider."""
         super().__init__(name="phoenix")
-        self._tenant_id: Optional[str] = None
         self._http_endpoint: Optional[str] = None
-        self._project_template: str = "cogniverse-{tenant_id}-{service}"
 
     def initialize(self, config: Dict[str, Any]) -> None:
         """
@@ -698,21 +700,14 @@ class PhoenixProvider(TelemetryProvider):
             )
 
         # Store config
-        self._tenant_id = tenant_id
         self._http_endpoint = http_endpoint
 
         # Initialize stores (create AsyncClient lazily per call to avoid event loop issues)
         self._trace_store = PhoenixTraceStore(
             http_endpoint=http_endpoint,
-            tenant_id=tenant_id,
-            project_template=self._project_template,
         )
-        self._annotation_store = PhoenixAnnotationStore(
-            http_endpoint=http_endpoint, tenant_id=tenant_id
-        )
-        self._dataset_store = PhoenixDatasetStore(
-            http_endpoint=http_endpoint, tenant_id=tenant_id
-        )
+        self._annotation_store = PhoenixAnnotationStore(http_endpoint=http_endpoint)
+        self._dataset_store = PhoenixDatasetStore(http_endpoint=http_endpoint)
 
         logger.info(
             f"Initialized Phoenix provider for tenant {tenant_id} "

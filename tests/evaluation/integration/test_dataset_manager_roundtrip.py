@@ -27,9 +27,7 @@ def manager(phoenix_container):
     from cogniverse_evaluation.data.datasets import DatasetManager
     from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
 
-    store = PhoenixDatasetStore(
-        http_endpoint=phoenix_container["http_endpoint"], tenant_id=TENANT
-    )
+    store = PhoenixDatasetStore(http_endpoint=phoenix_container["http_endpoint"])
     return DatasetManager(tenant_id=TENANT, dataset_store=store)
 
 
@@ -172,9 +170,7 @@ class TestDatasetManagerFaultContract:
         from cogniverse_evaluation.data.datasets import DatasetManager
         from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
 
-        store = PhoenixDatasetStore(
-            http_endpoint="http://127.0.0.1:29071", tenant_id=TENANT
-        )
+        store = PhoenixDatasetStore(http_endpoint="http://127.0.0.1:29071")
         return DatasetManager(tenant_id=TENANT, dataset_store=store)
 
     def test_create_raises_on_outage(self, dead_manager):

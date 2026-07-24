@@ -31,7 +31,7 @@ async def test_create_dataset_runs_off_event_loop_thread(
 ):
     from phoenix.client.resources.datasets import Datasets
 
-    store = PhoenixDatasetStore(phoenix_container["http_endpoint"], "acme:acme")
+    store = PhoenixDatasetStore(phoenix_container["http_endpoint"])
 
     loop_thread = threading.get_ident()
     observed: dict[str, int] = {}
@@ -76,7 +76,7 @@ async def test_append_to_dataset_round_trips_and_offloads(
 
     from phoenix.client.resources.datasets import Datasets
 
-    store = PhoenixDatasetStore(phoenix_container["http_endpoint"], "acme:acme")
+    store = PhoenixDatasetStore(phoenix_container["http_endpoint"])
     name = f"append-rt-{uuid.uuid4().hex[:6]}"
     meta = {"input_keys": ["question"], "output_keys": ["answer"]}
 
@@ -116,7 +116,7 @@ async def test_append_to_missing_dataset_raises_value_error(phoenix_container):
     (append cannot infer their full metadata)."""
     import uuid
 
-    store = PhoenixDatasetStore(phoenix_container["http_endpoint"], "acme:acme")
+    store = PhoenixDatasetStore(phoenix_container["http_endpoint"])
 
     with pytest.raises(ValueError, match="not found|Dataset not found"):
         await store.append_to_dataset(
