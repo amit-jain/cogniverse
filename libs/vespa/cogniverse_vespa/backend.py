@@ -72,9 +72,6 @@ class VespaBackend(Backend):
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
         # Store multiple ingestion clients, one per schema
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
-        self._async_ingestion_clients: Dict[
-            str, Any
-        ] = {}  # For async ingestion (optional)
         self.schema_manager: Optional[VespaSchemaManager] = None
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
@@ -583,8 +580,10 @@ class VespaBackend(Backend):
             deployed = self.schema_manager.list_deployed_document_types()
             return schema_name in deployed
         except Exception as e:
+            # An enumeration failure is a backend outage, not "schema
+            # invalid" — flattening it to False collapses the two.
             logger.error(f"Failed to validate schema {schema_name}: {e}")
-            return False
+            raise
 
     # Search methods
 
@@ -1521,8 +1520,10 @@ class VespaBackend(Backend):
             logger.debug(f"Created metadata document: {schema}/{doc_id}")
             return True
         except Exception as e:
+            # An outage is not a rejected write — raise so callers never
+            # read a lost write as a clean failure they may retry-skip.
             logger.error(f"Failed to create metadata document {schema}/{doc_id}: {e}")
-            return False
+            raise
 
     def get_metadata_document(
         self, schema: str, doc_id: str
@@ -1686,8 +1687,10 @@ class VespaBackend(Backend):
             logger.debug(f"Deleted metadata document: {schema}/{doc_id}")
             return True
         except Exception as e:
+            # An outage is not "already deleted" — raise so callers never
+            # report a delete that did not happen.
             logger.error(f"Failed to delete metadata document {schema}/{doc_id}: {e}")
-            return False
+            raise
 
     # ============================================================================
     # Connection Management
@@ -1701,10 +1704,6 @@ class VespaBackend(Backend):
         for schema_name, client in self._vespa_ingestion_clients.items():
             client.close()
             logger.info(f"Closed Vespa client for schema: {schema_name}")
-
-        for schema_name, client in self._async_ingestion_clients.items():
-            client.close()
-            logger.info(f"Closed async Vespa client for schema: {schema_name}")
 
         if self._metadata_app is not None:
             self._metadata_app.close()

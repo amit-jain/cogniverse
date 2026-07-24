@@ -35,13 +35,16 @@ def test_validate_schema_checks_deployed_document_types():
     assert backend.validate_schema("nonexistent_schema") is False
 
 
-def test_validate_schema_returns_false_on_listing_failure():
+def test_validate_schema_raises_on_listing_failure():
+    """An enumeration outage is not "schema invalid" — flattening it to False
+    collapses the two for every caller keying off the bool."""
     backend = _bare_backend()
     backend.schema_manager.list_deployed_document_types.side_effect = RuntimeError(
         "config server down"
     )
 
-    assert backend.validate_schema("agent_memories") is False
+    with pytest.raises(RuntimeError, match="config server down"):
+        backend.validate_schema("agent_memories")
 
 
 def test_health_check_coerces_status_dict_to_bool():
@@ -339,3 +342,76 @@ def test_get_metadata_document_raises_on_backend_failure():
 
     with pytest.raises(VespaError):
         backend.get_metadata_document(schema="tenant_metadata", doc_id="acme:acme")
+
+
+class TestWriteFaultContracts:
+    """Backend write failures must raise — a False return reads as "the
+    write was rejected" and callers silently drop or mis-report the write."""
+
+    def test_update_document_raises_on_backend_failure(self):
+        from cogniverse_sdk.document import Document
+
+        backend = _bare_backend()
+        backend.config = {"schema_name": "agent_memories"}
+        backend.ingest_documents = MagicMock(
+            side_effect=ConnectionError("backend down")
+        )
+
+        doc = Document(id="m1", text_content="x", metadata={})
+        with pytest.raises(ConnectionError):
+            backend.update_document("m1", doc)
+
+    def test_update_document_rejects_id_mismatch_loudly(self):
+        from cogniverse_sdk.document import Document
+
+        backend = _bare_backend()
+        backend.config = {"schema_name": "agent_memories"}
+        backend.ingest_documents = MagicMock()
+
+        doc = Document(id="OTHER", text_content="x", metadata={})
+        with pytest.raises(ValueError, match="does not match"):
+            backend.update_document("m1", doc)
+        backend.ingest_documents.assert_not_called()
+
+    def test_update_document_requires_a_schema_name(self):
+        from cogniverse_sdk.document import Document
+
+        backend = _bare_backend()
+        backend.config = {}
+
+        doc = Document(id="m1", text_content="x", metadata={})
+        with pytest.raises(ValueError, match="schema_name"):
+            backend.update_document("m1", doc)
+
+    def test_create_metadata_document_raises_on_outage(self):
+        backend = _bare_backend()
+        backend._url = "http://localhost"
+        app = MagicMock()
+        app.feed_data_point.side_effect = ConnectionError("backend down")
+        backend._metadata_vespa_app = MagicMock(return_value=app)
+
+        with pytest.raises(ConnectionError):
+            backend.create_metadata_document("tenant_metadata", "t1", {"a": 1})
+
+    def test_delete_metadata_document_raises_on_outage(self):
+        backend = _bare_backend()
+        backend._url = "http://localhost"
+        app = MagicMock()
+        app.delete_data.side_effect = ConnectionError("backend down")
+        backend._metadata_vespa_app = MagicMock(return_value=app)
+
+        with pytest.raises(ConnectionError):
+            backend.delete_metadata_document("tenant_metadata", "t1")
+
+    def test_create_metadata_document_false_on_rejected_status(self):
+        """A non-200 the client surfaces WITHOUT raising stays a clean False
+        (a rejected write, distinct from an outage)."""
+        backend = _bare_backend()
+        backend._url = "http://localhost"
+        response = MagicMock()
+        response.status_code = 400
+        app = MagicMock()
+        app.feed_data_point.return_value = response
+        backend._metadata_vespa_app = MagicMock(return_value=app)
+
+        assert backend.create_metadata_document("tenant_metadata", "t1", {}) is False
