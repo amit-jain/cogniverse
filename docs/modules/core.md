@@ -1636,6 +1636,12 @@ loader = ModelLoaderFactory.create_loader(
     logger=logger,
 )
 model, processor = loader.load_model()
+
+# Capability probe: True when the model has no in-process loader (must be
+# served via the vLLM sidecar). Gate on this instead of catching the
+# in-process load's RuntimeError.
+from cogniverse_core.common.models import is_remote_only_model
+is_remote_only_model("TomoroAI/tomoro-colqwen3-embed-4b")  # True
 ```
 
 **Loader Registry:**
