@@ -182,6 +182,48 @@ def test_uninitialized_backend_raises(backend: VespaBackend) -> None:
         backend.query_metadata_documents(schema="x", yql="y")
 
 
+class _CapturingVespaClient:
+    """Records the query parameters so paging kwargs can be asserted."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def query(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(status_code=200, json={"root": {"children": []}})
+
+
+def test_offset_forwarded_as_native_query_parameter(backend: VespaBackend) -> None:
+    """A non-zero paging offset must ride as Vespa's native ``offset``
+    parameter. A YQL offset alone is bounded by ``hits``, so the second page
+    of a walk lands outside the window and comes back empty — the walk then
+    silently truncates at the first page."""
+    fake = _CapturingVespaClient()
+    with patch("cogniverse_vespa.backend.make_persistent_vespa_ops", return_value=fake):
+        backend.query_metadata_documents(
+            schema="agent_memories_acme",
+            yql="select * from agent_memories_acme where true order by id desc",
+            hits=100,
+            offset=100,
+        )
+    assert fake.calls[0]["offset"] == 100
+    assert fake.calls[0]["hits"] == 100
+
+
+def test_offset_zero_omits_the_parameter(backend: VespaBackend) -> None:
+    """Page one (offset 0) must not send an offset — the default is 0 and an
+    explicit 0 is redundant noise on the hot first-page read."""
+    fake = _CapturingVespaClient()
+    with patch("cogniverse_vespa.backend.make_persistent_vespa_ops", return_value=fake):
+        backend.query_metadata_documents(
+            schema="agent_memories_acme",
+            yql="select * from agent_memories_acme where true order by id desc",
+            hits=100,
+            offset=0,
+        )
+    assert "offset" not in fake.calls[0]
+
+
 def test_vespa_error_propagates(backend: VespaBackend) -> None:
     """The REAL non-2xx shape: pyvespa raise_for_status raises VespaError on
     4xx/5xx (only 404 returns) — it must propagate, not flatten to []."""
