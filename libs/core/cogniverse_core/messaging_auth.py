@@ -17,6 +17,16 @@ logger = logging.getLogger(__name__)
 GATEWAY_AGENT_NAME = "_messaging_gateway"
 
 
+def _mapping_session_key(platform: str, external_user_id: str) -> str:
+    """Promoted filter key for one user→tenant mapping.
+
+    Stored as ``session_id`` (a filterable Vespa field) so ``get_tenant_id``
+    narrows to the single mapping server-side instead of scanning the
+    partition's capped 100-row page.
+    """
+    return f"{platform}:{external_user_id}"
+
+
 class InviteTokenManager:
     """Manages invite tokens for Telegram user registration."""
 
@@ -133,6 +143,7 @@ class UserTenantMapper:
             "platform": platform,
             "external_user_id": str(external_user_id),
             "tenant_id": tenant_id,
+            "session_id": _mapping_session_key(platform, str(external_user_id)),
         }
 
         try:
@@ -162,11 +173,12 @@ class UserTenantMapper:
     def get_tenant_id(self, platform: str, external_user_id: str) -> Optional[str]:
         """Look up tenant_id for an external user by exact metadata match.
 
-        Enumerates the stored mappings and matches ``platform`` +
-        ``external_user_id`` by equality on their metadata. The old
-        semantic-search + substring match could return another user's tenant
-        (a nearest-neighbour or substring false positive) and silently missed
-        users past the ``top_k`` window.
+        Narrows to this user's mapping server-side on the stamped
+        ``session_id`` key, then confirms ``platform`` + ``external_user_id``
+        by equality. Filtering server-side is what keeps a mapping past the
+        partition's 100-row page reachable — a plain enumerate-and-scan sees
+        only an arbitrary capped page and reports a registered user as
+        unregistered once the partition grows past it.
 
         Raises on a Mem0 outage — flattening that to None made every
         registered user look unregistered for the outage's duration.
@@ -174,6 +186,7 @@ class UserTenantMapper:
         memories = self.memory_manager.get_all_memories(
             tenant_id=SYSTEM_TENANT_ID,
             agent_name=GATEWAY_AGENT_NAME,
+            filters={"session_id": _mapping_session_key(platform, external_user_id)},
         )
 
         for mem in memories:

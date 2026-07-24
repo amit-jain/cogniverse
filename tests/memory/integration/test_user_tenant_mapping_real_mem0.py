@@ -13,10 +13,10 @@ import uuid
 from pathlib import Path
 
 import pytest
-from cogniverse_core.messaging_auth import GATEWAY_AGENT_NAME, UserTenantMapper
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.messaging_auth import GATEWAY_AGENT_NAME, UserTenantMapper
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
@@ -89,6 +89,35 @@ async def test_register_then_lookup_resolves_tenant_real_mem0(
         top_k=5,
     )
     assert any(user_id in (h.get("memory", "")) for h in sys_hits)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_lookup_resolves_mapping_past_the_hundred_row_page_real_mem0(
+    shared_memory_vespa, shared_denseon
+):
+    """A mapping registered past the store's 100-row page still resolves.
+
+    The gateway shares one SYSTEM partition across every tenant, so past 100
+    mappings an unfiltered scan returns only a capped page. get_tenant_id
+    narrows server-side on the stamped session key, so the target resolves
+    regardless of how full the partition is.
+    """
+    mm = _build_manager(
+        shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
+    )
+    mapper = UserTenantMapper(mm)
+
+    run = uuid.uuid4().hex[:8]
+    users = [f"tg{run}{i:03d}" for i in range(105)]
+    for i, uid in enumerate(users):
+        assert mapper.register_user("telegram", uid, f"acme:t{run}{i:03d}") is True
+
+    # The last-registered user sits past the 100-row page; it must resolve.
+    assert mapper.get_tenant_id("telegram", users[104]) == f"acme:t{run}104"
+    # A mid-partition user resolves to its own exact tenant.
+    assert mapper.get_tenant_id("telegram", users[100]) == f"acme:t{run}100"
+    assert mapper.get_tenant_id("telegram", users[0]) == f"acme:t{run}000"
 
 
 @pytest.mark.integration

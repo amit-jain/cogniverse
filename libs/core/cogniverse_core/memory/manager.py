@@ -1022,6 +1022,7 @@ class Mem0MemoryManager:
         agent_name: str,
         include_archived: bool = False,
         filters: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = 100,
     ) -> List[Dict[str, Any]]:
         """
         Get all memories for an agent.
@@ -1035,6 +1036,11 @@ class Mem0MemoryManager:
             filters: Optional server-side filters (e.g. ``{"subject_key":
                 ...}``) merged into the store query — prefer these over
                 fetching everything and filtering in Python.
+            limit: Maximum rows to return, newest first. Defaults to 100
+                (the store's page size). Pass ``None`` to walk every page
+                and return the whole partition — required by callers that
+                enumerate and filter in Python, so a partition past 100
+                rows cannot silently truncate.
 
         Returns:
             List of all memories
@@ -1047,6 +1053,7 @@ class Mem0MemoryManager:
                 user_id=tenant_id,
                 agent_id=agent_name,
                 filters=filters,
+                limit=limit,
             )
 
             # Mem0 get_all returns {"results": [...]}

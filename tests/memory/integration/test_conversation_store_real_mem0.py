@@ -7,6 +7,7 @@ them in order, confirm contexts are isolated and the window is bounded.
 
 from __future__ import annotations
 
+import time
 import uuid
 from pathlib import Path
 
@@ -111,3 +112,42 @@ async def test_history_window_is_bounded_real_mem0(shared_memory_vespa, shared_d
     assert len(history) == 10
     assert history[0]["content"] == "turn 4"
     assert history[-1]["content"] == "turn 13"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_quiet_context_survives_busy_neighbor_real_mem0(
+    shared_memory_vespa, shared_denseon
+):
+    """A quiet context reloads complete when a neighbor floods the partition.
+
+    get_history must narrow to the context server-side and page through
+    every matching turn. A plain enumerate-then-filter sees only the newest
+    100 rows, so an older context's turns fall off the page and its history
+    reloads empty once the partition grows past 100.
+    """
+    mm = _build_manager(
+        shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
+    )
+    store = ConversationStore(mm, SYSTEM_TENANT_ID)
+    quiet = f"chat{uuid.uuid4().hex[:10]}"
+    busy = f"chat{uuid.uuid4().hex[:10]}"
+
+    store.store_turn(quiet, "user", "quiet q1")
+    store.store_turn(quiet, "assistant", "quiet a1")
+    store.store_turn(quiet, "user", "quiet q2")
+    # Push the quiet context strictly before the flood so the second-grained
+    # created_at cannot tie its turns into the newest-100 page.
+    time.sleep(1.2)
+    for i in range(101):
+        store.store_turn(busy, "user", f"busy {i}")
+
+    assert store.get_history(quiet) == [
+        {"role": "user", "content": "quiet q1"},
+        {"role": "assistant", "content": "quiet a1"},
+        {"role": "user", "content": "quiet q2"},
+    ]
+    # The flooded context's most-recent window is exact and ordered, proving
+    # the paginated within-context read returns every matching turn.
+    busy_hist = store.get_history(busy, max_turns=5)
+    assert [t["content"] for t in busy_hist] == [f"busy {i}" for i in range(96, 101)]

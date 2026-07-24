@@ -42,11 +42,17 @@ class ConversationStore:
         content is the stored text with its ``[ctx:id] [role] `` prefix
         stripped, so neither depends on parsing the free text for the role.
         """
+        ctx = str(context_id)
+        # Narrow to this context server-side on the stamped session key, then
+        # walk every matching turn (limit=None). Enumerating the partition and
+        # filtering in Python sees only the newest 100 rows, so a busy
+        # neighbour buries this context and its history reloads empty.
         rows = self._memory.get_all_memories(
             tenant_id=self._tenant_id,
             agent_name=CONVERSATION_AGENT_NAME,
+            filters={"session_id": ctx},
+            limit=None,
         )
-        ctx = str(context_id)
         prefix = f"[ctx:{ctx}] "
         collected: List = []
         for row in rows:
@@ -100,6 +106,10 @@ class ConversationStore:
             metadata={
                 "type": "conversation",
                 "context_id": ctx,
+                # session_id is a promoted Vespa field, so get_history filters
+                # to this context server-side instead of scanning the whole
+                # partition; context_id carries it.
+                "session_id": ctx,
                 # not "role": Mem0 reserves it and overwrites with the
                 # message role, so the turn's role would be lost on read.
                 "turn_role": role,
