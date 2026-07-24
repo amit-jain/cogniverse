@@ -37,7 +37,12 @@ def memory_manager(shared_memory_vespa, shared_denseon):
     """Initialize and return memory manager for all tests."""
     Mem0MemoryManager._instances.clear()
 
-    manager = Mem0MemoryManager(tenant_id="test_tenant")
+    # Canonical org:tenant form so the derived schema matches the single
+    # suffix the shared fixture deploys (agent_memories_test_tenant). The bare
+    # "test_tenant" canonicalizes to "test_tenant:test_tenant" and derives the
+    # double-suffix agent_memories_test_tenant_test_tenant, which is never
+    # deployed, so every read/search resolved an unknown schema.
+    manager = Mem0MemoryManager(tenant_id="test:tenant")
 
     manager.initialize(
         backend_host=get_backend_host(),
