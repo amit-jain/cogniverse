@@ -1070,6 +1070,8 @@ requirements = strategy.get_required_processors()
 
 **Best For**: ColQwen chunk-based video processing
 
+**Incompatible with `VLMDescriptionStrategy`**: chunks are video-file segments, not keyframe images, so a chunk+VLM pairing cannot produce descriptions. `ProcessingStrategySet` raises `ValueError` at construction if the two are combined (chunk profiles pair with `NoDescriptionStrategy`).
+
 ### 3. SingleVectorSegmentationStrategy
 
 **Purpose**: Process video with sliding windows for single-vector embeddings
@@ -1144,6 +1146,8 @@ strategy = VLMDescriptionStrategy(
     batch_size=500
 )
 ```
+
+**Requires keyframe segmentation** (`FrameSegmentationStrategy`): it describes keyframe images, so pairing it with a chunk-based segmentation is rejected by `ProcessingStrategySet` at construction.
 
 ### 6. MultiVectorEmbeddingStrategy
 
