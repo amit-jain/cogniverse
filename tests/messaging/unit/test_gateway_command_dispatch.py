@@ -375,8 +375,9 @@ class TestHandleMessage:
         g.runtime_client.dispatch_agent = AsyncMock(
             return_value={"message": "the answer"}
         )
-        g._user_mapper = MagicMock()
-        g._user_mapper.get_tenant_id.return_value = tenant_id
+        g.runtime_client.resolve_tenant = AsyncMock(
+            return_value={"status": "ok", "tenant_id": tenant_id}
+        )
         return g
 
     @pytest.mark.asyncio
@@ -648,25 +649,14 @@ class TestErrorHandler:
 @pytest.mark.ci_fast
 class TestTenantLookupOutage:
     @pytest.mark.asyncio
-    async def test_message_during_memory_outage_says_unavailable(
-        self, config_manager_memory
-    ):
-        """A Mem0 outage during tenant lookup must read as "temporarily
-        unavailable", never as "please register" — every registered user
-        looked unregistered for the outage's duration."""
-
-        class _DownMemory:
-            def add_memory(self, *args, **kwargs):
-                raise ConnectionError("mem0 down")
-
-            def get_all_memories(self, *args, **kwargs):
-                raise ConnectionError("mem0 down")
-
-        g = MessagingGateway(
-            bot_token="123:FAKE",
-            runtime_url="http://x",
-            config_manager=config_manager_memory,
-            memory_manager=_DownMemory(),
+    async def test_message_during_resolve_outage_says_unavailable(self):
+        """A runtime/Mem0 outage during tenant resolution must read as
+        "temporarily unavailable", never as "please register" — every
+        registered user looked unregistered for the outage's duration."""
+        g = MessagingGateway(bot_token="123:FAKE", runtime_url="http://x")
+        g.runtime_client = MagicMock()
+        g.runtime_client.resolve_tenant = AsyncMock(
+            return_value={"status": "unavailable", "message": "mem0 down"}
         )
         update = _message_update(text="hello there")
         await g._handle_message(update, context=None)

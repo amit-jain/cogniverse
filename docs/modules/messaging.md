@@ -80,12 +80,12 @@ MessagingGateway(
     webhook_listen: str = "0.0.0.0",  # webhook mode: HTTP server bind address
     webhook_port: int = 8443,         # webhook mode: HTTP server bind port
     webhook_path: str = "",           # webhook mode: URL path Telegram POSTs updates to
-    memory_manager=None,          # Mem0MemoryManager; enables auth + conversation history
-    config_manager=None,          # enables invite-token registration
+    memory_manager=None,          # Mem0MemoryManager; enables conversation history only
+    outbound_poll_seconds: float = 5.0,
 )
 ```
 
-Registration and conversation history are both optional: without `config_manager`, `/start <token>` replies that registration is unavailable; without `memory_manager`, the gateway skips history lookup/storage and every user is treated as unregistered (`_handle_message` short-circuits to "please register").
+Registration and tenant resolution go through the runtime's HTTP API: `/start <token>` calls `POST /admin/messaging/register` and each message resolves the sender via `GET /admin/messaging/resolve` (cached positively per user for 60s). The gateway therefore registers users out of the box in the deployed chart — it needs only `RUNTIME_URL`. A runtime/backend outage during either call replies "temporarily unavailable" (the token is never consumed by a failed attempt); `tenant_id: null` from resolve is the only thing that reads as "please register". Conversation history remains optional: without `memory_manager` the gateway skips history lookup/storage.
 
 `build_app()` registers a `CommandHandler` for every slash command (`start`, `help`, and all nine command families) — the plain-text `MessageHandler` filters with `~filters.COMMAND`, so a command without its own handler would be silently dropped by Telegram dispatch. Updates process concurrently (up to 32 in parallel) so one slow agent dispatch cannot stall other chats, and a registered error handler replies "Something went wrong handling that — please try again." when a handler raises (runtime unreachable, malformed response) instead of leaving the user in silence.
 
@@ -131,7 +131,7 @@ Alongside inbound handling, the gateway runs a background `_outbound_drain_loop`
 
 **Location:** `libs/core/cogniverse_core/messaging_auth.py` (shared with the runtime, which serves registration routes over HTTP)
 
-- **`InviteTokenManager(config_manager)`** — generates, validates, and marks-used invite tokens, stored in the `_system` tenant's config store (`ConfigScope.SYSTEM`, service `"messaging_gateway"`). `generate_token(tenant_id, expires_in_hours=24)` returns a UUID hex token; `validate_token(token)` returns the tenant_id, returns `None` if unknown/expired/already used, and raises on a store outage (the gateway replies "temporarily unavailable" instead of "invalid token"); `mark_token_used(token, tenant_id)` returns `False` on a failed consume write (logged; the token stays live until expiry). `_handle_start` registers the user first and consumes the token only on success, so a failed registration never burns the token.
+- **`InviteTokenManager(config_manager)`** — generates, validates, and marks-used invite tokens, stored in the `_system` tenant's config store (`ConfigScope.SYSTEM`, service `"messaging_gateway"`). `generate_token(tenant_id, expires_in_hours=24)` returns a UUID hex token; `validate_token(token)` returns the tenant_id, returns `None` if unknown/expired/already used, and raises on a store outage (the gateway replies "temporarily unavailable" instead of "invalid token"); `mark_token_used(token, tenant_id)` returns `False` on a failed consume write (logged; the token stays live until expiry). The runtime's `POST /admin/messaging/register` route drives validate → register → consume in that order (serialized per process), so a failed registration never burns the token and a concurrent duplicate register loses at validation; the gateway only speaks HTTP.
 - **`UserTenantMapper(memory_manager)`** — maps a Telegram user ID to a tenant ID via Mem0, storing the mapping under the system tenant partition (`SYSTEM_TENANT_ID`) with `agent_name="_messaging_gateway"` and `infer=False` so the raw mapping text isn't rewritten by LLM extraction.
 
 ---
@@ -171,6 +171,8 @@ The constructor `timeout` bounds only agent dispatch (`dispatch_agent`) and SSE 
 | `dispatch_agent(agent_name, query, tenant_id, context_id=None, conversation_history=None, top_k=10, context=None)` | `POST /agents/{agent_name}/process` |
 | `stream_events(task_id)` | `GET /events/workflows/{task_id}` (SSE) |
 | `create_invite_token(tenant_id, expires_in_hours=24)` | `POST /admin/messaging/invite` |
+| `register_user(platform, external_user_id, token)` | `POST /admin/messaging/register` — returns `{"status": "registered"\|"invalid_token"\|"unavailable", ...}`, never raises |
+| `resolve_tenant(platform, external_user_id)` | `GET /admin/messaging/resolve` — `{"status": "ok", "tenant_id": str\|None}` or `{"status": "unavailable"}` |
 | `save_wiki_session(tenant_id, query, response, agent_name="gateway_agent", entities=None)` | `POST /wiki/save` |
 | `search_wiki(tenant_id, query, top_k=5)` | `POST /wiki/search` |
 | `get_wiki_topic(tenant_id, slug)` | `GET /wiki/topic/{slug}` |
