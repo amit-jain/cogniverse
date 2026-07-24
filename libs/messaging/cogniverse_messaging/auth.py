@@ -49,51 +49,53 @@ class InviteTokenManager:
     def validate_token(self, token: str) -> Optional[str]:
         """Validate an invite token and return the tenant_id if valid.
 
-        Returns None if token is invalid, expired, or already used.
-        Reads through the ConfigManager so the lookup key gets the same
-        tenant canonicalization as generate_token's write — a raw store
-        read with "_system" looks up a key nobody writes.
+        Returns None if the token is unknown, expired, or already used.
+        Raises on a config-store outage — flattening that to None told the
+        user their perfectly good token was invalid. Reads through the
+        ConfigManager so the lookup key gets the same tenant
+        canonicalization as generate_token's write — a raw store read with
+        "_system" looks up a key nobody writes.
         """
-        try:
-            value = self.config_manager.get_config_value(
-                tenant_id="_system",
-                scope=ConfigScope.SYSTEM,
-                service="messaging_gateway",
-                config_key=f"invite_token_{token}",
-            )
+        value = self.config_manager.get_config_value(
+            tenant_id="_system",
+            scope=ConfigScope.SYSTEM,
+            service="messaging_gateway",
+            config_key=f"invite_token_{token}",
+        )
 
-            if value is None:
-                return None
-            if isinstance(value, str):
-                import json
+        if value is None:
+            return None
+        if isinstance(value, str):
+            import json
 
-                try:
-                    value = json.loads(value)
-                except Exception:
-                    return None
-
-            if value.get("used"):
-                logger.warning(f"Token already used: {token[:8]}...")
+            try:
+                value = json.loads(value)
+            except ValueError:
+                logger.error(f"Unparseable invite token value: {token[:8]}...")
                 return None
 
-            expires_at = value.get("expires_at", "")
-            if expires_at:
-                expiry = datetime.fromisoformat(expires_at)
-                if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) > expiry:
-                    logger.warning(f"Token expired: {token[:8]}...")
-                    return None
+        if value.get("used"):
+            logger.warning(f"Token already used: {token[:8]}...")
+            return None
 
-            return value.get("tenant_id")
+        expires_at = value.get("expires_at", "")
+        if expires_at:
+            expiry = datetime.fromisoformat(expires_at)
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > expiry:
+                logger.warning(f"Token expired: {token[:8]}...")
+                return None
 
-        except Exception as e:
-            logger.error(f"Token validation failed: {e}")
+        return value.get("tenant_id")
 
-        return None
+    def mark_token_used(self, token: str, tenant_id: str) -> bool:
+        """Mark a token as used after successful registration.
 
-    def mark_token_used(self, token: str, tenant_id: str) -> None:
-        """Mark a token as used after successful registration."""
+        Returns False when the write fails — the token stays live until it
+        expires; the user is already registered at that point, so a failure
+        here must not undo the registration, only be logged.
+        """
         try:
             self.config_manager.set_config_value(
                 tenant_id="_system",
@@ -107,8 +109,10 @@ class InviteTokenManager:
                     "used_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
+            return True
         except Exception as e:
             logger.error(f"Failed to mark token as used: {e}")
+            return False
 
 
 class UserTenantMapper:
@@ -163,15 +167,14 @@ class UserTenantMapper:
         semantic-search + substring match could return another user's tenant
         (a nearest-neighbour or substring false positive) and silently missed
         users past the ``top_k`` window.
+
+        Raises on a Mem0 outage — flattening that to None made every
+        registered user look unregistered for the outage's duration.
         """
-        try:
-            memories = self.memory_manager.get_all_memories(
-                tenant_id=SYSTEM_TENANT_ID,
-                agent_name=GATEWAY_AGENT_NAME,
-            )
-        except Exception as e:
-            logger.error(f"Failed to look up user mapping: {e}")
-            return None
+        memories = self.memory_manager.get_all_memories(
+            tenant_id=SYSTEM_TENANT_ID,
+            agent_name=GATEWAY_AGENT_NAME,
+        )
 
         for mem in memories:
             meta = mem.get("metadata") or {}

@@ -50,7 +50,7 @@ class TestInviteTokenManager:
         token = token_manager.generate_token("acme:alice")
         assert token_manager.validate_token(token) == "acme:alice"
 
-        token_manager.mark_token_used(token, "acme:alice")
+        assert token_manager.mark_token_used(token, "acme:alice") is True
         assert token_manager.validate_token(token) is None
 
     def test_mark_used_stores_tz_aware_used_at(
@@ -110,9 +110,10 @@ class TestInviteTokenManager:
         )
         assert token_manager.validate_token("strtok") == "acme:alice"
 
-    def test_validate_fails_closed_on_store_outage(self):
-        """A config-store outage validates to None (token treated as not
-        valid) instead of crashing the /start handler."""
+    def test_validate_raises_on_store_outage(self):
+        """A config-store outage must RAISE, not read as "invalid token" —
+        flattening it made users discard perfectly good tokens; the gateway
+        catches this and replies that registration is temporarily down."""
         from cogniverse_foundation.config.manager import ConfigManager
         from tests.utils.memory_store import InMemoryConfigStore
 
@@ -123,7 +124,24 @@ class TestInviteTokenManager:
         store = OutageStore()
         store.initialize()
         manager = InviteTokenManager(ConfigManager(store=store))
-        assert manager.validate_token("anytoken") is None
+        with pytest.raises(ConnectionError):
+            manager.validate_token("anytoken")
+
+    def test_mark_token_used_returns_false_on_store_failure(self):
+        """A failed consume write reports False so the caller can log that
+        the token stays live; it must not raise — the user is already
+        registered by the time the token is consumed."""
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        class WriteFailStore(InMemoryConfigStore):
+            def set_config(self, *args, **kwargs):
+                raise ConnectionError("config store unreachable")
+
+        store = WriteFailStore()
+        store.initialize()
+        manager = InviteTokenManager(ConfigManager(store=store))
+        assert manager.mark_token_used("sometoken", "acme:alice") is False
 
 
 class TestUserTenantMapper:
@@ -213,3 +231,16 @@ class TestUserTenantMapper:
         mapper = UserTenantMapper(memory_manager)
         result = mapper.get_tenant_id("telegram", "99999")
         assert result is None
+
+    def test_get_tenant_id_raises_on_memory_outage(self, memory_manager):
+        """A Mem0 outage must RAISE, not read as "unregistered" — flattening
+        it re-prompted every registered user to register during the outage;
+        the gateway catches this and replies the service is temporarily
+        unavailable."""
+        memory_manager.get_all_memories.side_effect = ConnectionError(
+            "mem0 unreachable"
+        )
+
+        mapper = UserTenantMapper(memory_manager)
+        with pytest.raises(ConnectionError):
+            mapper.get_tenant_id("telegram", "12345")

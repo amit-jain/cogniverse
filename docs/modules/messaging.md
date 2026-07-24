@@ -131,7 +131,7 @@ Alongside inbound handling, the gateway runs a background `_outbound_drain_loop`
 
 **Location:** `libs/messaging/cogniverse_messaging/auth.py`
 
-- **`InviteTokenManager(config_manager)`** — generates, validates, and marks-used invite tokens, stored in the `_system` tenant's config store (`ConfigScope.SYSTEM`, service `"messaging_gateway"`). `generate_token(tenant_id, expires_in_hours=24)` returns a UUID hex token; `validate_token(token)` returns the tenant_id or `None` if missing, expired, or already used.
+- **`InviteTokenManager(config_manager)`** — generates, validates, and marks-used invite tokens, stored in the `_system` tenant's config store (`ConfigScope.SYSTEM`, service `"messaging_gateway"`). `generate_token(tenant_id, expires_in_hours=24)` returns a UUID hex token; `validate_token(token)` returns the tenant_id, returns `None` if unknown/expired/already used, and raises on a store outage (the gateway replies "temporarily unavailable" instead of "invalid token"); `mark_token_used(token, tenant_id)` returns `False` on a failed consume write (logged; the token stays live until expiry). `_handle_start` registers the user first and consumes the token only on success, so a failed registration never burns the token.
 - **`UserTenantMapper(memory_manager)`** — maps a Telegram user ID to a tenant ID via Mem0, storing the mapping under the system tenant partition (`SYSTEM_TENANT_ID`) with `agent_name="_messaging_gateway"` and `infer=False` so the raw mapping text isn't rewritten by LLM extraction.
 
 ---

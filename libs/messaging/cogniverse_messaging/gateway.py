@@ -112,17 +112,40 @@ class MessagingGateway:
             )
             return
 
-        tenant_id = self._token_manager.validate_token(token)
+        try:
+            tenant_id = self._token_manager.validate_token(token)
+        except Exception as exc:  # noqa: BLE001 — store outage, not a bad token
+            logger.error("Token validation unavailable: %s", exc)
+            await update.message.reply_text(
+                "Registration is temporarily unavailable — your token was not "
+                "consumed, please try again shortly."
+            )
+            return
         if not tenant_id:
             await update.message.reply_text(format_invalid_token())
             return
 
         user_id = str(update.effective_user.id)
 
-        if self._user_mapper:
-            self._user_mapper.register_user("telegram", user_id, tenant_id)
+        # Register BEFORE consuming the token, and only consume on success —
+        # burning the token around a failed registration locks the user out
+        # until an admin mints a new one, while telling them "Registered".
+        if self._user_mapper and not self._user_mapper.register_user(
+            "telegram", user_id, tenant_id
+        ):
+            await update.message.reply_text(
+                "Registration failed — your invite token is still valid, "
+                "please try again in a moment."
+            )
+            return
 
-        self._token_manager.mark_token_used(token, tenant_id)
+        if not self._token_manager.mark_token_used(token, tenant_id):
+            logger.error(
+                "User %s registered but token %s... could not be consumed; "
+                "it stays live until it expires",
+                user_id,
+                token[:8],
+            )
         await update.message.reply_text(format_registration_success(tenant_id))
 
     async def _handle_help(self, update: Update, context) -> None:
@@ -138,7 +161,14 @@ class MessagingGateway:
 
         tenant_id = None
         if self._user_mapper:
-            tenant_id = self._user_mapper.get_tenant_id("telegram", user_id)
+            try:
+                tenant_id = self._user_mapper.get_tenant_id("telegram", user_id)
+            except Exception as exc:  # noqa: BLE001 — outage ≠ unregistered
+                logger.error("Tenant lookup unavailable: %s", exc)
+                await update.message.reply_text(
+                    "Service temporarily unavailable — please try again shortly."
+                )
+                return
 
         if not tenant_id:
             await update.message.reply_text(format_registration_required())
