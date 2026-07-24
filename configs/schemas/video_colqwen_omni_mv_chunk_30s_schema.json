@@ -461,6 +461,9 @@
     "created_at_format": "epoch",
     "embeddings": {
       "embedding": "embedding"
+    },
+    "metadata_fields": {
+      "segment_index": "segment_id"
     }
   }
 }
