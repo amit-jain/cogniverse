@@ -79,3 +79,44 @@ def test_top3_event_accepts_string_content_type():
     add_search_results_to_span(span, [SimpleNamespace(document=doc, score=0.7)])
     (_, payload) = span.events[0]
     assert "video" in payload["top_3"]
+
+
+class TestFirstAttributeLookup:
+    """``_first`` must tolerate non-string attribute cells — a numpy-array
+    value compared against "" yields an elementwise result whose truthiness
+    raises, crashing the whole span batch read."""
+
+    def test_numpy_array_cell_is_returned_not_crashed(self):
+        import numpy as np
+
+        from cogniverse_foundation.telemetry.span_contract import _first
+
+        arr = np.array([1.0, 2.0, 3.0])
+        assert _first({"output.value": arr}, "output.value") is arr
+
+    def test_empty_string_still_skipped(self):
+        from cogniverse_foundation.telemetry.span_contract import _first
+
+        assert _first({"a": "", "b": "value"}, "a", "b") == "value"
+
+    def test_none_still_skipped(self):
+        from cogniverse_foundation.telemetry.span_contract import _first
+
+        assert _first({"a": None}, "a", default="fallback") == "fallback"
+
+    def test_read_span_io_survives_numpy_attribute_cell(self):
+        import numpy as np
+        import pandas as pd
+
+        from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+        row = pd.Series(
+            {
+                "context.span_id": "s1",
+                "name": "search_service.search",
+                "attributes.output.value": np.array([1.0, 2.0]),
+                "attributes.input.value": "query text",
+            }
+        )
+        io = read_span_io(row)
+        assert io is not None
