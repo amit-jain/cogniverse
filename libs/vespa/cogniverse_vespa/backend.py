@@ -1383,6 +1383,41 @@ class VespaBackend(Backend):
             )
         return resp
 
+    def put_document(
+        self,
+        document,
+        schema_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+        base_schema_name: Optional[str] = None,
+    ) -> None:
+        """Full-put a generic ``cogniverse_sdk.document.Document``.
+
+        Serializes through the schema's declared ``document_mapping`` block
+        (loaded from the BASE schema JSON — pass ``base_schema_name`` when
+        ``schema_name`` is tenant-suffixed). Raises ValueError when the
+        schema declares no mapping: a generic Document is only feedable to
+        schemas that say how their fields map, never by guessing.
+        """
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        schema_name = schema_name or self.config.get("schema_name")
+        base_name = base_schema_name or schema_name
+        schema_json = self._schema_loader_instance.load_schema(base_name)
+        mapping_cfg = (schema_json or {}).get("document_mapping")
+        if not mapping_cfg:
+            raise ValueError(
+                f"Schema {base_name!r} declares no document_mapping — "
+                f"add one to its schema JSON or feed schema-specific "
+                f"fields via put_document_fields"
+            )
+        mapping = DocumentFieldMapping.from_dict(mapping_cfg)
+        self.put_document_fields(
+            document.id,
+            document.to_schema_fields(mapping),
+            schema_name=schema_name,
+            namespace=namespace,
+        )
+
     def put_document_fields(
         self,
         document_id: str,

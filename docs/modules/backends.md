@@ -606,6 +606,8 @@ operations:
 |--------|---------|
 | `search(query_dict)` | Tenant-scoped search (delegates to `VespaSearchBackend`) |
 | `ingest_documents(documents, schema_name)` | Batch ingest via a per-tenant `VespaPyClient` |
+| `put_document(document, schema_name, namespace=None, base_schema_name=None)` | Full-put a generic `cogniverse_sdk` `Document`, serialized through the base schema's declared `document_mapping` block; raises `ValueError` when the schema declares no mapping |
+| `put_document_fields` / `get_document_fields` / `update_document_fields` / `delete_document_fields` | Namespace-aware raw-fields document CRUD (the primitives wiki/graph/ingestion use) |
 | `feed(document, schema_name)` | Feed a single document |
 | `ingest_stream(documents, schema_name)` | Stream ingestion for large datasets |
 | `update_document(document_id, document, schema_name)` | Partial or full document update |
