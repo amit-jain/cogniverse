@@ -539,27 +539,37 @@ def down(keep_data: bool) -> None:
     console.print("[cyan]Removing Helm release...[/cyan]")
     helm_uninstall()
 
-    if not keep_data:
-        # Delete the cogniverse namespace to clean up PVCs and other resources
-        console.print(f"[cyan]Deleting namespace {NAMESPACE}...[/cyan]")
-        subprocess.run(
-            ["kubectl", "delete", "namespace", NAMESPACE, "--ignore-not-found"],
+    if keep_data:
+        console.print("[green]Cogniverse stack removed.[/green]")
+        return
+
+    # kubectl delete rc was previously ignored, so a forbidden/unreachable
+    # delete still printed "stack removed" and exited 0 — invisible to any
+    # script wrapping `cogniverse down`. Surface each failure and exit nonzero.
+    failed: list[str] = []
+    for ns in (NAMESPACE, "argo"):
+        console.print(f"[cyan]Deleting namespace {ns}...[/cyan]")
+        result = subprocess.run(
+            ["kubectl", "delete", "namespace", ns, "--ignore-not-found"],
             check=False,
+            capture_output=True,
+            text=True,
             timeout=120,
         )
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip() or f"exit {result.returncode}"
+            console.print(f"[red]Failed to delete namespace {ns}: {detail}[/red]")
+            failed.append(ns)
 
-        # Delete the argo namespace
-        console.print("[cyan]Deleting namespace argo...[/cyan]")
-        subprocess.run(
-            ["kubectl", "delete", "namespace", "argo", "--ignore-not-found"],
-            check=False,
-            timeout=120,
+    # Delete k3d cluster if one exists
+    if cluster_exists():
+        console.print("[cyan]Deleting k3d cluster...[/cyan]")
+        delete_cluster()
+
+    if failed:
+        raise SystemExit(
+            f"Teardown incomplete — namespace delete failed: {', '.join(failed)}"
         )
-
-        # Delete k3d cluster if one exists
-        if cluster_exists():
-            console.print("[cyan]Deleting k3d cluster...[/cyan]")
-            delete_cluster()
 
     console.print("[green]Cogniverse stack removed.[/green]")
 
@@ -803,10 +813,14 @@ def sandbox_status() -> None:
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         console.print(f"  Synced to cluster: [red]unknown (kubectl: {exc})[/red]")
         return
-    synced = result.returncode == 0
-    console.print(
-        f"  Synced to cluster: {'[green]yes[/green]' if synced else '[red]no[/red]'}"
-    )
+    stderr = (result.stderr or "").lower()
+    if result.returncode == 0:
+        console.print("  Synced to cluster: [green]yes[/green]")
+    elif "not found" in stderr or "notfound" in stderr:
+        console.print("  Synced to cluster: [red]no[/red]")
+    else:
+        detail = (result.stderr or "").strip() or f"exit {result.returncode}"
+        console.print(f"  Synced to cluster: [yellow]unknown ({detail})[/yellow]")
 
 
 @cli.command()
