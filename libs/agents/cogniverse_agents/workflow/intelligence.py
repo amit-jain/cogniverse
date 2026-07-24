@@ -19,7 +19,6 @@ from cogniverse_agents.workflow_types import (
     WorkflowTask,
 )
 from cogniverse_core.registries import WorkflowStoreRegistry
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 from cogniverse_sdk.interfaces.workflow_store import (
     AgentPerformance,
     WorkflowExecution,
@@ -49,7 +48,6 @@ class WorkflowIntelligence:
 
     def __init__(
         self,
-        telemetry_provider: TelemetryProvider,
         tenant_id: str,
         max_history_size: int = 10000,
         optimization_strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
@@ -632,14 +630,12 @@ class WorkflowIntelligence:
 
 
 def create_workflow_intelligence(
-    telemetry_provider: TelemetryProvider,
     tenant_id: str,
     max_history_size: int = 10000,
     optimization_strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
 ) -> WorkflowIntelligence:
     """Factory function to create workflow intelligence system"""
     return WorkflowIntelligence(
-        telemetry_provider=telemetry_provider,
         tenant_id=tenant_id,
         max_history_size=max_history_size,
         optimization_strategy=optimization_strategy,

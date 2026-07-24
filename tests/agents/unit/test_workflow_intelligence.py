@@ -2,8 +2,6 @@
 Unit tests for WorkflowIntelligence — read-only template loader
 """
 
-from unittest.mock import Mock
-
 import pytest
 
 from cogniverse_agents.workflow.intelligence import (
@@ -20,9 +18,8 @@ from cogniverse_sdk.interfaces.workflow_store import AgentPerformance, WorkflowT
 
 
 def _make_intelligence(**kwargs) -> WorkflowIntelligence:
-    """Create a WorkflowIntelligence instance with a mock telemetry_provider."""
+    """Create a WorkflowIntelligence instance for the given tenant."""
     defaults = dict(
-        telemetry_provider=Mock(),
         tenant_id="test_tenant",
     )
     defaults.update(kwargs)
@@ -34,7 +31,7 @@ class TestWorkflowIntelligence:
     """Test cases for WorkflowIntelligence class"""
 
     def test_workflow_intelligence_initialization(self):
-        """Test WorkflowIntelligence initializes with required telemetry_provider and tenant_id"""
+        """Test WorkflowIntelligence initializes with required tenant_id"""
         intelligence = _make_intelligence(
             max_history_size=1000,
             optimization_strategy=OptimizationStrategy.BALANCED,
@@ -48,7 +45,7 @@ class TestWorkflowIntelligence:
     def test_workflow_intelligence_requires_tenant_id(self):
         """Empty tenant_id must raise ValueError"""
         with pytest.raises(ValueError, match="tenant_id is required"):
-            WorkflowIntelligence(telemetry_provider=Mock(), tenant_id="")
+            WorkflowIntelligence(tenant_id="")
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
@@ -400,9 +397,7 @@ class TestLearnedQueryPatterns:
         )
         await intel.record_execution(self._execution("SHOW ME SUNSET FOOTAGE"))
 
-        assert intel.query_type_patterns["video_search"] == [
-            "show me sunset footage"
-        ]
+        assert intel.query_type_patterns["video_search"] == ["show me sunset footage"]
 
     @pytest.mark.asyncio
     async def test_learned_patterns_capped_oldest_evicted(self):
@@ -438,9 +433,7 @@ class TestLearnedQueryPatterns:
 
         await intel.record_execution(self._execution("show me sunset footage"))
 
-        assert (
-            intel._find_matching_template("show me sunset footage") is template
-        )
+        assert intel._find_matching_template("show me sunset footage") is template
 
     @pytest.mark.asyncio
     async def test_other_type_patterns_do_not_leak_into_video_template(self):

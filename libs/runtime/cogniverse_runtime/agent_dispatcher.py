@@ -460,9 +460,7 @@ class AgentDispatcher:
             try:
                 from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
-                workflow_intelligence = WorkflowIntelligence(
-                    tm.get_provider(tenant_id=tenant_id), tenant_id
-                )
+                workflow_intelligence = WorkflowIntelligence(tenant_id)
             except Exception as exc:
                 logger.debug("WorkflowIntelligence init failed (non-fatal): %s", exc)
 
