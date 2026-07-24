@@ -1817,7 +1817,7 @@ success/failure into `ExportMetrics` at all)) tracks connection health via the
 **`TraceManager`** (`data/traces.py`) — used by the CLI's `list-traces` command:
 
 ```python
-TraceManager(storage: TelemetryStorage | None = None)
+TraceManager(tenant_id: str, storage: TelemetryStorage | None = None)
 
 manager.get_recent_traces(hours_back: int = 1, limit: int = 100) -> pd.DataFrame
 manager.get_traces_by_ids(trace_ids: list[str]) -> pd.DataFrame
@@ -1826,6 +1826,14 @@ manager.get_traces_by_experiment(profile: str, strategy: str, hours_back: int = 
 manager.get_trace_statistics(hours_back: int = 24) -> dict
 manager.export_traces(output_path: str, hours_back: int = 24) -> bool
 ```
+
+`extract_trace_data` (via the module-level `trace_dict_from_span_row`) reads
+the columns the Phoenix span frame actually carries — `context.trace_id` for
+identity, `start_time`/`end_time` for the derived `duration_ms` (`None` when
+a bound is missing), `attributes.output.value` parsed from its JSON string —
+and reconstructs `metadata` from the flattened `attributes.metadata.*`
+columns. `get_trace_statistics` averages the same start/end-derived
+durations, excluding rows with a missing bound.
 
 `get_traces_by_experiment` fetches the window unfiltered, then matches
 `profile`/`strategy` against the flattened `attributes.metadata.profile` /
@@ -1964,26 +1972,30 @@ cogniverse-eval evaluate --mode experiment --dataset test_dataset \
 
 # Evaluate existing traces (batch mode)
 cogniverse-eval evaluate --mode batch --dataset test_dataset \
-    -t trace_id_1 -t trace_id_2
+    --tenant-id acme:acme -t trace_id_1 -t trace_id_2
 
 # Live evaluation
-cogniverse-eval evaluate --mode live --dataset test_dataset
+cogniverse-eval evaluate --mode live --dataset test_dataset \
+    --tenant-id acme:acme
 
 # Create a dataset from CSV
 cogniverse-eval create-dataset --name my_dataset --tenant-id acme:acme --csv queries.csv
 
 # List recent traces
-cogniverse-eval list-traces --hours 2 --limit 50
+cogniverse-eval list-traces --tenant-id acme:acme --hours 2 --limit 50
 
 # Quick smoke test (optionally --tenant-id, defaults to the system tenant)
 cogniverse-eval test
 ```
 
 `evaluate --mode experiment` requires both `--profiles`/`-p` and
-`--strategies`/`-s`; `create-dataset` requires `--tenant-id` and either
-`--csv` or `--queries-json`; `test` accepts an optional `--tenant-id`
-(defaults to `SYSTEM_TENANT_ID`) so the smoke test runs with zero flags. All
-commands accept `-v`/`--verbose` for debug logging.
+`--strategies`/`-s`; `evaluate --mode batch`/`--mode live` require
+`--tenant-id` (or `project_name`/`tenant_id` in the `--config` file) to
+resolve the span project to read; `create-dataset` requires `--tenant-id` and
+either `--csv` or `--queries-json`; `list-traces` requires `--tenant-id`
+unconditionally (no config-file fallback); `test` accepts an optional
+`--tenant-id` (defaults to `SYSTEM_TENANT_ID`) so the smoke test runs with
+zero flags. All commands accept `-v`/`--verbose` for debug logging.
 
 ---
 
@@ -2780,10 +2792,15 @@ retrieval_solver = create_retrieval_solver(
 # ground_truth_strategy must be one of "schema_aware" (default), "dataset",
 # "backend", or "hybrid" — any other value silently falls back to schema_aware
 # (see core/ground_truth.py::get_ground_truth_strategy).
+# The span project comes from "project_name" or is derived from "tenant_id"
+# (canonicalized, same derivation the span writers use); the solver raises if
+# neither is configured. Trace dicts are built from the columns the Phoenix
+# span frame actually carries: context.trace_id for identity, and
+# start_time/end_time for the derived duration_ms.
 batch_solver = create_batch_solver(
     trace_ids=None,  # None for recent traces
     config={
-        "project_name": "cogniverse-default",
+        "tenant_id": "acme:acme",
         "hours_back": 24,
         "limit": 100,
         "ground_truth_strategy": "hybrid"
@@ -2793,7 +2810,7 @@ batch_solver = create_batch_solver(
 # Live solver - monitors and evaluates live traces
 live_solver = create_live_solver(
     config={
-        "project_name": "cogniverse-default",
+        "tenant_id": "acme:acme",
         "poll_interval": 10,
         "max_iterations": 10
     }
@@ -2928,12 +2945,20 @@ sample through `ConfigurableVisualJudge`; `create_quality_scorer()` scores
 each sample through the synchronous evaluators from
 `evaluators.sync_reference_free.create_sync_evaluators()`.
 
+Judge failures (a raised vision call or an `evaluation_failed` result) are
+excluded from the mean and reported under `metadata["failed_evaluations"]`;
+genuine zeros (no results, no video id) still score 0.0. When every attempted
+judge call fails the scorer raises instead of reporting a score, so a judge
+outage cannot masquerade as a uniform quality collapse.
+
 **ConfigurableVisualJudge:**
 
 Resolves each result's ``source_url`` through :class:`MediaLocator`, extracts
 frames via cv2, and asks the configured LLM (provider, model, endpoint all
 sourced from the evaluator config — never constructor defaults) whether they
-match the query.
+match the query. Each vision call is bounded by the evaluator config's
+`request_timeout_s` (default 120) so an unresponsive endpoint fails the
+evaluation instead of hanging the run.
 
 ```python
 from cogniverse_core.common.media import MediaConfig, MediaLocator
@@ -2961,16 +2986,19 @@ result = evaluator.evaluate(
 
 - `test_experiment_tracker.py` — experiment configuration, dataset management, result formatting, `main(args)`'s required-args signature
 - `test_routing_evaluator.py` — routing outcome classification, metric calculation, `parse_confidence` label/percent coercion
+- `test_agent_evaluators.py` — per-agent-type registry (`evaluators/agent_evaluators.py`): every agent type has an entry, judge prompts are byte-identical, routing confidence calibration reads the canonical `output.value` JSON (with the legacy attribute still honored)
 - `test_span_evaluator.py` — span evaluation dispatch, evaluator resolution
 - `test_quality_monitor.py` — threshold checks, verdict decisions, baseline read/write fault contracts (`_read_baseline_metric`/`_get_agent_baseline` raise on outage, `None` only when genuinely absent), `_store_trigger_dataset`/`submit_optimization` dataset-name wiring
 - `test_online_evaluator_confidence.py` — confidence calibration scoring
 - `test_data_managers.py` — `DatasetManager` / `TraceManager`
 - `test_storage.py` — `TelemetryStorage` connection/health-check handling, `get_traces_for_evaluation` raising `ConnectionError` when disconnected
 - `test_ground_truth.py` — ground truth strategy dispatch, per-schema discovery caching, `BackendGroundTruthStrategy`'s tighter `top_k`
+- `test_golden_dataset_from_traces.py` — `scripts/create_golden_dataset_from_traces.py`'s `GoldenDatasetGenerator` reads the flattened Phoenix span frame (`attributes.input.value`/`attributes.output.value`), not bare `input`/`output`
 - `test_metrics.py` — MRR/nDCG/precision/recall/F1/MAP
 - `test_evaluators.py` — `Evaluator` base class, reference-free evaluators
 - `test_inspect_scorers.py`, `test_solvers.py`, `test_task.py`, `test_reranking.py` — Inspect AI integration
-- `test_plugin_analyzers.py`, `test_visual_plugin.py` — schema analyzer / visual plugin registration
+- `test_plugin_analyzers.py`, `test_visual_plugin.py`, `test_schema_agnostic.py` — schema analyzer / visual plugin registration across document, image, and video schemas
+- `test_visual_judge_frame_cleanup.py` — `ConfigurableVisualJudge.evaluate` unlinks its extracted temp frame files on both success and failure
 - `test_media_helpers.py` — `_media_helpers` source/frame resolution
 - `test_multi_turn_llm_judge.py` — session-level LLM judging
 - `test_cli.py`, `test_cli_simple.py` — CLI command behavior

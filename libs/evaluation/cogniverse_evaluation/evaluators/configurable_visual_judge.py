@@ -65,6 +65,9 @@ class ConfigurableVisualJudge(Evaluator):
         self.model = model or evaluator_config["model"]
         self.base_url = base_url or evaluator_config["base_url"]
         self.api_key = evaluator_config.get("api_key")
+        # Bound every vision call — an unresponsive endpoint must fail the
+        # evaluation, not hang the whole experiment run.
+        self.request_timeout_s = float(evaluator_config.get("request_timeout_s", 120))
 
         self.locator = locator
 
@@ -265,6 +268,7 @@ class ConfigurableVisualJudge(Evaluator):
             f"{base}/chat/completions",
             json={"model": self.model, "messages": messages, "max_tokens": 300},
             headers=headers,
+            timeout=self.request_timeout_s,
         )
 
         if response.status_code != 200:

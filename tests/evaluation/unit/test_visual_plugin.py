@@ -262,3 +262,204 @@ class TestVisualJudgeTenantAndModelOverride:
 
         assert judge.model == "config-model"
         assert judge.base_url == "http://config"
+
+
+class TestVisualJudgeScorerFailureContract:
+    """Judge failures are excluded from the mean and surfaced in metadata; a
+    judge outage (every attempted call failing) refuses to produce a score
+    instead of reporting a uniform 0.0 quality collapse."""
+
+    def _state(self, outputs):
+        state = Mock()
+        state.input = {"query": "test query"}
+        state.outputs = outputs
+        return state
+
+    def _config_patch(self):
+        return patch(
+            "cogniverse_foundation.config.utils.get_config",
+            return_value={
+                "evaluators": {
+                    "test_judge": {
+                        "provider": "openai",
+                        "model": "m",
+                        "base_url": "http://config",
+                    }
+                }
+            },
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_failures_excluded_from_mean(self):
+        scorer = VisualEvaluatorPlugin.create_visual_judge_scorer("test_judge")
+        state = self._state(
+            {
+                "p1_s1": {"success": True, "results": [{"video_id": "v1"}]},
+                "p2_s1": {"success": True, "results": [{"video_id": "v2"}]},
+            }
+        )
+
+        good = Mock()
+        good.score = 0.8
+        good.label = "excellent_match"
+
+        judge = Mock()
+        judge.evaluate.side_effect = [good, RuntimeError("Vision API error: 503")]
+
+        with (
+            self._config_patch(),
+            patch(
+                "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge",
+                return_value=judge,
+            ),
+        ):
+            score = await scorer(state, None)
+
+        assert score.value == 0.8
+        assert score.metadata["individual_scores"] == {"p1_s1": 0.8}
+        assert "503" in score.metadata["failed_evaluations"]["p2_s1"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_all_attempted_failing_raises(self):
+        scorer = VisualEvaluatorPlugin.create_visual_judge_scorer("test_judge")
+        state = self._state(
+            {
+                "p1_s1": {"success": True, "results": [{"video_id": "v1"}]},
+                "empty": {"success": True, "results": []},
+            }
+        )
+
+        judge = Mock()
+        judge.evaluate.side_effect = RuntimeError("connection refused")
+
+        with (
+            self._config_patch(),
+            patch(
+                "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge",
+                return_value=judge,
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="every attempted configuration"):
+                await scorer(state, None)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_evaluation_failed_label_is_failure_not_zero(self):
+        scorer = VisualEvaluatorPlugin.create_visual_judge_scorer("test_judge")
+        state = self._state(
+            {
+                "p1_s1": {"success": True, "results": [{"video_id": "v1"}]},
+                "p2_s1": {"success": True, "results": [{"video_id": "v2"}]},
+            }
+        )
+
+        failed_result = Mock()
+        failed_result.score = 0.0
+        failed_result.label = "evaluation_failed"
+        failed_result.explanation = "Visual evaluation failed: timeout"
+
+        good = Mock()
+        good.score = 0.6
+        good.label = "good_match"
+
+        judge = Mock()
+        judge.evaluate.side_effect = [failed_result, good]
+
+        with (
+            self._config_patch(),
+            patch(
+                "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge",
+                return_value=judge,
+            ),
+        ):
+            score = await scorer(state, None)
+
+        # The failed judgment is not averaged in as a 0.0 quality signal.
+        assert score.value == 0.6
+        assert score.metadata["individual_scores"] == {"p2_s1": 0.6}
+        assert "timeout" in score.metadata["failed_evaluations"]["p1_s1"]
+
+
+class TestVisualJudgeRequestTimeout:
+    """The vision call is bounded — a hung or dead endpoint fails within the
+    configured timeout instead of hanging the experiment run."""
+
+    def _judge(self, base_url, timeout_s):
+        from cogniverse_core.common.media import MediaLocator
+        from cogniverse_evaluation.evaluators.configurable_visual_judge import (
+            ConfigurableVisualJudge,
+        )
+
+        with patch(
+            "cogniverse_evaluation.evaluators.configurable_visual_judge.get_config",
+            return_value={
+                "evaluators": {
+                    "visual_judge": {
+                        "provider": "openai",
+                        "model": "m",
+                        "base_url": base_url,
+                        "request_timeout_s": timeout_s,
+                    }
+                }
+            },
+        ):
+            return ConfigurableVisualJudge(locator=MediaLocator.__new__(MediaLocator))
+
+    @pytest.mark.unit
+    def test_hung_endpoint_times_out(self, tmp_path):
+        import socket
+        import threading
+        import time
+
+        import requests as requests_lib
+
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        server.settimeout(0.2)
+        stop = threading.Event()
+        conns = []
+
+        def _accept():
+            # Accept connections but never respond.
+            while not stop.is_set():
+                try:
+                    conn, _ = server.accept()
+                    conns.append(conn)
+                except socket.timeout:
+                    continue
+
+        thread = threading.Thread(target=_accept, daemon=True)
+        thread.start()
+
+        frame = tmp_path / "frame.jpg"
+        frame.write_bytes(b"\xff\xd8\xff\xdbfakejpeg")
+
+        judge = self._judge(f"http://127.0.0.1:{port}", timeout_s=1.0)
+        assert judge.request_timeout_s == 1.0
+
+        started = time.monotonic()
+        try:
+            with pytest.raises(requests_lib.exceptions.RequestException):
+                judge._score_frames("query", [str(frame)])
+            assert time.monotonic() - started < 10
+        finally:
+            stop.set()
+            thread.join(timeout=2)
+            for conn in conns:
+                conn.close()
+            server.close()
+
+    @pytest.mark.unit
+    def test_dead_endpoint_raises_promptly(self, tmp_path):
+        import requests as requests_lib
+
+        frame = tmp_path / "frame.jpg"
+        frame.write_bytes(b"\xff\xd8\xff\xdbfakejpeg")
+
+        judge = self._judge("http://127.0.0.1:29071", timeout_s=1.0)
+        with pytest.raises(requests_lib.exceptions.RequestException):
+            judge._score_frames("query", [str(frame)])
