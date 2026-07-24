@@ -52,6 +52,9 @@ All concrete agent implementations (OrchestratorAgent, SearchAgent, etc.) inheri
 
 ## Package Structure
 
+`cogniverse_core/messaging_auth.py` — `InviteTokenManager` (invite tokens in the system config store, canonicalized through the ConfigManager) and `UserTenantMapper` (Telegram-user→tenant mappings in the Mem0 system partition). Lives in core so both the messaging gateway and the runtime's registration routes share one implementation.
+
+
 ```text
 cogniverse_core/
 ├── agents/                      # Agent base classes and mixins

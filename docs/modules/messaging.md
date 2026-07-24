@@ -23,7 +23,7 @@
 
 ## Overview
 
-The Messaging module runs a standalone gateway service that bridges Telegram to the Cogniverse runtime. It translates Telegram updates into runtime agent-dispatch calls, formats agent responses back into Telegram messages, and manages user registration (invite tokens) and per-chat conversation history via Mem0. Agent dispatch, wiki, and admin operations go exclusively through the runtime's HTTP API — the only in-process imports of another workspace package are `cogniverse_core.common.tenant_utils.SYSTEM_TENANT_ID` and `cogniverse_sdk.interfaces.config_store.ConfigScope`, both used by `auth.py` for invite-token storage.
+The Messaging module runs a standalone gateway service that bridges Telegram to the Cogniverse runtime. It translates Telegram updates into runtime agent-dispatch calls, formats agent responses back into Telegram messages, and manages user registration (invite tokens) and per-chat conversation history via Mem0. Agent dispatch, wiki, and admin operations go exclusively through the runtime's HTTP API — the auth primitives (`InviteTokenManager`, `UserTenantMapper`) live in `cogniverse_core.messaging_auth` so the runtime can serve registration over HTTP without importing the Telegram stack.
 
 Key responsibilities:
 
@@ -43,7 +43,7 @@ graph TD
 
     Root --> Gateway["<span style='color:#000'><b>gateway.py</b><br/>MessagingGateway, main() entry point</span>"]
     Root --> CommandRouter["<span style='color:#000'>command_router.py<br/>parse_message(), ParsedCommand</span>"]
-    Root --> Auth["<span style='color:#000'>auth.py<br/>InviteTokenManager, UserTenantMapper</span>"]
+    Root --> Auth["<span style='color:#000'>cogniverse_core.messaging_auth<br/>InviteTokenManager, UserTenantMapper</span>"]
     Root --> Conversation["<span style='color:#000'>conversation.py<br/>ConversationManager (Mem0-backed)</span>"]
     Root --> RuntimeClient["<span style='color:#000'>runtime_client.py<br/>RuntimeClient (async HTTP)</span>"]
     Root --> TelegramHandler["<span style='color:#000'>telegram_handler.py<br/>Response formatting, message chunking</span>"]
@@ -129,7 +129,7 @@ Alongside inbound handling, the gateway runs a background `_outbound_drain_loop`
 
 ## Authentication
 
-**Location:** `libs/messaging/cogniverse_messaging/auth.py`
+**Location:** `libs/core/cogniverse_core/messaging_auth.py` (shared with the runtime, which serves registration routes over HTTP)
 
 - **`InviteTokenManager(config_manager)`** — generates, validates, and marks-used invite tokens, stored in the `_system` tenant's config store (`ConfigScope.SYSTEM`, service `"messaging_gateway"`). `generate_token(tenant_id, expires_in_hours=24)` returns a UUID hex token; `validate_token(token)` returns the tenant_id, returns `None` if unknown/expired/already used, and raises on a store outage (the gateway replies "temporarily unavailable" instead of "invalid token"); `mark_token_used(token, tenant_id)` returns `False` on a failed consume write (logged; the token stays live until expiry). `_handle_start` registers the user first and consumes the token only on success, so a failed registration never burns the token.
 - **`UserTenantMapper(memory_manager)`** — maps a Telegram user ID to a tenant ID via Mem0, storing the mapping under the system tenant partition (`SYSTEM_TENANT_ID`) with `agent_name="_messaging_gateway"` and `infer=False` so the raw mapping text isn't rewritten by LLM extraction.

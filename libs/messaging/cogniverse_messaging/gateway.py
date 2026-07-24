@@ -75,7 +75,7 @@ class MessagingGateway:
     def _init_auth(self):
         """Lazy-initialize auth components."""
         if self._token_manager is None and self._config_manager is not None:
-            from cogniverse_messaging.auth import (
+            from cogniverse_core.messaging_auth import (
                 InviteTokenManager,
                 UserTenantMapper,
             )
