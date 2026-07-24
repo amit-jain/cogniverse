@@ -148,6 +148,11 @@ class WikiIndex:
     def render_markdown(self) -> str:
         """Render the index as a human-readable markdown document."""
         lines = [f"# Wiki Index — {self.tenant_id}", ""]
+        lines.append(
+            f"_{self.page_count} pages: {self.topic_count} topics, "
+            f"{self.session_count} sessions._"
+        )
+        lines.append("")
 
         lines.append("## Topics")
         if self._topics:

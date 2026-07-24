@@ -215,6 +215,13 @@ class TestWikiIndex:
         assert idx.topic_count == 0
         assert idx.session_count == 1
 
+    def test_render_markdown_shows_totals(self):
+        idx = WikiIndex(tenant_id="acme:production")
+        idx.add_page("topic", "ML", "ml", "ML summary.")
+        idx.add_page("topic", "AI", "ai", "AI summary.")
+        idx.add_page("session", "S1", "s1", "Notes.")
+        assert "_3 pages: 2 topics, 1 sessions._" in idx.render_markdown()
+
     def test_add_multiple(self):
         idx = WikiIndex(tenant_id="acme:production")
         idx.add_page("topic", "ML", "ml", "ML summary.")
