@@ -577,6 +577,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     logger.info("Default asyncio executor capped at 16 workers")
 
+    # Wire Phoenix endpoints into the admin router from the environment here at
+    # the entrypoint, so its request handlers read config, not os.environ.
+    admin.set_phoenix_endpoints(
+        os.environ.get("PHOENIX_HTTP_ENDPOINT", "http://localhost:6006"),
+        os.environ.get("PHOENIX_GRPC_ENDPOINT", "localhost:4317"),
+    )
+
     logger.info("Starting Cogniverse Runtime...")
 
     # 1. Wait for backend to be reachable before loading config.
