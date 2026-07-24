@@ -259,3 +259,48 @@ class TestBulkDeleteSuffixAndRefuseGuards:
 
         # Refused before any redeploy — nothing was deployed.
         assert deployed_packages == []
+
+
+class TestSchemaEnumerationRefusesPartial:
+    """A registry entry that cannot be rebuilt into the deployment package is
+    a schema the deploy would DROP (with its documents) — enumeration must
+    abort, never skip the entry and hand back a partial package."""
+
+    def _manager_with_rows(self, rows) -> VespaSchemaManager:
+        from types import SimpleNamespace
+
+        mgr = object.__new__(VespaSchemaManager)
+        mgr._logger = logging.getLogger("test_schema_enumeration")
+        mgr._schema_registry = SimpleNamespace(_get_all_schemas=lambda: rows)
+        return mgr
+
+    def test_empty_definition_aborts_enumeration(self):
+        from types import SimpleNamespace
+
+        rows = [
+            SimpleNamespace(
+                full_schema_name="video_x_acme_acme", schema_definition="   "
+            )
+        ]
+        with pytest.raises(RuntimeError, match="drop the schema"):
+            self._manager_with_rows(rows)._get_existing_tenant_schemas()
+
+    def test_invalid_json_definition_aborts_enumeration(self):
+        from types import SimpleNamespace
+
+        rows = [
+            SimpleNamespace(
+                full_schema_name="video_x_acme_acme", schema_definition="{not json"
+            )
+        ]
+        with pytest.raises(RuntimeError, match="Cannot rebuild"):
+            self._manager_with_rows(rows)._get_existing_tenant_schemas()
+
+
+def test_upload_metadata_schemas_defaults_to_removal_disabled():
+    """Safe-by-default: only registry-aware callers that need deleted-tenant
+    cleanup opt into allow_schema_removal=True explicitly."""
+    import inspect
+
+    signature = inspect.signature(VespaSchemaManager.upload_metadata_schemas)
+    assert signature.parameters["allow_schema_removal"].default is False

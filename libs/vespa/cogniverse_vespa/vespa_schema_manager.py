@@ -581,10 +581,14 @@ class VespaSchemaManager:
                             not schema_info.schema_definition
                             or schema_info.schema_definition.strip() == ""
                         ):
-                            self._logger.warning(
-                                f"⚠️  Skipping schema {schema_info.full_schema_name}: empty definition"
+                            # A schema absent from the package is a schema the
+                            # deploy would DROP (with its documents) — an
+                            # unbuildable entry must abort, never be skipped.
+                            raise RuntimeError(
+                                f"Registry entry for {schema_info.full_schema_name} "
+                                "has an empty schema definition; cannot rebuild it "
+                                "for the deployment package"
                             )
-                            continue
                         schema_json = json.loads(schema_info.schema_definition)
                     else:
                         schema_json = schema_info.schema_definition
@@ -594,16 +598,12 @@ class VespaSchemaManager:
                     self._logger.warning(
                         f"✅ Preserving tenant schema: {schema_info.full_schema_name}"
                     )
-                except (json.JSONDecodeError, ValueError) as e:
-                    self._logger.warning(
-                        f"⚠️  Skipping schema {schema_info.full_schema_name}: invalid JSON - {e}"
-                    )
-                    continue
                 except Exception as e:
-                    self._logger.warning(
-                        f"⚠️  Skipping schema {schema_info.full_schema_name}: {e}"
-                    )
-                    continue
+                    raise RuntimeError(
+                        f"Cannot rebuild schema {schema_info.full_schema_name} for "
+                        f"the deployment package: {e}. A deploy without it would "
+                        "drop the schema and its documents from Vespa."
+                    ) from e
 
             self._logger.warning(
                 f"✅ Found {len(pyvespa_schemas)} tenant schemas to preserve"
