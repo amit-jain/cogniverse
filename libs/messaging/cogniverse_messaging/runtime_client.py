@@ -67,7 +67,9 @@ class RuntimeClient:
         payload: Dict[str, Any] = {
             "agent_name": agent_name,
             "query": query,
-            "context": {"tenant_id": tenant_id, **(context or {})},
+            # tenant_id last: a caller-supplied context must never be able
+            # to override the authoritative tenant.
+            "context": {**(context or {}), "tenant_id": tenant_id},
             "top_k": top_k,
         }
         if context_id:
