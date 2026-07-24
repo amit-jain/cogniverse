@@ -16,13 +16,21 @@ logger = logging.getLogger(__name__)
 class RuntimeClient:
     """Async HTTP client for the Cogniverse runtime API."""
 
-    def __init__(self, runtime_url: str, timeout: float = 300.0):
-        # timeout bounds agent dispatch and event-stream reads; every other
-        # call (CRUD, drain, health) is a fast route and uses the client
-        # default below. connect stays short everywhere so an unreachable
-        # runtime fails in seconds instead of hanging out the read budget.
+    def __init__(
+        self,
+        runtime_url: str,
+        timeout: float = 300.0,
+        dispatch_timeout: float = 120.0,
+    ):
+        # timeout bounds event-stream reads; every CRUD/drain/health call is a
+        # fast route and uses the client default below. dispatch_timeout is the
+        # interactive-chat read budget: a hung runtime must degrade to a
+        # graceful reply, not hold a gateway worker for the full stream timeout.
+        # connect stays short everywhere so an unreachable runtime fails in
+        # seconds instead of hanging out the read budget.
         self.runtime_url = runtime_url.rstrip("/")
         self.timeout = timeout
+        self.dispatch_timeout = dispatch_timeout
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -77,11 +85,22 @@ class RuntimeClient:
         if conversation_history:
             payload["conversation_history"] = conversation_history
 
-        resp = await client.post(
-            f"/agents/{agent_name}/process",
-            json=payload,
-            timeout=httpx.Timeout(self.timeout, connect=5.0),
-        )
+        # A dead/hung/reset runtime must degrade to a status dict the gateway
+        # renders as a graceful "service unavailable" reply — not raise into the
+        # PTB global error handler as a generic crash. Mirrors register_user /
+        # resolve_tenant, which never raise on transport faults.
+        try:
+            resp = await client.post(
+                f"/agents/{agent_name}/process",
+                json=payload,
+                timeout=httpx.Timeout(self.dispatch_timeout, connect=5.0),
+            )
+        except httpx.TransportError as exc:
+            logger.warning("Agent dispatch transport error for %s: %s", agent_name, exc)
+            return {
+                "status": "unavailable",
+                "message": f"runtime unreachable: {exc}",
+            }
 
         if resp.status_code != 200:
             logger.error(
@@ -92,7 +111,14 @@ class RuntimeClient:
                 "message": f"Agent returned {resp.status_code}",
             }
 
-        return resp.json()
+        try:
+            return resp.json()
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.error("Agent dispatch non-JSON 200 for %s: %s", agent_name, exc)
+            return {
+                "status": "error",
+                "message": "runtime returned a non-JSON response",
+            }
 
     async def stream_events(self, task_id: str) -> AsyncIterator[Dict[str, Any]]:
         """Subscribe to SSE events for a streaming task."""

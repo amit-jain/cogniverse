@@ -660,3 +660,31 @@ class TestTenantLookupOutage:
         sent = [c.args[0] for c in update.message.reply_text.await_args_list]
         assert any("temporarily unavailable" in s for s in sent), sent
         assert not any("register" in s.lower() for s in sent), sent
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestDispatchDegradesGracefully:
+    @pytest.mark.asyncio
+    async def test_cached_user_message_to_dead_runtime_replies_unavailable(self):
+        """A cache-resolved (registered) user whose message hits a dead runtime
+        gets the graceful 'temporarily unavailable' reply — dispatch degrades to
+        a status dict rather than raising into the error handler as a crash."""
+        import time as _time
+
+        from cogniverse_messaging.runtime_client import RuntimeClient
+
+        g = MessagingGateway(bot_token="123:FAKE", runtime_url="http://127.0.0.1:29071")
+        g.runtime_client = RuntimeClient("http://127.0.0.1:29071", dispatch_timeout=1.0)
+        # Pre-cache the tenant so resolution succeeds via the cache (no HTTP) and
+        # the message reaches dispatch, which then degrades on the dead port.
+        g._tenant_cache["7"] = ("acme:alice", _time.monotonic() + 60)
+
+        update = _message_update(text="what is colpali")
+        try:
+            await g._handle_message(update, context=None)
+        finally:
+            await g.runtime_client.close()
+
+        sent = [c.args[0] for c in update.message.reply_text.await_args_list]
+        assert any("temporarily unavailable" in s for s in sent), sent
