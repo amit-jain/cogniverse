@@ -15,6 +15,7 @@ conversions, keeping the backend-specific logic encapsulated.
 """
 
 import logging
+import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -62,6 +63,8 @@ _MAX_S_EPOCH = 4_102_444_800  # 2100-01-01 UTC in s
 
 
 def _validate_ms_timestamp(ts: float, field: str) -> None:
+    if math.isnan(ts) or math.isinf(ts):
+        raise ValueError(f"{field}={ts!r} is not a finite timestamp.")
     if ts < _MIN_MS_EPOCH or ts > _MAX_MS_EPOCH:
         raise ValueError(
             f"{field}={ts!r} is outside [0, year-2100] in milliseconds. "
@@ -70,6 +73,8 @@ def _validate_ms_timestamp(ts: float, field: str) -> None:
 
 
 def _validate_s_timestamp(ts: float, field: str) -> None:
+    if math.isnan(ts) or math.isinf(ts):
+        raise ValueError(f"{field}={ts!r} is not a finite timestamp.")
     if ts < _MIN_S_EPOCH or ts > _MAX_S_EPOCH:
         raise ValueError(
             f"{field}={ts!r} is outside [0, year-2100] in seconds. "

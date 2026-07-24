@@ -231,6 +231,16 @@ class TestVespaTimestampOnPartialUpdate:
         assert isinstance(fields["created_at"], int)
         assert fields["created_at"] > 0
 
+    def test_nonfinite_created_at_raises_not_crashes(self):
+        """A NaN/Inf timestamp — as the string 'nan' (now parsed to a float) or a
+        direct float — must raise a clear 'not finite' error, not slip the
+        magnitude validator (every NaN comparison is False) and crash at
+        int(nan)."""
+        client = self._memory_client()
+        for bad in ("nan", "NaN", float("nan"), float("inf")):
+            with pytest.raises(ValueError, match="not a finite timestamp"):
+                client.process(self._doc(created_at=bad), operation_type="feed")
+
 
 @pytest.mark.unit
 class TestYqlQuote:
