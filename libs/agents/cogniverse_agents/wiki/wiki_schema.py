@@ -81,32 +81,42 @@ class WikiPage:
             return f"wiki_topic_{safe}_{self.slug}"
         return f"wiki_session_{safe}_{self._session_ts}"
 
-    def to_vespa_document(self) -> dict:
-        """Return a Vespa-ready document dict with all fields.
+    def to_document(self):
+        """Represent this page as a generic SDK Document for feeding through
+        the schema's declared document mapping.
 
-        Lists are JSON-serialized to strings (matching the Vespa schema which
-        stores entities/sources/cross_references as plain string fields).
-        Optional fields that are None are omitted.
+        List fields are JSON-encoded strings (the Vespa schema stores
+        entities/sources/cross_references as plain string fields); the ISO
+        timestamps ride the Document's epoch fields and serialize back to
+        ISO via the mapping. Optional fields that are None are omitted.
         """
-        fields: dict = {
-            "doc_id": self.doc_id,
+        from datetime import datetime
+
+        from cogniverse_sdk.document import ContentType, Document
+
+        metadata = {
             "tenant_id": self.tenant_id,
             "page_type": self.page_type,
-            "title": self.title,
-            "content": self.content,
             "slug": self.slug,
             "entities": json.dumps(self.entities),
             "sources": json.dumps(self.sources),
             "cross_references": json.dumps(self.cross_references),
             "update_count": self.update_count,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
         }
         if self.query is not None:
-            fields["query"] = self.query
+            metadata["query"] = self.query
         if self.agent_used is not None:
-            fields["agent_used"] = self.agent_used
-        return {"fields": fields}
+            metadata["agent_used"] = self.agent_used
+
+        return Document(
+            id=self.doc_id,
+            content_type=ContentType.TEXT,
+            title=self.title,
+            text_content=self.content,
+            created_at=int(datetime.fromisoformat(self.created_at).timestamp()),
+            updated_at=int(datetime.fromisoformat(self.updated_at).timestamp()),
+            metadata=metadata,
+        )
 
 
 @dataclass

@@ -11,6 +11,25 @@ import pytest
 from cogniverse_agents.wiki.wiki_schema import WikiIndex, WikiPage, generate_slug
 
 
+def _wiki_mapping():
+    from pathlib import Path
+
+    from cogniverse_sdk.document import DocumentFieldMapping
+
+    schema = json.loads(Path("configs/schemas/wiki_pages_schema.json").read_text())
+    return DocumentFieldMapping.from_dict(schema["document_mapping"])
+
+
+def _schema_fields(page):
+    """Serialize a page exactly as the feed path does: Document + the wiki
+    schema's declared document_mapping."""
+    return page.to_document().to_schema_fields(_wiki_mapping())
+
+
+def _schema_fields_from_document(doc):
+    return doc.to_schema_fields(_wiki_mapping())
+
+
 @pytest.mark.unit
 class TestSlugGeneration:
     def test_simple_title(self):
@@ -98,7 +117,7 @@ class TestWikiPage:
         suffix = page.doc_id[len("wiki_session_acme_production_") :]
         assert suffix.isdigit()
 
-    def test_to_vespa_document_structure(self):
+    def test_serialized_field_structure(self):
         page = WikiPage(
             tenant_id="acme:production",
             page_type="topic",
@@ -108,9 +127,7 @@ class TestWikiPage:
             sources=["doc1", "doc2"],
             cross_references=["deep_learning"],
         )
-        doc = page.to_vespa_document()
-        assert "fields" in doc
-        fields = doc["fields"]
+        fields = _schema_fields(page)
         assert fields["doc_id"] == page.doc_id
         assert fields["tenant_id"] == "acme:production"
         assert fields["page_type"] == "topic"
@@ -129,8 +146,7 @@ class TestWikiPage:
             sources=["doc1"],
             cross_references=["dl"],
         )
-        doc = page.to_vespa_document()
-        fields = doc["fields"]
+        fields = _schema_fields(page)
         # Lists must be JSON strings
         assert isinstance(fields["entities"], str)
         assert isinstance(fields["sources"], str)
@@ -151,10 +167,10 @@ class TestWikiPage:
         )
         assert page.query is None
         assert page.agent_used is None
-        doc = page.to_vespa_document()
-        # Optional None fields should not appear in vespa doc
-        assert "query" not in doc["fields"]
-        assert "agent_used" not in doc["fields"]
+        fields = _schema_fields(page)
+        # Optional None fields should not appear in the fed document
+        assert "query" not in fields
+        assert "agent_used" not in fields
 
     def test_timestamps_present(self):
         page = WikiPage(
@@ -397,13 +413,15 @@ class TestSaveSession:
             schema_name="wiki_pages_acme_production",
             namespace="wiki_content",
         )
-        backend.put_document_fields.assert_called_once()
-        (doc_id, fields), put_kwargs = backend.put_document_fields.call_args
-        assert doc_id == "wiki_topic_acme_production_machine_learning"
+        backend.put_document.assert_called_once()
+        (fed_doc,), put_kwargs = backend.put_document.call_args
+        assert fed_doc.id == "wiki_topic_acme_production_machine_learning"
         assert put_kwargs == {
             "schema_name": "wiki_pages_acme_production",
+            "base_schema_name": "wiki_pages",
             "namespace": "wiki_content",
         }
+        fields = _schema_fields_from_document(fed_doc)
         assert fields["content"] == (
             "Older notes on ML.\n\n---\n\nMachine learning is a subset of AI."
         )
@@ -857,8 +875,8 @@ class TestWikiPageEnumeration:
         assert not any(k.startswith("input.query") for k in calls["params"])
         assert 'tenant_id contains "t:t"' in calls["params"]["yql"]
 
-        fed = backend.put_document_fields.call_args
-        content = fed.args[1]["content"]
+        fed = backend.put_document.call_args
+        content = fed.args[0].text_content
         assert "- **ColPali**" in content
         assert "Session — what is colpali" in content
         assert "_No topics yet._" not in content
@@ -913,7 +931,7 @@ class TestWikiFailureContract:
     def test_save_session_raises_when_feed_fails(self, monkeypatch):
         self._patch_embedder(monkeypatch)
         backend = MagicMock()
-        backend.put_document_fields.side_effect = ConnectionError("refused")
+        backend.put_document.side_effect = ConnectionError("refused")
         mgr = _wired_manager(backend)
         with pytest.raises(ConnectionError):
             mgr.save_session(
@@ -950,3 +968,83 @@ class TestWikiFailureContract:
         backend = MagicMock()
         backend.get_document_fields.return_value = None
         assert _wired_manager(backend).get_index() is None
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestWikiPageDocumentMapping:
+    """WikiPage → Document → declared wiki mapping must reproduce the exact
+    field shape the schema stores — the mapping path replaced the page's
+    hand-built serializer, so a drift here changes what lands in Vespa."""
+
+    def _mapping(self):
+        from pathlib import Path
+
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        schema = json.loads(Path("configs/schemas/wiki_pages_schema.json").read_text())
+        return DocumentFieldMapping.from_dict(schema["document_mapping"])
+
+    def test_page_serializes_to_exact_schema_fields(self):
+        page = WikiPage(
+            tenant_id="acme:acme",
+            page_type="topic",
+            title="Vespa Schemas",
+            content="A schema declares fields.",
+            entities=["vespa"],
+            sources=["doc1"],
+            cross_references=["other_topic"],
+            query="what is a schema",
+            agent_used="search_agent",
+            update_count=3,
+            created_at="2026-01-01T10:00:00+00:00",
+            updated_at="2026-01-02T11:30:00+00:00",
+        )
+
+        fields = page.to_document().to_schema_fields(self._mapping())
+
+        assert fields == {
+            "doc_id": "wiki_topic_acme_acme_vespa_schemas",
+            "tenant_id": "acme:acme",
+            "page_type": "topic",
+            "title": "Vespa Schemas",
+            "content": "A schema declares fields.",
+            "slug": "vespa_schemas",
+            "entities": '["vespa"]',
+            "sources": '["doc1"]',
+            "cross_references": '["other_topic"]',
+            "update_count": 3,
+            "query": "what is a schema",
+            "agent_used": "search_agent",
+            "created_at": "2026-01-01T10:00:00+00:00",
+            "updated_at": "2026-01-02T11:30:00+00:00",
+        }
+
+    def test_optional_fields_omitted_when_absent(self):
+        page = WikiPage(
+            tenant_id="acme:acme",
+            page_type="topic",
+            title="T",
+            content="c",
+            entities=[],
+            sources=[],
+            cross_references=[],
+        )
+        fields = page.to_document().to_schema_fields(self._mapping())
+        assert "query" not in fields
+        assert "agent_used" not in fields
+
+    def test_embedding_lands_under_schema_field(self):
+        page = WikiPage(
+            tenant_id="acme:acme",
+            page_type="topic",
+            title="T",
+            content="c",
+            entities=[],
+            sources=[],
+            cross_references=[],
+        )
+        doc = page.to_document()
+        doc.add_embedding("embedding", [0.1, 0.2])
+        fields = doc.to_schema_fields(self._mapping())
+        assert fields["embedding"] == [0.1, 0.2]

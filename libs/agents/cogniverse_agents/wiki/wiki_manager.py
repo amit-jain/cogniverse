@@ -480,26 +480,27 @@ class WikiManager:
 
         index_content = index.render_markdown()
         index_doc_id = f"wiki_index_{safe}"
-        payload = {
-            "fields": {
-                "doc_id": index_doc_id,
+        from cogniverse_sdk.document import ContentType, Document
+
+        index_doc = Document(
+            id=index_doc_id,
+            content_type=ContentType.TEXT,
+            title=f"Wiki Index — {self._tenant_id}",
+            text_content=index_content,
+            metadata={
                 "tenant_id": self._tenant_id,
                 "page_type": "index",
-                "title": f"Wiki Index — {self._tenant_id}",
-                "content": index_content,
                 "slug": "wiki_index",
                 "entities": "[]",
                 "sources": "[]",
                 "cross_references": "[]",
                 "update_count": 1,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-        }
-        self._backend.put_document_fields(
-            index_doc_id,
-            payload["fields"],
+            },
+        )
+        self._backend.put_document(
+            index_doc,
             schema_name=self._schema_name,
+            base_schema_name="wiki_pages",
             namespace=_WIKI_NAMESPACE,
         )
 
@@ -531,18 +532,17 @@ class WikiManager:
         )
 
     def _feed_page(self, page: WikiPage, embedding: List[float]) -> None:
-        """Feed *page* through the backend's namespace-aware document API.
+        """Feed *page* through the schema's declared document mapping.
 
         A feed failure raises — swallowing it let ``save_session`` return a
         fully-formed page that was never persisted.
         """
-        payload = page.to_vespa_document()
-        payload["fields"]["embedding"] = embedding
-
-        self._backend.put_document_fields(
-            page.doc_id,
-            payload["fields"],
+        doc = page.to_document()
+        doc.add_embedding("embedding", embedding)
+        self._backend.put_document(
+            doc,
             schema_name=self._schema_name,
+            base_schema_name="wiki_pages",
             namespace=_WIKI_NAMESPACE,
         )
 
