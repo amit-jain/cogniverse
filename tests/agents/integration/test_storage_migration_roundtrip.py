@@ -252,10 +252,7 @@ class TestWorkflowIntelligenceRoundTrip:
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
         from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 
-        wi = WorkflowIntelligence(
-            telemetry_provider=real_provider,
-            tenant_id="wi-exec-test",
-        )
+        wi = WorkflowIntelligence(tenant_id="wi-exec-test")
 
         execution = WorkflowExecution(
             workflow_id=f"wf-{uuid.uuid4().hex[:8]}",
@@ -280,10 +277,7 @@ class TestWorkflowIntelligenceRoundTrip:
         """load_historical_data works with no prior artifacts."""
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
-        wi = WorkflowIntelligence(
-            telemetry_provider=real_provider,
-            tenant_id="wi-empty-test",
-        )
+        wi = WorkflowIntelligence(tenant_id="wi-empty-test")
         await wi.load_historical_data()
         # No artifacts persisted, so everything is empty
         assert len(wi.workflow_history) == 0

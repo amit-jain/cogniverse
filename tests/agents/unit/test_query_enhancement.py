@@ -1111,13 +1111,10 @@ class TestWorkflowIntelligence:
 
     def test_query_type_classification(self):
         """Test query type classification logic"""
-        from unittest.mock import Mock
 
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
-        intelligence = WorkflowIntelligence(
-            telemetry_provider=Mock(), tenant_id="test_tenant"
-        )
+        intelligence = WorkflowIntelligence(tenant_id="test_tenant")
 
         # Test video search queries
         assert (
@@ -1183,14 +1180,11 @@ class TestWorkflowIntelligence:
 
     def test_intelligence_statistics(self):
         """Test workflow intelligence statistics"""
-        from unittest.mock import Mock
 
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
         from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 
-        intelligence = WorkflowIntelligence(
-            telemetry_provider=Mock(), tenant_id="test_tenant"
-        )
+        intelligence = WorkflowIntelligence(tenant_id="test_tenant")
 
         # Add some mock executions
         successful_execution = WorkflowExecution(

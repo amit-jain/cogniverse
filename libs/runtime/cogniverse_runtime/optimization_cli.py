@@ -1858,10 +1858,7 @@ async def run_workflow_optimization(
     # Use OrchestrationEvaluator to extract workflow executions
     from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
-    intelligence = WorkflowIntelligence(
-        telemetry_provider=telemetry_provider,
-        tenant_id=tenant_id,
-    )
+    intelligence = WorkflowIntelligence(tenant_id=tenant_id)
 
     from cogniverse_agents.routing.orchestration_evaluator import (
         OrchestrationEvaluator,

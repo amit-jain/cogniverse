@@ -706,7 +706,7 @@ class TestDSPyAgentArtifactRoundTrip:
         )
 
         # Create WorkflowIntelligence with the same provider+tenant
-        wi = WorkflowIntelligence(real_provider, tenant_id)
+        wi = WorkflowIntelligence(tenant_id)
         assert len(wi.workflow_templates) == 0  # nothing loaded yet
 
         await wi.load_historical_data()
@@ -721,7 +721,7 @@ class TestDSPyAgentArtifactRoundTrip:
         assert loaded_tmpl.task_sequence[0]["agent"] == "entity_extraction_agent"
 
         # Now test via OrchestratorAgent._load_artifact
-        wi2 = WorkflowIntelligence(real_provider, tenant_id)
+        wi2 = WorkflowIntelligence(tenant_id)
         mock_registry = Mock()
         mock_registry.agents = {}
         mock_registry.list_agents = Mock(return_value=[])
@@ -827,7 +827,7 @@ class TestWorkflowStoreRoundTrip:
         await store.save_template(tenant_id, template)
 
         # Fresh WorkflowIntelligence loads everything back through the store.
-        wi = WorkflowIntelligence(real_provider, tenant_id)
+        wi = WorkflowIntelligence(tenant_id)
         await wi.load_historical_data()
 
         assert list(wi.workflow_history) == executions
@@ -1350,7 +1350,7 @@ class TestArtifactAffectsBehavior:
         )
 
         # Create WorkflowIntelligence and load from real Phoenix
-        wi = WorkflowIntelligence(real_provider, tenant_id)
+        wi = WorkflowIntelligence(tenant_id)
         await wi.load_historical_data()
 
         assert template_id in wi.workflow_templates, (
