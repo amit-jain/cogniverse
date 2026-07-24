@@ -521,7 +521,7 @@ class TestGatewayTopKForwarding:
         seen = {}
 
         async def _downstream(
-            agent_name, query, tenant_id, top_k, conversation_history
+            agent_name, query, tenant_id, top_k, conversation_history, enrichment=None
         ):
             seen["top_k"] = top_k
             seen["agent_name"] = agent_name
@@ -538,3 +538,114 @@ class TestGatewayTopKForwarding:
 
         assert seen["agent_name"] == "search_agent"
         assert seen["top_k"] == 37  # not the dropped default of 10
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestHistoryRewriteOnModalityBranches:
+    """The image/audio/document/deep-research branches must resolve an
+    anaphoric follow-up against conversation history — they dropped it before,
+    so "more of those" searched for the literal words, not the prior entity."""
+
+    async def _run_branch(self, dispatcher, capability, exec_attr):
+        d = dispatcher
+        agent = MagicMock()
+        agent.capabilities = {capability}
+        d._registry.get_agent.return_value = agent
+        d._spawn_background = lambda coro: coro.close()
+
+        async def _fake_rewrite(query, history):
+            return f"resolved:{query}:from:{history[-1]['content']}"
+
+        d._rewrite_query_with_history = _fake_rewrite
+
+        seen = {}
+
+        async def _exec(query, tenant_id, top_k):
+            seen["query"] = query
+            return {"status": "success", "message": "ok"}
+
+        setattr(d, exec_attr, _exec)
+
+        await d.dispatch(
+            agent_name="x",
+            query="more of those",
+            context={
+                "tenant_id": "acme:acme",
+                "conversation_history": [{"role": "user", "content": "cats"}],
+            },
+        )
+        return seen
+
+    async def test_image_branch_rewrites_query_with_history(self, dispatcher):
+        seen = await self._run_branch(
+            dispatcher, "image_search", "_execute_image_search_task"
+        )
+        assert seen["query"] == "resolved:more of those:from:cats"
+
+    async def test_audio_branch_rewrites_query_with_history(self, dispatcher):
+        seen = await self._run_branch(
+            dispatcher, "audio_analysis", "_execute_audio_search_task"
+        )
+        assert seen["query"] == "resolved:more of those:from:cats"
+
+    async def test_document_branch_rewrites_query_with_history(self, dispatcher):
+        seen = await self._run_branch(
+            dispatcher, "document_analysis", "_execute_document_search_task"
+        )
+        assert seen["query"] == "resolved:more of those:from:cats"
+
+    async def test_no_history_leaves_query_unchanged(self, dispatcher):
+        d = dispatcher
+        agent = MagicMock()
+        agent.capabilities = {"image_search"}
+        d._registry.get_agent.return_value = agent
+        d._spawn_background = lambda coro: coro.close()
+
+        async def _fail_rewrite(query, history):
+            raise AssertionError("must not rewrite when there is no history")
+
+        d._rewrite_query_with_history = _fail_rewrite
+        seen = {}
+
+        async def _img(query, tenant_id, top_k):
+            seen["query"] = query
+            return {"status": "success", "message": "ok"}
+
+        d._execute_image_search_task = _img
+        await d.dispatch(
+            agent_name="x", query="find cats", context={"tenant_id": "acme:acme"}
+        )
+        assert seen["query"] == "find cats"
+
+    async def test_downstream_agent_threads_enrichment_to_search(self, dispatcher):
+        """The router's enrichment (entities, enhanced_query, ...) must reach
+        the search task through _execute_downstream_agent, not be dropped."""
+        d = dispatcher
+        agent = MagicMock()
+        agent.capabilities = {"search"}
+        d._registry.get_agent.return_value = agent
+
+        seen = {}
+
+        async def _search(
+            query,
+            tenant_id,
+            top_k,
+            conversation_history=None,
+            enrichment=None,
+            context=None,
+        ):
+            seen["enrichment"] = enrichment
+            return {"status": "success", "message": "ok"}
+
+        d._execute_search_task = _search
+        enrichment = {"entities": ["cats"], "enhanced_query": "cats playing"}
+
+        await d._execute_downstream_agent(
+            agent_name="search_agent",
+            query="q",
+            tenant_id="acme:acme",
+            enrichment=enrichment,
+        )
+        assert seen["enrichment"] == enrichment

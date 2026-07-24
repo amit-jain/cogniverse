@@ -4,8 +4,10 @@ Extracted from routers/agents.py so both the REST endpoint and the A2A
 executor can share the same dispatch logic without duplication.
 
 Multi-turn support: The context dict may carry 'context_id' and
-'conversation_history' (list of {role, content} dicts) which are
-forwarded to routing/orchestration and search paths.
+'conversation_history' (list of {role, content} dicts). Routing,
+orchestration, and search consume history directly; the image, audio,
+document, and deep-research branches resolve an anaphoric query against it
+via _resolve_history_query before running.
 """
 
 from __future__ import annotations
@@ -1065,11 +1067,23 @@ class AgentDispatcher:
                 context=context,
             )
         elif capabilities & {"image_search", "visual_analysis"}:
-            result = await self._execute_image_search_task(query, tenant_id, top_k)
+            result = await self._execute_image_search_task(
+                await self._resolve_history_query(query, conversation_history),
+                tenant_id,
+                top_k,
+            )
         elif capabilities & {"audio_analysis", "transcription"}:
-            result = await self._execute_audio_search_task(query, tenant_id, top_k)
+            result = await self._execute_audio_search_task(
+                await self._resolve_history_query(query, conversation_history),
+                tenant_id,
+                top_k,
+            )
         elif capabilities & {"document_analysis", "pdf_processing"}:
-            result = await self._execute_document_search_task(query, tenant_id, top_k)
+            result = await self._execute_document_search_task(
+                await self._resolve_history_query(query, conversation_history),
+                tenant_id,
+                top_k,
+            )
         elif capabilities & {"detailed_report"}:
             result = await self._execute_detailed_report_task(
                 query, tenant_id, context=context
@@ -1081,7 +1095,10 @@ class AgentDispatcher:
         elif capabilities & {"text_analysis", "sentiment", "classification"}:
             result = await self._execute_text_analysis_task(query, context, tenant_id)
         elif "deep_research" in capabilities:
-            result = await self._execute_deep_research_task(query, tenant_id)
+            result = await self._execute_deep_research_task(
+                await self._resolve_history_query(query, conversation_history),
+                tenant_id,
+            )
         elif "coding" in capabilities:
             result = await self._execute_coding_task(query, tenant_id, context)
         else:
@@ -1919,6 +1936,18 @@ class AgentDispatcher:
             logger.info("Code search unavailable, proceeding without context: %s", exc)
             return []
 
+    async def _resolve_history_query(
+        self, query: str, conversation_history: Optional[List[Dict[str, str]]]
+    ) -> str:
+        """Rewrite an anaphoric query against conversation history, or return it
+        unchanged when there is none. Lets the image / audio / document /
+        deep-research branches — which don't natively consume history — still
+        resolve a follow-up like "more of those" against the prior turn, the
+        same way the search branch does internally."""
+        if not conversation_history:
+            return query
+        return await self._rewrite_query_with_history(query, conversation_history)
+
     async def _rewrite_query_with_history(
         self, query: str, conversation_history: List[Dict[str, str]]
     ) -> str:
@@ -2043,12 +2072,24 @@ class AgentDispatcher:
         else:
             # Simple: route directly to the execution agent
             conversation_history = context.get("conversation_history", [])
+            enrichment = {
+                k: context[k]
+                for k in (
+                    "enhanced_query",
+                    "entities",
+                    "relationships",
+                    "query_variants",
+                    "profiles",
+                )
+                if k in context
+            }
             downstream = await self._execute_downstream_agent(
                 agent_name=result.routed_to,
                 query=query,
                 tenant_id=tenant_id,
                 top_k=top_k,
                 conversation_history=conversation_history,
+                enrichment=enrichment or None,
             )
             final = {
                 "status": "success",
@@ -2150,11 +2191,13 @@ class AgentDispatcher:
         tenant_id: str,
         top_k: int = 10,
         conversation_history: Optional[List[Dict[str, str]]] = None,
+        enrichment: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute the downstream agent that the router recommended.
 
         Re-uses the existing _execute_*_task methods based on the agent's
-        capabilities, passing conversation_history through for query rewrite.
+        capabilities, passing conversation_history through for query rewrite and
+        the router's enrichment through to the search path.
         """
         agent = self._registry.get_agent(agent_name)
         if not agent:
@@ -2171,14 +2214,26 @@ class AgentDispatcher:
                 tenant_id,
                 top_k,
                 conversation_history=conversation_history,
-                enrichment=None,
+                enrichment=enrichment,
             )
         elif capabilities & {"image_search", "visual_analysis"}:
-            return await self._execute_image_search_task(query, tenant_id, top_k)
+            return await self._execute_image_search_task(
+                await self._resolve_history_query(query, conversation_history),
+                tenant_id,
+                top_k,
+            )
         elif capabilities & {"audio_analysis", "transcription"}:
-            return await self._execute_audio_search_task(query, tenant_id, top_k)
+            return await self._execute_audio_search_task(
+                await self._resolve_history_query(query, conversation_history),
+                tenant_id,
+                top_k,
+            )
         elif capabilities & {"document_analysis", "pdf_processing"}:
-            return await self._execute_document_search_task(query, tenant_id, top_k)
+            return await self._execute_document_search_task(
+                await self._resolve_history_query(query, conversation_history),
+                tenant_id,
+                top_k,
+            )
         elif capabilities & {"detailed_report"}:
             return await self._execute_detailed_report_task(query, tenant_id)
         elif capabilities & {"summarization", "text_generation"}:
