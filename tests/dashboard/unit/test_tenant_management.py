@@ -79,3 +79,40 @@ def test_create_tenant_form_requires_tenant_name(tmp_path: Path) -> None:
     # Missing tenant name must block the API call and surface an error.
     assert at.session_state["_api_calls"] == []
     assert any("Tenant Name is required" in e.value for e in at.error)
+
+
+class TestSidebarTenantCanonicalization:
+    """The sidebar tenant entry is canonicalized before it lands in session
+    state — every tab derives span/config/memory namespaces from it, and the
+    writers all use the canonical org:tenant form. A simple-form entry left
+    raw makes every tab read an empty namespace."""
+
+    def test_simple_form_becomes_canonical(self):
+        from cogniverse_dashboard.utils import canonicalize_tenant_input
+
+        assert canonicalize_tenant_input("acme") == "acme:acme"
+
+    def test_canonical_form_unchanged(self):
+        from cogniverse_dashboard.utils import canonicalize_tenant_input
+
+        assert canonicalize_tenant_input("acme:prod") == "acme:prod"
+
+    def test_empty_input_unchanged(self):
+        from cogniverse_dashboard.utils import canonicalize_tenant_input
+
+        assert canonicalize_tenant_input("") == ""
+
+    def test_malformed_input_returned_verbatim_for_the_gate(self):
+        from cogniverse_dashboard.utils import canonicalize_tenant_input
+
+        assert canonicalize_tenant_input("a:b:c") == "a:b:c"
+
+    def test_app_shell_uses_the_helper(self):
+        """The sidebar input path in app.py routes through the helper — the
+        module is a Streamlit script, so pin the wiring textually."""
+        from pathlib import Path
+
+        import cogniverse_dashboard
+
+        app_src = (Path(cogniverse_dashboard.__file__).parent / "app.py").read_text()
+        assert "canonicalize_tenant_input(active_tenant)" in app_src

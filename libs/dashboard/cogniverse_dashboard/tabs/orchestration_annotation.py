@@ -121,10 +121,14 @@ def render_orchestration_annotation_tab():
                 start_time = end_time - timedelta(hours=lookback_hours)
 
                 async def fetch_spans():
+                    # Server-side name filter — pulling the whole project
+                    # window and filtering client-side downloads the full
+                    # frame per refresh.
                     return await provider.traces.get_spans(
                         project=f"cogniverse-{tenant_id}",
                         start_time=start_time,
                         end_time=end_time,
+                        filters={"name": "cogniverse.orchestration"},
                     )
 
                 spans_df = run_async_in_streamlit(fetch_spans())
@@ -135,7 +139,7 @@ def render_orchestration_annotation_tab():
                     )
                     st.session_state.orch_spans = None
                 else:
-                    # Filter for orchestration spans
+                    # Defensive re-filter on the returned frame.
                     orch_spans = spans_df[
                         spans_df["name"] == "cogniverse.orchestration"
                     ].head(max_workflows)

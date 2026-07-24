@@ -341,6 +341,13 @@ with st.sidebar:
         "via POST /admin/tenants before use.",
         key="active_tenant_input",
     ).strip()
+    # Canonicalize at the input source: every span/config/memory namespace is
+    # keyed by the canonical org:tenant form. A simple-form entry ("acme")
+    # passes the registration gate (the runtime canonicalizes server-side)
+    # but would make every tab read the empty raw-form namespace.
+    from cogniverse_dashboard.utils import canonicalize_tenant_input
+
+    active_tenant = canonicalize_tenant_input(active_tenant)
     if active_tenant != st.session_state.get("active_tenant"):
         st.session_state["active_tenant"] = active_tenant
     # Sync to "current_tenant" key used by config_management_tab and other scripts
