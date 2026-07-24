@@ -283,5 +283,16 @@
       },
       "timeout": 2.0
     }
-  ]
+  ],
+
+  "document_mapping": {
+    "id": "document_id",
+    "title": "document_title",
+    "content_path": "document_path",
+    "created_at": "creation_timestamp",
+    "created_at_format": "epoch",
+    "embeddings": {
+      "colpali_embedding": "colpali_embedding"
+    }
+  }
 }
