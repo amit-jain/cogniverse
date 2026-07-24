@@ -137,7 +137,7 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
    - Composes `SpanEvaluator`, `GoldenDatasetEvaluator`, `LLMJudgeCore`, and `PhoenixDatasetStore` rather than reimplementing them
 
 10. **Evaluation Provider System**
-    - Provider-agnostic abstraction (`EvaluationProvider`, `AnalyticsProvider`, `MonitoringProvider`) for experiment tracking, dataset management, and analytics
+    - Provider-agnostic abstraction (`EvaluationProvider`, `AnalyticsProvider`) for experiment tracking, dataset management, and analytics
     - Entry-point based discovery (`cogniverse.evaluation.providers`) with tenant-scoped caching, mirroring the telemetry provider registry
     - Phoenix is the only concrete implementation shipped today (`PhoenixEvaluationProvider`)
 
@@ -1541,20 +1541,12 @@ class AnalyticsProvider(ABC):
     def create_time_series_plot(self, traces, metric="duration") -> Any: ...
     def create_distribution_plot(self, traces, metric="duration") -> Any: ...
     def generate_report(self, traces, format="markdown") -> str: ...
-
-class MonitoringProvider(ABC):
-    def start(self) -> None: ...
-    def stop(self) -> None: ...
-    def log_retrieval_event(self, event: dict) -> None: ...
-    def get_active_alerts(self) -> list[dict]: ...
-    def get_metrics_summary(self) -> dict: ...
 ```
 
 `EvaluationProvider` is the only interface with a concrete implementation
 today (`PhoenixEvaluationProvider` in `cogniverse_telemetry_phoenix`).
-`AnalyticsProvider` and `MonitoringProvider` document the contract that
-`PhoenixAnalytics` and future monitoring providers follow, but are not
-literally subclassed by them.
+`AnalyticsProvider` documents the contract that `PhoenixAnalytics` follows
+but is not literally subclassed by it.
 
 `PhoenixEvaluationProvider.create_experiment(name, ...)` registers a durable
 `experiment-{name}` dataset holding the creation record (`event`,
@@ -3093,7 +3085,7 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 
 - ✅ Continuous cross-agent quality monitoring with optimization triggers (`QualityMonitor`)
 
-- ✅ Provider-agnostic evaluation backend abstraction (`EvaluationProvider`/`AnalyticsProvider`/`MonitoringProvider`)
+- ✅ Provider-agnostic evaluation backend abstraction (`EvaluationProvider`/`AnalyticsProvider`)
 
 - ✅ Multi-evaluator support (quality, LLM, golden, reference-free)
 

@@ -8,7 +8,6 @@ Similar to telemetry providers, but for experiment/dataset/evaluation concerns.
 from .base import (
     AnalyticsProvider,
     EvaluationProvider,
-    MonitoringProvider,
     TraceMetrics,
 )
 from .registry import (
@@ -20,14 +19,9 @@ from .registry import (
 )
 
 __all__ = [
-    # Provider interfaces (Phoenix is the only concrete impl today —
-    # RootCauseProvider + DatasetsProvider were removed because they
-    # had zero implementations in any commit; the concrete
-    # RootCauseAnalyzer in cogniverse_evaluation.analysis exists
-    # outside this provider hierarchy).
+    # Provider interfaces
     "EvaluationProvider",
     "AnalyticsProvider",
-    "MonitoringProvider",
     # Data structures
     "TraceMetrics",
     # Registry functions
