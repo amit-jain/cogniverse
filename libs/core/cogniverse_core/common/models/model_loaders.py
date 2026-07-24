@@ -1106,7 +1106,7 @@ def get_or_load_model(
 
     # Two-level locking: the global lock only guards the cache dict and the
     # per-key lock registry; the (minutes-long) load itself runs under a
-    # per-key lock so a cold load of one model no longer blocks cache hits
+    # per-key lock so a cold load of one model does not block cache hits
     # and loads of every other model.
     with _model_lock:
         cached = _cached_entry()

@@ -317,12 +317,11 @@ class WorkflowStateMachine:
                     if trans.condition(self.context):
                         available.append((trans.to_state, trans.description))
                 except Exception as exc:  # noqa: BLE001 — log + degrade
-                    # A user-supplied transition predicate that raises
-                    # used to be silently treated as "not available",
-                    # masking bugs in custom workflows. Log so the
-                    # predicate failure is visible AND keep the
-                    # exclude-from-available behaviour (so a broken
-                    # predicate doesn't crash the whole state machine).
+                    # A user-supplied transition predicate that raises is
+                    # logged (so the failure is visible, not masked as a bug
+                    # in a custom workflow) and excluded from the available
+                    # set — a broken predicate stays unavailable rather than
+                    # crashing the whole state machine.
                     logger.warning(
                         "Transition predicate %s→%s raised — treating as "
                         "unavailable: %s",

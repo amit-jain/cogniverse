@@ -78,9 +78,9 @@ def evaluation_task(
 
     # Load dataset from Phoenix using sync client directly
     # (avoids nested asyncio.run issues when called from async context).
-    # Cached per (endpoint, dataset): an experiment sweep builds one task
-    # per profile x strategy combination, and each used to re-download the
-    # identical dataset.
+    # Cached per (endpoint, dataset): an experiment sweep builds one task per
+    # profile x strategy combination, so the identical dataset is fetched once
+    # rather than per task.
     import pandas as pd
 
     from cogniverse_evaluation.providers import get_evaluation_provider

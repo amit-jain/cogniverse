@@ -148,7 +148,7 @@ class VideoIngestionPipelineBuilder:
                 )
             )
 
-        # Create pipeline instance - config_manager will be used to create app_config if not provided
+        # config_manager creates app_config when app_config is not provided
         pipeline = VideoIngestionPipeline(
             tenant_id=self._tenant_id,
             config=self._config,

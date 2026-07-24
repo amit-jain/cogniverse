@@ -1455,14 +1455,9 @@ async def set_pin_quotas(
     return PinQuotasResponse(tenant_id=tenant_id, quotas=current)
 
 
-# Memory pin / unpin / list endpoints. PinService was already wired
-# into the lifecycle scheduler (so pinned memories survive cleanup), but the
-# only way to actually pin a memory used to be the in-process Python API —
-# meaning a tenant admin had no operational path to pin anything. These
-# endpoints close that gap. The requester's role + actor_id ride in the
-# request body; auth middleware (out of scope here) is responsible for
-# rejecting requests whose claimed role does not match the caller's
-# authenticated identity.
+# Memory pin / unpin / list endpoints. Pinned memories survive lifecycle
+# cleanup via PinService (wired into the scheduler). The requester's role +
+# actor_id ride in the request body.
 
 
 class PinCreateRequest(BaseModel):

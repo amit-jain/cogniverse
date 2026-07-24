@@ -248,9 +248,9 @@ async def upload_video(
         raise HTTPException(status_code=400, detail=str(exc))
 
     if not profile or not profile.strip():
-        # Validate BEFORE the multipart body is copied into the object store:
-        # an empty profile used to fail only at idempotency hashing, after
-        # the whole upload had already been transferred, and as a 500.
+        # Validate BEFORE the multipart body is copied into the object store,
+        # so an empty profile is rejected up front as a 400 instead of failing
+        # deep in idempotency hashing (a 500) after the whole upload transferred.
         raise HTTPException(
             status_code=400, detail="profile must be a non-empty string"
         )
@@ -841,9 +841,9 @@ async def _extract_graph_per_segment_inner(
         edges=accumulated_edges,
     )
 
-    # CrossModalLinker no longer depends on the ColBERT sidecar — it
-    # works purely off the existing Node.label tags and transcript
-    # Person-mention frequencies. Always runs; cheap.
+    # CrossModalLinker works purely off the existing Node.label tags and
+    # transcript Person-mention frequencies — no sidecar dependency. Always
+    # runs; cheap.
     linker = CrossModalLinker()
     linked = linker.link(combined)
 

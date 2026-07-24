@@ -586,9 +586,9 @@ class DSPyAgentOptimizerPipeline:
 
             # Confidence score difference (closer to expected = better).
             # Catch only the conversion errors a missing/malformed
-            # routing_confidence can raise — broader excepts used to
-            # swallow real bugs in `pred` shape and silently zero the
-            # confidence-bonus contribution.
+            # routing_confidence can raise — a broad except would swallow real
+            # bugs in `pred` shape and silently zero the confidence-bonus
+            # contribution.
             try:
                 expected_conf = float(example.routing_confidence)
                 actual_conf = float(pred.routing_confidence)

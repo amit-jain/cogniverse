@@ -122,8 +122,8 @@ class WikiManager:
         sources = sources or []
 
         # Upsert a topic page for every entity, concurrently — each entity's
-        # GET/merge/feed is an independent round-trip, so latency no longer
-        # scales linearly in entity count. Dedup by slug first: same-slug
+        # GET/merge/feed is an independent round-trip, so latency does not
+        # scale linearly in entity count. Dedup by slug first: same-slug
         # entities map to one topic doc, and concurrent upserts of that doc
         # would race the read-modify-write merge.
         seen_slugs: set = set()
@@ -298,10 +298,9 @@ class WikiManager:
                     {"doc_id": doc_id, "title": title, "content_length": len(content)}
                 )
 
-            # Stale: updated_at older than 30 days. Track parse
-            # failures explicitly — silently dropping them used to
-            # under-report the stale-page count (a page with a
-            # malformed updated_at would just vanish from the lint).
+            # Stale: updated_at older than 30 days. Track parse failures
+            # explicitly so a page with a malformed updated_at is counted,
+            # not silently dropped from the lint and under-counted as stale.
             updated_at_raw = fields.get("updated_at", "")
             if updated_at_raw:
                 try:

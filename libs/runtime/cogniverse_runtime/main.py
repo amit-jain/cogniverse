@@ -613,13 +613,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 2a. First-install probe. A FRESH backend serves health while its query
     # chain has NO application deployed, so every config read fails until
-    # the metadata schemas (config_metadata included) deploy — which used to
-    # happen in VespaBackend.__init__ before any read and now runs late in
-    # this lifespan. Probe with a real config read; on failure deploy the
-    # metadata application and re-probe with a convergence budget. A read
-    # still failing after that is a genuine outage and raises, preserving
-    # the fail-fast contract. Clusters with persisted data pass the first
-    # probe and never bootstrap.
+    # the metadata schemas (config_metadata included) deploy — which this
+    # lifespan does late, not eagerly at backend construction. Probe with a
+    # real config read; on failure deploy the metadata application and re-probe
+    # with a convergence budget. A read still failing after that is a genuine
+    # outage and raises, preserving the fail-fast contract. Clusters with
+    # persisted data pass the first probe and never bootstrap.
     try:
         await asyncio.to_thread(config_manager.get_system_config)
     except Exception as probe_exc:
