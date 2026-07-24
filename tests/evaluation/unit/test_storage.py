@@ -729,3 +729,73 @@ class TestExporterTimeoutUnits:
                     storage._configure_opentelemetry()
 
         assert mock_exporter.call_args.kwargs["timeout"] == 30
+
+
+class TestShutdownReconnectRace:
+    """An in-flight health-check reconnect must not re-install a provider (or
+    flip state to CONNECTED) after shutdown() has returned — that leaks a live
+    OTLP export pipeline past a completed teardown."""
+
+    @pytest.mark.unit
+    def test_shutdown_never_resurrects_provider(self):
+        import threading
+        import time as _time
+        from unittest.mock import AsyncMock
+
+        config = ConnectionConfig(
+            max_retries=1,
+            retry_delay_seconds=0.01,
+            enable_health_checks=False,
+        )
+
+        mock_provider = Mock()
+        mock_provider.telemetry.traces.get_spans = AsyncMock(
+            return_value=pd.DataFrame()
+        )
+
+        factory_entered = threading.Event()
+        release_factory = threading.Event()
+        calls = {"n": 0}
+
+        def blocking_factory(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return mock_provider  # initial connect: instant
+            factory_entered.set()
+            assert release_factory.wait(timeout=10), "factory never released"
+            return mock_provider
+
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider",
+            side_effect=blocking_factory,
+        ):
+            with patch("cogniverse_evaluation.data.storage.trace"):
+                storage = TelemetryStorage(config)
+                assert storage.connection_state == ConnectionState.CONNECTED
+
+                # Simulate a dropped connection so the health check reconnects.
+                storage.connection_state = ConnectionState.DISCONNECTED
+                reconnect = threading.Thread(target=storage._perform_health_check)
+                reconnect.start()
+                assert factory_entered.wait(timeout=10), "reconnect never started"
+
+                # Reconnect is mid-build holding the lock. Shutdown must wait
+                # it out (or fence it) — never return and then lose to it.
+                shutdown_done = threading.Event()
+
+                def _shutdown():
+                    storage.shutdown()
+                    shutdown_done.set()
+
+                shut = threading.Thread(target=_shutdown)
+                shut.start()
+                _time.sleep(0.2)  # let shutdown reach the lock
+                release_factory.set()
+                reconnect.join(timeout=10)
+                shut.join(timeout=10)
+                assert shutdown_done.is_set(), "shutdown never completed"
+
+                assert storage.provider is None, (
+                    "reconnect resurrected the provider after shutdown"
+                )
+                assert storage.connection_state == ConnectionState.DISCONNECTED

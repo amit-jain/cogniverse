@@ -210,20 +210,25 @@ class SpanEvaluator:
     @staticmethod
     def _span_latency_ms(span) -> Optional[float]:
         """Latency in ms from the raw Phoenix span row: prefer an explicit
-        ``latency_ms`` column, else derive from start/end timestamps."""
+        ``latency_ms`` column, else derive from start/end timestamps.
+        Every missing/NaT case returns ``None`` — a NaT bound subtracts to
+        NaN, which would poison downstream aggregation as a value."""
         raw = span.get("latency_ms")
         if raw is not None:
             try:
-                return float(raw)
+                value = float(raw)
+                if not pd.isna(value):
+                    return value
             except (TypeError, ValueError):
                 pass
         start = span.get("start_time")
         end = span.get("end_time")
         if start is not None and end is not None:
             try:
-                return (end - start).total_seconds() * 1000.0
+                value = (end - start).total_seconds() * 1000.0
             except (AttributeError, TypeError):
                 return None
+            return None if pd.isna(value) else float(value)
         return None
 
     async def evaluate_spans(
