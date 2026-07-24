@@ -286,50 +286,12 @@ def create_test_cluster(
             f"k3d cluster creation failed: {(exc.stderr or '').strip()[:300] or exc}"
         )
 
-    # k3d's CoreDNS forwards to the host's resolv.conf; on hosts whose
-    # resolver is a dead/localhost stub, every pod's external DNS fails and
-    # the vLLM pods (which touch huggingface.co even with a warm weight
-    # cache) never become ready. Pin real upstream resolvers.
-    ctx = f"k3d-{cluster_name}"
-    cm = _cmd(
-        [
-            "kubectl",
-            "--context",
-            ctx,
-            "-n",
-            "kube-system",
-            "get",
-            "configmap",
-            "coredns",
-            "-o",
-            "yaml",
-        ],
-        check=False,
-    )
-    if cm.returncode == 0 and "forward . /etc/resolv.conf" in cm.stdout:
-        patched = cm.stdout.replace(
-            "forward . /etc/resolv.conf", "forward . 1.1.1.1 8.8.8.8"
-        )
-        subprocess.run(
-            ["kubectl", "--context", ctx, "apply", "-f", "-"],
-            input=patched,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        _cmd(
-            [
-                "kubectl",
-                "--context",
-                ctx,
-                "-n",
-                "kube-system",
-                "rollout",
-                "restart",
-                "deployment/coredns",
-            ],
-            check=False,
-        )
+    # create_cluster already pins CoreDNS upstreams; re-assert here so a
+    # cluster that raced the configmap's creation still converges (the pin
+    # is idempotent and cheap when already applied).
+    from cogniverse_cli.cluster import pin_coredns_upstreams
+
+    pin_coredns_upstreams(cluster_name)
 
     if not share_host_storage:
         # /host-data is node-local here; the chart's DirectoryOrCreate

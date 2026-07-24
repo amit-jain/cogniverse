@@ -98,6 +98,10 @@ cogniverse stop                        # stop the dev cluster
 cogniverse stop --name cogniverse-e2e  # stop the e2e cluster
 cogniverse start                       # resume dev (restores port-forwards)
 cogniverse start --name cogniverse-e2e
+# Both `up` (create) and `start` pin the cluster's CoreDNS upstreams to
+# 1.1.1.1/8.8.8.8 (idempotent). k3d's default forwards to the host's
+# /etc/resolv.conf — on hosts with a dead/localhost resolver every pod's
+# external DNS fails and the vLLM pods crashloop with flapping NodePorts.
 
 # Tear down
 cogniverse down
