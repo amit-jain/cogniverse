@@ -104,6 +104,27 @@ async def _existing_run_is_real(redis: aioredis.Redis, sha: str) -> bool:
     return age < _COMMIT_GRACE_SECONDS
 
 
+async def _submit_committed(redis: aioredis.Redis, sha: str) -> bool:
+    """Whether the submit MULTI/EXEC actually committed, read fresh.
+
+    A connection dropped after the server commits the submit transaction but
+    before the client reads the reply raises from ``pipe.execute()`` even though
+    the XADD and committed marker landed. The committed marker, read on a healthy
+    pooled connection, distinguishes that from a genuine submit failure. Returns
+    False when the probe itself errors so a genuinely failed submit still
+    compensates.
+    """
+    try:
+        return await idempotency.is_submitted(redis, sha)
+    except Exception:
+        logger.exception(
+            "Enqueue commit-probe failed for sha=%s; treating submit as not "
+            "committed so compensation runs",
+            sha,
+        )
+        return False
+
+
 async def _wait_for_terminal(
     redis: aioredis.Redis, ingest_id: str, deadline_seconds: float
 ) -> Optional[dict]:
@@ -237,24 +258,40 @@ async def enqueue_ingestion(
             committed_ttl_seconds=_inflight_ttl_seconds(),
         )
     except Exception:
-        if incremented:
+        # The XADD + committed marker commit in one MULTI/EXEC. A connection
+        # dropped AFTER the server commits EXEC but before the client reads the
+        # reply raises here even though the job is durably enqueued with its
+        # markers set. A fresh read of the committed marker tells that apart from
+        # a genuine failure: if it landed the submit succeeded, and clearing the
+        # markers / decrementing would strand the queued job — a resubmit would
+        # duplicate it and the worker's terminal decrement would undercount — so
+        # fall through to the success path. Otherwise compensate every committed
+        # step and re-raise the original error.
+        if not await _submit_committed(redis, sha):
+            if incremented:
+                try:
+                    await queue.decrement_active(redis, tenant_id)
+                except Exception:
+                    logger.exception(
+                        "Enqueue compensation: decrement_active failed for "
+                        "tenant=%s; counter self-heals via ACTIVE_TTL",
+                        tenant_id,
+                    )
             try:
-                await queue.decrement_active(redis, tenant_id)
+                await idempotency.clear_inflight(redis, sha)
             except Exception:
                 logger.exception(
-                    "Enqueue compensation: decrement_active failed for "
-                    "tenant=%s; counter self-heals via ACTIVE_TTL",
-                    tenant_id,
+                    "Enqueue compensation: clear_inflight failed for sha=%s; "
+                    "resubmits return the dead id until the inflight TTL lapses",
+                    sha,
                 )
-        try:
-            await idempotency.clear_inflight(redis, sha)
-        except Exception:
-            logger.exception(
-                "Enqueue compensation: clear_inflight failed for sha=%s; "
-                "resubmits return the dead id until the inflight TTL lapses",
-                sha,
-            )
-        raise
+            raise
+        logger.warning(
+            "Ingest submit reply lost after commit: id=%s sha=%s; the job is "
+            "durably enqueued, treating submit as successful",
+            ingest_id,
+            sha,
+        )
 
     logger.info(
         "Ingest enqueued: id=%s tenant=%s profile=%s source=%s",

@@ -483,6 +483,109 @@ class TestEnqueueCompensation:
         assert [j.ingest_id for j in jobs] == [result.ingest_id]
 
     @pytest.mark.asyncio
+    async def test_submit_reply_lost_after_commit_is_treated_as_success(
+        self, redis, monkeypatch
+    ):
+        """A connection dropped AFTER the submit MULTI/EXEC commits — but before
+        the client reads the reply — must NOT trigger compensation. The job is
+        durably enqueued with its markers set; clearing them lets a resubmit
+        duplicate the job and makes the worker's terminal decrement undercount.
+        Injected at the lowest seam: the submit pipeline's execute runs the real
+        EXEC (committing the XADD + committed marker) and then raises."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = "s3://bucket/lost-reply.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        real_pipeline = redis.pipeline
+
+        def _pipeline_dropping_reply(*args, **kwargs):
+            pipe = real_pipeline(*args, **kwargs)
+            real_execute = pipe.execute
+
+            async def _execute_then_drop(*a, **k):
+                await real_execute(*a, **k)  # real EXEC commits both writes
+                raise ConnectionError("connection reset after EXEC committed")
+
+            pipe.execute = _execute_then_drop
+            return pipe
+
+        monkeypatch.setattr(redis, "pipeline", _pipeline_dropping_reply)
+        result = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        monkeypatch.setattr(redis, "pipeline", real_pipeline)
+
+        # Submit is reported successful — the job is durably queued.
+        assert result.existing is False
+        assert result.state == "queued"
+
+        # Both markers survived (compensation did not destroy them).
+        assert await idempotency.is_submitted(redis, sha) is True
+        assert await idempotency.get_existing_ingest_id(redis, sha) == result.ingest_id
+
+        # The active counter was incremented once and NOT decremented.
+        assert await queue.get_active(redis, tenant) == 1
+
+        # The job landed on the work stream exactly once.
+        assert await queue.queue_depth(redis) == 1
+
+        # A resubmit finds the real in-flight run and enqueues no duplicate.
+        resubmit = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        assert resubmit.existing is True
+        assert resubmit.ingest_id == result.ingest_id
+        assert await queue.queue_depth(redis) == 1
+        assert await queue.get_active(redis, tenant) == 1
+
+    @pytest.mark.asyncio
+    async def test_submit_failure_before_commit_compensates_fully(
+        self, redis, monkeypatch
+    ):
+        """The genuine-failure companion at the same seam: the submit pipeline's
+        execute raises BEFORE the real EXEC, so nothing commits. The committed
+        marker is absent, so compensation must run fully — clear the inflight
+        marker, restore the active counter, and re-raise — and a retry must
+        re-enqueue a real job."""
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
+
+        src, profile, tenant = "s3://bucket/precommit-fail.mp4", "video", "acme:acme"
+        sha = idempotency.compute_sha(src, profile, tenant)
+
+        real_pipeline = redis.pipeline
+
+        def _pipeline_never_commits(*args, **kwargs):
+            pipe = real_pipeline(*args, **kwargs)
+
+            async def _execute_raises(*a, **k):
+                raise ConnectionError("connection reset before EXEC")
+
+            pipe.execute = _execute_raises
+            return pipe
+
+        monkeypatch.setattr(redis, "pipeline", _pipeline_never_commits)
+        with pytest.raises(ConnectionError, match="before EXEC"):
+            await enqueue_ingestion(
+                redis, source_url=src, profile=profile, tenant_id=tenant
+            )
+        monkeypatch.setattr(redis, "pipeline", real_pipeline)
+
+        # Nothing committed: no marker, no stream entry, counter restored.
+        assert await idempotency.is_submitted(redis, sha) is False
+        assert await idempotency.get_existing_ingest_id(redis, sha) is None
+        assert await queue.get_active(redis, tenant) == 0
+        assert await queue.queue_depth(redis) == 0
+
+        # A retry re-enqueues a real job that lands on the stream.
+        result = await enqueue_ingestion(
+            redis, source_url=src, profile=profile, tenant_id=tenant
+        )
+        assert result.existing is False
+        assert result.state == "queued"
+        assert await queue.queue_depth(redis) == 1
+
+    @pytest.mark.asyncio
     async def test_happy_path_marks_submitted(self, redis):
         """A successful enqueue records the submitted marker so a resubmit can
         tell a real in-flight run from a crash-orphaned phantom."""
