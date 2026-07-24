@@ -466,13 +466,15 @@ class TestTenantManagerAPI:
         try:
             resp = test_client.delete(f"/admin/tenants/{target}")
             assert resp.status_code == 500, resp.text
-            assert "no registry entry" in resp.text
+            assert "no registry record" in resp.text
 
             # The refusal keeps the tenant; the delete is retryable.
             assert test_client.get(f"/admin/tenants/{target}").status_code == 200
         finally:
-            # Recover the cluster: absorb the orphan in one bulk redeploy so
-            # later tests' deletes aren't poisoned by it.
+            # Recover the cluster: the victim IS the named tenant here, so its
+            # orphan schema is a deletion target (not an unconfirmable peer
+            # survivor) and the bulk redeploy drops it so later tests' deletes
+            # aren't poisoned by it.
             backend.schema_manager.delete_tenant_schemas_bulk([victim])
 
         retry = test_client.delete(f"/admin/tenants/{target}")
