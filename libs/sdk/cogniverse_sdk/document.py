@@ -14,6 +14,36 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 
+def _as_epoch_seconds(value: Any, field_name: str) -> int:
+    """Coerce a stored timestamp to epoch seconds, failing with context.
+
+    Accepts int/float seconds, digit strings, and millisecond epochs
+    (converted); anything else raises instead of storing a mistyped value
+    the backend's long field rejects much later.
+    """
+    if value is None:
+        return int(time.time())
+    if isinstance(value, bool):
+        raise TypeError(f"Document.from_dict: {field_name} must be a timestamp")
+    if isinstance(value, str):
+        if not value.strip().isdigit():
+            raise TypeError(
+                f"Document.from_dict: {field_name} must be an integer "
+                f"timestamp, got {value!r}"
+            )
+        value = int(value.strip())
+    if isinstance(value, float):
+        value = int(value)
+    if not isinstance(value, int):
+        raise TypeError(
+            f"Document.from_dict: {field_name} must be an integer timestamp, "
+            f"got {type(value).__name__}"
+        )
+    if value >= 1_000_000_000_000:  # milliseconds epoch
+        value //= 1000
+    return value
+
+
 class ContentType(Enum):
     """Types of content the pipeline can process."""
 
@@ -160,9 +190,14 @@ class Document:
             "created_at": self.created_at,
         }
 
-        # Add embeddings
+        # Add embeddings — tolerate both the wrapped add_embedding shape
+        # ({"data": ..., "metadata": ...}) and a raw vector, which external
+        # payloads deserialized via from_dict can carry.
         for emb_name, emb_data in self.embeddings.items():
-            doc[emb_name] = emb_data["data"]
+            if isinstance(emb_data, dict) and "data" in emb_data:
+                doc[emb_name] = emb_data["data"]
+            else:
+                doc[emb_name] = emb_data
 
         # Add custom metadata (this is where content-specific fields go)
         doc.update(self.metadata)
@@ -190,10 +225,41 @@ class Document:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Document":
-        """Create Document from dictionary."""
+        """Create Document from dictionary.
+
+        A corrupt payload raises with the offending field named — a
+        silently mistyped document (string timestamp, scalar embeddings
+        map) detonates far from here otherwise, inside whatever backend
+        consumes it.
+        """
+        embeddings = data.get("embeddings") or {}
+        if not isinstance(embeddings, dict):
+            raise TypeError(
+                f"Document.from_dict: embeddings must be a dict, "
+                f"got {type(embeddings).__name__}"
+            )
+        metadata = data.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise TypeError(
+                f"Document.from_dict: metadata must be a dict, "
+                f"got {type(metadata).__name__}"
+            )
+        try:
+            content_type = ContentType(data.get("content_type", "document"))
+        except ValueError:
+            raise ValueError(
+                f"Document.from_dict: unknown content_type {data.get('content_type')!r}"
+            ) from None
+        try:
+            status = ProcessingStatus(data.get("status", "pending"))
+        except ValueError:
+            raise ValueError(
+                f"Document.from_dict: unknown status {data.get('status')!r}"
+            ) from None
+
         doc = cls(
             id=data.get("id", str(uuid.uuid4())),
-            content_type=ContentType(data.get("content_type", "document")),
+            content_type=content_type,
             content_path=(
                 Path(data["content_path"]) if data.get("content_path") else None
             ),
@@ -201,13 +267,13 @@ class Document:
             title=data.get("title"),
             text_content=data.get("text_content"),
             description=data.get("description"),
-            embeddings=data.get("embeddings", {}),
-            status=ProcessingStatus(data.get("status", "pending")),
+            embeddings=embeddings,
+            status=status,
             processing_time=data.get("processing_time"),
             error_message=data.get("error_message"),
-            metadata=data.get("metadata", {}),
-            created_at=data.get("created_at", int(time.time())),
-            updated_at=data.get("updated_at", int(time.time())),
+            metadata=metadata,
+            created_at=_as_epoch_seconds(data.get("created_at"), "created_at"),
+            updated_at=_as_epoch_seconds(data.get("updated_at"), "updated_at"),
         )
         return doc
 
@@ -252,16 +318,15 @@ class SearchResult:
         if "source_id" in self.document.metadata:
             result["source_id"] = self.document.metadata["source_id"]
 
-        # Add temporal info if present in metadata
-        if (
-            "start_time" in self.document.metadata
-            and "end_time" in self.document.metadata
-        ):
-            result["temporal_info"] = {
-                "start_time": self.document.metadata["start_time"],
-                "end_time": self.document.metadata["end_time"],
-                "duration": self.document.metadata["end_time"]
-                - self.document.metadata["start_time"],
-            }
+        # Add temporal info if present in metadata; duration only when both
+        # bounds are numeric — string timecodes previously crashed the
+        # whole serialization on the subtraction.
+        start = self.document.metadata.get("start_time")
+        end = self.document.metadata.get("end_time")
+        if start is not None and end is not None:
+            temporal: Dict[str, Any] = {"start_time": start, "end_time": end}
+            if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+                temporal["duration"] = end - start
+            result["temporal_info"] = temporal
 
         return result
