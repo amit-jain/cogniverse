@@ -120,6 +120,74 @@ class TestReconcileOrphansDryRun:
         assert "weird_custom_schema_acme" in data["unrecovered_schemas"]
         assert data["orphan_tenants"] == []
 
+    def test_every_shipped_base_schema_is_attributable(self, admin_client):
+        """An orphan of ANY shipped base must be attributed to its tenant.
+
+        The reconciler strips a KNOWN_BASES prefix to recover the orphan's
+        tenant; a shipped base missing from that list makes its orphans
+        unattributable — never a deletion target — and (since the redeploy
+        refuses unresolved survivors) one such orphan then blocks every
+        tenant-delete and reconcile. Drives the real route with one orphan per
+        base schema shipped in configs/schemas and asserts none land in
+        unrecovered_schemas.
+        """
+        from pathlib import Path
+
+        client, _, schema_manager, schema_registry = admin_client
+
+        repo_root = Path(__file__).resolve().parents[3]
+        protected = {
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+        }
+        shipped_bases = sorted(
+            p.name.removesuffix("_schema.json")
+            for p in (repo_root / "configs" / "schemas").glob("*_schema.json")
+            if p.name.removesuffix("_schema.json") not in protected
+        )
+        assert shipped_bases  # the glob found the shipped schema set
+
+        schema_manager.list_deployed_document_types.return_value = [
+            *protected,
+            *[f"{base}_pt_pt" for base in shipped_bases],
+            "knowledge_graph_legit",
+        ]
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        schema_registry._get_all_schemas.return_value = [legit]
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=true")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["unrecovered_schemas"] == []
+        assert data["orphan_tenants"] == ["pt_pt"]
+
+    def test_attribution_matches_longest_base_first(self, admin_client):
+        """A ``document_text_semantic`` orphan must attribute to its real
+        tenant token — first-match-wins on the shorter ``document_text`` prefix
+        would strip it to the bogus tenant ``semantic_<tid>``."""
+        client, _, schema_manager, schema_registry = admin_client
+
+        schema_manager.list_deployed_document_types.return_value = [
+            "tenant_metadata",
+            "config_metadata",
+            "organization_metadata",
+            "adapter_registry",
+            "document_text_semantic_acme_acme",
+            "knowledge_graph_legit",
+        ]
+        legit = MagicMock()
+        legit.full_schema_name = "knowledge_graph_legit"
+        schema_registry._get_all_schemas.return_value = [legit]
+
+        resp = client.post("/admin/reconcile-orphans?dry_run=true")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["orphan_tenants"] == ["acme_acme"]
+        assert data["unrecovered_schemas"] == []
+
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
