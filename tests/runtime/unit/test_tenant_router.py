@@ -109,12 +109,10 @@ class TestSetInstructions:
 class TestGetInstructions:
     def test_returns_stored_instructions(self, tenant_client):
         client, cm = tenant_client
-        entry = MagicMock()
-        entry.config_value = {
+        cm.get_config_value.return_value = {
             "text": "Focus on video search.",
             "updated_at": "2024-01-01T00:00:00+00:00",
         }
-        cm.store.get_config.return_value = entry
 
         resp = client.get("/acme/instructions")
         assert resp.status_code == 200
@@ -124,31 +122,33 @@ class TestGetInstructions:
 
     def test_404_when_not_set(self, tenant_client):
         client, cm = tenant_client
-        cm.store.get_config.return_value = None
+        cm.get_config_value.return_value = None
 
         resp = client.get("/acme/instructions")
         assert resp.status_code == 404
 
     def test_404_when_empty_value(self, tenant_client):
         client, cm = tenant_client
-        entry = MagicMock()
-        entry.config_value = {}
-        cm.store.get_config.return_value = entry
+        cm.get_config_value.return_value = {}
 
         resp = client.get("/acme/instructions")
         assert resp.status_code == 404
 
-    def test_get_passes_correct_store_args(self, tenant_client):
+    def test_get_reads_through_the_manager(self, tenant_client):
+        """The read must go through ConfigManager.get_config_value — it
+        canonicalizes the tenant exactly like set_instructions' write; a raw
+        store read looks up a key the write never produced and always 404s."""
         client, cm = tenant_client
-        cm.store.get_config.return_value = None
+        cm.get_config_value.return_value = None
 
         client.get("/myorg/instructions")
 
-        cm.store.get_config.assert_called_once()
-        call_kwargs = cm.store.get_config.call_args.kwargs
+        cm.get_config_value.assert_called_once()
+        call_kwargs = cm.get_config_value.call_args.kwargs
         assert call_kwargs["tenant_id"] == "myorg"
         assert call_kwargs["service"] == "tenant_instructions"
         assert call_kwargs["config_key"] == "system_prompt"
+        cm.store.get_config.assert_not_called()
 
 
 @pytest.mark.unit
@@ -708,15 +708,13 @@ class TestListJobs:
 class TestDeleteJob:
     def test_deletes_existing_job(self, tenant_client):
         client, cm = tenant_client
-        entry = MagicMock()
-        entry.config_value = {
+        cm.get_config_value.return_value = {
             "job_id": "abc12345",
             "name": "test",
             "schedule": "0 9 * * 1",
             "query": "q",
             "post_actions": [],
         }
-        cm.store.get_config.return_value = entry
 
         resp = client.delete("/acme/jobs/abc12345")
         assert resp.status_code == 200
@@ -730,7 +728,7 @@ class TestDeleteJob:
 
     def test_404_when_job_not_found(self, tenant_client):
         client, cm = tenant_client
-        cm.store.get_config.return_value = None
+        cm.get_config_value.return_value = None
 
         resp = client.delete("/acme/jobs/nonexistent")
         assert resp.status_code == 404
