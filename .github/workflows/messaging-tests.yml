@@ -1,0 +1,97 @@
+name: Messaging Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths:
+      - 'libs/messaging/**'
+      - 'libs/core/**'
+      - 'libs/foundation/**'
+      # The invite round-trip drives the real admin router, so its
+      # regressions must trigger this suite too.
+      - 'libs/runtime/cogniverse_runtime/routers/**'
+      - 'tests/messaging/**'
+      - 'tests/conftest.py'
+      - 'tests/fixtures/**'
+      - 'tests/utils/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+      - '.github/workflows/messaging-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'libs/messaging/**'
+      - 'libs/core/**'
+      - 'libs/foundation/**'
+      - 'libs/runtime/cogniverse_runtime/routers/**'
+      - 'tests/messaging/**'
+      - 'tests/conftest.py'
+      - 'tests/fixtures/**'
+      - 'tests/utils/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+      - '.github/workflows/messaging-tests.yml'
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    # Unit + integration in one job: the integration tests bind ephemeral
+    # localhost ports and drive the admin router over ASGITransport — no
+    # external infrastructure. No -m marker filter: a file lacking the
+    # marker would silently stop running in CI.
+    - name: Run tests
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+          tests/messaging/unit/ tests/messaging/integration/ \
+          -v --tb=short
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Run linting
+      run: |
+        uv run ruff check libs/messaging/cogniverse_messaging
+        uv run ruff format --check libs/messaging/cogniverse_messaging
