@@ -359,6 +359,44 @@ class TestDocumentSchemaFieldMapping:
         assert out["creation_timestamp"] == 1700000000
         assert type(out["creation_timestamp"]) is int
 
+    def test_epoch_ms_format_multiplies_to_milliseconds(self):
+        """creation_timestamp is a millisecond field on video/audio schemas;
+        epoch_ms scales the seconds epoch so it lands as ms, not 1970."""
+        doc = Document(id="d", created_at=1700000000, updated_at=1700000000)
+        out = doc.to_schema_fields(self._mapping(created_at_format="epoch_ms"))
+        assert out["creation_timestamp"] == 1700000000000
+        assert type(out["creation_timestamp"]) is int
+
+    def test_metadata_fields_rename_to_schema_field(self):
+        """A value carried in metadata is renamed to its schema field name."""
+        doc = Document(id="d")
+        doc.metadata = {"segment_index": 3}
+        out = doc.to_schema_fields(
+            self._mapping(metadata_fields={"segment_index": "segment_id"})
+        )
+        assert out["segment_id"] == 3
+
+    def test_include_metadata_false_feeds_only_declared_renames(self):
+        """With include_metadata off, only the explicitly renamed metadata keys
+        reach the output — no blanket passthrough of unknown metadata keys."""
+        doc = Document(id="d")
+        doc.metadata = {"segment_index": 3, "junk_key": "should not feed"}
+        out = doc.to_schema_fields(
+            self._mapping(
+                include_metadata=False,
+                metadata_fields={"segment_index": "segment_id"},
+            )
+        )
+        assert out["segment_id"] == 3
+        assert "junk_key" not in out
+        assert "segment_index" not in out
+
+    def test_metadata_fields_from_dict_rejects_non_str_values(self):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        with pytest.raises(ValueError, match="metadata_fields must map str to str"):
+            DocumentFieldMapping.from_dict({"metadata_fields": {"segment_index": 5}})
+
 
 class TestMappingPathAndUpdatedAt:
     def test_content_path_and_updated_at_map(self):
