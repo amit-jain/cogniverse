@@ -272,11 +272,13 @@ def wiki_manager(wiki_vespa):
     backend._port = http_port
     backend._metadata_app = None
     backend._metadata_app_key = None
-    backend.config = {}
-    # put_document loads the base schema's document_mapping through this loader;
-    # the real backend sets it in __init__, so a bare-constructed backend must
-    # provide it too or every feed raises AttributeError.
+    # Document put/get resolve the wiki schema's document_mapping through the
+    # loader, so the real backend slice needs it wired.
+    # put_document resolves the wiki schema's document_mapping through this
+    # loader; the real backend sets it in __init__, so a bare-constructed
+    # backend must provide it too or every feed raises AttributeError.
     backend._schema_loader_instance = FilesystemSchemaLoader(Path("configs/schemas"))
+    backend.config = {}
     backend.search = MagicMock(return_value=[])
 
     manager = WikiManager(
@@ -599,3 +601,68 @@ class TestWikiVespaIntegration:
         pytest.fail(
             f"Document {topic_doc_id} still retrievable from Vespa after delete_page()."
         )
+
+    def test_concurrent_same_entity_filing_preserves_both_contents(
+        self, wiki_manager, monkeypatch
+    ):
+        """Two overlapping filings of the SAME entity must not lose either
+        writer's content. Both threads read the topic before either writes, so
+        without a test-and-set the second full-put clobbers the first. The
+        conditional put runs against real Vespa — its create+condition
+        semantics are exactly what the retry loop relies on — and the final
+        document read back from Vespa must contain BOTH contents.
+        """
+        manager, port = wiki_manager
+        entity = "cas_race_topic"
+        safe = TENANT_ID.replace(":", "_")
+        doc_id = f"wiki_topic_{safe}_{generate_slug(entity)}"
+        content_a = "CAS_ALPHA_distinct_marker_one"
+        content_b = "CAS_BETA_distinct_marker_two"
+
+        barrier = threading.Barrier(2, timeout=30)
+        original_get = manager._get_document_http
+        synced: set = set()
+        synced_lock = threading.Lock()
+
+        def barriered_get(read_doc_id):
+            result = original_get(read_doc_id)
+            tid = threading.get_ident()
+            with synced_lock:
+                first_read = tid not in synced
+                synced.add(tid)
+            if first_read:
+                # Hold until BOTH threads have read the pre-write state, forcing
+                # the interleaving that loses a write without a test-and-set.
+                barrier.wait()
+            return result
+
+        monkeypatch.setattr(manager, "_get_document_http", barriered_get)
+
+        errors: dict = {}
+
+        def worker(key, content):
+            try:
+                manager._get_or_create_topic(
+                    entity=entity, new_content=content, sources=[f"src_{key}"]
+                )
+            except Exception as exc:  # surfaced by the assert below
+                errors[key] = exc
+
+        threads = [
+            threading.Thread(target=worker, args=("a", content_a)),
+            threading.Thread(target=worker, args=("b", content_b)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(90)
+        assert not any(t.is_alive() for t in threads), "concurrent filing hung"
+        assert errors == {}, f"concurrent filing raised: {errors}"
+
+        doc = _get_vespa_doc(port, doc_id)
+        assert doc is not None, f"topic {doc_id} missing after concurrent filing"
+        fields = doc["fields"]
+        content = fields.get("content", "")
+        assert content_a in content, f"lost content_a; final content: {content!r}"
+        assert content_b in content, f"lost content_b; final content: {content!r}"
+        assert int(fields["update_count"]) == 2
