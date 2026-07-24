@@ -81,8 +81,7 @@ class TestCreateCluster:
 
         create_cluster("cogniverse")
 
-        call_args = mock_run.call_args  # type: ignore[attr-defined]
-        cmd = call_args[0][0]  # positional arg 0 is the command list
+        cmd = mock_run.call_args_list[0][0][0]  # first call: k3d create
 
         assert cmd[:4] == ["k3d", "cluster", "create", "cogniverse"]
 
@@ -103,7 +102,7 @@ class TestCreateCluster:
 
         create_cluster("cogniverse-e2e", ports=["33000:28000", 8080])
 
-        cmd = mock_run.call_args[0][0]  # type: ignore[attr-defined]
+        cmd = mock_run.call_args_list[0][0][0]  # first call: k3d create
         port_flags = [cmd[i + 1] for i in range(len(cmd)) if cmd[i] == "-p"]
         assert port_flags == [
             "33000:28000@loadbalancer",
@@ -124,7 +123,7 @@ class TestCreateCluster:
 
         create_cluster("cogniverse")
 
-        cmd = mock_run.call_args[0][0]  # type: ignore[attr-defined]
+        cmd = mock_run.call_args_list[0][0][0]  # first call: k3d create
         port_flags = [cmd[i + 1] for i in range(len(cmd)) if cmd[i] == "-p"]
         assert sorted(port_flags) == [
             "5000:5000@loadbalancer",
@@ -146,7 +145,7 @@ class TestCreateCluster:
 
         create_cluster("cogniverse")
 
-        cmd = mock_run.call_args[0][0]  # type: ignore[attr-defined]
+        cmd = mock_run.call_args_list[0][0][0]  # first call: k3d create
         port_flags = [cmd[i + 1] for i in range(len(cmd)) if cmd[i] == "-p"]
         assert "9999:9999@loadbalancer" in port_flags
         assert "7777:7777@loadbalancer" in port_flags
@@ -168,7 +167,7 @@ class TestCreateCluster:
 
         create_cluster("cogniverse")
 
-        cmd = mock_run.call_args[0][0]  # type: ignore[attr-defined]
+        cmd = mock_run.call_args_list[0][0][0]  # first call: k3d create
         port_flags = [cmd[i + 1] for i in range(len(cmd)) if cmd[i] == "-p"]
         assert f"{sample_drop}:{sample_drop}@loadbalancer" not in port_flags
         assert len(port_flags) == len(DEFAULT_PORTS) - 1
@@ -216,7 +215,7 @@ class TestStopStartCluster:
 
         start_cluster()
 
-        args = mock_run.call_args
+        args = mock_run.call_args_list[0]  # first call: k3d start (then DNS pin)
         assert args.args[0] == ["k3d", "cluster", "start", "cogniverse"]
         assert args.kwargs["check"] is True
 
@@ -439,3 +438,109 @@ class TestInstallMissingPrerequisites:
         monkeypatch.setattr(cluster, "install_prerequisite", lambda tool: True)
         monkeypatch.setattr(cluster.shutil, "which", lambda tool: "/usr/bin/" + tool)
         assert install_missing_prerequisites(["k3d", "helm"]) == []
+class TestPinCorednsUpstreams:
+    """k3d's CoreDNS forwards to the host's resolv.conf; a dead host resolver
+    fails every pod's external DNS (vLLM crashloops, flapping NodePorts).
+    The pin rewrites the forward to public upstreams, idempotently, on both
+    cluster create and start."""
+
+    K3D_COREFILE = (
+        "apiVersion: v1\n"
+        "data:\n"
+        "  Corefile: |\n"
+        "    .:53 {\n"
+        "        errors\n"
+        "        health\n"
+        "        forward . /etc/resolv.conf\n"
+        "        cache 30\n"
+        "    }\n"
+        "kind: ConfigMap\n"
+    )
+
+    def test_pinned_corefile_rewrites_host_forward(self) -> None:
+        from cogniverse_cli.cluster import pinned_corefile
+
+        patched = pinned_corefile(self.K3D_COREFILE)
+        assert patched is not None
+        assert "forward . 1.1.1.1 8.8.8.8" in patched
+        assert "forward . /etc/resolv.conf" not in patched
+
+    def test_pinned_corefile_none_when_already_pinned(self) -> None:
+        from cogniverse_cli.cluster import pinned_corefile
+
+        already = self.K3D_COREFILE.replace(
+            "forward . /etc/resolv.conf", "forward . 1.1.1.1 8.8.8.8"
+        )
+        assert pinned_corefile(already) is None
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_pin_applies_patch_and_restarts_coredns(self, mock_run) -> None:
+        from cogniverse_cli.cluster import pin_coredns_upstreams
+
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=self.K3D_COREFILE
+            ),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout=""),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout=""),
+        ]
+
+        assert pin_coredns_upstreams("cogniverse") is True
+
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        assert calls[0][:3] == ["kubectl", "--context", "k3d-cogniverse"]
+        assert "configmap" in calls[0]
+        assert calls[1][-3:] == ["apply", "-f", "-"]
+        applied = mock_run.call_args_list[1][1]["input"]
+        assert "forward . 1.1.1.1 8.8.8.8" in applied
+        assert calls[2][-2:] == ["restart", "deployment/coredns"]
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_pin_noop_when_already_pinned(self, mock_run) -> None:
+        from cogniverse_cli.cluster import pin_coredns_upstreams
+
+        already = self.K3D_COREFILE.replace(
+            "forward . /etc/resolv.conf", "forward . 1.1.1.1 8.8.8.8"
+        )
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=already
+        )
+
+        assert pin_coredns_upstreams("cogniverse") is True
+        assert len(mock_run.call_args_list) == 1  # get only — no apply/restart
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_pin_false_when_configmap_never_appears(self, mock_run) -> None:
+        from cogniverse_cli.cluster import pin_coredns_upstreams
+
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="not found"
+        )
+
+        assert pin_coredns_upstreams("cogniverse", timeout_s=0.01) is False
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_create_cluster_pins_coredns(self, mock_run) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=""
+        )
+
+        create_cluster("cogniverse")
+
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        assert calls[0][:3] == ["k3d", "cluster", "create"]
+        assert any("configmap" in c for c in calls[1:])
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_start_cluster_pins_coredns(self, mock_run) -> None:
+        from cogniverse_cli.cluster import start_cluster
+
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=""
+        )
+
+        start_cluster("cogniverse")
+
+        calls = [c[0][0] for c in mock_run.call_args_list]
+        assert calls[0] == ["k3d", "cluster", "start", "cogniverse"]
+        assert any("configmap" in c for c in calls[1:])

@@ -6,6 +6,7 @@ import os
 import platform
 import shutil
 import subprocess
+import time
 
 PREREQUISITES = ["docker", "kubectl", "helm"]
 CLUSTER_NAME = "cogniverse"
@@ -275,6 +276,83 @@ def create_cluster(
             mapping = f"{mapping}:{mapping}"
         cmd.extend(["-p", f"{mapping}@loadbalancer"])
     subprocess.run(cmd, check=True, timeout=120)
+    pin_coredns_upstreams(name)
+
+
+_COREDNS_HOST_FORWARD = "forward . /etc/resolv.conf"
+_COREDNS_PINNED_FORWARD = "forward . 1.1.1.1 8.8.8.8"
+
+
+def pinned_corefile(configmap_yaml: str) -> str | None:
+    """The coredns ConfigMap YAML with the host-resolver forward replaced by
+    pinned public upstreams, or ``None`` when no rewrite is needed."""
+    if _COREDNS_HOST_FORWARD not in configmap_yaml:
+        return None
+    return configmap_yaml.replace(_COREDNS_HOST_FORWARD, _COREDNS_PINNED_FORWARD)
+
+
+def pin_coredns_upstreams(name: str = CLUSTER_NAME, *, timeout_s: float = 60.0) -> bool:
+    """Point the cluster's CoreDNS at pinned public resolvers.
+
+    k3d's CoreDNS forwards to the host's ``/etc/resolv.conf``; on hosts whose
+    resolver is a dead/localhost stub every pod's external DNS fails — the
+    vLLM pods crashloop and their NodePorts flap (the serverlb accepts TCP
+    while the upstream is dead). Idempotent: returns True once the Corefile
+    is pinned (already or by this call), False when the coredns configmap
+    never appeared within ``timeout_s``.
+    """
+    ctx = f"k3d-{name}"
+    get_cmd = [
+        "kubectl",
+        "--context",
+        ctx,
+        "-n",
+        "kube-system",
+        "get",
+        "configmap",
+        "coredns",
+        "-o",
+        "yaml",
+    ]
+    deadline = time.time() + timeout_s
+    while True:
+        cm = subprocess.run(
+            get_cmd, capture_output=True, text=True, timeout=30, check=False
+        )
+        if cm.returncode == 0:
+            break
+        if time.time() >= deadline:
+            return False
+        time.sleep(2)
+
+    patched = pinned_corefile(cm.stdout or "")
+    if patched is None:
+        return True
+    subprocess.run(
+        ["kubectl", "--context", ctx, "apply", "-f", "-"],
+        input=patched,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            ctx,
+            "-n",
+            "kube-system",
+            "rollout",
+            "restart",
+            "deployment/coredns",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    return True
 
 
 def stop_cluster(name: str = CLUSTER_NAME) -> None:
@@ -288,8 +366,13 @@ def stop_cluster(name: str = CLUSTER_NAME) -> None:
 
 
 def start_cluster(name: str = CLUSTER_NAME) -> None:
-    """Start a previously stopped k3d cluster (volumes intact)."""
+    """Start a previously stopped k3d cluster (volumes intact).
+
+    Re-pins CoreDNS upstreams on every start so clusters created before the
+    pin existed converge on the working DNS configuration.
+    """
     subprocess.run(["k3d", "cluster", "start", name], check=True, timeout=600)
+    pin_coredns_upstreams(name)
 
 
 def list_cluster_states() -> list[dict]:
