@@ -50,3 +50,24 @@ def test_example_config_matches_the_shipped_default():
         (REPO_ROOT / "configs" / "examples" / "config.example.json").read_text()
     )
     assert example["pipeline_config"]["keyframe_fps"] == 0.5
+
+
+def test_chart_config_matches_the_shipped_default():
+    """The Helm chart ships its OWN config.json (mounted over
+    /app/configs/config.json in the runtime and ingestor pods), so a default
+    changed only in configs/config.json never reaches a chart deployment.
+    Pin the chart copy to the same sampling values as the repo config."""
+    import re
+
+    raw = (REPO_ROOT / "charts" / "cogniverse" / "files" / "config.json").read_text()
+    # The chart copy embeds Helm expressions ({{ include "..." . }}) whose inner
+    # quotes break plain JSON parsing — neutralise them; the fps values under
+    # pin are literal numbers untouched by templating.
+    chart = json.loads(re.sub(r"\{\{.*?\}\}", "HELM", raw, flags=re.S))
+    assert chart["pipeline_config"]["keyframe_fps"] == 0.5
+
+    backend = chart["backend"]
+    default_video_profile = backend["default_profiles"]["video"]["profile"]
+    profile = backend["profiles"][default_video_profile]
+    assert profile["pipeline_config"]["keyframe_fps"] == 0.5
+    assert profile["strategies"]["segmentation"]["params"]["fps"] == 0.5
