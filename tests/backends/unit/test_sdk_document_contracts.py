@@ -94,6 +94,41 @@ class TestDocumentFromDictContract:
         doc = Document.from_dict({"content_path": "/x/clip.mp4"})
         assert doc.content_type is ContentType.VIDEO
 
+    def test_numpy_int_timestamp_coerced(self):
+        import numpy as np
+
+        doc = Document.from_dict({"created_at": np.int64(1700000000)})
+        assert doc.created_at == 1700000000
+        assert type(doc.created_at) is int
+
+    def test_numpy_float_timestamp_coerced(self):
+        import numpy as np
+
+        doc = Document.from_dict({"created_at": np.float64(1700000000.0)})
+        assert doc.created_at == 1700000000
+        assert type(doc.created_at) is int
+
+    def test_numpy_bool_timestamp_rejected(self):
+        import numpy as np
+
+        with pytest.raises(TypeError, match="created_at"):
+            Document.from_dict({"created_at": np.bool_(True)})
+
+    def test_python_bool_timestamp_rejected(self):
+        with pytest.raises(TypeError, match="created_at"):
+            Document.from_dict({"created_at": True})
+
+    def test_auto_detect_covers_every_extension_branch(self):
+        cases = {
+            "/x/p.png": ContentType.IMAGE,
+            "/x/a.wav": ContentType.AUDIO,
+            "/x/n.md": ContentType.TEXT,
+            "/x/d.csv": ContentType.DATAFRAME,
+            "/x/unknown.xyz": ContentType.DOCUMENT,  # default, unchanged
+        }
+        for path, expected in cases.items():
+            assert Document.from_dict({"content_path": path}).content_type is expected
+
 
 class TestSearchResultToDict:
     def test_numeric_bounds_include_duration(self):
@@ -288,6 +323,41 @@ class TestDocumentSchemaFieldMapping:
 
         with pytest.raises(ValueError, match="created_at_format"):
             DocumentFieldMapping(created_at_format="unix")
+
+    def test_mapping_from_dict_rejects_list_embeddings(self):
+        """A list-typed embeddings block fails at load with a clear message,
+        not later at ``mapping.embeddings.items()`` during the feed."""
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        with pytest.raises(ValueError, match="embeddings must be a dict"):
+            DocumentFieldMapping.from_dict({"embeddings": ["embedding"]})
+
+    def test_mapping_from_dict_rejects_non_str_embedding_values(self):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        with pytest.raises(ValueError, match="str to str"):
+            DocumentFieldMapping.from_dict({"embeddings": {"embedding": 123}})
+
+    def test_content_type_as_raw_string_is_coerced(self):
+        """A Document whose content_type was set to a raw string still
+        serializes (coerced through the enum) instead of raising AttributeError."""
+        doc = Document(id="d", title="t")
+        doc.content_type = "video"  # raw string, not the enum
+        out = doc.to_schema_fields(self._mapping())
+        assert out["document_type"] == "video"
+
+    def test_content_type_garbage_string_raises_valueerror(self):
+        doc = Document(id="d", title="t")
+        doc.content_type = "hologram"
+        with pytest.raises(ValueError, match="hologram"):
+            doc.to_schema_fields(self._mapping())
+
+    def test_float_created_at_truncated_to_int_in_epoch(self):
+        """A float epoch must land as an int in the schema's long field."""
+        doc = Document(id="d", created_at=1700000000.75, updated_at=1700000000.75)
+        out = doc.to_schema_fields(self._mapping())
+        assert out["creation_timestamp"] == 1700000000
+        assert type(out["creation_timestamp"]) is int
 
 
 class TestMappingPathAndUpdatedAt:
