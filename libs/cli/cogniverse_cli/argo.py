@@ -16,6 +16,30 @@ ARGO_INSTALL_URL = (
 ALLOWED_KINDS = {"WorkflowTemplate", "CronWorkflow"}
 
 
+def _run_kubectl(
+    cmd: list[str],
+    *,
+    check: bool = True,
+    capture_output: bool = False,
+    timeout: int,
+) -> subprocess.CompletedProcess:
+    """Run a cluster command bounded by *timeout*.
+
+    Every call here talks to the cluster API; unbounded, an unreachable or
+    wedged API server hangs the argo install forever. A timeout surfaces as
+    a SystemExit naming the step instead.
+    """
+    try:
+        return subprocess.run(
+            cmd, check=check, capture_output=capture_output, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit(
+            f"`{' '.join(cmd[:3])}` timed out after {timeout}s — "
+            "is the cluster reachable?"
+        ) from None
+
+
 def install_argo_controller(namespace: str = "argo") -> None:
     """Install Argo Workflows controller.
 
@@ -33,21 +57,22 @@ def install_argo_controller(namespace: str = "argo") -> None:
     sub-chart values declare anyway (``argo.argo.authModes: [server]``);
     this just enforces the same on the upstream-manifest install path.
     """
-    subprocess.run(
+    _run_kubectl(
         ["kubectl", "create", "namespace", namespace],
         capture_output=True,
         check=False,
+        timeout=30,
     )
-    subprocess.run(
+    _run_kubectl(
         ["kubectl", "apply", "-n", namespace, "-f", ARGO_INSTALL_URL],
-        check=True,
+        timeout=300,
     )
     # Patch argo-server to drop the default --auth-mode=client. JSON-patch
     # against args[0] is brittle (the manifest's args list shape can shift
     # between releases), so use the strategic-merge form: replace the whole
     # ``args`` list. Idempotent — re-running on an already-patched
     # deployment is a no-op.
-    subprocess.run(
+    _run_kubectl(
         [
             "kubectl",
             "patch",
@@ -63,9 +88,9 @@ def install_argo_controller(namespace: str = "argo") -> None:
                 '"value":["server","--auth-mode=server"]}]'
             ),
         ],
-        check=True,
+        timeout=60,
     )
-    subprocess.run(
+    _run_kubectl(
         [
             "kubectl",
             "wait",
@@ -75,7 +100,7 @@ def install_argo_controller(namespace: str = "argo") -> None:
             namespace,
             "--timeout=300s",
         ],
-        check=True,
+        timeout=330,
     )
 
 
@@ -106,9 +131,9 @@ def deploy_workflow_templates(
             tmp_path = Path(tmp.name)
             yaml.dump_all(filtered, tmp, default_flow_style=False)
         try:
-            subprocess.run(
+            _run_kubectl(
                 ["kubectl", "apply", "-f", str(tmp_path), "-n", namespace],
-                check=True,
+                timeout=120,
             )
         finally:
             tmp_path.unlink(missing_ok=True)

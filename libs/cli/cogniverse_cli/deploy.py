@@ -125,7 +125,14 @@ def helm_install(
             "-d",
             tempfile.mkdtemp(prefix="cogniverse-chart-"),
         ]
-        packaged = subprocess.run(package_cmd, capture_output=True, text=True)
+        # Bounded like the sibling install call below, so a wedged helm
+        # package process cannot stall the CLI forever.
+        try:
+            packaged = subprocess.run(
+                package_cmd, capture_output=True, text=True, timeout=1500
+            )
+        except subprocess.TimeoutExpired:
+            raise SystemExit("helm package timed out after 25m") from None
         if packaged.returncode != 0:
             print(packaged.stderr, file=sys.stderr)
             raise RuntimeError(f"helm package failed (exit {packaged.returncode})")

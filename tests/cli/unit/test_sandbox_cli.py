@@ -90,8 +90,14 @@ class TestSandboxStatusCommand:
         mock_running: MagicMock,
         mock_run: MagicMock,
     ) -> None:
-        """Stopped gateway with no cluster secret renders no/no."""
-        mock_run.return_value = _completed(returncode=1)
+        """Stopped gateway with a genuinely-absent secret renders no/no.
+
+        kubectl reports a NotFound on stderr for an un-synced secret; that
+        specific message is what maps to "no"."""
+        mock_run.return_value = _completed(
+            returncode=1,
+            stderr='Error from server (NotFound): secrets "openshell-mtls" not found',
+        )
         runner = CliRunner()
         result = runner.invoke(cli, ["sandbox", "status"])
         assert result.exit_code == 0
@@ -101,6 +107,33 @@ class TestSandboxStatusCommand:
             "  Running: no",
             "  Synced to cluster: no",
         ]
+
+    @patch("cogniverse_cli.main.subprocess.run")
+    @patch("cogniverse_cli.sandbox.gateway_running", return_value=True)
+    @patch(
+        "cogniverse_cli.sandbox.get_active_gateway_dir",
+        return_value=Path("/cfg/gateways/cogniverse"),
+    )
+    @patch("cogniverse_cli.sandbox.openshell_installed", return_value=True)
+    def test_status_transient_kubectl_error_reads_unknown(
+        self,
+        mock_installed: MagicMock,
+        mock_dir: MagicMock,
+        mock_running: MagicMock,
+        mock_run: MagicMock,
+    ) -> None:
+        """A cluster-unreachable error is distinguished from genuine absence:
+        it renders "unknown (<reason>)", not "no", so an operator can tell an
+        outage from an un-synced secret."""
+        mock_run.return_value = _completed(
+            returncode=1,
+            stderr="Unable to connect to the server",
+        )
+        result = CliRunner().invoke(cli, ["sandbox", "status"])
+        assert result.exit_code == 0
+        assert result.output.splitlines()[-1] == (
+            "  Synced to cluster: unknown (Unable to connect to the server)"
+        )
 
 
 class TestSandboxSyncCommand:

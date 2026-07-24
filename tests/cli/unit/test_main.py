@@ -354,6 +354,7 @@ class TestDownCommand:
         mock_exists: MagicMock,
     ) -> None:
         """Without --keep-data, removes release, namespace, and k3d cluster."""
+        mock_run.return_value.returncode = 0
         runner = CliRunner()
         result = runner.invoke(cli, ["down"])
         assert result.exit_code == 0
@@ -364,6 +365,30 @@ class TestDownCommand:
         namespaces_deleted = [call[0][0][3] for call in mock_run.call_args_list]
         assert "cogniverse" in namespaces_deleted
         assert "argo" in namespaces_deleted
+
+    @patch("cogniverse_cli.main.cluster_exists", return_value=False)
+    @patch("cogniverse_cli.main.subprocess.run")
+    @patch("cogniverse_cli.main.helm_uninstall")
+    def test_down_surfaces_namespace_delete_failure(
+        self,
+        mock_uninstall: MagicMock,
+        mock_run: MagicMock,
+        mock_exists: MagicMock,
+    ) -> None:
+        """A failed `kubectl delete namespace` surfaces stderr and exits
+        nonzero — it previously printed "stack removed" and exited 0."""
+        failing = MagicMock()
+        failing.returncode = 1
+        failing.stderr = "Error: connection refused"
+        mock_run.return_value = failing
+
+        result = CliRunner().invoke(cli, ["down"])
+
+        assert result.exit_code != 0
+        assert "connection refused" in result.output
+        # Both namespaces are attempted before the nonzero exit.
+        assert mock_run.call_count == 2
+        assert "Cogniverse stack removed." not in result.output
 
     @patch("cogniverse_cli.main.helm_uninstall")
     def test_down_keep_data(self, mock_uninstall: MagicMock) -> None:

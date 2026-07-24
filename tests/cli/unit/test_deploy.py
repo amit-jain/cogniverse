@@ -279,3 +279,52 @@ class TestHelmTimeouts:
             with pytest.raises(SystemExit) as se:
                 helm_install(tmp_path / "chart", tmp_path / "v.yaml")
         assert "timed out" in str(se.value)
+
+    def test_package_call_is_timeout_bounded(self):
+        """The chart-package subprocess carries a timeout too — its sibling
+        install call already did, but a wedged `helm package` could still hang
+        the CLI forever."""
+        calls: list[tuple[list[str], dict]] = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            result = MagicMock(returncode=0, stderr="")
+            if cmd[:2] == ["helm", "package"]:
+                result.stdout = (
+                    "Successfully packaged chart and saved it to: "
+                    "/tmp/x/cogniverse-0.1.0.tgz\n"
+                )
+            return result
+
+        with (
+            patch("cogniverse_cli.deploy.release_exists", return_value=True),
+            patch("cogniverse_cli.deploy.subprocess.run", side_effect=fake_run),
+        ):
+            helm_install(
+                Path("/charts/cogniverse"),
+                Path("/v.yaml"),
+                chart_version="0.1.dev1+gabc",
+            )
+
+        package_cmd, package_kwargs = calls[0]
+        assert package_cmd[:2] == ["helm", "package"]
+        assert package_kwargs["timeout"] == 1500
+
+    def test_package_hang_aborts_with_message(self, tmp_path: Path):
+        import subprocess as sp
+
+        with (
+            patch("cogniverse_cli.deploy.release_exists", return_value=True),
+            patch(
+                "cogniverse_cli.deploy.subprocess.run",
+                side_effect=sp.TimeoutExpired(cmd="helm package", timeout=1500),
+            ),
+        ):
+            with pytest.raises(SystemExit) as se:
+                helm_install(
+                    tmp_path / "chart",
+                    tmp_path / "v.yaml",
+                    chart_version="0.1.dev1+gabc",
+                )
+        assert "package" in str(se.value)
+        assert "timed out" in str(se.value)
