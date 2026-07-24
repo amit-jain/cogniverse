@@ -403,8 +403,12 @@ class BackendVectorStore(VectorStoreBase):
 
             return mem0_results
         except Exception as e:
+            # A backend outage is not "no relevant memories" — raise so
+            # mem0 and the manager above surface it instead of silently
+            # running without memory context. delete() in this class
+            # already follows the same contract.
             logger.error(f"Search failed: {e}")
-            return []
+            raise
 
     def delete(self, vector_id: str) -> None:
         """Delete via backend"""
@@ -561,8 +565,11 @@ class BackendVectorStore(VectorStoreBase):
                 ),
             )
         except Exception as e:
+            # get_document returns None for a genuine not-found (handled
+            # above); an exception here is a backend failure — raise so it
+            # can't be mistaken for absence.
             logger.error(f"Failed to get {vector_id}: {e}")
-            return None
+            raise
 
     def list_cols(self) -> List[str]:
         """List collections"""

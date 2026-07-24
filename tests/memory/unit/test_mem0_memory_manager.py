@@ -603,3 +603,31 @@ class TestContradictionScanReadFailure:
         ), (
             f"expected a warning naming the subject and error: {[r.message for r in caplog.records]}"
         )
+
+
+class TestSearchMemoryFaultContract:
+    """A backend outage during search must raise — flattening it to [] reads
+    as "no relevant memories" and agents silently run without memory context.
+    get_all_memories already follows this contract; the two read paths must
+    agree."""
+
+    @pytest.mark.unit
+    def test_search_memory_raises_on_backend_failure(self):
+        manager = Mem0MemoryManager(tenant_id="tenant1")
+        mock_memory = MagicMock()
+        mock_memory.search.side_effect = ConnectionError("backend down")
+        manager.memory = mock_memory
+
+        with pytest.raises(ConnectionError):
+            manager.search_memory(query="q", tenant_id="tenant1", agent_name="agent")
+
+    @pytest.mark.unit
+    def test_search_memory_empty_result_still_empty(self):
+        manager = Mem0MemoryManager(tenant_id="tenant1")
+        mock_memory = MagicMock()
+        mock_memory.search.return_value = []
+        manager.memory = mock_memory
+
+        assert (
+            manager.search_memory(query="q", tenant_id="tenant1", agent_name="a") == []
+        )

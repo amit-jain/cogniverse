@@ -926,8 +926,12 @@ class Mem0MemoryManager:
             return actual_results
 
         except Exception as e:
+            # A backend outage is not "no relevant memories" — raise so
+            # callers can't mistake an outage for an empty result, matching
+            # get_all_memories. Callers that treat memory as best-effort
+            # catch at their own layer.
             logger.error(f"Memory search failed: {e}")
-            return []
+            raise
 
     # Re-stamps within this window are skipped — the lifecycle scheduler
     # reads recency at day scale, so per-request writes buy nothing.

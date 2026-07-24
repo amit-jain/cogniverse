@@ -45,6 +45,12 @@ def to_epoch_seconds(value: Any) -> Optional[int]:
             return None
     if isinstance(value, (int, float)):
         return _numeric_epoch_seconds(float(value))
+    if isinstance(value, datetime):
+        # Naive datetimes are UTC by convention (matching the ISO-string
+        # branch below); dropping them to None made the write path silently
+        # substitute now() for a caller-supplied created_at.
+        dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
     if isinstance(value, str):
         try:
             dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
