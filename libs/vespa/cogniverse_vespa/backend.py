@@ -1628,9 +1628,28 @@ class VespaBackend(Backend):
                     f"{schema}: {error_body!r}"
                 )
 
+            # A soft timeout or degraded coverage arrives as HTTP 200 with
+            # root.errors (and only partial children) — consuming the children
+            # without this check returns a partial listing recorded as success.
+            # Match the convergence probe and vespa_search_children: raise so a
+            # degraded scan is never mistaken for a complete one.
+            root = results.json.get("root", {})
+            errors = root.get("errors")
+            if errors:
+                raise RuntimeError(
+                    f"Vespa query returned errors for schema {schema} "
+                    f"(HTTP 200 with a soft timeout or degraded coverage yields "
+                    f"partial results): {errors!r}"
+                )
+            coverage = root.get("coverage") or {}
+            if coverage.get("degraded"):
+                raise RuntimeError(
+                    f"Vespa query coverage degraded for schema {schema}: {coverage!r}"
+                )
+
             # Extract documents from response
             documents = []
-            for hit in results.json.get("root", {}).get("children", []):
+            for hit in root.get("children", []):
                 fields = hit.get("fields", {})
                 documents.append(fields)
 
