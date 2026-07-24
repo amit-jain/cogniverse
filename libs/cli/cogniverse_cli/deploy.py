@@ -146,7 +146,14 @@ def helm_install(
     if set_values:
         for key, value in set_values.items():
             cmd.extend(["--set", f"{key}={value}"])
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # Subprocess timeout with headroom above helm's own --timeout, so a helm
+    # process hung before honoring its flag cannot stall the CLI forever.
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1500)
+    except subprocess.TimeoutExpired:
+        raise SystemExit(
+            f"helm {action} timed out after 25m — is the cluster reachable?"
+        ) from None
     if result.returncode != 0:
         # Print stderr but don't crash — let the CLI continue to health checks
         print(result.stderr, file=sys.stderr)
@@ -154,10 +161,22 @@ def helm_install(
 
 
 def helm_uninstall(name: str = RELEASE_NAME, namespace: str = NAMESPACE) -> None:
-    """Uninstall Helm release if it exists."""
+    """Uninstall Helm release if it exists.
+
+    Bounded twice: helm's own ``--timeout`` caps the uninstall work, and
+    the subprocess timeout (with headroom above it) caps a hung helm
+    process itself — unbounded, a dead API server left ``cogniverse
+    down`` hanging forever.
+    """
     if not release_exists(name, namespace):
         return
-    subprocess.run(
-        ["helm", "uninstall", name, "--namespace", namespace],
-        check=True,
-    )
+    try:
+        subprocess.run(
+            ["helm", "uninstall", name, "--namespace", namespace, "--timeout", "10m"],
+            check=True,
+            timeout=660,
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit(
+            "helm uninstall timed out after 11m — is the cluster reachable?"
+        ) from None

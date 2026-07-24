@@ -15,6 +15,8 @@ its required environment before constructing the gateway.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from types import SimpleNamespace
 
 import pytest
@@ -330,3 +332,76 @@ def test_main_rejects_non_numeric_env(monkeypatch, var, value):
     with pytest.raises(SystemExit) as exc:
         gw_mod.main()
     assert exc.value.code == 1
+
+
+@pytest.mark.asyncio
+async def test_sigterm_routes_through_graceful_shutdown():
+    """SIGTERM cancels the run task so the mode's finally-teardown runs —
+    the default disposition killed the process with the webhook still
+    registered and nothing closed."""
+    import os
+    import signal as signal_mod
+
+    gw = MessagingGateway(bot_token="123:FAKE", runtime_url="http://runtime")
+
+    teardown_ran = asyncio.Event()
+    started = asyncio.Event()
+
+    async def fake_polling():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            teardown_ran.set()
+
+    gw.run_polling = fake_polling
+
+    task = asyncio.create_task(gw.run())
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    os.kill(os.getpid(), signal_mod.SIGTERM)
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=2)
+    assert teardown_ran.is_set()
+
+    # The handler is removed on exit — a second SIGTERM must not linger.
+    assert asyncio.get_running_loop().remove_signal_handler(signal_mod.SIGTERM) is False
+
+
+@pytest.mark.asyncio
+async def test_webhook_shutdown_survives_delete_webhook_failure():
+    """A failing delete_webhook during shutdown must not skip the local
+    teardown — stop/shutdown/close still run."""
+    from unittest.mock import AsyncMock, patch
+
+    gw = MessagingGateway(
+        bot_token="123:FAKE", runtime_url="http://runtime", mode="webhook"
+    )
+
+    app = SimpleNamespace(
+        initialize=AsyncMock(),
+        start=AsyncMock(),
+        updater=SimpleNamespace(start_webhook=AsyncMock(), stop=AsyncMock()),
+        bot=SimpleNamespace(
+            delete_webhook=AsyncMock(side_effect=RuntimeError("telegram down"))
+        ),
+        stop=AsyncMock(),
+        shutdown=AsyncMock(),
+    )
+    gw.build_app = lambda: app
+    close = AsyncMock()
+    with patch.object(gw.runtime_client, "close", close):
+        task = asyncio.create_task(gw.run_webhook())
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if app.updater.start_webhook.await_count:
+                break
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    app.bot.delete_webhook.assert_awaited_once()
+    app.stop.assert_awaited_once()
+    app.shutdown.assert_awaited_once()
+    close.assert_awaited_once()
