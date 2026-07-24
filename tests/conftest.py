@@ -176,9 +176,21 @@ def _whisper_local_installed() -> bool:
 
 
 def pytest_collection_modifyitems(items):
-    """Auto-skip ``requires_whisper`` tests when the whisper-local
-    extra isn't installed, mirroring the runtime image's opt-in
-    boundary."""
+    """Location-derived markers + whisper auto-skip.
+
+    Tests under a ``unit/`` (``integration/``) directory get the ``unit``
+    (``integration``) marker from their location — the directory IS the
+    taxonomy, so a file or test that forgets the marker cannot silently fall
+    out of its directory's CI ``-m`` selection. ``local_only`` opts out: it
+    declares a deliberate exclusion from CI selections, so no location marker
+    is added (tests/runtime/unit/test_marker_coverage.py mirrors this rule).
+    """
+    from tests.fixtures.markers import apply_location_markers
+
+    apply_location_markers(items)
+
+    # Auto-skip ``requires_whisper`` tests when the whisper-local extra isn't
+    # installed, mirroring the runtime image's opt-in boundary.
     if _whisper_local_installed():
         return
     skip = pytest.mark.skip(
@@ -191,6 +203,19 @@ def pytest_collection_modifyitems(items):
     for item in items:
         if "requires_whisper" in item.keywords:
             item.add_marker(skip)
+
+
+def pytest_runtest_setup(item):
+    """Runtime LM gate for ``requires_lm``-marked tests.
+
+    An import-time ``skipif(not is_test_lm_available(), ...)`` latches the
+    PRE-session-fixture endpoint state — ``ensure_host_ollama`` provisions
+    the LM only at session setup — so the probe must run per test."""
+    if item.get_closest_marker("requires_lm") is not None:
+        from tests.fixtures.llm import is_test_lm_available, resolve_base_url
+
+        if not is_test_lm_available():
+            pytest.skip(f"Configured LLM endpoint not reachable ({resolve_base_url()})")
 
 
 def cleanup_background_threads():

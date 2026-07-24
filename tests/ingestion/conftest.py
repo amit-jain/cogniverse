@@ -36,11 +36,14 @@ TEST_VIDEO_DURATION = 5  # seconds
 
 
 def pytest_collection_modifyitems(items):
-    """Auto-skip ``requires_whisper`` tests when the whisper-local
-    extra isn't installed. Duplicated from ``tests/conftest.py``
-    because ``tests/ingestion/pytest.ini`` makes this the rootdir,
-    so the project-level conftest is outside the discovery boundary
-    when invoking from inside ``tests/ingestion/``."""
+    """Location-derived markers + whisper auto-skip. Duplicated from
+    ``tests/conftest.py`` because ``tests/ingestion/pytest.ini`` makes this
+    the rootdir, so the project-level conftest is outside the discovery
+    boundary when invoking from inside ``tests/ingestion/``."""
+    from tests.fixtures.markers import apply_location_markers
+
+    apply_location_markers(items)
+
     have_whisper = all(
         importlib.util.find_spec(name) is not None
         for name in ("whisper", "faster_whisper")

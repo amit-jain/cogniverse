@@ -177,7 +177,16 @@ Markers are registered in the root `pytest.ini` (`--strict-markers` rejects
 any unregistered marker) plus per-package overrides in `tests/ingestion/pytest.ini`
 and `tests/routing/pytest.ini`. The commonly used ones:
 
-- `unit`, `integration`, `e2e`, `system` — test tier
+- `unit`, `integration`, `e2e`, `system` — test tier. `unit` and
+  `integration` are also applied automatically from the test's location
+  (`tests/<pkg>/unit/` or `tests/<pkg>/integration/`) by
+  `tests/fixtures/markers.py::apply_location_markers`, wired into
+  `pytest_collection_modifyitems` in `tests/conftest.py` and the nested-root
+  conftests (`tests/ingestion/`, `tests/routing/`) — so a file that forgets
+  the marker cannot silently fall out of its directory's CI `-m` selection.
+  A file marked `local_only` opts out of the location marker (a declared,
+  visible CI exclusion). `tests/runtime/unit/test_marker_coverage.py`
+  verifies every file against the actual workflow selections.
 - `ci_fast` — small, essential subset run on every CI push
 - `ci_safe` — safe to run in CI (no local-only dependencies)
 - `local_only` — should only run locally, not in CI/CD
@@ -731,7 +740,9 @@ build below any specific percentage.
 
 ### GitHub Actions Workflows
 
-The project has **14 GitHub workflow files** organized by module:
+The project has **16 GitHub workflow files**: 12 per-module test workflows plus
+`chart-validation.yml`, `docs.yml`, `publish-packages.yml`, and two manual/release
+workflows not tied to a single module:
 
 | Workflow | Module | Tests | Docker Services |
 |----------|--------|-------|-----------------|
@@ -749,12 +760,16 @@ The project has **14 GitHub workflow files** organized by module:
 | `vespa-tests.yml` | cogniverse-vespa | unit + integration | Vespa |
 | `docs.yml` | Documentation | mkdocs build + deploy to GitHub Pages | None |
 | `publish-packages.yml` | Package publishing (PyPI/TestPyPI) | N/A | None |
+| `mirror-third-party.yml` | Air-gapped support (`workflow_dispatch` only) | Mirrors third-party images (Vespa, Phoenix, Ollama, …) to a target registry | None |
+| `release-images.yml` | Release (`v*` tag push or `workflow_dispatch`) | Builds/pushes every first-party image + Helm chart OCI artifact | None |
 
 ### Workflow Structure
 
 Each test workflow typically has these jobs:
 
-1. **unit-tests** - Fast unit tests with mocked dependencies (often with ci_fast marker)
+1. **unit-tests** - Unit tests; unit-dir jobs select `-m unit` (satisfied by
+   every test via the location-derived marker) so no file can silently fall
+   out of the selection
 2. **integration-tests** - Integration tests (with ci_fast subset for quick feedback)
 3. **lint** - Code linting with ruff/black
 4. **test-cli** or **test-imports** - Verify package imports work

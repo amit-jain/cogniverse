@@ -21,6 +21,8 @@ from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
 
+pytestmark = pytest.mark.integration
+
 SERVER_PATH = (
     Path(__file__).resolve().parents[3]
     / "libs/runtime/cogniverse_runtime/sidecars/clap_embed.py"

@@ -27,6 +27,8 @@ import pytest
 from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
 from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
 
+pytestmark = pytest.mark.integration
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

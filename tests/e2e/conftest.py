@@ -112,6 +112,15 @@ def pytest_collection_modifyitems(config, items):
             else:
                 keep.append(item)
         if deselected:
+            # Deselection is invisible beyond the summary count — name what
+            # was dropped and why so a green run can't silently omit these.
+            reporter = config.pluginmanager.get_plugin("terminalreporter")
+            if reporter is not None:
+                reporter.write_line(
+                    "e2e conftest deselected (external dep not configured): "
+                    + ", ".join(sorted({item.nodeid for item in deselected})),
+                    yellow=True,
+                )
             config.hook.pytest_deselected(items=deselected)
             items[:] = keep
 

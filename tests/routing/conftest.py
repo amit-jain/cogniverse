@@ -112,3 +112,13 @@ __all__ = [
     "telemetry_manager_with_phoenix",
     "telemetry_manager_without_phoenix",
 ]
+
+
+def pytest_collection_modifyitems(items):
+    """Location-derived markers. Duplicated from ``tests/conftest.py``
+    because ``tests/routing/pytest.ini`` makes this the rootdir, so the
+    project-level conftest is outside the discovery boundary when invoking
+    from inside ``tests/routing/``."""
+    from tests.fixtures.markers import apply_location_markers
+
+    apply_location_markers(items)

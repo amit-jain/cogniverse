@@ -68,9 +68,7 @@ jobs:
       env:
         COVERAGE_FILE: .coverage
       run: |
-        # Run only essential tests marked with @pytest.mark.ci_fast for faster CI
-        # To run all tests locally: uv run python -m pytest tests/agents/unit -m unit
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m "unit and ci_fast" \
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m unit \
           --cov=libs/agents/cogniverse_agents \
           --cov-report=term-missing \
           --cov-report=xml:coverage_agents.xml

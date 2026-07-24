@@ -21,6 +21,8 @@ from cogniverse_synthetic.schemas import (
 )
 from cogniverse_synthetic.service import SyntheticDataService
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def profile_service():

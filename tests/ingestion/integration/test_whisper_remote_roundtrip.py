@@ -41,6 +41,8 @@ from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 from cogniverse_runtime.ingestion.strategies import AudioTranscriptionStrategy
 
+pytestmark = pytest.mark.integration
+
 
 def _valid_wav_bytes(seconds: float = 0.2, rate: int = 16000) -> bytes:
     """A real 16 kHz mono PCM WAV the processor's pyav extraction can decode.
