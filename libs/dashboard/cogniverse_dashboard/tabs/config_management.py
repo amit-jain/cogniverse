@@ -12,6 +12,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_dashboard.tabs.backend_profile import render_backend_profile_tab
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
@@ -51,6 +52,11 @@ def render_config_management_tab():
             value=st.session_state["current_tenant"],
             help="Multi-tenant configuration isolation",
         )
+        # Canonicalize before any read or write: the manager canonicalizes
+        # writes internally, so a bare id typed here would list/read an
+        # empty parallel namespace and freshly saved configs would vanish.
+        if tenant_id:
+            tenant_id = canonical_tenant_id(tenant_id)
         st.session_state.current_tenant = tenant_id
 
     with col2:
