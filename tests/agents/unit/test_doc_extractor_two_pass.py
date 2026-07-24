@@ -163,3 +163,40 @@ def test_no_claim_extractor_yields_no_edges_but_still_entities():
     )
     assert [n.name for n in ents.nodes] == ["Alpha", "Beta"]
     assert edges == []
+
+
+class _OutageGliner:
+    """Every predict_entities call raises — a sidecar outage."""
+
+    def predict_entities(self, chunk, labels, threshold):
+        raise ConnectionError("gliner sidecar down")
+
+
+class _PartialGliner:
+    """Raises on chunks containing 'Beta', succeeds on 'Alpha' — a transient
+    per-chunk failure, not a total outage."""
+
+    def predict_entities(self, chunk, labels, threshold):
+        if "Beta" in chunk:
+            raise ConnectionError("transient gliner error")
+        return [{"text": "Alpha", "label": "Concept", "score": 0.9}]
+
+
+def test_total_gliner_outage_raises_not_regex_noise():
+    """A configured GLiNER failing on EVERY chunk is a sidecar outage — extract
+    must raise, not silently return a regex-only knowledge graph reported as a
+    successful ingest."""
+    ext = DocExtractor()
+    ext._gliner = _OutageGliner()
+    with pytest.raises(RuntimeError, match="failed on all"):
+        ext.extract_entities_from_text(_two_chunk_text(), "t:t", "doc1", _anchor())
+
+
+def test_partial_gliner_failure_is_best_effort():
+    """A GLiNER failure on SOME chunks falls back to regex for those and keeps
+    the GLiNER entities for the rest — no raise (not a total outage)."""
+    ext = DocExtractor()
+    ext._gliner = _PartialGliner()
+    ents = ext.extract_entities_from_text(_two_chunk_text(), "t:t", "doc1", _anchor())
+    names = {n.name for n in ents.nodes}
+    assert "Alpha" in names  # GLiNER succeeded on the Alpha chunk and was kept
