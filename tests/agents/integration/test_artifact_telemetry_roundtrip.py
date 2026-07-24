@@ -835,6 +835,85 @@ class TestWorkflowStoreRoundTrip:
         assert dict(wi.query_type_patterns) == patterns
         assert wi.workflow_templates == {"tmpl-rt-1": template}
 
+    @pytest.mark.asyncio
+    async def test_empty_prior_corpus_failure_clears_forward_patterns(
+        self, real_provider, monkeypatch
+    ):
+        """A mid-write failure on a first-run tenant rolls the forward query
+        patterns back to the empty prior, so the orchestrator never
+        template-matches against patterns whose executions were rolled back.
+        """
+        import uuid
+        from datetime import datetime
+
+        from cogniverse_agents.workflow.telemetry_workflow_store import (
+            _EXECUTIONS_KIND,
+        )
+        from cogniverse_core.registries import WorkflowStoreRegistry
+        from cogniverse_sdk.interfaces.workflow_store import (
+            AgentPerformance,
+            WorkflowExecution,
+        )
+
+        tenant_id = f"wf-empty-prior-pat-{uuid.uuid4().hex[:8]}"
+        WorkflowStoreRegistry.clear_cache()
+        store = WorkflowStoreRegistry.get(
+            name="telemetry", config={"telemetry_provider": real_provider}
+        )
+
+        # First-run tenant: no query patterns and no executions stored yet.
+        assert await store.load_query_patterns(tenant_id) == {}
+        assert await store.load_executions(tenant_id) == []
+
+        execution = WorkflowExecution(
+            workflow_id="wf-new",
+            query="find cats",
+            query_type="video_search",
+            execution_time=1.0,
+            success=True,
+            agent_sequence=["video_search_agent"],
+            task_count=1,
+            parallel_efficiency=1.0,
+            confidence_score=0.9,
+            user_satisfaction=0.7,
+            error_details=None,
+            timestamp=datetime(2026, 5, 26, 12, 0, 0),
+            metadata={},
+        )
+        profile = AgentPerformance(
+            agent_name="video_search_agent",
+            total_executions=1,
+            successful_executions=1,
+            average_execution_time=1.0,
+            average_confidence=0.9,
+            error_rate=0.0,
+            preferred_query_types=["video_search"],
+            performance_trend="stable",
+            last_updated=datetime(2026, 5, 26, 9, 0, 0),
+        )
+
+        # Fail exactly the forward executions write at the provider boundary; the
+        # patterns write and the whole restore run against real Phoenix.
+        executions_dataset = store._am(tenant_id)._demo_dataset_name(_EXECUTIONS_KIND)
+        real_replace = real_provider.datasets.replace_dataset
+
+        async def replace_or_fail(name, data, metadata=None):
+            if name == executions_dataset:
+                raise ConnectionError("phoenix down on executions replace")
+            return await real_replace(name=name, data=data, metadata=metadata)
+
+        monkeypatch.setattr(real_provider.datasets, "replace_dataset", replace_or_fail)
+
+        with pytest.raises(ConnectionError):
+            await store.save_learning_corpus(
+                tenant_id, [execution], [profile], {"video_search": ["find *"]}
+            )
+
+        # The forward pattern write is undone back to the empty prior, and the
+        # failed forward save leaves no executions persisted.
+        assert await store.load_query_patterns(tenant_id) == {}
+        assert await store.load_executions(tenant_id) == []
+
 
 class TestDispatcherArtifactWiring:
     """Verify AgentDispatcher.dispatch() triggers _load_artifact on agents."""

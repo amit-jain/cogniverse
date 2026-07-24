@@ -206,8 +206,7 @@ class WorkflowStore(ABC):
         except Exception:
             try:
                 await self.save_agent_profiles(tenant_id, prev_profiles)
-                if prev_patterns:
-                    await self.save_query_patterns(tenant_id, prev_patterns)
+                await self.save_query_patterns(tenant_id, prev_patterns)
                 await self.save_executions(tenant_id, prev_executions)
                 logger.warning(
                     "Learning-corpus save failed for %s; restored previous corpus",
