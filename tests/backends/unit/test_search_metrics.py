@@ -57,3 +57,66 @@ def test_empty_metrics_zero():
     m = SearchMetrics()
     assert m.avg_latency_ms == 0.0
     assert m.p95_latency_ms == 0.0
+
+
+def test_record_search_exact_under_concurrent_threads():
+    """Counters must be exact under concurrent recording — searches record
+    from pool worker threads, and an unguarded ``+=`` loses counts."""
+    import sys
+    import threading
+
+    metrics = SearchMetrics()
+    threads_n, per_thread = 8, 500
+    barrier = threading.Barrier(threads_n)
+
+    def hammer(worker: int):
+        barrier.wait()
+        for i in range(per_thread):
+            metrics.record_search(
+                success=(i % 2 == 0),
+                latency_ms=1.0,
+                strategy=f"s{worker % 2}",
+            )
+
+    original = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=hammer, args=(n,)) for n in range(threads_n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(original)
+
+    total = threads_n * per_thread
+    assert metrics.total_searches == total
+    assert metrics.successful_searches == total // 2
+    assert metrics.failed_searches == total // 2
+    assert metrics.total_latency_ms == float(total)
+    assert sum(metrics.strategy_usage.values()) == total
+
+
+def test_p95_stable_while_another_thread_records():
+    """The percentile sorts a locked snapshot — sorting the live deque while
+    another thread appends raised mid-iteration."""
+    import threading
+
+    metrics = SearchMetrics()
+    for _ in range(100):
+        metrics.record_search(success=True, latency_ms=5.0, strategy="s")
+
+    stop = threading.Event()
+
+    def writer():
+        while not stop.is_set():
+            metrics.record_search(success=True, latency_ms=5.0, strategy="s")
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        for _ in range(200):
+            assert metrics.p95_latency_ms == 5.0
+    finally:
+        stop.set()
+        thread.join()
