@@ -5,15 +5,19 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import cogniverse_cli.images as images_mod
 import yaml
 from cogniverse_cli.images import (
+    _read_third_party_images,
     build_images,
+    detect_torch_backend,
     dev_image_set_values,
     enabled_sidecars,
     has_workspace_source,
     import_images,
+    pull_and_import_third_party,
     read_app_version,
 )
 
@@ -387,3 +391,271 @@ class TestPruneSupersededImages:
         assert "sha-gliner-shared" not in removed_ids
         assert "sha-vespa" not in removed_ids
         assert "sha-runtime-new" not in removed_ids
+
+
+class TestDetectTorchBackend:
+    """The backend ladder: env override -> nvidia-smi -> rocminfo(gfx) ->
+    /sys/module/amdgpu -> cpu. Each rung is exercised in isolation because
+    the dev host itself has real GPU tooling."""
+
+    def _blank_slate(self, monkeypatch) -> MagicMock:
+        """No env override, no GPU binaries, no amdgpu module. Returns the
+        Path stand-in so a branch can flip ``/sys/module/amdgpu`` on."""
+        monkeypatch.delenv("COGNIVERSE_TORCH_BACKEND", raising=False)
+        monkeypatch.setattr(images_mod.shutil, "which", lambda name: None)
+        fake_path = MagicMock()
+        fake_path.return_value.exists.return_value = False
+        monkeypatch.setattr(images_mod, "Path", fake_path)
+        return fake_path
+
+    def test_env_override_wins(self, monkeypatch) -> None:
+        monkeypatch.setenv("COGNIVERSE_TORCH_BACKEND", "rocm")
+        assert detect_torch_backend() == "rocm"
+
+    def test_nvidia_smi_success_is_cuda(self, monkeypatch) -> None:
+        self._blank_slate(monkeypatch)
+        monkeypatch.setattr(
+            images_mod.shutil,
+            "which",
+            lambda name: "/usr/bin/nvidia-smi" if name == "nvidia-smi" else None,
+        )
+        monkeypatch.setattr(
+            images_mod.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(a[0], 0),
+        )
+        assert detect_torch_backend() == "cuda"
+
+    def test_nvidia_smi_failure_falls_through_to_cpu(self, monkeypatch) -> None:
+        self._blank_slate(monkeypatch)
+        monkeypatch.setattr(
+            images_mod.shutil,
+            "which",
+            lambda name: "/usr/bin/nvidia-smi" if name == "nvidia-smi" else None,
+        )
+
+        def boom(*a, **k):
+            raise subprocess.CalledProcessError(1, "nvidia-smi")
+
+        monkeypatch.setattr(images_mod.subprocess, "run", boom)
+        assert detect_torch_backend() == "cpu"
+
+    def test_rocminfo_gfx_agent_is_rocm(self, monkeypatch) -> None:
+        self._blank_slate(monkeypatch)
+        monkeypatch.setattr(
+            images_mod.shutil,
+            "which",
+            lambda name: "/usr/bin/rocminfo" if name == "rocminfo" else None,
+        )
+        monkeypatch.setattr(
+            images_mod.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(
+                a[0], 0, stdout="Name:      gfx1151\nMarketing Name: AMD\n"
+            ),
+        )
+        assert detect_torch_backend() == "rocm"
+
+    def test_rocminfo_without_gfx_falls_through_to_cpu(self, monkeypatch) -> None:
+        self._blank_slate(monkeypatch)
+        monkeypatch.setattr(
+            images_mod.shutil,
+            "which",
+            lambda name: "/usr/bin/rocminfo" if name == "rocminfo" else None,
+        )
+        monkeypatch.setattr(
+            images_mod.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="no agents\n"),
+        )
+        assert detect_torch_backend() == "cpu"
+
+    def test_amdgpu_module_present_is_rocm(self, monkeypatch) -> None:
+        fake_path = self._blank_slate(monkeypatch)
+        fake_path.return_value.exists.return_value = True
+        assert detect_torch_backend() == "rocm"
+        fake_path.assert_called_with("/sys/module/amdgpu")
+
+    def test_no_gpu_evidence_is_cpu(self, monkeypatch) -> None:
+        self._blank_slate(monkeypatch)
+        assert detect_torch_backend() == "cpu"
+
+
+class TestReadThirdPartyImages:
+    """`_read_third_party_images` walks the values file the way the chart
+    resolves images: vespa/phoenix, semantic-router, optional llm.builtin,
+    then each enabled inference.<svc> including imagesByDevice; pullPolicy
+    Never and enabled:false are skipped."""
+
+    def _values_file(self, tmp_path: Path) -> Path:
+        data = {
+            "vespa": {"image": {"repository": "vespaengine/vespa", "tag": "8.1"}},
+            "phoenix": {"image": {"repository": "arizephoenix/phoenix", "tag": "5.0"}},
+            "llm": {
+                "builtin": {
+                    "image": {"repository": "vllm/vllm-openai-cpu", "tag": "0.6"}
+                }
+            },
+            "semanticRouter": {"enabled": False},
+            "inference": {
+                # Locally-built image (pullPolicy Never) -> never pulled.
+                "gliner": {
+                    "enabled": True,
+                    "image": {
+                        "repository": "cogniverse/gliner",
+                        "tag": "dev",
+                        "pullPolicy": "Never",
+                    },
+                },
+                # Device-specific image AND the base image are both pre-pulled.
+                "clap_embed": {
+                    "enabled": True,
+                    "device": "rocm",
+                    "imagesByDevice": {
+                        "rocm": {"repository": "cogniverse/clap-rocm", "tag": "r1"},
+                        "cpu": {"repository": "cogniverse/clap-cpu", "tag": "c1"},
+                    },
+                    "image": {"repository": "cogniverse/clap", "tag": "base"},
+                },
+                # Disabled -> skipped entirely.
+                "face_embed": {
+                    "enabled": False,
+                    "image": {"repository": "cogniverse/face", "tag": "x"},
+                },
+            },
+        }
+        vf = tmp_path / "values.yaml"
+        vf.write_text(yaml.safe_dump(data))
+        return vf
+
+    def test_resolves_core_device_and_skips_never_and_disabled(
+        self, tmp_path: Path
+    ) -> None:
+        result = _read_third_party_images(self._values_file(tmp_path), skip_llm=False)
+        assert result == [
+            "vespaengine/vespa:8.1",
+            "arizephoenix/phoenix:5.0",
+            "vllm/vllm-openai-cpu:0.6",
+            "cogniverse/clap-rocm:r1",
+            "cogniverse/clap:base",
+        ]
+        # pullPolicy Never (gliner) and enabled:false (face_embed) never appear.
+        assert "cogniverse/gliner:dev" not in result
+        assert "cogniverse/face:x" not in result
+        # The non-selected device variant (cpu) is not pulled.
+        assert "cogniverse/clap-cpu:c1" not in result
+
+    def test_skip_llm_omits_builtin_llm_image(self, tmp_path: Path) -> None:
+        result = _read_third_party_images(self._values_file(tmp_path), skip_llm=True)
+        assert result == [
+            "vespaengine/vespa:8.1",
+            "arizephoenix/phoenix:5.0",
+            "cogniverse/clap-rocm:r1",
+            "cogniverse/clap:base",
+        ]
+
+    def test_semantic_router_images_included_when_enabled(self, tmp_path: Path) -> None:
+        vf = tmp_path / "sr.yaml"
+        vf.write_text(
+            yaml.safe_dump(
+                {
+                    "semanticRouter": {
+                        "enabled": True,
+                        "envoy": {
+                            "image": {"repository": "envoyproxy/envoy", "tag": "1.29"}
+                        },
+                        "router": {
+                            "image": {"repository": "cogniverse/sr", "tag": "2.0"}
+                        },
+                    }
+                }
+            )
+        )
+        assert _read_third_party_images(vf, skip_llm=True) == [
+            "envoyproxy/envoy:1.29",
+            "cogniverse/sr:2.0",
+        ]
+
+    def test_duplicate_images_are_deduplicated_first_wins(self, tmp_path: Path) -> None:
+        vf = tmp_path / "dup.yaml"
+        vf.write_text(
+            yaml.safe_dump(
+                {
+                    "vespa": {"image": {"repository": "shared/img", "tag": "1"}},
+                    "phoenix": {"image": {"repository": "shared/img", "tag": "1"}},
+                    "semanticRouter": {"enabled": False},
+                }
+            )
+        )
+        assert _read_third_party_images(vf, skip_llm=True) == ["shared/img:1"]
+
+    def test_missing_tag_defaults_to_latest(self, tmp_path: Path) -> None:
+        vf = tmp_path / "notag.yaml"
+        vf.write_text(
+            yaml.safe_dump(
+                {
+                    "vespa": {"image": {"repository": "vespaengine/vespa"}},
+                    "semanticRouter": {"enabled": False},
+                }
+            )
+        )
+        assert _read_third_party_images(vf, skip_llm=True) == [
+            "vespaengine/vespa:latest"
+        ]
+
+
+class TestPullAndImportThirdParty:
+    """`pull_and_import_third_party` docker-pulls each resolved image then
+    imports them all into k3d in one call."""
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_pulls_each_image_then_imports_all(
+        self, mock_run: object, tmp_path: Path
+    ) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+        vf = tmp_path / "values.yaml"
+        vf.write_text(
+            yaml.safe_dump(
+                {
+                    "vespa": {
+                        "image": {"repository": "vespaengine/vespa", "tag": "8.1"}
+                    },
+                    "phoenix": {
+                        "image": {"repository": "arizephoenix/phoenix", "tag": "5.0"}
+                    },
+                    "semanticRouter": {"enabled": False},
+                }
+            )
+        )
+
+        pull_and_import_third_party("cogniverse", vf, skip_llm=True)
+
+        calls = [c.args[0] for c in mock_run.call_args_list]  # type: ignore[attr-defined]
+        assert calls == [
+            ["docker", "pull", "vespaengine/vespa:8.1"],
+            ["docker", "pull", "arizephoenix/phoenix:5.0"],
+            [
+                "k3d",
+                "image",
+                "import",
+                "vespaengine/vespa:8.1",
+                "arizephoenix/phoenix:5.0",
+                "-c",
+                "cogniverse",
+            ],
+        ]
+        # Pull + import are best-effort (a slow/offline registry must not
+        # abort the deploy), so every call sets check=False.
+        for call in mock_run.call_args_list:  # type: ignore[attr-defined]
+            assert call.kwargs["check"] is False
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_no_images_pulls_nothing(self, mock_run: object, tmp_path: Path) -> None:
+        vf = tmp_path / "empty.yaml"
+        vf.write_text(yaml.safe_dump({"semanticRouter": {"enabled": False}}))
+
+        pull_and_import_third_party("cogniverse", vf, skip_llm=True)
+
+        mock_run.assert_not_called()  # type: ignore[attr-defined]
