@@ -257,6 +257,13 @@ def up(
 
     # 4. Resolve project root (needed for cluster volume mount and image build)
     project_root = resolve_project_root()
+    build_root = Path(image_source).resolve() if image_source else project_root
+    if image_source and not has_workspace_source(build_root):
+        console.print(
+            f"[red]--image-source {image_source} has no buildable workspace "
+            f"source (libs/runtime not found).[/red]"
+        )
+        sys.exit(1)
 
     # 5. Create k3d cluster if needed (local mode only)
     if use_k3d:
@@ -318,13 +325,13 @@ def up(
 
     dev_image_overrides: dict[str, str] = {}
     image_version: str | None = None
-    if project_root and has_workspace_source(project_root):
+    if build_root and has_workspace_source(build_root):
         console.print("[cyan]Building container images...[/cyan]")
         # Derive the git version once so the built image tag, the deployed
         # --set override, and the stamped chart version are all identical.
-        image_version = dev_version(project_root)
+        image_version = dev_version(build_root)
         tags = build_images(
-            project_root, values_files=values_files, version=image_version
+            build_root, values_files=values_files, version=image_version
         )
         if use_k3d:
             console.print("[cyan]Importing images into k3d...[/cyan]")

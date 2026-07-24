@@ -117,9 +117,7 @@ def install_prerequisite(tool: str) -> bool:
         return False
 
 
-def install_missing_prerequisites(
-    missing: list[str], *, interactive: bool = True
-) -> list[str]:
+def install_missing_prerequisites(missing: list[str]) -> list[str]:
     """Install missing tools after showing what will be installed.
 
     Returns list of tools that still can't be found after install attempts.
@@ -364,7 +362,7 @@ def _start_single_port_forward(
     )
 
 
-def start_port_forwards(*, skip_llm: bool = False) -> None:
+def start_port_forwards() -> None:
     """Start kubectl port-forward for all services as detached daemons.
 
     Uses ``start_new_session=True`` so processes survive after the CLI exits.
@@ -374,8 +372,6 @@ def start_port_forwards(*, skip_llm: bool = False) -> None:
     pids: list[int] = []
 
     for svc_name, ns, local_port, svc_port in PORT_FORWARD_SPECS:
-        if skip_llm and svc_name == "cogniverse-llm":
-            continue
         proc = _start_single_port_forward(svc_name, ns, local_port, svc_port)
         pids.append(proc.pid)
         _port_forward_procs.append(proc)
