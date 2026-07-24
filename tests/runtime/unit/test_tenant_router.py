@@ -462,6 +462,75 @@ class TestClearMemories:
             agent_name="_user_memories",
         )
 
+    def test_clear_by_category_deletes_every_match_past_the_page(self, tenant_client):
+        """Category clear must delete every match, not just the first page.
+
+        An enumerate-then-filter clear over the store's capped 100-row page
+        deletes only the matches on that page and reports success — the tail
+        survives. The clear must walk the whole partition.
+        """
+        client, _ = tenant_client
+        rows = [
+            {"id": f"m{i}", "memory": "x", "metadata": {"category": "ui"}}
+            for i in range(130)
+        ]
+        mgr = _CappedUserMemory(rows)
+
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
+            resp = client.delete("/acme/memories?category=ui")
+
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 130
+        assert set(mgr.deleted) == {f"m{i}" for i in range(130)}
+
+    def test_list_by_category_returns_every_match_past_the_page(self, tenant_client):
+        """Listing a category must surface every match past the page cap."""
+        client, _ = tenant_client
+        rows = [
+            {
+                "id": f"m{i}",
+                "memory": "x",
+                "metadata": {"category": "ui"},
+                "created_at": "2024-01-01",
+            }
+            for i in range(130)
+        ]
+        mgr = _CappedUserMemory(rows)
+
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
+            resp = client.get("/acme/memories?type=preference&category=ui&limit=200")
+
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 130
+
+
+class _CappedUserMemory:
+    """Partition-faithful user-memory store: an unfiltered read returns the
+    store's capped 100-row page unless the caller walks the whole partition
+    (``limit=None``). ``delete_memory`` removes a row so a re-read shrinks.
+    """
+
+    _PAGE = 100
+
+    def __init__(self, rows):
+        self.memory = object()  # already initialized
+        self._rows = {r["id"]: r for r in rows}
+        self.deleted: List[str] = []
+
+    def get_all_memories(self, tenant_id, agent_name, filters=None, limit=_PAGE, **kw):
+        live = [r for rid, r in self._rows.items() if rid not in self.deleted]
+        if limit is not None:
+            live = live[:limit]
+        return live
+
+    def delete_memory(self, memory_id, tenant_id, agent_name):
+        self.deleted.append(memory_id)
+        return True
+
 
 @pytest.mark.unit
 @pytest.mark.ci_fast

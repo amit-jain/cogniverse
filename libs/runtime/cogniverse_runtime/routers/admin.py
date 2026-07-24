@@ -991,8 +991,13 @@ def _resolve_telegram_chat_ids(tenant_id: str) -> List[str]:
     if not mgr.memory:
         return []
 
+    # Walk every page (limit=None): the target tenant's mappings can sit
+    # past the store's 100-row page when other tenants share the SYSTEM
+    # partition, and a capped read would silently drop their linked chats.
     rows = mgr.get_all_memories(
-        tenant_id=SYSTEM_TENANT_ID, agent_name=_MESSAGING_GATEWAY_AGENT
+        tenant_id=SYSTEM_TENANT_ID,
+        agent_name=_MESSAGING_GATEWAY_AGENT,
+        limit=None,
     )
     chat_ids: List[str] = []
     seen: set = set()

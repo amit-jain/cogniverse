@@ -358,8 +358,15 @@ async def list_memories(
                 top_k=limit,
             )
         else:
+            # A category filter is applied in Python below, so the whole
+            # partition must be walked (limit=None) — a capped read would
+            # drop matches sitting past the store's 100-row page. Without a
+            # category, the display limit bounds the read.
             raw = await asyncio.to_thread(
-                mgr.get_all_memories, tenant_id=tenant_id, agent_name=ns
+                mgr.get_all_memories,
+                tenant_id=tenant_id,
+                agent_name=ns,
+                limit=None if category else limit,
             )
 
         for entry in raw:
@@ -411,9 +418,13 @@ async def clear_memories(
         # The get + per-memory deletes are N blocking Vespa round-trips — run
         # the whole sweep off the event loop in one worker.
         def _clear_category() -> int:
+            # Walk every page (limit=None): the category filter runs in
+            # Python, so a capped read would leave matches past the store's
+            # 100-row page undeleted while reporting success.
             results = mgr.get_all_memories(
                 tenant_id=tenant_id,
                 agent_name=_USER_MEMORY_AGENT,
+                limit=None,
             )
             deleted = 0
             for r in results:

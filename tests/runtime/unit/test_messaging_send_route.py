@@ -63,6 +63,34 @@ def _patch_mapping(monkeypatch, rows=None, raise_outage=False):
     return mgr
 
 
+class _CappedMappingManager:
+    """Partition-faithful mapping store: an unfiltered read is capped at
+    the store's 100-row page unless the caller asks for the whole partition
+    (``limit=None``). Reproduces a target tenant's chats falling off the
+    page once other tenants flood the shared mapping partition.
+    """
+
+    _PAGE = 100
+
+    def __init__(self, rows):
+        self.memory = object()  # already initialized
+        self._rows = list(rows)
+
+    def get_all_memories(self, tenant_id, agent_name, filters=None, limit=_PAGE, **kw):
+        rows = list(self._rows)
+        if limit is not None:
+            rows = rows[:limit]
+        return rows
+
+
+def _patch_capped_mapping(monkeypatch, rows):
+    mgr = _CappedMappingManager(rows)
+    monkeypatch.setattr(
+        "cogniverse_core.memory.manager.Mem0MemoryManager", lambda tid: mgr
+    )
+    return mgr
+
+
 def test_send_resolves_chats_and_enqueues_one_per_chat(app, monkeypatch):
     _patch_mapping(
         monkeypatch,
@@ -87,6 +115,28 @@ def test_send_resolves_chats_and_enqueues_one_per_chat(app, monkeypatch):
         assert all(m["tenant_id"] == "acme:acme" for m in drained)
         # Drain cleared the queue.
         assert c.get("/admin/messaging/outbound/drain").json()["messages"] == []
+
+
+def test_send_reaches_chats_pushed_past_the_hundred_row_page(app, monkeypatch):
+    """A tenant's linked chats resolve even past the mapping page cap.
+
+    Other tenants' mappings flood the shared SYSTEM partition ahead of
+    acme's, pushing them past Mem0's 100-row page. Resolving must walk the
+    whole partition, or acme's messages are silently never enqueued.
+    """
+    fillers = [_mapping(str(i), "globex:globex") for i in range(100)]
+    acme = [_mapping(f"a{i}", "acme:acme") for i in range(5)]
+    _patch_capped_mapping(monkeypatch, rows=fillers + acme)
+    with TestClient(app) as c:
+        resp = c.post(
+            "/admin/messaging/send",
+            json={"tenant_id": "acme:acme", "message": "job done"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"enqueued": 5}
+
+        drained = c.get("/admin/messaging/outbound/drain").json()["messages"]
+        assert sorted(m["chat_id"] for m in drained) == ["a0", "a1", "a2", "a3", "a4"]
 
 
 def test_send_with_no_linked_chats_enqueues_zero(app, monkeypatch):
