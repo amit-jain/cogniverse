@@ -931,16 +931,20 @@ def _list_orphan_schemas() -> Dict[str, list]:
         "video_colpali_smol500_mv_frame",
         "video_videoprism_base_mv_chunk_30s",
         "video_videoprism_large_mv_chunk_30s",
+        "video_videoprism_lvt_base_sv_chunk_6s",
+        "video_videoprism_lvt_large_sv_chunk_6s",
         "video_colqwen_omni_mv_chunk_30s",
         "image_colpali_mv",
         "audio_clap_semantic",
         "audio_content",
         "document_text",
         "document_text_semantic",
+        "document_visual",
         "knowledge_graph",
         "agent_memories",
         "wiki_pages",
         "code_lateon_mv",
+        "lateon_mv",
         # Knowledge-system per-tenant provenance schema. Without this
         # entry the orphan reconciler couldn't strip provenance_<tid>
         # back to <tid>, so every Knowledge System e2e test left a
@@ -950,8 +954,12 @@ def _list_orphan_schemas() -> Dict[str, list]:
     )
     orphan_tenants: set = set()
     unrecovered: list = []
+    # Longest base first: with first-match-wins, "document_text" would strip a
+    # "document_text_semantic_<tid>" orphan to "semantic_<tid>" — a bogus
+    # tenant token.
+    bases_longest_first = sorted(KNOWN_BASES, key=len, reverse=True)
     for orphan in orphans:
-        for base in KNOWN_BASES:
+        for base in bases_longest_first:
             prefix = f"{base}_"
             if orphan.startswith(prefix):
                 orphan_tenants.add(orphan[len(prefix) :])
