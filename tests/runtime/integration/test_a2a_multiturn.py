@@ -25,6 +25,7 @@ def _send_message(
     tenant_id: str = "test:unit",
     task_id: str | None = None,
     rpc_id: int = 1,
+    message_metadata: dict | None = None,
 ) -> dict:
     """Send an A2A JSON-RPC message/send request and return the response body."""
     message = {
@@ -35,6 +36,8 @@ def _send_message(
     }
     if task_id:
         message["taskId"] = task_id
+    if message_metadata:
+        message["metadata"] = message_metadata
 
     payload = {
         "jsonrpc": "2.0",
@@ -172,6 +175,31 @@ class TestA2AMultiTurnHistoryAccumulation:
         turn3_contents = [t["content"] for t in turn3_hist]
         assert any("cat videos" in c for c in turn3_contents), turn3_contents
         assert any("dog videos" in c for c in turn3_contents), turn3_contents
+
+    def test_client_supplied_message_history_reaches_dispatch(
+        self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
+    ):
+        """A stateful client (the code REPL) that tracks its own turns and
+        sends them in the message metadata — with a fresh contextId and no
+        taskId, exactly as the CLI does — has that history reach the dispatcher.
+        Before the fix the server only read task.history and dropped it, so
+        every REPL turn arrived contextless."""
+        client_history = [
+            {"role": "user", "content": "search for cat videos"},
+            {"role": "assistant", "content": "found three cat clips"},
+        ]
+        _send_message(
+            a2a_client,
+            "how about the second one",
+            context_id=f"repl-{uuid.uuid4()}",  # fresh per call, no task threading
+            message_metadata={"conversation_history": client_history},
+            rpc_id=1,
+        )
+
+        assert len(dispatch_history_spy) == 1
+        seen_contents = [t["content"] for t in dispatch_history_spy[0]["history"]]
+        assert "search for cat videos" in seen_contents
+        assert "found three cat clips" in seen_contents
 
     def test_context_id_isolation(
         self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
