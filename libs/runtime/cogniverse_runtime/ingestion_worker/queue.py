@@ -202,11 +202,10 @@ def _parse_entry(message_id: str, fields: dict) -> Optional[IngestJob]:
     """Decode one stream entry, or None for a malformed one.
 
     An entry missing a required field (external XADD, producer/consumer
-    version skew) can never be processed; raising here used to abort the
-    whole claim/reclaim batch — in the reaper's sweep that happened BEFORE
-    the dead-letter check, so one malformed entry stalled orphan recovery
-    for every entry behind it. Callers settle the client (see
-    settle_malformed_entry) and ack the malformed entry away.
+    version skew) can never be processed. Returning None instead of raising
+    keeps one bad entry from aborting the whole claim/reclaim batch and
+    stalling the reaper's orphan recovery behind it; callers settle the
+    client (see settle_malformed_entry) and ack the malformed entry away.
     """
     try:
         return IngestJob(

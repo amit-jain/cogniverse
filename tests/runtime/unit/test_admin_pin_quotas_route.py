@@ -127,3 +127,60 @@ async def test_org_admin_quota_rejects_sub_sentinel_negatives(monkeypatch):
     assert "org_admin" in bad.json()["detail"]
     assert ok.status_code == 200
     assert ok.json()["quotas"]["org_admin"] == -1
+
+
+class _OutageArtifactManager:
+    """ArtifactManager double whose blob store is down."""
+
+    async def load_blob(self, kind, key):
+        raise ConnectionError("blob store down")
+
+    async def save_blob(self, kind, key, raw):
+        raise ConnectionError("blob store down")
+
+
+def _build_outage_app(monkeypatch):
+    admin_router._reset_admin_overrides_for_tests()
+    monkeypatch.setattr(
+        admin_router, "_build_artifact_manager", lambda key: _OutageArtifactManager()
+    )
+    app = FastAPI()
+    app.include_router(admin_router.router, prefix="/admin")
+    return app
+
+
+@pytest.mark.asyncio
+async def test_pin_quotas_get_maps_store_outage_to_503(monkeypatch):
+    """A blob-store outage is a dependency failure — 503 with a descriptive
+    detail, never an opaque 500."""
+    app = _build_outage_app(monkeypatch)
+    response = await _get(app, "/admin/tenants/acme:acme/pin_quotas")
+    assert response.status_code == 503
+    assert "pin-quota store unavailable" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_pin_quotas_put_maps_store_outage_to_503(monkeypatch):
+    app = _build_outage_app(monkeypatch)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as client:
+        response = await client.put(
+            "/admin/tenants/acme:acme/pin_quotas", json={"user": 5}
+        )
+    assert response.status_code == 503
+    assert "pin-quota store unavailable" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_pin_quotas_put_still_validates_before_store(monkeypatch):
+    """Request validation fires before the store is touched — a bad request
+    is a 400 even when the store is down."""
+    app = _build_outage_app(monkeypatch)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as client:
+        response = await client.put(
+            "/admin/tenants/acme:acme/pin_quotas", json={"user": -2}
+        )
+    assert response.status_code == 400

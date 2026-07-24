@@ -80,7 +80,18 @@ async def stream_events(
             status_code=400,
             detail="last-event-id must be a Redis stream id like 1712000000000-0",
         )
-    redis = await get_redis(_redis_url())
+    try:
+        redis = await get_redis(_redis_url())
+        # The client connects lazily; ping now so an outage fails the
+        # request cleanly BEFORE the 200 stream starts instead of killing
+        # the SSE stream mid-flight.
+        await redis.ping()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"ingestion status store unavailable: {exc}"
+        ) from exc
 
     async def gen():
         last_id = last_event_id or "0-0"
@@ -122,8 +133,17 @@ async def get_status(ingest_id: str) -> dict:
     """Snapshot the latest event on the status stream — point-read
     alternative to the SSE stream for callers that don't speak
     EventSource. Returns the latest event plus the full history."""
-    redis = await get_redis(_redis_url())
-    events = await queue.read_status_since(redis, ingest_id)
+    try:
+        redis = await get_redis(_redis_url())
+        events = await queue.read_status_since(redis, ingest_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Redis down is a dependency outage, not a server bug — 503 so
+        # callers can retry, never an opaque 500.
+        raise HTTPException(
+            status_code=503, detail=f"ingestion status store unavailable: {exc}"
+        ) from exc
     if not events:
         raise HTTPException(
             status_code=404,

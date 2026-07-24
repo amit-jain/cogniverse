@@ -10,6 +10,7 @@ import asyncio
 import logging
 import re
 import uuid
+import weakref
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -30,20 +31,22 @@ logger = logging.getLogger(__name__)
 
 # One client per running event loop for the Argo submit/status calls.
 # Building a client per request paid ~10ms of TLS-context setup plus a fresh
-# TCP handshake on every call; keying by loop id keeps tests (one loop per
-# test) from reusing a client bound to a torn-down loop. No lock: the
-# check-construct-set sequence has no await, so it is atomic on its loop.
+# TCP handshake on every call. Keyed by the LOOP OBJECT in a weak map — an
+# ``id(loop)`` key collides when a torn-down loop's id is reused by a new
+# loop (CPython reuses freed addresses), handing the new loop a client bound
+# to the dead one; the weak map reaps entries with their loop instead. No
+# lock: the check-construct-set sequence has no await, so it is atomic on
+# its loop.
 _ARGO_CLIENT_TIMEOUT = httpx.Timeout(10.0)
-_argo_clients: Dict[int, httpx.AsyncClient] = {}
+_argo_clients: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
 async def _shared_argo_client() -> httpx.AsyncClient:
     loop = asyncio.get_running_loop()
-    key = id(loop)
-    client = _argo_clients.get(key)
+    client = _argo_clients.get(loop)
     if client is None or client.is_closed:
         client = httpx.AsyncClient(timeout=_ARGO_CLIENT_TIMEOUT)
-        _argo_clients[key] = client
+        _argo_clients[loop] = client
     return client
 
 
