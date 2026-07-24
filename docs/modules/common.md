@@ -606,20 +606,31 @@ def get_all_memories(
     agent_name: str,
     include_archived: bool = False,
     filters: Optional[Dict[str, Any]] = None,
+    limit: Optional[int] = 100,
 ) -> List[Dict[str, Any]]:
     """
-    Get all memories for an agent.
+    Get all memories for an agent, newest first.
 
     Args:
         tenant_id: Tenant identifier
         agent_name: Agent name
         include_archived: When False (default), soft-deleted memories are excluded
         filters: Optional server-side filters (e.g. {"subject_key": ...})
+        limit: Maximum rows to return, newest first. Defaults to 100 (the
+            store's page size). Pass None to walk every page and return the
+            whole partition — required by callers that enumerate and filter
+            in Python, so a partition past 100 rows cannot silently truncate.
 
     Returns:
         List of all memories
     """
 ```
+
+Prefer a server-side `filters` narrow (e.g. `{"session_id": ...}`) for a
+targeted lookup; pass `limit=None` only when the caller genuinely needs
+every row (an admin listing or a category clear). A backend outage raises
+rather than returning `[]`, so callers can't mistake an outage for an
+empty store.
 
 #### delete_memory()
 ```python

@@ -255,3 +255,150 @@ class TestReadFaultContract:
         store.backend.get_document.return_value = None
 
         assert store.get("missing-id") is None
+
+    @pytest.mark.unit
+    def test_list_raises_on_backend_failure(self):
+        """A swallowed list() outage reads as an empty partition, so every
+        enumerate-and-filter caller mistakes it for no-data and truncates."""
+        store = self._store()
+        store.backend.query_metadata_documents.side_effect = ConnectionError(
+            "backend down"
+        )
+
+        with pytest.raises(ConnectionError):
+            store.list(limit=100)
+        with pytest.raises(ConnectionError):
+            store.list(limit=None)
+
+
+class _PagingBackend:
+    """Backend double that honors YQL ``limit``/``offset`` over an ordered
+    row set — models Vespa's paged query so the store's walk can be driven
+    deterministically without a live cluster.
+    """
+
+    def __init__(self, rows: List[Dict[str, Any]], *, ignore_offset: bool = False):
+        self._by_id = sorted(rows, key=lambda r: r["id"], reverse=True)
+        self._by_recency = sorted(
+            rows, key=lambda r: (r["created_at"], r["id"]), reverse=True
+        )
+        self.ignore_offset = ignore_offset
+        self.query_count = 0
+        self.yqls: List[str] = []
+
+    def query_metadata_documents(self, schema, yql=None, **kwargs):
+        self.query_count += 1
+        self.yqls.append(yql)
+        # Page size and offset ride as hits/offset, not in the YQL.
+        limit = int(kwargs["hits"])
+        offset = 0 if self.ignore_offset else int(kwargs.get("offset", 0))
+        # Serve the order the query asked for so the walk's unique-id ordering
+        # is exercised, not just the loop.
+        ordered = self._by_recency if "created_at" in yql else self._by_id
+        return ordered[offset : offset + limit]
+
+
+def _paging_store(backend: _PagingBackend) -> BackendVectorStore:
+    store = object.__new__(BackendVectorStore)
+    store.backend = backend
+    store.collection_name = "agent_memories_acme"
+    store.profile = "agent_memories"
+    store.is_telemetry = False
+    return store
+
+
+def _rows(n: int) -> List[Dict[str, Any]]:
+    return [
+        {
+            "id": f"m{i:04d}",
+            "created_at": 1_700_000_000 + i,
+            "text": f"row {i}",
+            "user_id": "u",
+            "agent_id": "a",
+            "metadata_": json.dumps({"n": i}),
+        }
+        for i in range(n)
+    ]
+
+
+@pytest.mark.unit
+class TestListPagination:
+    def test_walks_every_page_with_no_duplicates(self):
+        """limit=None returns the whole partition across page boundaries."""
+        backend = _PagingBackend(_rows(250))
+        store = _paging_store(backend)
+
+        results, next_offset = store.list(limit=None)
+
+        assert next_offset is None
+        ids = [r.id for r in results]
+        assert len(ids) == 250
+        assert len(set(ids)) == 250  # no row seen twice across pages
+        # Newest first: m0249 down to m0000.
+        assert ids[0] == "m0249"
+        assert ids[-1] == "m0000"
+        assert backend.query_count == 3  # 100 + 100 + 50
+
+    def test_bounded_read_is_the_newest_slice(self):
+        backend = _PagingBackend(_rows(250))
+        store = _paging_store(backend)
+
+        results, next_offset = store.list(limit=10)
+
+        assert [r.id for r in results] == [f"m{249 - i:04d}" for i in range(10)]
+        assert next_offset == 10
+
+    def test_walk_orders_by_unique_id_bounded_by_recency(self):
+        """The full walk must page by the unique id (a total order offset
+        paging cannot skip across), while a bounded read stays most-recent
+        first — a walk ordered by the second-granularity created_at would
+        shuffle tied rows between page queries and drop them."""
+        walk_backend = _PagingBackend(_rows(150))
+        _paging_store(walk_backend).list(limit=None)
+        assert all("order by id desc" in q for q in walk_backend.yqls)
+        assert all("created_at" not in q for q in walk_backend.yqls)
+
+        bounded_backend = _PagingBackend(_rows(150))
+        _paging_store(bounded_backend).list(limit=10)
+        assert "order by created_at desc, id desc" in bounded_backend.yqls[0]
+
+    def test_pagination_guard_raises_when_offset_ignored(self):
+        """A backend that ignores offset would loop forever or silently
+        truncate; the walk must fail loud instead."""
+        backend = _PagingBackend(_rows(250), ignore_offset=True)
+        store = _paging_store(backend)
+
+        with pytest.raises(RuntimeError, match="did not advance"):
+            store.list(limit=None)
+
+    def test_concurrent_walks_are_isolated(self):
+        """N threads walking one store see the complete partition each, with
+        no cross-talk — the walk holds only call-local state."""
+        import threading
+
+        backend = _PagingBackend(_rows(250))
+        store = _paging_store(backend)
+
+        barrier = threading.Barrier(8)
+        results: Dict[int, List[str]] = {}
+        errors: List[Exception] = []
+
+        def worker(tid: int):
+            try:
+                barrier.wait()
+                rows, _ = store.list(limit=None)
+                results[tid] = [r.id for r in rows]
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        expected = [f"m{249 - i:04d}" for i in range(250)]
+        assert len(results) == 8
+        for tid, ids in results.items():
+            assert ids == expected, f"thread {tid} saw an incomplete/reordered walk"

@@ -251,7 +251,45 @@ class TestMem0MemoryManager:
             user_id="tenant1",
             agent_id="test_agent",
             filters=None,
+            limit=100,
         )
+
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_get_all_memories_limit_none_walks_every_page(
+        self, mock_memory_class, manager
+    ):
+        """limit=None forwards to mem0 as the whole-partition walk signal."""
+        mock_memory = MagicMock()
+        mock_memory.get_all.return_value = {"results": []}
+        manager.memory = mock_memory
+
+        manager.get_all_memories(
+            tenant_id="tenant1",
+            agent_name="test_agent",
+            limit=None,
+        )
+
+        mock_memory.get_all.assert_called_once_with(
+            user_id="tenant1",
+            agent_id="test_agent",
+            filters=None,
+            limit=None,
+        )
+
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_get_all_memories_raises_on_backend_outage(
+        self, mock_memory_class, manager
+    ):
+        """A store outage must propagate, never flatten to [] — a caller
+        reading [] would treat an outage as an empty partition."""
+        import pytest
+
+        mock_memory = MagicMock()
+        mock_memory.get_all.side_effect = ConnectionError("vespa unreachable")
+        manager.memory = mock_memory
+
+        with pytest.raises(ConnectionError):
+            manager.get_all_memories(tenant_id="tenant1", agent_name="test_agent")
 
     @patch("cogniverse_core.memory.manager.Memory")
     def test_delete_memory(self, mock_memory_class, manager):

@@ -586,67 +586,127 @@ class BackendVectorStore(VectorStoreBase):
             "vector_size": self.vector_size,
         }
 
+    _LIST_PAGE_SIZE = 100
+
+    # Bounded reads want the most-recent slice, so they order by created_at
+    # first; id breaks ties. The full walk orders by id ALONE — id is unique,
+    # so it is a total order that offset paging cannot skip or duplicate a row
+    # across, whereas created_at is second-granularity and a dense tie cluster
+    # straddling a page boundary shuffles between the two page queries.
+    _ORDER_BOUNDED = "created_at desc, id desc"
+    _ORDER_WALK = "id desc"
+
     def list(
         self,
         filters: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = 100,
+        offset: int = 0,
     ):
-        """List memories with filtering"""
-        try:
-            # Build YQL query with filters
-            yql_conditions = ["true"]  # Start with match-all
-            if filters:
-                if "user_id" in filters:
-                    yql_conditions.append(
-                        f"user_id contains {_yql_quote(filters['user_id'])}"
-                    )
-                if "agent_id" in filters:
-                    yql_conditions.append(
-                        f"agent_id contains {_yql_quote(filters['agent_id'])}"
-                    )
-                if filters.get("session_id"):
-                    yql_conditions.append(
-                        f"session_id contains {_yql_quote(filters['session_id'])}"
-                    )
-                if filters.get("subject_key"):
-                    yql_conditions.append(
-                        f"subject_key contains {_yql_quote(filters['subject_key'])}"
-                    )
+        """List memories with server-side filtering.
 
-            where_clause = " and ".join(yql_conditions)
-            yql = f"select * from {self.collection_name} where {where_clause} limit {limit or 100}"
+        ``limit=None`` walks every page (offset-continuation loop) ordered by
+        the unique id and returns the whole partition — the caller then cannot
+        silently truncate. An ``int`` limit returns a single most-recent-first
+        page starting at ``offset`` plus the next offset for continuation.
 
-            # Use query_metadata_documents() to list memories
-            results = self.backend.query_metadata_documents(
-                schema=self.collection_name,
-                yql=yql,
-                hits=limit or 100,
-            )
+        A backend error propagates — a swallowed outage would read as an
+        empty partition and truncate the walk.
+        """
+        where_clause = self._list_where_clause(filters)
 
-            # Convert to mem0 format
-            mem0_results = []
-            for result in results:
-                created_at = _created_at_iso(result.get("created_at"))
-
-                mem0_results.append(
-                    BackendSearchResult(
-                        id=result.get("id"),
-                        score=0.0,
-                        payload=_build_read_payload(
-                            data=result.get("text", result.get("content", "")),
-                            user_id=result.get("user_id", ""),
-                            agent_id=result.get("agent_id", ""),
-                            metadata_raw=result.get("metadata_"),
-                            created_at=created_at,
-                        ),
-                    )
+        if limit is None:
+            all_results: List[BackendSearchResult] = []
+            seen_ids: set = set()
+            page_offset = 0
+            while True:
+                page = self._list_page(
+                    where_clause,
+                    limit=self._LIST_PAGE_SIZE,
+                    offset=page_offset,
+                    order_by=self._ORDER_WALK,
                 )
+                fresh = [r for r in page if r.id not in seen_ids]
+                if page and not fresh:
+                    # A full page of already-seen rows means the offset never
+                    # advanced — a truncated walk would silently drop the tail,
+                    # so fail loud instead.
+                    raise RuntimeError(
+                        f"list pagination did not advance at offset {page_offset} "
+                        f"for {self.collection_name}"
+                    )
+                for row in fresh:
+                    seen_ids.add(row.id)
+                    all_results.append(row)
+                if len(page) < self._LIST_PAGE_SIZE:
+                    break
+                page_offset += self._LIST_PAGE_SIZE
+            return (all_results, None)
 
-            # Return as tuple (results, next_offset)
-            return (mem0_results, None)
-        except Exception as e:
-            logger.error(f"List failed: {e}")
-            return ([], None)
+        results = self._list_page(
+            where_clause, limit=limit, offset=offset, order_by=self._ORDER_BOUNDED
+        )
+        next_offset = offset + len(results) if len(results) == limit else None
+        return (results, next_offset)
+
+    @staticmethod
+    def _list_where_clause(filters: Optional[Dict[str, Any]]) -> str:
+        yql_conditions = ["true"]  # Start with match-all
+        if filters:
+            if "user_id" in filters:
+                yql_conditions.append(
+                    f"user_id contains {_yql_quote(filters['user_id'])}"
+                )
+            if "agent_id" in filters:
+                yql_conditions.append(
+                    f"agent_id contains {_yql_quote(filters['agent_id'])}"
+                )
+            if filters.get("session_id"):
+                yql_conditions.append(
+                    f"session_id contains {_yql_quote(filters['session_id'])}"
+                )
+            if filters.get("subject_key"):
+                yql_conditions.append(
+                    f"subject_key contains {_yql_quote(filters['subject_key'])}"
+                )
+        return " and ".join(yql_conditions)
+
+    def _list_page(
+        self, where_clause: str, *, limit: int, offset: int, order_by: str
+    ) -> List[BackendSearchResult]:
+        # Page size and offset ride as the backend's hits/offset parameters,
+        # NOT as YQL limit/offset: a YQL limit pins the query offset back to 0
+        # (so every page repeats the first), and a YQL offset is bounded by
+        # hits (so the second page lands outside the window and comes back
+        # empty). id is a stable, unique sort key that offset paging never
+        # skips or duplicates a row across.
+        yql = (
+            f"select * from {self.collection_name} where {where_clause} "
+            f"order by {order_by}"
+        )
+        results = self.backend.query_metadata_documents(
+            schema=self.collection_name,
+            yql=yql,
+            hits=limit,
+            offset=offset,
+        )
+
+        mem0_results: List[BackendSearchResult] = []
+        for result in results:
+            created_at = _created_at_iso(result.get("created_at"))
+            mem0_results.append(
+                BackendSearchResult(
+                    id=result.get("id"),
+                    score=0.0,
+                    payload=_build_read_payload(
+                        data=result.get("text", result.get("content", "")),
+                        user_id=result.get("user_id", ""),
+                        agent_id=result.get("agent_id", ""),
+                        metadata_raw=result.get("metadata_"),
+                        created_at=created_at,
+                    ),
+                )
+            )
+        return mem0_results
 
     def reset(self) -> None:
         """Reset collection"""

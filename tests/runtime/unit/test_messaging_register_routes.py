@@ -17,7 +17,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from cogniverse_core.messaging_auth import InviteTokenManager
+from cogniverse_core.messaging_auth import InviteTokenManager, UserTenantMapper
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.routers import admin as admin_router
 from tests.utils.memory_store import InMemoryConfigStore
@@ -26,6 +26,17 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 class _PartitionedMemory:
+    """Partition-faithful Mem0 double.
+
+    Mirrors the real store contract that matters for user-tenant mapping:
+    Mem0 caps an unfiltered ``get_all`` at 100 rows, and a promoted-field
+    (``session_id``) filter is applied server-side. Without the filter a
+    mapping past the 100th inserted row is invisible; with it the exact row
+    comes back regardless of how full the partition is.
+    """
+
+    _DEFAULT_PAGE = 100
+
     def __init__(self):
         self.store = {}
         self.fail_writes = False
@@ -40,10 +51,20 @@ class _PartitionedMemory:
         )
         return "mem_1"
 
-    def get_all_memories(self, tenant_id, agent_name):
+    def get_all_memories(
+        self, tenant_id, agent_name, filters=None, limit=_DEFAULT_PAGE, **kwargs
+    ):
         if self.fail_reads:
             raise ConnectionError("mem0 down")
-        return self.store.get((tenant_id, agent_name), [])
+        rows = list(self.store.get((tenant_id, agent_name), []))
+        if filters and filters.get("session_id") is not None:
+            wanted = filters["session_id"]
+            rows = [
+                r for r in rows if (r.get("metadata") or {}).get("session_id") == wanted
+            ]
+        if limit is not None:
+            rows = rows[:limit]
+        return rows
 
 
 class _OutageStore(InMemoryConfigStore):
@@ -303,3 +324,24 @@ async def test_different_tokens_register_in_parallel():
     finally:
         admin_router.set_system_memory_factory(None)
         admin_router._register_locks.clear()
+
+
+def test_resolve_finds_mapping_beyond_the_hundred_row_page(harness):
+    """A registered user past the 100th mapping still resolves.
+
+    Mem0's unfiltered ``get_all`` returns a capped 100-row page, so a
+    linear scan misses any mapping past it. ``get_tenant_id`` must narrow
+    server-side by the stamped session key, not enumerate-and-scan.
+    """
+    _, _, memory = harness
+    mapper = UserTenantMapper(memory)
+
+    for i in range(1, 102):
+        assert mapper.register_user("telegram", str(i), f"acme:t{i}") is True
+
+    # The 101st mapping sits past Mem0's default page; it must still resolve.
+    assert mapper.get_tenant_id("telegram", "101") == "acme:t101"
+    # And a user well inside the first page resolves to its own tenant.
+    assert mapper.get_tenant_id("telegram", "7") == "acme:t7"
+    # An unregistered user is genuinely None, not a scan artifact.
+    assert mapper.get_tenant_id("telegram", "9999") is None
