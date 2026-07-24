@@ -10,6 +10,7 @@ search.
 """
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -479,3 +480,61 @@ class TestAgentBehaviorConfigWiring:
         assert captured["deps"].thinking_enabled is False
         assert captured["deps"].visual_analysis_enabled is False
         assert captured["deps"].tenant_id == "acme:acme"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestGatewayTopKForwarding:
+    """A caller's top_k must reach the downstream agent through the gateway
+    routing branch. It was dropped there — _execute_gateway_task read
+    context['top_k'] (a key nobody writes) and defaulted to 10, so a request
+    for 100 results was silently capped at 10."""
+
+    async def test_dispatch_forwards_top_k_through_gateway_branch(self, dispatcher):
+        d = dispatcher
+        gateway_agent = MagicMock()
+        gateway_agent.capabilities = {"gateway"}
+        d._registry.get_agent.return_value = gateway_agent
+
+        d.consult_egress_policy = lambda *a, **k: None
+        d._verify_routing_egress = lambda *a, **k: None
+        d._get_rail_chains = lambda tenant_id: None
+        d._spawn_background = lambda coro: coro.close()
+
+        routed = SimpleNamespace(
+            complexity="simple",
+            routed_to="search_agent",
+            modality="video",
+            generation_type="raw",
+            confidence=0.9,
+        )
+
+        class _GW:
+            async def _process_impl(self, _input):
+                return routed
+
+        async def _build_gw(_tenant_id):
+            return _GW()
+
+        d._get_or_build_gateway_agent = _build_gw
+
+        seen = {}
+
+        async def _downstream(
+            agent_name, query, tenant_id, top_k, conversation_history
+        ):
+            seen["top_k"] = top_k
+            seen["agent_name"] = agent_name
+            return {"status": "success", "message": "ok"}
+
+        d._execute_downstream_agent = _downstream
+
+        await d.dispatch(
+            agent_name="gateway_agent",
+            query="find every matching clip",
+            context={"tenant_id": "acme:acme"},
+            top_k=37,
+        )
+
+        assert seen["agent_name"] == "search_agent"
+        assert seen["top_k"] == 37  # not the dropped default of 10

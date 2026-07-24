@@ -1052,7 +1052,7 @@ class AgentDispatcher:
         }
 
         if capabilities & {"gateway", "routing", "intelligent_routing"}:
-            result = await self._execute_gateway_task(query, context, tenant_id)
+            result = await self._execute_gateway_task(query, context, tenant_id, top_k)
         elif "orchestration" in capabilities:
             result = await self._execute_orchestration_task(query, context, tenant_id)
         elif capabilities & {"search", "video_search", "retrieval"}:
@@ -1989,6 +1989,7 @@ class AgentDispatcher:
         query: str,
         context: Dict[str, Any],
         tenant_id: str,
+        top_k: int = 10,
     ) -> Dict[str, Any]:
         """Route query through GatewayAgent for triage.
 
@@ -2046,7 +2047,7 @@ class AgentDispatcher:
                 agent_name=result.routed_to,
                 query=query,
                 tenant_id=tenant_id,
-                top_k=context.get("top_k", 10),
+                top_k=top_k,
                 conversation_history=conversation_history,
             )
             final = {
