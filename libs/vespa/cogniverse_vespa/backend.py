@@ -1592,6 +1592,12 @@ class VespaBackend(Backend):
             query_params = {
                 "hits": kwargs.get("hits", 100),
             }
+            # Forward paging offset as Vespa's native query parameter. A YQL
+            # `offset` alone is bounded by `hits`, so the second page of a
+            # walk lands outside the hits window and returns empty; the
+            # explicit parameter pages past it.
+            if kwargs.get("offset"):
+                query_params["offset"] = kwargs["offset"]
 
             if yql:
                 query_params["yql"] = yql
