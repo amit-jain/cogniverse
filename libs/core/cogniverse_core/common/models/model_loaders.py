@@ -755,6 +755,13 @@ def _is_colqwen3(model_name: str) -> bool:
     return "colqwen3" in name or "tomoro" in name
 
 
+def is_remote_only_model(model_name: str) -> bool:
+    """True when the model can only be served remotely (vLLM sidecar) —
+    in-process loading raises. Public capability probe so callers can gate
+    on the contract instead of matching the error message."""
+    return _is_colqwen3(model_name)
+
+
 def _raise_if_qwen3_vl(model_name: str, error: Exception) -> None:
     """Re-raise a local-load failure as the clear remote-only error when it is
     the ``qwen3_vl`` unsupported-architecture signature."""

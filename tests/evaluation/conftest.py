@@ -4,6 +4,7 @@ Pytest configuration and fixtures for evaluation framework tests.
 
 import json
 import logging
+import os
 
 # Add project root to path
 import sys
@@ -28,7 +29,14 @@ eval_logger = logging.getLogger(__name__)
 
 # Path to schema JSON files
 EVAL_SCHEMAS_DIR = Path(__file__).resolve().parents[2] / "configs" / "schemas"
-EVAL_COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
+# The heavy eval suites (test_end_to_end, seeded-document fixtures) encode
+# in-process with this model. The production default is remote-only (vLLM
+# sidecar), so those suites gate at runtime via eval_colpali_model —
+# override with a locally loadable model to run them on a dev host, e.g.
+# EVAL_COLPALI_MODEL=vidore/colSmol-500M.
+EVAL_COLPALI_MODEL = os.environ.get(
+    "EVAL_COLPALI_MODEL", "TomoroAI/tomoro-colqwen3-embed-4b"
+)
 # Schema name MUST match what ``VespaSearchBackend`` constructs from the
 # tenant_id used in tests. The runtime builds
 # ``f"{base_schema_name}_{tenant_id.replace(':', '_')}"`` (see
@@ -504,9 +512,22 @@ def eval_vespa_instance(shared_vespa):  # noqa: F811
 
 @pytest.fixture(scope="module")
 def eval_colpali_model():
-    """Load ColPali model once for evaluation integration tests."""
-    from cogniverse_core.common.models import get_or_load_model
+    """Load ColPali model once for evaluation integration tests.
+
+    Declares its dependency instead of erroring: the suite needs an
+    IN-PROCESS encoder, and the default eval model is remote-only (vLLM
+    sidecar). Skip with the override instructions rather than failing every
+    consumer with a load error.
+    """
+    from cogniverse_core.common.models import get_or_load_model, is_remote_only_model
     from cogniverse_core.query.encoders import QueryEncoderFactory
+
+    if is_remote_only_model(EVAL_COLPALI_MODEL):
+        pytest.skip(
+            f"{EVAL_COLPALI_MODEL} is remote-only (vLLM embedding sidecar); "
+            "these suites encode in-process — set EVAL_COLPALI_MODEL to a "
+            "locally loadable model (e.g. vidore/colSmol-500M) to run them"
+        )
 
     config = {
         "colpali_model": EVAL_COLPALI_MODEL,
