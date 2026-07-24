@@ -13,8 +13,10 @@ content.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -34,7 +36,7 @@ pytestmark = [pytest.mark.integration]
 TENANT = "acme:acme"
 
 
-def _build_manager(*, shared_memory_vespa, shared_denseon) -> Mem0MemoryManager:
+def _build_manager_with_cm(*, shared_memory_vespa, shared_denseon):
     Mem0MemoryManager._instances.clear()
     BackendRegistry._backend_instances.clear()
     config_store = VespaConfigStore(
@@ -63,14 +65,19 @@ def _build_manager(*, shared_memory_vespa, shared_denseon) -> Mem0MemoryManager:
         config_manager=cm,
         schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
     )
+    return mm, cm
+
+
+def _build_manager(*, shared_memory_vespa, shared_denseon) -> Mem0MemoryManager:
+    mm, _cm = _build_manager_with_cm(
+        shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
+    )
     return mm
 
 
 def _dispatcher_with_real_store(mm) -> AgentDispatcher:
     """Real dispatcher whose conversation store is a real ConversationStore
     on the real Mem0 manager — no in-memory double."""
-    from unittest.mock import MagicMock
-
     config_manager = MagicMock()
     d = AgentDispatcher(
         agent_registry=MagicMock(),
@@ -78,6 +85,26 @@ def _dispatcher_with_real_store(mm) -> AgentDispatcher:
         schema_loader=MagicMock(),
     )
     d._conversation_store_factory = lambda tenant_id: ConversationStore(mm, tenant_id)
+    agent = MagicMock()
+    agent.capabilities = {"search"}
+    d._registry.get_agent.return_value = agent
+    d._spawn_background = lambda coro: coro.close()
+    return d
+
+
+def _dispatcher_with_real_construction(cm) -> AgentDispatcher:
+    """Real dispatcher with NO store factory injected — it must build its own
+    ConversationStore + Mem0MemoryManager from the real ConfigManager, the same
+    way the served runtime does. Exercises the production construction path that
+    the seam tests bypass."""
+    d = AgentDispatcher(
+        agent_registry=MagicMock(),
+        config_manager=cm,
+        schema_loader=MagicMock(),
+    )
+    # factory deliberately left None: _build_conversation_store must construct
+    # the real manager itself.
+    assert d._conversation_store_factory is None
     agent = MagicMock()
     agent.capabilities = {"search"}
     d._registry.get_agent.return_value = agent
@@ -221,7 +248,6 @@ async def test_dispatch_degrades_when_memory_unavailable():
     The store build raises here (as get_all_memories does on a real Mem0
     outage), so this exercises the dispatcher's real degrade path with no
     infrastructure needed."""
-    from unittest.mock import MagicMock
 
     d = AgentDispatcher(
         agent_registry=MagicMock(),
@@ -244,3 +270,144 @@ async def test_dispatch_degrades_when_memory_unavailable():
 
     assert result["message"] == "answered anyway"
     assert seen[0] == []  # degraded to no history, still ran
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_dispatch_bounded_when_history_load_hangs(monkeypatch):
+    """A hung Mem0 must not stall the reply. The history load is time-bounded,
+    so once the budget elapses the agent answers with no history rather than
+    waiting on the backend. No infrastructure needed — a hanging store stub
+    drives the real bound."""
+    from cogniverse_runtime import agent_dispatcher as _ad
+
+    monkeypatch.setattr(_ad, "CONVERSATION_IO_TIMEOUT_S", 0.2)
+
+    class _HangingLoadStore:
+        def get_history(self, context_id, max_turns=10):
+            time.sleep(2.0)  # far past the 0.2s budget
+            return [{"role": "user", "content": "should never be seen"}]
+
+        def store_turn(self, *args, **kwargs):
+            pass
+
+    d = AgentDispatcher(
+        agent_registry=MagicMock(),
+        config_manager=MagicMock(),
+        schema_loader=MagicMock(),
+    )
+    d._conversation_store_factory = lambda _tenant: _HangingLoadStore()
+    agent = MagicMock()
+    agent.capabilities = {"search"}
+    d._registry.get_agent.return_value = agent
+    d._spawn_background = lambda coro: coro.close()
+    seen: list = []
+    _reply_with(d, {"q": "answered without waiting"}, seen)
+
+    start = time.monotonic()
+    result = await _dispatch(d, "q", f"chat{uuid.uuid4().hex[:10]}")
+    elapsed = time.monotonic() - start
+
+    assert result["message"] == "answered without waiting"
+    assert seen[0] == []  # degraded to no history when the load timed out
+    assert elapsed < 1.5  # bounded well under the 2s hang
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_dispatch_bounded_when_history_save_hangs(monkeypatch):
+    """A hung save must not stall the reply either. The save is awaited (so the
+    next turn reads its own writes) but time-bounded, so a stuck store_turn
+    drops the turns and returns instead of holding the reply open."""
+    from cogniverse_runtime import agent_dispatcher as _ad
+
+    monkeypatch.setattr(_ad, "CONVERSATION_IO_TIMEOUT_S", 0.2)
+
+    class _HangingSaveStore:
+        def get_history(self, context_id, max_turns=10):
+            return []
+
+        def store_turn(self, *args, **kwargs):
+            time.sleep(2.0)  # far past the 0.2s budget
+
+    d = AgentDispatcher(
+        agent_registry=MagicMock(),
+        config_manager=MagicMock(),
+        schema_loader=MagicMock(),
+    )
+    d._conversation_store_factory = lambda _tenant: _HangingSaveStore()
+    agent = MagicMock()
+    agent.capabilities = {"search"}
+    d._registry.get_agent.return_value = agent
+    d._spawn_background = lambda coro: coro.close()
+    seen: list = []
+    _reply_with(d, {"q": "answered anyway"}, seen)
+
+    start = time.monotonic()
+    result = await _dispatch(d, "q", f"chat{uuid.uuid4().hex[:10]}")
+    elapsed = time.monotonic() - start
+
+    assert result["message"] == "answered anyway"
+    assert elapsed < 1.5  # save bounded, reply not stalled by the hung write
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_history_round_trips_through_real_construction(
+    shared_memory_vespa, shared_denseon, monkeypatch
+):
+    """With NO store factory injected, the dispatcher builds its own real
+    ConversationStore + Mem0MemoryManager from the ConfigManager (the served
+    runtime's path, via lazy_init_memory) and history still round-trips: the
+    second dispatch sees the exact turns the first one persisted through the
+    dispatcher-built store.
+
+    lazy_init_memory reads llm_config.primary from the config store and the
+    Vespa config port + LLM endpoint from the environment — provide them
+    exactly as the deployment does (the llm_config seam is the same one
+    memory_init's own unit tests stub), then let the real construction run
+    against real Vespa + DenseOn.
+    """
+    from cogniverse_runtime import memory_init
+
+    mm, cm = _build_manager_with_cm(
+        shared_memory_vespa=shared_memory_vespa, shared_denseon=shared_denseon
+    )
+    monkeypatch.setattr(
+        memory_init,
+        "get_config",
+        lambda tenant_id, config_manager: {
+            "llm_config": {
+                "primary": {"model": get_llm_model(), "api_base": get_llm_base_url()}
+            }
+        },
+    )
+    monkeypatch.setenv("VESPA_CONFIG_PORT", str(shared_memory_vespa["config_port"]))
+    monkeypatch.setenv("LLM_ENDPOINT", get_llm_base_url())
+    d = _dispatcher_with_real_construction(cm)
+    # The non-seam manager resolves its own per-tenant schema
+    # (agent_memories_{canonical.replace(':','_')}); the fixture provisions
+    # agent_memories_test_tenant, so dispatch under the tenant that maps there.
+    provisioned_tenant = "test:tenant"
+    ctx = f"chat{uuid.uuid4().hex[:10]}"
+    seen: list = []
+    _reply_with(
+        d,
+        {"what is colpali": "a late-interaction model", "how many dims": "128"},
+        seen,
+    )
+
+    r1 = await _dispatch(d, "what is colpali", ctx, tenant=provisioned_tenant)
+    assert r1["message"] == "a late-interaction model"
+    assert seen[0] == []
+
+    r2 = await _dispatch(d, "how many dims", ctx, tenant=provisioned_tenant)
+    assert r2["message"] == "128"
+    # seen[1] is what the second dispatch's own _build_conversation_store loaded
+    # from real Mem0 — proving the non-seam construction round-trips.
+    assert seen[1] == [
+        {"role": "user", "content": "what is colpali"},
+        {"role": "assistant", "content": "a late-interaction model"},
+    ]

@@ -56,6 +56,12 @@ class ConversationStore:
                     meta = json.loads(meta)
                 except (ValueError, TypeError):
                     continue
+            # Mem0 returns metadata as a dict (or the JSON string handled above).
+            # A row whose metadata is any other shape is not one of ours — skip
+            # it rather than let meta.get(...) raise and lose the whole history
+            # to one malformed row.
+            if not isinstance(meta, dict):
+                continue
             if meta.get("type") != "conversation":
                 continue
             if str(meta.get("context_id")) != ctx:
@@ -72,7 +78,14 @@ class ConversationStore:
             tag = f"[{role}] "
             if text.startswith(tag):
                 text = text[len(tag) :]
-            collected.append((meta.get("seq", 0.0), {"role": role, "content": text}))
+            # seq orders turns on read; store_turn always writes a float. A row
+            # whose seq is a foreign/corrupt non-number is dropped rather than
+            # crash the sort — a mixed str/float key set is unorderable.
+            try:
+                seq = float(meta.get("seq", 0.0))
+            except (ValueError, TypeError):
+                continue
+            collected.append((seq, {"role": role, "content": text}))
 
         collected.sort(key=lambda item: item[0])
         return [turn for _seq, turn in collected[-max_turns:]]
