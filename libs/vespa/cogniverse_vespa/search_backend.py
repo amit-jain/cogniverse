@@ -163,7 +163,13 @@ _LATENCY_WINDOW = 1000
 
 @dataclass
 class SearchMetrics:
-    """Comprehensive search metrics"""
+    """Comprehensive search metrics.
+
+    Thread-safe: searches record from pool worker threads concurrently, so
+    every mutation runs under a lock (an unguarded ``+=`` loses counts) and
+    the percentile sorts a locked snapshot (sorting the live deque while
+    another thread appends raises).
+    """
 
     total_searches: int = 0
     successful_searches: int = 0
@@ -178,6 +184,9 @@ class SearchMetrics:
     )
     strategy_usage: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
     error_types: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
 
     def record_search(
         self,
@@ -187,18 +196,19 @@ class SearchMetrics:
         error: Optional[Exception] = None,
     ):
         """Record search metrics"""
-        self.total_searches += 1
-        self.total_latency_ms += latency_ms
-        self.search_latencies.append(latency_ms)
+        with self._lock:
+            self.total_searches += 1
+            self.total_latency_ms += latency_ms
+            self.search_latencies.append(latency_ms)
 
-        if success:
-            self.successful_searches += 1
-        else:
-            self.failed_searches += 1
-            if error:
-                self.error_types[type(error).__name__] += 1
+            if success:
+                self.successful_searches += 1
+            else:
+                self.failed_searches += 1
+                if error:
+                    self.error_types[type(error).__name__] += 1
 
-        self.strategy_usage[strategy] += 1
+            self.strategy_usage[strategy] += 1
 
     @property
     def success_rate(self) -> float:
@@ -217,9 +227,10 @@ class SearchMetrics:
     @property
     def p95_latency_ms(self) -> float:
         """Calculate 95th percentile latency"""
-        if not self.search_latencies:
-            return 0.0
-        sorted_latencies = sorted(self.search_latencies)
+        with self._lock:
+            if not self.search_latencies:
+                return 0.0
+            sorted_latencies = sorted(self.search_latencies)
         idx = int(len(sorted_latencies) * 0.95)
         return sorted_latencies[min(idx, len(sorted_latencies) - 1)]
 
