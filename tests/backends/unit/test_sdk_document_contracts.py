@@ -193,3 +193,98 @@ class TestWorkflowRecordsTolerateSchemaDrift:
         )
         payload = {**wt.to_dict(), "future_field": "x"}
         assert WorkflowTemplate.from_dict(payload) == wt
+
+
+class TestDocumentSchemaFieldMapping:
+    """The write-side translation layer: a generic Document serializes into
+    one schema's declared field names via DocumentFieldMapping. Unmapped
+    generic fields are omitted — schemas only ever receive fields they
+    declare, which is what makes a generic Document feedable at all."""
+
+    def _mapping(self, **overrides):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        base = dict(
+            id="document_id",
+            title="document_title",
+            text_content="full_text",
+            content_type="document_type",
+            created_at="creation_timestamp",
+            created_at_format="epoch",
+            embeddings={"embedding": "embedding"},
+        )
+        base.update(overrides)
+        return DocumentFieldMapping(**base)
+
+    def test_maps_core_fields_to_schema_names_exactly(self):
+        doc = Document(
+            id="doc-1",
+            content_type=ContentType.TEXT,
+            title="My Title",
+            text_content="body text",
+            created_at=1700000000,
+            updated_at=1700000000,
+        )
+        out = doc.to_schema_fields(self._mapping())
+        assert out == {
+            "document_id": "doc-1",
+            "document_title": "My Title",
+            "full_text": "body text",
+            "document_type": "text",
+            "creation_timestamp": 1700000000,
+        }
+
+    def test_unmapped_generic_fields_are_omitted(self):
+        doc = Document(
+            id="doc-1",
+            description="never fed",
+            content_id="also never fed",
+            title="t",
+        )
+        out = doc.to_schema_fields(self._mapping(description=None, content_id=None))
+        assert "never fed" not in out.values()
+        assert "also never fed" not in out.values()
+
+    def test_iso_created_at_format(self):
+        doc = Document(id="d", created_at=1700000000, updated_at=1700000000)
+        out = doc.to_schema_fields(
+            self._mapping(created_at="created_at", created_at_format="iso")
+        )
+        assert out["created_at"] == "2023-11-14T22:13:20+00:00"
+
+    def test_embeddings_map_wrapped_and_raw(self):
+        doc = Document(id="d")
+        doc.add_embedding("embedding", [1.0, 2.0])
+        doc.embeddings["raw"] = [3.0]
+        out = doc.to_schema_fields(
+            self._mapping(embeddings={"embedding": "vec_a", "raw": "vec_b"})
+        )
+        assert out["vec_a"] == [1.0, 2.0]
+        assert out["vec_b"] == [3.0]
+
+    def test_metadata_passes_through_and_core_fields_win(self):
+        doc = Document(
+            id="d",
+            title="real title",
+            metadata={"page_count": 3, "document_title": "stale metadata copy"},
+        )
+        out = doc.to_schema_fields(self._mapping())
+        assert out["page_count"] == 3
+        assert out["document_title"] == "real title"
+
+    def test_include_metadata_false_drops_metadata(self):
+        doc = Document(id="d", metadata={"page_count": 3})
+        out = doc.to_schema_fields(self._mapping(include_metadata=False))
+        assert "page_count" not in out
+
+    def test_mapping_from_dict_rejects_unknown_keys(self):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        with pytest.raises(ValueError, match="typo_key"):
+            DocumentFieldMapping.from_dict({"typo_key": "x"})
+
+    def test_mapping_rejects_bad_created_at_format(self):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        with pytest.raises(ValueError, match="created_at_format"):
+            DocumentFieldMapping(created_at_format="unix")
