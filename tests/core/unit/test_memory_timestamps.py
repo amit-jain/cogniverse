@@ -128,3 +128,32 @@ def test_to_epoch_seconds_numpy_nan_is_none():
 
     assert to_epoch_seconds(np.float64("nan")) is None
     assert to_epoch_seconds(np.float32("inf")) is None
+
+
+class TestDatetimeInput:
+    """datetime objects are a valid created_at — dropping them to None made
+    the write path silently substitute now() for a caller-supplied value."""
+
+    def test_aware_datetime_converts_exactly(self):
+        from datetime import datetime, timezone
+
+        from cogniverse_core.memory._timestamps import to_epoch_seconds
+
+        dt = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        assert to_epoch_seconds(dt) == 1767225600
+
+    def test_naive_datetime_treated_as_utc(self):
+        from datetime import datetime
+
+        from cogniverse_core.memory._timestamps import to_epoch_seconds
+
+        dt = datetime(2026, 1, 1, 0, 0, 0)
+        assert to_epoch_seconds(dt) == 1767225600
+
+    def test_epoch_to_iso_accepts_datetime(self):
+        from datetime import datetime, timezone
+
+        from cogniverse_core.memory._timestamps import epoch_to_iso_utc
+
+        dt = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        assert epoch_to_iso_utc(dt) == "2026-01-01T00:00:00+00:00"

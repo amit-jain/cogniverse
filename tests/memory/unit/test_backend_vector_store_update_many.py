@@ -215,3 +215,43 @@ class TestCreatedAtNormalization:
             "2024-01-01T00:00:00+00:00"
         )
         assert _created_at_iso(None) is None
+
+
+class TestReadFaultContract:
+    """Backend failures during reads must raise — search() returning [] and
+    get() returning None on an outage are indistinguishable from genuine
+    absence, silently disabling memory retrieval. delete() already raises."""
+
+    def _store(self):
+        from unittest.mock import MagicMock
+
+        return BackendVectorStore(
+            collection_name="agent_memories_t",
+            backend_client=MagicMock(),
+            embedding_model_dims=768,
+            tenant_id="t",
+            profile="agent_memories",
+        )
+
+    @pytest.mark.unit
+    def test_search_raises_on_backend_failure(self):
+        store = self._store()
+        store.backend.search.side_effect = ConnectionError("backend down")
+
+        with pytest.raises(ConnectionError):
+            store.search("q", vectors=[0.1] * 768, limit=3)
+
+    @pytest.mark.unit
+    def test_get_raises_on_backend_failure(self):
+        store = self._store()
+        store.backend.get_document.side_effect = ConnectionError("backend down")
+
+        with pytest.raises(ConnectionError):
+            store.get("mem-1")
+
+    @pytest.mark.unit
+    def test_get_returns_none_for_genuine_not_found(self):
+        store = self._store()
+        store.backend.get_document.return_value = None
+
+        assert store.get("missing-id") is None
