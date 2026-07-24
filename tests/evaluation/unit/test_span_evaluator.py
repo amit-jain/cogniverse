@@ -10,6 +10,43 @@ from cogniverse_evaluation.span_evaluator import SpanEvaluator
 pytestmark = pytest.mark.unit
 
 
+def _sample_spans_df() -> pd.DataFrame:
+    """Sample formatted-span frame for the evaluate_spans tests (relocated here
+    from the production SpanEvaluator — it had no production caller)."""
+    return pd.DataFrame(
+        [
+            {
+                "span_id": "span_001",
+                "trace_id": "trace_001",
+                "operation_name": "search_service.search",
+                "attributes": {
+                    "query": "person wearing winter clothes outdoors in daylight",
+                    "is_test_query": True,
+                    "dataset_id": "golden_test_v1",
+                },
+                "outputs": {
+                    "results": [
+                        {"video_id": "v_-IMXSEIabMM", "score": 0.85},
+                        {"video_id": "v_HWFrgou1LD2Q", "score": 0.72},
+                    ]
+                },
+            },
+            {
+                "span_id": "span_002",
+                "trace_id": "trace_002",
+                "operation_name": "search_service.search",
+                "attributes": {"query": "industrial machinery"},
+                "outputs": {
+                    "results": [
+                        {"video_id": "v_7qOJRNOtTV4", "score": 0.91},
+                        {"video_id": "v_J0nA4VgnoCo", "score": 0.88},
+                    ]
+                },
+            },
+        ]
+    )
+
+
 @pytest.fixture
 def provider():
     mock = MagicMock()
@@ -29,11 +66,6 @@ def evaluator(provider):
 
 
 class TestSpanEvaluator:
-    # `_create_mock_spans_df()` is a sample-data builder used by the
-    # evaluate_spans tests below. It is NOT used on the live path: production
-    # `get_recent_spans` returns an empty DataFrame (not fabricated spans) when
-    # Phoenix has no spans or errors, so the quality monitor never scores
-    # fiction — see TestGetRecentSpans.
     def test_project_name_stored(self, evaluator):
         assert evaluator.project_name == "test-project"
 
@@ -210,7 +242,7 @@ class TestGetRecentSpans:
 class TestEvaluateSpans:
     @pytest.mark.asyncio
     async def test_runs_all_evaluators_by_default(self, evaluator):
-        df = evaluator._create_mock_spans_df()
+        df = _sample_spans_df()
         results = await evaluator.evaluate_spans(df)
         assert len(results) > 0
         for eval_name, eval_df in results.items():
@@ -220,14 +252,14 @@ class TestEvaluateSpans:
 
     @pytest.mark.asyncio
     async def test_specific_evaluator_names_used(self, evaluator):
-        df = evaluator._create_mock_spans_df()
+        df = _sample_spans_df()
         results = await evaluator.evaluate_spans(df, evaluator_names=["relevance"])
         assert "relevance" in results
         assert len(results) == 1
 
     @pytest.mark.asyncio
     async def test_unknown_evaluator_skipped(self, evaluator):
-        df = evaluator._create_mock_spans_df()
+        df = _sample_spans_df()
         results = await evaluator.evaluate_spans(
             df, evaluator_names=["nonexistent_evaluator"]
         )
@@ -235,7 +267,7 @@ class TestEvaluateSpans:
 
     @pytest.mark.asyncio
     async def test_evaluator_error_recorded_with_negative_score(self, evaluator):
-        df = evaluator._create_mock_spans_df()
+        df = _sample_spans_df()
 
         # Make the relevance evaluator throw
         mock_rel_evaluator = MagicMock()
@@ -249,7 +281,7 @@ class TestEvaluateSpans:
 
     @pytest.mark.asyncio
     async def test_golden_dataset_evaluator_runs(self, evaluator):
-        df = evaluator._create_mock_spans_df()
+        df = _sample_spans_df()
         results = await evaluator.evaluate_spans(df, evaluator_names=["golden_dataset"])
         assert "golden_dataset" in results
         assert len(results["golden_dataset"]) == len(df)
@@ -268,7 +300,7 @@ class TestEvaluateSpans:
     @pytest.mark.asyncio
     async def test_score_values_in_valid_range(self, evaluator):
         """Relevance evaluator scores should be 0–1 (not error = -1)."""
-        df = evaluator._create_mock_spans_df()
+        df = _sample_spans_df()
         results = await evaluator.evaluate_spans(df, evaluator_names=["relevance"])
         scores = results["relevance"]["score"]
         for score in scores:
@@ -282,20 +314,17 @@ class TestRunEvaluationPipeline:
             return_value=pd.DataFrame()
         )
 
-        with patch.object(
-            evaluator, "_create_mock_spans_df", return_value=pd.DataFrame()
-        ):
-            result = await evaluator.run_evaluation_pipeline(
-                hours=1,
-                upload_evaluations=False,
-            )
+        result = await evaluator.run_evaluation_pipeline(
+            hours=1,
+            upload_evaluations=False,
+        )
         assert "error" in result
 
     @pytest.mark.asyncio
     async def test_pipeline_returns_summary_structure(self, evaluator):
         # Inject sample spans explicitly — the live get_recent_spans returns
         # empty (no fabrication), so the pipeline is fed via a patched fetch.
-        sample = evaluator._create_mock_spans_df()
+        sample = _sample_spans_df()
         with patch.object(
             evaluator, "get_recent_spans", AsyncMock(return_value=sample)
         ):
@@ -316,7 +345,7 @@ class TestRunEvaluationPipeline:
 
     @pytest.mark.asyncio
     async def test_pipeline_summary_contains_mean_score(self, evaluator):
-        sample = evaluator._create_mock_spans_df()
+        sample = _sample_spans_df()
         with patch.object(
             evaluator, "get_recent_spans", AsyncMock(return_value=sample)
         ):
@@ -336,7 +365,7 @@ class TestRunEvaluationPipeline:
     async def test_upload_evaluations_called_when_requested(self, evaluator):
         evaluator.provider.telemetry.annotations = MagicMock()
         evaluator.provider.telemetry.annotations.add_annotation = AsyncMock()
-        sample = evaluator._create_mock_spans_df()
+        sample = _sample_spans_df()
 
         with (
             patch.object(evaluator, "get_recent_spans", AsyncMock(return_value=sample)),

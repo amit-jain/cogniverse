@@ -226,40 +226,6 @@ class SpanEvaluator:
                 return None
         return None
 
-    def _create_mock_spans_df(self) -> pd.DataFrame:
-        """Create mock spans data for testing"""
-        mock_spans = [
-            {
-                "span_id": "span_001",
-                "trace_id": "trace_001",
-                "operation_name": "search_service.search",
-                "attributes": {
-                    "query": "person wearing winter clothes outdoors in daylight",
-                    "is_test_query": True,
-                    "dataset_id": "golden_test_v1",
-                },
-                "outputs": {
-                    "results": [
-                        {"video_id": "v_-IMXSEIabMM", "score": 0.85},
-                        {"video_id": "v_HWFrgou1LD2Q", "score": 0.72},
-                    ]
-                },
-            },
-            {
-                "span_id": "span_002",
-                "trace_id": "trace_002",
-                "operation_name": "search_service.search",
-                "attributes": {"query": "industrial machinery"},
-                "outputs": {
-                    "results": [
-                        {"video_id": "v_7qOJRNOtTV4", "score": 0.91},
-                        {"video_id": "v_J0nA4VgnoCo", "score": 0.88},
-                    ]
-                },
-            },
-        ]
-        return pd.DataFrame(mock_spans)
-
     async def evaluate_spans(
         self,
         spans_df: pd.DataFrame,
