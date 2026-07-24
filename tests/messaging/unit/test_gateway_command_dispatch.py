@@ -395,11 +395,11 @@ class TestHandleMessage:
         g.runtime_client.dispatch_agent.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_plain_text_dispatches_to_gateway_agent_with_history(self):
+    async def test_plain_text_dispatches_with_context_id_only(self):
+        """The gateway passes only context_id — the runtime loads and stores
+        this chat's history around the agent call, so the gateway sends no
+        conversation_history and holds no memory connection."""
         g = self._gateway()
-        conv = MagicMock()
-        conv.get_history.return_value = [{"role": "user", "content": "earlier"}]
-        g._get_conversation_manager = MagicMock(return_value=conv)
         update = _message_update(text="find sunsets over water")
 
         await g._handle_message(update, context=None)
@@ -409,14 +409,10 @@ class TestHandleMessage:
             query="find sunsets over water",
             tenant_id="acme:acme",
             context_id="99",
-            conversation_history=[{"role": "user", "content": "earlier"}],
             context={},
         )
         update.message.chat.send_action.assert_awaited_once_with("typing")
         update.message.reply_text.assert_awaited_once_with("the answer")
-        # Both turns stored: the user's query and the assistant's reply.
-        conv.store_turn.assert_any_call("99", "user", "find sunsets over water")
-        conv.store_turn.assert_any_call("99", "assistant", "the answer")
 
     @pytest.mark.asyncio
     async def test_search_command_routes_to_search_agent(self):

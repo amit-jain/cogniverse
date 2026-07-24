@@ -23,7 +23,7 @@
 
 ## Overview
 
-The Messaging module runs a standalone gateway service that bridges Telegram to the Cogniverse runtime. It translates Telegram updates into runtime agent-dispatch calls, formats agent responses back into Telegram messages, and manages user registration (invite tokens) and per-chat conversation history via Mem0. Agent dispatch, wiki, and admin operations go exclusively through the runtime's HTTP API — the auth primitives (`InviteTokenManager`, `UserTenantMapper`) live in `cogniverse_core.messaging_auth` so the runtime can serve registration over HTTP without importing the Telegram stack.
+The Messaging module runs a standalone gateway service that bridges Telegram to the Cogniverse runtime. It translates Telegram updates into runtime agent-dispatch calls, formats agent responses back into Telegram messages, and manages user registration (invite tokens). Agent dispatch, registration, tenant resolution, and per-chat conversation history all go through the runtime's HTTP API — the auth primitives (`InviteTokenManager`, `UserTenantMapper`) live in `cogniverse_core.messaging_auth`, and the runtime loads/saves conversation history itself around each agent call, so the gateway holds no backend connection.
 
 Key responsibilities:
 
@@ -44,13 +44,11 @@ graph TD
     Root --> Gateway["<span style='color:#000'><b>gateway.py</b><br/>MessagingGateway, main() entry point</span>"]
     Root --> CommandRouter["<span style='color:#000'>command_router.py<br/>parse_message(), ParsedCommand</span>"]
     Root --> Auth["<span style='color:#000'>cogniverse_core.messaging_auth<br/>InviteTokenManager, UserTenantMapper</span>"]
-    Root --> Conversation["<span style='color:#000'>conversation.py<br/>ConversationManager (Mem0-backed)</span>"]
     Root --> RuntimeClient["<span style='color:#000'>runtime_client.py<br/>RuntimeClient (async HTTP)</span>"]
     Root --> TelegramHandler["<span style='color:#000'>telegram_handler.py<br/>Response formatting, message chunking</span>"]
 
     Gateway --> CommandRouter
     Gateway --> Auth
-    Gateway --> Conversation
     Gateway --> RuntimeClient
     Gateway --> TelegramHandler
 
@@ -58,7 +56,6 @@ graph TD
     style Gateway fill:#ffcc80,stroke:#ef6c00,color:#000
     style CommandRouter fill:#81d4fa,stroke:#0288d1,color:#000
     style Auth fill:#81d4fa,stroke:#0288d1,color:#000
-    style Conversation fill:#81d4fa,stroke:#0288d1,color:#000
     style RuntimeClient fill:#81d4fa,stroke:#0288d1,color:#000
     style TelegramHandler fill:#81d4fa,stroke:#0288d1,color:#000
 ```
@@ -80,7 +77,6 @@ MessagingGateway(
     webhook_listen: str = "0.0.0.0",  # webhook mode: HTTP server bind address
     webhook_port: int = 8443,         # webhook mode: HTTP server bind port
     webhook_path: str = "",           # webhook mode: URL path Telegram POSTs updates to
-    memory_manager=None,          # Mem0MemoryManager; enables conversation history only
     outbound_poll_seconds: float = 5.0,
 )
 ```
@@ -138,16 +134,7 @@ Alongside inbound handling, the gateway runs a background `_outbound_drain_loop`
 
 ## Conversation History
 
-**Location:** `libs/messaging/cogniverse_messaging/conversation.py`
-
-```python
-ConversationManager(memory_manager, tenant_id: str)
-```
-
-- `get_history(chat_id, max_turns=10) -> List[Dict[str, str]]` — searches Mem0 for turns tagged `[chat:{chat_id}]` and returns `{"role": "user"|"assistant", "content": ...}` entries.
-- `store_turn(chat_id, role, content)` — stores a turn as a Mem0 memory with `metadata={"type": "conversation", "chat_id": ..., "role": ...}`.
-
-Both methods no-op when `memory_manager` is `None` or `memory_manager.memory` is uninitialized.
+Conversation history is **server-side**: the gateway sends only `context_id` (the Telegram chat id) with each dispatch, and the runtime's agent dispatcher loads that context's recent turns before the agent runs and appends the two new turns after (`cogniverse_core.conversation.ConversationStore`, keyed by `(tenant_id, context_id)`). The gateway therefore holds no Mem0 connection and multi-turn memory works in the deployed chart. History is enrichment: a Mem0 outage degrades to no-history (the agent still answers) rather than failing the reply. See [Core → ConversationStore](core.md) and the dispatcher.
 
 ---
 

@@ -41,10 +41,11 @@ class MessagingGateway:
     """Telegram messaging gateway for Cogniverse.
 
     Translates Telegram messages to runtime API calls and sends
-    formatted responses back. Registration and tenant resolution go
-    through the runtime's HTTP API (the runtime owns the token store and
-    the user-tenant mappings); conversation history is Mem0-backed and
-    only active when a memory_manager is injected.
+    formatted responses back. Registration, tenant resolution, and
+    conversation history all live behind the runtime's HTTP API (the
+    runtime owns the token store, the user-tenant mappings, and Mem0), so
+    the gateway holds no backend connection and works in the deployed
+    chart from RUNTIME_URL alone.
     """
 
     _TENANT_CACHE_TTL_SECONDS = 60.0
@@ -59,7 +60,6 @@ class MessagingGateway:
         webhook_listen: str = "0.0.0.0",
         webhook_port: int = 8443,
         webhook_path: str = "",
-        memory_manager=None,
         outbound_poll_seconds: float = 5.0,
     ):
         self.bot_token = bot_token
@@ -71,7 +71,6 @@ class MessagingGateway:
         self.runtime_client = RuntimeClient(runtime_url)
         self._outbound_poll_seconds = outbound_poll_seconds
 
-        self._memory_manager = memory_manager
         self._app: Application = None
         # user_id -> (tenant_id, expiry). Only positive resolves are cached
         # so a fresh registration is visible on the user's next message.
@@ -94,14 +93,6 @@ class MessagingGateway:
                 now + self._TENANT_CACHE_TTL_SECONDS,
             )
         return result
-
-    def _get_conversation_manager(self, tenant_id: str):
-        """Create a ConversationManager for a tenant."""
-        if self._memory_manager is None:
-            return None
-        from cogniverse_messaging.conversation import ConversationManager
-
-        return ConversationManager(self._memory_manager, tenant_id)
 
     async def _handle_start(self, update: Update, context) -> None:
         """Handle /start command — user registration via the runtime.
@@ -205,12 +196,6 @@ class MessagingGateway:
             )
             return
 
-        conv_manager = self._get_conversation_manager(tenant_id)
-        history = []
-        if conv_manager:
-            history = conv_manager.get_history(chat_id)
-            conv_manager.store_turn(chat_id, "user", parsed.query)
-
         await update.message.chat.send_action("typing")
 
         agent_context = {}
@@ -218,23 +203,21 @@ class MessagingGateway:
             agent_context["media_type"] = parsed.media_type
             agent_context["media_file_id"] = parsed.media_file_id
 
+        # Only context_id travels; the runtime loads and stores this chat's
+        # conversation history around the agent call (it owns Mem0), so the
+        # gateway holds no memory connection and history works in the
+        # deployed chart.
         response = await self.runtime_client.dispatch_agent(
             agent_name=parsed.agent_name,
             query=parsed.query,
             tenant_id=tenant_id,
             context_id=chat_id,
-            conversation_history=history,
             context=agent_context,
         )
 
         messages = format_agent_response(response)
         for chunk in messages:
             await update.message.reply_text(chunk)
-
-        if conv_manager:
-            assistant_text = response.get("message", "")
-            if assistant_text:
-                conv_manager.store_turn(chat_id, "assistant", assistant_text)
 
     async def _handle_wiki_command(
         self, update: Update, parsed, tenant_id: str
