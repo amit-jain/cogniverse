@@ -12,8 +12,15 @@ MAX_RESULTS_PER_MESSAGE = 5
 def format_agent_response(response: Dict[str, Any]) -> List[str]:
     """Format an agent response into Telegram-friendly message chunks.
 
-    Returns a list of strings, each within MAX_MESSAGE_LENGTH.
+    Returns a list of strings, each within MAX_MESSAGE_LENGTH. Field types
+    are guarded individually — one off-type field from an agent must
+    degrade that field, never crash the handler, which would leave the user
+    with no reply at all.
     """
+    if not isinstance(response, dict):
+        logger.error("Agent response is not a dict: %r", type(response))
+        return ["Error: agent returned an unexpected response."]
+
     if response.get("status") == "error":
         error_msg = response.get("message", "An error occurred")
         return [f"Error: {error_msg}"]
@@ -22,14 +29,20 @@ def format_agent_response(response: Dict[str, Any]) -> List[str]:
 
     message = response.get("message", "")
     if message:
-        parts.append(message)
+        parts.append(message if isinstance(message, str) else str(message))
 
     results = response.get("results", [])
+    if not isinstance(results, list):
+        logger.error("Agent results field has unexpected shape: %r", type(results))
+        results = []
     if results:
         results_text = _format_results(results[:MAX_RESULTS_PER_MESSAGE])
-        parts.append(results_text)
+        if results_text:
+            parts.append(results_text)
 
-        total = response.get("results_count", len(results))
+        total = response.get("results_count")
+        if not isinstance(total, int) or isinstance(total, bool):
+            total = len(results)
         if total > MAX_RESULTS_PER_MESSAGE:
             parts.append(f"Showing {MAX_RESULTS_PER_MESSAGE} of {total} results.")
 
@@ -44,6 +57,9 @@ def _format_results(results: List[Dict[str, Any]]) -> str:
     """Format search results as a numbered list."""
     lines = []
     for i, result in enumerate(results, 1):
+        if not isinstance(result, dict):
+            logger.error("Skipping malformed result entry: %r", result)
+            continue
         title = (
             result.get("video_title")
             or result.get("title")
@@ -51,6 +67,8 @@ def _format_results(results: List[Dict[str, Any]]) -> str:
         )
         score = result.get("score", result.get("relevance_score"))
         description = result.get("segment_description") or result.get("description", "")
+        if description and not isinstance(description, str):
+            description = str(description)
 
         line = f"{i}. {title}"
         if score is not None:

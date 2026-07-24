@@ -1,5 +1,6 @@
 """Unit tests for command routing."""
 
+import pytest
 from cogniverse_messaging.command_router import parse_message
 
 
@@ -170,3 +171,47 @@ class TestCommandParsing:
         assert result.is_command
         assert result.jobs_subcommand == ""
         assert result.query == ""
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestCommandTokenMatching:
+    """Commands match on the exact first token with any @botname suffix
+    stripped — Telegram appends the suffix in group chats, and a prefix
+    match bled it into the query and misrouted near-miss commands."""
+
+    def test_botname_suffix_stripped_from_agent_command(self):
+        parsed = parse_message(text="/search@my_bot cats playing")
+        assert parsed.agent_name == "search_agent"
+        assert parsed.query == "cats playing"
+
+    def test_botname_suffix_stripped_from_family_command(self):
+        parsed = parse_message(text="/wiki@my_bot search embeddings")
+        assert parsed.is_wiki
+        assert parsed.wiki_subcommand == "search"
+        assert parsed.query == "embeddings"
+
+    def test_botname_suffix_stripped_from_start(self):
+        parsed = parse_message(text="/start@my_bot tok123")
+        assert parsed.is_registration
+        assert parsed.registration_token == "tok123"
+
+    def test_prefix_collision_routes_to_gateway(self):
+        parsed = parse_message(text="/codebase scan for bugs")
+        assert parsed.agent_name == "gateway_agent"
+        assert not parsed.is_command
+        assert parsed.query == "/codebase scan for bugs"
+
+    def test_wiki_prefix_collision_routes_to_gateway(self):
+        parsed = parse_message(text="/wikipedia lookup")
+        assert not parsed.is_wiki
+        assert parsed.agent_name == "gateway_agent"
+
+    def test_command_matching_is_case_insensitive(self):
+        parsed = parse_message(text="/Search cats")
+        assert parsed.agent_name == "search_agent"
+        assert parsed.query == "cats"
+
+    def test_help_with_botname(self):
+        parsed = parse_message(text="/help@my_bot")
+        assert parsed.is_help

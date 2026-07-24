@@ -1,5 +1,6 @@
 """Unit tests for Telegram message formatting and chunking."""
 
+import pytest
 from cogniverse_messaging.telegram_handler import (
     _format_results,
     chunk_message,
@@ -118,3 +119,49 @@ class TestFormatResults:
     def test_numeric_score_renders_as_percent(self):
         out = _format_results([{"title": "Clip", "score": 0.85}])
         assert "1. Clip (85%)" in out
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestFormatAgentResponseShapeGuards:
+    """One off-type field from an agent degrades that field, never crashes
+    the handler — a crash left the Telegram user with no reply at all."""
+
+    def test_results_count_none_falls_back_to_len(self):
+        out = format_agent_response(
+            {"results": [{"title": "a"}], "results_count": None}
+        )
+        assert out
+        assert "1. a" in out[0]
+
+    def test_results_count_string_falls_back_to_len(self):
+        out = format_agent_response(
+            {"results": [{"title": "a"}], "results_count": "many"}
+        )
+        assert out
+        assert "Showing" not in " ".join(out)
+
+    def test_non_string_message_is_coerced(self):
+        out = format_agent_response({"message": {"answer": "42"}})
+        assert out
+        assert "42" in out[0]
+
+    def test_non_list_results_treated_as_empty(self):
+        out = format_agent_response({"message": "hi", "results": {"weird": True}})
+        assert out == ["hi"]
+
+    def test_non_dict_result_entry_skipped(self):
+        out = format_agent_response(
+            {"results": ["garbage", {"title": "kept"}], "results_count": 2}
+        )
+        joined = " ".join(out)
+        assert "kept" in joined
+        assert "garbage" not in joined
+
+    def test_non_string_description_is_coerced(self):
+        out = format_agent_response({"results": [{"title": "a", "description": 12345}]})
+        assert "12345" in out[0]
+
+    def test_non_dict_response_is_an_error_message(self):
+        out = format_agent_response(["not", "a", "dict"])
+        assert out == ["Error: agent returned an unexpected response."]

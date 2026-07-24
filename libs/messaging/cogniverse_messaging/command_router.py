@@ -17,6 +17,13 @@ AGENT_COMMANDS = {
     "/code": "coding_agent",
 }
 
+FAMILY_COMMANDS = {
+    "/wiki": "is_wiki",
+    "/instructions": "is_instructions",
+    "/memories": "is_memories",
+    "/jobs": "is_jobs",
+}
+
 HELP_TEXT = """Available commands:
 
 /search <query> — Search videos, images, documents
@@ -104,18 +111,24 @@ def parse_message(
 
     text = text.strip()
 
-    if text.startswith("/start"):
-        parts = text.split(maxsplit=1)
-        token = parts[1].strip() if len(parts) > 1 else None
+    # Match the command TOKEN exactly, with any "@botname" suffix stripped —
+    # Telegram appends it in group chats. A startswith match bled the suffix
+    # into the query ("/search@bot cats" → "@bot cats") and misrouted every
+    # prefix collision ("/codebase scan" → coding_agent with "base scan").
+    head, _, rest = text.partition(" ")
+    command = head.split("@", 1)[0].lower() if head.startswith("/") else ""
+    rest = rest.strip()
+
+    if command == "/start":
         return ParsedCommand(
             agent_name="",
             query="",
             is_command=True,
             is_registration=True,
-            registration_token=token,
+            registration_token=rest or None,
         )
 
-    if text == "/help":
+    if command == "/help":
         return ParsedCommand(
             agent_name="",
             query="",
@@ -123,69 +136,34 @@ def parse_message(
             is_help=True,
         )
 
-    if text.startswith("/wiki"):
-        parts = text.split(maxsplit=2)
-        subcmd = parts[1] if len(parts) > 1 else ""
-        wiki_query = parts[2] if len(parts) > 2 else ""
+    if command in FAMILY_COMMANDS:
+        parts = rest.split(maxsplit=1)
+        subcmd = parts[0] if parts else ""
+        arg = parts[1] if len(parts) > 1 else ""
         return ParsedCommand(
             agent_name="",
-            query=wiki_query,
+            query=arg,
             is_command=True,
-            is_wiki=True,
-            wiki_subcommand=subcmd,
+            **{
+                FAMILY_COMMANDS[command]: True,
+                f"{command[1:]}_subcommand": subcmd,
+            },
         )
 
-    if text.startswith("/instructions"):
-        parts = text.split(maxsplit=2)
-        subcmd = parts[1] if len(parts) > 1 else ""
-        instructions_text = parts[2] if len(parts) > 2 else ""
-        return ParsedCommand(
-            agent_name="",
-            query=instructions_text,
-            is_command=True,
-            is_instructions=True,
-            instructions_subcommand=subcmd,
-        )
-
-    if text.startswith("/memories"):
-        parts = text.split(maxsplit=2)
-        subcmd = parts[1] if len(parts) > 1 else ""
-        mem_arg = parts[2] if len(parts) > 2 else ""
-        return ParsedCommand(
-            agent_name="",
-            query=mem_arg,
-            is_command=True,
-            is_memories=True,
-            memories_subcommand=subcmd,
-        )
-
-    if text.startswith("/jobs"):
-        parts = text.split(maxsplit=2)
-        subcmd = parts[1] if len(parts) > 1 else ""
-        jobs_arg = parts[2] if len(parts) > 2 else ""
-        return ParsedCommand(
-            agent_name="",
-            query=jobs_arg,
-            is_command=True,
-            is_jobs=True,
-            jobs_subcommand=subcmd,
-        )
-
-    for command, agent in AGENT_COMMANDS.items():
-        if text.startswith(command):
-            query = text[len(command) :].strip()
-            if not query:
-                return ParsedCommand(
-                    agent_name=agent,
-                    query="",
-                    is_command=True,
-                    is_help=True,
-                )
+    agent = AGENT_COMMANDS.get(command)
+    if agent:
+        if not rest:
             return ParsedCommand(
                 agent_name=agent,
-                query=query,
+                query="",
                 is_command=True,
+                is_help=True,
             )
+        return ParsedCommand(
+            agent_name=agent,
+            query=rest,
+            is_command=True,
+        )
 
     return ParsedCommand(
         agent_name="gateway_agent",
