@@ -769,8 +769,16 @@ async def _extract_graph_per_segment_inner(
             )
 
     segment_entities = await asyncio.gather(
-        *(_entities(record) for record in segments_list)
+        *(_entities(record) for record in segments_list),
+        return_exceptions=True,
     )
+    # Settle every segment before propagating — a bare gather raises the first
+    # segment's failure (e.g. a total GLiNER outage) while sibling to_thread KG
+    # calls keep running detached in the shared executor, wasting sidecar work
+    # and, under a hung sidecar, throttling unrelated offloads process-wide.
+    for ents in segment_entities:
+        if isinstance(ents, BaseException):
+            raise ents
 
     # Reconstruct each segment's prior-entity pool IN ORDER: segment N sees the
     # deduped union of entity names from segments 0..N-1, exactly the serial
@@ -801,8 +809,13 @@ async def _extract_graph_per_segment_inner(
         *(
             _claims(record, ents, prior)
             for record, ents, prior in zip(segments_list, segment_entities, priors)
-        )
+        ),
+        return_exceptions=True,
     )
+    # Settle every segment before propagating, same as the entity pass above.
+    for edges in segment_edges:
+        if isinstance(edges, BaseException):
+            raise edges
 
     # Accumulate in segment order — identical ordering to the serial path.
     for record, ents, edges in zip(segments_list, segment_entities, segment_edges):

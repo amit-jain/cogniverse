@@ -10,6 +10,8 @@ reconstruction and the segment-ordered accumulation of nodes and back-refs.
 
 from __future__ import annotations
 
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -124,3 +126,88 @@ async def test_claim_pass_prior_pool_is_earlier_segments_entities(monkeypatch):
     assert br["s0"]["entity_ids"] == ["ent_s0"]
     assert br["s1"]["entity_ids"] == ["ent_s1"]
     assert br["s2"]["entity_ids"] == ["ent_s2"]
+
+
+@pytest.mark.asyncio
+async def test_entity_pass_failure_settles_siblings(monkeypatch):
+    """A segment's entity-extraction failure (e.g. a total GLiNER outage) must
+    settle the sibling segments before propagating — a bare gather raises the
+    first failure while sibling to_thread KG calls keep running detached in the
+    shared executor, throttling unrelated offloads under a hung sidecar."""
+    records = [_record(i) for i in range(3)]
+    monkeypatch.setattr(
+        ingestion, "_iter_segments_for_graph", lambda pr, sd: iter(records)
+    )
+    monkeypatch.setattr(ingestion, "_lookup_artifact_manager", lambda t, cm: None)
+    monkeypatch.setattr(ingestion, "_resolve_tenant_llm_config", lambda t, cm: None)
+    monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
+
+    async def _no_backrefs(**kwargs):
+        return None
+
+    monkeypatch.setattr(ingestion, "_write_backrefs_to_content", _no_backrefs)
+
+    sibling_finished = threading.Event()
+
+    class StubDoc:
+        def __init__(self, **kwargs):
+            pass
+
+        def extract_entities_from_text(
+            self, *, text, tenant_id, source_doc_id, segment_anchor
+        ):
+            if segment_anchor.segment_id == "s0":
+                time.sleep(0.02)
+                raise RuntimeError("total GLiNER outage")
+            if segment_anchor.segment_id == "s2":
+                time.sleep(0.2)  # outlives s0's fast failure
+                sibling_finished.set()
+            name = f"Ent_{segment_anchor.segment_id}"
+            node = SimpleNamespace(name=name, node_id=name.lower())
+            return SimpleNamespace(nodes=[node], per_chunk_entity_names=[[name]])
+
+        def extract_claims_from_text(self, **kwargs):
+            return []
+
+    class StubClaim:
+        def __init__(self, **kwargs):
+            pass
+
+    class StubLinker:
+        def link(self, combined):
+            return combined
+
+    class StubResult:
+        def __init__(self, source_doc_id="", nodes=(), edges=(), file_sha256=None):
+            self.source_doc_id = source_doc_id
+            self.nodes = list(nodes)
+            self.edges = list(edges)
+            self.file_sha256 = file_sha256
+
+    mgr = SimpleNamespace(
+        upsert=lambda linked: {
+            "nodes_upserted": 0,
+            "edges_upserted": 0,
+            "failed_ids": [],
+        },
+        _backend=SimpleNamespace(),
+    )
+    graph_router = SimpleNamespace(_graph_manager_factory=lambda t: mgr)
+
+    with pytest.raises(RuntimeError, match="total GLiNER outage"):
+        await ingestion._extract_graph_per_segment_inner(
+            processing_results={},
+            source_doc_id="doc1",
+            tenant_id="acme:acme",
+            config_manager=SimpleNamespace(),
+            DocExtractor=StubDoc,
+            ClaimExtractor=StubClaim,
+            CrossModalLinker=StubLinker,
+            ExtractionResult=StubResult,
+            graph_router=graph_router,
+        )
+
+    # If the failure orphaned the siblings, s2's 0.2s thread would still be
+    # running here (s0 failed at ~0.02s). The event being set proves the
+    # orchestration settled every segment before it raised.
+    assert sibling_finished.is_set()
