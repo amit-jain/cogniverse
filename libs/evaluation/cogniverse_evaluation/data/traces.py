@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 from .storage import TelemetryStorage
 
@@ -123,7 +123,9 @@ class TraceManager:
             storage: Phoenix storage instance.
         """
         self.tenant_id = canonical_tenant_id(tenant_id)
-        self.project_name = TelemetryConfig().get_project_name(self.tenant_id)
+        self.project_name = get_telemetry_manager().config.get_project_name(
+            self.tenant_id
+        )
         self.storage = storage or TelemetryStorage()
 
     def get_recent_traces(self, hours_back: int = 1, limit: int = 100) -> pd.DataFrame:

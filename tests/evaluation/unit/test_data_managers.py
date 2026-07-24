@@ -460,3 +460,45 @@ class TestTraceManager:
                     # Verify JSON was written
                     handle = mock_file()
                     assert handle.write.called
+
+
+class TestReaderProjectDerivation:
+    """Batch/live trace readers must derive the span project from the LOADED
+    telemetry config — the same template the span writers use — so that a
+    ``tenant_project_template`` override does not make the readers query a
+    project nothing writes to."""
+
+    @pytest.mark.unit
+    def test_readers_match_writer_project_under_template_override(self):
+        import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+        from cogniverse_evaluation.core.solvers import _resolve_project
+        from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
+        from cogniverse_foundation.telemetry.manager import (
+            TelemetryManager,
+            get_telemetry_manager,
+        )
+
+        override = "acme-spans-{tenant_id}-v2"
+        TelemetryManager.reset()
+        telemetry_manager_module._telemetry_manager = TelemetryManager(
+            TelemetryConfig(tenant_project_template=override)
+        )
+        try:
+            tenant = "acme:acme"
+            # Writer-side derivation — identical to the SpanEvaluator wiring in
+            # quality_monitor._make_span_evaluator.
+            writer_project = get_telemetry_manager().config.get_project_name(
+                canonical_tenant_id(tenant)
+            )
+            assert writer_project == "acme-spans-acme:acme-v2"
+
+            trace_manager = TraceManager(tenant_id=tenant, storage=Mock())
+            assert trace_manager.project_name == writer_project
+
+            assert _resolve_project({"tenant_id": tenant}) == writer_project
+        finally:
+            TelemetryManager.reset()
+            telemetry_manager_module._telemetry_manager = TelemetryManager(
+                TelemetryConfig()
+            )
