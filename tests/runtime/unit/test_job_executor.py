@@ -408,3 +408,53 @@ class TestMainExitCode:
         with pytest.raises(SystemExit) as excinfo:
             je.main()
         assert excinfo.value.code == 2  # argparse usage error
+
+
+class TestDeliveryEmbeddingsColdBuildRace:
+    """Two concurrent first-touches of the delivery-embedding map must both
+    see the COMPLETE map and trigger exactly one build — a key-by-key fill of
+    the module global let a second caller observe a truthy-but-partial dict
+    and silently miss a delivery destination."""
+
+    @pytest.mark.unit
+    def test_concurrent_first_touch_sees_complete_map(self, monkeypatch):
+        import threading
+
+        monkeypatch.setattr(je, "_delivery_embeddings", {})
+
+        first_key_written = threading.Event()
+        release_build = threading.Event()
+        embed_calls = []
+
+        def slow_embed(desc, denseon_url, is_query):
+            embed_calls.append(desc)
+            if len(embed_calls) == 1:
+                first_key_written.set()
+                assert release_build.wait(timeout=10)
+            return [1.0, 0.0]
+
+        monkeypatch.setattr(je, "_embed_text", slow_embed)
+
+        seen_sizes = []
+        expected = len(je._DELIVERY_DESCRIPTIONS)
+
+        def toucher():
+            je._ensure_delivery_embeddings("http://denseon")
+            seen_sizes.append(len(je._delivery_embeddings))
+
+        builder = threading.Thread(target=toucher)
+        builder.start()
+        assert first_key_written.wait(timeout=10)
+
+        # Second first-touch arrives mid-build; it must wait for the full
+        # map, never observe a partial one.
+        racer = threading.Thread(target=toucher)
+        racer.start()
+
+        release_build.set()
+        builder.join(timeout=10)
+        racer.join(timeout=10)
+
+        assert seen_sizes == [expected, expected]
+        # One build only — each destination embedded exactly once.
+        assert len(embed_calls) == expected

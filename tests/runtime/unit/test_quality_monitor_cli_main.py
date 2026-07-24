@@ -139,3 +139,38 @@ def test_default_monitor_keyboard_interrupt_exits_0(patched):
     code = _main_exit(patched, _BASE)
     assert code == 0
     assert _StubMonitor.instances[-1].closed is True
+
+
+class TestConfigErrorExitsCleanly:
+    """A configuration error (BACKEND_URL unset) exits 1 with a one-line
+    ``Error:`` message — never a raw traceback."""
+
+    def test_missing_backend_url_exits_with_clean_error(self):
+        import os
+        import subprocess
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("BACKEND_URL", "BACKEND_PORT")
+        }
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "cogniverse_runtime.quality_monitor_cli",
+                "--tenant-id",
+                "acme:acme",
+                "--llm-model",
+                "test-model",
+                "--once",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=180,
+        )
+        assert result.returncode == 1
+        assert "Error:" in result.stderr
+        assert "BACKEND_URL" in result.stderr
+        assert "Traceback" not in result.stderr

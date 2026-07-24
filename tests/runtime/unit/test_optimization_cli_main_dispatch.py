@@ -285,3 +285,37 @@ def test_non_dict_result_exits_0(monkeypatch):
         ["--mode", "online-eval", "--tenant-id", "acme", "--lookback-hours", "1"],
     )
     assert code == 0
+
+
+class TestConfigErrorExitsCleanly:
+    """A configuration error (BACKEND_URL unset) exits 1 with a one-line
+    ``Error:`` message — never a raw traceback."""
+
+    def test_missing_backend_url_exits_with_clean_error(self):
+        import os
+        import subprocess
+        import sys as _sys
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("BACKEND_URL", "BACKEND_PORT")
+        }
+        result = subprocess.run(
+            [
+                _sys.executable,
+                "-m",
+                "cogniverse_runtime.optimization_cli",
+                "--mode",
+                "cleanup",
+                "--tenant-id",
+                "acme:acme",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=180,
+        )
+        assert result.returncode == 1
+        assert "Error:" in result.stderr
+        assert "Traceback" not in result.stderr
