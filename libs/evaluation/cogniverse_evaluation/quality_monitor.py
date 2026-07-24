@@ -344,7 +344,6 @@ class QualityMonitor:
 
             self._dataset_store = PhoenixDatasetStore(
                 http_endpoint=self.phoenix_http_endpoint,
-                tenant_id=self.tenant_id,
             )
         return self._dataset_store
 

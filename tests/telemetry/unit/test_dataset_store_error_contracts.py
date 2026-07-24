@@ -23,7 +23,7 @@ pytestmark = pytest.mark.unit
 def _store():
     from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
 
-    return PhoenixDatasetStore(http_endpoint="http://phoenix:6006", tenant_id="acme:a")
+    return PhoenixDatasetStore(http_endpoint="http://phoenix:6006")
 
 
 def _http_error(

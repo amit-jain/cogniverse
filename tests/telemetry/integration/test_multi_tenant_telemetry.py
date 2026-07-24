@@ -574,8 +574,6 @@ class TestGetSpansNameFilterRealPhoenix:
 
         store = PhoenixTraceStore(
             http_endpoint=phoenix_container["http_endpoint"],
-            tenant_id=tenant,
-            project_template="cogniverse-{tenant_id}-{service}",
         )
         project = phoenix_config.get_project_name(tenant, "routing")
 

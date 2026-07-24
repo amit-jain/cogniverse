@@ -60,12 +60,8 @@ class TestPerLoopClientMemoization:
 
         traces = PhoenixTraceStore(
             http_endpoint="http://unused:1",
-            tenant_id="t",
-            project_template="p-{tenant_id}",
         )
-        annotations = PhoenixAnnotationStore(
-            http_endpoint="http://unused:1", tenant_id="t"
-        )
+        annotations = PhoenixAnnotationStore(http_endpoint="http://unused:1")
 
         async def within_one_loop():
             a = traces._get_client()
@@ -100,8 +96,6 @@ class TestGetSpansServerSideNameFilter:
 
         store = PhoenixTraceStore(
             http_endpoint="http://unused:1",
-            tenant_id="t",
-            project_template="p-{tenant_id}",
         )
         client = MagicMock()
         client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())
@@ -126,8 +120,6 @@ class TestGetSpansServerSideNameFilter:
 
         store = PhoenixTraceStore(
             http_endpoint="http://unused:1",
-            tenant_id="t",
-            project_template="p-{tenant_id}",
         )
         client = MagicMock()
         client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())
@@ -159,8 +151,6 @@ class TestGetSpansServerSideNameFilter:
 
         store = PhoenixTraceStore(
             http_endpoint="http://unused:1",
-            tenant_id="t",
-            project_template="p-{tenant_id}",
         )
         client = MagicMock()
         client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())
@@ -187,8 +177,6 @@ class TestGetSpansServerSideNameFilter:
 
         store = PhoenixTraceStore(
             http_endpoint="http://unused:1",
-            tenant_id="t",
-            project_template="p-{tenant_id}",
         )
         client = MagicMock()
         client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())
@@ -213,8 +201,6 @@ class TestGetSpansServerSideNameFilter:
 
         store = PhoenixTraceStore(
             http_endpoint="http://unused:1",
-            tenant_id="t",
-            project_template="p-{tenant_id}",
         )
         client = MagicMock()
         client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())

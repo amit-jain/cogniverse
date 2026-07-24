@@ -122,9 +122,7 @@ class TestDatasetManagerWriterReadByTask:
         from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
 
         name = f"dm-task-{uuid.uuid4().hex[:8]}"
-        store = PhoenixDatasetStore(
-            http_endpoint=phoenix_container["http_endpoint"], tenant_id="acme:t"
-        )
+        store = PhoenixDatasetStore(http_endpoint=phoenix_container["http_endpoint"])
         DatasetManager(tenant_id="acme:t", dataset_store=store).create_from_queries(
             [
                 {
@@ -152,3 +150,105 @@ class TestDatasetManagerWriterReadByTask:
             f"expected_videos from the output slot were dropped: {sample.target}"
         )
         assert sample.metadata["query_type"] == "visual"
+
+
+class TestBatchSolverRealPhoenix:
+    """The batch solver against real Phoenix spans.
+
+    Emits real search spans, then loads them back through the real provider —
+    verifying the tenant-derived project, the ``context.trace_id`` filter, and
+    the trace-dict extraction (query, parsed results, duration) against the
+    frame shape Phoenix actually returns.
+    """
+
+    @pytest.mark.asyncio
+    async def test_batch_solver_loads_requested_trace_from_real_spans(
+        self, search_evaluator_provider
+    ):
+        import asyncio
+        import time
+        import uuid
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+
+        from cogniverse_evaluation.core.solvers import create_batch_solver
+        from cogniverse_foundation.telemetry.context import (
+            add_search_results_to_span,
+            search_span,
+        )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        suffix = uuid.uuid4().hex[:8]
+        tenant_id = f"bsolver{suffix}:main"
+        project_name = f"cogniverse-{tenant_id}"
+        manager = get_telemetry_manager()
+
+        def _emit(query: str) -> str:
+            results = [
+                SimpleNamespace(
+                    document=SimpleNamespace(
+                        id="vid_pos",
+                        metadata={"source_id": "vid_pos"},
+                        content_type=None,
+                    ),
+                    score=0.93,
+                ),
+                SimpleNamespace(
+                    document=SimpleNamespace(
+                        id="vid_neg",
+                        metadata={"source_id": "vid_neg"},
+                        content_type=None,
+                    ),
+                    score=0.40,
+                ),
+            ]
+            with search_span(tenant_id=tenant_id, query=query, top_k=5) as span:
+                add_search_results_to_span(span, results)
+                trace_id_hex = format(span.get_span_context().trace_id, "032x")
+            return trace_id_hex
+
+        wanted_trace = _emit("kite surfing on a windy beach")
+        _emit("decoy query that must be filtered out")
+        manager.force_flush(timeout_millis=10000)
+
+        # Wait until both spans are indexed so the trace-id filter is proven
+        # to exclude the decoy rather than racing its ingestion.
+        provider = search_evaluator_provider
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            df = await provider.telemetry.traces.get_spans(
+                project=project_name,
+                start_time=datetime.now(timezone.utc) - timedelta(hours=1),
+                limit=100,
+            )
+            if (
+                df is not None
+                and not df.empty
+                and "name" in df.columns
+                and int((df["name"] == "search_service.search").sum()) >= 2
+            ):
+                break
+            await asyncio.sleep(2.0)
+        else:
+            pytest.fail("emitted spans were not indexed within 60s")
+
+        assert "context.trace_id" in df.columns
+
+        solver = create_batch_solver(
+            trace_ids=[wanted_trace], config={"tenant_id": tenant_id}
+        )
+        state = SimpleNamespace(outputs={}, metadata={})
+        result = await solver(state, None)
+
+        loaded = result.metadata["loaded_traces"]
+        assert [t["trace_id"] for t in loaded] == [wanted_trace]
+        trace = loaded[0]
+        assert trace["query"] == "kite surfing on a windy beach"
+        assert trace["duration_ms"] is not None and trace["duration_ms"] > 0
+        assert trace["timestamp"] is not None
+        # No backend configured: the schema-aware strategy reports that
+        # explicitly instead of fabricating ground truth.
+        assert trace["ground_truth"] == []
+        assert trace["ground_truth_source"] == "no_backend"
+        stats = result.metadata["ground_truth_stats"]
+        assert stats["total_traces"] == 1
