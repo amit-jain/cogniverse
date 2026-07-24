@@ -677,19 +677,24 @@ class TelemetryManager:
         """
         Reset singleton instance - FOR TESTS ONLY.
 
-        Shuts down all tracer providers and clears singleton state.
-        Allows tests to start with fresh TelemetryManager.
+        Shuts down all tracer providers, clears the class singleton, and clears
+        the module-global that ``get_telemetry_manager`` short-circuits on, so a
+        subsequent ``get_telemetry_manager()`` rebuilds a fresh, live instance
+        instead of handing back the shut-down one.
         """
         if cls._instance is not None:
             try:
                 cls._instance.shutdown()
-                # Clear registered project configs
                 cls._instance._project_configs.clear()
             except Exception as e:
                 logger.warning(f"Error during reset: {e}")
             finally:
                 cls._instance = None
                 logger.info("TelemetryManager singleton reset")
+
+        global _telemetry_manager
+        with _telemetry_manager_lock:
+            _telemetry_manager = None
 
 
 class NoOpSpan:

@@ -771,7 +771,7 @@ assert manager2.config is config  # True - uses original config
 #### `reset() -> None` (class method)
 Reset singleton instance - **FOR TESTS ONLY**.
 
-Shuts down all tracer providers, clears caches, and resets the singleton. This allows tests to start with a fresh TelemetryManager.
+Shuts down all tracer providers, clears caches, resets the class singleton, and clears the module-global that `get_telemetry_manager()` short-circuits on — so the next `get_telemetry_manager()` rebuilds a fresh, live instance rather than returning the shut-down one. The global is cleared under the same lock `get_telemetry_manager()` uses for its cold build, so a rebuild racing a reset is single-flight.
 
 **Example:**
 ```python
