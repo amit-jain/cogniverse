@@ -151,8 +151,8 @@ The tenant management service (`libs/runtime/cogniverse_runtime/admin/tenant_man
 > unresolved Vespa-only orphan (a schema with no registry record that it
 > cannot confirm belongs to this tenant), it **refuses** with a
 > `BackendDeploymentError` rather than dropping a peer tenant's data. Use
-> `POST /admin/reconcile-orphans?dry_run=true` to audit orphans first,
-> then `dry_run=false` naming the orphan tenants to clear them.
+> `POST /admin/reconcile-orphans?dry_run=true` to review the orphans
+> first, then `dry_run=false` naming the orphan tenants to clear them.
 
 > Ingestion and graph endpoints (`/ingestion/upload`,
 > `/ingestion/start`, `/graph/*`) require the tenant to be registered
