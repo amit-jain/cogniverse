@@ -139,6 +139,7 @@
     "title": "title",
     "text_content": "content",
     "created_at": "created_at",
+    "updated_at": "updated_at",
     "created_at_format": "iso",
     "embeddings": {
       "embedding": "embedding"
