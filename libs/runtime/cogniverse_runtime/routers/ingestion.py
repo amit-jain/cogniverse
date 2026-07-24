@@ -139,8 +139,15 @@ async def start_ingestion(
         # belong before any filesystem or request-content inspection so we
         # don't leak server-side state (e.g. dir existence) to unauth'd
         # callers.
+        # A client may send org_id separately with a simple tenant_id; combine
+        # them into the canonical org:tenant form (matching /upload and the
+        # search route). Dropping org_id landed content in tenant:tenant while
+        # the combining search path read org:tenant and never saw it.
+        combined_tenant = request.tenant_id
+        if request.org_id and request.tenant_id and ":" not in request.tenant_id:
+            combined_tenant = f"{request.org_id}:{request.tenant_id}"
         try:
-            tenant_id = require_tenant_id(request.tenant_id, source="IngestionRequest")
+            tenant_id = require_tenant_id(combined_tenant, source="IngestionRequest")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         await assert_tenant_exists(tenant_id)
@@ -1244,8 +1251,14 @@ async def run_ingestion(
     try:
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
+        # Combine a separately-supplied org_id with a simple tenant_id so the
+        # background pipeline writes to the same canonical org:tenant namespace
+        # start_ingestion resolved the backend under.
+        combined_tenant = request.tenant_id
+        if request.org_id and request.tenant_id and ":" not in request.tenant_id:
+            combined_tenant = f"{request.org_id}:{request.tenant_id}"
         tenant_id = require_tenant_id(
-            request.tenant_id, source="run_ingestion background task"
+            combined_tenant, source="run_ingestion background task"
         )
 
         pipeline = VideoIngestionPipeline(

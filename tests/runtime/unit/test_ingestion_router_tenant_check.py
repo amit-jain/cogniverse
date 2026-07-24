@@ -467,6 +467,43 @@ class TestStartIngestionSuccess:
             if job_id is not None:
                 ingestion_router.ingestion_jobs.pop(job_id, None)
 
+    def test_start_combines_org_id_with_simple_tenant(self, monkeypatch, tmp_path):
+        """A separately-supplied ``org_id`` plus a simple ``tenant_id`` must be
+        combined into the canonical ``org:tenant`` form before it reaches the
+        backend registry (start_ingestion) AND the ingestion pipeline
+        (run_ingestion) — otherwise the upload lands in ``tenant:tenant`` while
+        the search path (which combines) reads ``org:tenant`` and never sees it.
+        """
+        app, cm, sl, registry, recorded = self._build_app(monkeypatch, tmp_path)
+        job_id = None
+        try:
+            with TestClient(app) as client:
+                resp = client.post(
+                    "/ingestion/start",
+                    json={
+                        "video_dir": str(tmp_path),
+                        "profile": "video_colpali_smol500_mv_frame",
+                        "tenant_id": "acme",
+                        "org_id": "bigcorp",
+                        "content_type": "video",
+                    },
+                )
+            assert resp.status_code == 200, resp.text
+            job_id = resp.json()["job_id"]
+
+            # start_ingestion resolved the backend under the combined tenant.
+            registry.get_ingestion_backend.assert_called_once_with(
+                name="vespa",
+                tenant_id="bigcorp:acme",
+                config_manager=cm,
+                schema_loader=sl,
+            )
+            # run_ingestion built the pipeline under the same combined tenant.
+            assert recorded["pipeline_init"]["tenant_id"] == "bigcorp:acme"
+        finally:
+            if job_id is not None:
+                ingestion_router.ingestion_jobs.pop(job_id, None)
+
 
 @pytest.mark.unit
 @pytest.mark.ci_fast

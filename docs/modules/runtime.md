@@ -542,6 +542,7 @@ curl -X POST http://localhost:8000/ingestion/start \
     "batch_size": 10
   }'
 ```
+Body fields mirror `IngestionRequest`: `video_dir`, `profile`, `backend` (default `"vespa"`), `tenant_id` (required), `org_id` (optional), `content_type`, `max_videos`, `batch_size` (default `10`). An `org_id` supplied alongside a simple `tenant_id` (no colon) is combined into the canonical `org:tenant` form for both the backend resolution and the background pipeline, matching `/ingestion/upload` and the search route.
 
 **POST /ingestion/upload** - Upload a video to MinIO and enqueue ingestion via Redis
 ```bash
