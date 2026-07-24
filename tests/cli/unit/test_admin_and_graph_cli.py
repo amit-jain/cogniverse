@@ -246,3 +246,178 @@ class TestGraphUpsertPayloadContract:
         assert len(validated) == len(result.edges)
         assert all(e.evidence_span for e in validated)
         assert all(e.modality == "code" for e in validated)
+
+
+# ---------------------------------------------------------------------------
+# graph neighbors / path + failure contracts
+# ---------------------------------------------------------------------------
+
+
+def test_graph_neighbors_renders_both_edge_directions(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/graph/neighbors"
+        assert request.url.params["node"] == "Alice"
+        return httpx.Response(
+            200,
+            json={
+                "name": "Alice",
+                "out_edges": [
+                    {
+                        "target_node_id": "Bob",
+                        "relation": "knows",
+                        "provenance": "doc1",
+                    }
+                ],
+                "in_edges": [
+                    {
+                        "source_node_id": "Carol",
+                        "relation": "cites",
+                        "provenance": "doc2",
+                    }
+                ],
+            },
+        )
+
+    _mount_httpx(monkeypatch, handler)
+    rc = graph_cli.cmd_neighbors("acme", "Alice", runtime_url="http://runtime.test")
+    assert rc == 0
+    out = capture_console.getvalue()
+    assert "Neighbors of Alice" in out
+    assert "Bob" in out and "knows" in out
+    assert "Carol" in out and "cites" in out
+
+
+def test_graph_path_renders_hops_and_length(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/graph/path"
+        return httpx.Response(
+            200, json={"path": ["Alice", "Bob", "Carol"], "length": 2}
+        )
+
+    _mount_httpx(monkeypatch, handler)
+    rc = graph_cli.cmd_path("acme", "Alice", "Carol", runtime_url="http://runtime.test")
+    assert rc == 0
+    out = capture_console.getvalue()
+    assert "length 2" in out
+    assert "Alice" in out and "Bob" in out and "Carol" in out
+
+
+def test_graph_path_no_path_found_exits_0(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"path": None})
+
+    _mount_httpx(monkeypatch, handler)
+    rc = graph_cli.cmd_path("acme", "A", "B", runtime_url="http://runtime.test")
+    assert rc == 0
+    assert "No path found" in capture_console.getvalue()
+
+
+@pytest.mark.parametrize(
+    "invoke",
+    [
+        lambda: graph_cli.cmd_stats("acme", runtime_url="http://runtime.test"),
+        lambda: graph_cli.cmd_search("acme", "q", runtime_url="http://runtime.test"),
+        lambda: graph_cli.cmd_neighbors("acme", "n", runtime_url="http://runtime.test"),
+        lambda: graph_cli.cmd_path("acme", "a", "b", runtime_url="http://runtime.test"),
+    ],
+    ids=["stats", "search", "neighbors", "path"],
+)
+def test_graph_unreachable_runtime_exits_2_with_message(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO, invoke
+) -> None:
+    """An unreachable runtime prints a clear one-liner and exits 2 — it
+    previously escaped as a raw ConnectError traceback with exit 1."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    _mount_httpx(monkeypatch, handler)
+    rc = invoke()
+    assert rc == 2
+    out = capture_console.getvalue()
+    assert "Failed to reach runtime" in out
+    assert "Traceback" not in out
+
+
+@pytest.mark.parametrize(
+    "invoke",
+    [
+        lambda: graph_cli.cmd_stats("acme", runtime_url="http://runtime.test"),
+        lambda: graph_cli.cmd_search("acme", "q", runtime_url="http://runtime.test"),
+        lambda: graph_cli.cmd_neighbors("acme", "n", runtime_url="http://runtime.test"),
+        lambda: graph_cli.cmd_path("acme", "a", "b", runtime_url="http://runtime.test"),
+    ],
+    ids=["stats", "search", "neighbors", "path"],
+)
+def test_graph_non_200_exits_3(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO, invoke
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="unavailable")
+
+    _mount_httpx(monkeypatch, handler)
+    assert invoke() == 3
+    assert "503" in capture_console.getvalue()
+
+
+def test_graph_stats_partial_body_renders_without_crash(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    """A partial 200 (missing node_count/degree fields) renders defaults —
+    the direct dict indexing previously died with a KeyError traceback."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"top_nodes": [{"node_id": "A"}]})
+
+    _mount_httpx(monkeypatch, handler)
+    rc = graph_cli.cmd_stats("acme", runtime_url="http://runtime.test")
+    assert rc == 0
+    out = capture_console.getvalue()
+    assert "Nodes: 0" in out
+
+
+def test_graph_non_json_200_exits_3(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>proxy error</html>")
+
+    _mount_httpx(monkeypatch, handler)
+    assert graph_cli.cmd_stats("acme", runtime_url="http://runtime.test") == 3
+    assert "non-JSON" in capture_console.getvalue()
+
+
+def test_graph_cli_wrapper_propagates_exit_code(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    """`cogniverse graph stats` (the click wrapper) exits with the command's
+    code so scripts can branch on failure."""
+    from click.testing import CliRunner
+    from cogniverse_cli.main import cli
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    _mount_httpx(monkeypatch, handler)
+    result = CliRunner().invoke(cli, ["graph", "stats", "--tenant", "acme:acme"])
+    assert result.exit_code == 2
+
+
+def test_graph_cli_wrapper_success_exits_0(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"node_count": 1, "edge_count": 0})
+
+    _mount_httpx(monkeypatch, handler)
+    from click.testing import CliRunner
+    from cogniverse_cli.main import cli
+
+    result = CliRunner().invoke(cli, ["graph", "stats", "--tenant", "acme:acme"])
+    assert result.exit_code == 0

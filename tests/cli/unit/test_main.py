@@ -519,3 +519,43 @@ class TestStopStartCommands:
         assert result.exit_code == 0
         mock_start.assert_called_once_with("cogniverse-e2e")
         mock_forwards.assert_not_called()
+
+
+class TestIndexCommandGate:
+    """`cogniverse index` routes code AND docs through index_files — the docs
+    pipeline is fully wired (extension→profile map, markdown graph
+    extraction), and the old blanket gate refused it as "not yet
+    implemented". Only video, which has no collector branch, stays gated."""
+
+    def _invoke(self, tmp_path: Path, args: list[str], record: dict):
+        import cogniverse_cli.index as index_mod
+
+        def _fake_index_files(root, content_type, tenant_id, profile=None):
+            record.update(root=root, content_type=content_type, tenant_id=tenant_id)
+
+        with patch.object(index_mod, "index_files", _fake_index_files):
+            runner = CliRunner()
+            return runner.invoke(
+                cli, ["index", str(tmp_path), *args, "--tenant", "acme:acme"]
+            )
+
+    def test_docs_type_reaches_index_files(self, tmp_path: Path) -> None:
+        record: dict = {}
+        result = self._invoke(tmp_path, ["--type", "docs"], record)
+        assert result.exit_code == 0, result.output
+        assert "not yet implemented" not in result.output
+        assert record["content_type"] == "docs"
+        assert record["tenant_id"] == "acme:acme"
+
+    def test_code_type_reaches_index_files(self, tmp_path: Path) -> None:
+        record: dict = {}
+        result = self._invoke(tmp_path, ["--type", "code"], record)
+        assert result.exit_code == 0, result.output
+        assert record["content_type"] == "code"
+
+    def test_video_type_stays_gated(self, tmp_path: Path) -> None:
+        record: dict = {}
+        result = self._invoke(tmp_path, ["--type", "video"], record)
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output
+        assert record == {}
