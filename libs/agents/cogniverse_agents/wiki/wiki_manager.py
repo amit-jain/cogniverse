@@ -577,7 +577,13 @@ class WikiManager:
         fully-formed page that was never persisted.
         """
         doc = page.to_document()
+        # to_document() carries the page's logical created_at/updated_at (lint
+        # keys staleness off updated_at). add_embedding stamps updated_at=now as
+        # a side effect, so re-apply the page's timestamps after attaching the
+        # vector, or every page reads as freshly updated and lint never fires.
+        created_at, updated_at = doc.created_at, doc.updated_at
         doc.add_embedding("embedding", embedding)
+        doc.created_at, doc.updated_at = created_at, updated_at
         self._backend.put_document(
             doc,
             schema_name=self._schema_name,

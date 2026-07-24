@@ -260,6 +260,9 @@ def wiki_manager(wiki_vespa):
     _generate_embedding falls through to the built-in zero-vector
     fallback when no embedding service is reachable — no mock needed.
     """
+    from pathlib import Path
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_vespa.backend import VespaBackend
 
     http_port = wiki_vespa["http_port"]
@@ -270,6 +273,10 @@ def wiki_manager(wiki_vespa):
     backend._metadata_app = None
     backend._metadata_app_key = None
     backend.config = {}
+    # put_document loads the base schema's document_mapping through this loader;
+    # the real backend sets it in __init__, so a bare-constructed backend must
+    # provide it too or every feed raises AttributeError.
+    backend._schema_loader_instance = FilesystemSchemaLoader(Path("configs/schemas"))
     backend.search = MagicMock(return_value=[])
 
     manager = WikiManager(
@@ -420,6 +427,53 @@ class TestWikiVespaIntegration:
         assert updated_update_count > first_update_count, (
             f"update_count did not increment: was {first_update_count}, "
             f"now {updated_update_count}"
+        )
+
+    def test_concurrent_save_sessions_keep_both_writes(self, wiki_manager):
+        """Two concurrent save_session calls for the SAME entity must both land
+        their content on the topic page in real Vespa. The real GET/PUT latency
+        is the read-merge-write window; the per-topic lock serializes it so
+        neither write is lost (without the lock the second feed overwrites the
+        first and one interaction's text is silently gone)."""
+        import concurrent.futures
+
+        manager, port = wiki_manager
+        entity = "attention_mechanism"
+        safe = TENANT_ID.replace(":", "_")
+        doc_id = f"wiki_topic_{safe}_{generate_slug(entity)}"
+
+        # Seed a base topic so both racers hit the merge path.
+        manager.save_session(
+            query="seed",
+            response="BASE_attention_notes",
+            entities=[entity],
+            agent_name="search_agent",
+        )
+        base_doc = _get_vespa_doc(port, doc_id)
+        assert base_doc is not None
+        base_count = base_doc.get("fields", {}).get("update_count", 0)
+
+        def _save(marker: str) -> None:
+            manager.save_session(
+                query=f"q_{marker}",
+                response=f"CONTENT_{marker}",
+                entities=[entity],
+                agent_name="search_agent",
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            for fut in [ex.submit(_save, m) for m in ("ALPHA", "BETA")]:
+                fut.result()
+
+        final = _get_vespa_doc(port, doc_id)
+        assert final is not None
+        content = final.get("fields", {}).get("content", "")
+        assert "BASE_attention_notes" in content
+        assert "CONTENT_ALPHA" in content, "first concurrent write was lost"
+        assert "CONTENT_BETA" in content, "second concurrent write was lost"
+        final_count = final.get("fields", {}).get("update_count", 0)
+        assert final_count == base_count + 2, (
+            f"update_count {final_count} != base {base_count} + 2 merges"
         )
 
     def test_lint_detects_empty_page(self, wiki_manager):
