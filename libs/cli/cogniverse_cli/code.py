@@ -67,6 +67,7 @@ class CodingSession:
             return 0
 
         applied = 0
+        failed: List[str] = []
         for change in self.last_result.code_changes:
             file_path = change.get("file_path", "")
             content = change.get("content", "")
@@ -77,21 +78,34 @@ class CodingSession:
 
             path = Path(file_path)
 
-            if change_type == "delete":
-                if path.exists():
-                    path.unlink()
-                    console.print(f"  [red]Deleted {file_path}[/red]")
-                    applied += 1
-                continue
+            # One unwritable target (permissions, disk full) must not kill
+            # the REPL mid-apply — report it and keep going so the user sees
+            # exactly which files landed and which did not.
+            try:
+                if change_type == "delete":
+                    if path.exists():
+                        path.unlink()
+                        console.print(f"  [red]Deleted {file_path}[/red]")
+                        applied += 1
+                    continue
 
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            except OSError as exc:
+                console.print(f"  [red]Failed to write {file_path}: {exc}[/red]")
+                failed.append(file_path)
+                continue
             label = "new" if change_type == "new" else "modified"
             console.print(f"  [green]{file_path} ({label})[/green]")
             applied += 1
 
         if applied:
             console.print(f"Applied {applied} file(s)")
+        if failed:
+            console.print(
+                f"[red]{len(failed)} file(s) failed; fix the cause and re-run "
+                f"/apply — already-applied files are simply rewritten.[/red]"
+            )
         return applied
 
     def show_diff(self) -> None:
@@ -113,7 +127,11 @@ class CodingSession:
             elif change_type == "delete":
                 console.print("[red]File will be deleted[/red]")
             else:
-                existing = path.read_text()
+                try:
+                    existing = path.read_text()
+                except OSError as exc:
+                    console.print(f"[red]Cannot read {file_path}: {exc}[/red]")
+                    continue
                 if existing == content:
                     console.print("[dim]No changes[/dim]")
                 else:
@@ -215,12 +233,12 @@ def run_repl(
         resp = httpx.get(f"{runtime_url}/health", timeout=5.0)
         if resp.status_code != 200:
             console.print("[red]Runtime not healthy. Run `cogniverse up` first.[/red]")
-            return
-    except (httpx.ConnectError, httpx.ReadTimeout):
+            raise SystemExit(2)
+    except httpx.TransportError:
         console.print(
             "[red]Cannot connect to runtime. Run `cogniverse up` first.[/red]"
         )
-        return
+        raise SystemExit(2) from None
 
     session = CodingSession(
         tenant_id=tenant_id,

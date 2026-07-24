@@ -69,8 +69,17 @@ def _build_a2a_request(
     }
 
 
-def _parse_coding_result(data: Dict[str, Any]) -> CodingResult:
-    """Parse a CodingOutput from the final event data."""
+def _parse_coding_result(data: Any) -> CodingResult:
+    """Parse a CodingOutput from the final event data.
+
+    Any unexpected shape degrades to a summary-only result — a crash here
+    aborts the whole REPL session mid-stream.
+    """
+    if not isinstance(data, dict):
+        return CodingResult(
+            summary=str(data) if data is not None else "", raw={"data": data}
+        )
+
     result = data.get("result", data)
     if isinstance(result, str):
         try:
@@ -80,6 +89,9 @@ def _parse_coding_result(data: Dict[str, Any]) -> CodingResult:
 
     if isinstance(result, dict) and "result" in result:
         result = result["result"]
+
+    if not isinstance(result, dict):
+        return CodingResult(summary=str(result) if result is not None else "", raw=data)
 
     return CodingResult(
         plan=result.get("plan", ""),
@@ -166,8 +178,13 @@ def stream_coding_response(
             "[red]Cannot connect to runtime. Run `cogniverse up` first.[/red]"
         )
         return None
-    except httpx.ReadTimeout:
+    except httpx.TimeoutException:
         console.print("[yellow]Request timed out (10 min limit).[/yellow]")
+        return None
+    except httpx.TransportError as exc:
+        # Mid-stream disconnects (RemoteProtocolError, ReadError) previously
+        # escaped as a traceback that killed the REPL session.
+        console.print(f"[red]Connection to runtime failed mid-stream: {exc}[/red]")
         return None
 
     return result
@@ -180,14 +197,20 @@ def _handle_event(event: dict, current_phase: str):
       {"id": ..., "result": {"status": {"state": "...", "message": {"parts": [{"kind": "text", "text": "{...json...}"}]}}}}
     """
     result_obj = event.get("result", event)
-    status = result_obj.get("status", {})
+    if not isinstance(result_obj, dict):
+        return current_phase
+    status = result_obj.get("status")
+    if not isinstance(status, dict):
+        status = {}
     state = status.get("state", "")
     message = status.get("message", {})
 
     if not isinstance(message, dict):
         return current_phase
 
-    parts = message.get("parts", [])
+    parts = message.get("parts") or []
+    if not isinstance(parts, list):
+        return current_phase
     text = ""
     for part in parts:
         if isinstance(part, dict) and (
@@ -202,6 +225,8 @@ def _handle_event(event: dict, current_phase: str):
     try:
         payload = json.loads(text)
     except (json.JSONDecodeError, TypeError):
+        payload = {"text": text}
+    if not isinstance(payload, dict):
         payload = {"text": text}
 
     event_type = payload.get("type", "")
