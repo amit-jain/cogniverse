@@ -16,6 +16,8 @@ from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.messaging_auth import InviteTokenManager, UserTenantMapper
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
+pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
 
 @pytest.fixture
 def token_manager(config_manager_memory):
