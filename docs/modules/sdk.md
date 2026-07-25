@@ -156,13 +156,13 @@ class Backend(IngestionBackend, SearchBackend):
         self._initialized = False
 
     def initialize(self, config: Dict[str, Any]) -> None:
-        """Concrete: initializes once and delegates to _initialize_backend()"""
+        """Concrete: delegates while the initialized flag is false."""
         if not self._initialized:
             self._initialize_backend(config)
             self._initialized = True
 
     # _initialize_backend(config) -> None: abstract - subclasses implement
-    # backend-specific connection setup; called exactly once by initialize()
+    # backend-specific connection setup.
 
     # Inherited from SearchBackend (abstract - must implement):
     # search(query_dict) -> List[SearchResult]
@@ -706,7 +706,7 @@ cogniverse_sdk/
 
 **Methods (Backend — schema management and metadata ops):**
 
-- `_initialize_backend(config)`: Abstract; backend-specific connection/client setup, called exactly once by the concrete `initialize()`
+- `_initialize_backend(config)`: Abstract backend-specific connection/client setup invoked by the concrete `initialize()`
 - `deploy_schemas(schema_definitions)`: Deploy multiple schemas together
 - `delete_schema(schema_name, tenant_id)`: Delete tenant schema(s); returns `List[str]` of deleted names
 - `schema_exists(schema_name, tenant_id)`: Check if schema exists
@@ -884,6 +884,12 @@ embedding = doc.get_embedding("colpali")
 # Get embedding metadata
 emb_meta = doc.get_embedding_metadata("colpali")
 
+# An embedding may use the canonical wrapper created by add_embedding or be a
+# raw vector. get_embedding returns either representation's vector unchanged.
+doc.embeddings["raw"] = [0.1, 0.2]
+assert doc.get_embedding("raw") == [0.1, 0.2]
+assert doc.get_embedding_metadata("raw") is None
+
 # To dict
 doc_dict = doc.to_dict()
 
@@ -910,13 +916,20 @@ names:
   `"iso"` (UTC string).
 - `metadata_fields`: `{metadata_key: schema_field}` renames a value carried in
   `Document.metadata` to a schema field name (e.g. `{"segment_index":
-  "segment_id"}`).
+  "segment_id"}`). When the source and destination names differ, the source
+  key is consumed rather than also being passed through, so feeds contain only
+  the schema's declared destination field.
 - `embeddings`: `{embedding_name: schema_field}` maps a stored embedding to its
   field. Backends that hex/binary-encode embeddings (the ingestion path)
   override these with their processed vectors.
 - `include_metadata`: when `false`, only the explicitly mapped/renamed fields
   are fed (no blanket passthrough of every metadata key) — used by schemas whose
   values all live in metadata under non-matching names.
+
+Mapping loaders reject unknown keys and mistyped field names, booleans, and
+mapping dictionaries at load time. `from_schema_json` likewise requires a
+dictionary (or `None`), so malformed schema data fails with the boundary field
+named instead of surfacing later during a feed.
 
 Backends apply this automatically: `VespaBackend.put_document(document, schema_name=..., base_schema_name=...)` loads the base schema's `document_mapping`, serializes, and feeds — raising `ValueError` when the schema declares no mapping rather than guessing field names.
 
@@ -1255,8 +1268,13 @@ video_doc.set_processing_status(ProcessingStatus.COMPLETED)
 # Serialize to dict
 doc_dict = video_doc.to_dict()
 
-# Save to JSON
+# Save to JSON. Convert numpy arrays before serialization; Document.to_dict()
+# preserves embedding values and does not silently change their types.
 import json
+for stored_embedding in doc_dict["embeddings"].values():
+    data = stored_embedding.get("data")
+    if hasattr(data, "tolist"):
+        stored_embedding["data"] = data.tolist()
 with open("document.json", "w") as f:
     json.dump(doc_dict, f)
 
@@ -1447,30 +1465,29 @@ dependencies = [
 
 ### Running Tests
 
-The SDK package contains only interface definitions and has no dedicated test suite. Interface implementations and their integration with the SDK are tested in the project-level `tests/` directory:
+SDK data-record and interface contracts, concrete implementations, and
+real-service round trips are tested in the project-level `tests/` directory:
 
 ```bash
-# Test Vespa backend implementation (implements Backend, ConfigStore, etc.)
-uv run pytest tests/backends/ -v
-
-# Test ingestion pipeline (exercises IngestionBackend interface)
-uv run pytest tests/ingestion/ -v
-
-# Test all unit tests
-uv run pytest tests/ -v -m "unit"
+uv run pytest \
+  tests/backends/unit/test_sdk_document_contracts.py \
+  tests/backends/unit/test_backend_interface_contract.py \
+  tests/backends/unit/test_backend_bool_contracts.py \
+  -v --tb=long > /tmp/sdk-tests.log 2>&1
 ```
 
 ### Test Structure
 
-Note: The SDK package currently does not have a dedicated test suite, as it only defines interfaces. Interface implementations are tested in the project-level `tests/` directory (e.g., `tests/backends/`, `tests/ingestion/`).
-
-### Example Tests
-
-The SDK package defines interfaces only. Testing examples can be found in the project-level `tests/` directory:
-
-- **Backend interface tests**: See `tests/backends/` for VespaBackend implementation tests
-- **ConfigStore tests**: See `tests/backends/` for VespaConfigStore tests
-- **Ingestion tests**: See `tests/ingestion/` for backend ingestion tests
+- `tests/backends/unit/test_sdk_document_contracts.py` pins document, config,
+  and workflow-record serialization boundaries.
+- `tests/backends/unit/test_backend_interface_contract.py` verifies concrete
+  backend method signatures against SDK contracts.
+- `tests/backends/unit/test_backend_bool_contracts.py` verifies boolean return
+  contracts.
+- `tests/backends/integration/test_document_mapping_roundtrip.py` exercises
+  document mapping against a real Vespa service.
+- Concrete ConfigStore, WorkflowStore, and AdapterStore tests live alongside
+  their implementations under `tests/backends/` and `tests/agents/`.
 
 ---
 
@@ -1557,4 +1574,3 @@ uv publish --token $PYPI_TOKEN
 - **Implementation**: See `cogniverse-vespa` for Backend implementation
 - **Usage**: See `cogniverse-core` for how SDK is used
 - **Foundation**: See `cogniverse-foundation` for config base classes
-
