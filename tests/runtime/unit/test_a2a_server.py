@@ -1073,7 +1073,14 @@ class TestGatewayComplexHandoff:
         mock_dispatcher._execute_orchestration_task = _no_orchestration
 
         async def _fake_downstream(
-            *, agent_name, query, tenant_id, top_k, conversation_history, enrichment=None
+            *,
+            agent_name,
+            query,
+            tenant_id,
+            top_k,
+            conversation_history,
+            enrichment=None,
+            image_b64=None,
         ):
             return {"status": "success", "agent": agent_name, "results": []}
 

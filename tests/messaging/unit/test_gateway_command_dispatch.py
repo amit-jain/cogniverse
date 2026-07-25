@@ -360,6 +360,23 @@ def _message_update(
     return update
 
 
+def _bot_context(payload=b"", declared_size=None, download_error=None):
+    """Fake PTB context recording the Telegram file-download boundary.
+
+    ``bot.get_file(file_id)`` returns a file stub whose ``file_size`` is what
+    Telegram advertises and whose ``download_as_bytearray`` yields the bytes.
+    """
+    ctx = MagicMock()
+    photo_file = MagicMock()
+    photo_file.file_size = declared_size
+    if download_error is not None:
+        photo_file.download_as_bytearray = AsyncMock(side_effect=download_error)
+    else:
+        photo_file.download_as_bytearray = AsyncMock(return_value=bytearray(payload))
+    ctx.bot.get_file = AsyncMock(return_value=photo_file)
+    return ctx
+
+
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestHandleMessage:
@@ -440,19 +457,94 @@ class TestHandleMessage:
 
     @pytest.mark.asyncio
     async def test_photo_with_caption_threads_media_context(self):
+        """A photo is downloaded here (the bot token lives only in the gateway)
+        and its bytes travel to the runtime base64-encoded, routed at the image
+        agent so the image itself is the query."""
+        import base64
+
         g = self._gateway()
         photo = MagicMock()
         photo.file_id = "photo-file-123"
         update = _message_update(caption="what is in this image", photo=[photo])
+        payload = b"\x89PNG\r\n\x1a\n" + b"pixel-bytes" * 4
+        ctx = _bot_context(payload=payload, declared_size=len(payload))
 
-        await g._handle_message(update, context=None)
+        await g._handle_message(update, context=ctx)
+
+        ctx.bot.get_file.assert_awaited_once_with("photo-file-123")
+        kwargs = g.runtime_client.dispatch_agent.await_args.kwargs
+        assert kwargs["agent_name"] == "image_search_agent"
+        assert kwargs["query"] == "what is in this image"
+        assert kwargs["context"]["media_type"] == "photo"
+        assert kwargs["context"]["media_file_id"] == "photo-file-123"
+        assert kwargs["context"]["media_mime"] == "image/jpeg"
+        assert base64.b64decode(kwargs["context"]["media_content_b64"]) == payload
+
+    @pytest.mark.asyncio
+    async def test_photo_without_caption_still_searches_by_image(self):
+        import base64
+
+        g = self._gateway()
+        photo = MagicMock()
+        photo.file_id = "photo-file-999"
+        update = _message_update(photo=[photo])
+        payload = b"\x89PNG\r\n\x1a\nno-caption"
+        ctx = _bot_context(payload=payload, declared_size=len(payload))
+
+        await g._handle_message(update, context=ctx)
 
         kwargs = g.runtime_client.dispatch_agent.await_args.kwargs
-        assert kwargs["context"] == {
-            "media_type": "photo",
-            "media_file_id": "photo-file-123",
-        }
-        assert kwargs["query"] == "what is in this image"
+        assert kwargs["agent_name"] == "image_search_agent"
+        assert base64.b64decode(kwargs["context"]["media_content_b64"]) == payload
+
+    @pytest.mark.asyncio
+    async def test_oversized_photo_is_refused_before_download(self):
+        from cogniverse_messaging.gateway import MAX_PHOTO_BYTES
+
+        g = self._gateway()
+        photo = MagicMock()
+        photo.file_id = "photo-huge"
+        update = _message_update(photo=[photo])
+        ctx = _bot_context(payload=b"x", declared_size=MAX_PHOTO_BYTES + 1)
+
+        await g._handle_message(update, context=ctx)
+
+        # Refused on the advertised size — the bytes are never pulled, and
+        # nothing is dispatched.
+        ctx.bot.get_file.return_value.download_as_bytearray.assert_not_awaited()
+        g.runtime_client.dispatch_agent.assert_not_awaited()
+        reply = update.message.reply_text.await_args.args[0]
+        assert "too large" in reply
+        assert "5 MB" in reply
+
+    @pytest.mark.asyncio
+    async def test_photo_exceeding_cap_on_download_is_refused(self):
+        from cogniverse_messaging.gateway import MAX_PHOTO_BYTES
+
+        g = self._gateway()
+        photo = MagicMock()
+        photo.file_id = "photo-lying-size"
+        update = _message_update(photo=[photo])
+        # Telegram advertised a small size but delivered more than the cap.
+        ctx = _bot_context(payload=b"x" * (MAX_PHOTO_BYTES + 1), declared_size=10)
+
+        await g._handle_message(update, context=ctx)
+
+        g.runtime_client.dispatch_agent.assert_not_awaited()
+        assert "too large" in update.message.reply_text.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_photo_download_failure_replies_without_dispatching(self):
+        g = self._gateway()
+        photo = MagicMock()
+        photo.file_id = "photo-broken"
+        update = _message_update(photo=[photo])
+        ctx = _bot_context(download_error=OSError("connection reset"))
+
+        await g._handle_message(update, context=ctx)
+
+        g.runtime_client.dispatch_agent.assert_not_awaited()
+        assert "Could not download" in update.message.reply_text.await_args.args[0]
 
     @pytest.mark.asyncio
     async def test_video_with_caption_threads_media_context(self):

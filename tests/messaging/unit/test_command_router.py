@@ -56,9 +56,11 @@ class TestCommandParsing:
         result = parse_message(text="/search")
         assert result.is_help
 
-    def test_photo_routes_to_search(self):
+    def test_photo_routes_to_image_search(self):
+        # A photo is matched by its own content, so it goes to the image agent —
+        # not the video search agent, which can only match a text query.
         result = parse_message(has_photo=True, photo_file_id="AgACAgIAAxk")
-        assert result.agent_name == "search_agent"
+        assert result.agent_name == "image_search_agent"
         assert result.has_media
         assert result.media_type == "photo"
         assert result.media_file_id == "AgACAgIAAxk"
@@ -75,7 +77,7 @@ class TestCommandParsing:
             has_photo=True,
             photo_file_id="AgACAgIAAxk",
         )
-        assert result.agent_name == "search_agent"
+        assert result.agent_name == "image_search_agent"
         assert result.query == "Find similar scenes"
         assert result.has_media
 

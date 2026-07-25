@@ -2203,6 +2203,18 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 | `results` | List[ImageResult] | Image search results |
 | `count` | int | Total result count |
 
+**Search by image content:**
+
+| Method | Description |
+|-------|-------------|
+| `search_images(query, search_mode="semantic", limit=20, visual_filters=None)` | Text query encoded via `query_encoder.encode` |
+| `search_by_image(image_bytes, limit=20)` | Decodes raw bytes to a PIL image and runs image-to-image search; raises `ValueError` on empty or undecodable bytes rather than returning an empty result |
+| `find_similar_images(reference_image, limit=20)` | Same path from an already-decoded PIL image |
+
+`_encode_image` delegates to `query_encoder.encode_image`, so the query image is embedded by the deployed encoder (the image profile's sidecar via `QueryEncoderFactory`) — the same model that embedded the stored images, which is what makes MaxSim between them meaningful. Query patches are not padded; MaxSim ranks over the real patch count, as on the text side.
+
+A chat client that sends a photo reaches this through the runtime: the gateway base64-encodes the photo into the dispatch context as `media_content_b64`, and `AgentDispatcher._execute_image_search_task(query, tenant_id, top_k, image_b64=...)` decodes it and calls `search_by_image`. Caption text is not mixed into an image query — the image profile's ranking expresses one query tensor, so a caption would silently override the visual match.
+
 ---
 
 ### 10. SummarizerAgent

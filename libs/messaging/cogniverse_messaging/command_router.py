@@ -92,9 +92,18 @@ def parse_message(
     if has_photo or has_video:
         media_type = "photo" if has_photo else "video"
         file_id = photo_file_id if has_photo else video_file_id
-        query = text or f"Find similar {media_type} content"
+        # A photo is searchable by its CONTENT: the image agent embeds the photo
+        # itself and matches it against stored image embeddings. A video file has
+        # no single query embedding, so a video keeps caption-text search on the
+        # video index rather than pretending to match its frames.
+        if has_photo:
+            agent_name = "image_search_agent"
+            query = text or "Find visually similar images"
+        else:
+            agent_name = "search_agent"
+            query = text or "Find similar video content"
         return ParsedCommand(
-            agent_name="search_agent",
+            agent_name=agent_name,
             query=query,
             is_command=False,
             has_media=True,

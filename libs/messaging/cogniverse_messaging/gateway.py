@@ -36,6 +36,15 @@ from cogniverse_messaging.telegram_handler import (
 
 logger = logging.getLogger(__name__)
 
+# Telegram re-encodes photos to JPEG; the largest PhotoSize of a normal upload
+# is well under this. Anything bigger is refused before the download so a huge
+# file cannot pin gateway memory.
+MAX_PHOTO_BYTES = 5 * 1024 * 1024
+
+
+class PhotoTooLargeError(Exception):
+    """Raised when a photo exceeds MAX_PHOTO_BYTES; the message is user-facing."""
+
 
 class MessagingGateway:
     """Telegram messaging gateway for Cogniverse.
@@ -204,6 +213,26 @@ class MessagingGateway:
             agent_context["media_type"] = parsed.media_type
             agent_context["media_file_id"] = parsed.media_file_id
 
+        # A photo is searched by its content, so its BYTES have to reach the
+        # runtime: the bot token lives only here, so the runtime cannot fetch
+        # from Telegram itself. Download and base64 it into the dispatch context.
+        if parsed.media_type == "photo" and parsed.media_file_id:
+            try:
+                image_b64 = await self._download_photo_b64(
+                    context, parsed.media_file_id
+                )
+            except PhotoTooLargeError as exc:
+                await update.message.reply_text(str(exc))
+                return
+            except Exception:
+                logger.exception("Failed to download Telegram photo")
+                await update.message.reply_text(
+                    "Could not download that photo — please try sending it again."
+                )
+                return
+            agent_context["media_content_b64"] = image_b64
+            agent_context["media_mime"] = "image/jpeg"
+
         # Only context_id travels; the runtime loads and stores this chat's
         # conversation history around the agent call (it owns Mem0), so the
         # gateway holds no memory connection and history works in the
@@ -219,6 +248,33 @@ class MessagingGateway:
         messages = format_agent_response(response)
         for chunk in messages:
             await update.message.reply_text(chunk)
+
+    async def _download_photo_b64(self, context, file_id: str) -> str:
+        """Fetch a Telegram photo and return it base64-encoded.
+
+        Refuses anything over MAX_PHOTO_BYTES — both on the size Telegram
+        reports up front and on the bytes actually received, since the
+        advertised size is not guaranteed.
+        """
+        import base64
+
+        photo = await context.bot.get_file(file_id)
+
+        declared = getattr(photo, "file_size", None)
+        if declared and declared > MAX_PHOTO_BYTES:
+            raise PhotoTooLargeError(
+                f"That image is too large ({declared // (1024 * 1024)} MB). "
+                f"Please send one under {MAX_PHOTO_BYTES // (1024 * 1024)} MB."
+            )
+
+        data = bytes(await photo.download_as_bytearray())
+        if len(data) > MAX_PHOTO_BYTES:
+            raise PhotoTooLargeError(
+                f"That image is too large ({len(data) // (1024 * 1024)} MB). "
+                f"Please send one under {MAX_PHOTO_BYTES // (1024 * 1024)} MB."
+            )
+
+        return base64.b64encode(data).decode("ascii")
 
     async def _handle_wiki_command(
         self, update: Update, parsed, tenant_id: str

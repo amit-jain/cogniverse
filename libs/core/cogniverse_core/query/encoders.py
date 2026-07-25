@@ -153,6 +153,28 @@ class ColPaliFamilyQueryEncoder(QueryEncoder):
             query_embeddings = self.model(**batch_queries)
         return query_embeddings.cpu().numpy().squeeze(0)
 
+    def encode_image(self, image) -> np.ndarray:
+        """Encode a query IMAGE to multi-vector patch embeddings.
+
+        The query side of image-to-image (MaxSim) search: the same ColPali
+        model that embeds images at ingest embeds the query image, so the two
+        are directly comparable. ``image`` is a PIL Image (or a path the loader
+        opens). Uses the deployed sidecar when a URL is configured, else the
+        local processor — mirroring ``encode`` for the text side.
+        """
+        if self._remote_client is not None:
+            result = self._remote_client.process_images_vllm(
+                [image], model_name=self.model_name
+            )
+            return np.asarray(result["embeddings"], dtype=np.float32)
+
+        import torch
+
+        batch_images = self.processor.process_images([image]).to(self.device)
+        with torch.no_grad():
+            image_embeddings = self.model(**batch_images)
+        return image_embeddings.cpu().numpy().squeeze(0)
+
     def get_embedding_dim(self) -> int:
         return self.embedding_dim
 
