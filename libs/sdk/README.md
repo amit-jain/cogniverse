@@ -129,14 +129,20 @@ instance retryable. Separate backend instances use independent locks.
 `ConfigEntry` stores one scoped, versioned configuration value:
 
 ```python
+from datetime import datetime, timezone
+
 from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
 
+now = datetime.now(timezone.utc)
 entry = ConfigEntry(
     tenant_id="acme:acme",
     scope=ConfigScope.SYSTEM,
     service="video-search",
     config_key="ranking_profile",
     config_value={"name": "hybrid"},
+    version=1,
+    created_at=now,
+    updated_at=now,
 )
 
 payload = entry.to_dict()
@@ -146,12 +152,14 @@ assert restored == entry
 
 `ConfigStore` provides save, load, delete, list, active-version, and history
 operations for these records. Its concrete implementations own persistence.
+Config and workflow record datetimes must be timezone-aware; they are normalized
+to UTC and stored as timezone-bearing ISO-8601 strings.
 
 ## Workflow and adapter storage
 
 `WorkflowStore` records workflow executions, agent performance, reusable
 templates, learned patterns, and complete learning corpora. Its serialized
-datetimes are ISO-8601 values.
+datetimes use the same canonical UTC form.
 
 `AdapterStore` persists adapter metadata, artifacts, training examples,
 metrics, and activation state. Model types default to `"llm"` where the

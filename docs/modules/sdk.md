@@ -392,6 +392,10 @@ class ConfigEntry:
         return f"{self.tenant_id}:{self.scope.value}:{self.service}:{self.config_key}"
 ```
 
+`created_at` and `updated_at` must be timezone-aware datetimes. Construction
+normalizes them to UTC, and `from_dict()` accepts only ISO-8601 strings with
+timezone information.
+
 **Benefits:**
 
 - **Storage-Agnostic**: Pluggable backend via `ConfigStore` interface (e.g., Vespa)
@@ -520,6 +524,10 @@ class WorkflowStore(ABC):
 
 **Data Classes:**
 ```python
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
 @dataclass
 class WorkflowExecution:
     workflow_id: str
@@ -533,7 +541,9 @@ class WorkflowExecution:
     confidence_score: float
     user_satisfaction: Optional[float] = None
     error_details: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
@@ -546,7 +556,9 @@ class AgentPerformance:
     error_rate: float = 0.0
     preferred_query_types: List[str] = field(default_factory=list)
     performance_trend: str = "stable"
-    last_updated: datetime = field(default_factory=datetime.now)
+    last_updated: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 @dataclass
 class WorkflowTemplate:
@@ -558,9 +570,15 @@ class WorkflowTemplate:
     expected_execution_time: float
     success_rate: float
     usage_count: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     last_used: Optional[datetime] = None
 ```
+
+Workflow record datetimes follow the same canonical form: defaults are UTC,
+aware offsets are normalized to UTC, naive datetimes are rejected, and stored
+payloads use timezone-bearing ISO-8601 strings.
 
 ### 6. Adapter Store Interface
 
