@@ -3,6 +3,10 @@ VideoPrism model loader and inference utilities
 """
 
 import logging
+import threading
+from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -63,6 +67,7 @@ class VideoPrismLoader:
         self.forward_fn = None
         self.config = config or {}
         self.is_global = False  # Will be set for LVT models
+        self._model_lock = threading.Lock()
 
         # Model can handle arbitrary num_frames by interpolating temporal positional embeddings
         # Training used 16 frames for base, 8 for large, but inference can use any number
@@ -91,14 +96,20 @@ class VideoPrismLoader:
         if self.model is not None:
             return  # Already loaded
 
-        logger.info(f"Loading VideoPrism model: {self.model_name}")
+        with self._model_lock:
+            if self.model is not None:
+                return
 
-        # Build model using our local implementation
-        self.model = _videoprism_models.get_videoprism_model(self.model_name)
-        self.model.load_model()
-        self.forward_fn = self.model.forward_fn
+            logger.info(f"Loading VideoPrism model: {self.model_name}")
 
-        logger.info("VideoPrism model loaded successfully")
+            # Publish the candidate only after all weights are ready. A failed
+            # attempt must remain retryable and invisible to concurrent callers.
+            model = _videoprism_models.get_videoprism_model(self.model_name)
+            model.load_model()
+            self.model = model
+            self.forward_fn = model.forward_fn
+
+            logger.info("VideoPrism model loaded successfully")
 
     def preprocess_frames(self, frames: List[np.ndarray]) -> np.ndarray:
         """
@@ -375,6 +386,26 @@ class VideoPrismLoader:
 
 # Model instances cache
 _videoprism_loaders = {}
+_videoprism_loaders_lock = threading.Lock()
+
+
+def _freeze_config(value: Any) -> Any:
+    """Return a stable, hashable representation of a loader configuration."""
+    if isinstance(value, Mapping):
+        items = [
+            (_freeze_config(key), _freeze_config(item)) for key, item in value.items()
+        ]
+        return ("mapping", tuple(sorted(items, key=repr)))
+    if isinstance(value, (list, tuple)):
+        return (type(value).__name__, tuple(_freeze_config(item) for item in value))
+    if isinstance(value, AbstractSet):
+        items = [_freeze_config(item) for item in value]
+        return (type(value).__name__, tuple(sorted(items, key=repr)))
+    try:
+        hash(value)
+    except TypeError:
+        return (type(value).__qualname__, repr(value))
+    return (type(value).__qualname__, value)
 
 
 class VideoPrismGlobalLoader(VideoPrismLoader):
@@ -412,6 +443,7 @@ class VideoPrismGlobalLoader(VideoPrismLoader):
         # Text encoder components (loaded on demand)
         self.text_tokenizer = None
         self.text_encoder = None
+        self._text_encoder_lock = threading.Lock()
 
     def embeddings_to_vespa_format(
         self, embeddings: np.ndarray
@@ -569,25 +601,29 @@ class VideoPrismGlobalLoader(VideoPrismLoader):
         if self.text_encoder is not None:
             return  # Already loaded
 
-        logger.info(f"Loading text encoder for {self.model_name}")
+        with self._text_encoder_lock:
+            if self.text_encoder is not None:
+                return
 
-        try:
-            # Use our text encoder implementation - handle both relative and absolute imports
+            logger.info(f"Loading text encoder for {self.model_name}")
+
             try:
-                from .videoprism_text_encoder import VideoPrismTextEncoder
-            except ImportError:
-                # Fallback to absolute import
-                from cogniverse_core.common.models.videoprism_text_encoder import (
-                    VideoPrismTextEncoder,
-                )
+                # Use our text encoder implementation - handle both relative and
+                # absolute imports.
+                try:
+                    from .videoprism_text_encoder import VideoPrismTextEncoder
+                except ImportError:
+                    from cogniverse_core.common.models.videoprism_text_encoder import (
+                        VideoPrismTextEncoder,
+                    )
 
-            self.text_encoder = VideoPrismTextEncoder(
-                self.model_name, self.embedding_dim
-            )
-            logger.info("Text encoder ready (model loads lazily on first use)")
-        except Exception as e:
-            logger.error(f"Failed to load text encoder: {e}")
-            self.text_encoder = None
+                self.text_encoder = VideoPrismTextEncoder(
+                    self.model_name, self.embedding_dim
+                )
+                logger.info("Text encoder ready (model loads lazily on first use)")
+            except Exception as e:
+                logger.error(f"Failed to load text encoder: {e}")
+                self.text_encoder = None
 
     def encode_text(self, text: str) -> np.ndarray:
         """Encode text query to embeddings
@@ -620,15 +656,19 @@ def get_videoprism_loader(
     model_name: str = "videoprism_public_v1_base_hf",
     config: Optional[Dict[str, Any]] = None,
 ) -> VideoPrismLoader:
-    """Get or create VideoPrism loader instance for specific model"""
-    global _videoprism_loaders
+    """Get or create one loader for a model and immutable config snapshot."""
+    cache_key = (model_name, _freeze_config(config or {}))
+    loader = _videoprism_loaders.get(cache_key)
+    if loader is not None:
+        return loader
 
-    # Check if this is a global model request
-    if "global" in model_name or "_lvt_" in model_name:
-        if model_name not in _videoprism_loaders:
-            _videoprism_loaders[model_name] = VideoPrismGlobalLoader(model_name, config)
-    else:
-        if model_name not in _videoprism_loaders:
-            _videoprism_loaders[model_name] = VideoPrismLoader(model_name, config)
-
-    return _videoprism_loaders[model_name]
+    with _videoprism_loaders_lock:
+        loader = _videoprism_loaders.get(cache_key)
+        if loader is None:
+            config_snapshot = deepcopy(config) if config is not None else {}
+            if "global" in model_name or "_lvt_" in model_name:
+                loader = VideoPrismGlobalLoader(model_name, config_snapshot)
+            else:
+                loader = VideoPrismLoader(model_name, config_snapshot)
+            _videoprism_loaders[cache_key] = loader
+        return loader
