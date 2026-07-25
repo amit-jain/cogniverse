@@ -89,6 +89,7 @@ class ConfigManager:
 
         self.store = store
         self._backend_lock = threading.Lock()
+        self._profile_change_lock = threading.RLock()
         self._profile_change_listener = profile_change_listener
         # System config doesn't change after the runtime applies its env
         # overrides at startup, but `get_system_config` is hot — every
@@ -670,25 +671,26 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.add_backend_profile"
         )
-        with self._backend_lock:
-            backend_config = self.get_backend_config(
-                tenant_id=tenant_id, service=service
-            )
-            backend_config.add_profile(profile)
-            self.set_backend_config(
-                backend_config, tenant_id=tenant_id, service=service
-            )
+        with self._profile_change_lock:
+            with self._backend_lock:
+                backend_config = self.get_backend_config(
+                    tenant_id=tenant_id, service=service
+                )
+                backend_config.add_profile(profile)
+                self.set_backend_config(
+                    backend_config, tenant_id=tenant_id, service=service
+                )
 
-            logger.info(
-                f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
-            )
+                logger.info(
+                    f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
+                )
 
-        # Notify outside the lock to avoid holding _backend_lock across
-        # potentially slow listener work (e.g. backend dict updates).
-        profile_dict = (
-            profile.to_dict() if hasattr(profile, "to_dict") else dict(profile.__dict__)
-        )
-        self._notify_profile_change("added", profile.profile_name, profile_dict)
+            profile_dict = (
+                profile.to_dict()
+                if hasattr(profile, "to_dict")
+                else dict(profile.__dict__)
+            )
+            self._notify_profile_change("added", profile.profile_name, profile_dict)
         return profile
 
     def update_backend_profile(
@@ -732,25 +734,32 @@ class ConfigManager:
         if target_tenant_id is None:
             target_tenant_id = base_tenant_id
 
-        with self._backend_lock:
-            # Get base profile (may be from default tenant or another tenant)
-            base_config = self.get_backend_config(
-                tenant_id=base_tenant_id, service=service
-            )
-            merged_profile = base_config.merge_profile(profile_name, overrides)
+        with self._profile_change_lock:
+            with self._backend_lock:
+                # Get base profile (may be from default tenant or another tenant)
+                base_config = self.get_backend_config(
+                    tenant_id=base_tenant_id, service=service
+                )
+                merged_profile = base_config.merge_profile(profile_name, overrides)
 
-            # Save to target tenant
-            target_config = self.get_backend_config(
-                tenant_id=target_tenant_id, service=service
-            )
-            target_config.add_profile(merged_profile)
-            self.set_backend_config(
-                target_config, tenant_id=target_tenant_id, service=service
-            )
+                # Save to target tenant
+                target_config = self.get_backend_config(
+                    tenant_id=target_tenant_id, service=service
+                )
+                target_config.add_profile(merged_profile)
+                self.set_backend_config(
+                    target_config, tenant_id=target_tenant_id, service=service
+                )
 
-            logger.info(
-                f"Updated backend profile '{profile_name}' for {target_tenant_id}:{service} "
-                f"(based on {base_tenant_id})"
+                logger.info(
+                    f"Updated backend profile '{profile_name}' for "
+                    f"{target_tenant_id}:{service} (based on {base_tenant_id})"
+                )
+
+            self._notify_profile_change(
+                "added",
+                profile_name,
+                merged_profile.to_dict(),
             )
             return merged_profile
 
@@ -793,31 +802,31 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.delete_backend_profile"
         )
-        with self._backend_lock:
-            backend_config = self.get_backend_config(
-                tenant_id=tenant_id, service=service
-            )
-
-            # Check if profile exists
-            if profile_name not in backend_config.profiles:
-                logger.warning(
-                    f"Profile '{profile_name}' not found for {tenant_id}:{service}"
+        with self._profile_change_lock:
+            with self._backend_lock:
+                backend_config = self.get_backend_config(
+                    tenant_id=tenant_id, service=service
                 )
-                return False
 
-            # Remove profile
-            del backend_config.profiles[profile_name]
+                # Check if profile exists
+                if profile_name not in backend_config.profiles:
+                    logger.warning(
+                        f"Profile '{profile_name}' not found for {tenant_id}:{service}"
+                    )
+                    return False
 
-            # Save updated config
-            self.set_backend_config(
-                backend_config, tenant_id=tenant_id, service=service
-            )
+                # Remove profile
+                del backend_config.profiles[profile_name]
 
-            logger.info(
-                f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
-            )
-        # Notify outside the lock so listeners can't deadlock on _backend_lock.
-        self._notify_profile_change("removed", profile_name, None)
+                # Save updated config
+                self.set_backend_config(
+                    backend_config, tenant_id=tenant_id, service=service
+                )
+
+                logger.info(
+                    f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
+                )
+            self._notify_profile_change("removed", profile_name, None)
         return True
 
     # ========== Generic Configuration Access ==========
