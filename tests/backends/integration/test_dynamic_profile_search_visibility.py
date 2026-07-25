@@ -326,7 +326,21 @@ def test_profile_registered_via_config_manager_appears_in_live_backend(
     assert live["schema_config"] == {"embedding_dims": 768}
     assert live["type"] == "document"
 
-    # Step 4: profile resolution at search time must pass.
+    # Step 4: partial update reaches the same live backend with merged fields.
+    temp_config_manager.update_backend_profile(
+        target_profile,
+        {"embedding_model": "updated/DenseOn"},
+        base_tenant_id="test:unit",
+        target_tenant_id="test:unit",
+        service="backend",
+    )
+    updated_live = search_backend.profiles.get(target_profile)
+    assert updated_live == {
+        **live,
+        "embedding_model": "updated/DenseOn",
+    }
+
+    # Step 5: profile resolution at search time must pass.
     resolution_ok = False
     try:
         search_backend.search(
@@ -354,7 +368,7 @@ def test_profile_registered_via_config_manager_appears_in_live_backend(
         resolution_ok = True
     assert resolution_ok, "search should have at least reached profile resolution"
 
-    # Step 5: delete → profile disappears from the live backend.
+    # Step 6: delete → profile disappears from the live backend.
     deleted = temp_config_manager.delete_backend_profile(
         target_profile, tenant_id="test:unit", service="backend"
     )

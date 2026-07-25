@@ -214,8 +214,8 @@ config_manager.set_agent_config(
 | `set_backend_config(backend_config, tenant_id=None, service="backend")` | Set backend configuration |
 | `get_tenant_instructions_config(tenant_id)` | Get raw tenant instructions value (TTL-cached; `{"text": ..., "updated_at": ...}` or `None`) |
 | `get_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Get specific backend profile |
-| `add_backend_profile(profile, tenant_id="your_org:production", service="backend")` | Add/update backend profile |
-| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id` (defaults to `base_tenant_id`) |
+| `add_backend_profile(profile, tenant_id="your_org:production", service="backend")` | Add/update a backend profile, then notify live backends in persistence order |
+| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id`, and notifies live backends with the merged profile |
 | `list_backend_profiles(tenant_id="your_org:production", service="backend")` | List all backend profiles |
 | `delete_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Delete backend profile |
 | `get_config_value(tenant_id, scope, service, config_key, default=None)` | Get arbitrary config value by scope |

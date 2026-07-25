@@ -116,16 +116,19 @@ class ConfigManager:
             raise ValueError("store is required")
         self.store = store
         self._backend_lock = threading.Lock()  # Protects read-modify-write
+        self._profile_change_lock = threading.RLock()  # Orders persistence + notification
         self._profile_change_listener = profile_change_listener
 
     def add_backend_profile(self, profile, tenant_id=None, service="backend"):
         tenant_id = require_tenant_id(tenant_id, source="ConfigManager.add_backend_profile")
-        with self._backend_lock:  # Atomic operation
-            backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
-            backend_config.add_profile(profile)
-            self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
-        # Notified outside the lock so listener work can't deadlock on _backend_lock
-        self._notify_profile_change("added", profile.profile_name, profile.to_dict())
+        with self._profile_change_lock:
+            with self._backend_lock:  # Atomic read-modify-write
+                backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+                backend_config.add_profile(profile)
+                self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
+            # _backend_lock is released before listener work; the outer lock
+            # keeps concurrent persistence and notifications in the same order.
+            self._notify_profile_change("added", profile.profile_name, profile.to_dict())
 ```
 
 **Why Locking?**
@@ -148,6 +151,11 @@ The `_backend_lock` ensures:
 4. Thread 2 acquires lock (sees profiles A, B, C)
 5. Thread 2 reads, modifies, writes (profiles: A, B, C, D)
 6. Both profiles persist correctly
+
+The outer `_profile_change_lock` covers add, partial update, and delete. It
+keeps each persisted change adjacent to its live-backend notification, so an
+older slow notification cannot overtake and replace a newer profile. Listener
+errors remain isolated: the persisted change succeeds and the error is logged.
 
 **BackendConfig:**
 
