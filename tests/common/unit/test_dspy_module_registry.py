@@ -15,6 +15,8 @@ from cogniverse_foundation.config.agent_config import DSPyModuleType, OptimizerT
 class TestSignature(dspy.Signature):
     """Test signature for module creation"""
 
+    __test__ = False
+
     input_text = dspy.InputField()
     output_text = dspy.OutputField()
 
