@@ -9,7 +9,13 @@ unavailable.
 
 from __future__ import annotations
 
+import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from cogniverse_foundation.config.unified_config import (
     LLMConfig,
@@ -170,3 +176,78 @@ class TestJsonConfigCache:
         assert c._json_config["marker"] == 2
 
         utils_mod._JSON_CONFIG_CACHE.clear()
+
+    def test_concurrent_first_read_parses_once(self, tmp_path, monkeypatch):
+        from cogniverse_foundation.config import utils as utils_mod
+
+        cfg_file = tmp_path / "config.json"
+        expected = {"backend": {"port": 8080}, "marker": "shared"}
+        cfg_file.write_text(json.dumps(expected))
+        utils_mod._JSON_CONFIG_CACHE.clear()
+
+        worker_count = 12
+        ready = threading.Barrier(worker_count)
+        load_count = 0
+        count_lock = threading.Lock()
+        real_load = json.load
+
+        def discover():
+            ready.wait()
+            return cfg_file
+
+        def counting_load(fh):
+            nonlocal load_count
+            with count_lock:
+                load_count += 1
+            time.sleep(0.03)
+            return real_load(fh)
+
+        monkeypatch.setattr(
+            ConfigUtils, "_discover_config_file", staticmethod(discover)
+        )
+        monkeypatch.setattr(utils_mod.json, "load", counting_load)
+
+        def load_one():
+            config = ConfigUtils("acme", config_manager=MagicMock())
+            config._load_json_config()
+            return config._json_config
+
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            loaded = list(pool.map(lambda _: load_one(), range(worker_count)))
+
+        assert loaded == [expected] * worker_count
+        assert load_count == 1
+
+    def test_invalid_json_propagates_with_file_context(self, tmp_path, monkeypatch):
+        from cogniverse_foundation.config import utils as utils_mod
+
+        cfg_file = tmp_path / "config.json"
+        cfg_file.write_text('{"backend": ')
+        monkeypatch.setenv("COGNIVERSE_CONFIG", str(cfg_file))
+        utils_mod._JSON_CONFIG_CACHE.clear()
+        config = ConfigUtils("acme", config_manager=MagicMock())
+
+        with pytest.raises(json.JSONDecodeError) as exc:
+            config._load_json_config()
+
+        assert str(cfg_file) in str(exc.value)
+        assert config._json_config is None
+        assert utils_mod._JSON_CONFIG_CACHE == {}
+
+    def test_discovered_file_disappearance_propagates(self, tmp_path, monkeypatch):
+        from cogniverse_foundation.config import utils as utils_mod
+
+        missing = tmp_path / "removed-config.json"
+        monkeypatch.setattr(
+            ConfigUtils,
+            "_discover_config_file",
+            staticmethod(lambda: missing),
+        )
+        utils_mod._JSON_CONFIG_CACHE.clear()
+        config = ConfigUtils("acme", config_manager=MagicMock())
+
+        with pytest.raises(FileNotFoundError, match="removed-config.json"):
+            config._load_json_config()
+
+        assert config._json_config is None
+        assert utils_mod._JSON_CONFIG_CACHE == {}

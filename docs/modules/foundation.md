@@ -170,6 +170,10 @@ flowchart TB
   from a short-TTL cache (`scoped_config_cache_ttl_s`, default 5s). Setters
   on the same manager invalidate immediately — the TTL only bounds staleness
   for writes made by another process.
+- `ConfigUtils` parses a discovered `config.json` once per file modification
+  across concurrent callers and returns an isolated copy to each instance.
+  Invalid JSON and file-access failures propagate with the file path instead
+  of being treated as an empty configuration.
 - Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore)
 
 ```python
