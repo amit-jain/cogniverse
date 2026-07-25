@@ -218,8 +218,19 @@ class TestUserTenantMapper:
                 )
                 return "mem_1"
 
-            def get_all_memories(self, tenant_id, agent_name):
-                return self.store.get((tenant_id, agent_name), [])
+            def get_all_memories(self, tenant_id, agent_name, filters=None, limit=100):
+                rows = self.store.get((tenant_id, agent_name), [])
+                # Real Mem0 narrows on session_id server-side; a model that
+                # ignored the filter would hide a lookup that stopped stamping
+                # the key and silently fell back to scanning a capped page.
+                session_id = (filters or {}).get("session_id")
+                if session_id is not None:
+                    rows = [
+                        r
+                        for r in rows
+                        if (r.get("metadata") or {}).get("session_id") == session_id
+                    ]
+                return rows
 
         mapper = UserTenantMapper(_PartitionedMemory())
         assert mapper.register_user("telegram", "12345", "acme:alice") is True

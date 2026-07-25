@@ -15,7 +15,10 @@ import json
 
 import pytest
 
-from cogniverse_core.conversation import ConversationStore
+from cogniverse_core.conversation import (
+    CONVERSATION_AGENT_NAME,
+    ConversationStore,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -23,12 +26,27 @@ CTX = "c1"
 
 
 class _RecordingManager:
-    """Returns a fixed row list from get_all_memories, like Mem0 would."""
+    """Returns a fixed row list from get_all_memories, like Mem0 would.
+
+    Mirrors the real manager's signature and records the read arguments, so a
+    store that stopped narrowing server-side is caught here. Every row is
+    returned regardless of the filter — a backend that over-returns is the
+    case the store's own context guard has to survive.
+    """
 
     def __init__(self, rows):
         self._rows = rows
+        self.reads = []
 
-    def get_all_memories(self, tenant_id, agent_name):
+    def get_all_memories(self, tenant_id, agent_name, filters=None, limit=100):
+        self.reads.append(
+            {
+                "tenant_id": tenant_id,
+                "agent_name": agent_name,
+                "filters": filters,
+                "limit": limit,
+            }
+        )
         return list(self._rows)
 
 
@@ -90,5 +108,17 @@ def test_other_context_rows_do_not_leak():
         _row("[ctx:c1] [user] mine", _turn("user", CTX, 1.0)),
         _row("[ctx:other] [user] theirs", _turn("user", "other", 2.0)),
     ]
-    history = ConversationStore(_RecordingManager(rows), "acme:acme").get_history(CTX)
+    manager = _RecordingManager(rows)
+    history = ConversationStore(manager, "acme:acme").get_history(CTX)
     assert history == [{"role": "user", "content": "mine"}]
+    # Narrowed on the stamped session key and walked every page: an
+    # enumerate-and-filter read sees only the newest rows, so a busy
+    # neighbouring context buries this one and its history reloads empty.
+    assert manager.reads == [
+        {
+            "tenant_id": "acme:acme",
+            "agent_name": CONVERSATION_AGENT_NAME,
+            "filters": {"session_id": CTX},
+            "limit": None,
+        }
+    ]
