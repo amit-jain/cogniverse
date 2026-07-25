@@ -4,7 +4,7 @@ contracts.
 These pin the sdk's deserialization boundary: corrupt payloads raise with
 the offending field named (never a silently mistyped object that detonates
 inside the backend later), lifecycle setters mutate exactly the fields
-they name, and serializers tolerate the shapes real payloads carry.
+they name, and deserializers accept only their serializers' canonical shape.
 """
 
 from __future__ import annotations
@@ -30,6 +30,33 @@ from cogniverse_sdk.interfaces.workflow_store import (
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+
+def _document_payload(**overrides):
+    payload = Document(
+        id="doc-1",
+        created_at=1700000000,
+        updated_at=1700000001,
+    ).to_dict()
+    payload.update(overrides)
+    return payload
+
+
+def _workflow_execution_payload(**overrides):
+    payload = WorkflowExecution(
+        workflow_id="w1",
+        query="q",
+        query_type="search",
+        execution_time=1.0,
+        success=True,
+        agent_sequence=["a"],
+        task_count=1,
+        parallel_efficiency=1.0,
+        confidence_score=0.9,
+        timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    ).to_dict()
+    payload.update(overrides)
+    return payload
 
 
 class TestDocumentLifecycleSetters:
@@ -64,67 +91,51 @@ class TestDocumentFromDictContract:
         doc.add_embedding("e", [1.0])
         assert Document.from_dict(doc.to_dict()) == doc
 
-    def test_digit_string_timestamp_coerced(self):
-        doc = Document.from_dict({"created_at": "1700000000"})
-        assert doc.created_at == 1700000000
-
-    def test_millisecond_timestamp_converted_to_seconds(self):
-        doc = Document.from_dict({"created_at": 1700000000000})
-        assert doc.created_at == 1700000000
-
-    def test_non_numeric_timestamp_raises_with_field_name(self):
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "1700000000",
+            1700000000000,
+            -1700000000000,
+            1700000000.0,
+            True,
+            float("nan"),
+            float("inf"),
+        ],
+    )
+    def test_noncanonical_timestamp_raises_with_field_name(self, value):
         with pytest.raises(TypeError, match="created_at"):
-            Document.from_dict({"created_at": "yesterday"})
+            Document.from_dict(_document_payload(created_at=value))
 
     def test_unknown_content_type_raises_with_value(self):
         with pytest.raises(ValueError, match="hologram"):
-            Document.from_dict({"content_type": "hologram"})
+            Document.from_dict(_document_payload(content_type="hologram"))
 
     def test_unknown_status_raises_with_value(self):
         with pytest.raises(ValueError, match="exploded"):
-            Document.from_dict({"status": "exploded"})
+            Document.from_dict(_document_payload(status="exploded"))
 
     def test_scalar_embeddings_raises(self):
         with pytest.raises(TypeError, match="embeddings"):
-            Document.from_dict({"embeddings": "corrupt"})
+            Document.from_dict(_document_payload(embeddings="corrupt"))
 
-    def test_null_metadata_and_embeddings_become_empty_dicts(self):
-        doc = Document.from_dict({"metadata": None, "embeddings": None})
-        assert doc.metadata == {}
-        assert doc.embeddings == {}
+    @pytest.mark.parametrize("field_name", ["metadata", "embeddings"])
+    def test_null_mapping_is_rejected(self, field_name):
+        with pytest.raises(TypeError, match=field_name):
+            Document.from_dict(_document_payload(**{field_name: None}))
 
     def test_auto_detect_still_works(self):
-        doc = Document.from_dict({"content_path": "/x/clip.mp4"})
+        doc = Document.from_dict(_document_payload(content_path="/x/clip.mp4"))
         assert doc.content_type is ContentType.VIDEO
 
-    def test_numpy_int_timestamp_coerced(self):
-        import numpy as np
-
-        doc = Document.from_dict({"created_at": np.int64(1700000000)})
-        assert doc.created_at == 1700000000
-        assert type(doc.created_at) is int
-
-    def test_numpy_float_timestamp_coerced(self):
-        import numpy as np
-
-        doc = Document.from_dict({"created_at": np.float64(1700000000.0)})
-        assert doc.created_at == 1700000000
-        assert type(doc.created_at) is int
-
-    def test_numpy_bool_timestamp_rejected(self):
+    @pytest.mark.parametrize("scalar_type", ["int64", "float64", "bool_"])
+    def test_numpy_timestamp_is_rejected(self, scalar_type):
         import numpy as np
 
         with pytest.raises(TypeError, match="created_at"):
-            Document.from_dict({"created_at": np.bool_(True)})
-
-    def test_python_bool_timestamp_rejected(self):
-        with pytest.raises(TypeError, match="created_at"):
-            Document.from_dict({"created_at": True})
-
-    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
-    def test_non_finite_timestamp_rejected_with_field_name(self, value):
-        with pytest.raises(TypeError, match="created_at"):
-            Document.from_dict({"created_at": value})
+            Document.from_dict(
+                _document_payload(created_at=getattr(np, scalar_type)(1))
+            )
 
     def test_auto_detect_covers_every_extension_branch(self):
         cases = {
@@ -135,7 +146,21 @@ class TestDocumentFromDictContract:
             "/x/unknown.xyz": ContentType.DOCUMENT,  # default, unchanged
         }
         for path, expected in cases.items():
-            assert Document.from_dict({"content_path": path}).content_type is expected
+            assert (
+                Document.from_dict(_document_payload(content_path=path)).content_type
+                is expected
+            )
+
+    def test_unknown_fields_are_rejected(self):
+        with pytest.raises(ValueError, match="unknown fields.*obsolete_field"):
+            Document.from_dict(_document_payload(obsolete_field=True))
+
+    def test_missing_fields_are_rejected(self):
+        payload = _document_payload()
+        del payload["updated_at"]
+
+        with pytest.raises(ValueError, match="missing fields.*updated_at"):
+            Document.from_dict(payload)
 
 
 class TestDocumentEmbeddingAccess:
@@ -243,18 +268,30 @@ class TestConfigEntryFromDictContract:
         with pytest.raises(ValueError, match="created_at.*timezone"):
             ConfigEntry.from_dict(payload)
 
-    def test_aware_datetime_is_normalized_to_utc(self):
+    def test_non_utc_datetime_is_rejected(self):
         payload = self._payload()
         payload["created_at"] = "2026-01-01T05:30:00+05:30"
 
-        entry = ConfigEntry.from_dict(payload)
+        with pytest.raises(ValueError, match="created_at.*canonical UTC"):
+            ConfigEntry.from_dict(payload)
 
-        assert entry.created_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
-        assert entry.to_dict()["created_at"] == "2026-01-01T00:00:00+00:00"
+    def test_unknown_fields_are_rejected(self):
+        payload = self._payload()
+        payload["obsolete_field"] = True
+
+        with pytest.raises(ValueError, match="unknown fields.*obsolete_field"):
+            ConfigEntry.from_dict(payload)
+
+    def test_version_is_not_defaulted(self):
+        payload = self._payload()
+        del payload["version"]
+
+        with pytest.raises(ValueError, match="missing fields.*version"):
+            ConfigEntry.from_dict(payload)
 
 
-class TestWorkflowRecordsTolerateSchemaDrift:
-    def test_workflow_execution_ignores_extra_keys(self):
+class TestWorkflowRecordsRequireCanonicalFields:
+    def test_workflow_execution_rejects_extra_keys(self):
         we = WorkflowExecution(
             workflow_id="w1",
             query="q",
@@ -267,14 +304,16 @@ class TestWorkflowRecordsTolerateSchemaDrift:
             confidence_score=0.9,
         )
         payload = {**we.to_dict(), "added_by_newer_writer": True}
-        assert WorkflowExecution.from_dict(payload) == we
+        with pytest.raises(ValueError, match="unknown fields.*added_by_newer_writer"):
+            WorkflowExecution.from_dict(payload)
 
-    def test_agent_performance_ignores_extra_keys(self):
+    def test_agent_performance_rejects_extra_keys(self):
         ap = AgentPerformance(agent_name="a")
         payload = {**ap.to_dict(), "future_field": 1}
-        assert AgentPerformance.from_dict(payload) == ap
+        with pytest.raises(ValueError, match="unknown fields.*future_field"):
+            AgentPerformance.from_dict(payload)
 
-    def test_workflow_template_ignores_extra_keys(self):
+    def test_workflow_template_rejects_extra_keys(self):
         wt = WorkflowTemplate(
             template_id="t1",
             name="n",
@@ -285,7 +324,46 @@ class TestWorkflowRecordsTolerateSchemaDrift:
             success_rate=0.8,
         )
         payload = {**wt.to_dict(), "future_field": "x"}
-        assert WorkflowTemplate.from_dict(payload) == wt
+        with pytest.raises(ValueError, match="unknown fields.*future_field"):
+            WorkflowTemplate.from_dict(payload)
+
+    @pytest.mark.parametrize(
+        ("record_type", "payload", "field_name"),
+        [
+            (
+                WorkflowExecution,
+                _workflow_execution_payload(),
+                "metadata",
+            ),
+            (
+                AgentPerformance,
+                AgentPerformance(
+                    agent_name="a",
+                    last_updated=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ).to_dict(),
+                "performance_trend",
+            ),
+            (
+                WorkflowTemplate,
+                WorkflowTemplate(
+                    template_id="t1",
+                    name="n",
+                    description="d",
+                    query_patterns=["p"],
+                    task_sequence=[],
+                    expected_execution_time=1.0,
+                    success_rate=0.8,
+                    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ).to_dict(),
+                "usage_count",
+            ),
+        ],
+    )
+    def test_missing_fields_are_rejected(self, record_type, payload, field_name):
+        del payload[field_name]
+
+        with pytest.raises(ValueError, match=f"missing fields.*{field_name}"):
+            record_type.from_dict(payload)
 
 
 class TestWorkflowRecordDatetimeContract:
@@ -321,37 +399,31 @@ class TestWorkflowRecordDatetimeContract:
         [
             (
                 WorkflowExecution,
-                {
-                    "workflow_id": "w1",
-                    "query": "q",
-                    "query_type": "search",
-                    "execution_time": 1.0,
-                    "success": True,
-                    "agent_sequence": ["a"],
-                    "task_count": 1,
-                    "parallel_efficiency": 1.0,
-                    "confidence_score": 0.9,
-                    "timestamp": 1700000000,
-                },
+                _workflow_execution_payload(timestamp=1700000000),
                 "timestamp",
             ),
             (
                 AgentPerformance,
-                {"agent_name": "a", "last_updated": "2026-01-01T00:00:00"},
+                AgentPerformance(
+                    agent_name="a",
+                    last_updated=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ).to_dict()
+                | {"last_updated": "2026-01-01T00:00:00"},
                 "last_updated",
             ),
             (
                 WorkflowTemplate,
-                {
-                    "template_id": "t1",
-                    "name": "n",
-                    "description": "d",
-                    "query_patterns": ["p"],
-                    "task_sequence": [],
-                    "expected_execution_time": 1.0,
-                    "success_rate": 0.8,
-                    "last_used": 1700000000,
-                },
+                WorkflowTemplate(
+                    template_id="t1",
+                    name="n",
+                    description="d",
+                    query_patterns=["p"],
+                    task_sequence=[],
+                    expected_execution_time=1.0,
+                    success_rate=0.8,
+                    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ).to_dict()
+                | {"last_used": 1700000000},
                 "last_used",
             ),
         ],
@@ -360,24 +432,11 @@ class TestWorkflowRecordDatetimeContract:
         with pytest.raises(ValueError, match=field_name):
             record_type.from_dict(payload)
 
-    def test_aware_workflow_timestamp_is_normalized_to_utc(self):
-        payload = {
-            "workflow_id": "w1",
-            "query": "q",
-            "query_type": "search",
-            "execution_time": 1.0,
-            "success": True,
-            "agent_sequence": ["a"],
-            "task_count": 1,
-            "parallel_efficiency": 1.0,
-            "confidence_score": 0.9,
-            "timestamp": "2026-01-01T05:30:00+05:30",
-        }
+    def test_non_utc_workflow_timestamp_is_rejected(self):
+        payload = _workflow_execution_payload(timestamp="2026-01-01T05:30:00+05:30")
 
-        execution = WorkflowExecution.from_dict(payload)
-
-        assert execution.timestamp == datetime(2026, 1, 1, tzinfo=timezone.utc)
-        assert execution.to_dict()["timestamp"] == "2026-01-01T00:00:00+00:00"
+        with pytest.raises(ValueError, match="timestamp.*canonical UTC"):
+            WorkflowExecution.from_dict(payload)
 
 
 class _CorpusStore(WorkflowStore):
@@ -687,26 +746,30 @@ class TestDocumentSchemaFieldMapping:
         with pytest.raises(ValueError, match="str to str"):
             DocumentFieldMapping.from_dict({"embeddings": {"embedding": 123}})
 
-    def test_content_type_as_raw_string_is_coerced(self):
-        """A Document whose content_type was set to a raw string still
-        serializes (coerced through the enum) instead of raising AttributeError."""
+    def test_content_type_as_raw_string_is_rejected(self):
         doc = Document(id="d", title="t")
-        doc.content_type = "video"  # raw string, not the enum
-        out = doc.to_schema_fields(self._mapping())
-        assert out["document_type"] == "video"
-
-    def test_content_type_garbage_string_raises_valueerror(self):
-        doc = Document(id="d", title="t")
-        doc.content_type = "hologram"
-        with pytest.raises(ValueError, match="hologram"):
+        doc.content_type = "video"
+        with pytest.raises(TypeError, match="content_type.*ContentType"):
             doc.to_schema_fields(self._mapping())
 
-    def test_float_created_at_truncated_to_int_in_epoch(self):
-        """A float epoch must land as an int in the schema's long field."""
-        doc = Document(id="d", created_at=1700000000.75, updated_at=1700000000.75)
-        out = doc.to_schema_fields(self._mapping())
-        assert out["creation_timestamp"] == 1700000000
-        assert type(out["creation_timestamp"]) is int
+    @pytest.mark.parametrize(
+        ("field_name", "value", "expected_type"),
+        [
+            ("content_type", "video", "ContentType"),
+            ("status", "pending", "ProcessingStatus"),
+            ("metadata", None, "dict"),
+            ("embeddings", None, "dict"),
+        ],
+    )
+    def test_constructor_rejects_noncanonical_fields(
+        self, field_name, value, expected_type
+    ):
+        with pytest.raises(TypeError, match=f"{field_name}.*{expected_type}"):
+            Document(**{field_name: value})
+
+    def test_float_created_at_is_rejected(self):
+        with pytest.raises(TypeError, match="created_at.*integer timestamp"):
+            Document(id="d", created_at=1700000000.75, updated_at=1700000000.75)
 
     def test_epoch_ms_format_multiplies_to_milliseconds(self):
         """creation_timestamp is a millisecond field on video/audio schemas;

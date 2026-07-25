@@ -393,8 +393,10 @@ class ConfigEntry:
 ```
 
 `created_at` and `updated_at` must be timezone-aware datetimes. Construction
-normalizes them to UTC, and `from_dict()` accepts only ISO-8601 strings with
-timezone information.
+normalizes them to UTC. `from_dict()` accepts exactly the fields emitted by
+`to_dict()` and requires canonical UTC ISO-8601 strings; missing fields,
+unknown fields, alternate offsets, and obsolete payload shapes raise
+`ValueError`.
 
 **Benefits:**
 
@@ -1321,6 +1323,14 @@ if loaded_doc.content_type == ContentType.VIDEO:
 elif loaded_doc.content_type == ContentType.DATAFRAME:
     print(f"Processing dataframe with {loaded_doc.metadata.get('rows')} rows")
 ```
+
+`Document.from_dict()` consumes only the exact `to_dict()` field set. It
+rejects missing or unknown fields, null metadata/embedding mappings, and
+alternate timestamp encodings; `created_at` and `updated_at` must be Python
+integers containing epoch seconds. Construction and serialization enforce the
+same field types: `content_type` and `status` are enum values, mappings are
+dictionaries, and timestamps are never coerced from strings, floats, NumPy
+scalars, or milliseconds.
 
 ### Example 3: Config Store Interface
 

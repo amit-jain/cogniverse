@@ -25,11 +25,18 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-def _known_fields(cls, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop unknown keys so a payload written by a newer schema still
-    deserializes — cls(**data) raised TypeError on the first extra key."""
+def _canonical_payload(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Require the exact field set emitted by the record's serializer."""
+    if not isinstance(data, dict):
+        raise ValueError(f"payload must be a dict, got {type(data).__name__}")
     names = {f.name for f in fields(cls)}
-    return {k: v for k, v in data.items() if k in names}
+    unknown = set(data) - names
+    if unknown:
+        raise ValueError(f"unknown fields: {sorted(unknown)}")
+    missing = names - set(data)
+    if missing:
+        raise ValueError(f"missing fields: {sorted(missing)}")
+    return dict(data)
 
 
 def _utc_datetime(value: Any, field_name: str) -> datetime:
@@ -46,9 +53,15 @@ def _datetime_from_payload(value: Any, field_name: str) -> datetime:
             f"{field_name} must be an ISO-8601 string, got {type(value).__name__}"
         )
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise ValueError(f"{field_name} is not valid ISO-8601: {exc}") from None
+    canonical = _utc_datetime(parsed, field_name)
+    if value != canonical.isoformat():
+        raise ValueError(
+            f"{field_name} must use canonical UTC ISO-8601 form, got {value!r}"
+        )
+    return canonical
 
 
 @dataclass
@@ -79,9 +92,8 @@ class WorkflowExecution:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowExecution":
-        data = _known_fields(cls, data)
-        if "timestamp" in data:
-            data["timestamp"] = _datetime_from_payload(data["timestamp"], "timestamp")
+        data = _canonical_payload(cls, data)
+        data["timestamp"] = _datetime_from_payload(data["timestamp"], "timestamp")
         return cls(**data)
 
 
@@ -109,11 +121,10 @@ class AgentPerformance:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AgentPerformance":
-        data = _known_fields(cls, data)
-        if "last_updated" in data:
-            data["last_updated"] = _datetime_from_payload(
-                data["last_updated"], "last_updated"
-            )
+        data = _canonical_payload(cls, data)
+        data["last_updated"] = _datetime_from_payload(
+            data["last_updated"], "last_updated"
+        )
         return cls(**data)
 
 
@@ -145,12 +156,9 @@ class WorkflowTemplate:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowTemplate":
-        data = _known_fields(cls, data)
-        if "created_at" in data:
-            data["created_at"] = _datetime_from_payload(
-                data["created_at"], "created_at"
-            )
-        if data.get("last_used") is not None:
+        data = _canonical_payload(cls, data)
+        data["created_at"] = _datetime_from_payload(data["created_at"], "created_at")
+        if data["last_used"] is not None:
             data["last_used"] = _datetime_from_payload(data["last_used"], "last_used")
         return cls(**data)
 
