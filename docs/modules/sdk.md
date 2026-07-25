@@ -726,8 +726,8 @@ cogniverse_sdk/
 - `get_statistics()`: Get search backend statistics
 - `health_check()`: Check backend health
 - `get_embedding_requirements(schema_name)`: Get embedding requirements for schema
-- `add_profile(profile_name, profile_config)`: Register a new ranking/retrieval profile at runtime (concrete, default no-op; override to support hot-reload without a restart)
-- `remove_profile(profile_name)`: Unregister a profile at runtime (concrete, default no-op)
+- `add_profile(profile_name, profile_config)`: Required runtime registration of a new ranking/retrieval profile
+- `remove_profile(profile_name)`: Required runtime removal of a ranking/retrieval profile
 
 **Methods (IngestionBackend):**
 
