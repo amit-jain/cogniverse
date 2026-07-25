@@ -1820,7 +1820,11 @@ success/failure into `ExportMetrics` at all)) tracks connection health via the
 from the loaded telemetry config (`get_telemetry_manager().config.get_project_name`)
 — the same `tenant_project_template` the span writers use — so a template
 override reads the project production agents actually write to. Batch/live
-solvers resolve the same way via `core/solvers._resolve_project`.
+solvers resolve the same way via `core/solvers._resolve_project`. When storage
+is not injected, `TraceManager` also constructs it from that config's required
+`provider_config.http_endpoint` and `otlp_endpoint`; it never falls back to an
+unrelated localhost backend. A missing query endpoint raises `ValueError`, and
+a connection failure names the configured HTTP endpoint.
 
 ```python
 TraceManager(tenant_id: str, storage: TelemetryStorage | None = None)

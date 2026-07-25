@@ -12,7 +12,7 @@ import pandas as pd
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-from .storage import TelemetryStorage
+from .storage import ConnectionConfig, TelemetryStorage
 
 logger = logging.getLogger(__name__)
 
@@ -123,10 +123,33 @@ class TraceManager:
             storage: Phoenix storage instance.
         """
         self.tenant_id = canonical_tenant_id(tenant_id)
-        self.project_name = get_telemetry_manager().config.get_project_name(
-            self.tenant_id
-        )
-        self.storage = storage or TelemetryStorage()
+        telemetry_config = get_telemetry_manager().config
+        self.project_name = telemetry_config.get_project_name(self.tenant_id)
+
+        if storage is not None:
+            self.storage = storage
+            return
+
+        http_endpoint = telemetry_config.provider_config.get("http_endpoint")
+        if not isinstance(http_endpoint, str) or not http_endpoint.strip():
+            raise ValueError(
+                "telemetry provider_config.http_endpoint is required "
+                "when TraceManager creates storage"
+            )
+
+        try:
+            self.storage = TelemetryStorage(
+                ConnectionConfig(
+                    http_endpoint=http_endpoint,
+                    otlp_endpoint=telemetry_config.otlp_endpoint,
+                    enable_health_checks=False,
+                )
+            )
+        except ConnectionError as error:
+            raise ConnectionError(
+                "Failed to connect trace storage to configured telemetry endpoint "
+                f"{http_endpoint}"
+            ) from error
 
     def get_recent_traces(self, hours_back: int = 1, limit: int = 100) -> pd.DataFrame:
         """
