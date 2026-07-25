@@ -23,7 +23,12 @@ from PIL import Image
 
 from cogniverse_core.query.encoders import ColPaliFamilyQueryEncoder
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_colpali]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.local_only,
+    pytest.mark.requires_colpali,
+    pytest.mark.slow,
+]
 
 MODEL = "vidore/colsmol-500m"
 

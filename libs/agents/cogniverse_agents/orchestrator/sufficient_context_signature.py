@@ -65,6 +65,10 @@ class SufficientContextSignature(dspy.Signature):
     rationale: str = dspy.OutputField(
         desc=(
             "Short explanation of why the gate decided the evidence is or is "
-            "not sufficient. Used for telemetry and audit trails."
+            "not sufficient. Cite the concrete evidence supporting every "
+            "answered facet of the query, even when other facets remain "
+            "missing; then name the unsupported facets. Do not omit supported "
+            "facts merely because the overall decision is False. Used for "
+            "telemetry and audit trails."
         )
     )

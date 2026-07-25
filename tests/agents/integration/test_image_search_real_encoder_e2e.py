@@ -39,6 +39,7 @@ from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 
 pytestmark = [
     pytest.mark.integration,
+    pytest.mark.local_only,
     pytest.mark.requires_docker,
     pytest.mark.requires_models,
     pytest.mark.slow,

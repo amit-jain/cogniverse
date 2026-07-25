@@ -39,23 +39,8 @@ from cogniverse_agents.orchestrator_agent import (
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
-from tests.agents.integration.conftest import is_llm_available
 
 pytestmark = pytest.mark.integration
-
-
-# ---------------------------------------------------------------------------
-# File-level skip: the loop needs a reachable LM endpoint. Without it every
-# gate decision short-circuits to the safe default and the goldens cannot
-# be exercised meaningfully.
-# ---------------------------------------------------------------------------
-
-if not is_llm_available():
-    pytest.skip(
-        "Configured LLM endpoint not reachable — iterative retrieval loop "
-        "requires a real DSPy-backed LM for gate decisions",
-        allow_module_level=True,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -614,6 +599,11 @@ async def test_rlm_promotion_emits_instrumented_rlm_child_span(
         for s in rlm_spans
         if s.attributes.get("rlm_iterations") is not None
     ]
+    assert {
+        s.attributes.get("max_iterations")
+        for s in rlm_spans
+        if s.attributes.get("max_iterations") is not None
+    } == {3}
     assert_golden_json(
         {"rlm_iterations": rlm_iterations},
         "iter_loop_rlm_promotion_d10.json",

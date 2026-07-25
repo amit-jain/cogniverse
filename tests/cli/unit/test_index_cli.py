@@ -57,6 +57,27 @@ def _runtime_handler(graph_response: httpx.Response):
     return handler
 
 
+def _invalid_document_count_handler(documents_fed):
+    """Runtime reports terminal success with an invalid feed count."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/ingestion/upload":
+            return httpx.Response(202, json={"ingest_id": "i-empty", "state": "queued"})
+        if request.url.path == "/ingestion/i-empty/status":
+            return httpx.Response(
+                200,
+                json={
+                    "state": "complete",
+                    "latest": {"result": {"chunks": 0, "documents_fed": documents_fed}},
+                },
+            )
+        if request.url.path == "/graph/upsert":
+            return httpx.Response(200, json={"nodes_upserted": 0, "edges_upserted": 0})
+        return httpx.Response(404, text=f"unexpected path {request.url.path}")
+
+    return handler
+
+
 class _BoomExtractor:
     def extract(self, *args, **kwargs):
         raise RuntimeError("tree-sitter exploded")
@@ -119,6 +140,40 @@ def test_upload_and_graph_counts_in_summary(
     assert summary["graph_errors"] == 0
     out = capture_console.getvalue()
     assert "Indexed 1/1 files" in out
+
+
+@pytest.mark.parametrize(
+    ("documents_fed", "error_fragment"),
+    [
+        (0, "completed without feeding any documents"),
+        (-1, "completed without feeding any documents"),
+        ("zero", "invalid documents_fed='zero'"),
+        (True, "invalid documents_fed=True"),
+    ],
+)
+def test_terminal_ingest_with_invalid_document_count_is_not_reported_as_indexed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_console: io.StringIO,
+    documents_fed,
+    error_fragment: str,
+) -> None:
+    (tmp_path / "empty.py").write_text("")
+    _mount_httpx(monkeypatch, _invalid_document_count_handler(documents_fed))
+
+    summary = index_cli.index_files(
+        root=tmp_path,
+        content_type="code",
+        tenant_id="acme:acme",
+        runtime_url="http://runtime.test",
+    )
+
+    assert summary["files_indexed"] == 0
+    assert summary["documents_fed"] == 0
+    assert summary["errors"] == 1
+    out = capture_console.getvalue()
+    assert "Indexed 0/1 files" in out
+    assert error_fragment in out
 
 
 def test_upload_failure_lands_in_errors_not_silence(

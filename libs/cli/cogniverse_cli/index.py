@@ -249,12 +249,26 @@ def _upload_file(
             "status": resp.status_code,
         }
     result = latest.get("result", {}) or {}
+    documents_fed = result.get("documents_fed", 0)
+    if not isinstance(documents_fed, int) or isinstance(documents_fed, bool):
+        return {
+            "error": (
+                f"ingest {ingest_id} completed with invalid documents_fed="
+                f"{documents_fed!r}"
+            ),
+            "status": resp.status_code,
+        }
+    if documents_fed <= 0:
+        return {
+            "error": (f"ingest {ingest_id} completed without feeding any documents"),
+            "status": resp.status_code,
+        }
     return {
         "status": "success",
         "ingest_id": ingest_id,
         "video_id": result.get("video_id"),
         "chunks_created": result.get("chunks", result.get("keyframes", 0)),
-        "documents_fed": result.get("documents_fed", 0),
+        "documents_fed": documents_fed,
     }
 
 

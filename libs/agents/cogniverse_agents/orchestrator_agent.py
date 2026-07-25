@@ -390,6 +390,7 @@ class OrchestrationResult(BaseModel):
 # iterative RLM substrate. Mirrors the RLM-promotion rule for other large
 # prompts.
 _ITER_GATE_RLM_PROMOTION_CHARS = 6000
+_ITER_GATE_RLM_MAX_ITERATIONS = 3
 # Approximate character budget consumed by the dspy chat adapter's
 # wrapping of ``SufficientContextSignature`` (input field descriptions,
 # output field schemas, CoT scaffolding, role markers). Measured by
@@ -1835,6 +1836,7 @@ class OrchestratorAgent(
                 event_queue=self.event_queue,
                 task_id=f"sufficient_context_gate_{uuid.uuid4().hex[:8]}",
                 tenant_id=tenant_id,
+                max_iterations=_ITER_GATE_RLM_MAX_ITERATIONS,
             )
         return dspy.ChainOfThought(SufficientContextSignature)
 

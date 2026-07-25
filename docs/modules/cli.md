@@ -137,6 +137,14 @@ cogniverse index ./my-repo --type code --tenant acme --profile code_lateon_mv
 
 `--type code` and `--type docs` are implemented (`docs` maps each extension to its ingestion profile and runs markdown/text graph extraction); `video` is accepted but prints a not-yet-implemented notice. Each file is uploaded to `/ingestion/upload` and polled to a terminal state, then a knowledge-graph extraction pass runs locally (tree-sitter for code, GLiNER for text) and POSTs the resulting nodes/edges to `/graph/upsert`. Per-file graph-extraction failures are counted and listed in the run summary as graph errors rather than silently producing zero nodes.
 
+An ingestion job is counted as indexed only when its terminal result reports a
+positive integer `documents_fed`. A terminal `complete` result with zero,
+missing, boolean, or otherwise invalid `documents_fed` is a per-file indexing
+error, not success; it appears in the error list and does not increment
+`files_indexed`. Graph extraction remains a separate best-effort pass, so its
+failure is reported under `graph_errors` without rewriting the ingestion
+result.
+
 ### Knowledge graph
 
 ```bash

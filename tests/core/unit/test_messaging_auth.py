@@ -170,7 +170,8 @@ class TestUserTenantMapper:
         # get_tenant_id reads), NOT the user's own tenant — the lookup runs
         # before the tenant is known. The real tenant is preserved in the
         # content text and metadata. Stored verbatim (infer=False) so the
-        # substring parse in get_tenant_id is reliable.
+        # audit record remains human-readable; authorization lookup uses the
+        # exact metadata fields below.
         assert call_kwargs["tenant_id"] == SYSTEM_TENANT_ID
         assert call_kwargs["infer"] is False
         assert "acme:alice" in call_kwargs["content"]
