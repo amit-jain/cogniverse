@@ -141,10 +141,19 @@ def shared_denseon(vllm_sidecar):
     Mirrors the chart's ``vllm_embed`` engine: ``--runner pooling
     --convert embed`` pools to a single dense vector per input (no
     per-token reshape), matching DenseOn's dense-retrieval semantics.
+    The chart pins float32 because DenseOn can emit NaNs for ordinary
+    document-prefixed text under vLLM's lower-precision CPU default.
     """
     return vllm_sidecar.spawn(
         "lightonai/DenseOn",
-        extra_args=["--runner", "pooling", "--convert", "embed"],
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--dtype",
+            "float32",
+        ],
     )
 
 

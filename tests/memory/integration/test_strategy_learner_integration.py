@@ -12,6 +12,7 @@ import pytest
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.optimizer.strategy_learner import StrategyLearner
+from tests.utils.async_polling import wait_for_vespa_indexing
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ def memory_manager(shared_memory_vespa, shared_denseon):
         embedding_model="lightonai/DenseOn",
         llm_base_url=get_llm_base_url(),
         embedder_base_url=shared_denseon,
-        auto_create_schema=False,
+        auto_create_schema=True,
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
@@ -369,3 +370,27 @@ class TestLLMDistillation:
             )
             assert s.agent == "search"
             assert s.confidence == 0.6  # Default for LLM-distilled
+
+        wait_for_vespa_indexing(delay=2)
+        stored = memory_manager.get_all_memories(
+            tenant_id="test_tenant",
+            agent_name="_strategy_store_search",
+        )
+        stored_llm = [
+            memory
+            for memory in stored
+            if (memory.get("metadata") or {}).get("source") == "llm_distillation"
+        ]
+        expected_contents = {
+            (
+                f"I prefer the following approach for search: {strategy.text} "
+                f"I use this when {strategy.applies_when}."
+            )
+            for strategy in llm_strategies
+        }
+        stored_by_content = {memory["memory"]: memory for memory in stored_llm}
+        assert set(stored_by_content) == expected_contents
+        for memory in stored_by_content.values():
+            assert memory["metadata"]["agent"] == "search"
+            assert memory["metadata"]["source"] == "llm_distillation"
+            assert memory["metadata"]["confidence"] == 0.6
