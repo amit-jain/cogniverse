@@ -1,10 +1,12 @@
 """BackendVectorStore.insert / list against a real Vespa.
 
-Two correctness pins:
+Three correctness pins:
 
 * insert() must not report a dropped feed as a stored memory. The backend
   returns per-document feed failures without raising, so a client/schema
   dimension mismatch must not leave Mem0 believing the write landed.
+* get() must unwrap the canonical Document embedding envelope after the
+  vector has survived a real Vespa feed-and-read round trip.
 * list() must emit a tz-aware UTC created_at (matching the sibling get()/
   search() read paths), not a host-local naive timestamp.
 
@@ -93,6 +95,7 @@ def test_insert_raises_when_feed_drops_documents(memory_store):
     ) == ["mem-ok-1"]
     stored = store.get("mem-ok-1")
     assert stored is not None and stored.id == "mem-ok-1"
+    assert stored.vector == pytest.approx([0.1] * DIM)
 
 
 def test_list_emits_tz_aware_utc_created_at(memory_store):

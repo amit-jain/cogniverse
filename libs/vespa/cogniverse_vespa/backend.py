@@ -722,13 +722,19 @@ class VespaBackend(Backend):
         if fields is None:
             return None
 
-        return Document(
+        document = Document(
             id=document_id,
             text_content=fields.get("text", ""),
             metadata={
                 k: v for k, v in fields.items() if k not in ("text", "embedding", "id")
             },
         )
+        embedding = fields.get("embedding")
+        if embedding is not None:
+            if isinstance(embedding, dict) and "values" in embedding:
+                embedding = embedding["values"]
+            document.add_embedding("embedding", embedding)
+        return document
 
     def batch_get_documents(
         self, document_ids: List[str], schema_name: Optional[str] = None

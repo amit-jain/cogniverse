@@ -613,7 +613,7 @@ operations:
 | `ingest_stream(documents, schema_name)` | Stream ingestion for large datasets |
 | `update_document(document_id, document, schema_name)` | Partial or full document update; raises on backend failure or id mismatch (False means the write was rejected, never that the backend was unreachable) |
 | `delete_document(document_id, schema_name)` | Delete a single document |
-| `get_document(document_id, schema_name)` / `batch_get_documents(document_ids)` | Point lookups |
+| `get_document(document_id, schema_name)` / `batch_get_documents(document_ids)` | Point lookups that reconstruct stored Vespa tensors through `Document.add_embedding`, so `Document.get_embedding(name)` returns the embedding data rather than a storage envelope |
 | `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package |
 | `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False` — a masked outage reads as "schema missing" and lets the deploy route redeploy over live data |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
@@ -2668,6 +2668,7 @@ on every call — all for free.
 - Multi-tenant isolation (user_id → tenant scoping on the backend)
 - Per-agent namespacing (agent_id)
 - Semantic search via embeddings
+- Canonical `Document.get_embedding("embedding")` reads on point lookups
 - Metadata filtering
 - Telemetry spans on every operation (inherited from the Backend impl)
 
