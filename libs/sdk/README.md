@@ -95,8 +95,9 @@ When `metadata_fields` renames a key, the source key is consumed and only the
 destination schema field is emitted. Set `include_metadata` to `false` in JSON
 configuration to emit only explicitly mapped core and metadata fields.
 
-Mapping loaders reject unknown keys and mistyped field names, mapping
-dictionaries, and booleans before a backend feed begins.
+Mapping construction, loading, and serialization reject unknown keys,
+mistyped field names, mapping dictionaries, and booleans before a backend feed
+begins.
 
 ## Backend contracts
 

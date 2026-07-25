@@ -786,6 +786,34 @@ class TestDocumentSchemaFieldMapping:
         with pytest.raises(TypeError, match=field_name):
             DocumentFieldMapping.from_dict(payload)
 
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"id": 42}, "id.*str or None"),
+            ({"include_metadata": "false"}, "include_metadata.*bool"),
+            ({"metadata_fields": []}, "metadata_fields.*dict"),
+            ({"metadata_fields": {"source": 5}}, "metadata_fields.*str to str"),
+            ({"embeddings": []}, "embeddings.*dict"),
+            ({"embeddings": {"embedding": 123}}, "embeddings.*str to str"),
+        ],
+    )
+    def test_mapping_constructor_rejects_noncanonical_fields(self, kwargs, match):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        with pytest.raises((TypeError, ValueError), match=match):
+            DocumentFieldMapping(**kwargs)
+
+    def test_mapping_mutation_is_rejected_at_serialization(self):
+        mapping = self._mapping()
+        mapping.id = 42
+
+        with pytest.raises(TypeError, match="id.*str or None"):
+            Document(id="d").to_schema_fields(mapping)
+
+    def test_non_mapping_object_is_rejected_at_serialization(self):
+        with pytest.raises(TypeError, match="mapping.*DocumentFieldMapping"):
+            Document(id="d").to_schema_fields({})
+
     def test_mapping_from_schema_json_rejects_non_dict_schema(self):
         from cogniverse_sdk.document import DocumentFieldMapping
 

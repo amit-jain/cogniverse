@@ -68,11 +68,50 @@ class DocumentFieldMapping:
     _FORMATS = ("epoch", "epoch_ms", "iso")
 
     def __post_init__(self):
+        self._validate_canonical_state()
+
+    def _validate_canonical_state(self) -> None:
+        string_fields = (
+            "id",
+            "title",
+            "text_content",
+            "description",
+            "content_type",
+            "content_id",
+            "content_path",
+            "created_at",
+            "updated_at",
+        )
+        for field_name in string_fields:
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(
+                    f"DocumentFieldMapping.{field_name} must be a str or None, "
+                    f"got {type(value).__name__}"
+                )
         if self.created_at_format not in self._FORMATS:
             raise ValueError(
                 f"DocumentFieldMapping: created_at_format must be one of "
                 f"{self._FORMATS}, got {self.created_at_format!r}"
             )
+        if not isinstance(self.include_metadata, bool):
+            raise TypeError(
+                "DocumentFieldMapping.include_metadata must be a bool, "
+                f"got {type(self.include_metadata).__name__}"
+            )
+        for field_name in ("metadata_fields", "embeddings"):
+            mapping = getattr(self, field_name)
+            if not isinstance(mapping, dict):
+                raise TypeError(
+                    f"DocumentFieldMapping.{field_name} must be a dict, "
+                    f"got {type(mapping).__name__}"
+                )
+            for source, target in mapping.items():
+                if not isinstance(source, str) or not isinstance(target, str):
+                    raise ValueError(
+                        f"DocumentFieldMapping.{field_name} must map str to str, "
+                        f"got {source!r} -> {target!r}"
+                    )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DocumentFieldMapping":
@@ -395,6 +434,11 @@ class Document:
         Fields whose generic value is None are omitted, as are generic
         fields the mapping does not name.
         """
+        if not isinstance(mapping, DocumentFieldMapping):
+            raise TypeError(
+                f"mapping must be a DocumentFieldMapping, got {type(mapping).__name__}"
+            )
+        mapping._validate_canonical_state()
         self._validate_canonical_state()
         fields_out: Dict[str, Any] = {}
         if mapping.include_metadata:
