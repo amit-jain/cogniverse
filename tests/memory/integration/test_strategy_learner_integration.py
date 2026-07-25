@@ -17,6 +17,97 @@ from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 logger = logging.getLogger(__name__)
 
+EXPECTED_PATTERN_PROJECTIONS = [
+    (
+        "High-scoring search queries average 0.88 while low-scoring average "
+        "0.15. Focus on improving queries similar to the low-scoring patterns.",
+        "Processing search requests",
+        "search",
+        "org",
+        0.2,
+        "pattern_extraction",
+        "test_tenant",
+        10,
+    ),
+    (
+        "Temporal queries (when, before, after) consistently score poorly "
+        "(0% above threshold). Consider alternative search strategy or profile "
+        "for these query types.",
+        "Query contains temporal keywords",
+        "search",
+        "org",
+        0.25,
+        "pattern_extraction",
+        "test_tenant",
+        5,
+    ),
+    (
+        "Object queries (what, show, find) perform well with current search "
+        "configuration (75% score above threshold).",
+        "Query contains object keywords",
+        "search",
+        "org",
+        0.2,
+        "pattern_extraction",
+        "test_tenant",
+        4,
+    ),
+    (
+        "High-scoring searches return an average of 1 results. Adjust top_k "
+        "accordingly.",
+        "Configuring search result count",
+        "search",
+        "org",
+        0.7,
+        "pattern_extraction",
+        "test_tenant",
+        5,
+    ),
+]
+
+
+def _strategy_projection(strategy):
+    return (
+        strategy.text,
+        strategy.applies_when,
+        strategy.agent,
+        strategy.level,
+        strategy.confidence,
+        strategy.source,
+        strategy.tenant_id,
+        strategy.trace_count,
+    )
+
+
+def _expected_pattern_contents():
+    return {
+        (
+            f"I prefer the following approach for search: {text} "
+            f"I use this when {applies_when}."
+        )
+        for text, applies_when, *_ in EXPECTED_PATTERN_PROJECTIONS
+    }
+
+
+def _expected_formatted_lines():
+    return {
+        (
+            "- I prefer the following approach for search: "
+            f"{text} I use this when {applies_when}. "
+            f"(confidence: {confidence:.2f}, from {trace_count} traces, user-level)"
+        )
+        for (
+            text,
+            applies_when,
+            _agent,
+            _level,
+            confidence,
+            _source,
+            _tenant_id,
+            trace_count,
+        ) in EXPECTED_PATTERN_PROJECTIONS
+    }
+
 
 @pytest.fixture(scope="module")
 def memory_manager(shared_memory_vespa, shared_denseon):
@@ -67,6 +158,14 @@ def memory_manager(shared_memory_vespa, shared_denseon):
     except Exception:
         pass
     Mem0MemoryManager._instances.clear()
+
+
+@pytest.fixture(autouse=True)
+def clear_strategy_namespace(memory_manager):
+    memory_manager.clear_agent_memory("test_tenant", "_strategy_store_search")
+    wait_for_vespa_indexing(delay=1)
+    yield
+    memory_manager.clear_agent_memory("test_tenant", "_strategy_store_search")
 
 
 @pytest.fixture
@@ -161,7 +260,9 @@ class TestStrategyRoundTrip:
         )
 
         strategies = await learner.learn_from_trigger_dataset(trigger_df)
-        assert len(strategies) >= 1
+        assert [_strategy_projection(strategy) for strategy in strategies] == (
+            EXPECTED_PATTERN_PROJECTIONS
+        )
 
         retrieved = learner.get_strategies_for_agent(
             query="find videos of people exercising",
@@ -169,14 +270,15 @@ class TestStrategyRoundTrip:
             top_k=5,
         )
 
-        assert len(retrieved) >= 1, (
-            f"Should retrieve stored strategies from real Vespa, got {len(retrieved)}"
-        )
-
-        for s in retrieved:
-            # Mem0 returns memory text in 'memory' key
-            assert "memory" in s, f"Expected 'memory' key in result: {s}"
-            assert len(s["memory"]) > 0
+        assert {row["memory"] for row in retrieved} == _expected_pattern_contents()
+        assert {
+            (
+                row["_level"],
+                (row.get("metadata") or {})["agent"],
+                (row.get("metadata") or {})["source"],
+            )
+            for row in retrieved
+        } == {("user", "search", "pattern_extraction")}
 
     @pytest.mark.asyncio
     async def test_format_retrieved_strategies(self, memory_manager, trigger_df):
@@ -186,7 +288,10 @@ class TestStrategyRoundTrip:
             tenant_id="test_tenant",
         )
 
-        await learner.learn_from_trigger_dataset(trigger_df)
+        strategies = await learner.learn_from_trigger_dataset(trigger_df)
+        assert [_strategy_projection(strategy) for strategy in strategies] == (
+            EXPECTED_PATTERN_PROJECTIONS
+        )
 
         retrieved = learner.get_strategies_for_agent(
             query="search for objects in video",
@@ -194,10 +299,9 @@ class TestStrategyRoundTrip:
         )
 
         formatted = StrategyLearner.format_strategies_for_context(retrieved)
-
-        if retrieved:
-            assert "## Learned Strategies" in formatted
-            assert "confidence:" in formatted
+        lines = formatted.splitlines()
+        assert lines[0] == "## Learned Strategies"
+        assert set(lines[1:]) == _expected_formatted_lines()
 
     @pytest.mark.asyncio
     async def test_memory_mixin_retrieves_strategies(self, memory_manager, trigger_df):
@@ -206,7 +310,10 @@ class TestStrategyRoundTrip:
             memory_manager=memory_manager,
             tenant_id="test_tenant",
         )
-        await learner.learn_from_trigger_dataset(trigger_df)
+        strategies = await learner.learn_from_trigger_dataset(trigger_df)
+        assert [_strategy_projection(strategy) for strategy in strategies] == (
+            EXPECTED_PATTERN_PROJECTIONS
+        )
 
         mixin = MemoryAwareMixin()
         mixin.memory_manager = memory_manager
@@ -216,8 +323,9 @@ class TestStrategyRoundTrip:
 
         strategies = mixin.get_strategies("find the red car in video")
 
-        assert strategies is not None
-        assert "## Learned Strategies" in strategies
+        lines = strategies.splitlines()
+        assert lines[0] == "## Learned Strategies"
+        assert set(lines[1:]) == _expected_formatted_lines()
 
     @pytest.mark.asyncio
     async def test_inject_context_includes_strategies(self, memory_manager, trigger_df):
@@ -226,7 +334,10 @@ class TestStrategyRoundTrip:
             memory_manager=memory_manager,
             tenant_id="test_tenant",
         )
-        await learner.learn_from_trigger_dataset(trigger_df)
+        strategies = await learner.learn_from_trigger_dataset(trigger_df)
+        assert [_strategy_projection(strategy) for strategy in strategies] == (
+            EXPECTED_PATTERN_PROJECTIONS
+        )
 
         mixin = MemoryAwareMixin()
         mixin.memory_manager = memory_manager
@@ -238,8 +349,10 @@ class TestStrategyRoundTrip:
             "You are a search agent.", "find objects in video"
         )
 
-        assert "You are a search agent." in result
+        assert result.startswith("You are a search agent.")
         assert "## Learned Strategies" in result
+        for line in _expected_formatted_lines():
+            assert line in result
 
 
 @pytest.mark.integration
@@ -260,7 +373,9 @@ class TestTwoLevelScoping:
             tenant_id="test_tenant",
         )
         strategies = await learner.learn_from_trigger_dataset(trigger_df)
-        assert len(strategies) >= 1
+        assert [_strategy_projection(strategy) for strategy in strategies] == (
+            EXPECTED_PATTERN_PROJECTIONS
+        )
 
         # All pattern-extracted strategies should have level=org
         # and tenant_id=org_id (which is "test_tenant" for simple tenant)
@@ -358,18 +473,26 @@ class TestLLMDistillation:
         pattern_strategies = [s for s in strategies if s.source == "pattern_extraction"]
         llm_strategies = [s for s in strategies if s.source == "llm_distillation"]
 
-        assert len(pattern_strategies) >= 1
-        assert len(llm_strategies) >= 1, (
-            f"LLM distillation should produce at least 1 strategy, got {len(llm_strategies)}"
-        )
-
-        for s in llm_strategies:
-            assert len(s.text) >= 10, f"Strategy text too short: '{s.text}'"
-            assert len(s.applies_when) >= 5, (
-                f"Applies_when too short: '{s.applies_when}'"
+        assert [
+            _strategy_projection(strategy) for strategy in pattern_strategies
+        ] == EXPECTED_PATTERN_PROJECTIONS
+        assert len(llm_strategies) == 5
+        assert {
+            (
+                strategy.agent,
+                strategy.level,
+                strategy.confidence,
+                strategy.source,
+                strategy.tenant_id,
+                strategy.trace_count,
+                strategy.confirmation_count,
             )
-            assert s.agent == "search"
-            assert s.confidence == 0.6  # Default for LLM-distilled
+            for strategy in llm_strategies
+        } == {("search", "org", 0.6, "llm_distillation", "test_tenant", 2, 1)}
+        assert all(10 <= len(strategy.text) <= 500 for strategy in llm_strategies)
+        assert all(
+            5 <= len(strategy.applies_when) <= 200 for strategy in llm_strategies
+        )
 
         wait_for_vespa_indexing(delay=2)
         stored = memory_manager.get_all_memories(
