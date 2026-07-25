@@ -1,14 +1,18 @@
 # Cogniverse Evaluation
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-07-25
 **Layer:** Core
-**Dependencies:** cogniverse-sdk, cogniverse-foundation
+**Dependencies:** See `pyproject.toml`
 
-Provider-agnostic evaluation framework for experiments, metrics, and multi-modal assessments.
+Evaluation framework for experiments, retrieval metrics, trace analysis, and
+configured visual assessments.
 
 ## Overview
 
-The Evaluation package sits in the **Core Layer**, providing a unified evaluation framework that works across different telemetry and experiment tracking providers. It defines provider-independent interfaces for experiments, metrics, datasets, and evaluators with first-class support for multi-modal content.
+The Evaluation package sits in the **Core Layer**. It defines provider
+interfaces for experiments, metrics, datasets, and evaluators. The current
+dataset, trace, and experiment workflows are exercised with the Phoenix
+provider supplied by `cogniverse-telemetry-phoenix`.
 
 This package enables rigorous evaluation of agents, search systems, and multi-modal RAG pipelines using standardized metrics and golden datasets.
 
@@ -78,25 +82,14 @@ Built-in evaluators for different evaluation scenarios:
 
 ### Metrics (`cogniverse_evaluation.metrics`)
 
-Standardized metrics for evaluation:
+Function-based retrieval metrics:
 
 **Built-in Metrics:**
-- **Accuracy**: Classification accuracy
-- **Relevance**: Retrieval relevance scoring
-- **Precision/Recall**: Information retrieval metrics
-- **F1 Score**: Harmonic mean of precision and recall
-- **NDCG**: Normalized Discounted Cumulative Gain
-- **MRR**: Mean Reciprocal Rank
-
-**Custom Metrics:**
-- Define custom metrics with `CustomMetric` base class
-- Support for multi-modal metrics
-- Aggregation and statistical analysis
-
-**Reference-Free Metrics:**
-- Quality assessment without ground truth
-- Coherence and consistency scoring
-- Fluency and readability metrics
+- **MRR**: Reciprocal rank of the first relevant result
+- **NDCG**: Discounted ranking quality
+- **Precision/Recall/F1 at k**: Cutoff-based retrieval quality
+- **MAP**: Average precision across the ranked result list
+- **Metric suite**: Combined retrieval metric calculation
 
 ### Inspect AI Integration (`cogniverse_evaluation.core`)
 
@@ -119,40 +112,40 @@ Trace span evaluation for observability:
 ### CLI Interface (`cogniverse_evaluation.cli`)
 
 Command-line interface for running evaluations:
+
 ```bash
-# Run golden dataset evaluation
-cogniverse-eval golden --dataset path/to/dataset.csv --agent routing
+# Run an experiment over profile/strategy combinations
+uv run cogniverse-eval evaluate \
+  --mode experiment \
+  --dataset golden_eval_v1 \
+  --profiles frame_based_colpali \
+  --strategies binary_binary
 
-# Run reference-free evaluation
-cogniverse-eval reference-free --queries queries.txt --agent video_search
+# Evaluate selected traces
+uv run cogniverse-eval evaluate \
+  --mode batch \
+  --dataset golden_eval_v1 \
+  --tenant-id acme:acme \
+  --trace-ids TRACE_ID
 
-# Run visual judge evaluation
-cogniverse-eval visual-judge --images image_dir/ --model qwen2-vl
+# Inspect recent traces for a tenant
+uv run cogniverse-eval list-traces \
+  --tenant-id acme:acme \
+  --hours 2 \
+  --limit 50
 ```
 
 ## Installation
 
 ```bash
-uv add cogniverse-evaluation
-```
-
-Or with pip:
-```bash
-pip install cogniverse-evaluation
+uv sync --extra dev --extra cpu
 ```
 
 ## Dependencies
 
-**Internal:**
-- `cogniverse-sdk`: Pure backend interfaces
-- `cogniverse-foundation`: Configuration and telemetry base
-
-**External:**
-- `inspect-ai>=0.3.0`: LLM inspection and evaluation framework
-- `numpy>=1.24.0`: Numerical computations
-- `pandas>=2.0.0`: Data manipulation and analysis
-- `scikit-learn>=1.3.0`: ML metrics and evaluation
-- `pillow>=10.0.0`: Image processing for multi-modal evaluation
+The installable package dependencies and exact versions are defined in
+`libs/evaluation/pyproject.toml`. Workspace development must use the root
+`uv.lock`.
 
 ## Usage Examples
 
@@ -250,57 +243,31 @@ print(f"Recall@3:   {calculate_recall_at_k(retrieved, expected, k=3):.3f}")
 Repeated identifiers consume a rank but receive relevance credit only once.
 Metric cutoffs must be non-negative.
 
-### Orchestrator Agent Evaluation
-
-```python
-from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
-
-# Initialize routing evaluator
-evaluator = RoutingEvaluator(
-    golden_dataset="routing_golden_v2.csv",
-    metrics=["routing_accuracy", "confidence", "latency"]
-)
-
-# Evaluate routing decisions via OrchestratorAgent
-results = await evaluator.evaluate(
-    agent=orchestrator_agent,
-    test_queries=test_queries
-)
-
-print(f"Routing Accuracy: {results['routing_accuracy']:.2%}")
-print(f"Avg Confidence: {results['avg_confidence']:.3f}")
-print(f"P95 Latency: {results['p95_latency']:.0f}ms")
-```
-
 ## Multi-Modal Evaluation
 
-The evaluation framework provides first-class support for multi-modal content:
+The evaluation framework supports video and image-backed search results:
 
 ### Visual Evaluation
-- **Image Quality Assessment**: Evaluate image search results
-- **Video Frame Analysis**: Frame-by-frame video evaluation
-- **Cross-Modal Relevance**: Text-to-image/video relevance scoring
 
-### Audio Evaluation
-- **Speech Quality**: Audio clarity and transcription accuracy
-- **Audio-Text Alignment**: Evaluate audio transcription quality
-
-### Multi-Modal Consistency
-- **Cross-Modal Coherence**: Consistency across modalities
-- **Alignment Metrics**: Text-image-video alignment scoring
+- **Video frame analysis**: Resolve a result's `source_url` and extract frames.
+- **Configured visual judgment**: Send those frames to the configured
+  OpenAI-compatible evaluator endpoint.
+- **Retrieval relevance**: Score text-to-video results with golden or
+  reference-free evaluators.
 
 ## Provider Plugins
 
-The evaluation framework supports multiple providers through a plugin system:
+The provider registry discovers implementations from the
+`cogniverse.evaluation.providers` entry-point group.
 
 **Built-in Providers:**
-- **Phoenix**: Integration via `cogniverse-telemetry-phoenix` package
-- **MLflow**: Experiment tracking integration
-- **Weights & Biases**: W&B integration
-- **TensorBoard**: TensorBoard logging
+
+- **Phoenix**: Supplied by the `cogniverse-telemetry-phoenix` package.
 
 **Custom Providers:**
-Implement the provider interface to add support for new backends.
+
+Implement `EvaluationProvider` and register the implementation through the
+entry-point group.
 
 ## Architecture Position
 
@@ -325,16 +292,15 @@ Application Layer:
 ## Development
 
 ```bash
-# Install in editable mode
-cd libs/evaluation
-uv pip install -e .
+# Install the workspace
+uv sync --extra dev --extra cpu
 
-# Run tests
-pytest tests/evaluation/
+# Run the complete evaluation suite with full tracebacks
+JAX_PLATFORM_NAME=cpu uv run pytest tests/evaluation -v --tb=long
 
 # Run specific evaluator tests
-pytest tests/evaluation/unit/test_visual_plugin.py
-pytest tests/evaluation/unit/test_media_helpers.py
+uv run pytest tests/evaluation/unit/test_visual_plugin.py -v --tb=long
+uv run pytest tests/evaluation/unit/test_media_helpers.py -v --tb=long
 ```
 
 ## Testing
@@ -344,15 +310,8 @@ The evaluation package includes:
 - Metrics calculation tests
 - Multi-modal evaluation tests
 - Provider plugin tests
-- Integration tests with golden datasets
+- Real Phoenix and Vespa integration tests
 - Reference-free evaluation tests
-
-## Performance
-
-- **Golden Dataset Evaluation**: Process 1000+ samples/minute
-- **LLM Judge**: 10-20 judgments/second (model-dependent)
-- **Visual Judge**: 5-10 images/second (GPU-dependent)
-- **Batch Processing**: Efficient batch evaluation support
 
 ## License
 
