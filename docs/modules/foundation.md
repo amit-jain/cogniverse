@@ -742,6 +742,9 @@ packages both register `name="default"` under the same group,
 tenant-scoped registry, `get()` canonicalizes its `tenant_id` argument and
 places that canonical value in the initialization mapping after caller config
 is merged, so a config payload cannot override the cache's tenant identity.
+`TelemetryRegistry` further keys providers by project plus HTTP and gRPC
+endpoints, so reconfiguring an existing project creates a provider bound to the
+new destinations.
 
 ---
 
