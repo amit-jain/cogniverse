@@ -589,14 +589,9 @@ class TestMem0ProfileRegistrationIntegration:
             "otherwise we're not proving dynamic registration worked."
         )
 
-        # Reuse `test_tenant` because that's the only tenant whose
-        # agent_memories_<tenant> schema the fixture actually deploys
-        # to Vespa. Using a brand-new tenant requires auto-deploy which
-        # currently fails in the fixture (it preserves the existing
-        # `agent_memories_test_tenant` schema via a parser that chokes
-        # on the fixture's own deployed schema — orthogonal pre-existing
-        # bug, not in scope for this test).
-        tenant_id = "test_tenant"
+        # Use the canonical org:tenant identity whose derived
+        # agent_memories_test_tenant schema the fixture deploys.
+        tenant_id = "test:tenant"
         agent_name = f"propagation_agent_{uuid.uuid4().hex[:8]}"
 
         manager = Mem0MemoryManager(tenant_id=tenant_id)
@@ -623,16 +618,18 @@ class TestMem0ProfileRegistrationIntegration:
         )
 
         # Real write: a unique memory that we can search for later.
-        unique_phrase = "Rosetta Stone hieroglyphs Champollion 1822 decipherment"
+        content = (
+            "The user is researching the Rosetta Stone hieroglyphs "
+            "Champollion 1822 decipherment for a history paper."
+        )
         memory_id = manager.add_memory(
-            content=(
-                f"The user is researching the {unique_phrase} for a history paper."
-            ),
+            content=content,
             tenant_id=tenant_id,
             agent_name=agent_name,
             metadata={"category": "research_topic"},
+            infer=False,
         )
-        assert memory_id is not None and isinstance(memory_id, str)
+        assert isinstance(memory_id, str)
 
         # Let Vespa indexing settle.
         wait_for_vespa_indexing(delay=2)
@@ -646,16 +643,8 @@ class TestMem0ProfileRegistrationIntegration:
             agent_name=agent_name,
             top_k=5,
         )
-        assert len(results) > 0, (
-            "Mem0.search_memory returned zero hits — either profile "
-            "propagation regressed, Vespa isn't indexing, or the "
-            "embedder is returning vectors uncorrelated with the query."
-        )
-        found = any("champollion" in str(r).lower() for r in results)
-        assert found, (
-            f"Ingested memory about Champollion not retrievable by "
-            f"semantic search — got: {results!r}"
-        )
+        assert {result["id"] for result in results} == {memory_id}
+        assert {result["memory"] for result in results} == {content}
 
         # Cleanup
         try:
