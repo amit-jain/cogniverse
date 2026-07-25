@@ -10,7 +10,7 @@ Subclasses declare:
 
 Subclasses may also set ``_tenant_scoped = True`` to opt into the
 ``initialize()``-style lifecycle: instances are constructed with
-``klass()`` then handed the merged ``{tenant_id, **config}`` dict via
+``klass()`` then handed the merged ``{**config, tenant_id}`` dict via
 ``instance.initialize(...)``, and the per-instance cache is keyed by
 ``(name, tenant_id)``.  The default (``_tenant_scoped = False``) uses
 direct ``klass(**config)`` construction and a cache key derived from
@@ -360,8 +360,8 @@ class EntryPointRegistry(Generic[T]):
         """
         if cls._tenant_scoped:
             instance = klass()
-            full_config: Dict[str, Any] = {"tenant_id": tenant_id}
-            full_config.update(config)
+            full_config = dict(config)
+            full_config["tenant_id"] = tenant_id
             instance.initialize(full_config)
             return instance
         return klass(**config) if config else klass()

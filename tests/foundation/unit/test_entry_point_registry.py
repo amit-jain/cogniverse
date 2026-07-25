@@ -53,6 +53,11 @@ class _LifecycleProvider:
         self.initialized = False
 
 
+class _FailingLifecycleProvider(_LifecycleProvider):
+    def initialize(self, config: Dict[str, Any]) -> None:
+        raise ConnectionError(f"provider unavailable for {config['tenant_id']}")
+
+
 # Test subclasses
 
 
@@ -244,6 +249,36 @@ def test_tenant_scoped_get_calls_initialize_with_merged_config():
         "tenant_id": "acme:acme",
         "http_endpoint": "http://localhost:6006",
     }
+
+
+def test_tenant_scoped_config_cannot_override_canonical_tenant():
+    _ProviderRegistry.register("phoenix", _LifecycleProvider)
+
+    instance = _ProviderRegistry.get(
+        name="phoenix",
+        tenant_id="acme",
+        config={
+            "tenant_id": "globex",
+            "http_endpoint": "http://localhost:6006",
+        },
+    )
+
+    assert instance.config == {
+        "tenant_id": "acme:acme",
+        "http_endpoint": "http://localhost:6006",
+    }
+
+
+def test_tenant_scoped_initialization_failure_propagates_without_caching():
+    _ProviderRegistry.register("phoenix", _FailingLifecycleProvider)
+
+    with pytest.raises(
+        ConnectionError,
+        match="provider unavailable for acme:acme",
+    ):
+        _ProviderRegistry.get(name="phoenix", tenant_id="acme")
+
+    assert len(_ProviderRegistry._instances) == 0
 
 
 def test_tenant_scoped_cache_isolates_per_tenant():
