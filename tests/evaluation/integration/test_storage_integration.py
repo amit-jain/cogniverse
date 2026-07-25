@@ -24,6 +24,11 @@ pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 class TestTelemetryStorageIntegration:
     """Integration tests for telemetry storage with real backend."""
 
+    @pytest.fixture(autouse=True)
+    def configured_telemetry(self, telemetry_manager_with_phoenix):
+        """Install the real Phoenix-backed telemetry manager singleton."""
+        return telemetry_manager_with_phoenix
+
     @pytest.fixture
     def storage(self, phoenix_container):
         """Create storage instance with test telemetry backend."""
