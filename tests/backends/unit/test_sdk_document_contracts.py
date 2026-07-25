@@ -10,6 +10,7 @@ they name, and serializers tolerate the shapes real payloads carry.
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -225,6 +226,30 @@ class TestConfigEntryFromDictContract:
         with pytest.raises(ValueError, match="ConfigEntry.from_dict"):
             ConfigEntry.from_dict(payload)
 
+    @pytest.mark.parametrize("value", [None, 1700000000])
+    def test_non_string_datetime_names_the_field(self, value):
+        payload = self._payload()
+        payload["created_at"] = value
+
+        with pytest.raises(ValueError, match="created_at"):
+            ConfigEntry.from_dict(payload)
+
+    def test_naive_datetime_is_rejected(self):
+        payload = self._payload()
+        payload["created_at"] = "2026-01-01T00:00:00"
+
+        with pytest.raises(ValueError, match="created_at.*timezone"):
+            ConfigEntry.from_dict(payload)
+
+    def test_aware_datetime_is_normalized_to_utc(self):
+        payload = self._payload()
+        payload["created_at"] = "2026-01-01T05:30:00+05:30"
+
+        entry = ConfigEntry.from_dict(payload)
+
+        assert entry.created_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert entry.to_dict()["created_at"] == "2026-01-01T00:00:00+00:00"
+
 
 class TestWorkflowRecordsTolerateSchemaDrift:
     def test_workflow_execution_ignores_extra_keys(self):
@@ -259,6 +284,98 @@ class TestWorkflowRecordsTolerateSchemaDrift:
         )
         payload = {**wt.to_dict(), "future_field": "x"}
         assert WorkflowTemplate.from_dict(payload) == wt
+
+
+class TestWorkflowRecordDatetimeContract:
+    def test_defaults_are_utc(self):
+        execution = WorkflowExecution(
+            workflow_id="w1",
+            query="q",
+            query_type="search",
+            execution_time=1.0,
+            success=True,
+            agent_sequence=["a"],
+            task_count=1,
+            parallel_efficiency=1.0,
+            confidence_score=0.9,
+        )
+        profile = AgentPerformance(agent_name="a")
+        template = WorkflowTemplate(
+            template_id="t1",
+            name="n",
+            description="d",
+            query_patterns=["p"],
+            task_sequence=[],
+            expected_execution_time=1.0,
+            success_rate=0.8,
+        )
+
+        assert execution.timestamp.utcoffset() == timedelta(0)
+        assert profile.last_updated.utcoffset() == timedelta(0)
+        assert template.created_at.utcoffset() == timedelta(0)
+
+    @pytest.mark.parametrize(
+        ("record_type", "payload", "field_name"),
+        [
+            (
+                WorkflowExecution,
+                {
+                    "workflow_id": "w1",
+                    "query": "q",
+                    "query_type": "search",
+                    "execution_time": 1.0,
+                    "success": True,
+                    "agent_sequence": ["a"],
+                    "task_count": 1,
+                    "parallel_efficiency": 1.0,
+                    "confidence_score": 0.9,
+                    "timestamp": 1700000000,
+                },
+                "timestamp",
+            ),
+            (
+                AgentPerformance,
+                {"agent_name": "a", "last_updated": "2026-01-01T00:00:00"},
+                "last_updated",
+            ),
+            (
+                WorkflowTemplate,
+                {
+                    "template_id": "t1",
+                    "name": "n",
+                    "description": "d",
+                    "query_patterns": ["p"],
+                    "task_sequence": [],
+                    "expected_execution_time": 1.0,
+                    "success_rate": 0.8,
+                    "last_used": 1700000000,
+                },
+                "last_used",
+            ),
+        ],
+    )
+    def test_invalid_datetime_names_the_field(self, record_type, payload, field_name):
+        with pytest.raises(ValueError, match=field_name):
+            record_type.from_dict(payload)
+
+    def test_aware_workflow_timestamp_is_normalized_to_utc(self):
+        payload = {
+            "workflow_id": "w1",
+            "query": "q",
+            "query_type": "search",
+            "execution_time": 1.0,
+            "success": True,
+            "agent_sequence": ["a"],
+            "task_count": 1,
+            "parallel_efficiency": 1.0,
+            "confidence_score": 0.9,
+            "timestamp": "2026-01-01T05:30:00+05:30",
+        }
+
+        execution = WorkflowExecution.from_dict(payload)
+
+        assert execution.timestamp == datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert execution.to_dict()["timestamp"] == "2026-01-01T00:00:00+00:00"
 
 
 class TestDocumentSchemaFieldMapping:

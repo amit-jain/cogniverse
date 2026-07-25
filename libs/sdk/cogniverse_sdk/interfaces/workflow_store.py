@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,25 @@ def _known_fields(cls, data: Dict[str, Any]) -> Dict[str, Any]:
     deserializes — cls(**data) raised TypeError on the first extra key."""
     names = {f.name for f in fields(cls)}
     return {k: v for k, v in data.items() if k in names}
+
+
+def _utc_datetime(value: Any, field_name: str) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError(f"{field_name} must be a datetime, got {type(value).__name__}")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must include timezone information")
+    return value.astimezone(timezone.utc)
+
+
+def _datetime_from_payload(value: Any, field_name: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field_name} must be an ISO-8601 string, got {type(value).__name__}"
+        )
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} is not valid ISO-8601: {exc}") from None
 
 
 @dataclass
@@ -46,8 +65,11 @@ class WorkflowExecution:
     confidence_score: float
     user_satisfaction: Optional[float] = None
     error_details: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.timestamp = _utc_datetime(self.timestamp, "timestamp")
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -57,9 +79,8 @@ class WorkflowExecution:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowExecution":
         data = _known_fields(cls, data)
-        ts = data.get("timestamp")
-        if isinstance(ts, str):
-            data["timestamp"] = datetime.fromisoformat(ts)
+        if "timestamp" in data:
+            data["timestamp"] = _datetime_from_payload(data["timestamp"], "timestamp")
         return cls(**data)
 
 
@@ -75,7 +96,10 @@ class AgentPerformance:
     error_rate: float = 0.0
     preferred_query_types: List[str] = field(default_factory=list)
     performance_trend: str = "stable"  # improving, degrading, stable
-    last_updated: datetime = field(default_factory=datetime.now)
+    last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        self.last_updated = _utc_datetime(self.last_updated, "last_updated")
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -85,9 +109,10 @@ class AgentPerformance:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AgentPerformance":
         data = _known_fields(cls, data)
-        lu = data.get("last_updated")
-        if isinstance(lu, str):
-            data["last_updated"] = datetime.fromisoformat(lu)
+        if "last_updated" in data:
+            data["last_updated"] = _datetime_from_payload(
+                data["last_updated"], "last_updated"
+            )
         return cls(**data)
 
 
@@ -103,8 +128,13 @@ class WorkflowTemplate:
     expected_execution_time: float
     success_rate: float
     usage_count: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_used: Optional[datetime] = None
+
+    def __post_init__(self) -> None:
+        self.created_at = _utc_datetime(self.created_at, "created_at")
+        if self.last_used is not None:
+            self.last_used = _utc_datetime(self.last_used, "last_used")
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -115,12 +145,12 @@ class WorkflowTemplate:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowTemplate":
         data = _known_fields(cls, data)
-        ca = data.get("created_at")
-        if isinstance(ca, str):
-            data["created_at"] = datetime.fromisoformat(ca)
-        lu = data.get("last_used")
-        if isinstance(lu, str):
-            data["last_used"] = datetime.fromisoformat(lu)
+        if "created_at" in data:
+            data["created_at"] = _datetime_from_payload(
+                data["created_at"], "created_at"
+            )
+        if data.get("last_used") is not None:
+            data["last_used"] = _datetime_from_payload(data["last_used"], "last_used")
         return cls(**data)
 
 

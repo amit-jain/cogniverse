@@ -7,7 +7,7 @@ Supports multiple implementations: SQLite, Vespa, Elasticsearch, etc.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +22,28 @@ class ConfigScope(Enum):
     SCHEMA = "schema"
     BACKEND = "backend"
     DURABLE = "durable"
+
+
+def _utc_datetime(value: Any, field_name: str) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError(
+            f"ConfigEntry.{field_name} must be a datetime, got {type(value).__name__}"
+        )
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"ConfigEntry.{field_name} must include timezone information")
+    return value.astimezone(timezone.utc)
+
+
+def _datetime_from_payload(data: Dict[str, Any], field_name: str) -> datetime:
+    value = data[field_name]
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field_name} must be an ISO-8601 string, got {type(value).__name__}"
+        )
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} is not valid ISO-8601: {exc}") from None
 
 
 @dataclass
@@ -48,6 +70,10 @@ class ConfigEntry:
     version: int
     created_at: datetime
     updated_at: datetime
+
+    def __post_init__(self) -> None:
+        self.created_at = _utc_datetime(self.created_at, "created_at")
+        self.updated_at = _utc_datetime(self.updated_at, "updated_at")
 
     def get_config_id(self) -> str:
         """Generate unique config ID: tenant_id:scope:service:config_key"""
@@ -81,8 +107,8 @@ class ConfigEntry:
                 config_key=data["config_key"],
                 config_value=data["config_value"],
                 version=data.get("version", 1),
-                created_at=datetime.fromisoformat(data["created_at"]),
-                updated_at=datetime.fromisoformat(data["updated_at"]),
+                created_at=_datetime_from_payload(data, "created_at"),
+                updated_at=_datetime_from_payload(data, "updated_at"),
             )
         except KeyError as e:
             raise ValueError(
