@@ -1,9 +1,4 @@
-"""Integration test configuration for common tests.
-
-Re-exports the project-wide ``shared_vespa`` container; common tests
-(config persistence, dynamic config) only need the metadata schemas
-that ``shared_vespa`` already deploys at session start.
-"""
+"""Integration test configuration for common tests."""
 
 import logging
 
@@ -11,9 +6,6 @@ import pytest
 
 # Import vespa backend to trigger self-registration
 import cogniverse_vespa  # noqa: F401
-
-# Re-export the canonical session-scoped Vespa from the project root.
-from tests.conftest import shared_vespa  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
