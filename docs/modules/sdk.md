@@ -145,7 +145,10 @@ Single `Document` class for all content types:
 Defines the contract for all backend implementations (Vespa, Qdrant, etc.):
 
 ```python
-from cogniverse_sdk.interfaces.backend import Backend, SearchBackend, IngestionBackend
+from threading import Lock
+from typing import Any, Dict
+
+from cogniverse_sdk.interfaces.backend import IngestionBackend, SearchBackend
 
 class Backend(IngestionBackend, SearchBackend):
     """Combined search and ingestion backend interface"""
@@ -154,10 +157,15 @@ class Backend(IngestionBackend, SearchBackend):
         """Initialize backend with a name for identification"""
         self.name = name
         self._initialized = False
+        self._initialization_lock = Lock()
 
     def initialize(self, config: Dict[str, Any]) -> None:
-        """Concrete: delegates while the initialized flag is false."""
-        if not self._initialized:
+        """Initialize once across concurrent callers."""
+        if self._initialized:
+            return
+        with self._initialization_lock:
+            if self._initialized:
+                return
             self._initialize_backend(config)
             self._initialized = True
 
@@ -706,7 +714,7 @@ cogniverse_sdk/
 
 **Methods (Backend — schema management and metadata ops):**
 
-- `_initialize_backend(config)`: Abstract backend-specific connection/client setup invoked by the concrete `initialize()`
+- `_initialize_backend(config)`: Abstract backend-specific connection/client setup; concurrent calls on one instance invoke it once after a successful initialization, while a raised exception leaves initialization retryable
 - `deploy_schemas(schema_definitions)`: Deploy multiple schemas together
 - `delete_schema(schema_name, tenant_id)`: Delete tenant schema(s); returns `List[str]` of deleted names
 - `schema_exists(schema_name, tenant_id)`: Check if schema exists
