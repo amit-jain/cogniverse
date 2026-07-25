@@ -993,6 +993,10 @@ result_dict = result.to_dict()
 # }
 ```
 
+`document` must be a `Document`, `score` must be a finite Python `float`, and
+`highlights` must be a dictionary or `None`. Invalid values raise at
+construction instead of reaching API serialization.
+
 ### Backend Interface
 
 #### Search Method
