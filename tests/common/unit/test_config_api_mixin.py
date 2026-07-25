@@ -23,12 +23,16 @@ from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
 class TestSignature(dspy.Signature):
     """Test signature for module creation"""
 
+    __test__ = False
+
     input_text = dspy.InputField()
     output_text = dspy.OutputField()
 
 
 class TestAgent(DynamicDSPyMixin, ConfigAPIMixin):
     """Test agent class using both mixins"""
+
+    __test__ = False
 
     def __init__(
         self,
