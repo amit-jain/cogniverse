@@ -201,7 +201,7 @@ config_manager.set_agent_config(
 | `set_system_config(system_config)` | Set global system configuration |
 | `get_agent_config(tenant_id, agent_name)` | Get agent configuration |
 | `set_agent_config(tenant_id, agent_name, agent_config)` | Set agent configuration |
-| `get_agent_config_history(tenant_id, agent_name, limit=10)` | Get config version history |
+| `get_agent_config_history(tenant_id, agent_name, limit=10)` | Get version history after canonicalizing the tenant identifier |
 | `get_routing_config(tenant_id="your_org:production", service="gateway_agent")` | Get routing configuration |
 | `set_routing_config(routing_config, tenant_id=None, service="gateway_agent")` | Set routing configuration |
 | `get_durable_execution_config(tenant_id, service="optimization")` | Get durable-execution enablement (default off) |
@@ -219,7 +219,7 @@ config_manager.set_agent_config(
 | `get_config_value(tenant_id, scope, service, config_key, default=None)` | Get arbitrary config value by scope |
 | `set_config_value(tenant_id, scope, service, config_key, config_value)` | Set arbitrary config value by scope |
 | `get_all_configs(tenant_id, scope=None)` | Get all configs for a tenant, optionally filtered by scope |
-| `export_configs(tenant_id, output_path)` | Export all configs to JSON |
+| `export_configs(tenant_id, output_path)` | Export all configs to JSON with a timezone-aware UTC `exported_at` |
 | `get_stats()` | Get configuration statistics |
 
 ### Configuration Types
