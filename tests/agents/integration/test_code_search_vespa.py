@@ -14,6 +14,8 @@ import pytest
 
 from cogniverse_runtime.ingestion.strategies import CodeSegmentationStrategy
 
+pytestmark = pytest.mark.integration
+
 logger = logging.getLogger(__name__)
 
 

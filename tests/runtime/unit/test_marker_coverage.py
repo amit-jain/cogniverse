@@ -37,6 +37,11 @@ GATED_DIRS = {
     "routing/unit": "unit",
     "memory/unit": "unit",
     "memory/integration": "integration",
+    "agents/integration": "integration",
+    "core/integration": "integration",
+    "messaging/integration": "integration",
+    "messaging/unit": "unit",
+    "backends/integration": "integration",
 }
 
 

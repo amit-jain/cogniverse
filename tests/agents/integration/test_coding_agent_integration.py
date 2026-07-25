@@ -15,6 +15,8 @@ import pytest
 from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
 from tests.agents.integration.conftest import skip_if_no_lm
 
+pytestmark = pytest.mark.integration
+
 logger = logging.getLogger(__name__)
 
 

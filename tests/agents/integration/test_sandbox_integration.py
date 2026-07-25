@@ -45,6 +45,7 @@ def _docker_available():
 
 
 pytestmark = [
+    pytest.mark.integration,
     pytest.mark.skipif(
         not _openshell_cli_available(), reason="openshell CLI not installed"
     ),
