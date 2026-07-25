@@ -714,7 +714,7 @@ class MyStoreRegistry(EntryPointRegistry[MyStore]):
     _entry_point_group = "myapp.stores"
     _label = "my store"
     # _tenant_scoped = False (default): klass(**config), cached by backend_url/port
-    # _tenant_scoped = True: klass() + .initialize(config|{tenant_id}), cached by tenant
+    # _tenant_scoped = True: klass() + .initialize({**config, tenant_id}), cached by tenant
 ```
 
 Implementations register via their `pyproject.toml`:
@@ -727,7 +727,10 @@ default = "my_pkg.stores.default_impl:DefaultStore"
 Callers fetch instances with `MyStoreRegistry.get(name="default",
 config={...})`. Conflict detection is always on — if two installed
 packages both register `name="default"` under the same group,
-`discover()` raises `ValueError` rather than silently picking one.
+`discover()` raises `ValueError` rather than silently picking one. For a
+tenant-scoped registry, `get()` canonicalizes its `tenant_id` argument and
+places that canonical value in the initialization mapping after caller config
+is merged, so a config payload cannot override the cache's tenant identity.
 
 ---
 

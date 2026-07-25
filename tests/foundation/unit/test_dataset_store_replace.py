@@ -12,7 +12,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from cogniverse_foundation.telemetry.providers.base import DatasetStore
+from cogniverse_foundation.telemetry.providers.base import (
+    DatasetNotFoundError,
+    DatasetStore,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -70,6 +73,21 @@ async def test_replace_restores_previous_on_torn_create():
 
 
 @pytest.mark.asyncio
+async def test_replace_restores_existing_empty_dataset_on_torn_create():
+    store = _FakeStore()
+    empty = pd.DataFrame(columns=["v"])
+    await store.replace_dataset("d", empty)
+    store.fail_next_create = True
+
+    with pytest.raises(ConnectionError, match="create failed after delete"):
+        await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
+
+    restored = await store.get_dataset("d")
+    pd.testing.assert_frame_equal(restored, empty)
+    assert store.creates == ["d", "d", "d"]
+
+
+@pytest.mark.asyncio
 async def test_replace_on_absent_name_creates_fresh():
     store = _FakeStore()
     # No prior dataset — replace must simply create it (no restore attempted).
@@ -106,7 +124,7 @@ class _OutageOnPreReadStore(DatasetStore):
 async def test_replace_pre_read_outage_propagates_before_delete():
     """A transient outage on the pre-read must propagate BEFORE the destructive
     delete, so a flapping backend can never destroy the prior dataset. Only a
-    genuine not-found (KeyError/ValueError) may be treated as 'nothing to
+    genuine not-found (KeyError/DatasetNotFoundError) may be treated as 'nothing to
     restore'."""
     store = _OutageOnPreReadStore()
     with pytest.raises(ConnectionError, match="503 during pre-read"):
@@ -115,3 +133,36 @@ async def test_replace_pre_read_outage_propagates_before_delete():
         "destructive delete ran despite an unconfirmable pre-read"
     )
     assert "d" in store.data and list(store.data["d"]["v"]) == ["PRECIOUS"]
+
+
+class _InvalidResponseOnPreReadStore(_OutageOnPreReadStore):
+    async def get_dataset(self, name):
+        raise ValueError("malformed dataset response")
+
+
+@pytest.mark.asyncio
+async def test_replace_invalid_pre_read_propagates_before_delete():
+    store = _InvalidResponseOnPreReadStore()
+
+    with pytest.raises(ValueError, match="malformed dataset response"):
+        await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
+
+    assert store.deleted == []
+    assert list(store.data["d"]["v"]) == ["PRECIOUS"]
+
+
+class _AbsentDatasetStore(_FakeStore):
+    async def get_dataset(self, name):
+        if name not in self.data:
+            raise DatasetNotFoundError(name)
+        return self.data[name]
+
+
+@pytest.mark.asyncio
+async def test_replace_typed_not_found_creates_fresh():
+    store = _AbsentDatasetStore()
+
+    result = await store.replace_dataset("d", pd.DataFrame([{"v": "new"}]))
+
+    assert result == "d"
+    assert list((await store.get_dataset("d"))["v"]) == ["new"]
