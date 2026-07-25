@@ -9,54 +9,28 @@ schema's field names for feeding — schemas declare their mapping, the
 serializer stays pure.
 """
 
-import math
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 
-def _as_epoch_seconds(value: Any, field_name: str) -> int:
-    """Coerce a stored timestamp to epoch seconds, failing with context.
-
-    Accepts int/float seconds, digit strings, and millisecond epochs
-    (converted); anything else raises instead of storing a mistyped value
-    the backend's long field rejects much later.
-    """
-    if value is None:
-        return int(time.time())
-    # numpy scalars first: np.float64 IS a float subclass (handled below) but
-    # np.int64 is NOT an int subclass and np.bool_ is NOT a bool subclass, so a
-    # created_at read from a pandas/parquet row (naturally np.int64) would fall
-    # through to the raise. Coerce to the Python scalar so the checks apply
-    # uniformly (and np.bool_ still gets rejected as a bool below).
-    if type(value).__module__ == "numpy" and hasattr(value, "item"):
-        value = value.item()
-    if isinstance(value, bool):
-        raise TypeError(f"Document.from_dict: {field_name} must be a timestamp")
-    if isinstance(value, str):
-        if not value.strip().isdigit():
-            raise TypeError(
-                f"Document.from_dict: {field_name} must be an integer "
-                f"timestamp, got {value!r}"
-            )
-        value = int(value.strip())
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise TypeError(
-                f"Document.from_dict: {field_name} must be a finite timestamp"
-            )
-        value = int(value)
-    if not isinstance(value, int):
+def _as_epoch_seconds(
+    value: Any, field_name: str, boundary: str = "Document.from_dict"
+) -> int:
+    """Require the canonical integer-seconds representation."""
+    if type(value) is not int:
         raise TypeError(
-            f"Document.from_dict: {field_name} must be an integer timestamp, "
+            f"{boundary}: {field_name} must be an integer timestamp, "
             f"got {type(value).__name__}"
         )
-    if value >= 1_000_000_000_000:  # milliseconds epoch
-        value //= 1000
+    if abs(value) >= 1_000_000_000_000:
+        raise TypeError(
+            f"{boundary}: {field_name} must use epoch seconds, got {value!r}"
+        )
     return value
 
 
@@ -267,10 +241,34 @@ class Document:
         """Post-initialization processing."""
         if self.content_path:
             self.content_path = Path(self.content_path)
+        self._validate_canonical_state()
 
         # Auto-detect content type from content_path if not specified
         if self.content_type == ContentType.DOCUMENT and self.content_path:
             self._auto_detect_type()
+
+    def _validate_canonical_state(self) -> None:
+        if not isinstance(self.content_type, ContentType):
+            raise TypeError(
+                "Document.content_type must be a ContentType, "
+                f"got {type(self.content_type).__name__}"
+            )
+        if not isinstance(self.status, ProcessingStatus):
+            raise TypeError(
+                "Document.status must be a ProcessingStatus, "
+                f"got {type(self.status).__name__}"
+            )
+        if not isinstance(self.embeddings, dict):
+            raise TypeError(
+                f"Document.embeddings must be a dict, "
+                f"got {type(self.embeddings).__name__}"
+            )
+        if not isinstance(self.metadata, dict):
+            raise TypeError(
+                f"Document.metadata must be a dict, got {type(self.metadata).__name__}"
+            )
+        self.created_at = _as_epoch_seconds(self.created_at, "created_at", "Document")
+        self.updated_at = _as_epoch_seconds(self.updated_at, "updated_at", "Document")
 
     def _auto_detect_type(self):
         """Auto-detect content type from file extension."""
@@ -321,6 +319,10 @@ class Document:
         self, status: ProcessingStatus, error_message: Optional[str] = None
     ):
         """Update processing status."""
+        if not isinstance(status, ProcessingStatus):
+            raise TypeError(
+                f"status must be a ProcessingStatus, got {type(status).__name__}"
+            )
         self.status = status
         self.error_message = error_message
         self.updated_at = int(time.time())
@@ -356,6 +358,7 @@ class Document:
         Fields whose generic value is None are omitted, as are generic
         fields the mapping does not name.
         """
+        self._validate_canonical_state()
         fields_out: Dict[str, Any] = {}
         if mapping.include_metadata:
             renamed_sources = {
@@ -389,27 +392,19 @@ class Document:
         if mapping.description and self.description is not None:
             core[mapping.description] = self.description
         if mapping.content_type:
-            # content_type is normally a ContentType enum, but a caller may set
-            # it to a raw string ("video"); coerce through the enum so a bad
-            # value raises a clear ValueError instead of an opaque AttributeError.
-            ct = self.content_type
-            if not isinstance(ct, ContentType):
-                ct = ContentType(ct)
-            core[mapping.content_type] = ct.value
+            core[mapping.content_type] = self.content_type.value
         if mapping.content_id and self.content_id is not None:
             core[mapping.content_id] = self.content_id
         if mapping.content_path and self.content_path is not None:
             core[mapping.content_path] = str(self.content_path)
 
         def _stamp(value: int) -> Any:
-            # created_at is an epoch in SECONDS; land it as the schema field
-            # wants: an ISO string, milliseconds, or seconds — always an int for
-            # the numeric forms (a float must not reach a Vespa long field).
+            # created_at is epoch seconds; land it in the schema's declared unit.
             if mapping.created_at_format == "iso":
-                return datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat()
+                return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
             if mapping.created_at_format == "epoch_ms":
-                return int(value) * 1000
-            return int(value)
+                return value * 1000
+            return value
 
         if mapping.created_at:
             core[mapping.created_at] = _stamp(self.created_at)
@@ -430,6 +425,7 @@ class Document:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
+        self._validate_canonical_state()
         return {
             "id": self.id,
             "content_type": self.content_type.value,
@@ -456,48 +452,58 @@ class Document:
         map) detonates far from here otherwise, inside whatever backend
         consumes it.
         """
-        embeddings = data.get("embeddings") or {}
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"Document.from_dict: payload must be a dict, got {type(data).__name__}"
+            )
+        expected = {item.name for item in fields(cls)}
+        unknown = set(data) - expected
+        if unknown:
+            raise ValueError(f"Document.from_dict: unknown fields: {sorted(unknown)}")
+        missing = expected - set(data)
+        if missing:
+            raise ValueError(f"Document.from_dict: missing fields: {sorted(missing)}")
+
+        embeddings = data["embeddings"]
         if not isinstance(embeddings, dict):
             raise TypeError(
                 f"Document.from_dict: embeddings must be a dict, "
                 f"got {type(embeddings).__name__}"
             )
-        metadata = data.get("metadata") or {}
+        metadata = data["metadata"]
         if not isinstance(metadata, dict):
             raise TypeError(
                 f"Document.from_dict: metadata must be a dict, "
                 f"got {type(metadata).__name__}"
             )
         try:
-            content_type = ContentType(data.get("content_type", "document"))
+            content_type = ContentType(data["content_type"])
         except ValueError:
             raise ValueError(
-                f"Document.from_dict: unknown content_type {data.get('content_type')!r}"
+                f"Document.from_dict: unknown content_type {data['content_type']!r}"
             ) from None
         try:
-            status = ProcessingStatus(data.get("status", "pending"))
+            status = ProcessingStatus(data["status"])
         except ValueError:
             raise ValueError(
-                f"Document.from_dict: unknown status {data.get('status')!r}"
+                f"Document.from_dict: unknown status {data['status']!r}"
             ) from None
 
         doc = cls(
-            id=data.get("id", str(uuid.uuid4())),
+            id=data["id"],
             content_type=content_type,
-            content_path=(
-                Path(data["content_path"]) if data.get("content_path") else None
-            ),
-            content_id=data.get("content_id"),
-            title=data.get("title"),
-            text_content=data.get("text_content"),
-            description=data.get("description"),
+            content_path=(Path(data["content_path"]) if data["content_path"] else None),
+            content_id=data["content_id"],
+            title=data["title"],
+            text_content=data["text_content"],
+            description=data["description"],
             embeddings=embeddings,
             status=status,
-            processing_time=data.get("processing_time"),
-            error_message=data.get("error_message"),
+            processing_time=data["processing_time"],
+            error_message=data["error_message"],
             metadata=metadata,
-            created_at=_as_epoch_seconds(data.get("created_at"), "created_at"),
-            updated_at=_as_epoch_seconds(data.get("updated_at"), "updated_at"),
+            created_at=_as_epoch_seconds(data["created_at"], "created_at"),
+            updated_at=_as_epoch_seconds(data["updated_at"], "updated_at"),
         )
         return doc
 

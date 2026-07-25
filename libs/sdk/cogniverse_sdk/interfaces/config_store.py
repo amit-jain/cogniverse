@@ -6,7 +6,7 @@ Supports multiple implementations: SQLite, Vespa, Elasticsearch, etc.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -41,9 +41,15 @@ def _datetime_from_payload(data: Dict[str, Any], field_name: str) -> datetime:
             f"{field_name} must be an ISO-8601 string, got {type(value).__name__}"
         )
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise ValueError(f"{field_name} is not valid ISO-8601: {exc}") from None
+    canonical = _utc_datetime(parsed, field_name)
+    if value != canonical.isoformat():
+        raise ValueError(
+            f"{field_name} must use canonical UTC ISO-8601 form, got {value!r}"
+        )
+    return canonical
 
 
 @dataclass
@@ -100,13 +106,22 @@ class ConfigEntry:
         field instead of a bare KeyError/ValueError with no context.
         """
         try:
+            if not isinstance(data, dict):
+                raise ValueError(f"payload must be a dict, got {type(data).__name__}")
+            expected = {item.name for item in fields(cls)}
+            unknown = set(data) - expected
+            if unknown:
+                raise ValueError(f"unknown fields: {sorted(unknown)}")
+            missing = expected - set(data)
+            if missing:
+                raise ValueError(f"missing fields: {sorted(missing)}")
             return cls(
                 tenant_id=data["tenant_id"],
                 scope=ConfigScope(data["scope"]),
                 service=data["service"],
                 config_key=data["config_key"],
                 config_value=data["config_value"],
-                version=data.get("version", 1),
+                version=data["version"],
                 created_at=_datetime_from_payload(data, "created_at"),
                 updated_at=_datetime_from_payload(data, "updated_at"),
             )
