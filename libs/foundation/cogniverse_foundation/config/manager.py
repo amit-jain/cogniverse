@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -286,6 +287,9 @@ class ConfigManager:
         Returns:
             List of AgentConfig ordered by version descending
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_agent_config_history"
+        )
         entries = self.store.get_config_history(
             tenant_id=tenant_id,
             scope=ConfigScope.AGENT,
@@ -907,7 +911,7 @@ class ConfigManager:
             json.dump(
                 {
                     "tenant_id": tenant_id,
-                    "exported_at": __import__("datetime").datetime.now().isoformat(),
+                    "exported_at": datetime.now(timezone.utc).isoformat(),
                     "configs": configs,
                 },
                 f,
