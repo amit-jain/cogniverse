@@ -25,6 +25,7 @@ class MockSearchBackend(SearchBackend):
         self.backend_config = backend_config
         self.schema_loader = schema_loader
         self.config_manager = config_manager
+        self.profiles: dict[str, dict] = {}
         # Mock schema_registry attribute (will be injected by BackendRegistry)
         self.schema_registry = None
 
@@ -46,6 +47,12 @@ class MockSearchBackend(SearchBackend):
 
     def get_statistics(self) -> dict:
         return {}
+
+    def add_profile(self, profile_name: str, profile_config: dict) -> None:
+        self.profiles[profile_name] = dict(profile_config)
+
+    def remove_profile(self, profile_name: str) -> None:
+        self.profiles.pop(profile_name, None)
 
     def get_embedding_requirements(self, schema_name: str) -> dict:
         """Mock implementation of get_embedding_requirements"""
@@ -90,6 +97,20 @@ class MockIngestionBackend(IngestionBackend):
 
     def get_schema_info(self) -> dict:
         return {}
+
+
+def test_search_backend_double_mutates_profiles_exactly():
+    backend = MockSearchBackend(
+        backend_config=None,
+        schema_loader=None,
+        config_manager=None,
+    )
+
+    backend.add_profile("documents", {"schema": "document_chunk"})
+    backend.add_profile("frames", {"schema": "video_frame"})
+    backend.remove_profile("documents")
+
+    assert backend.profiles == {"frames": {"schema": "video_frame"}}
 
 
 class TestBackendRegistrySearchShared:
@@ -304,6 +325,7 @@ class TestBackendRegistryIngestionTenantIsolation:
                 self.schema_loader = schema_loader
                 self.config_manager = config_manager
                 self.schema_registry = None
+                self.profiles: dict[str, dict] = {}
 
             def initialize(self, config: dict):
                 self.initialized = True
@@ -322,6 +344,12 @@ class TestBackendRegistryIngestionTenantIsolation:
 
             def get_statistics(self) -> dict:
                 return {}
+
+            def add_profile(self, profile_name: str, profile_config: dict) -> None:
+                self.profiles[profile_name] = dict(profile_config)
+
+            def remove_profile(self, profile_name: str) -> None:
+                self.profiles.pop(profile_name, None)
 
             def get_embedding_requirements(self, schema_name: str) -> dict:
                 return {
