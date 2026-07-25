@@ -9,6 +9,7 @@ schema's field names for feeding — schemas declare their mapping, the
 serializer stays pure.
 """
 
+import math
 import time
 import uuid
 from dataclasses import dataclass, field, fields
@@ -563,9 +564,19 @@ class SearchResult:
         score: float,
         highlights: Optional[Dict[str, Any]] = None,
     ):
+        if not isinstance(document, Document):
+            raise TypeError(
+                f"document must be a Document, got {type(document).__name__}"
+            )
+        if type(score) is not float or not math.isfinite(score):
+            raise TypeError(f"score must be a finite float, got {score!r}")
+        if highlights is not None and not isinstance(highlights, dict):
+            raise TypeError(
+                f"highlights must be a dict or None, got {type(highlights).__name__}"
+            )
         self.document = document
         self.score = score
-        self.highlights = highlights or {}
+        self.highlights = {} if highlights is None else highlights
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""

@@ -231,6 +231,23 @@ class TestDocumentEmbeddingAccess:
 
 
 class TestSearchResultToDict:
+    @pytest.mark.parametrize("score", [1, True, float("nan"), float("inf")])
+    def test_noncanonical_score_is_rejected(self, score):
+        with pytest.raises(TypeError, match="score.*finite float"):
+            SearchResult(Document(), score=score)
+
+    @pytest.mark.parametrize("highlights", [[], "", 0, False])
+    def test_non_mapping_highlights_are_rejected(self, highlights):
+        with pytest.raises(TypeError, match="highlights.*dict"):
+            SearchResult(Document(), score=0.5, highlights=highlights)
+
+    def test_non_document_is_rejected(self):
+        with pytest.raises(TypeError, match="document.*Document"):
+            SearchResult({"id": "d"}, score=0.5)
+
+    def test_none_highlights_uses_empty_mapping(self):
+        assert SearchResult(Document(), score=0.5, highlights=None).highlights == {}
+
     def test_numeric_bounds_include_duration(self):
         r = SearchResult(
             Document(metadata={"start_time": 10, "end_time": 25}), score=0.9
