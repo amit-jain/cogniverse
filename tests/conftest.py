@@ -214,12 +214,13 @@ def pytest_collection_modifyitems(items):
             item.add_marker(skip)
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_runtest_setup(item):
     """Runtime LM gate for ``requires_lm``-marked tests.
 
-    An import-time ``skipif(not is_test_lm_available(), ...)`` latches the
-    PRE-session-fixture endpoint state — ``ensure_host_ollama`` provisions
-    the LM only at session setup — so the probe must run per test."""
+    ``trylast=True`` lets pytest fill autouse fixtures first, so the availability
+    probe runs only after ``ensure_host_ollama`` provisions the session endpoint.
+    """
     if item.get_closest_marker("requires_lm") is not None:
         from tests.fixtures.llm import is_test_lm_available, resolve_base_url
 
