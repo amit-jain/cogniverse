@@ -187,17 +187,25 @@ class TestMemorySystemCompleteE2E:
         """Test tenant isolation"""
 
         # Add memory for tenant A
-        memory_manager.add_memory(
-            content="Customer Sarah owns three Persian cats named Whiskers, Mittens, and Shadow",
+        tenant_a_content = (
+            "Customer Sarah owns three Persian cats named Whiskers, Mittens, and Shadow"
+        )
+        tenant_a_id = memory_manager.add_memory(
+            content=tenant_a_content,
             tenant_id="tenant_a",
             agent_name="isolation_test",
+            infer=False,
         )
 
         # Add memory for tenant B
-        memory_manager.add_memory(
-            content="Customer Mike has two Golden Retriever dogs named Buddy and Max",
+        tenant_b_content = (
+            "Customer Mike has two Golden Retriever dogs named Buddy and Max"
+        )
+        tenant_b_id = memory_manager.add_memory(
+            content=tenant_b_content,
             tenant_id="tenant_b",
             agent_name="isolation_test",
+            infer=False,
         )
 
         wait_for_vespa_indexing(delay=5)
@@ -218,21 +226,11 @@ class TestMemorySystemCompleteE2E:
             top_k=10,
         )
 
-        # Verify isolation
-        text_a = " ".join([str(r) for r in results_a])
-        text_b = " ".join([str(r) for r in results_b])
-
-        assert (
-            "cat" in text_a.lower()
-            or "sarah" in text_a.lower()
-            or "whiskers" in text_a.lower()
-        )
-        assert (
-            "dog" in text_b.lower()
-            or "mike" in text_b.lower()
-            or "buddy" in text_b.lower()
-            or "golden" in text_b.lower()
-        )
+        # Each query must return exactly the record persisted for that tenant.
+        assert {result["id"] for result in results_a} == {tenant_a_id}
+        assert {result["memory"] for result in results_a} == {tenant_a_content}
+        assert {result["id"] for result in results_b} == {tenant_b_id}
+        assert {result["memory"] for result in results_b} == {tenant_b_content}
 
         # Cleanup
         memory_manager.clear_agent_memory("tenant_a", "isolation_test")

@@ -57,7 +57,7 @@ def memory_with_registry(shared_memory_vespa, shared_denseon):
         embedding_model="lightonai/DenseOn",
         llm_base_url=get_llm_base_url(),
         embedder_base_url=shared_denseon,
-        auto_create_schema=False,
+        auto_create_schema=True,
         config_manager=cm,
         schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
     )
