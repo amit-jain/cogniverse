@@ -396,7 +396,8 @@ class ConfigEntry:
 normalizes them to UTC. `from_dict()` accepts exactly the fields emitted by
 `to_dict()` and requires canonical UTC ISO-8601 strings; missing fields,
 unknown fields, alternate offsets, and obsolete payload shapes raise
-`ValueError`.
+`ValueError`. Identifiers are strings, `scope` is a `ConfigScope`,
+`config_value` is a dictionary, and `version` is a positive Python integer.
 
 **Benefits:**
 

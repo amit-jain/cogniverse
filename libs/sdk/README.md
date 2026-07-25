@@ -149,7 +149,9 @@ assert restored == entry
 `ConfigStore` provides save, load, delete, list, active-version, and history
 operations for these records. Its concrete implementations own persistence.
 Config and workflow record datetimes must be timezone-aware; they are normalized
-to UTC and stored as timezone-bearing ISO-8601 strings.
+to UTC and stored as timezone-bearing ISO-8601 strings. Configuration
+identifiers are strings, values are dictionaries, and versions are positive
+Python integers.
 
 ## Workflow and adapter storage
 
