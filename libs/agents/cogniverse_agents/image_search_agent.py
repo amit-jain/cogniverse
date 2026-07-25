@@ -267,36 +267,41 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             logger.error(f"❌ Similar image search failed: {e}")
             raise
 
+    async def search_by_image(
+        self, image_bytes: bytes, limit: int = 20
+    ) -> List[ImageResult]:
+        """Search by the CONTENT of a query image supplied as raw bytes.
+
+        Decodes the bytes to a PIL image and runs image-to-image MaxSim search.
+        Raises ValueError on empty or undecodable bytes so the caller replies
+        with an honest error rather than a silent empty result.
+        """
+        import io
+
+        if not image_bytes:
+            raise ValueError("search_by_image received empty image bytes")
+        try:
+            image = Image.open(io.BytesIO(image_bytes))
+            image.load()
+        except Exception as e:
+            raise ValueError(
+                f"Could not decode query image ({len(image_bytes)} bytes): {e}"
+            )
+        return await self.find_similar_images(image, limit=limit)
+
     def _encode_image(self, image: Image.Image) -> np.ndarray:
+        """Encode a query image to ColPali multi-vector patch embeddings.
+
+        Routes through ``query_encoder`` (resolved via QueryEncoderFactory so the
+        image_profile's deployed sidecar is used) — the same model that embeds
+        images at ingest, which is what makes MaxSim between the query image and
+        the stored images meaningful. A bare local ColPali load raised
+        "remote-only" for the ColQwen model in every deployment; going through
+        the encoder makes image-to-image search work remote or local, exactly
+        like text search. Query patches are not padded — MaxSim ranks over the
+        real patch count, the same as the text query side.
         """
-        Encode image using ColPali
-
-        Args:
-            image: PIL Image
-
-        Returns:
-            ColPali multi-vector embedding [1024, 128]
-        """
-        import torch
-
-        batch_inputs = self.colpali_processor.process_images([image]).to(
-            self.colpali_model.device
-        )
-
-        with torch.no_grad():
-            embeddings = self.colpali_model(**batch_inputs)
-
-        # Reshape to [1024, 128] format (remove batch dimension)
-        embeddings_np = embeddings.squeeze(0).cpu().numpy()
-
-        # Pad or truncate to exactly 1024 patches
-        if embeddings_np.shape[0] < 1024:
-            padding = np.zeros((1024 - embeddings_np.shape[0], embeddings_np.shape[1]))
-            embeddings_np = np.vstack([embeddings_np, padding])
-        elif embeddings_np.shape[0] > 1024:
-            embeddings_np = embeddings_np[:1024]
-
-        return embeddings_np
+        return self.query_encoder.encode_image(image)
 
     async def _search_vespa(
         self,

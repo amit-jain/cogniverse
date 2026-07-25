@@ -119,7 +119,16 @@ Alongside inbound handling, the gateway runs a background `_outbound_drain_loop`
 | `/research <query>` | `deep_research_agent` |
 | `/code <query>` | `coding_agent` |
 
-`/wiki`, `/instructions`, `/memories`, and `/jobs` are parsed into their own `ParsedCommand` fields (`is_wiki`/`wiki_subcommand`, etc.) and dispatched by `MessagingGateway._handle_*_command` to the matching `RuntimeClient` method. A message with no recognized command and no media falls through to `gateway_agent`. Photo/video messages (no text command) route to `search_agent` with `has_media=True`.
+`/wiki`, `/instructions`, `/memories`, and `/jobs` are parsed into their own `ParsedCommand` fields (`is_wiki`/`wiki_subcommand`, etc.) and dispatched by `MessagingGateway._handle_*_command` to the matching `RuntimeClient` method. A message with no recognized command and no media falls through to `gateway_agent`.
+
+Media messages set `has_media=True` and route by type:
+
+| Media | Agent | Query | Why |
+|---|---|---|---|
+| Photo | `image_search_agent` | caption, else `"Find visually similar images"` | The photo itself is the query — its bytes are embedded and matched against stored image embeddings |
+| Video | `search_agent` | caption, else `"Find similar video content"` | A video file has no single query embedding, so it stays caption-text search over the video index |
+
+For a photo, `MessagingGateway._handle_message` downloads the file through the bot API (`context.bot.get_file(file_id)` → `download_as_bytearray()`) and base64-encodes it into the dispatch context as `media_content_b64` (with `media_mime`), alongside `media_type` / `media_file_id`. The bot token lives only in the gateway, so the runtime cannot fetch from Telegram itself — the bytes have to travel with the request. `MessagingGateway._download_photo_b64` refuses anything over `MAX_PHOTO_BYTES` (5 MB), checking both the size Telegram advertises and the bytes actually received, and replies with a plain message rather than dispatching when the download fails.
 
 ---
 

@@ -1071,6 +1071,7 @@ class AgentDispatcher:
                 await self._resolve_history_query(query, conversation_history),
                 tenant_id,
                 top_k,
+                image_b64=context.get("media_content_b64"),
             )
         elif capabilities & {"audio_analysis", "transcription"}:
             result = await self._execute_audio_search_task(
@@ -2090,6 +2091,7 @@ class AgentDispatcher:
                 top_k=top_k,
                 conversation_history=conversation_history,
                 enrichment=enrichment or None,
+                image_b64=context.get("media_content_b64"),
             )
             final = {
                 "status": "success",
@@ -2192,12 +2194,14 @@ class AgentDispatcher:
         top_k: int = 10,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         enrichment: Optional[Dict[str, Any]] = None,
+        image_b64: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute the downstream agent that the router recommended.
 
         Re-uses the existing _execute_*_task methods based on the agent's
-        capabilities, passing conversation_history through for query rewrite and
-        the router's enrichment through to the search path.
+        capabilities, passing conversation_history through for query rewrite,
+        the router's enrichment through to the search path, and a supplied query
+        image through to image search.
         """
         agent = self._registry.get_agent(agent_name)
         if not agent:
@@ -2221,6 +2225,7 @@ class AgentDispatcher:
                 await self._resolve_history_query(query, conversation_history),
                 tenant_id,
                 top_k,
+                image_b64=image_b64,
             )
         elif capabilities & {"audio_analysis", "transcription"}:
             return await self._execute_audio_search_task(
@@ -2371,8 +2376,23 @@ class AgentDispatcher:
         )
 
     async def _execute_image_search_task(
-        self, query: str, tenant_id: str, top_k: int
+        self,
+        query: str,
+        tenant_id: str,
+        top_k: int,
+        image_b64: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Search images by text, or by the CONTENT of a supplied query image.
+
+        When ``image_b64`` is present (a chat client sent a photo) the image
+        itself is the query: it is embedded with the same ColPali model that
+        embedded the stored images and matched by MaxSim. Any caption text is
+        not mixed in — the image profile's ranking expresses one query tensor,
+        so a caption would silently override the visual match.
+        """
+        import base64
+        import binascii
+
         from cogniverse_agents.image_search_agent import (
             ImageSearchAgent,
             ImageSearchDeps,
@@ -2386,13 +2406,24 @@ class AgentDispatcher:
         )
         agent = ImageSearchAgent(deps=deps)
 
-        results = await agent.search_images(query=query, limit=top_k)
+        if image_b64:
+            try:
+                image_bytes = base64.b64decode(image_b64, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError(
+                    f"media_content_b64 is not valid base64: {exc}"
+                ) from exc
+            results = await agent.search_by_image(image_bytes, limit=top_k)
+            message = f"Found {len(results)} images matching the supplied image"
+        else:
+            results = await agent.search_images(query=query, limit=top_k)
+            message = f"Found {len(results)} images for '{query}'"
 
         result_list = [r.model_dump() for r in results]
         return {
             "status": "success",
             "agent": "image_search_agent",
-            "message": f"Found {len(result_list)} images for '{query}'",
+            "message": message,
             "results_count": len(result_list),
             "results": result_list,
         }

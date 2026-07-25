@@ -187,77 +187,86 @@ class TestImageSearchAgent:
         assert "input.query(qt)" in params
         assert params["query"] == "sports car"
 
+    def test_encode_image_delegates_to_query_encoder(self):
+        """_encode_image runs the query image through the deployed encoder
+        (query_encoder.encode_image) — the same model that embeds images at
+        ingest — not a separately-loaded local model."""
+        fake_emb = np.random.randn(37, 320).astype(np.float32)
+        seen = {}
+
+        def fake_encode_image(image):
+            seen["image"] = image
+            return fake_emb
+
+        self.agent._query_encoder = SimpleNamespace(encode_image=fake_encode_image)
+        image = Image.new("RGB", (100, 100))
+        out = self.agent._encode_image(image)
+
+        assert out is fake_emb
+        assert seen["image"] is image
+
     @pytest.mark.asyncio
-    @patch.object(ImageSearchAgent, "colpali_model", new_callable=PropertyMock)
-    @patch.object(ImageSearchAgent, "colpali_processor", new_callable=PropertyMock)
     @patch("requests.post")
-    async def test_find_similar_images(self, mock_post, mock_processor, mock_model):
-        """Test finding similar images using ColPali"""
-        # Mock model and processor
-        mock_model_obj = MagicMock()
-        mock_processor_obj = MagicMock()
-        mock_model.return_value = mock_model_obj
-        mock_processor.return_value = mock_processor_obj
+    async def test_find_similar_images(self, mock_post):
+        """find_similar_images encodes the reference image through the deployed
+        encoder and queries Vespa with the resulting multi-vector."""
+        fake_emb = np.random.randn(12, 320).astype(np.float32)
+        seen = {}
 
-        # Mock processor.process_images
-        mock_batch_inputs = MagicMock()
-        mock_batch_inputs.to.return_value = mock_batch_inputs
-        mock_processor_obj.process_images.return_value = mock_batch_inputs
+        def _enc(image):
+            seen["image"] = image
+            return fake_emb
 
-        # Mock model device
-        mock_model_obj.device = "cpu"
+        self.agent._query_encoder = SimpleNamespace(encode_image=_enc)
 
-        # Mock model output
-        mock_embeddings_tensor = MagicMock()
-        mock_embeddings = np.random.randn(1, 1024, 128)
-        mock_embeddings_tensor.squeeze.return_value.cpu.return_value.numpy.return_value = mock_embeddings.squeeze(
-            0
-        )
-        mock_model_obj.return_value = mock_embeddings_tensor
-
-        # Mock Vespa response
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"root": {"children": []}}
         mock_post.return_value = mock_response
 
-        # Execute similar image search
         reference_image = Image.new("RGB", (100, 100))
         await self.agent.find_similar_images(reference_image=reference_image, limit=20)
 
-        # Verify Vespa was called
+        assert seen["image"] is reference_image
         mock_post.assert_called_once()
 
-    @patch("cogniverse_agents.image_search_agent.get_or_load_model")
-    def test_encode_image(self, mock_get_model):
-        """Test image encoding with ColPali"""
-        # Mock model and processor
-        mock_model_obj = MagicMock()
-        mock_processor_obj = MagicMock()
-        mock_get_model.return_value = (mock_model_obj, mock_processor_obj)
+    @pytest.mark.asyncio
+    @patch("requests.post")
+    async def test_search_by_image_decodes_bytes_and_searches(self, mock_post):
+        """search_by_image decodes real PNG bytes to the correct image and runs
+        image-to-image search through the encoder + Vespa."""
+        import io
 
-        # Mock processor.process_images
-        mock_batch_inputs = MagicMock()
-        mock_batch_inputs.to.return_value = mock_batch_inputs
-        mock_processor_obj.process_images.return_value = mock_batch_inputs
+        fake_emb = np.random.randn(9, 320).astype(np.float32)
+        seen = {}
 
-        # Mock model device
-        mock_model_obj.device = "cpu"
+        def _enc(image):
+            seen["size"] = image.size
+            return fake_emb
 
-        # Mock model output with correct shape [batch, patches, dim]
-        mock_embeddings_tensor = MagicMock()
-        mock_embeddings = np.random.randn(1, 1024, 128)  # [batch, patches, dim]
-        mock_embeddings_tensor.squeeze.return_value.cpu.return_value.numpy.return_value = mock_embeddings.squeeze(
-            0
-        )
-        mock_model_obj.return_value = mock_embeddings_tensor
+        self.agent._query_encoder = SimpleNamespace(encode_image=_enc)
 
-        # Encode image
-        image = Image.new("RGB", (100, 100))
-        embedding = self.agent._encode_image(image)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"root": {"children": []}}
+        mock_post.return_value = mock_response
 
-        # Verify embedding shape
-        assert embedding.shape == (1024, 128)
+        buf = io.BytesIO()
+        Image.new("RGB", (64, 48), color=(10, 20, 30)).save(buf, format="PNG")
+        await self.agent.search_by_image(buf.getvalue(), limit=5)
+
+        assert seen["size"] == (64, 48)
+        mock_post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_search_by_image_rejects_empty_bytes(self):
+        with pytest.raises(ValueError, match="empty image bytes"):
+            await self.agent.search_by_image(b"", limit=5)
+
+    @pytest.mark.asyncio
+    async def test_search_by_image_rejects_undecodable_bytes(self):
+        with pytest.raises(ValueError, match="Could not decode query image"):
+            await self.agent.search_by_image(b"not a real image", limit=5)
 
     @pytest.mark.asyncio
     async def test_dspy_to_a2a_output(self):

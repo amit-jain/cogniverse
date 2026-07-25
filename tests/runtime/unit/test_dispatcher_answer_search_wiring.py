@@ -521,7 +521,13 @@ class TestGatewayTopKForwarding:
         seen = {}
 
         async def _downstream(
-            agent_name, query, tenant_id, top_k, conversation_history, enrichment=None
+            agent_name,
+            query,
+            tenant_id,
+            top_k,
+            conversation_history,
+            enrichment=None,
+            image_b64=None,
         ):
             seen["top_k"] = top_k
             seen["agent_name"] = agent_name
@@ -561,7 +567,7 @@ class TestHistoryRewriteOnModalityBranches:
 
         seen = {}
 
-        async def _exec(query, tenant_id, top_k):
+        async def _exec(query, tenant_id, top_k, image_b64=None):
             seen["query"] = query
             return {"status": "success", "message": "ok"}
 
@@ -608,7 +614,7 @@ class TestHistoryRewriteOnModalityBranches:
         d._rewrite_query_with_history = _fail_rewrite
         seen = {}
 
-        async def _img(query, tenant_id, top_k):
+        async def _img(query, tenant_id, top_k, image_b64=None):
             seen["query"] = query
             return {"status": "success", "message": "ok"}
 
