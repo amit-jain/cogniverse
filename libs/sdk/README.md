@@ -159,7 +159,10 @@ to UTC and stored as timezone-bearing ISO-8601 strings.
 
 `WorkflowStore` records workflow executions, agent performance, reusable
 templates, learned patterns, and complete learning corpora. Its serialized
-datetimes use the same canonical UTC form.
+datetimes use the same canonical UTC form. Complete-corpus replacement is
+serialized per tenant and replaces empty pattern mappings as well as non-empty
+ones. Compensation attempts every channel; a failed compensation surfaces
+alongside the forward failure in an `ExceptionGroup`.
 
 `AdapterStore` persists adapter metadata, artifacts, training examples,
 metrics, and activation state. Model types default to `"llm"` where the

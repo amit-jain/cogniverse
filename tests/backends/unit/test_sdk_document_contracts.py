@@ -9,6 +9,7 @@ they name, and serializers tolerate the shapes real payloads carry.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -24,6 +25,7 @@ from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
 from cogniverse_sdk.interfaces.workflow_store import (
     AgentPerformance,
     WorkflowExecution,
+    WorkflowStore,
     WorkflowTemplate,
 )
 
@@ -376,6 +378,184 @@ class TestWorkflowRecordDatetimeContract:
 
         assert execution.timestamp == datetime(2026, 1, 1, tzinfo=timezone.utc)
         assert execution.to_dict()["timestamp"] == "2026-01-01T00:00:00+00:00"
+
+
+class _CorpusStore(WorkflowStore):
+    def __init__(self):
+        self.executions = {}
+        self.profiles = {}
+        self.patterns = {}
+        self.a_profile_written = asyncio.Event()
+        self.release_a = asyncio.Event()
+        self.b_complete = asyncio.Event()
+        self.profile_save_calls = 0
+        self.pattern_save_calls = 0
+        self.execution_save_calls = 0
+        self.fail_forward_execution = False
+        self.fail_profile_restore = False
+        self.profile_barrier = None
+
+    async def save_executions(self, tenant_id, executions):
+        self.execution_save_calls += 1
+        if self.fail_forward_execution and self.execution_save_calls == 1:
+            raise ConnectionError("forward executions failed")
+        self.executions[tenant_id] = list(executions)
+        if executions and executions[0].workflow_id == "b":
+            self.b_complete.set()
+
+    async def load_executions(self, tenant_id):
+        return list(self.executions.get(tenant_id, []))
+
+    async def save_agent_profiles(self, tenant_id, profiles):
+        self.profile_save_calls += 1
+        if self.fail_profile_restore and self.profile_save_calls == 2:
+            raise RuntimeError("profile restore failed")
+        self.profiles[tenant_id] = list(profiles)
+        if self.profile_barrier is not None:
+            await self.profile_barrier.wait()
+        if profiles and profiles[0].agent_name == "agent_a":
+            self.a_profile_written.set()
+            await self.release_a.wait()
+
+    async def load_agent_profiles(self, tenant_id):
+        return list(self.profiles.get(tenant_id, []))
+
+    async def save_query_patterns(self, tenant_id, patterns):
+        self.pattern_save_calls += 1
+        self.patterns[tenant_id] = dict(patterns)
+
+    async def load_query_patterns(self, tenant_id):
+        return dict(self.patterns.get(tenant_id, {}))
+
+    async def save_template(self, tenant_id, template):
+        raise NotImplementedError
+
+    async def load_templates(self, tenant_id):
+        raise NotImplementedError
+
+    async def delete_template(self, tenant_id, template_id):
+        raise NotImplementedError
+
+    def health_check(self):
+        return True
+
+    def get_stats(self):
+        return {}
+
+
+def _corpus_execution(workflow_id):
+    return WorkflowExecution(
+        workflow_id=workflow_id,
+        query=workflow_id,
+        query_type="search",
+        execution_time=1.0,
+        success=True,
+        agent_sequence=[f"agent_{workflow_id}"],
+        task_count=1,
+        parallel_efficiency=1.0,
+        confidence_score=0.9,
+    )
+
+
+class TestWorkflowLearningCorpusContract:
+    async def test_empty_patterns_replace_stale_patterns(self):
+        store = _CorpusStore()
+        store.patterns["acme:prod"] = {"stale": ["old"]}
+
+        await store.save_learning_corpus(
+            "acme:prod",
+            [_corpus_execution("new")],
+            [AgentPerformance(agent_name="agent_new")],
+            {},
+        )
+
+        assert store.patterns["acme:prod"] == {}
+
+    async def test_same_tenant_concurrent_saves_remain_coherent(self):
+        store = _CorpusStore()
+
+        save_a = asyncio.create_task(
+            store.save_learning_corpus(
+                "acme:prod",
+                [_corpus_execution("a")],
+                [AgentPerformance(agent_name="agent_a")],
+                {"a": ["pattern_a"]},
+            )
+        )
+        await asyncio.wait_for(store.a_profile_written.wait(), timeout=1)
+
+        save_b = asyncio.create_task(
+            store.save_learning_corpus(
+                "acme:prod",
+                [_corpus_execution("b")],
+                [AgentPerformance(agent_name="agent_b")],
+                {"b": ["pattern_b"]},
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(store.b_complete.wait(), timeout=0.2)
+        store.release_a.set()
+        await asyncio.gather(save_a, save_b)
+
+        assert [item.workflow_id for item in store.executions["acme:prod"]] == ["b"]
+        assert [item.agent_name for item in store.profiles["acme:prod"]] == ["agent_b"]
+        assert store.patterns["acme:prod"] == {"b": ["pattern_b"]}
+
+    async def test_different_tenants_save_independently(self):
+        store = _CorpusStore()
+        store.profile_barrier = asyncio.Barrier(2)
+
+        await asyncio.wait_for(
+            asyncio.gather(
+                store.save_learning_corpus(
+                    "acme:a",
+                    [_corpus_execution("a")],
+                    [AgentPerformance(agent_name="tenant_a")],
+                    {"a": ["pattern_a"]},
+                ),
+                store.save_learning_corpus(
+                    "acme:b",
+                    [_corpus_execution("b")],
+                    [AgentPerformance(agent_name="tenant_b")],
+                    {"b": ["pattern_b"]},
+                ),
+            ),
+            timeout=1,
+        )
+
+        assert [item.agent_name for item in store.profiles["acme:a"]] == ["tenant_a"]
+        assert [item.agent_name for item in store.profiles["acme:b"]] == ["tenant_b"]
+
+    async def test_restore_failure_surfaces_both_errors_and_attempts_all_restores(self):
+        store = _CorpusStore()
+        tenant = "acme:prod"
+        store.executions[tenant] = [_corpus_execution("old")]
+        store.profiles[tenant] = [AgentPerformance(agent_name="agent_old")]
+        store.patterns[tenant] = {"old": ["pattern_old"]}
+        store.fail_forward_execution = True
+        store.fail_profile_restore = True
+
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await store.save_learning_corpus(
+                tenant,
+                [_corpus_execution("new")],
+                [AgentPerformance(agent_name="agent_new")],
+                {"new": ["pattern_new"]},
+            )
+
+        assert [type(error) for error in exc_info.value.exceptions] == [
+            ConnectionError,
+            RuntimeError,
+        ]
+        assert [str(error) for error in exc_info.value.exceptions] == [
+            "forward executions failed",
+            "profile restore failed",
+        ]
+        assert store.profile_save_calls == 2
+        assert store.pattern_save_calls == 2
+        assert store.execution_save_calls == 2
+        assert store.patterns[tenant] == {"old": ["pattern_old"]}
+        assert [item.workflow_id for item in store.executions[tenant]] == ["old"]
 
 
 class TestDocumentSchemaFieldMapping:

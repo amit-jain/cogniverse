@@ -15,6 +15,7 @@ trivial lifecycle/health methods stay sync.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field, fields
@@ -223,31 +224,58 @@ class WorkflowStore(ABC):
         profiles are missing. Two guards: executions (the only corpus that
         references agents) is written LAST, so a failure before it never
         persists a dangling reference; and on any failure the previous corpus is
-        restored so a partial write is undone.
+        restored so a partial write is undone. Writes for one tenant are
+        serialized; different tenants use independent locks.
         """
+        locks = self.__dict__.setdefault("_learning_corpus_locks", {})
+        lock = locks.setdefault(tenant_id, asyncio.Lock())
+        async with lock:
+            await self._save_learning_corpus_locked(
+                tenant_id, executions, profiles, patterns
+            )
+
+    async def _save_learning_corpus_locked(
+        self,
+        tenant_id: str,
+        executions: List[WorkflowExecution],
+        profiles: List[AgentPerformance],
+        patterns: Dict[str, List[str]],
+    ) -> None:
         prev_profiles = await self.load_agent_profiles(tenant_id)
         prev_patterns = await self.load_query_patterns(tenant_id)
         prev_executions = await self.load_executions(tenant_id)
         try:
             await self.save_agent_profiles(tenant_id, profiles)
-            if patterns:
-                await self.save_query_patterns(tenant_id, patterns)
+            await self.save_query_patterns(tenant_id, patterns)
             await self.save_executions(tenant_id, executions)
-        except Exception:
-            try:
-                await self.save_agent_profiles(tenant_id, prev_profiles)
-                await self.save_query_patterns(tenant_id, prev_patterns)
-                await self.save_executions(tenant_id, prev_executions)
-                logger.warning(
-                    "Learning-corpus save failed for %s; restored previous corpus",
+        except Exception as forward_error:
+            restore_errors = []
+            restore_steps = [
+                ("agent profiles", self.save_agent_profiles, prev_profiles),
+                ("query patterns", self.save_query_patterns, prev_patterns),
+                ("executions", self.save_executions, prev_executions),
+            ]
+            for label, restore, previous in restore_steps:
+                try:
+                    await restore(tenant_id, previous)
+                except Exception as restore_error:
+                    restore_error.add_note(
+                        f"while restoring {label} for tenant {tenant_id!r}"
+                    )
+                    restore_errors.append(restore_error)
+            if restore_errors:
+                logger.error(
+                    "Learning-corpus save and restore failed for %s",
                     tenant_id,
                 )
-            except Exception:
-                logger.exception(
-                    "Learning-corpus save failed for %s and the restore also "
-                    "failed; the corpus may be inconsistent",
-                    tenant_id,
-                )
+                raise ExceptionGroup(
+                    f"Learning-corpus save and restore failed for {tenant_id!r}",
+                    [forward_error, *restore_errors],
+                ) from forward_error
+            logger.warning(
+                "Learning-corpus save failed for %s; restored previous corpus",
+                tenant_id,
+            )
             raise
 
     # ==================== Workflow Templates ====================
