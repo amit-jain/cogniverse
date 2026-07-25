@@ -1422,25 +1422,6 @@ def _vespa_wait_for_query_ready(data_port: int, timeout: int = 120) -> bool:
     return False
 
 
-def _vespa_cleanup_my_container(container_name: str) -> None:
-    """Remove only OUR container by exact name, not any container that
-    happens to share the prefix.
-
-    Earlier this helper used the prefix filter ``name=^backend-tests-``
-    and killed every matching container. That blew away in-use containers
-    when pytest re-evaluated the fixture mid-session (e.g. after a
-    transient setup failure), turning one bad fixture call into a
-    cascade of failed tests downstream. Exact name keeps the blast radius
-    to what we own."""
-    import subprocess
-
-    subprocess.run(
-        ["docker", "rm", "-f", container_name],
-        capture_output=True,
-        timeout=30,
-    )
-
-
 @pytest.fixture(scope="session")
 def shared_vespa():
     """One Vespa container per pytest session, pinned against OOM-kill.
@@ -1472,15 +1453,7 @@ def shared_vespa():
     import platform
     import subprocess
 
-    from tests.utils.docker_utils import generate_unique_ports
-
-    http_port, config_port = generate_unique_ports("tests.conftest")
-    container_name = f"backend-tests-{http_port}"
-
-    # Only remove OUR exact container if a prior crashed pytest left it
-    # behind. Don't touch other backend-tests-* containers — they belong
-    # to concurrent sessions or other users.
-    _vespa_cleanup_my_container(container_name)
+    from tests.utils.docker_utils import start_docker_container_with_port_retry
 
     # Reap labelled containers whose owning pytest died without teardown
     # (SIGKILL skips the finally) — a dead session's Vespa JVM holds GBs.
@@ -1493,33 +1466,24 @@ def shared_vespa():
         "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
     )
 
-    # --oom-score-adj=-1000 makes the kernel pick literally anything else
-    # before this container under memory pressure. Losing the shared Vespa
-    # mid-session breaks every downstream test; the per-test sidecars
-    # (vllm, pylate) are cheaper to lose and restart.
-    result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            container_name,
+    container_name, http_port, config_port = start_docker_container_with_port_retry(
+        "tests.conftest",
+        name_prefix="backend-tests",
+        image="vespaengine/vespa:8.668.5",
+        container_ports=(8080, 19071),
+        extra_run_args=[
+            # The owner label lets the next session reap this container
+            # when SIGKILL prevents the fixture's finally block.
             "--label",
             f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{http_port}:8080",
-            "-p",
-            f"{config_port}:19071",
             "--platform",
             docker_platform,
+            # Losing the shared Vespa mid-session breaks every downstream
+            # test; transient inference sidecars are cheaper to restart.
             "--oom-score-adj=-1000",
-            "vespaengine/vespa:8.668.5",
         ],
-        capture_output=True,
-        text=True,
+        max_attempts=5,
     )
-    if result.returncode != 0:
-        pytest.fail(f"Failed to start shared_vespa container: {result.stderr}")
 
     try:
         if not _vespa_wait_for_config_ready(config_port, timeout=120):
