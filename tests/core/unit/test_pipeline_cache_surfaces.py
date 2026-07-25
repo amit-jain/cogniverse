@@ -132,16 +132,138 @@ async def test_invalidate_video_does_not_wipe_prefix_sibling_profiles(tmp_path):
 
     base = _cache("direct_video_global")
     large = _cache("direct_video_global_large")
-    await base.set_transcript("/videos/clip.mp4", {"text": "base", "segments": []})
+    await base.set_transcript(
+        "/videos/clip.mp4",
+        {"text": "base-en", "segments": []},
+        model_size="base",
+        language="en",
+    )
+    await base.set_transcript(
+        "/videos/clip.mp4",
+        {"text": "large-fr", "segments": []},
+        model_size="large",
+        language="fr",
+    )
+    await base.set_transcript(
+        "/videos/other.mp4",
+        {"text": "other", "segments": []},
+        model_size="base",
+        language="en",
+    )
     await large.set_transcript("/videos/clip.mp4", {"text": "large", "segments": []})
 
     cleared = await base.invalidate_video("/videos/clip.mp4")
 
-    assert cleared == 1
-    assert await base.get_transcript("/videos/clip.mp4") is None
+    assert cleared == 2
+    assert (
+        await base.get_transcript("/videos/clip.mp4", model_size="base", language="en")
+        is None
+    )
+    assert (
+        await base.get_transcript("/videos/clip.mp4", model_size="large", language="fr")
+        is None
+    )
+    assert await base.get_transcript(
+        "/videos/other.mp4", model_size="base", language="en"
+    ) == {"text": "other", "segments": []}
     large_survivor = await large.get_transcript("/videos/clip.mp4")
     assert large_survivor is not None, "sibling _large profile was wrongly wiped"
     assert large_survivor["text"] == "large"
+
+
+@pytest.mark.asyncio
+async def test_parameter_variants_use_distinct_reversible_canonical_paths(cache):
+    video = "/videos/clip.mp4"
+    variants = {
+        ("base", "en"): {"text": "base-en", "segments": []},
+        ("base", "fr"): {"text": "base-fr", "segments": []},
+        ("large-v3", "en"): {"text": "large-en", "segments": []},
+        ("vision/" + ("x" * 320), "日本語"): {
+            "text": "long-unicode",
+            "segments": [],
+        },
+    }
+
+    for (model, language), payload in variants.items():
+        assert (
+            await cache.set_transcript(
+                video, payload, model_size=model, language=language
+            )
+            is True
+        )
+
+    for (model, language), payload in variants.items():
+        assert (
+            await cache.get_transcript(video, model_size=model, language=language)
+            == payload
+        )
+
+    backend = cache.cache.backends[0]
+    video_key = cache._generate_video_key(video)
+    keys = [
+        cache._generate_artifact_key(
+            video_key, "transcript", lang=language, model=model
+        )
+        for model, language in variants
+    ]
+    paths = [backend._key_to_path(key) for key in keys]
+
+    assert len(set(paths)) == len(variants)
+    assert all(".keys" in path.parts for path in paths)
+    assert all(max(map(len, path.parts)) <= 200 for path in paths)
+    assert [backend._path_to_key(path) for path in paths] == keys
+
+
+@pytest.mark.asyncio
+async def test_list_keys_and_stats_are_exact_for_canonical_entries(cache):
+    video = "/videos/exact.mp4"
+    await cache.set_transcript(
+        video,
+        {"text": "english", "segments": []},
+        model_size="base",
+        language="en",
+    )
+    await cache.set_transcript(
+        video,
+        {"text": "french", "segments": []},
+        model_size="large",
+        language="fr",
+    )
+    await cache.set_descriptions(
+        video,
+        {"descriptions": [{"frame_id": 0, "text": "goal"}]},
+        model_name="vision/model:v2",
+        batch_size=7,
+    )
+
+    backend = cache.cache.backends[0]
+    video_key = cache._generate_video_key(video)
+    expected_keys = sorted(
+        [
+            cache._generate_artifact_key(
+                video_key, "transcript", lang="en", model="base"
+            ),
+            cache._generate_artifact_key(
+                video_key, "transcript", lang="fr", model="large"
+            ),
+            cache._generate_artifact_key(
+                video_key,
+                "descriptions",
+                batch_size=7,
+                model="vision/model:v2",
+            ),
+        ]
+    )
+    expected_paths = [backend._key_to_path(key) for key in expected_keys]
+
+    assert await backend.list_keys() == [(key, None) for key in expected_keys]
+    assert await backend.list_keys(f"{video_key}:transcript:*") == [
+        (key, None) for key in expected_keys if ":transcript:" in key
+    ]
+
+    stats = await backend.get_stats()
+    assert stats["total_files"] == 3
+    assert stats["size_bytes"] == sum(path.stat().st_size for path in expected_paths)
 
 
 @pytest.mark.asyncio
