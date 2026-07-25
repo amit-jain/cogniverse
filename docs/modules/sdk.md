@@ -499,8 +499,8 @@ class WorkflowStore(ABC):
     @abstractmethod
     async def load_query_patterns(self, tenant_id: str) -> Dict[str, List[str]]: ...
 
-    # Concrete template method (not abstract): writes the three corpora as one
-    # unit — executions last, previous corpus restored on any failure.
+    # Concrete template method (not abstract): serializes writes per tenant,
+    # writes executions last, and restores every prior channel after a failure.
     async def save_learning_corpus(
         self,
         tenant_id: str,
@@ -521,6 +521,13 @@ class WorkflowStore(ABC):
     @abstractmethod
     def get_stats(self) -> Dict[str, Any]: ...
 ```
+
+`save_learning_corpus()` replaces every channel, so an empty `patterns` mapping
+clears stale patterns. Saves for the same tenant cannot interleave, while
+different tenants retain independent locks. If a forward write fails, every
+restore step is attempted. A successful restore re-raises the forward error; if
+any restore also fails, an `ExceptionGroup` contains the forward error followed
+by each restore error.
 
 **Data Classes:**
 ```python
@@ -804,9 +811,10 @@ cogniverse_sdk/
 - `save_agent_profiles(tenant_id, profiles)` / `load_agent_profiles(tenant_id)`
 - `save_query_patterns(tenant_id, patterns)` / `load_query_patterns(tenant_id)`
 - `save_learning_corpus(tenant_id, executions, profiles, patterns)`: concrete
-  template method — writes all three corpora as one unit (executions last;
-  previous corpus restored on any failure) so a mid-sequence outage never
-  leaves executions referencing missing profiles
+  template method — replaces all three corpora, including an empty patterns
+  mapping; same-tenant calls are serialized, executions are written last, and
+  every prior channel is restored after a failure. Restore failures are
+  collected with the forward error in an `ExceptionGroup`.
 - `save_template(tenant_id, template)`: Create or update a template
 - `load_templates(tenant_id)`: Load all templates for tenant
 - `delete_template(tenant_id, template_id)`: Delete a template by id
