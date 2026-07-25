@@ -89,6 +89,7 @@ pip install cogniverse-foundation
 - `cogniverse-sdk`: Pure backend interfaces
 
 **External:**
+- `fastapi==0.135.3`: Dynamic configuration REST endpoints
 - `opentelemetry-api>=1.20.0`: OpenTelemetry interfaces
 - `opentelemetry-sdk>=1.20.0`: OpenTelemetry SDK
 - `pydantic>=2.0.0`: Data validation
