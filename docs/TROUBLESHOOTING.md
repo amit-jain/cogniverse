@@ -126,18 +126,45 @@ Bind for 0.0.0.0:28000 failed: port is already allocated
 (Phoenix), `4317` (OTLP), `11434` (Ollama), `2746` (Argo), plus `29001`-`29011`
 for inference sidecars.
 
+`cogniverse start` checks the stored mappings of a stopped load balancer before
+starting any cluster node. If a port is occupied, it reports the host port and
+the Cogniverse service that needs it without leaving the cluster partially
+started.
+
 ```bash
 # Find what's holding a conflicting port
-lsof -i :28000
+lsof -nP -iTCP:11434 -sTCP:LISTEN
 
-# Exclude a port from the k3d loadbalancer mapping (e.g. a host LLM already
-# using 11434) via the environment before `cogniverse up`
+# Choice 1: free or reconfigure the host listener, then resume the cluster
+cogniverse start --name cogniverse
+```
+
+k3d's experimental edit command can add a published port, but it cannot remove
+or remap one on an existing cluster. Setting `COGNIVERSE_K3D_EXCLUDE_PORTS`
+after creation therefore does not change its mappings. To keep a host Ollama
+listener on `11434`, preserve any cluster-local data and recreate the cluster
+without the conflicting mapping:
+
+```bash
+# Choice 2: remove the existing cluster only after preserving required data
+k3d cluster delete cogniverse
 export COGNIVERSE_K3D_EXCLUDE_PORTS=11434
 cogniverse up
+```
 
-# Or tear down and recreate the cluster
-cogniverse down
-cogniverse up
+### k3d Load Balancer Detached from the Cluster Network
+
+After k3d reports a successful start, `cogniverse start` verifies that the load
+balancer joined the cluster network. A detached load balancer cannot resolve the
+server container, so the Kubernetes API and every published service remain
+unavailable even though k3d reports the server as running.
+
+The CLI reports the exact container and network names. Reattach and restart that
+load balancer without deleting the cluster:
+
+```bash
+docker network connect k3d-cogniverse k3d-cogniverse-serverlb
+docker restart k3d-cogniverse-serverlb
 ```
 
 ### Pods Stuck Pending / CrashLoopBackOff

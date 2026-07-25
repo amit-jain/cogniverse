@@ -216,9 +216,29 @@ class TestStopStartCluster:
     def test_start_cluster_invokes_k3d_start(self, mock_run: object) -> None:
         from cogniverse_cli.cluster import start_cluster
 
-        start_cluster()
+        mock_run.side_effect = [  # type: ignore[attr-defined]
+            subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=(
+                    '[{"name": "cogniverse", "network": {"name": '
+                    '"k3d-cogniverse"}, "nodes": []}]'
+                ),
+            ),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout=""),
+            subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=(
+                    '[{"name": "cogniverse", "network": {"name": '
+                    '"k3d-cogniverse"}, "nodes": []}]'
+                ),
+            ),
+        ]
+        with patch("cogniverse_cli.cluster.pin_coredns_upstreams"):
+            start_cluster()
 
-        args = mock_run.call_args_list[0]  # first call: k3d start (then DNS pin)
+        args = mock_run.call_args_list[1]  # inspection runs before k3d start
         assert args.args[0] == ["k3d", "cluster", "start", "cogniverse"]
         assert args.kwargs["check"] is True
 
@@ -540,15 +560,37 @@ class TestPinCorednsUpstreams:
     def test_start_cluster_pins_coredns(self, mock_run) -> None:
         from cogniverse_cli.cluster import start_cluster
 
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=""
-        )
+        def run(cmd, **kwargs):
+            if cmd[:3] == ["k3d", "cluster", "list"]:
+                return subprocess.CompletedProcess(
+                    args=cmd,
+                    returncode=0,
+                    stdout=(
+                        '[{"name": "cogniverse", "network": {"name": '
+                        '"k3d-cogniverse"}, "nodes": []}]'
+                    ),
+                )
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout="forward . 1.1.1.1 8.8.8.8",
+            )
 
+        mock_run.side_effect = run
         start_cluster("cogniverse")
 
         calls = [c[0][0] for c in mock_run.call_args_list]
-        assert calls[0] == ["k3d", "cluster", "start", "cogniverse"]
-        assert any("configmap" in c for c in calls[1:])
+        assert calls[0] == [
+            "k3d",
+            "cluster",
+            "list",
+            "cogniverse",
+            "-o",
+            "json",
+        ]
+        assert calls[1] == ["k3d", "cluster", "start", "cogniverse"]
+        assert calls[2] == calls[0]
+        assert any("configmap" in c for c in calls[3:])
 
 
 class _FakeProc:
