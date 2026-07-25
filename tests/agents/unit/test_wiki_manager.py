@@ -32,6 +32,14 @@ def _schema_fields_from_document(doc):
     return doc.to_schema_fields(_wiki_mapping())
 
 
+def _iso_seconds(iso_ts):
+    """The stored ISO stamp round-trips through an int epoch, dropping any
+    sub-second component the page timestamp carries."""
+    from datetime import datetime
+
+    return datetime.fromisoformat(iso_ts).replace(microsecond=0).isoformat()
+
+
 @pytest.mark.unit
 class TestSlugGeneration:
     def test_simple_title(self):
@@ -442,6 +450,7 @@ class TestSaveSession:
         assert json.loads(fields["sources"]) == ["doc0", "doc1"]
         assert json.loads(fields["entities"]) == ["Machine Learning"]
         assert fields["created_at"] == "2026-01-01T00:00:00+00:00"
+        assert fields["updated_at"] == _iso_seconds(page.updated_at)
         assert fields["title"] == "Machine Learning"
         assert fields["page_type"] == "topic"
         assert fields["embedding"] == [0.2] * 768
@@ -1257,3 +1266,47 @@ class TestTopicMergeConcurrency:
         assert "index feed 500" in msg  # original cause preserved
         assert "self-heal" in msg
         assert "wiki_session" in msg  # names the saved session doc
+
+
+class TestFedDocumentTimestamps:
+    """The fed document carries the page's own ``updated_at``.
+
+    ``Document.add_embedding`` re-stamps ``updated_at`` with the wall clock, so
+    attaching the embedding after building the document overwrites the page's
+    timestamp with feed time and the staleness lint reads every stored page as
+    freshly updated.
+    """
+
+    def _make_manager(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        return WikiManager(
+            backend=MagicMock(),
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+    def _aged_page(self):
+        page = WikiPage(
+            tenant_id="acme:production",
+            page_type="topic",
+            title="Aged Topic",
+            content="body",
+            entities=[],
+            sources=[],
+            cross_references=[],
+        )
+        page.created_at = "2026-05-25T10:30:00+00:00"
+        page.updated_at = "2026-05-25T10:30:00+00:00"
+        return page
+
+    def test_fed_document_keeps_the_page_updated_at(self):
+        mgr = self._make_manager()
+        page = self._aged_page()
+
+        doc = mgr._page_to_fed_document(page, [0.3] * 768)
+
+        fields = _schema_fields_from_document(doc)
+        assert fields["updated_at"] == "2026-05-25T10:30:00+00:00"
+        assert fields["created_at"] == "2026-05-25T10:30:00+00:00"
+        assert fields["embedding"] == [0.3] * 768
