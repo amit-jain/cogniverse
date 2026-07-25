@@ -55,6 +55,16 @@ class InMemoryEventQueue(BaseEventQueue):
         Notifies all waiting subscribers.
         Drops oldest events if buffer is full.
         """
+        if event.task_id != self._task_id:
+            raise ValueError(
+                f"event task_id '{event.task_id}' does not match "
+                f"queue task_id '{self._task_id}'"
+            )
+        if event.tenant_id != self._tenant_id:
+            raise ValueError(
+                f"event tenant_id '{event.tenant_id}' does not match "
+                f"queue tenant_id '{self._tenant_id}'"
+            )
         if self._closed:
             raise RuntimeError(f"Queue {self._task_id} is closed")
 
@@ -263,6 +273,42 @@ class InMemoryQueueManager(BaseQueueManager):
                 del self._queues[task_id]
                 return None
 
+            return queue
+
+    async def get_or_create_queue(
+        self,
+        task_id: str,
+        tenant_id: str,
+        ttl_minutes: int = 30,
+    ) -> EventQueue:
+        """Return one tenant-scoped queue, creating it atomically if absent."""
+        async with self._lock:
+            queue = self._queues.get(task_id)
+            if queue is not None and queue.is_expired:
+                logger.info(f"Queue {task_id} is expired, removing")
+                await queue.close()
+                del self._queues[task_id]
+                queue = None
+
+            if queue is not None:
+                if queue.tenant_id != tenant_id:
+                    raise ValueError(
+                        f"Queue {task_id} belongs to tenant '{queue.tenant_id}', "
+                        f"but requested tenant '{tenant_id}'"
+                    )
+                return queue
+
+            queue = InMemoryEventQueue(
+                task_id=task_id,
+                tenant_id=tenant_id,
+                ttl_minutes=ttl_minutes or self._default_ttl,
+                max_buffer_size=self._max_buffer_size,
+            )
+            self._queues[task_id] = queue
+            logger.info(
+                f"Created queue for task {task_id} "
+                f"(tenant: {tenant_id}, ttl: {ttl_minutes}min)"
+            )
             return queue
 
     async def close_queue(self, task_id: str) -> bool:
