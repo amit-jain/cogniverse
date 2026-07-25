@@ -9,6 +9,11 @@ URL doesn't require N parallel edits across the cli/ tree.
 # that talks to the cluster (deploy, secrets, cluster, sandbox).
 NAMESPACE = "cogniverse"
 
+# Helm release name the stack installs under. The chart's fullname helper
+# collapses to this (chart name and release name match), so Secret and
+# Service names the cli has to address are "<RELEASE_NAME>-<suffix>".
+RELEASE_NAME = "cogniverse"
+
 # Default runtime HTTP endpoint when the cli is run outside the
 # cluster (typical for dev). NodePort 28000 is the chart's
 # externally-exposed runtime port; production callers running

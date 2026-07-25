@@ -165,9 +165,33 @@ non-200, 4 when the runtime answers without a token.
 ### Secrets
 
 ```bash
-cogniverse secrets sync              # warn if hf-token is missing
-cogniverse secrets sync --required   # fail if hf-token is missing
+cogniverse secrets sync              # warn on anything missing
+cogniverse secrets sync --required   # fail on anything missing
 ```
+
+Syncs the cluster Secrets the chart mounts but does not create:
+
+| Secret | Key | Source |
+|---|---|---|
+| `hf-token` | `HF_TOKEN` | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, else `~/.cache/huggingface/token` |
+| `cogniverse-messaging-secrets` | `telegram-bot-token` | `TELEGRAM_BOT_TOKEN` |
+
+Every secret resolves through the same order, most specific first:
+
+1. the environment variable — CI, or an explicit one-off override
+2. `./.env` — project-local, gitignored
+3. `~/.env` — shared across checkouts on this machine
+4. any tool-specific location (only `~/.cache/huggingface/token`, for `HF_TOKEN`)
+
+Each `.env` may be a **directory** holding one `<VAR>.env` file per secret (the
+file may contain `VAR=value` or just the bare value), or a **single file** of
+`KEY=value` lines. Both are read, so a project `.env` overrides `~/.env`
+per-variable rather than wholesale — you can keep shared credentials in your
+home copy and override just one of them per checkout.
+
+The messaging deployment reads `TELEGRAM_BOT_TOKEN` from
+`cogniverse-messaging-secrets`; without this sync the gateway pod cannot start
+when `messaging.enabled=true`.
 
 ### Sandbox
 

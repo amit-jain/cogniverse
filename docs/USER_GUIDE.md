@@ -142,7 +142,7 @@ The `cogniverse` CLI manages the full stack:
 | `cogniverse graph path <src> <dst>` | Find path between nodes |
 | `cogniverse sandbox sync` | Sync OpenShell gateway mTLS certs into the cluster (after rotation) |
 | `cogniverse sandbox status` | Show OpenShell gateway status and cluster sync state |
-| `cogniverse secrets sync` | Re-sync the `hf-token` Secret from local HuggingFace credentials |
+| `cogniverse secrets sync` | Re-sync cluster Secrets (`hf-token`, `cogniverse-messaging-secrets`) from env vars, `./.env`, or `~/.env` |
 | `cogniverse admin reconcile-orphans` | Find (and, with `--confirm`, drop) Vespa schema orphans not in the schema registry |
 | `cogniverse admin invite <tenant_id>` | Mint a messaging invite token; prints the `/start <token>` the user sends to the bot |
 
