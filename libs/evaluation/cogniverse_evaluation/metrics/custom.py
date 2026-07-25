@@ -9,6 +9,22 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def _validate_k(k: int) -> None:
+    if k < 0:
+        raise ValueError("k must be non-negative")
+
+
+def _binary_relevance_by_rank(results: list[str], expected_ids: set[str]) -> list[int]:
+    credited_ids: set[str] = set()
+    relevances = []
+    for item in results:
+        is_new_relevant = item in expected_ids and item not in credited_ids
+        relevances.append(int(is_new_relevant))
+        if is_new_relevant:
+            credited_ids.add(item)
+    return relevances
+
+
 def calculate_mrr(results: list[str], expected: list[str]) -> float:
     """
     Calculate Mean Reciprocal Rank.
@@ -42,29 +58,24 @@ def calculate_ndcg(results: list[str], expected: list[str], k: int = 10) -> floa
     Returns:
         NDCG@K score (0 to 1)
     """
-    if not expected:
+    _validate_k(k)
+    expected_ids = set(expected)
+    if not expected_ids:
         return 0.0
 
-    # Limit to top k results
     results_k = results[:k]
+    relevances = _binary_relevance_by_rank(results_k, expected_ids)
 
-    # Calculate relevance scores (1 if relevant, 0 otherwise)
-    relevances = [1 if item in expected else 0 for item in results_k]
-
-    # Calculate DCG
     dcg = 0.0
     for i, rel in enumerate(relevances):
-        dcg += rel / np.log2(i + 2)  # i+2 because positions start at 1
+        dcg += rel / np.log2(i + 2)
 
-    # Calculate ideal DCG
-    ideal_relevances = [1] * min(len(expected), k)
-    ideal_relevances += [0] * max(0, k - len(expected))
+    ideal_relevances = [1] * min(len(expected_ids), k)
 
     idcg = 0.0
-    for i, rel in enumerate(ideal_relevances[:k]):
+    for i, rel in enumerate(ideal_relevances):
         idcg += rel / np.log2(i + 2)
 
-    # Calculate NDCG
     if idcg == 0:
         return 0.0
 
@@ -85,11 +96,12 @@ def calculate_precision_at_k(
     Returns:
         Precision@K score (0 to 1)
     """
+    _validate_k(k)
     if not results or k == 0:
         return 0.0
 
     results_k = results[:k]
-    relevant_retrieved = len([item for item in results_k if item in expected])
+    relevant_retrieved = sum(_binary_relevance_by_rank(results_k, set(expected)))
 
     return relevant_retrieved / len(results_k)
 
@@ -106,13 +118,15 @@ def calculate_recall_at_k(results: list[str], expected: list[str], k: int = 5) -
     Returns:
         Recall@K score (0 to 1)
     """
-    if not expected:
+    _validate_k(k)
+    expected_ids = set(expected)
+    if not expected_ids:
         return 0.0
 
     results_k = results[:k]
-    relevant_retrieved = len([item for item in expected if item in results_k])
+    relevant_retrieved = sum(_binary_relevance_by_rank(results_k, expected_ids))
 
-    return relevant_retrieved / len(expected)
+    return relevant_retrieved / len(expected_ids)
 
 
 def calculate_f1_at_k(results: list[str], expected: list[str], k: int = 5) -> float:
@@ -161,18 +175,20 @@ def calculate_map(
         if not expected:
             continue
 
-        # Calculate average precision for this query
+        expected_ids = set(expected)
         precisions = []
         num_relevant = 0
+        credited_ids: set[str] = set()
 
         for i, item in enumerate(results):
-            if item in expected:
+            if item in expected_ids and item not in credited_ids:
+                credited_ids.add(item)
                 num_relevant += 1
                 precision = num_relevant / (i + 1)
                 precisions.append(precision)
 
         if precisions:
-            ap = sum(precisions) / len(expected)
+            ap = sum(precisions) / len(expected_ids)
         else:
             ap = 0.0
 

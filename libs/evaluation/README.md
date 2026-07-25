@@ -247,6 +247,9 @@ print(f"Precision@3:{calculate_precision_at_k(retrieved, expected, k=3):.3f}")
 print(f"Recall@3:   {calculate_recall_at_k(retrieved, expected, k=3):.3f}")
 ```
 
+Repeated identifiers consume a rank but receive relevance credit only once.
+Metric cutoffs must be non-negative.
+
 ### Orchestrator Agent Evaluation
 
 ```python

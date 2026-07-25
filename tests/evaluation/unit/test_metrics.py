@@ -5,6 +5,7 @@ Unit tests for evaluation metrics.
 import pytest
 
 from cogniverse_evaluation.metrics.custom import (
+    calculate_f1_at_k,
     calculate_map,
     calculate_metrics_suite,
     calculate_mrr,
@@ -138,3 +139,37 @@ class TestReferenceBasedMetrics:
         # Check metric values are in valid range
         for _key, value in metrics.items():
             assert 0 <= value <= 1
+
+    @pytest.mark.unit
+    def test_duplicate_identifiers_receive_relevance_credit_once(self):
+        """Repeated identifiers consume rank without earning duplicate credit."""
+        retrieved = ["video1", "video1", "video2"]
+        relevant = ["video1", "video2", "video2"]
+
+        expected_dcg = 1 + 1 / 2
+        ideal_dcg = 1 + 1 / 1.584962500721156
+
+        assert calculate_ndcg(retrieved, relevant, k=3) == pytest.approx(
+            expected_dcg / ideal_dcg
+        )
+        assert calculate_precision_at_k(retrieved, relevant, k=3) == pytest.approx(
+            2 / 3
+        )
+        assert calculate_recall_at_k(retrieved, relevant, k=3) == 1.0
+        assert calculate_f1_at_k(retrieved, relevant, k=3) == pytest.approx(0.8)
+        assert calculate_map([retrieved], [relevant]) == pytest.approx(5 / 6)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "metric",
+        [
+            calculate_ndcg,
+            calculate_precision_at_k,
+            calculate_recall_at_k,
+            calculate_f1_at_k,
+        ],
+    )
+    def test_negative_cutoff_is_rejected(self, metric):
+        """Negative cutoffs are invalid for every cutoff metric."""
+        with pytest.raises(ValueError, match="k must be non-negative"):
+            metric(["video1"], ["video1"], k=-1)

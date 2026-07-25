@@ -1929,7 +1929,9 @@ metrics = calculate_metrics_suite(
 
 `calculate_metrics_suite` defaults `k_values` to `[1, 5, 10]` and always
 includes `mrr` and `ndcg` (unparameterized) plus `precision@k`/`recall@k`/`f1@k`
-for each `k`.
+for each `k`. Ranked identifiers receive relevance credit at most once, so
+duplicates still consume rank but cannot inflate a metric above `1.0`.
+Cutoffs must be non-negative.
 
 ---
 
