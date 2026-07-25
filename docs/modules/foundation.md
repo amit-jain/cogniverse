@@ -548,7 +548,12 @@ class MyAgent(DynamicDSPyMixin, ConfigAPIMixin):
 | `GET /config/modules/available` | List registered DSPy module types |
 | `GET /config/optimizers/available` | List registered DSPy optimizer types |
 
-Every mutating endpoint persists through the injected `ConfigManager`, so changes survive a restart and are versioned like any other config write.
+Every mutating endpoint persists through the injected `ConfigManager`, so
+changes survive a restart and are versioned like any other config write. The
+tenant is fixed when the routes are registered; request query parameters cannot
+redirect a write to another tenant. Mutations are serialized, synchronous store
+calls run in a worker thread, and a persistence failure restores the prior
+in-memory configuration before the endpoint returns an error.
 
 ---
 
