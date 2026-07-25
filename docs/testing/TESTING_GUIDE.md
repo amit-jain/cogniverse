@@ -206,6 +206,18 @@ and `tests/routing/pytest.ini`. The commonly used ones:
 - `phoenix`, `inspect`, `ragas` — evaluation-framework dependencies
 - `timeout` — tests with custom timeout values
 
+`local_only` is an explicit run-on-demand policy, not a CI pass. In particular,
+the real image-search encoder test (Docker/model sidecar) and real ColPali
+image-encoding test (large CPU model) are intentionally excluded from normal
+CI and also carry `slow` plus their precise resource markers. Run them locally
+when changing their boundaries:
+
+```bash
+uv run pytest -m local_only \
+  tests/agents/integration/test_image_search_real_encoder_e2e.py \
+  tests/core/integration/test_colpali_encode_image_real.py
+```
+
 ```bash
 # Run only the fast CI subset
 JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -m ci_fast -v

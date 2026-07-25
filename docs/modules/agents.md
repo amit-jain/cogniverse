@@ -3557,6 +3557,18 @@ The promotion is **idempotent**: if the caller already supplied an
 `rlm` field (any value, including `None` for explicit opt-out), the
 orchestrator does not touch it.
 
+The orchestrator's iterative-retrieval sufficiency gate has a separate,
+smaller promotion threshold. When the JSON-serialized accumulated evidence
+exceeds 6,000 characters, the gate runs through `InstrumentedRLM` with a hard
+cap of three iterations; smaller evidence sets use
+`dspy.ChainOfThought(SufficientContextSignature)`. A `False` gate decision does
+not mean the accumulated evidence is discarded: its rationale must cite
+concrete support already found and name only the facets still missing. The
+next retrieval round can therefore reformulate for the gaps without losing
+supported facts. The integration golden in
+`tests/agents/integration/test_iterative_retrieval_loop.py` pins both the
+multi-round behavior and the three-iteration RLM cap.
+
 ### RLM A/B harness
 
 `RLMABRunner` runs the same query through both arms — once without RLM

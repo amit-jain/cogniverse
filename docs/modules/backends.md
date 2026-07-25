@@ -2357,6 +2357,15 @@ and `test_vespa_factory.py`. Illustrative pattern (real fixtures wire
 `config_manager`/`schema_loader` through `get_backend(tenant_id)` factory
 fixtures, not `self.` attributes):
 
+`VespaPyClient._feed_prepared_batch` tracks the terminal callback state of
+every document by document id. PyVespa completes concurrent feed callbacks out
+of input order, so a raised feed marks as failed every id that did not receive
+a successful callback (explicit failure or unresolved), while preserving ids
+that already succeeded. The returned `(success_count, failed_documents)` is
+therefore an id-set result, never a positional tail of the submitted batch.
+`test_partial_update_roundtrip.py` fault-injects a real mid-batch transport
+failure and checks the reported ids against Document v1 state.
+
 ```python
 import pytest
 from cogniverse_vespa.search_backend import VespaSearchBackend

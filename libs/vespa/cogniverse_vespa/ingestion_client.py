@@ -486,8 +486,12 @@ class VespaPyClient:
             if not self.connect():
                 return 0, [d["put"].split("::")[-1] for d in documents]
 
-        success_count = 0
-        failed_docs = []
+        # A feeder may invoke callbacks in any completion order and may raise
+        # after only a subset completed.  Keep terminal state by document id;
+        # a positional ``documents[success_count:]`` tail cannot identify the
+        # unresolved documents under concurrent feeding.
+        document_status = {doc["put"].split("::")[-1]: None for doc in documents}
+        status_lock = threading.Lock()
 
         try:
             # Convert documents to pyvespa format with embedding conversion
@@ -524,16 +528,12 @@ class VespaPyClient:
                 # from its feeder worker threads, so every counter mutation
                 # sits under a lock — an unguarded ``+= 1`` loses increments
                 # under concurrent callbacks and under-reports successes.
-                batch_success = 0
-                batch_failed = []
                 batch_retries = {}  # Track retries per document
-                tally_lock = threading.Lock()
 
                 def callback(response, doc_id):
-                    nonlocal batch_success, batch_failed, batch_retries
                     if response.is_successful():
-                        with tally_lock:
-                            batch_success += 1
+                        with status_lock:
+                            document_status[doc_id] = True
                             retries = batch_retries.get(doc_id, 0)
                         if retries:
                             self.logger.info(
@@ -541,8 +541,9 @@ class VespaPyClient:
                             )
                     else:
                         # Track retry attempts
-                        with tally_lock:
+                        with status_lock:
                             batch_retries[doc_id] = batch_retries.get(doc_id, 0) + 1
+                            document_status[doc_id] = False
                             attempt = batch_retries[doc_id]
 
                         # Log detailed error
@@ -559,10 +560,6 @@ class VespaPyClient:
                                 f"Failed to feed {doc_id} to schema '{self.schema_name}' "
                                 f"(attempt {attempt}): HTTP {status}"
                             )
-
-                        # Add to failed list after max retries (handled by pyvespa internally)
-                        with tally_lock:
-                            batch_failed.append(doc_id)
 
                 # Feed with production-ready configuration. feed_async_iterable
                 # is pyvespa's HTTP/2 async feeder (I/O-bound throughput) and
@@ -592,14 +589,16 @@ class VespaPyClient:
                         compress=self.feed_config["compress"],
                     )
 
-                # Update counts
-                success_count += batch_success
-                failed_docs.extend(batch_failed)
-
                 # Log batch results with retry info
-                unique_failed = list(
-                    set(batch_failed)
-                )  # Remove duplicates from retries
+                with status_lock:
+                    batch_success = sum(
+                        document_status[doc["id"]] is True for doc in batch
+                    )
+                    unique_failed = [
+                        doc["id"]
+                        for doc in batch
+                        if document_status[doc["id"]] is False
+                    ]
                 self.logger.info(
                     f"Batch {batch_num} to schema '{self.schema_name}': "
                     f"{batch_success}/{len(batch)} documents fed successfully"
@@ -612,10 +611,16 @@ class VespaPyClient:
 
         except Exception as e:
             self.logger.error(f"Batch feeding failed: {e}")
-            # Mark remaining as failed
-            for doc in documents[success_count:]:
-                failed_docs.append(doc["put"].split("::")[-1])
 
+        with status_lock:
+            success_count = sum(
+                document_status[doc["put"].split("::")[-1]] is True for doc in documents
+            )
+            failed_docs = [
+                doc["put"].split("::")[-1]
+                for doc in documents
+                if document_status[doc["put"].split("::")[-1]] is not True
+            ]
         return success_count, failed_docs
 
     def check_document_exists(self, doc_id: str) -> bool:

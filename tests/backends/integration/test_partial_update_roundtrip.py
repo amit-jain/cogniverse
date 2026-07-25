@@ -8,12 +8,17 @@ operation_type="feed" replaces the whole document and drops an omitted field.
 """
 
 import logging
+import subprocess
+import threading
 import time
+import uuid
 from pathlib import Path
 
 import numpy as np
 import pytest
+import vespa.application as vespa_app
 
+from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_sdk.document import ContentType, Document
 from cogniverse_vespa.ingestion_client import VespaPyClient
@@ -28,6 +33,38 @@ logger = logging.getLogger(__name__)
 
 TENANT_ID = "partial_update_rt"
 EMBED = np.full((768,), 0.05, dtype=np.float32)
+
+
+def _build_backend(shared_vespa):
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    store = VespaConfigStore(
+        backend_url="http://localhost", backend_port=shared_vespa["http_port"]
+    )
+    config_manager = ConfigManager(store=store)
+    config_manager.set_system_config(
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=shared_vespa["http_port"],
+        )
+    )
+    tenant = f"feedfault{uuid.uuid4().hex[:6]}"
+    return BackendRegistry.get_instance().get_ingestion_backend(
+        name="vespa",
+        tenant_id=tenant,
+        config={
+            "wait_for_indexing": False,
+            "backend": {
+                "url": "http://localhost",
+                "config_port": shared_vespa["config_port"],
+                "port": shared_vespa["http_port"],
+            },
+        },
+        config_manager=config_manager,
+        schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+    )
 
 
 def _memory_doc(doc_id: str, text: str, *, with_embedding: bool) -> Document:
@@ -113,6 +150,112 @@ class TestPartialUpdateRoundTrip:
         survived = _embedding_values(after["embedding"])
         assert len(survived) == 768
         assert survived == pytest.approx([0.05] * 768, abs=1e-3)
+
+    def test_mid_batch_connection_loss_reports_exact_nonpersisted_ids(
+        self, shared_vespa, monkeypatch
+    ):
+        """Returned failed IDs must match real Document-v1 state after an
+        out-of-order concurrent feed loses its Vespa connection."""
+        backend = _build_backend(shared_vespa)
+        client = backend._get_or_create_ingestion_client("agent_memories")
+
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            ready = _memory_doc("__fault_ready__", "ready", with_embedding=True)
+            result = backend.ingest_documents([ready], "agent_memories")
+            if (
+                result["success_count"] == 1
+                and client.get_document_data(ready.id) is not None
+            ):
+                break
+            time.sleep(2)
+        else:
+            pytest.fail("fault-test tenant schema was not feedable within 90s")
+
+        ids = [f"fault-{i:03d}" for i in range(80)]
+        payload = "x" * (256 * 1024)
+        docs = [
+            _memory_doc(doc_id, f"{doc_id}:{payload}", with_embedding=True)
+            for doc_id in ids
+        ]
+
+        original = vespa_app.Vespa.feed_iterable
+        pause_lock = threading.Lock()
+        paused = threading.Event()
+        release_thread = None
+
+        def feed_nonprefix_then_abort(self, *args, **kwargs):
+            callback = kwargs["callback"]
+            all_docs = list(kwargs["iter"])
+            # Submit a deliberately non-prefix subset to the real concurrent
+            # feeder. The remaining IDs model work not yet submitted when the
+            # connection-level batch abort occurs.
+            kwargs["iter"] = iter(all_docs[::4])
+
+            def callback_then_pause(response, doc_id):
+                nonlocal release_thread
+                callback(response, doc_id)
+                if response.is_successful() and not paused.is_set():
+                    with pause_lock:
+                        if not paused.is_set():
+                            result = subprocess.run(
+                                [
+                                    "docker",
+                                    "pause",
+                                    shared_vespa["container_name"],
+                                ],
+                                capture_output=True,
+                                text=True,
+                                timeout=30,
+                            )
+                            assert result.returncode == 0, result.stderr
+                            paused.set()
+
+                            def release_after_transport_timeout():
+                                time.sleep(5)
+                                subprocess.run(
+                                    [
+                                        "docker",
+                                        "unpause",
+                                        shared_vespa["container_name"],
+                                    ],
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=30,
+                                )
+
+                            release_thread = threading.Thread(
+                                target=release_after_transport_timeout,
+                                daemon=True,
+                            )
+                            release_thread.start()
+
+            kwargs["callback"] = callback_then_pause
+            original(self, *args, **kwargs)
+            raise ConnectionError("connection lost before remaining submissions")
+
+        monkeypatch.setattr(vespa_app.Vespa, "feed_iterable", feed_nonprefix_then_abort)
+
+        try:
+            result = backend.ingest_documents(docs, "agent_memories")
+            assert paused.is_set(), "fault injection never paused Vespa"
+        finally:
+            if paused.is_set():
+                subprocess.run(
+                    ["docker", "unpause", shared_vespa["container_name"]],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            if release_thread is not None:
+                release_thread.join(timeout=30)
+
+        persisted = {
+            doc_id for doc_id in ids if client.get_document_data(doc_id) is not None
+        }
+        assert 0 < len(persisted) < len(ids)
+        assert result["success_count"] == len(persisted)
+        assert set(result["failed_documents"]) == set(ids) - persisted
 
     def test_full_feed_replaces_and_drops_omitted_embedding(self, memory_client):
         c = memory_client

@@ -222,6 +222,18 @@ uv run pytest tests/messaging/unit/ -v --tb=long
 
 Covers command parsing, invite-token auth, gateway command dispatch, and the `RuntimeClient` CRUD wrappers. `tests/messaging/integration/test_gateway_webhook_serves.py` verifies `run_webhook()` actually binds and serves an HTTP server that Telegram can POST updates to, not just registers the webhook URL. Round-trip coverage against a real runtime lives in `tests/runtime/integration/test_inbound_messaging_primitive.py` and `tests/runtime/integration/test_inbound_messaging_redis.py`; end-to-end coverage lives in `tests/e2e/test_messaging_e2e.py` and `tests/e2e/test_messaging_gateway_e2e.py`.
 
+Photo-download coverage has two boundary levels. The regular integration test
+uses a real `python-telegram-bot` client against a local Bot API stub.
+`test_gateway_photo_download_real_telegram.py` is an opt-in `local_only` test
+that calls Telegram's real `getUpdates`, `getFile`, and file-download APIs,
+then verifies the exact downloaded bytes are forwarded to
+`image_search_agent`. Set `TELEGRAM_BOT_TOKEN` through the normal secret
+resolution path, send that bot a photo, and optionally set `TELEGRAM_CHAT_ID`
+to select a chat. It skips with an actionable reason when credentials, a
+pending photo, or `getUpdates` availability are absent; Telegram disables
+`getUpdates` while a webhook is configured. Never store either value in a
+tracked file.
+
 ---
 
 ## Architecture Position
