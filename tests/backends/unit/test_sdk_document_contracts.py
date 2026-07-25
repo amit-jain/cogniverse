@@ -118,6 +118,11 @@ class TestDocumentFromDictContract:
         with pytest.raises(TypeError, match="created_at"):
             Document.from_dict({"created_at": True})
 
+    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
+    def test_non_finite_timestamp_rejected_with_field_name(self, value):
+        with pytest.raises(TypeError, match="created_at"):
+            Document.from_dict({"created_at": value})
+
     def test_auto_detect_covers_every_extension_branch(self):
         cases = {
             "/x/p.png": ContentType.IMAGE,
@@ -128,6 +133,21 @@ class TestDocumentFromDictContract:
         }
         for path, expected in cases.items():
             assert Document.from_dict({"content_path": path}).content_type is expected
+
+
+class TestDocumentEmbeddingAccess:
+    def test_raw_embedding_is_returned_unchanged(self):
+        doc = Document(embeddings={"raw": [1.0, 2.0]})
+
+        assert doc.get_embedding("raw") == [1.0, 2.0]
+        assert doc.get_embedding_metadata("raw") is None
+
+    def test_wrapped_embedding_returns_data_and_metadata(self):
+        doc = Document()
+        doc.add_embedding("wrapped", [3.0], {"model": "clip"})
+
+        assert doc.get_embedding("wrapped") == [3.0]
+        assert doc.get_embedding_metadata("wrapped") == {"model": "clip"}
 
 
 class TestSearchResultToDict:
@@ -156,6 +176,17 @@ class TestSearchResultToDict:
     def test_source_id_surfaces(self):
         r = SearchResult(Document(metadata={"source_id": "vid_1"}), score=0.5)
         assert r.to_dict()["source_id"] == "vid_1"
+
+    def test_boolean_bounds_do_not_create_numeric_duration(self):
+        result = SearchResult(
+            Document(metadata={"start_time": True, "end_time": False}),
+            score=0.5,
+        ).to_dict()
+
+        assert result["temporal_info"] == {
+            "start_time": True,
+            "end_time": False,
+        }
 
 
 class TestConfigEntryFromDictContract:
@@ -318,6 +349,27 @@ class TestDocumentSchemaFieldMapping:
         with pytest.raises(ValueError, match="typo_key"):
             DocumentFieldMapping.from_dict({"typo_key": "x"})
 
+    @pytest.mark.parametrize(
+        ("payload", "field_name"),
+        [
+            ({"id": 42}, "id"),
+            ({"include_metadata": "false"}, "include_metadata"),
+        ],
+    )
+    def test_mapping_from_dict_rejects_mistyped_scalar_fields(
+        self, payload, field_name
+    ):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        with pytest.raises(TypeError, match=field_name):
+            DocumentFieldMapping.from_dict(payload)
+
+    def test_mapping_from_schema_json_rejects_non_dict_schema(self):
+        from cogniverse_sdk.document import DocumentFieldMapping
+
+        with pytest.raises(TypeError, match="schema_json"):
+            DocumentFieldMapping.from_schema_json(["not-a-schema"])
+
     def test_mapping_rejects_bad_created_at_format(self):
         from cogniverse_sdk.document import DocumentFieldMapping
 
@@ -372,9 +424,17 @@ class TestDocumentSchemaFieldMapping:
         doc = Document(id="d")
         doc.metadata = {"segment_index": 3}
         out = doc.to_schema_fields(
-            self._mapping(metadata_fields={"segment_index": "segment_id"})
+            self._mapping(
+                id=None,
+                title=None,
+                text_content=None,
+                content_type=None,
+                created_at=None,
+                embeddings={},
+                metadata_fields={"segment_index": "segment_id"},
+            )
         )
-        assert out["segment_id"] == 3
+        assert out == {"segment_id": 3}
 
     def test_include_metadata_false_feeds_only_declared_renames(self):
         """With include_metadata off, only the explicitly renamed metadata keys

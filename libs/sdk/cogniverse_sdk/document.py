@@ -9,6 +9,7 @@ schema's field names for feeding — schemas declare their mapping, the
 serializer stays pure.
 """
 
+import math
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -44,6 +45,10 @@ def _as_epoch_seconds(value: Any, field_name: str) -> int:
             )
         value = int(value.strip())
     if isinstance(value, float):
+        if not math.isfinite(value):
+            raise TypeError(
+                f"Document.from_dict: {field_name} must be a finite timestamp"
+            )
         value = int(value)
     if not isinstance(value, int):
         raise TypeError(
@@ -118,6 +123,25 @@ class DocumentFieldMapping:
         unknown = set(data) - known
         if unknown:
             raise ValueError(f"document_mapping has unknown keys: {sorted(unknown)}")
+        string_fields = known - {
+            "embeddings",
+            "metadata_fields",
+            "include_metadata",
+        }
+        for field_name in string_fields:
+            value = data.get(field_name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(
+                    f"document_mapping.{field_name} must be a str or None, "
+                    f"got {type(value).__name__}"
+                )
+        if "include_metadata" in data and not isinstance(
+            data["include_metadata"], bool
+        ):
+            raise TypeError(
+                "document_mapping.include_metadata must be a bool, "
+                f"got {type(data['include_metadata']).__name__}"
+            )
         metadata_fields = data.get("metadata_fields")
         if metadata_fields is not None:
             if not isinstance(metadata_fields, dict):
@@ -167,6 +191,10 @@ class DocumentFieldMapping:
         schema declares no mapping and ``required`` is False; raises ValueError
         naming the schema when ``required`` and the block is absent.
         """
+        if schema_json is not None and not isinstance(schema_json, dict):
+            raise TypeError(
+                f"schema_json must be a dict or None, got {type(schema_json).__name__}"
+            )
         mapping_cfg = (schema_json or {}).get("document_mapping")
         if not mapping_cfg:
             if required:
@@ -277,11 +305,17 @@ class Document:
 
     def get_embedding(self, name: str) -> Optional[Any]:
         """Get embedding data by name."""
-        return self.embeddings.get(name, {}).get("data")
+        value = self.embeddings.get(name)
+        if isinstance(value, dict) and "data" in value:
+            return value["data"]
+        return value
 
     def get_embedding_metadata(self, name: str) -> Optional[Dict]:
         """Get embedding metadata by name."""
-        return self.embeddings.get(name, {}).get("metadata")
+        value = self.embeddings.get(name)
+        if isinstance(value, dict) and "data" in value:
+            return value.get("metadata")
+        return None
 
     def set_processing_status(
         self, status: ProcessingStatus, error_message: Optional[str] = None
@@ -324,7 +358,18 @@ class Document:
         """
         fields_out: Dict[str, Any] = {}
         if mapping.include_metadata:
-            fields_out.update(self.metadata)
+            renamed_sources = {
+                source
+                for source, target in mapping.metadata_fields.items()
+                if source != target
+            }
+            fields_out.update(
+                {
+                    key: value
+                    for key, value in self.metadata.items()
+                    if key not in renamed_sources
+                }
+            )
 
         # Explicit metadata-key -> schema-field renames (e.g. segment_index ->
         # segment_id). These win over a raw passthrough of the same source key
@@ -504,7 +549,12 @@ class SearchResult:
         end = self.document.metadata.get("end_time")
         if start is not None and end is not None:
             temporal: Dict[str, Any] = {"start_time": start, "end_time": end}
-            if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+            if (
+                isinstance(start, (int, float))
+                and not isinstance(start, bool)
+                and isinstance(end, (int, float))
+                and not isinstance(end, bool)
+            ):
                 temporal["duration"] = end - start
             result["temporal_info"] = temporal
 
