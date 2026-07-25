@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.unified_config import SystemConfig
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -51,3 +52,13 @@ def test_get_modify_set_round_trip_persists():
 
     reread = cm.get_system_config()
     assert reread.inference_service_urls["vllm_colpali"] == "http://encoder:8000"
+
+
+def test_setter_input_mutation_does_not_poison_cache():
+    cm = _manager()
+    config = SystemConfig(llm_model="persisted-model")
+    cm.set_system_config(config)
+
+    config.llm_model = "caller-mutated-model"
+
+    assert cm.get_system_config().llm_model == "persisted-model"

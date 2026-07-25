@@ -97,6 +97,7 @@ class ConfigManager:
         # reachable burns ~20s per test). The cache is busted by
         # `set_system_config` so live updates still propagate.
         self._system_config_cache: Optional[SystemConfig] = None
+        self._system_config_lock = threading.Lock()
         # Per-tenant scoped configs (routing/telemetry/backend) are read on
         # every request via ConfigUtils' ensure cascade — each read was a
         # separate store round-trip (a YQL query against Vespa). Cache the
@@ -111,6 +112,7 @@ class ConfigManager:
         self._scoped_config_cache: "OrderedDict[tuple, tuple[float, Optional[dict]]]" = OrderedDict()
         self._scoped_config_cache_max = 512
         self._scoped_config_lock = threading.Lock()
+        self._scoped_fill_locks = tuple(threading.Lock() for _ in range(64))
 
         logger.info(
             "ConfigManager initialized with %s, profile_change_listener=%s",
@@ -170,21 +172,25 @@ class ConfigManager:
         if self._system_config_cache is not None:
             return copy.deepcopy(self._system_config_cache)
 
-        entry = self.store.get_config(
-            tenant_id=self._SYSTEM_TENANT_ID,
-            scope=ConfigScope.SYSTEM,
-            service="system",
-            config_key="system_config",
-        )
+        with self._system_config_lock:
+            if self._system_config_cache is not None:
+                return copy.deepcopy(self._system_config_cache)
 
-        if entry is None:
-            logger.warning("No system config found, using defaults")
-            cfg = SystemConfig()
-        else:
-            cfg = SystemConfig.from_dict(entry.config_value)
+            entry = self.store.get_config(
+                tenant_id=self._SYSTEM_TENANT_ID,
+                scope=ConfigScope.SYSTEM,
+                service="system",
+                config_key="system_config",
+            )
 
-        self._system_config_cache = cfg
-        return copy.deepcopy(cfg)
+            if entry is None:
+                logger.warning("No system config found, using defaults")
+                cfg = SystemConfig()
+            else:
+                cfg = SystemConfig.from_dict(entry.config_value)
+
+            self._system_config_cache = cfg
+            return copy.deepcopy(cfg)
 
     def set_system_config(self, system_config: SystemConfig) -> SystemConfig:
         """Set system-wide infrastructure configuration.
@@ -204,7 +210,8 @@ class ConfigManager:
         )
         # Bust the get_system_config cache so the new write is visible
         # on the next read in this process.
-        self._system_config_cache = system_config
+        with self._system_config_lock:
+            self._system_config_cache = copy.deepcopy(system_config)
 
         logger.info("System config updated")
         return system_config
@@ -320,29 +327,45 @@ class ConfigManager:
             if hit is not None and now - hit[0] < self._scoped_config_cache_ttl_s:
                 self._scoped_config_cache.move_to_end(key)  # mark MRU
                 return copy.deepcopy(hit[1])
-        entry = self.store.get_config(
-            tenant_id=tenant_id,
-            scope=scope,
-            service=service,
-            config_key=config_key,
-        )
-        value = entry.config_value if entry is not None else None
-        with self._scoped_config_lock:
-            self._scoped_config_cache[key] = (now, value)
-            self._scoped_config_cache.move_to_end(key)
-            while len(self._scoped_config_cache) > self._scoped_config_cache_max:
-                self._scoped_config_cache.popitem(last=False)
-        return copy.deepcopy(value)
+
+        fill_lock = self._scoped_fill_lock(scope, tenant_id)
+        with fill_lock:
+            now = time.monotonic()
+            with self._scoped_config_lock:
+                hit = self._scoped_config_cache.get(key)
+                if hit is not None and now - hit[0] < self._scoped_config_cache_ttl_s:
+                    self._scoped_config_cache.move_to_end(key)
+                    return copy.deepcopy(hit[1])
+
+            entry = self.store.get_config(
+                tenant_id=tenant_id,
+                scope=scope,
+                service=service,
+                config_key=config_key,
+            )
+            value = entry.config_value if entry is not None else None
+            with self._scoped_config_lock:
+                self._scoped_config_cache[key] = (time.monotonic(), value)
+                self._scoped_config_cache.move_to_end(key)
+                while len(self._scoped_config_cache) > self._scoped_config_cache_max:
+                    self._scoped_config_cache.popitem(last=False)
+            return copy.deepcopy(value)
+
+    def _scoped_fill_lock(self, scope: ConfigScope, tenant_id: str) -> threading.Lock:
+        """Return the bounded lock serializing one tenant/scope cache fill."""
+        index = hash((scope, tenant_id)) % len(self._scoped_fill_locks)
+        return self._scoped_fill_locks[index]
 
     def _invalidate_scoped_config(self, scope: ConfigScope, tenant_id: str) -> None:
         """Drop cached entries for a (scope, tenant) after a write."""
-        with self._scoped_config_lock:
-            for key in [
-                k
-                for k in self._scoped_config_cache
-                if k[0] == scope and k[1] == tenant_id
-            ]:
-                del self._scoped_config_cache[key]
+        with self._scoped_fill_lock(scope, tenant_id):
+            with self._scoped_config_lock:
+                for key in [
+                    k
+                    for k in self._scoped_config_cache
+                    if k[0] == scope and k[1] == tenant_id
+                ]:
+                    del self._scoped_config_cache[key]
 
     # ========== Tenant Instructions ==========
 

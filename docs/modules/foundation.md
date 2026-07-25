@@ -169,7 +169,9 @@ flowchart TB
   writes; per-tenant scoped configs (routing/telemetry/backend) are served
   from a short-TTL cache (`scoped_config_cache_ttl_s`, default 5s). Setters
   on the same manager invalidate immediately — the TTL only bounds staleness
-  for writes made by another process.
+  for writes made by another process. Concurrent cold reads for the same
+  tenant and scope share one store fetch, and a completed setter cannot be
+  overwritten by an older in-flight cache fill.
 - `ConfigUtils` parses a discovered `config.json` once per file modification
   across concurrent callers and returns an isolated copy to each instance.
   Invalid JSON and file-access failures propagate with the file path instead
