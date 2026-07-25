@@ -25,17 +25,10 @@ import os
 import time
 from pathlib import Path
 
-import httpx
 import numpy as np
 import pytest
 
 pytestmark = pytest.mark.integration
-
-
-# ---------------------------------------------------------------------------
-# File-level skip: the ColBERT pylate sidecar must be reachable. Without it
-# every encode call raises and there's no byte-stable output to lock.
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -193,25 +186,8 @@ def test_cosine_pairs_match_golden_and_trace_lifts_similarity(colbert_encoder):
 # ---------------------------------------------------------------------------
 
 
-def _graph_manager_available() -> bool:
-    """Return True when a GraphManager can be constructed against a real
-    Vespa with the KG schema and colbert sidecar reachable."""
-    try:
-        config_path = Path(__file__).resolve().parents[3] / "configs" / "config.json"
-        config = json.loads(config_path.read_text())
-        backend = config.get("backend", {})
-        url = backend.get("url") or os.environ.get("VESPA_URL")
-        port = backend.get("port") or os.environ.get("VESPA_PORT")
-        if not (url and port):
-            return False
-        resp = httpx.get(f"{url}:{port}/ApplicationStatus", timeout=2.0)
-        return resp.status_code < 500
-    except Exception:
-        return False
-
-
 @pytest.fixture(scope="module")
-def seeded_graph_manager(pylate_server):
+def seeded_graph_manager(pylate_server, shared_vespa):
     """Deploy knowledge_graph schema for tenant=g4test in live Vespa and
     upsert the Marie Curie node set the search test exercises.
 
@@ -235,12 +211,9 @@ def seeded_graph_manager(pylate_server):
     from cogniverse_foundation.config.unified_config import SystemConfig
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
-    backend_cfg = json.loads(
-        (Path(__file__).resolve().parents[3] / "configs" / "config.json").read_text()
-    ).get("backend", {})
-    http_port = int(backend_cfg.get("port") or 8080)
-    config_port = int(backend_cfg.get("config_port") or 19071)
-    base_url = backend_cfg.get("url") or "http://localhost"
+    http_port = shared_vespa["http_port"]
+    config_port = shared_vespa["config_port"]
+    base_url = "http://localhost"
     tenant_id = "g4test"
 
     store = VespaConfigStore(backend_url=base_url, backend_port=http_port)
@@ -353,10 +326,6 @@ def seeded_graph_manager(pylate_server):
     return mgr
 
 
-@pytest.mark.skipif(
-    not _graph_manager_available(),
-    reason="Vespa backend not reachable — search_nodes test needs the deployed KG",
-)
 def test_top1_swaps_when_trace_supplied(colbert_encoder, seeded_graph_manager):
     """Without a trace, top-1 for "discover" returns one node; with a
     CoT trace targeting radioactivity research, top-1 swaps. Both pinned."""

@@ -7,9 +7,10 @@ a test — a broken strategy lookup would ship green.
 
 from __future__ import annotations
 
-import pytest
+import shutil
+from pathlib import Path
 
-from cogniverse_core.registries.registry import StrategyRegistry, get_registry
+import pytest
 
 pytestmark = [pytest.mark.unit]
 
@@ -17,12 +18,35 @@ PROFILE = "video_colpali_smol500_mv_frame"
 
 
 @pytest.fixture()
-def registry():
-    StrategyRegistry._instance = None
+def registry(tmp_path, monkeypatch):
+    import cogniverse_core.registries.registry as registry_module
+    from cogniverse_vespa.ranking_strategy_extractor import (
+        extract_all_ranking_strategies,
+        save_ranking_strategies,
+    )
+
+    repo_config = Path(__file__).resolve().parents[3] / "configs"
+    isolated_config = tmp_path / "configs"
+    isolated_schemas = isolated_config / "schemas"
+    isolated_schemas.mkdir(parents=True)
+    shutil.copy2(repo_config / "config.json", isolated_config / "config.json")
+    for schema_path in (repo_config / "schemas").glob("*_schema.json"):
+        shutil.copy2(schema_path, isolated_schemas / schema_path.name)
+
+    strategies = extract_all_ranking_strategies(isolated_schemas)
+    save_ranking_strategies(
+        strategies,
+        isolated_schemas / "ranking_strategies.json",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    registry_module.StrategyRegistry._instance = None
+    registry_module._registry = None
     try:
-        yield get_registry()
+        yield registry_module.get_registry()
     finally:
-        StrategyRegistry._instance = None
+        registry_module.StrategyRegistry._instance = None
+        registry_module._registry = None
 
 
 def test_list_profiles_returns_the_configured_profiles(registry):
