@@ -120,7 +120,9 @@ def require_ready(backend: Backend, config: dict) -> None:
 ```
 
 Concrete implementations must implement every abstract method with the exact
-SDK signature.
+SDK signature. Calls to `Backend.initialize()` on one instance are serialized:
+the backend-specific hook runs once after success, and an exception leaves the
+instance retryable. Separate backend instances use independent locks.
 
 ## Configuration records
 

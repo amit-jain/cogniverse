@@ -6,6 +6,7 @@ to integrate with the Cogniverse system.
 """
 
 from abc import ABC, abstractmethod
+from threading import Lock
 from typing import Any, Dict, Iterator, List, Optional
 
 from cogniverse_sdk.document import Document, SearchResult
@@ -264,14 +265,18 @@ class Backend(IngestionBackend, SearchBackend):
         """
         self.name = name
         self._initialized = False
+        self._initialization_lock = Lock()
 
     def initialize(self, config: Dict[str, Any]) -> None:
         """Initialize both ingestion and search capabilities."""
         if self._initialized:
             return
 
-        self._initialize_backend(config)
-        self._initialized = True
+        with self._initialization_lock:
+            if self._initialized:
+                return
+            self._initialize_backend(config)
+            self._initialized = True
 
     @abstractmethod
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
