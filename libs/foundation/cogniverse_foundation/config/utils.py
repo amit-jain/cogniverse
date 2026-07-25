@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Parsed config.json shared across ConfigUtils instances, keyed (path, mtime).
 _JSON_CONFIG_CACHE: dict = {}
+_JSON_CONFIG_CACHE_LOCK = threading.Lock()
 
 # Profile keys that are cluster infrastructure (service endpoints), not tenant
 # data. These always resolve from the system config so a change in config.json
@@ -135,7 +136,9 @@ class ConfigUtils:
         Parsed content is shared across ConfigUtils instances via a
         module-level cache keyed by (path, mtime) — ``get_config`` builds a
         fresh ConfigUtils per call, so without this every request re-read
-        and re-parsed the same file; the mtime key keeps edits visible.
+        and re-parsed the same file; the mtime key keeps edits visible. File
+        access and JSON errors propagate so callers cannot mistake invalid
+        deployment configuration for an empty configuration.
         """
         if self._json_config is not None:
             return  # Already loaded
@@ -146,19 +149,23 @@ class ConfigUtils:
             self._json_config = {}
             return
 
-        try:
-            cache_key = (str(config_path), os.path.getmtime(config_path))
+        cache_key = (str(config_path), os.path.getmtime(config_path))
+        with _JSON_CONFIG_CACHE_LOCK:
             cached = _JSON_CONFIG_CACHE.get(cache_key)
             if cached is None:
                 with open(config_path, "r") as f:
-                    cached = json.load(f)
+                    try:
+                        cached = json.load(f)
+                    except json.JSONDecodeError as exc:
+                        raise json.JSONDecodeError(
+                            f"{config_path}: {exc.msg}",
+                            exc.doc,
+                            exc.pos,
+                        ) from exc
                 _JSON_CONFIG_CACHE.clear()  # one live file; drop stale mtimes
                 _JSON_CONFIG_CACHE[cache_key] = cached
                 logger.debug(f"Loaded system config from {config_path}")
-            self._json_config = copy.deepcopy(cached)
-        except Exception as e:
-            logger.error(f"Error loading JSON config from {config_path}: {e}")
-            self._json_config = {}
+        self._json_config = copy.deepcopy(cached)
 
     def _ensure_backend_config(self):
         """
