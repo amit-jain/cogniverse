@@ -522,7 +522,14 @@ agents = registry.list_agents()  # ["search_agent", ...]
 
 # Get agent by name
 agent = registry.get_agent("search_agent")  # Returns AgentEndpoint or None
+
+# Release the lazily created remote-agent connection pool at shutdown
+await registry.close()
 ```
+
+Local registry operations do not create an HTTP client. Concurrent remote
+health or discovery calls share one lazily constructed client, and `close()`
+detaches that client before awaiting connection-pool shutdown.
 
 ### BackendRegistry
 

@@ -5,6 +5,7 @@ Provides centralized registry for all available agents with health monitoring.
 
 import asyncio
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -50,6 +51,7 @@ class AgentRegistry:
         # Constructed lazily on first use — a registry used only for local
         # agent lookup never opens (or has to close) an httpx client.
         self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client_lock = threading.Lock()
 
         # Initialize with system config agents
         self._initialize_from_config()
@@ -60,7 +62,9 @@ class AgentRegistry:
     def http_client(self) -> httpx.AsyncClient:
         """Lazily-created async client for remote agent health/dispatch calls."""
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=10.0)
+            with self._http_client_lock:
+                if self._http_client is None:
+                    self._http_client = httpx.AsyncClient(timeout=10.0)
         return self._http_client
 
     def _initialize_from_config(self):
@@ -439,6 +443,8 @@ class AgentRegistry:
 
     async def close(self):
         """Close the HTTP client if one was ever created."""
-        if self._http_client is not None:
-            await self._http_client.aclose()
+        with self._http_client_lock:
+            client = self._http_client
             self._http_client = None
+        if client is not None:
+            await client.aclose()
