@@ -1746,9 +1746,9 @@ result = client.process_images(
 Handles VideoPrism model loading and inference:
 
 ```python
-from cogniverse_core.common.models import VideoPrismLoader
+from cogniverse_core.common.models import get_videoprism_loader
 
-loader = VideoPrismLoader(
+loader = get_videoprism_loader(
     model_name="videoprism_public_v1_base_hf",
     config={"videoprism_repo_path": "/path/to/videoprism"}
 )
@@ -1763,6 +1763,10 @@ embeddings = loader.extract_embeddings(frames)
 # Preprocess frames for model input
 video_input = loader.preprocess_frames(frames)  # (1, num_frames, 288, 288, 3)
 ```
+
+The factory snapshots the configuration and shares one loader for each
+equivalent `(model_name, config)` pair. Concurrent cold calls wait for one
+weight load; a failed candidate is not published and remains retryable.
 
 **Model Variants:**
 
