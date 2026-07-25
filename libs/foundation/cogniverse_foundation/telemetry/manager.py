@@ -574,6 +574,8 @@ class TelemetryManager:
             self._evict_orphaned_providers()
             logger.debug(f"Expired tracer from cache (TTL): {cache_key}")
             return None
+        self._tenant_tracers.pop(cache_key)
+        self._tenant_tracers[cache_key] = tracer
         return tracer
 
     def _evict_old_tracers(self):
