@@ -164,11 +164,63 @@ class TestDocumentFromDictContract:
 
 
 class TestDocumentEmbeddingAccess:
-    def test_raw_embedding_is_returned_unchanged(self):
-        doc = Document(embeddings={"raw": [1.0, 2.0]})
+    @pytest.mark.parametrize(
+        ("embeddings", "match"),
+        [
+            ({"raw": [1.0, 2.0]}, r"embeddings\['raw'\].*wrapper"),
+            ({"missing": {"data": [1.0], "metadata": {}}}, "missing fields"),
+            (
+                {
+                    "extra": {
+                        "data": [1.0],
+                        "metadata": {},
+                        "created_at": 1700000000,
+                        "obsolete": True,
+                    }
+                },
+                "unknown fields",
+            ),
+            (
+                {
+                    "metadata": {
+                        "data": [1.0],
+                        "metadata": None,
+                        "created_at": 1700000000,
+                    }
+                },
+                r"metadata.*dict",
+            ),
+            (
+                {
+                    "timestamp": {
+                        "data": [1.0],
+                        "metadata": {},
+                        "created_at": "1700000000",
+                    }
+                },
+                r"created_at.*integer timestamp",
+            ),
+            (
+                {
+                    1: {
+                        "data": [1.0],
+                        "metadata": {},
+                        "created_at": 1700000000,
+                    }
+                },
+                "embedding name.*str",
+            ),
+        ],
+    )
+    def test_noncanonical_embedding_wrapper_is_rejected(self, embeddings, match):
+        with pytest.raises((TypeError, ValueError), match=match):
+            Document(embeddings=embeddings)
 
-        assert doc.get_embedding("raw") == [1.0, 2.0]
-        assert doc.get_embedding_metadata("raw") is None
+    def test_add_embedding_rejects_non_mapping_metadata(self):
+        doc = Document()
+
+        with pytest.raises(TypeError, match="metadata.*dict"):
+            doc.add_embedding("wrapped", [3.0], [])
 
     def test_wrapped_embedding_returns_data_and_metadata(self):
         doc = Document()
@@ -674,15 +726,12 @@ class TestDocumentSchemaFieldMapping:
         )
         assert out["created_at"] == "2023-11-14T22:13:20+00:00"
 
-    def test_embeddings_map_wrapped_and_raw(self):
+    def test_embedding_wrapper_maps_exact_vector(self):
         doc = Document(id="d")
         doc.add_embedding("embedding", [1.0, 2.0])
-        doc.embeddings["raw"] = [3.0]
-        out = doc.to_schema_fields(
-            self._mapping(embeddings={"embedding": "vec_a", "raw": "vec_b"})
-        )
-        assert out["vec_a"] == [1.0, 2.0]
-        assert out["vec_b"] == [3.0]
+        out = doc.to_schema_fields(self._mapping(embeddings={"embedding": "vec"}))
+
+        assert out["vec"] == [1.0, 2.0]
 
     def test_metadata_passes_through_and_core_fields_win(self):
         doc = Document(

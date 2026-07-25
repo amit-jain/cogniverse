@@ -63,15 +63,10 @@ assert document.get_embedding_metadata("videoprism_global") == {
 }
 ```
 
-Embedding values may use the wrapper created by `add_embedding` or a raw-vector
-form:
-
-```python
-document.embeddings["raw"] = [0.4, 0.5]
-
-assert document.get_embedding("raw") == [0.4, 0.5]
-assert document.get_embedding_metadata("raw") is None
-```
+Embedding entries use only the wrapper created by `add_embedding`. Each wrapper
+contains exactly `data`, `metadata`, and an integer-second `created_at`;
+direct raw-vector entries and incomplete or additional wrapper fields are
+invalid.
 
 ### Schema field mapping
 
