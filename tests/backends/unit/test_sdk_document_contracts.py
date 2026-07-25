@@ -433,7 +433,7 @@ class TestWorkflowRecordsRequireCanonicalFields:
             name="n",
             description="d",
             query_patterns=["p"],
-            task_sequence=["a"],
+            task_sequence=[{"agent": "a"}],
             expected_execution_time=1.0,
             success_rate=0.8,
         )
@@ -478,6 +478,107 @@ class TestWorkflowRecordsRequireCanonicalFields:
 
         with pytest.raises(ValueError, match=f"missing fields.*{field_name}"):
             record_type.from_dict(payload)
+
+
+class TestWorkflowRecordValueContract:
+    @pytest.mark.parametrize(
+        ("field_name", "value", "match"),
+        [
+            ("workflow_id", 1, "workflow_id.*str"),
+            ("query", None, "query.*str"),
+            ("query_type", 1, "query_type.*str"),
+            ("execution_time", 1, "execution_time.*finite float"),
+            ("execution_time", -1.0, "execution_time.*at least 0"),
+            ("success", 1, "success.*bool"),
+            ("agent_sequence", ["a", 1], "agent_sequence.*list of str"),
+            ("task_count", True, "task_count.*non-negative integer"),
+            ("parallel_efficiency", 1.1, "parallel_efficiency.*between 0 and 1"),
+            ("confidence_score", float("nan"), "confidence_score.*finite float"),
+            ("user_satisfaction", 1.1, "user_satisfaction.*between 0 and 1"),
+            ("error_details", 1, "error_details.*str or None"),
+            ("metadata", [], "metadata.*dict"),
+        ],
+    )
+    def test_workflow_execution_rejects_invalid_values(self, field_name, value, match):
+        kwargs = {
+            "workflow_id": "w1",
+            "query": "q",
+            "query_type": "search",
+            "execution_time": 1.0,
+            "success": True,
+            "agent_sequence": ["a"],
+            "task_count": 1,
+            "parallel_efficiency": 1.0,
+            "confidence_score": 0.9,
+        }
+        kwargs[field_name] = value
+
+        with pytest.raises((TypeError, ValueError), match=match):
+            WorkflowExecution(**kwargs)
+
+    @pytest.mark.parametrize(
+        ("field_name", "value", "match"),
+        [
+            ("agent_name", 1, "agent_name.*str"),
+            ("total_executions", True, "total_executions.*non-negative integer"),
+            ("successful_executions", -1, "successful_executions.*non-negative"),
+            ("average_execution_time", 1, "average_execution_time.*finite float"),
+            ("average_confidence", 1.1, "average_confidence.*between 0 and 1"),
+            ("error_rate", float("inf"), "error_rate.*finite float"),
+            (
+                "preferred_query_types",
+                ["search", 1],
+                "preferred_query_types.*list of str",
+            ),
+            ("performance_trend", "unknown", "performance_trend.*improving"),
+        ],
+    )
+    def test_agent_performance_rejects_invalid_values(self, field_name, value, match):
+        kwargs = {"agent_name": "agent"}
+        kwargs[field_name] = value
+
+        with pytest.raises((TypeError, ValueError), match=match):
+            AgentPerformance(**kwargs)
+
+    def test_agent_performance_rejects_success_count_above_total(self):
+        with pytest.raises(ValueError, match="successful_executions.*total_executions"):
+            AgentPerformance(
+                agent_name="agent",
+                total_executions=1,
+                successful_executions=2,
+            )
+
+    @pytest.mark.parametrize(
+        ("field_name", "value", "match"),
+        [
+            ("template_id", 1, "template_id.*str"),
+            ("name", None, "name.*str"),
+            ("description", 1, "description.*str"),
+            ("query_patterns", ["p", 1], "query_patterns.*list of str"),
+            ("task_sequence", ["agent"], "task_sequence.*list of dict"),
+            (
+                "expected_execution_time",
+                -1.0,
+                "expected_execution_time.*at least 0",
+            ),
+            ("success_rate", 1.1, "success_rate.*between 0 and 1"),
+            ("usage_count", True, "usage_count.*non-negative integer"),
+        ],
+    )
+    def test_workflow_template_rejects_invalid_values(self, field_name, value, match):
+        kwargs = {
+            "template_id": "t1",
+            "name": "n",
+            "description": "d",
+            "query_patterns": ["p"],
+            "task_sequence": [{"agent": "a"}],
+            "expected_execution_time": 1.0,
+            "success_rate": 0.8,
+        }
+        kwargs[field_name] = value
+
+        with pytest.raises((TypeError, ValueError), match=match):
+            WorkflowTemplate(**kwargs)
 
 
 class TestWorkflowRecordDatetimeContract:
