@@ -25,6 +25,29 @@ def test_cache_key_distinguishes_projects():
     assert none == "phoenix_acme:acme"
 
 
+def test_cache_key_distinguishes_endpoint_reconfiguration():
+    first = TelemetryRegistry._cache_key(
+        "phoenix",
+        {
+            "project_name": "search",
+            "http_endpoint": "http://phoenix-a:6006",
+            "grpc_endpoint": "phoenix-a:4317",
+        },
+        "acme:acme",
+    )
+    second = TelemetryRegistry._cache_key(
+        "phoenix",
+        {
+            "project_name": "search",
+            "http_endpoint": "http://phoenix-b:6006",
+            "grpc_endpoint": "phoenix-b:4317",
+        },
+        "acme:acme",
+    )
+
+    assert first != second
+
+
 def test_get_provider_threads_project_name_into_config():
     manager = object.__new__(TelemetryManager)
     manager.config = SimpleNamespace(
