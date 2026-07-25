@@ -162,6 +162,14 @@ serialized per tenant and replaces empty pattern mappings as well as non-empty
 ones. Compensation attempts every channel; a failed compensation surfaces
 alongside the forward failure in an `ExceptionGroup`.
 
+Workflow records accept only their declared fields and canonical Python value
+types. Durations are finite non-negative floats; efficiency, confidence,
+satisfaction, success-rate, and error-rate values are floats between zero and
+one. Counts are non-negative integers, successful executions cannot exceed
+total executions, string sequences reject non-string members, and template
+task sequences contain dictionaries. Performance trends are `improving`,
+`degrading`, or `stable`.
+
 `AdapterStore` persists adapter metadata, artifacts, training examples,
 metrics, and activation state. Model types default to `"llm"` where the
 interface declares that default.

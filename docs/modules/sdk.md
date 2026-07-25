@@ -588,7 +588,23 @@ class WorkflowTemplate:
 
 Workflow record datetimes follow the same canonical form: defaults are UTC,
 aware offsets are normalized to UTC, naive datetimes are rejected, and stored
-payloads use timezone-bearing ISO-8601 strings.
+payloads use timezone-bearing ISO-8601 strings. Each record accepts exactly its
+declared fields and validates values during both direct construction and
+deserialization:
+
+- Execution durations are finite, non-negative Python floats; efficiencies,
+  confidence scores, and optional satisfaction scores are floats between zero
+  and one. Success is a boolean, task counts are non-negative Python integers,
+  agent sequences contain only strings, and metadata is a dictionary.
+- Performance counts are non-negative Python integers, successful executions
+  cannot exceed total executions, timing is a finite non-negative float, and
+  confidence and error rate are floats between zero and one. Preferred query
+  types contain only strings, and trend is `improving`, `degrading`, or
+  `stable`.
+- Template query patterns contain only strings and task sequences contain only
+  dictionaries. Expected timing is a finite non-negative float, success rate is
+  a float between zero and one, and usage count is a non-negative Python
+  integer.
 
 ### 6. Adapter Store Interface
 

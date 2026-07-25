@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
@@ -64,6 +65,36 @@ def _datetime_from_payload(value: Any, field_name: str) -> datetime:
     return canonical
 
 
+def _require_string(value: Any, field_name: str) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a str, got {type(value).__name__}")
+
+
+def _require_nonnegative_integer(value: Any, field_name: str) -> None:
+    if type(value) is not int or value < 0:
+        raise TypeError(f"{field_name} must be a non-negative integer")
+
+
+def _require_finite_float(
+    value: Any,
+    field_name: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> None:
+    if type(value) is not float or not math.isfinite(value):
+        raise TypeError(f"{field_name} must be a finite float")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{field_name} must be at least {minimum:g}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{field_name} must be between {minimum:g} and {maximum:g}")
+
+
+def _require_string_list(value: Any, field_name: str) -> None:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise TypeError(f"{field_name} must be a list of str")
+
+
 @dataclass
 class WorkflowExecution:
     """Historical workflow execution record."""
@@ -83,6 +114,41 @@ class WorkflowExecution:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _require_string(self.workflow_id, "workflow_id")
+        _require_string(self.query, "query")
+        _require_string(self.query_type, "query_type")
+        _require_finite_float(self.execution_time, "execution_time", minimum=0.0)
+        if type(self.success) is not bool:
+            raise TypeError(
+                f"success must be a bool, got {type(self.success).__name__}"
+            )
+        _require_string_list(self.agent_sequence, "agent_sequence")
+        _require_nonnegative_integer(self.task_count, "task_count")
+        _require_finite_float(
+            self.parallel_efficiency,
+            "parallel_efficiency",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        _require_finite_float(
+            self.confidence_score,
+            "confidence_score",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        if self.user_satisfaction is not None:
+            _require_finite_float(
+                self.user_satisfaction,
+                "user_satisfaction",
+                minimum=0.0,
+                maximum=1.0,
+            )
+        if self.error_details is not None and not isinstance(self.error_details, str):
+            raise TypeError("error_details must be a str or None")
+        if not isinstance(self.metadata, dict):
+            raise TypeError(
+                f"metadata must be a dict, got {type(self.metadata).__name__}"
+            )
         self.timestamp = _utc_datetime(self.timestamp, "timestamp")
 
     def to_dict(self) -> Dict[str, Any]:
@@ -112,6 +178,35 @@ class AgentPerformance:
     last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self) -> None:
+        _require_string(self.agent_name, "agent_name")
+        _require_nonnegative_integer(self.total_executions, "total_executions")
+        _require_nonnegative_integer(
+            self.successful_executions, "successful_executions"
+        )
+        if self.successful_executions > self.total_executions:
+            raise ValueError("successful_executions cannot exceed total_executions")
+        _require_finite_float(
+            self.average_execution_time,
+            "average_execution_time",
+            minimum=0.0,
+        )
+        _require_finite_float(
+            self.average_confidence,
+            "average_confidence",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        _require_finite_float(
+            self.error_rate,
+            "error_rate",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        _require_string_list(self.preferred_query_types, "preferred_query_types")
+        if self.performance_trend not in {"improving", "degrading", "stable"}:
+            raise ValueError(
+                "performance_trend must be improving, degrading, or stable"
+            )
         self.last_updated = _utc_datetime(self.last_updated, "last_updated")
 
     def to_dict(self) -> Dict[str, Any]:
@@ -144,6 +239,26 @@ class WorkflowTemplate:
     last_used: Optional[datetime] = None
 
     def __post_init__(self) -> None:
+        _require_string(self.template_id, "template_id")
+        _require_string(self.name, "name")
+        _require_string(self.description, "description")
+        _require_string_list(self.query_patterns, "query_patterns")
+        if not isinstance(self.task_sequence, list) or any(
+            not isinstance(task, dict) for task in self.task_sequence
+        ):
+            raise TypeError("task_sequence must be a list of dict")
+        _require_finite_float(
+            self.expected_execution_time,
+            "expected_execution_time",
+            minimum=0.0,
+        )
+        _require_finite_float(
+            self.success_rate,
+            "success_rate",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        _require_nonnegative_integer(self.usage_count, "usage_count")
         self.created_at = _utc_datetime(self.created_at, "created_at")
         if self.last_used is not None:
             self.last_used = _utc_datetime(self.last_used, "last_used")
