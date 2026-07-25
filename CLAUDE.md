@@ -149,6 +149,13 @@ These have been violated repeatedly despite explicit instruction. They are absol
 
 **3. Do not create a branch and PR for every small fix.** Batch related changes onto one branch. Do not push or open/close PRs or delete remote branches without explicit approval.
 
+**4. No backward compatibility unless explicitly requested.** When a contract,
+schema, configuration shape, storage layout, or API changes, implement only the
+new canonical form. Do not add legacy reads, aliases, migrations, fallbacks,
+dual-read/dual-write paths, version shims, or silent acceptance of obsolete
+data. Treat old forms as invalid. If removal of an old production path is
+required, present the exact deletion for the user's approval.
+
 ## Agent Directives
 
 The governing loop for all work: **gather context → take action → verify work → repeat.**
