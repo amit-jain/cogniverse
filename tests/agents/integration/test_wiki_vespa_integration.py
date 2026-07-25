@@ -403,6 +403,7 @@ class TestWikiVespaIntegration:
         first_doc = _get_vespa_doc(port, doc_id)
         assert first_doc is not None, f"Topic page {doc_id} not found after first save."
         first_update_count = first_doc.get("fields", {}).get("update_count", 0)
+        first_created_at = first_doc.get("fields", {}).get("created_at", "")
 
         # Second session — _get_or_create_topic fetches the existing doc via HTTP,
         # then merges and re-feeds.  No mock needed here.
@@ -426,10 +427,19 @@ class TestWikiVespaIntegration:
         assert "positional encoding" in updated_content, (
             "Merged content missing second session text."
         )
-        assert updated_update_count > first_update_count, (
-            f"update_count did not increment: was {first_update_count}, "
+        assert updated_update_count == first_update_count + 1, (
+            f"update_count did not increment by one: was {first_update_count}, "
             f"now {updated_update_count}"
         )
+
+        # The merge re-feeds the whole topic doc: creation time must survive it
+        # and the stamp the staleness lint reads must advance to the merge.
+        updated_fields = updated_doc.get("fields", {})
+        assert updated_fields.get("created_at") == first_created_at
+        merged_at = datetime.fromisoformat(updated_fields["updated_at"])
+        created_at = datetime.fromisoformat(first_created_at)
+        assert merged_at >= created_at
+        assert (datetime.now(timezone.utc) - merged_at).total_seconds() < 300
 
     def test_concurrent_save_sessions_keep_both_writes(self, wiki_manager):
         """Two concurrent save_session calls for the SAME entity must both land
@@ -533,12 +543,18 @@ class TestWikiVespaIntegration:
         doc = _get_vespa_doc(port, stale_page.doc_id)
         assert doc is not None, "Stale page not found in Vespa"
 
-        updated_at = doc.get("fields", {}).get("updated_at", "")
-        assert (
-            "2026-02" in updated_at
-            or "2026-01" in updated_at
-            or old_date[:10] in updated_at
-        ), f"Page should have old timestamp but has {updated_at}"
+        # The stored stamp is the page's own updated_at (seconds precision),
+        # not the wall clock at feed time — the staleness lint reads this field.
+        expected = datetime.fromisoformat(old_date).replace(microsecond=0).isoformat()
+        fields = doc.get("fields", {})
+        assert fields.get("updated_at") == expected
+        assert fields.get("created_at") == expected
+
+        stale = [
+            p for p in manager.lint()["stale_pages"] if p["doc_id"] == stale_page.doc_id
+        ]
+        assert len(stale) == 1
+        assert stale[0]["days_since_update"] == 60
 
     def test_lint_detects_orphan_topic(self, wiki_manager):
         """A topic page not referenced by any session is an orphan."""

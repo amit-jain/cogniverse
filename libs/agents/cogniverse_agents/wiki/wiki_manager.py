@@ -469,8 +469,7 @@ class WikiManager:
         document); a transport failure raises so a lost write never reads as a
         successful save.
         """
-        doc = page.to_document()
-        doc.add_embedding("embedding", embedding)
+        doc = self._page_to_fed_document(page, embedding)
         return self._backend.conditional_put_document(
             doc,
             condition=f"{self._schema_name}.update_count=={expected_update_count}",
@@ -615,20 +614,24 @@ class WikiManager:
             metadata=fields,
         )
 
+    def _page_to_fed_document(self, page: WikiPage, embedding: List[float]):
+        """Build the feed Document for *page* with its embedding attached.
+
+        ``Document.add_embedding`` stamps ``updated_at`` with the wall clock;
+        the stored value must stay the page's own timestamp.
+        """
+        doc = page.to_document()
+        doc.add_embedding("embedding", embedding)
+        doc.updated_at = int(datetime.fromisoformat(page.updated_at).timestamp())
+        return doc
+
     def _feed_page(self, page: WikiPage, embedding: List[float]) -> None:
         """Feed *page* through the schema's declared document mapping.
 
         A feed failure raises — swallowing it let ``save_session`` return a
         fully-formed page that was never persisted.
         """
-        doc = page.to_document()
-        # to_document() carries the page's logical created_at/updated_at (lint
-        # keys staleness off updated_at). add_embedding stamps updated_at=now as
-        # a side effect, so re-apply the page's timestamps after attaching the
-        # vector, or every page reads as freshly updated and lint never fires.
-        created_at, updated_at = doc.created_at, doc.updated_at
-        doc.add_embedding("embedding", embedding)
-        doc.created_at, doc.updated_at = created_at, updated_at
+        doc = self._page_to_fed_document(page, embedding)
         self._backend.put_document(
             doc,
             schema_name=self._schema_name,
