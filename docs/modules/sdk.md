@@ -958,10 +958,11 @@ names:
   are fed (no blanket passthrough of every metadata key) — used by schemas whose
   values all live in metadata under non-matching names.
 
-Mapping loaders reject unknown keys and mistyped field names, booleans, and
-mapping dictionaries at load time. `from_schema_json` likewise requires a
-dictionary (or `None`), so malformed schema data fails with the boundary field
-named instead of surfacing later during a feed.
+Mapping construction, loading, and serialization reject unknown keys,
+mistyped field names, booleans, and mapping dictionaries.
+`from_schema_json` likewise requires a dictionary (or `None`), so malformed
+schema data fails with the boundary field named instead of surfacing later
+during a feed.
 
 Backends apply this automatically: `VespaBackend.put_document(document, schema_name=..., base_schema_name=...)` loads the base schema's `document_mapping`, serializes, and feeds — raising `ValueError` when the schema declares no mapping rather than guessing field names.
 
