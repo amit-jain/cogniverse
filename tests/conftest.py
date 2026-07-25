@@ -1550,7 +1550,14 @@ def shared_vespa():
         }
 
     finally:
-        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        try:
+            from cogniverse_core.memory.manager import Mem0MemoryManager
+            from cogniverse_core.registries.backend_registry import BackendRegistry
+
+            Mem0MemoryManager._instances.clear()
+            BackendRegistry.clear_instances()
+        finally:
+            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
 
 
 @pytest.fixture(scope="session")
