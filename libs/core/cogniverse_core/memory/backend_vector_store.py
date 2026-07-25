@@ -540,12 +540,11 @@ class BackendVectorStore(VectorStoreBase):
             if doc is None:
                 return None
 
-            # Extract embedding from Document.embeddings dict
+            embedding = doc.get_embedding("embedding")
             vector = None
-            if doc.embeddings and "embedding" in doc.embeddings:
+            if embedding is not None:
                 import numpy as np
 
-                embedding = doc.embeddings["embedding"]
                 if isinstance(embedding, np.ndarray):
                     vector = embedding.tolist()
                 else:
