@@ -920,12 +920,6 @@ embedding = doc.get_embedding("colpali")
 # Get embedding metadata
 emb_meta = doc.get_embedding_metadata("colpali")
 
-# An embedding may use the canonical wrapper created by add_embedding or be a
-# raw vector. get_embedding returns either representation's vector unchanged.
-doc.embeddings["raw"] = [0.1, 0.2]
-assert doc.get_embedding("raw") == [0.1, 0.2]
-assert doc.get_embedding_metadata("raw") is None
-
 # To dict
 doc_dict = doc.to_dict()
 
@@ -956,8 +950,10 @@ names:
   key is consumed rather than also being passed through, so feeds contain only
   the schema's declared destination field.
 - `embeddings`: `{embedding_name: schema_field}` maps a stored embedding to its
-  field. Backends that hex/binary-encode embeddings (the ingestion path)
-  override these with their processed vectors.
+  field. Stored embeddings use the exact `add_embedding()` wrapper:
+  `data`, `metadata`, and an integer-second `created_at`. Backends that
+  hex/binary-encode embeddings (the ingestion path) override these with their
+  processed vectors.
 - `include_metadata`: when `false`, only the explicitly mapped/renamed fields
   are fed (no blanket passthrough of every metadata key) — used by schemas whose
   values all live in metadata under non-matching names.

@@ -263,6 +263,38 @@ class Document:
                 f"Document.embeddings must be a dict, "
                 f"got {type(self.embeddings).__name__}"
             )
+        wrapper_fields = {"data", "metadata", "created_at"}
+        for name, stored in self.embeddings.items():
+            if not isinstance(name, str):
+                raise TypeError(
+                    f"Document embedding name must be a str, got {type(name).__name__}"
+                )
+            if not isinstance(stored, dict):
+                raise TypeError(
+                    f"Document.embeddings[{name!r}] must be an embedding wrapper dict"
+                )
+            unknown = set(stored) - wrapper_fields
+            if unknown:
+                raise ValueError(
+                    f"Document.embeddings[{name!r}] has unknown fields: "
+                    f"{sorted(unknown)}"
+                )
+            missing = wrapper_fields - set(stored)
+            if missing:
+                raise ValueError(
+                    f"Document.embeddings[{name!r}] has missing fields: "
+                    f"{sorted(missing)}"
+                )
+            if not isinstance(stored["metadata"], dict):
+                raise TypeError(
+                    f"Document.embeddings[{name!r}].metadata must be a dict, "
+                    f"got {type(stored['metadata']).__name__}"
+                )
+            _as_epoch_seconds(
+                stored["created_at"],
+                "created_at",
+                f"Document.embeddings[{name!r}]",
+            )
         if not isinstance(self.metadata, dict):
             raise TypeError(
                 f"Document.metadata must be a dict, got {type(self.metadata).__name__}"
@@ -294,26 +326,30 @@ class Document:
         metadata: Optional[Dict] = None,
     ):
         """Add an embedding with optional metadata."""
+        if not isinstance(name, str):
+            raise TypeError(f"name must be a str, got {type(name).__name__}")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise TypeError(
+                f"metadata must be a dict or None, got {type(metadata).__name__}"
+            )
         self.embeddings[name] = {
             "data": embedding,
-            "metadata": metadata or {},
+            "metadata": metadata if metadata is not None else {},
             "created_at": int(time.time()),
         }
         self.updated_at = int(time.time())
 
     def get_embedding(self, name: str) -> Optional[Any]:
         """Get embedding data by name."""
+        self._validate_canonical_state()
         value = self.embeddings.get(name)
-        if isinstance(value, dict) and "data" in value:
-            return value["data"]
-        return value
+        return value["data"] if value is not None else None
 
     def get_embedding_metadata(self, name: str) -> Optional[Dict]:
         """Get embedding metadata by name."""
+        self._validate_canonical_state()
         value = self.embeddings.get(name)
-        if isinstance(value, dict) and "data" in value:
-            return value.get("metadata")
-        return None
+        return value["metadata"] if value is not None else None
 
     def set_processing_status(
         self, status: ProcessingStatus, error_message: Optional[str] = None
@@ -353,8 +389,8 @@ class Document:
 
         Metadata keys pass through verbatim (they are schema-specific by
         contract); mapped core fields overwrite a colliding metadata key so
-        the Document's own values win deterministically. Embedding values
-        unwrap both the wrapped ``add_embedding`` shape and raw vectors.
+        the Document's own values win deterministically. Embedding values use
+        the canonical wrapper created by ``add_embedding``.
         Fields whose generic value is None are omitted, as are generic
         fields the mapping does not name.
         """
@@ -415,11 +451,7 @@ class Document:
         for emb_name, schema_field in mapping.embeddings.items():
             if emb_name not in self.embeddings:
                 continue
-            emb_data = self.embeddings[emb_name]
-            if isinstance(emb_data, dict) and "data" in emb_data:
-                fields_out[schema_field] = emb_data["data"]
-            else:
-                fields_out[schema_field] = emb_data
+            fields_out[schema_field] = self.embeddings[emb_name]["data"]
 
         return fields_out
 
