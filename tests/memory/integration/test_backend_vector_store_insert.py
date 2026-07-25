@@ -3,8 +3,8 @@
 Two correctness pins:
 
 * insert() must not report a dropped feed as a stored memory. The backend
-  returns per-document feed failures without raising, so a wrong-dim (or
-  otherwise rejected) vector left Mem0 believing the write landed.
+  returns per-document feed failures without raising, so a client/schema
+  dimension mismatch must not leave Mem0 believing the write landed.
 * list() must emit a tz-aware UTC created_at (matching the sibling get()/
   search() read paths), not a host-local naive timestamp.
 
@@ -65,13 +65,20 @@ def memory_store(shared_vespa):
 def test_insert_raises_when_feed_drops_documents(memory_store):
     store = memory_store
 
-    # Too many cells for the dense tensor<float>(d0[768]) field: Vespa rejects
-    # the feed (success_count == 0) but the client swallows it into failed_docs
-    # rather than raising — insert() must surface that as an error, not report
-    # the dropped write as a stored memory. (A short vector would be zero-padded
-    # and accepted, so the overflow direction is the reliable rejection.)
+    # Simulate a deployment/config mismatch: the client accepts 1024 cells,
+    # while the real deployed schema still requires dense
+    # tensor<float>(d0[768]). Vespa rejects the feed (success_count == 0), and
+    # insert() must surface that boundary failure rather than report the
+    # dropped write as a stored memory.
+    mismatched_store = BackendVectorStore(
+        collection_name=store.collection_name,
+        backend_client=store.backend,
+        embedding_model_dims=DIM + 256,
+        tenant_id=store.tenant_id,
+        profile=store.profile,
+    )
     with pytest.raises(RuntimeError, match="persisted only 0/1"):
-        store.insert(
+        mismatched_store.insert(
             vectors=[[0.1] * (DIM + 256)],
             payloads=[{"data": "x", "user_id": "u_fail", "agent_id": "a"}],
             ids=["mem-fail-1"],
