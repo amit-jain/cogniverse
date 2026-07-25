@@ -117,8 +117,8 @@ from cogniverse_core.events import (
 # Get the global queue manager
 manager = get_queue_manager()
 
-# Create a queue for a workflow
-queue = await manager.create_queue(
+# Atomically reuse or create one queue for this tenant and workflow
+queue = await manager.get_or_create_queue(
     task_id="workflow_123",
     tenant_id="tenant1",
     ttl_minutes=30,
@@ -138,6 +138,10 @@ async for event in queue.subscribe():
     if event.event_type == "complete":
         break
 ```
+
+`get_or_create_queue()` serializes concurrent first access. A task ID cannot be
+reused by another tenant, and `enqueue()` rejects events whose task or tenant
+does not match the queue. These checks occur before the event offset advances.
 
 ### With Orchestrator
 
