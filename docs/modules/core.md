@@ -1166,6 +1166,8 @@ memory's ``metadata["kind"]`` is looked up in the ``KnowledgeRegistry``
 and that schema's retention policy decides whether to delete it. There
 is no bulk-age fallback; a memory without a registered kind falls back
 to the registry's safe default (`permanent`) and is never auto-deleted.
+Numeric `created_at` values accept signed epoch seconds, milliseconds,
+microseconds, or nanoseconds; normalization preserves dates before 1970.
 
 | `Retention` | Behaviour |
 |---|---|

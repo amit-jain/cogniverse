@@ -71,6 +71,21 @@ def test_to_epoch_seconds_collapses_microsecond_and_nanosecond_magnitudes():
     assert to_epoch_seconds(_S * 10**9) == _S  # nanoseconds -> seconds
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        -1_700_000_000,
+        -1_700_000_000_000,
+        -1_700_000_000_000_000,
+        -1_700_000_000_000_000_000,
+        "-1700000000000",
+    ],
+)
+def test_to_epoch_seconds_collapses_negative_epoch_units(value):
+    assert to_epoch_seconds(value) == -1_700_000_000
+    assert epoch_to_iso_utc(value) == "1916-02-18T01:46:40+00:00"
+
+
 def test_epoch_to_iso_utc_survives_absurd_magnitude():
     # A value far beyond ms used to reach datetime.fromtimestamp and raise
     # OSError/OverflowError (swallowed on the read path); now it collapses.
