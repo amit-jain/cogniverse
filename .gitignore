@@ -113,10 +113,11 @@ coverage.xml
 htmlcov/
 htmlcov_*/
 
-# Claude configuration (agents and rules are committed, settings are not)
+# Claude configuration (agents, rules, and hooks are committed, settings are not)
 .claude/*
 !.claude/agents/
 !.claude/rules/
+!.claude/hooks/
 
 # Generated files
 configs/schemas/ranking_strategies.json
