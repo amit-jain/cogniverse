@@ -78,6 +78,27 @@ class ConfigEntry:
     updated_at: datetime
 
     def __post_init__(self) -> None:
+        for field_name in ("tenant_id", "service", "config_key"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str):
+                raise TypeError(
+                    f"ConfigEntry.{field_name} must be a str, "
+                    f"got {type(value).__name__}"
+                )
+        if not isinstance(self.scope, ConfigScope):
+            raise TypeError(
+                f"ConfigEntry.scope must be a ConfigScope, "
+                f"got {type(self.scope).__name__}"
+            )
+        if not isinstance(self.config_value, dict):
+            raise TypeError(
+                f"ConfigEntry.config_value must be a dict, "
+                f"got {type(self.config_value).__name__}"
+            )
+        if type(self.version) is not int or self.version < 1:
+            raise ValueError(
+                f"ConfigEntry.version must be a positive integer, got {self.version!r}"
+            )
         self.created_at = _utc_datetime(self.created_at, "created_at")
         self.updated_at = _utc_datetime(self.updated_at, "updated_at")
 
@@ -129,7 +150,7 @@ class ConfigEntry:
             raise ValueError(
                 f"ConfigEntry.from_dict: missing required field {e.args[0]!r}"
             ) from None
-        except ValueError as e:
+        except (TypeError, ValueError) as e:
             raise ValueError(f"ConfigEntry.from_dict: {e}") from None
 
 

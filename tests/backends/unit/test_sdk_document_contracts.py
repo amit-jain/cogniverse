@@ -358,6 +358,51 @@ class TestConfigEntryFromDictContract:
         with pytest.raises(ValueError, match="missing fields.*version"):
             ConfigEntry.from_dict(payload)
 
+    @pytest.mark.parametrize(
+        ("field_name", "value", "match"),
+        [
+            ("tenant_id", 1, "tenant_id.*str"),
+            ("scope", "system", "scope.*ConfigScope"),
+            ("service", None, "service.*str"),
+            ("config_key", 1, "config_key.*str"),
+            ("config_value", [], "config_value.*dict"),
+            ("version", True, "version.*positive integer"),
+            ("version", 0, "version.*positive integer"),
+        ],
+    )
+    def test_constructor_rejects_noncanonical_fields(self, field_name, value, match):
+        kwargs = {
+            "tenant_id": "acme:acme",
+            "scope": ConfigScope.SYSTEM,
+            "service": "svc",
+            "config_key": "k",
+            "config_value": {"a": 1},
+            "version": 1,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 1, 2, tzinfo=timezone.utc),
+        }
+        kwargs[field_name] = value
+
+        with pytest.raises((TypeError, ValueError), match=match):
+            ConfigEntry(**kwargs)
+
+    @pytest.mark.parametrize(
+        ("field_name", "value", "match"),
+        [
+            ("tenant_id", 1, "tenant_id.*str"),
+            ("service", None, "service.*str"),
+            ("config_key", 1, "config_key.*str"),
+            ("config_value", [], "config_value.*dict"),
+            ("version", True, "version.*positive integer"),
+        ],
+    )
+    def test_payload_rejects_noncanonical_fields(self, field_name, value, match):
+        payload = self._payload()
+        payload[field_name] = value
+
+        with pytest.raises(ValueError, match=match):
+            ConfigEntry.from_dict(payload)
+
 
 class TestWorkflowRecordsRequireCanonicalFields:
     def test_workflow_execution_rejects_extra_keys(self):
