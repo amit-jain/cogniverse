@@ -63,6 +63,16 @@ def test_real_vespa_ingest_stream_accepts_schema_name():
     )
 
 
+def test_runtime_profile_mutation_is_required_and_matches_real_backends():
+    assert {"add_profile", "remove_profile"} <= SearchBackend.__abstractmethods__
+    assert _params(VespaSearchBackend.add_profile) == _params(SearchBackend.add_profile)
+    assert _params(VespaSearchBackend.remove_profile) == _params(
+        SearchBackend.remove_profile
+    )
+    assert _params(VespaBackend.add_profile) == _params(SearchBackend.add_profile)
+    assert _params(VespaBackend.remove_profile) == _params(SearchBackend.remove_profile)
+
+
 class _InitializationProbe:
     def __init__(self, hook):
         Backend.__init__(self, "probe")
