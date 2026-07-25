@@ -58,11 +58,11 @@ class VespaBackend(Backend):
     a unified interface compatible with the backend registry.
     """
 
-    # Class-level fallback so partially-constructed instances (test slices via
-    # object.__new__ that skip __init__) still have a lock for the lazy
-    # metadata-session init; __init__ replaces it with a per-instance lock so
-    # real backends don't contend across instances.
+    # Class-level fallbacks keep partially-constructed instances (test slices
+    # via object.__new__) safe. __init__ replaces both with per-instance locks
+    # so real backends do not contend across instances.
     _metadata_app_lock = threading.Lock()
+    _close_lock = threading.Lock()
 
     def __init__(self, backend_config, schema_loader=None, config_manager=None):
         """
@@ -113,6 +113,7 @@ class VespaBackend(Backend):
         self._metadata_app = None
         self._metadata_app_key = None
         self._metadata_app_lock = threading.Lock()
+        self._close_lock = threading.Lock()
 
         # SchemaRegistry will be injected later (no circular dependency)
         self.schema_registry = None
@@ -1826,17 +1827,47 @@ class VespaBackend(Backend):
         """
         Close connections to Vespa.
         """
-        # Close all schema-specific clients
-        for schema_name, client in self._vespa_ingestion_clients.items():
-            client.close()
-            logger.info(f"Closed Vespa client for schema: {schema_name}")
+        with self._close_lock:
+            search_backend = getattr(self, "_vespa_search_backend", None)
+            self._vespa_search_backend = None
 
-        if self._metadata_app is not None:
-            self._metadata_app.close()
+            ingestion_clients = list(
+                getattr(self, "_vespa_ingestion_clients", {}).items()
+            )
+            self._vespa_ingestion_clients = {}
+
+            metadata_app = getattr(self, "_metadata_app", None)
             self._metadata_app = None
             self._metadata_app_key = None
 
-        logger.info("Closed all Vespa backend connections")
+            failures: list[tuple[str, Exception]] = []
+
+            if search_backend is not None:
+                try:
+                    search_backend.close()
+                except Exception as exc:
+                    failures.append(("search backend", exc))
+
+            for schema_name, client in ingestion_clients:
+                try:
+                    client.close()
+                    logger.info(f"Closed Vespa client for schema: {schema_name}")
+                except Exception as exc:
+                    failures.append((f"ingestion client {schema_name}", exc))
+
+            if metadata_app is not None:
+                try:
+                    metadata_app.close()
+                except Exception as exc:
+                    failures.append(("metadata client", exc))
+
+            if failures:
+                details = "; ".join(f"{name}: {exc}" for name, exc in failures)
+                raise RuntimeError(
+                    f"Failed to close Vespa backend resources: {details}"
+                ) from failures[0][1]
+
+            logger.info("Closed all Vespa backend connections")
 
     def health_check(self) -> bool:
         """
