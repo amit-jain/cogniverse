@@ -762,6 +762,32 @@ def admin_reconcile_orphans(confirm: bool, runtime_url: str) -> None:
     run(runtime_url, confirm=confirm)
 
 
+@admin.command(name="invite")
+@click.argument("tenant_id")
+@click.option(
+    "--expires-in-hours",
+    default=24,
+    show_default=True,
+    type=int,
+    help="How long the token stays valid.",
+)
+@click.option(
+    "--runtime-url",
+    default="http://localhost:28000",
+    show_default=True,
+    help="Runtime endpoint to call /admin/messaging/invite on.",
+)
+def admin_invite(tenant_id: str, expires_in_hours: int, runtime_url: str) -> None:
+    """Mint a messaging invite token for TENANT_ID.
+
+    The user sends the printed ``/start <token>`` to the bot to link their
+    chat account to this tenant. Tokens are single-use and expire.
+    """
+    from cogniverse_cli.admin import run_invite
+
+    run_invite(runtime_url, tenant_id, expires_in_hours=expires_in_hours)
+
+
 @cli.group()
 def sandbox() -> None:
     """Manage the OpenShell sandbox gateway for the coding agent."""

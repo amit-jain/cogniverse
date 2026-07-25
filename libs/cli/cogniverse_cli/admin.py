@@ -100,3 +100,51 @@ def run(runtime_url: str, *, confirm: bool) -> None:
     code = cmd_reconcile_orphans(runtime_url, confirm=confirm)
     if code != 0:
         sys.exit(code)
+
+
+def cmd_create_invite(
+    runtime_url: str, tenant_id: str, *, expires_in_hours: int
+) -> int:
+    """Mint a messaging invite token for ``tenant_id``.
+
+    Prints the token and the exact ``/start <token>`` line the operator hands
+    to the user, who sends it to the bot to link their chat account to the
+    tenant. Returns the process exit code.
+    """
+    url = f"{runtime_url.rstrip('/')}/admin/messaging/invite"
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                url,
+                json={"tenant_id": tenant_id, "expires_in_hours": expires_in_hours},
+            )
+    except httpx.HTTPError as exc:
+        console.print(f"[red]Failed to reach runtime at {runtime_url}: {exc}[/red]")
+        return 2
+
+    if resp.status_code != 200:
+        console.print(
+            f"[red]invite returned {resp.status_code}: {resp.text[:500]}[/red]"
+        )
+        return 3
+
+    data = resp.json()
+    token = data.get("token")
+    if not token:
+        console.print(f"[red]Runtime returned no token: {data}[/red]")
+        return 4
+
+    console.print(
+        f"[green]Invite token for [bold]{data.get('tenant_id')}[/bold][/green]"
+    )
+    console.print(f"  token:      [cyan]{token}[/cyan]")
+    console.print(f"  expires in: {expires_in_hours}h")
+    console.print(f"\nSend this to the bot:\n  [bold]/start {token}[/bold]")
+    return 0
+
+
+def run_invite(runtime_url: str, tenant_id: str, *, expires_in_hours: int) -> None:
+    """Entry point used by the click command in main.py."""
+    code = cmd_create_invite(runtime_url, tenant_id, expires_in_hours=expires_in_hours)
+    if code != 0:
+        sys.exit(code)
