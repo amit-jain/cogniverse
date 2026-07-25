@@ -67,6 +67,85 @@ def generate_unique_ports(
     return http_port, http_port + 10991
 
 
+def start_docker_container_with_port_retry(
+    module_name: str,
+    *,
+    name_prefix: str,
+    image: str,
+    container_ports: Tuple[int, int],
+    extra_run_args: list[str] | None = None,
+    container_command: list[str] | None = None,
+    max_attempts: int = 5,
+) -> Tuple[str, int, int]:
+    """Start a two-port Docker container, retrying allocation races.
+
+    Port probing and ``docker run`` cannot be atomic: another process may bind
+    a candidate after :func:`generate_unique_ports` releases its probe socket.
+    Only Docker's allocation-conflict errors are retried. Invalid options,
+    missing images, and daemon failures raise immediately with their stderr.
+    """
+    import os
+    import threading
+
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
+    container_http_port, container_config_port = container_ports
+    allocation_markers = (
+        "address already in use",
+        "port is already allocated",
+        "bind for 0.0.0.0",
+    )
+    last_error = ""
+
+    for attempt in range(1, max_attempts + 1):
+        http_port, config_port = generate_unique_ports(module_name)
+        container_name = (
+            f"{name_prefix}-{os.getpid()}-{threading.get_ident()}-{http_port}"
+        )
+        command = [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            *(extra_run_args or []),
+            "-p",
+            f"{http_port}:{container_http_port}",
+            "-p",
+            f"{config_port}:{container_config_port}",
+            image,
+            *(container_command or []),
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0:
+            return container_name, http_port, config_port
+
+        last_error = " ".join(result.stderr.split())
+        if not any(marker in last_error.lower() for marker in allocation_markers):
+            raise RuntimeError(
+                f"Docker container {container_name} failed on attempt "
+                f"{attempt}/{max_attempts}: {last_error}"
+            )
+
+        subprocess.run(
+            ["docker", "rm", "-f", container_name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    raise RuntimeError(
+        f"Docker container allocation failed after {max_attempts} attempts: "
+        f"{last_error}"
+    )
+
+
 def wait_for_container_removal(container_name: str, timeout: int = 30) -> bool:
     """
     Wait for Docker container to be fully removed and resources released.
