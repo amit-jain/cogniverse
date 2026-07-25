@@ -150,7 +150,17 @@ cogniverse admin reconcile-orphans
 
 # Actually drop them
 cogniverse admin reconcile-orphans --confirm --runtime-url http://localhost:28000
+
+# Mint a messaging invite token for a tenant
+cogniverse admin invite acme:alice
+cogniverse admin invite acme:alice --expires-in-hours 2 --runtime-url http://localhost:28000
 ```
+
+`admin invite` calls `POST /admin/messaging/invite` and prints the token plus the
+`/start <token>` line the user sends to the bot to link their chat account to
+that tenant. Tokens are single-use and expire (24h by default). Exit codes match
+the rest of `cogniverse admin`: 2 when the runtime is unreachable, 3 on a
+non-200, 4 when the runtime answers without a token.
 
 ### Secrets
 
