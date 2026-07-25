@@ -26,6 +26,8 @@ import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def real_provider(telemetry_manager_with_phoenix):

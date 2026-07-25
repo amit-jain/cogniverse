@@ -17,6 +17,8 @@ from cogniverse_agents.optimizer.artifact_manager import (
 from tests.agents.integration.conftest import skip_if_no_lm
 from tests.fixtures.llm import make_dspy_lm
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def real_provider(telemetry_manager_with_phoenix):

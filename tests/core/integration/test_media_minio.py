@@ -22,6 +22,8 @@ from cogniverse_core.common.media import (
 )
 from tests.system.minio_test_manager import MinIOTestManager
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture(scope="module")
 def minio_container():

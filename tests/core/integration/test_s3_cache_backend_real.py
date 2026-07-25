@@ -21,6 +21,8 @@ from cogniverse_core.common.cache.base import CacheConfig, CacheManager
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 from tests.system.minio_test_manager import MinIOTestManager
 
+pytestmark = pytest.mark.integration
+
 VIDEO = "s3://corpus/v_cache.mp4"
 
 

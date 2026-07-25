@@ -32,6 +32,8 @@ import pytest
 from cogniverse_agents.graph.graph_manager import GraphManager
 from cogniverse_agents.graph.graph_schema import ExtractionResult, Node
 
+pytestmark = pytest.mark.integration
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
