@@ -841,6 +841,132 @@ def test_failed_exact_container_removal_reports_boundary_failure(monkeypatch):
     assert commands.count(["docker", "rm", "-f", "cogniverse-test-llm-teacher"]) == 2
 
 
+def test_exact_container_removal_timeout_succeeds_after_container_disappears(
+    monkeypatch,
+):
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    commands: list[list[str]] = []
+
+    def removal_in_progress(command, **kwargs):
+        commands.append(list(command))
+        if command[:3] == ["docker", "rm", "-f"]:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        if command[:2] == ["docker", "inspect"]:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="",
+                stderr="No such container",
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(hermetic_llm.subprocess, "run", removal_in_progress)
+
+    hermetic_llm._remove_container("cogniverse-test-llm-teacher")
+
+    assert commands == [
+        ["docker", "rm", "-f", "cogniverse-test-llm-teacher"],
+        ["docker", "inspect", "cogniverse-test-llm-teacher"],
+    ]
+
+
+def test_exact_container_removal_in_progress_waits_until_absent(monkeypatch):
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    inspect_results = iter(
+        [
+            subprocess.CompletedProcess(
+                ["docker", "inspect"],
+                0,
+                stdout="id",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                ["docker", "inspect"],
+                1,
+                stdout="",
+                stderr="No such container",
+            ),
+        ]
+    )
+    inspect_calls = 0
+
+    def removal_in_progress(command, **kwargs):
+        nonlocal inspect_calls
+        if command[:3] == ["docker", "rm", "-f"]:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="",
+                stderr="removal of container is already in progress",
+            )
+        if command[:2] == ["docker", "inspect"]:
+            inspect_calls += 1
+            return next(inspect_results)
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(hermetic_llm.subprocess, "run", removal_in_progress)
+    monkeypatch.setattr(hermetic_llm.time, "sleep", lambda seconds: None)
+
+    hermetic_llm._remove_container("cogniverse-test-llm-teacher")
+
+    assert inspect_calls == 2
+
+
+@pytest.mark.parametrize(
+    ("remove_result", "expected_message"),
+    [
+        ("timeout", "docker removal timed out"),
+        ("in-progress", "docker removal remained in progress"),
+    ],
+)
+def test_exact_container_removal_fails_when_container_remains(
+    monkeypatch,
+    remove_result,
+    expected_message,
+):
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    monotonic_values = iter((0.0, 31.0))
+    inspect_calls = 0
+
+    def container_remains(command, **kwargs):
+        nonlocal inspect_calls
+        if command[:3] == ["docker", "rm", "-f"]:
+            if remove_result == "timeout":
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="",
+                stderr="removal of container is already in progress",
+            )
+        if command[:2] == ["docker", "inspect"]:
+            inspect_calls += 1
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="container-id",
+                stderr="",
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(hermetic_llm.subprocess, "run", container_remains)
+    monkeypatch.setattr(
+        hermetic_llm.time,
+        "monotonic",
+        lambda: next(monotonic_values),
+    )
+
+    with pytest.raises(RuntimeError, match=expected_message) as exc_info:
+        hermetic_llm._remove_container("cogniverse-test-llm-teacher")
+
+    assert "cogniverse-test-llm-teacher" in str(exc_info.value)
+    assert "still exists" in str(exc_info.value)
+    assert inspect_calls == 1
+
+
 def test_failed_exact_fallback_reports_logs_and_removes_container(monkeypatch):
     import tests.utils.hermetic_llm as hermetic_llm
 
@@ -950,6 +1076,40 @@ def test_session_config_preserves_distinct_exact_models(monkeypatch, tmp_path):
     }
 
 
+def test_primary_session_config_excludes_unprovisioned_teacher(monkeypatch, tmp_path):
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    source_config = tmp_path / "source.json"
+    source_config.write_text(
+        json.dumps(
+            {
+                "llm_config": {
+                    "primary": {"temperature": 0.1},
+                    "teacher": {
+                        "model": "openai/wrong-teacher",
+                        "api_base": "http://wrong-teacher.invalid/v1",
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(hermetic_llm, "HERMETIC_CONFIG_DIR", tmp_path)
+
+    written = hermetic_llm._write_session_config(
+        "http://primary.test/v1",
+        None,
+        source_config=source_config,
+    )
+
+    assert json.loads(written.read_text())["llm_config"] == {
+        "primary": {
+            "temperature": 0.1,
+            "model": f"openai/{GEMMA}",
+            "api_base": "http://primary.test/v1",
+        }
+    }
+
+
 def test_concurrent_processes_materialize_distinct_source_configs(
     monkeypatch,
     tmp_path,
@@ -1004,6 +1164,154 @@ def test_concurrent_processes_materialize_distinct_source_configs(
     assert len({path for path, _ in materialized}) == 2
 
 
+def test_ordinary_collection_does_not_request_exact_lm_fixture(monkeypatch, tmp_path):
+    import tests.conftest as root_conftest
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    provision_calls: list[str] = []
+
+    class Item:
+        path = tmp_path / "tests" / "runtime" / "unit" / "test_plain.py"
+        fixturenames: list[str] = []
+        own_markers: list = []
+
+        def get_closest_marker(self, name):
+            return next(
+                (marker for marker in self.own_markers if marker.name == name),
+                None,
+            )
+
+        def add_marker(self, marker):
+            self.own_markers.append(marker.mark)
+
+    monkeypatch.setattr(
+        hermetic_llm,
+        "ensure_llm",
+        lambda model: provision_calls.append(model),
+    )
+    monkeypatch.setattr(root_conftest, "_whisper_local_installed", lambda: True)
+    item = Item()
+
+    root_conftest.pytest_collection_modifyitems([item])
+
+    fixture_marker = root_conftest.ensure_host_ollama._fixture_function_marker
+    assert fixture_marker.autouse is False
+    assert "ensure_host_ollama" not in item.fixturenames
+    assert provision_calls == []
+
+
+def test_requires_lm_provisions_only_exact_primary(monkeypatch, tmp_path):
+    import tests.conftest as root_conftest
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "llm_config": {
+                    "primary": {},
+                    "teacher": {"model": "openai/wrong-teacher"},
+                }
+            }
+        )
+    )
+    session_config_path = tmp_path / "session-config.json"
+    session_config_path.write_text("{}")
+    provision_calls: list[tuple[str, float]] = []
+    activation_calls: list[tuple[str, str | None, object]] = []
+
+    class Item:
+        _cogniverse_lm_roles = frozenset({"primary"})
+
+    class Session:
+        items = [Item()]
+
+    class Request:
+        session = Session()
+
+    def provision(model=GEMMA, deadline_s=900.0):
+        provision_calls.append((model, deadline_s))
+        return "http://127.0.0.1:29110/v1"
+
+    def activate(primary_api_base, teacher_api_base=None, *, source_config):
+        activation_calls.append((primary_api_base, teacher_api_base, source_config))
+        root_conftest.os.environ["TEST_LLM_API_BASE"] = primary_api_base
+        root_conftest.os.environ["TEST_LLM_MODEL"] = GEMMA
+        return session_config_path
+
+    monkeypatch.setattr(hermetic_llm, "ensure_llm", provision)
+    monkeypatch.setattr(hermetic_llm, "activate_llms", activate)
+
+    fixture = root_conftest.ensure_host_ollama.__wrapped__(
+        Request(),
+        str(config_path),
+    )
+    next(fixture)
+    try:
+        assert provision_calls == [(GEMMA, 900.0)]
+        assert activation_calls == [("http://127.0.0.1:29110/v1", None, config_path)]
+    finally:
+        fixture.close()
+    assert not session_config_path.exists()
+
+
+def test_teacher_marker_requests_distinct_primary_and_teacher_roles(
+    monkeypatch,
+    tmp_path,
+):
+    import tests.conftest as root_conftest
+
+    teacher_marker = pytest.mark.requires_teacher_model.mark
+
+    class Item:
+        path = tmp_path / "tests" / "e2e" / "test_teacher.py"
+        fixturenames: list[str] = []
+        own_markers = [teacher_marker]
+
+        def get_closest_marker(self, name):
+            return next(
+                (marker for marker in self.own_markers if marker.name == name),
+                None,
+            )
+
+        def add_marker(self, marker):
+            self.own_markers.append(marker.mark)
+
+    monkeypatch.setattr(root_conftest, "_whisper_local_installed", lambda: True)
+    item = Item()
+
+    root_conftest.pytest_collection_modifyitems([item])
+
+    assert item.fixturenames == ["ensure_host_ollama"]
+    assert item._cogniverse_lm_roles == frozenset({"primary", "teacher"})
+
+
+def test_direct_lm_fixture_requests_distinct_primary_and_teacher_roles(
+    monkeypatch,
+    tmp_path,
+):
+    import tests.conftest as root_conftest
+
+    class Item:
+        path = tmp_path / "tests" / "runtime" / "integration" / "test_compile.py"
+        fixturenames = ["ensure_host_ollama"]
+        own_markers: list = []
+
+        def get_closest_marker(self, name):
+            return None
+
+        def add_marker(self, marker):
+            self.own_markers.append(marker.mark)
+
+    monkeypatch.setattr(root_conftest, "_whisper_local_installed", lambda: True)
+    item = Item()
+
+    root_conftest.pytest_collection_modifyitems([item])
+
+    assert item.fixturenames == ["ensure_host_ollama"]
+    assert item._cogniverse_lm_roles == frozenset({"primary", "teacher"})
+
+
 def test_root_lm_fixture_uses_exact_gemma_provisioner(monkeypatch, tmp_path):
     import tests.conftest as root_conftest
     import tests.utils.hermetic_llm as hermetic_llm
@@ -1027,6 +1335,15 @@ def test_root_lm_fixture_uses_exact_gemma_provisioner(monkeypatch, tmp_path):
     session_config_path = tmp_path / "session-config.json"
     session_config_path.write_text("{}")
 
+    class Item:
+        _cogniverse_lm_roles = frozenset({"primary", "teacher"})
+
+    class Session:
+        items = [Item()]
+
+    class Request:
+        session = Session()
+
     def provision(model=GEMMA, deadline_s=900.0):
         provision_calls.append((model, deadline_s))
         port = 29110 if model == GEMMA else 29111
@@ -1047,7 +1364,10 @@ def test_root_lm_fixture_uses_exact_gemma_provisioner(monkeypatch, tmp_path):
 
     monkeypatch.setattr(subprocess, "run", record_run)
 
-    fixture = root_conftest.ensure_host_ollama.__wrapped__(str(config_path))
+    fixture = root_conftest.ensure_host_ollama.__wrapped__(
+        Request(),
+        str(config_path),
+    )
     next(fixture)
     try:
         assert provision_calls == [
