@@ -1008,16 +1008,17 @@ curl -X POST http://localhost:28000/wiki/search \
   -d '{"query": "machine learning", "tenant_id": "acme_corp", "top_k": 5}'
 
 # Get a topic page
-curl http://localhost:28000/wiki/topic/machine_learning
+curl "http://localhost:28000/wiki/topic/machine_learning?tenant_id=acme_corp"
 
 # Get the wiki index
-curl http://localhost:28000/wiki/index
+curl "http://localhost:28000/wiki/index?tenant_id=acme_corp"
 
 # Run lint checks
-curl http://localhost:28000/wiki/lint
+curl "http://localhost:28000/wiki/lint?tenant_id=acme_corp"
 
 # Delete a topic page
-curl -X DELETE http://localhost:28000/wiki/topic/machine_learning
+curl -X DELETE \
+  "http://localhost:28000/wiki/topic/machine_learning?tenant_id=acme_corp"
 ```
 
 ---

@@ -479,7 +479,10 @@ max_annotations_per_run=50, automation_rules=None)` — an `AutomationRulesConfi
 can override the individual threshold kwargs.
 
 `routing/annotation_queue.py`'s `AnnotationQueue` tracks requests through `pending -> assigned -> completed`
-states; `routing/annotation_storage.py`'s `AnnotationStorage` persists completed annotations under a
+states. Enqueued timestamp strings must include a timezone offset and are normalized to UTC;
+assignment, deadline, and completion timestamps are also stored in UTC. `assign(..., sla_hours=None)`
+uses the priority default, while an explicit value, including `0`, is honored.
+`routing/annotation_storage.py`'s `AnnotationStorage` persists completed annotations under a
 per-agent-type Phoenix annotation name (`{agent_type}_annotation`; routing keeps `routing_annotation`,
 and `RoutingAnnotationStorage` remains as an alias);
 `routing/orchestration_annotation_storage.py`'s `OrchestrationAnnotationStorage` does the same for
@@ -505,6 +508,8 @@ class OrchestrationEvaluator:
 ```
 
 Invoked from `libs/runtime/cogniverse_runtime/optimization_cli.py` as part of the batch optimization job.
+Concurrent calls on one evaluator instance are serialized so its processed-span set and
+incremental resume time advance through one telemetry window at a time.
 
 ---
 

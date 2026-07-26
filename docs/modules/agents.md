@@ -203,7 +203,10 @@ graph TD
     style WorkflowDir fill:#81d4fa,stroke:#0288d1,color:#000
 ```
 
-**Total Files**: 95 Python files (33 at top level + 62 in subdirectories)
+The wiki implementation is the `libs/agents/cogniverse_agents/wiki/`
+subpackage; `wiki_manager.py` owns page persistence and lint reporting.
+
+**Total Files**: 96 Python files (35 at top level + 61 in subdirectories)
 
 **Key Agent Files** (all at top level):
 
@@ -568,7 +571,11 @@ The orchestrator uses DSPy for planning and AgentRegistry for discovery:
 
 ```python
 from cogniverse_agents.orchestrator_agent import (
-    OrchestratorAgent, OrchestratorDeps, OrchestratorInput, OrchestratorOutput,
+    OrchestratorAgent,
+    OrchestratorDeps,
+    OrchestratorInput,
+    OrchestratorOutput,
+    close_orchestrator_http_client,
 )
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
@@ -589,6 +596,9 @@ result = await orchestrator._process_impl(
 )
 
 # Result contains: plan_steps, parallel_groups, agent_results, final_output, execution_summary
+
+# Release the current event loop's shared HTTP connection pool at shutdown.
+await close_orchestrator_http_client()
 ```
 
 #### Key Features
@@ -596,7 +606,7 @@ result = await orchestrator._process_impl(
 - **DSPy Planning**: `OrchestrationModule` uses `dspy.ChainOfThought` to plan agent sequences
 - **Parallel Execution**: Steps can run in parallel groups (e.g., entity extraction + query enhancement)
 - **Agent Discovery**: Uses `AgentRegistry.find_agents_by_capability()` for dynamic agent lookup
-- **Agent Calls**: Executes agents via `httpx.AsyncClient` calls to agent process endpoints
+- **Agent Calls**: Executes agents through one shared `httpx.AsyncClient` per event loop; `close_orchestrator_http_client()` removes and closes the current loop's client and raises `RuntimeError` if shutdown fails
 - **Graceful Degradation**: Captures agent failures without stopping the pipeline
 
 ---
@@ -3722,6 +3732,8 @@ for c in out.contradictions_touched:
 | `include_trust=False` | Skips per-source `extract_trust` / `apply_decay`. |
 | `include_contradictions=False` | Skips ContradictionDetector pass. |
 | Source memory missing trust metadata | `trust_score` is `None`. |
+| Source memory absent | The source row remains present with no trust metadata. |
+| Memory backend read fails | Raises `RuntimeError` with the memory and tenant identifiers instead of returning an incomplete explanation. |
 
 The `explanation` field is human-readable structured text, intended to
 be rendered as-is in audit UIs without further LLM post-processing.
