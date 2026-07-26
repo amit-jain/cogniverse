@@ -11,6 +11,9 @@ code; no mocks at any service boundary.
 import json
 import os
 import tempfile
+import threading
+import time
+from uuid import uuid4
 
 import pytest
 from inspect_ai import eval as inspect_eval
@@ -18,8 +21,7 @@ from inspect_ai import eval as inspect_eval
 from cogniverse_evaluation.cli import cli
 from cogniverse_evaluation.core.task import evaluation_task
 
-# No ci_fast: these drive a real ColPali embedding model, which is
-# remote-only (vLLM sidecar via inference_service_url) — not available in CI.
+# No ci_fast: these drive the production Tomoro embedding sidecar and real Vespa.
 pytestmark = [pytest.mark.integration]
 
 
@@ -234,18 +236,108 @@ class TestEndToEnd:
 
     @pytest.mark.integration
     def test_cli_list_traces_command(self, search_evaluator_provider):
-        """Test CLI list-traces command with real Phoenix.
-
-        List-traces reads from real Phoenix — returns whatever spans exist.
-        """
+        """The CLI reads an exact emitted span through configured Phoenix."""
         from click.testing import CliRunner
 
+        from cogniverse_evaluation.data.traces import TraceManager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        query = f"CLI trace query {uuid4().hex[:8]}"
+        telemetry_manager = get_telemetry_manager()
+        with telemetry_manager.span(
+            name="search_service.search",
+            tenant_id="test:unit",
+            attributes={
+                "input.value": query,
+                "output.value": json.dumps([{"video_id": "cli-video", "score": 0.91}]),
+                "profile": "cli-profile",
+                "strategy": "cli-strategy",
+            },
+        ) as span:
+            assert span is not None
+        assert telemetry_manager.force_flush(timeout_millis=10000) is True
+
         runner = CliRunner()
+        deadline = time.monotonic() + 60
+        result = None
+        while time.monotonic() < deadline:
+            result = runner.invoke(
+                cli,
+                [
+                    "list-traces",
+                    "--tenant-id",
+                    "test:unit",
+                    "--hours",
+                    "2",
+                    "--limit",
+                    "100",
+                ],
+            )
+            if result.exit_code == 0 and query in result.output:
+                break
+            time.sleep(1)
 
-        result = runner.invoke(cli, ["list-traces", "--hours", "2", "--limit", "10"])
-
+        assert result is not None
         assert result.exit_code == 0
-        assert "Fetching traces" in result.output
+        assert f"Query: {query}..." in result.output
+        assert "Results: 1" in result.output
+
+        trace_manager = TraceManager(tenant_id="test:unit")
+        barrier = threading.Barrier(4)
+        observed = [None] * 4
+        errors = []
+
+        def read_concurrently(index):
+            try:
+                barrier.wait(timeout=10)
+                frame = trace_manager.get_recent_traces(hours_back=2, limit=100)
+                queries = {
+                    trace["query"] for trace in trace_manager.extract_trace_data(frame)
+                }
+                observed[index] = query if query in queries else None
+            except Exception as error:
+                errors.append(error)
+
+        threads = [
+            threading.Thread(target=read_concurrently, args=(index,))
+            for index in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        try:
+            assert [thread.is_alive() for thread in threads] == [
+                False,
+                False,
+                False,
+                False,
+            ]
+            assert errors == []
+            assert observed == [query, query, query, query]
+        finally:
+            trace_manager.storage.shutdown()
+
+    @pytest.mark.integration
+    def test_trace_manager_rejects_missing_query_endpoint(
+        self, search_evaluator_provider
+    ):
+        """A missing canonical query endpoint fails before any fallback read."""
+        from cogniverse_evaluation.data.traces import TraceManager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        config = get_telemetry_manager().config
+        provider_config = config.provider_config
+        config.provider_config = {}
+        try:
+            with pytest.raises(
+                ValueError,
+                match="telemetry provider_config.http_endpoint is required",
+            ):
+                TraceManager(tenant_id="test:unit")
+        finally:
+            config.provider_config = provider_config
 
     @pytest.mark.integration
     def test_evaluation_with_output_file(
