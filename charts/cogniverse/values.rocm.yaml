@@ -25,6 +25,8 @@ inference:
       - '{"video":0,"image":1}'
       - "--gpu-memory-utilization"
       - "0.25"
+      - "--max-num-seqs"
+      - "1"
     kvCacheGiB: null
     image: null
     resources:
@@ -46,6 +48,10 @@ inference:
       - "448"
       - "--gpu-memory-utilization"
       - "0.16"
+      - "--max-num-seqs"
+      - "1"
+      - "--max-num-batched-tokens"
+      - "2048"
     resources:
       limits:
         cpu: "2"
