@@ -1,35 +1,54 @@
-"""Self-provisioned LLM for integration tests.
+"""Self-provisioned exact LLMs for integration tests.
 
-Integration tests must not depend on the k3d cluster (that's the e2e
-tier). ``ensure_llm()`` provisions a vLLM Docker sidecar serving the
-SAME model as the production student LM — so semantic assertions and
-goldens keep their meaning — and points the config chain at it by
-writing a session config and exporting ``COGNIVERSE_CONFIG``.
+``ensure_llm()`` first reuses a configured endpoint only when its OpenAI
+model-list contract names the requested production model exactly.
+Otherwise it provisions that identical model in a local vLLM sidecar.
+``activate_llms()`` then writes both distinct production roles into the
+session config.
 
-The container has a fixed name and is reused across pytest sessions:
-first spawn pays the model load, every later session reattaches in
-seconds. On a ROCm host the sidecar runs GPU-accelerated (detected via
-``detect_torch_backend``); elsewhere it falls back to CPU vLLM.
+Each model has a fixed container name and is reused across pytest
+sessions. On a ROCm host the sidecar runs GPU-accelerated; elsewhere it
+falls back to CPU vLLM.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
-import pathlib
 import subprocess
+import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
 
-import requests
+from tests.utils.vllm_sidecar import (
+    _configured_model_urls,
+    _server_base,
+    find_exact_model_endpoint,
+    listed_model_ids,
+    serves_exact_model,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_CONFIG = REPO_ROOT / "configs" / "config.json"
 CONTAINER = "cogniverse-test-llm"
 MODEL = "google/gemma-4-e4b-it"
 HOST_PORT = 29110
-HERMETIC_CONFIG = REPO_ROOT / "outputs" / ".hermetic" / "config.json"
+TEACHER_CONTAINER = "cogniverse-test-llm-teacher"
+TEACHER_MODEL = "google/gemma-4-26b-a4b-it"
+TEACHER_HOST_PORT = 29111
+HERMETIC_CONFIG_DIR = REPO_ROOT / "outputs" / ".hermetic"
+_LOCK_PATH = (
+    Path(tempfile.gettempdir()) / f"cogniverse-exact-llm-sidecars-{os.getuid()}.lock"
+)
 _HF_CACHE = str(Path.home() / ".cache" / "huggingface")
+_ENSURE_LOCK = threading.Lock()
+_SIDECARS = {
+    MODEL: (CONTAINER, HOST_PORT),
+    TEACHER_MODEL: (TEACHER_CONTAINER, TEACHER_HOST_PORT),
+}
 
 _IMAGES = {
     "rocm": "vllm/vllm-openai-rocm:v0.23.0",
@@ -47,33 +66,98 @@ def _detect_device() -> str:
     return "rocm" if backend == "rocm" else "cpu"
 
 
-def _healthy(base_url: str, timeout: float = 3.0) -> bool:
-    try:
-        return requests.get(f"{base_url}/v1/models", timeout=timeout).status_code == 200
-    except Exception:
-        return False
+def _healthy(base_url: str, model: str, timeout: float = 3.0) -> bool:
+    return serves_exact_model(base_url, model, timeout)
 
 
-def _container_state() -> Optional[str]:
+def _container_state(container: str) -> str | None:
     out = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Status}}", CONTAINER],
+        ["docker", "inspect", "-f", "{{.State.Status}}", container],
         capture_output=True,
         text=True,
+        timeout=30,
+        check=False,
     )
     return out.stdout.strip() if out.returncode == 0 else None
 
 
-def _spawn(device: str, gpu_utilization: float = 0.25) -> None:
+def _container_logs(container: str) -> str:
+    try:
+        out = subprocess.run(
+            ["docker", "logs", "--tail", "200", container],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"unable to read container logs: {exc}"
+    return "\n".join(part for part in (out.stdout, out.stderr) if part).strip()
+
+
+def _remove_container(container: str) -> None:
+    result = subprocess.run(
+        ["docker", "rm", "-f", container],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    if result.returncode != 0 and "No such container" not in detail:
+        raise RuntimeError(
+            f"docker could not remove exact-model container {container!r}: "
+            f"{detail or f'exit {result.returncode}'}"
+        )
+
+
+def _cleanup_container(container: str) -> str:
+    try:
+        _remove_container(container)
+    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+        return f"cleanup failed: {type(exc).__name__}: {exc}"
+    return "cleanup completed"
+
+
+def _exception_detail(exc: Exception) -> str:
+    details = [f"{type(exc).__name__}: {exc}"]
+    if isinstance(exc, subprocess.CalledProcessError):
+        details.extend(
+            str(part).strip()
+            for part in (exc.stdout, exc.stderr)
+            if part and str(part).strip()
+        )
+    return "\n".join(details)
+
+
+@contextmanager
+def _ensure_lock():
+    """Serialize exact-model provisioning across threads and pytest processes."""
+    with _ENSURE_LOCK:
+        _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _LOCK_PATH.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _spawn(
+    model: str,
+    container: str,
+    host_port: int,
+    device: str,
+    gpu_utilization: float = 0.25,
+) -> None:
     cmd = [
         "docker",
         "run",
         "-d",
         "--name",
-        CONTAINER,
-        "--label",
-        f"cogniverse-test-owner-pid={os.getpid()}",
+        container,
         "-p",
-        f"{HOST_PORT}:8000",
+        f"{host_port}:8000",
         "-v",
         f"{_HF_CACHE}:/root/.cache/huggingface",
         # The host resolv.conf can point at a dead resolver (k3d node DNS
@@ -86,13 +170,6 @@ def _spawn(device: str, gpu_utilization: float = 0.25) -> None:
         # over the shared containers under memory pressure.
         "--oom-score-adj=400",
     ]
-    # Serve straight from the mounted cache when the model is already
-    # present — vLLM's startup hub check otherwise needs egress and dies
-    # on a host with broken DNS even though every weight is local.
-    model_dir = pathlib.Path(_HF_CACHE) / "hub" / f"models--{MODEL.replace('/', '--')}"
-    if model_dir.exists():
-        cmd += ["-e", "HF_HUB_OFFLINE=1"]
-
     if device == "rocm":
         cmd += [
             "--device",
@@ -118,77 +195,147 @@ def _spawn(device: str, gpu_utilization: float = 0.25) -> None:
     else:
         cmd += ["-e", "VLLM_CPU_KVCACHE_SPACE=4"]
         engine_args = ["--max-model-len", "16384"]
-    cmd += [_IMAGES[device], "--model", MODEL, *engine_args]
+    cmd += [_IMAGES[device], "--model", model, *engine_args]
     subprocess.run(cmd, check=True, timeout=120)
 
 
-def _write_session_config(api_base: str) -> Path:
-    config = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
+def _write_session_config(
+    primary_api_base: str,
+    teacher_api_base: str,
+    *,
+    source_config: Path = SOURCE_CONFIG,
+) -> Path:
+    config = json.loads(source_config.read_text())
     llm = config.setdefault("llm_config", {})
-    for key in ("primary", "teacher"):
+    for key, model, api_base in (
+        ("primary", MODEL, primary_api_base),
+        ("teacher", TEACHER_MODEL, teacher_api_base),
+    ):
         endpoint = llm.setdefault(key, {})
+        endpoint["model"] = f"openai/{model}"
         endpoint["api_base"] = api_base
-    # Legacy top-level fallback some readers still consult.
-    config["base_url"] = api_base
-    HERMETIC_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    HERMETIC_CONFIG.write_text(json.dumps(config, indent=2))
-    return HERMETIC_CONFIG
-
-
-def ensure_llm(deadline_s: float = 900.0) -> Optional[str]:
-    """Provision (or reattach to) the test LM; return its OpenAI base URL.
-
-    Side effect: exports ``COGNIVERSE_CONFIG`` pointing at a session
-    config whose llm endpoints target the sidecar — every config-chain
-    consumer in this process resolves to it. Returns None when Docker is
-    unavailable or the model never becomes ready (callers skip).
-    """
-    base_url = f"http://127.0.0.1:{HOST_PORT}/v1"
-    probe = f"http://127.0.0.1:{HOST_PORT}"
-
-    state = _container_state()
-    if state == "running" and _healthy(probe):
-        os.environ["COGNIVERSE_CONFIG"] = str(_write_session_config(base_url))
-        return base_url
-
-    def _await_ready(budget_s: float) -> bool:
-        deadline = time.time() + budget_s
-        while time.time() < deadline:
-            if _healthy(probe):
-                return True
-            if _container_state() != "running":
-                return False  # crashed/exited — caller tries the next rung
-            time.sleep(5)
-        return False
-
+    HERMETIC_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    config_path = HERMETIC_CONFIG_DIR / f"config-{os.getpid()}.json"
+    pending = config_path.with_name(f".{config_path.name}.{threading.get_ident()}.tmp")
     try:
-        if state == "running":
-            if _await_ready(deadline_s):
-                os.environ["COGNIVERSE_CONFIG"] = str(_write_session_config(base_url))
-                return base_url
-            return None
-        if state is not None:
-            subprocess.run(["docker", "start", CONTAINER], check=True, timeout=60)
-            if _await_ready(deadline_s):
-                os.environ["COGNIVERSE_CONFIG"] = str(_write_session_config(base_url))
-                return base_url
-            subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)
+        pending.write_text(json.dumps(config, indent=2))
+        os.replace(pending, config_path)
+    finally:
+        pending.unlink(missing_ok=True)
+    return config_path
 
-        # Fresh spawns: on ROCm the cluster's vLLM pods may hold most of
-        # the unified pool, so step the budget down before giving up on
-        # the GPU; CPU vLLM is the always-works fallback.
-        device = _detect_device()
-        attempts = (
-            [("rocm", 0.25), ("rocm", 0.12), ("cpu", 0.0)]
-            if device == "rocm"
-            else [("cpu", 0.0)]
-        )
-        for dev, util in attempts:
-            subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True)
-            _spawn(dev, gpu_utilization=util)
-            if _await_ready(deadline_s):
-                os.environ["COGNIVERSE_CONFIG"] = str(_write_session_config(base_url))
-                return base_url
-    except Exception:
-        return None
-    return None
+
+def activate_llms(
+    primary_api_base: str,
+    teacher_api_base: str,
+    *,
+    source_config: Path = SOURCE_CONFIG,
+) -> Path:
+    """Publish verified, distinct student and teacher endpoints to the process."""
+    primary_api_base = f"{_server_base(primary_api_base)}/v1"
+    teacher_api_base = f"{_server_base(teacher_api_base)}/v1"
+    config_path = _write_session_config(
+        primary_api_base,
+        teacher_api_base,
+        source_config=source_config,
+    )
+    os.environ["COGNIVERSE_CONFIG"] = str(config_path)
+    os.environ["TEST_LLM_API_BASE"] = primary_api_base
+    os.environ["TEST_LLM_MODEL"] = MODEL
+    os.environ.setdefault("OPENAI_API_KEY", "not-required")
+    return config_path
+
+
+def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
+    """Resolve or provision ``model`` exactly and return its OpenAI base URL."""
+    try:
+        container, host_port = _SIDECARS[model]
+    except KeyError as exc:
+        raise ValueError(f"No exact local sidecar is configured for {model!r}") from exc
+
+    with _ensure_lock():
+        configured = find_exact_model_endpoint(model, _configured_model_urls(model))
+        if configured is not None:
+            return f"{configured}/v1"
+
+        local_base = f"http://127.0.0.1:{host_port}"
+
+        def _await_ready(budget_s: float) -> bool:
+            deadline = time.monotonic() + budget_s
+            while time.monotonic() < deadline:
+                model_ids = listed_model_ids(local_base)
+                if model_ids is not None:
+                    return model in model_ids
+                if _container_state(container) != "running":
+                    return False
+                time.sleep(5)
+            return False
+
+        try:
+            state = _container_state(container)
+            if state == "running":
+                model_ids = listed_model_ids(local_base)
+                if model_ids is not None and model not in model_ids:
+                    _remove_container(container)
+                    state = None
+                elif _healthy(local_base, model):
+                    return f"{local_base}/v1"
+            if state == "running":
+                if _await_ready(deadline_s):
+                    return f"{local_base}/v1"
+                _remove_container(container)
+                state = None
+            if state is not None:
+                subprocess.run(
+                    ["docker", "start", container],
+                    check=True,
+                    timeout=60,
+                    capture_output=True,
+                    text=True,
+                )
+                if _await_ready(deadline_s):
+                    return f"{local_base}/v1"
+                _remove_container(container)
+
+            device = _detect_device()
+            attempts = (
+                [("rocm", 0.25), ("rocm", 0.12), ("cpu", 0.0)]
+                if device == "rocm"
+                else [("cpu", 0.0)]
+            )
+            errors: list[str] = []
+            for dev, util in attempts:
+                _remove_container(container)
+                try:
+                    _spawn(
+                        model,
+                        container,
+                        host_port,
+                        dev,
+                        gpu_utilization=util,
+                    )
+                    if _await_ready(deadline_s):
+                        return f"{local_base}/v1"
+                    errors.append(
+                        f"{dev} sidecar did not serve {model!r}; "
+                        f"container logs:\n{_container_logs(container)}"
+                    )
+                except (OSError, subprocess.SubprocessError) as exc:
+                    errors.append(
+                        f"{dev} sidecar failed: {exc}; "
+                        f"container logs:\n{_container_logs(container)}"
+                    )
+
+            detail = "; ".join(errors) or "no local launch attempt completed"
+            raise RuntimeError(
+                f"No configured endpoint or local vLLM sidecar served exact model "
+                f"{model!r}: {detail}"
+            )
+        except Exception as exc:
+            logs = _container_logs(container)
+            cleanup = _cleanup_container(container)
+            raise RuntimeError(
+                f"Failed to provision exact model {model!r} in container "
+                f"{container!r}: {_exception_detail(exc)}\n"
+                f"container logs:\n{logs}\n{cleanup}"
+            ) from exc
