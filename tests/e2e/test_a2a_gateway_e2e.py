@@ -13,10 +13,13 @@ to the orchestration pipeline and not directly callable via REST.
 Requires live k3d-deployed runtime at http://localhost:33000.
 """
 
+import hashlib
+
 import httpx
 import pytest
 
 from tests.e2e.conftest import (
+    DATA_ROOT,
     PHOENIX_URL,
     RUNTIME,
     TENANT_ID,
@@ -24,7 +27,11 @@ from tests.e2e.conftest import (
 )
 
 PROFILE = "video_colpali_smol500_mv_frame"
-SAMPLE_VIDEO_ID = "v_-nl4G-00PtA"
+SAMPLE_VIDEO_ID = hashlib.sha256(
+    (
+        DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
+    ).read_bytes()
+).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +243,7 @@ class TestGatewaySeededSearchContract:
                 "/agents/gateway_agent/process",
                 json={
                     "agent_name": "gateway_agent",
-                    "query": "find the video of a man washing dishes",
+                    "query": "show me cooking videos",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
                 },

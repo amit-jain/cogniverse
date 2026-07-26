@@ -16,6 +16,7 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import dspy
 import pytest
@@ -27,7 +28,9 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Re-export the canonical shared_memory_vespa fixture so it's discoverable
 # by tests under tests/agents/integration/ (pytest only walks UP from a
 # test file's directory, not laterally into siblings).
-from tests.memory.conftest import shared_memory_vespa  # noqa: F401
+from tests.memory.conftest import shared_memory_vespa as _shared_memory_vespa_fixture
+
+shared_memory_vespa = _shared_memory_vespa_fixture
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +257,7 @@ def clear_singleton_state_between_tests():
 
 
 @pytest.fixture(autouse=True, scope="module")
-def _set_test_backend_env(shared_memory_vespa):  # noqa: F811
+def _set_test_backend_env(shared_memory_vespa, request):
     """Point ``BACKEND_URL``/``BACKEND_PORT`` at the test-owned Vespa so
     ``create_default_config_manager()`` resolves to it, never the running
     cluster's persisted config store.
@@ -271,22 +274,54 @@ def _set_test_backend_env(shared_memory_vespa):  # noqa: F811
 
     original_url = os.environ.get("BACKEND_URL")
     original_port = os.environ.get("BACKEND_PORT")
+    parsed_base_url = urlsplit(shared_memory_vespa["base_url"])
+    backend_url = f"{parsed_base_url.scheme}://{parsed_base_url.hostname}"
+    module = request.module
+    original_live_endpoint = None
+    original_bright_schema = None
+    original_wall_clock_ms = None
+    if module.__name__ == "tests.agents.integration.test_bright_video_probes":
+        from cogniverse_agents import orchestrator_agent
+        from tests.utils.vespa_test_helpers import schema_full_name
 
-    os.environ["BACKEND_URL"] = "http://localhost"
+        original_live_endpoint = module._live_vespa_endpoint
+        original_bright_schema = module.BRIGHT_FULL_SCHEMA
+        original_wall_clock_ms = orchestrator_agent._ITER_RETRIEVAL_WALL_CLOCK_MS
+
+        def test_vespa_endpoint():
+            return (
+                backend_url,
+                shared_memory_vespa["http_port"],
+                shared_memory_vespa["config_port"],
+            )
+
+        module._live_vespa_endpoint = test_vespa_endpoint
+        module.BRIGHT_FULL_SCHEMA = schema_full_name(
+            module.BRIGHT_BASE_SCHEMA,
+            module.BRIGHT_TENANT_ID,
+        )
+        orchestrator_agent._ITER_RETRIEVAL_WALL_CLOCK_MS = 600_000
+
+    os.environ["BACKEND_URL"] = backend_url
     os.environ["BACKEND_PORT"] = str(shared_memory_vespa["http_port"])
     config_utils._config_manager_singleton = None
 
-    yield
-
-    config_utils._config_manager_singleton = None
-    if original_url is not None:
-        os.environ["BACKEND_URL"] = original_url
-    else:
-        os.environ.pop("BACKEND_URL", None)
-    if original_port is not None:
-        os.environ["BACKEND_PORT"] = original_port
-    else:
-        os.environ.pop("BACKEND_PORT", None)
+    try:
+        yield
+    finally:
+        config_utils._config_manager_singleton = None
+        if original_live_endpoint is not None:
+            module._live_vespa_endpoint = original_live_endpoint
+            module.BRIGHT_FULL_SCHEMA = original_bright_schema
+            orchestrator_agent._ITER_RETRIEVAL_WALL_CLOCK_MS = original_wall_clock_ms
+        if original_url is not None:
+            os.environ["BACKEND_URL"] = original_url
+        else:
+            os.environ.pop("BACKEND_URL", None)
+        if original_port is not None:
+            os.environ["BACKEND_PORT"] = original_port
+        else:
+            os.environ.pop("BACKEND_PORT", None)
 
 
 class _SharedVespaManagerAdapter:
@@ -355,7 +390,7 @@ class _SharedVespaManagerAdapter:
 
 
 @pytest.fixture(scope="module")
-def vespa_with_schema(shared_memory_vespa):  # noqa: F811
+def vespa_with_schema(shared_memory_vespa, tomoro_inference_url):
     """Compatibility shim: yields the dict shape the 4 consumer tests
     expect, but backed by the project-wide ``shared_vespa`` container
     (re-exported through ``shared_memory_vespa``).
@@ -410,11 +445,14 @@ def vespa_with_schema(shared_memory_vespa):  # noqa: F811
     if hasattr(registry, "_backend_instances"):
         registry._backend_instances.clear()
 
+    manager = _SharedVespaManagerAdapter(shared_memory_vespa)
+    inject_tomoro_url(manager.config_manager, tomoro_inference_url)
+
     yield {
         "http_port": shared_memory_vespa["http_port"],
         "config_port": shared_memory_vespa["config_port"],
         "base_url": shared_memory_vespa["base_url"],
-        "manager": _SharedVespaManagerAdapter(shared_memory_vespa),
+        "manager": manager,
         # Base name (NOT tenant-scoped) — consumer tests append "_test_tenant"
         # themselves, and config.json profile lookups key on base names.
         "default_schema": "video_colpali_smol500_mv_frame",

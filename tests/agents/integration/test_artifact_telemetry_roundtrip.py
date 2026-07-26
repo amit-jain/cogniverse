@@ -665,7 +665,7 @@ class TestDSPyAgentArtifactRoundTrip:
     @pytest.mark.asyncio
     async def test_orchestrator_loads_workflow_templates(self, real_provider):
         """Save workflow data → OrchestratorAgent loads via load_historical_data."""
-        import json
+        from datetime import datetime, timezone
         from unittest.mock import Mock, patch
 
         from cogniverse_agents.orchestrator_agent import (
@@ -673,52 +673,39 @@ class TestDSPyAgentArtifactRoundTrip:
             OrchestratorDeps,
         )
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_core.registries import WorkflowStoreRegistry
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowTemplate
 
         tenant_id = "orchestrator-artifact-roundtrip"
-
-        # WorkflowIntelligence creates its own ArtifactManager from the provider.
-        # Save workflow template data that load_historical_data() will pick up.
-        mgr = ArtifactManager(real_provider, tenant_id)
-
-        # Save a template index + template blob (the format load_historical_data expects)
         template_id = "tmpl_test_001"
-        await mgr.save_blob("workflow", "template_index", json.dumps([template_id]))
-        from datetime import datetime
-
-        template_data = {
-            "template_id": template_id,
-            "name": "video_search_template",
-            "description": "Search for video content with entity extraction",
-            "query_patterns": ["find * videos", "search for * content"],
-            "task_sequence": [
+        template = WorkflowTemplate(
+            template_id=template_id,
+            name="video_search_template",
+            description="Search for video content with entity extraction",
+            query_patterns=["find * videos", "search for * content"],
+            task_sequence=[
                 {"agent": "entity_extraction_agent", "timeout": 30},
                 {"agent": "search_agent", "timeout": 60},
             ],
-            "expected_execution_time": 5.0,
-            "success_rate": 0.85,
-            "usage_count": 10,
-            "created_at": datetime.now().isoformat(),
-            "last_used": None,
-        }
-        await mgr.save_blob(
-            "workflow", f"template_{template_id}", json.dumps(template_data)
+            expected_execution_time=5.0,
+            success_rate=0.85,
+            usage_count=10,
+            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            last_used=None,
         )
+        WorkflowStoreRegistry.clear_cache()
+        store = WorkflowStoreRegistry.get(
+            name="telemetry", config={"telemetry_provider": real_provider}
+        )
+        await store.save_template(tenant_id, template)
 
         # Create WorkflowIntelligence with the same provider+tenant
         wi = WorkflowIntelligence(tenant_id)
         assert len(wi.workflow_templates) == 0  # nothing loaded yet
 
         await wi.load_historical_data()
-        assert template_id in wi.workflow_templates, (
-            f"Template {template_id} not loaded, got: {list(wi.workflow_templates.keys())}"
-        )
-        loaded_tmpl = wi.workflow_templates[template_id]
-        assert loaded_tmpl.name == "video_search_template"
-        assert loaded_tmpl.success_rate == 0.85
-        assert loaded_tmpl.usage_count == 10
-        assert len(loaded_tmpl.task_sequence) == 2
-        assert loaded_tmpl.task_sequence[0]["agent"] == "entity_extraction_agent"
+        assert wi.workflow_templates == {template_id: template}
 
         # Now test via OrchestratorAgent._load_artifact
         wi2 = WorkflowIntelligence(tenant_id)
@@ -758,7 +745,7 @@ class TestWorkflowStoreRoundTrip:
     @pytest.mark.asyncio
     async def test_save_via_store_load_via_intelligence(self, real_provider):
         import uuid
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
         from cogniverse_core.registries import WorkflowStoreRegistry
@@ -783,7 +770,7 @@ class TestWorkflowStoreRoundTrip:
                 confidence_score=0.91,
                 user_satisfaction=0.75,
                 error_details=None,
-                timestamp=datetime(2026, 5, 26, 12, 0, 0),
+                timestamp=datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
                 metadata={"source": "roundtrip"},
             )
         ]
@@ -797,7 +784,7 @@ class TestWorkflowStoreRoundTrip:
                 error_rate=0.1,
                 preferred_query_types=["visual"],
                 performance_trend="improving",
-                last_updated=datetime(2026, 5, 26, 9, 0, 0),
+                last_updated=datetime(2026, 5, 26, 9, 0, 0, tzinfo=timezone.utc),
             )
         ]
         patterns = {"video_search": ["find *", "show me *"]}
@@ -810,7 +797,7 @@ class TestWorkflowStoreRoundTrip:
             expected_execution_time=1.2,
             success_rate=0.95,
             usage_count=3,
-            created_at=datetime(2026, 5, 1, 0, 0, 0),
+            created_at=datetime(2026, 5, 1, 0, 0, 0, tzinfo=timezone.utc),
             last_used=None,
         )
 
@@ -844,7 +831,7 @@ class TestWorkflowStoreRoundTrip:
         template-matches against patterns whose executions were rolled back.
         """
         import uuid
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         from cogniverse_agents.workflow.telemetry_workflow_store import (
             _EXECUTIONS_KIND,
@@ -877,7 +864,7 @@ class TestWorkflowStoreRoundTrip:
             confidence_score=0.9,
             user_satisfaction=0.7,
             error_details=None,
-            timestamp=datetime(2026, 5, 26, 12, 0, 0),
+            timestamp=datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
             metadata={},
         )
         profile = AgentPerformance(
@@ -889,7 +876,7 @@ class TestWorkflowStoreRoundTrip:
             error_rate=0.0,
             preferred_query_types=["video_search"],
             performance_trend="stable",
-            last_updated=datetime(2026, 5, 26, 9, 0, 0),
+            last_updated=datetime(2026, 5, 26, 9, 0, 0, tzinfo=timezone.utc),
         )
 
         # Fail exactly the forward executions write at the provider boundary; the
@@ -1394,47 +1381,46 @@ class TestArtifactAffectsBehavior:
         with correct task_sequence. This is the function OrchestratorAgent calls
         at planning time to inject template context into the DSPy planner.
         """
-        import json
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_core.registries import WorkflowStoreRegistry
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowTemplate
 
         tenant_id = "behavior-orchestrator-test"
-        mgr = ArtifactManager(real_provider, tenant_id)
 
         # Save template with patterns designed to match "find cooking videos"
         template_id = "tmpl_behavior_001"
-        await mgr.save_blob("workflow", "template_index", json.dumps([template_id]))
-        template_data = {
-            "template_id": template_id,
-            "name": "video_search_with_entities",
-            "description": "Extract entities then search videos",
-            "query_patterns": [
+        template = WorkflowTemplate(
+            template_id=template_id,
+            name="video_search_with_entities",
+            description="Extract entities then search videos",
+            query_patterns=[
                 "find cooking videos",
                 "find sports videos",
                 "find music videos",
             ],
-            "task_sequence": [
+            task_sequence=[
                 {"agent": "entity_extraction_agent", "timeout": 30},
                 {"agent": "search_agent", "timeout": 60},
             ],
-            "expected_execution_time": 5.0,
-            "success_rate": 0.9,
-            "usage_count": 50,
-            "created_at": datetime.now().isoformat(),
-            "last_used": None,
-        }
-        await mgr.save_blob(
-            "workflow", f"template_{template_id}", json.dumps(template_data)
+            expected_execution_time=5.0,
+            success_rate=0.9,
+            usage_count=50,
+            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            last_used=None,
         )
+        WorkflowStoreRegistry.clear_cache()
+        store = WorkflowStoreRegistry.get(
+            name="telemetry", config={"telemetry_provider": real_provider}
+        )
+        await store.save_template(tenant_id, template)
 
         # Create WorkflowIntelligence and load from real Phoenix
         wi = WorkflowIntelligence(tenant_id)
         await wi.load_historical_data()
 
-        assert template_id in wi.workflow_templates, (
-            f"Template not loaded, got: {list(wi.workflow_templates.keys())}"
-        )
+        assert wi.workflow_templates == {template_id: template}
 
         # Verify template matching works — "find cooking videos" is an exact pattern
         matched = wi._find_matching_template("find cooking videos")

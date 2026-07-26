@@ -232,8 +232,8 @@ class TestCodeSearchVespaEndToEnd:
     ):
         """Full round-trip: parse → encode with LateOn-Code-edge → feed Vespa → search → verify.
 
-        Uses the vespa_with_schema fixture's 128-dim schema. LateOn-Code-edge
-        48-dim embeddings are zero-padded to 128-dim for compatibility with the
+        Uses the vespa_with_schema fixture's 320-dim schema. LateOn-Code-edge
+        48-dim embeddings are zero-padded to 320-dim for compatibility with the
         existing test schema. MaxSim ranking works correctly — the padded zeros
         contribute nothing to the score, so search results are ordered by the
         real 48 dimensions.
@@ -250,7 +250,7 @@ class TestCodeSearchVespaEndToEnd:
         # deploy_schema canonicalizes test_tenant → test_tenant:test_tenant, so
         # the deployed doc type is double-suffixed; build the same name here.
         schema_name = schema_full_name(base_schema, "test_tenant")
-        schema_embedding_dim = 128
+        schema_embedding_dim = 320
 
         # 1. Parse real agent files
         repo_root = Path(__file__).resolve().parents[3]
@@ -274,7 +274,7 @@ class TestCodeSearchVespaEndToEnd:
         texts = [seg["content"][:8192] for seg in segments_to_ingest]
         doc_embeddings = colbert_model.encode(texts, is_query=False)
 
-        # 3. Feed to Vespa (pad 48→128 for test schema compatibility)
+        # 3. Feed to Vespa (pad 48→320 for test schema compatibility)
         for idx, (seg, emb) in enumerate(zip(segments_to_ingest, doc_embeddings)):
             emb_np = np.array(emb, dtype=np.float32)
 
@@ -288,6 +288,8 @@ class TestCodeSearchVespaEndToEnd:
             if emb_np.shape[0] > 2048:
                 emb_np = emb_np[:2048]
 
+            assert emb_np.shape[1] == 320
+
             float_dict = {}
             for patch_idx in range(emb_np.shape[0]):
                 float_dict[str(patch_idx)] = emb_np[patch_idx].tolist()
@@ -295,6 +297,7 @@ class TestCodeSearchVespaEndToEnd:
             binary = np.packbits(
                 np.where(emb_np > 0, 1, 0).astype(np.uint8), axis=1
             ).astype(np.int8)
+            assert binary.shape[1] == 40
             binary_dict = {}
             for patch_idx in range(binary.shape[0]):
                 binary_dict[str(patch_idx)] = binary[patch_idx].tolist()
@@ -339,6 +342,8 @@ class TestCodeSearchVespaEndToEnd:
                 dtype=np.float32,
             )
             query_np = np.hstack([query_np, q_pad])
+
+        assert query_np.shape[1] == 320
 
         qt_cells = []
         for tok_idx in range(query_np.shape[0]):

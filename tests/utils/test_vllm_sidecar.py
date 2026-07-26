@@ -1170,10 +1170,14 @@ def test_ordinary_collection_does_not_request_exact_lm_fixture(monkeypatch, tmp_
 
     provision_calls: list[str] = []
 
+    class FixtureInfo:
+        initialnames = ()
+
     class Item:
         path = tmp_path / "tests" / "runtime" / "unit" / "test_plain.py"
         fixturenames: list[str] = []
         own_markers: list = []
+        _fixtureinfo = FixtureInfo()
 
         def get_closest_marker(self, name):
             return next(
@@ -1237,6 +1241,18 @@ def test_requires_lm_provisions_only_exact_primary(monkeypatch, tmp_path):
         activation_calls.append((primary_api_base, teacher_api_base, source_config))
         root_conftest.os.environ["TEST_LLM_API_BASE"] = primary_api_base
         root_conftest.os.environ["TEST_LLM_MODEL"] = GEMMA
+        session_config_path.write_text(
+            json.dumps(
+                {
+                    "llm_config": {
+                        "primary": {
+                            "model": f"openai/{GEMMA}",
+                            "api_base": primary_api_base,
+                        }
+                    }
+                }
+            )
+        )
         return session_config_path
 
     monkeypatch.setattr(hermetic_llm, "ensure_llm", provision)
@@ -1250,9 +1266,60 @@ def test_requires_lm_provisions_only_exact_primary(monkeypatch, tmp_path):
     try:
         assert provision_calls == [(GEMMA, 900.0)]
         assert activation_calls == [("http://127.0.0.1:29110/v1", None, config_path)]
+        materialized_lm = json.loads(session_config_path.read_text())["llm_config"]
+        assert materialized_lm == {
+            "primary": {
+                "model": f"openai/{GEMMA}",
+                "api_base": "http://127.0.0.1:29110/v1",
+            },
+            "teacher": {
+                "model": "openai/__teacher_role_not_provisioned__",
+                "api_base": "http://127.0.0.1:29110/v1",
+            },
+        }
     finally:
         fixture.close()
     assert not session_config_path.exists()
+
+
+def test_primary_only_activation_rejects_missing_primary_config(monkeypatch, tmp_path):
+    import tests.conftest as root_conftest
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    source_config = tmp_path / "config.json"
+    source_config.write_text('{"llm_config":{"primary":{},"teacher":{}}}')
+    session_config = tmp_path / "session-config.json"
+
+    class Item:
+        _cogniverse_lm_roles = frozenset({"primary"})
+
+    class Session:
+        items = [Item()]
+
+    class Request:
+        session = Session()
+
+    monkeypatch.setattr(
+        hermetic_llm,
+        "ensure_llm",
+        lambda model: "http://127.0.0.1:29110/v1",
+    )
+
+    def activate(primary_api_base, teacher_api_base=None, *, source_config):
+        session_config.write_text('{"llm_config":{}}')
+        return session_config
+
+    monkeypatch.setattr(hermetic_llm, "activate_llms", activate)
+
+    fixture = root_conftest.ensure_host_ollama.__wrapped__(
+        Request(),
+        str(source_config),
+    )
+    with pytest.raises(
+        pytest.fail.Exception,
+        match="primary-only LM activation produced no llm_config.primary",
+    ):
+        next(fixture)
 
 
 def test_teacher_marker_requests_distinct_primary_and_teacher_roles(
@@ -1263,10 +1330,14 @@ def test_teacher_marker_requests_distinct_primary_and_teacher_roles(
 
     teacher_marker = pytest.mark.requires_teacher_model.mark
 
+    class FixtureInfo:
+        initialnames = ()
+
     class Item:
         path = tmp_path / "tests" / "e2e" / "test_teacher.py"
         fixturenames: list[str] = []
         own_markers = [teacher_marker]
+        _fixtureinfo = FixtureInfo()
 
         def get_closest_marker(self, name):
             return next(
@@ -1286,16 +1357,53 @@ def test_teacher_marker_requests_distinct_primary_and_teacher_roles(
     assert item._cogniverse_lm_roles == frozenset({"primary", "teacher"})
 
 
+def test_requires_lm_provisioning_precedes_local_lm_fixture(monkeypatch, tmp_path):
+    import tests.conftest as root_conftest
+
+    requires_lm = pytest.mark.requires_lm.mark
+
+    class FixtureInfo:
+        initialnames = ("real_dspy_lm",)
+        name2fixturedefs = {}
+
+    class Item:
+        path = tmp_path / "tests" / "agents" / "integration" / "test_agent.py"
+        fixturenames = ["real_dspy_lm"]
+        own_markers = [requires_lm]
+        _fixtureinfo = FixtureInfo()
+
+        def get_closest_marker(self, name):
+            return next(
+                (marker for marker in self.own_markers if marker.name == name),
+                None,
+            )
+
+        def add_marker(self, marker):
+            self.own_markers.append(marker.mark)
+
+    monkeypatch.setattr(root_conftest, "_whisper_local_installed", lambda: True)
+    item = Item()
+
+    root_conftest.pytest_collection_modifyitems([item])
+
+    assert item.fixturenames == ["ensure_host_ollama", "real_dspy_lm"]
+    assert item._cogniverse_lm_roles == frozenset({"primary"})
+
+
 def test_direct_lm_fixture_requests_distinct_primary_and_teacher_roles(
     monkeypatch,
     tmp_path,
 ):
     import tests.conftest as root_conftest
 
+    class FixtureInfo:
+        initialnames = ("ensure_host_ollama",)
+
     class Item:
         path = tmp_path / "tests" / "runtime" / "integration" / "test_compile.py"
         fixturenames = ["ensure_host_ollama"]
         own_markers: list = []
+        _fixtureinfo = FixtureInfo()
 
         def get_closest_marker(self, name):
             return None
@@ -1310,6 +1418,286 @@ def test_direct_lm_fixture_requests_distinct_primary_and_teacher_roles(
 
     assert item.fixturenames == ["ensure_host_ollama"]
     assert item._cogniverse_lm_roles == frozenset({"primary", "teacher"})
+
+
+def test_transitive_lm_fixture_requests_only_primary(monkeypatch, tmp_path):
+    import tests.conftest as root_conftest
+
+    class FixtureInfo:
+        initialnames = ("dspy_lm",)
+        name2fixturedefs = {}
+
+    class Item:
+        path = tmp_path / "tests" / "agents" / "integration" / "test_summary.py"
+        fixturenames = ["dspy_lm", "_dspy_lm_instance", "ensure_host_ollama"]
+        own_markers: list = []
+        _fixtureinfo = FixtureInfo()
+
+        def get_closest_marker(self, name):
+            return None
+
+        def add_marker(self, marker):
+            self.own_markers.append(marker.mark)
+
+    monkeypatch.setattr(root_conftest, "_whisper_local_installed", lambda: True)
+    item = Item()
+
+    root_conftest.pytest_collection_modifyitems([item])
+
+    assert item.fixturenames == [
+        "dspy_lm",
+        "_dspy_lm_instance",
+        "ensure_host_ollama",
+    ]
+    assert item._cogniverse_lm_roles == frozenset({"primary"})
+
+
+def test_transitive_teacher_lm_consumer_requests_teacher_role(monkeypatch, tmp_path):
+    import tests.conftest as root_conftest
+
+    def teacher_consumer(optimizer):
+        return optimizer.teacher_lm
+
+    class FixtureDef:
+        func = teacher_consumer
+
+    class FixtureInfo:
+        initialnames = ("dspy_lm", "teacher_consumer")
+        name2fixturedefs = {"teacher_consumer": (FixtureDef(),)}
+
+    class Item:
+        path = tmp_path / "tests" / "agents" / "integration" / "test_report.py"
+        fixturenames = [
+            "dspy_lm",
+            "_dspy_lm_instance",
+            "ensure_host_ollama",
+            "teacher_consumer",
+        ]
+        own_markers: list = []
+        _fixtureinfo = FixtureInfo()
+
+        @staticmethod
+        def obj():
+            return None
+
+        def get_closest_marker(self, name):
+            return None
+
+        def add_marker(self, marker):
+            self.own_markers.append(marker.mark)
+
+    monkeypatch.setattr(root_conftest, "_whisper_local_installed", lambda: True)
+    item = Item()
+
+    root_conftest.pytest_collection_modifyitems([item])
+
+    assert item._cogniverse_lm_roles == frozenset({"primary", "teacher"})
+
+
+@pytest.mark.parametrize(
+    "stale_reason",
+    [
+        "Configured LM endpoint not reachable",
+        "Live Vespa at http://localhost:8080 unreachable: connection refused",
+    ],
+)
+def test_stale_bright_stack_skip_requests_runtime_provisioning(
+    monkeypatch,
+    tmp_path,
+    stale_reason,
+):
+    import tests.conftest as root_conftest
+
+    stale_skip = pytest.mark.skipif(
+        True,
+        reason=stale_reason,
+    ).mark
+
+    class Parent:
+        own_markers = [stale_skip]
+
+    class FixtureInfo:
+        initialnames = ()
+        name2fixturedefs = {}
+
+    class Item:
+        def __init__(self, test_name):
+            self.path = (
+                tmp_path
+                / "tests"
+                / "agents"
+                / "integration"
+                / "test_bright_video_probes.py"
+            )
+            self.name = test_name
+            self.fixturenames: list[str] = []
+            self.own_markers: list = []
+            self.parent = Parent()
+            self._fixtureinfo = FixtureInfo()
+
+        @staticmethod
+        def obj():
+            return None
+
+        def get_closest_marker(self, name):
+            return next(
+                (
+                    marker
+                    for marker in [*self.own_markers, *self.parent.own_markers]
+                    if marker.name == name
+                ),
+                None,
+            )
+
+        def iter_markers_with_node(self, name=None):
+            return [
+                (node, marker)
+                for node in (self, self.parent)
+                for marker in node.own_markers
+                if name is None or marker.name == name
+            ]
+
+        def add_marker(self, marker):
+            self.own_markers.append(marker.mark)
+
+    monkeypatch.setattr(root_conftest, "_whisper_local_installed", lambda: True)
+    items = [Item("test_recall"), Item("test_baseline")]
+
+    root_conftest.pytest_collection_modifyitems(items)
+
+    assert Parent.own_markers == []
+    for item in items:
+        assert item.get_closest_marker("skipif") is None
+        assert item.get_closest_marker("requires_lm") is not None
+        assert item._cogniverse_lm_roles == frozenset({"primary"})
+        assert item.fixturenames == ["ensure_host_ollama"]
+
+
+def test_agent_vespa_fixture_injects_exact_inference_url(monkeypatch):
+    import tests.agents.integration.conftest as agents_conftest
+    import tests.utils.vespa_test_helpers as vespa_test_helpers
+    from cogniverse_foundation.config.manager import ConfigManager
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    def config_manager():
+        store = InMemoryConfigStore()
+        store.initialize()
+        return ConfigManager(store=store)
+
+    spawn_calls: list[tuple[str, tuple[str, ...]]] = []
+
+    class Factory:
+        def spawn(self, model, *, extra_args):
+            spawn_calls.append((model, tuple(extra_args)))
+            return "http://127.0.0.1:33901"
+
+    class Adapter:
+        def __init__(self, shared_vespa):
+            self.config_manager = config_manager()
+
+    monkeypatch.setattr(agents_conftest, "_SharedVespaManagerAdapter", Adapter)
+    monkeypatch.setattr(
+        vespa_test_helpers,
+        "deploy_tenant_schema",
+        lambda *args, **kwargs: "video_colpali_smol500_mv_frame_test_tenant",
+    )
+
+    shared_vespa = {
+        "http_port": 34180,
+        "config_port": 34181,
+        "base_url": "http://127.0.0.1:34180",
+        "config_manager": config_manager(),
+    }
+    tomoro_url = agents_conftest.tomoro_inference_url.__wrapped__(Factory())
+    fixture = agents_conftest.vespa_with_schema.__wrapped__(
+        shared_vespa,
+        tomoro_url,
+    )
+    result = next(fixture)
+    try:
+        assert spawn_calls == [
+            (
+                TOMORO,
+                (
+                    "--runner",
+                    "pooling",
+                    "--convert",
+                    "embed",
+                    "--max-model-len",
+                    "4096",
+                ),
+            )
+        ]
+        system_config = result["manager"].config_manager.get_system_config()
+        assert system_config.inference_service_urls == {
+            "vllm_colpali": "http://127.0.0.1:33901"
+        }
+    finally:
+        fixture.close()
+
+
+def test_agent_backend_fixture_routes_bright_module_to_test_vespa(monkeypatch):
+    import tests.agents.integration.conftest as agents_conftest
+    from cogniverse_agents import orchestrator_agent
+
+    def original_endpoint():
+        return ("http://localhost", 8080, 19071)
+
+    class Module:
+        pass
+
+    class Request:
+        pass
+
+    module = Module()
+    module.__name__ = "tests.agents.integration.test_bright_video_probes"
+    module._live_vespa_endpoint = original_endpoint
+    module.BRIGHT_BASE_SCHEMA = "video_colpali_smol500_mv_frame"
+    module.BRIGHT_TENANT_ID = "bright_probe_test"
+    module.BRIGHT_FULL_SCHEMA = "video_colpali_smol500_mv_frame_bright_probe_test"
+    request = Request()
+    request.module = module
+
+    monkeypatch.delenv("BACKEND_URL", raising=False)
+    monkeypatch.delenv("BACKEND_PORT", raising=False)
+    monkeypatch.setattr(
+        orchestrator_agent,
+        "_ITER_RETRIEVAL_WALL_CLOCK_MS",
+        30_000,
+    )
+    shared_vespa = {
+        "base_url": "http://127.0.0.1:34180",
+        "http_port": 34180,
+        "config_port": 34181,
+    }
+
+    fixture = agents_conftest._set_test_backend_env.__wrapped__(
+        shared_vespa,
+        request,
+    )
+    next(fixture)
+    try:
+        assert module._live_vespa_endpoint() == (
+            "http://127.0.0.1",
+            34180,
+            34181,
+        )
+        assert os.environ["BACKEND_URL"] == "http://127.0.0.1"
+        assert os.environ["BACKEND_PORT"] == "34180"
+        assert module.BRIGHT_FULL_SCHEMA == (
+            "video_colpali_smol500_mv_frame_bright_probe_test_bright_probe_test"
+        )
+        assert orchestrator_agent._ITER_RETRIEVAL_WALL_CLOCK_MS == 600_000
+    finally:
+        fixture.close()
+
+    assert module._live_vespa_endpoint is original_endpoint
+    assert (
+        module.BRIGHT_FULL_SCHEMA == "video_colpali_smol500_mv_frame_bright_probe_test"
+    )
+    assert orchestrator_agent._ITER_RETRIEVAL_WALL_CLOCK_MS == 30_000
+    assert "BACKEND_URL" not in os.environ
+    assert "BACKEND_PORT" not in os.environ
 
 
 def test_root_lm_fixture_uses_exact_gemma_provisioner(monkeypatch, tmp_path):

@@ -640,7 +640,11 @@ def _bootstrap_tenant_and_schemas() -> None:
         "active_video_profile", "video_colpali_smol500_mv_frame"
     )
     all_profiles = config.get("backend", {}).get("profiles", {})
-    profile_def = all_profiles.get(active_profile, {})
+    profile_names = (
+        active_profile,
+        "document_text_semantic",
+        "document_visual_colpali",
+    )
 
     # Step 1: Create tenant (409 = already exists)
     try:
@@ -657,10 +661,14 @@ def _bootstrap_tenant_and_schemas() -> None:
     # Delete-then-create so config.json edits take effect: POST rejects
     # re-creation and PUT can't change embedding_model. delete_schema=false
     # avoids redeploying the Vespa schema on every session.
-    if profile_def:
+    for profile_name in profile_names:
+        profile_def = all_profiles.get(profile_name, {})
+        if not profile_def:
+            continue
+
         try:
             httpx.delete(
-                f"{RUNTIME}/admin/profiles/{active_profile}",
+                f"{RUNTIME}/admin/profiles/{profile_name}",
                 params={"tenant_id": TENANT_ID, "delete_schema": "false"},
                 timeout=30,
             )
@@ -669,11 +677,11 @@ def _bootstrap_tenant_and_schemas() -> None:
 
         try:
             payload = {
-                "profile_name": active_profile,
+                "profile_name": profile_name,
                 "tenant_id": TENANT_ID,
                 "type": profile_def.get("type", "video"),
                 "description": profile_def.get("description", ""),
-                "schema_name": profile_def.get("schema_name", active_profile),
+                "schema_name": profile_def.get("schema_name", profile_name),
                 "embedding_model": profile_def.get("embedding_model", ""),
                 "pipeline_config": profile_def.get("pipeline_config", {}),
                 "strategies": profile_def.get("strategies", {}),

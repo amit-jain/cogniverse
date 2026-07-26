@@ -35,7 +35,6 @@ import requests
 from cogniverse_agents.graph.graph_manager import GraphManager
 from cogniverse_agents.graph.graph_schema import Mention
 from tests.fixtures.llm import (
-    is_test_lm_available,
     resolve_api_key,
     resolve_base_url,
     resolve_prefixed_model,
@@ -45,7 +44,7 @@ from tests.utils.vespa_test_helpers import schema_full_name
 
 
 @pytest.fixture(scope="function", autouse=True)
-def _configure_dspy_lm():
+def _configure_dspy_lm(ensure_host_ollama):
     """Per-test DSPy LM configuration.
 
     The session-wide ``cleanup_dspy_state`` autouse fixture (see
@@ -56,10 +55,6 @@ def _configure_dspy_lm():
     ``ClaimExtractor`` invocations inside ``_extract_graph_per_segment``
     have a real LM to talk to.
     """
-    if not is_test_lm_available():
-        yield None
-        return
-
     import dspy
 
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
@@ -71,8 +66,10 @@ def _configure_dspy_lm():
         api_key=resolve_api_key(),
         temperature=0.0,
         max_tokens=800,
+        seed=0,
     )
     lm = create_dspy_lm(endpoint)
+    lm.cache = False
     dspy.configure(lm=lm)
     try:
         yield lm
@@ -116,24 +113,7 @@ def assert_golden(actual: Any, name: str) -> None:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Skip the whole file when the test LM is unreachable                         #
-# (per project convention — no per-test skips for infra deps).                #
-# --------------------------------------------------------------------------- #
-
-pytestmark = [pytest.mark.integration]
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _require_test_lm():
-    """Runtime LM gate. An import-time skipif latches the PRE-session-fixture
-    endpoint state — ``ensure_host_ollama`` provisions the LM only at session
-    setup, so the gate must probe after fixtures run, not at collection."""
-    if not is_test_lm_available():
-        pytest.skip(
-            "Test LM endpoint not reachable at "
-            f"{resolve_base_url()} — ClaimExtractor needs a live LM"
-        )
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 
 
 # --------------------------------------------------------------------------- #
@@ -147,7 +127,10 @@ TENANT_ID = "test"
 # yielding "knowledge_graph_test_test".
 GRAPH_SCHEMA = schema_full_name("knowledge_graph", TENANT_ID)
 
-SEG_3_TEXT = "Marie Curie discovered radium in 1898 at the Sorbonne."
+SEG_3_TEXT = (
+    "Marie Curie discovered radium. "
+    "Marie Curie discovered it in 1898 while working at the Sorbonne."
+)
 SEG_3_START = 12.0
 SEG_3_END = 18.5
 
@@ -437,14 +420,14 @@ def _edges_from_source(
 
 
 def _strip_volatile(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop fields that aren't stable across runs (timestamps,
-    embedding payloads). Keeps the assertion focused on the
-    semantic content the test claims to lock."""
+    """Drop timestamps, embeddings, and Vespa response metadata."""
     drop = {
         "created_at",
-        "updated_at",
+        "documentid",
         "embedding",
         "embedding_binary",
+        "sddocname",
+        "updated_at",
     }
     return {k: v for k, v in d.items() if k not in drop}
 

@@ -39,8 +39,38 @@ from cogniverse_agents.orchestrator_agent import (
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
+from tests.fixtures.llm import (
+    resolve_api_key,
+    resolve_base_url,
+    resolve_prefixed_model,
+)
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def dspy_lm(ensure_host_ollama):
+    """Pin the golden-producing gate calls to reproducible sampling."""
+    import dspy
+
+    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    endpoint = LLMEndpointConfig(
+        model=resolve_prefixed_model(),
+        api_base=resolve_base_url(),
+        api_key=resolve_api_key(),
+        temperature=0.0,
+        max_tokens=800,
+        seed=0,
+    )
+    lm = create_dspy_lm(endpoint)
+    lm.cache = False
+    dspy.configure(lm=lm)
+    try:
+        yield lm
+    finally:
+        dspy.configure(lm=None)
 
 
 # ---------------------------------------------------------------------------
@@ -60,46 +90,6 @@ def assert_golden_json(actual, name: str) -> None:
         return
     expected = path.read_text().rstrip("\n")
     assert actual_json == expected, f"Golden mismatch for {name}"
-
-
-def assert_golden_gate(actual, name: str) -> None:
-    """Golden assertion for a sufficiency-gate output: ``sufficient`` and
-    ``missing_aspects`` are byte-locked; ``confidence`` is an LM-sampled
-    float compared as a tight band; the free-prose ``rationale`` re-words
-    across identical runs at temperature 0.1, so the contract is that it
-    GROUNDS the verdict — quoting the evidence fact — not its byte stream."""
-    path = GOLDEN_DIR / name
-    actual_json = json.dumps(actual, indent=2, sort_keys=True, default=str)
-    if RECORD_GOLDEN:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(actual_json + "\n")
-        return
-    expected = json.loads(path.read_text())
-    got = json.loads(actual_json)
-
-    exp_conf = float(expected.pop("confidence"))
-    got_conf = float(got.pop("confidence"))
-    assert abs(got_conf - exp_conf) <= 0.05, (
-        f"{name}: confidence {got_conf} vs {exp_conf} (band 0.05)"
-    )
-
-    expected.pop("rationale")
-    rationale = got.pop("rationale")
-    assert 50 <= len(rationale) <= 1000, (
-        f"{name}: rationale length {len(rationale)} outside bounds: {rationale[:200]!r}"
-    )
-    assert "Marie Curie discovered radium" in rationale, (
-        f"{name}: rationale never quotes the evidence fact:\n{rationale}"
-    )
-    assert "1898" in rationale, (
-        f"{name}: rationale never cites the year the question asks for:\n{rationale}"
-    )
-
-    assert got == expected, (
-        f"Golden mismatch for {name} (structural fields).\n"
-        f"--- expected ---\n{json.dumps(expected, indent=2)}\n"
-        f"--- actual ---\n{json.dumps(got, indent=2)}"
-    )
 
 
 def assert_golden_text(actual: str, name: str) -> None:
@@ -454,7 +444,7 @@ async def test_gate2_output_locked_against_golden(captured_spans, dspy_lm):
     peer = _IterRetrievalPeer()
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
     loop_result, _ = await _run_loop(orchestrator)
-    assert_golden_gate(loop_result.final_gate_output, "iter_loop_gate2.json")
+    assert_golden_json(loop_result.final_gate_output, "iter_loop_gate2.json")
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +614,9 @@ async def test_wall_clock_cap_exits_promptly(captured_spans, dspy_lm, monkeypatc
     peer = _IterRetrievalPeer()
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
 
+    async def _fixed_reformulation(query, missing_aspects):
+        return query, ""
+
     async def _force_insufficient_gate(
         *, original_query, accumulated_evidence, iteration_idx
     ):
@@ -636,6 +629,7 @@ async def test_wall_clock_cap_exits_promptly(captured_spans, dspy_lm, monkeypatc
             "rationale": "forced-insufficient for wall-clock test",
         }
 
+    monkeypatch.setattr(orchestrator, "_reformulate_query", _fixed_reformulation)
     orchestrator._run_sufficiency_gate = _force_insufficient_gate  # type: ignore[method-assign]
 
     started = time.monotonic()
