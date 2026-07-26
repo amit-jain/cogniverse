@@ -24,6 +24,7 @@ from tests.e2e.conftest import (
 )
 
 PROFILE = "video_colpali_smol500_mv_frame"
+SAMPLE_VIDEO_ID = "v_-nl4G-00PtA"
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +225,62 @@ class TestGatewaySimpleRouting:
         assert gw.get("complexity") == "simple", (
             f"'cooking videos' with score 0.446 should be simple, got: {gw.get('complexity')!r}"
         )
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+class TestGatewaySeededSearchContract:
+    def test_seeded_video_identity_order_and_competing_route(self):
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            video_response = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": "find the video of a man washing dishes",
+                    "context": {"tenant_id": TENANT_ID},
+                    "top_k": 5,
+                },
+            )
+            document_response = client.post(
+                "/agents/gateway_agent/process",
+                json={
+                    "agent_name": "gateway_agent",
+                    "query": "find PDF documents about washing dishes",
+                    "context": {"tenant_id": TENANT_ID},
+                    "top_k": 5,
+                },
+            )
+
+        assert video_response.status_code == 200
+        video_data = video_response.json()
+        assert video_data["status"] == "success"
+        assert video_data["gateway"]["complexity"] == "simple"
+        assert video_data["gateway"]["modality"] == "video"
+        assert video_data["gateway"]["routed_to"] == "search_agent"
+
+        downstream = video_data["downstream_result"]
+        assert downstream["status"] == "success"
+        assert downstream["profile"] == PROFILE
+        assert downstream["results_count"] == len(downstream["results"])
+        video_ids = [result["metadata"]["video_id"] for result in downstream["results"]]
+        assert video_ids
+        assert set(video_ids) == {SAMPLE_VIDEO_ID}
+        scores = [result["score"] for result in downstream["results"]]
+        assert scores == sorted(scores, reverse=True)
+
+        assert document_response.status_code == 200
+        document_data = document_response.json()
+        assert document_data["status"] == "success"
+        assert document_data["gateway"]["complexity"] == "simple"
+        assert document_data["gateway"]["modality"] == "document"
+        assert document_data["gateway"]["routed_to"] == "document_agent"
+        document_results = document_data.get("downstream_result", {}).get(
+            "results",
+            [],
+        )
+        assert SAMPLE_VIDEO_ID not in {
+            result.get("metadata", {}).get("video_id") for result in document_results
+        }
 
 
 # ---------------------------------------------------------------------------
