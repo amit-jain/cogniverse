@@ -320,7 +320,10 @@ class ContradictionReconciliationAgent(
             # be recorded as "missing", which would let a total outage no-op the
             # reconciliation as if every conflicting memory had been deleted. A
             # genuinely absent member returns a non-dict and is skipped below.
-            memory = self.memory_manager.memory.get(mid)
+            memory = await asyncio.to_thread(
+                self.memory_manager.memory.get,
+                mid,
+            )
             if isinstance(memory, dict):
                 members.append(memory)
             elif isinstance(memory, list) and memory and isinstance(memory[0], dict):
