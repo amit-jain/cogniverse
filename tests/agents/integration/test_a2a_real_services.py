@@ -29,6 +29,7 @@ import pytest
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.span_contract import read_span_io
 
 from .conftest import skip_if_no_lm
 
@@ -492,34 +493,9 @@ class TestTelemetrySpansInPhoenix:
             "GatewayAgent._emit_gateway_span may not be firing."
         )
 
-        # Phoenix DataFrame stores span attributes as dotted column names:
-        # "attributes.gateway" contains {"query": "...", "complexity": "...", ...}
-        gateway_attrs = span.get("attributes.gateway") if hasattr(span, "get") else None
-        if gateway_attrs is None:
-            # Try index-based access for pandas Series
-            try:
-                gateway_attrs = span["attributes.gateway"]
-            except (KeyError, TypeError):
-                gateway_attrs = None
-
-        assert gateway_attrs is not None, (
-            f"Span should have 'attributes.gateway' column. "
-            f"Available columns: {list(span.index) if hasattr(span, 'index') else 'unknown'}"
-        )
-
-        # gateway_attrs is a dict with query, complexity, modality, etc.
-        if isinstance(gateway_attrs, dict):
-            gateway_query = gateway_attrs.get("query", "")
-        else:
-            gateway_query = str(gateway_attrs)
-
-        assert (
-            "robotics" in gateway_query.lower()
-            or "engineering" in gateway_query.lower()
-        ), (
-            f"Span gateway.query should contain 'robotics' or 'engineering', "
-            f"got: {gateway_query!r}"
-        )
+        span_io = read_span_io(span)
+        assert span_io["operation"] == "gateway"
+        assert span_io["input"] == test_query
 
 
 def _query_phoenix_for_span(

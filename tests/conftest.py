@@ -184,6 +184,54 @@ def _whisper_local_installed() -> bool:
     )
 
 
+_STALE_LM_SKIP_REASON = "Configured LM endpoint not reachable"
+_BRIGHT_STACK_SKIP_PREFIXES = (
+    "bright_video_probes.csv missing at ",
+    "cannot import is_llm_available helper:",
+    "OrchestratorAgent import failed:",
+    "Live Vespa at ",
+)
+_UNPROVISIONED_TEACHER_MODEL = "openai/__teacher_role_not_provisioned__"
+
+
+def _mark_stale_stack_for_runtime(item) -> list[tuple[object, object]]:
+    """Mark stale import-time skips for replacement after all items are scanned."""
+    iter_markers = getattr(item, "iter_markers_with_node", None)
+    if iter_markers is None:
+        return []
+    matched = []
+    for node, marker in list(iter_markers(name="skipif")):
+        reason = marker.kwargs.get("reason", "")
+        is_bright_stack_skip = str(getattr(item, "path", "")).endswith(
+            "test_bright_video_probes.py"
+        ) and reason.startswith(_BRIGHT_STACK_SKIP_PREFIXES)
+        is_stale_stack_skip = reason == _STALE_LM_SKIP_REASON or is_bright_stack_skip
+        if not is_stale_stack_skip or not marker.args or marker.args[0] is not True:
+            continue
+        item.add_marker(pytest.mark.requires_lm)
+        matched.append((node, marker))
+    return matched
+
+
+def _requests_teacher_lm(item) -> bool:
+    """Return whether a test or fixture closure reads a teacher LM explicitly."""
+    callables = [getattr(item, "obj", None)]
+    fixture_defs = getattr(
+        getattr(item, "_fixtureinfo", None),
+        "name2fixturedefs",
+        {},
+    )
+    for definitions in fixture_defs.values():
+        callables.extend(
+            getattr(fixture_def, "func", None) for fixture_def in (definitions or ())
+        )
+    return "teacher_lm" in item.fixturenames or any(
+        "teacher_lm" in getattr(getattr(callable_obj, "__code__", None), "co_names", ())
+        for callable_obj in callables
+        if callable_obj is not None
+    )
+
+
 def pytest_collection_modifyitems(items):
     """Location-derived markers, selective LM setup, and whisper auto-skip.
 
@@ -198,20 +246,33 @@ def pytest_collection_modifyitems(items):
 
     apply_location_markers(items)
 
+    stale_stack_markers = []
+    for item in items:
+        stale_stack_markers.extend(_mark_stale_stack_for_runtime(item))
+
     for item in items:
         roles: set[str] = set()
-        explicitly_requested = "ensure_host_ollama" in item.fixturenames
+        fixture_requested = "ensure_host_ollama" in item.fixturenames
+        directly_requested = "ensure_host_ollama" in item._fixtureinfo.initialnames
+        if fixture_requested:
+            roles.add("primary")
         if item.get_closest_marker("requires_lm") is not None:
             roles.add("primary")
         if item.get_closest_marker("requires_teacher_model") is not None:
             roles.update(("primary", "teacher"))
-        if explicitly_requested:
+        if _requests_teacher_lm(item):
+            roles.update(("primary", "teacher"))
+        if directly_requested:
             roles.update(("primary", "teacher"))
         if not roles:
             continue
         item._cogniverse_lm_roles = frozenset(roles)
-        if not explicitly_requested:
-            item.fixturenames.append("ensure_host_ollama")
+        if not fixture_requested:
+            item.fixturenames.insert(0, "ensure_host_ollama")
+
+    for node, marker in stale_stack_markers:
+        if marker in node.own_markers:
+            node.own_markers.remove(marker)
 
     # Auto-skip ``requires_whisper`` tests when the whisper-local extra isn't
     # installed, mirroring the runtime image's opt-in boundary.
@@ -820,6 +881,36 @@ def _install_ollama_to_home() -> Path:
     return bin_path
 
 
+def _complete_primary_only_lm_config(config_path: Path) -> None:
+    """Keep the required LMConfig shape while provisioning only the primary."""
+    try:
+        config = json.loads(config_path.read_text())
+    except (OSError, ValueError) as exc:
+        pytest.fail(
+            f"primary-only LM activation produced unreadable config "
+            f"{config_path}: {exc}",
+            pytrace=False,
+        )
+    llm_config = config.get("llm_config")
+    primary = llm_config.get("primary") if isinstance(llm_config, dict) else None
+    if not isinstance(primary, dict) or not primary:
+        pytest.fail(
+            "primary-only LM activation produced no llm_config.primary",
+            pytrace=False,
+        )
+    teacher = dict(primary)
+    teacher["model"] = _UNPROVISIONED_TEACHER_MODEL
+    llm_config["teacher"] = teacher
+    pending = config_path.with_name(
+        f".{config_path.name}.{threading.get_ident()}.complete.tmp"
+    )
+    try:
+        pending.write_text(json.dumps(config, indent=2))
+        os.replace(pending, config_path)
+    finally:
+        pending.unlink(missing_ok=True)
+
+
 @pytest.fixture(scope="session")
 def ensure_host_ollama(request, cogniverse_test_config):
     """Guarantee only the exact production LM roles selected by tests."""
@@ -856,6 +947,8 @@ def ensure_host_ollama(request, cogniverse_test_config):
         source_config=source_config,
     )
     try:
+        if "teacher" not in required_roles:
+            _complete_primary_only_lm_config(session_config)
         yield
     finally:
         if original_config is None:

@@ -23,7 +23,7 @@ import requests
 
 from cogniverse_agents.wiki.wiki_manager import WikiManager
 from cogniverse_agents.wiki.wiki_schema import WikiPage, generate_slug
-from tests.utils.docker_utils import generate_unique_ports
+from tests.utils.docker_utils import start_docker_container_with_port_retry
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -31,9 +31,7 @@ from tests.utils.docker_utils import generate_unique_ports
 
 TENANT_ID = "test_tenant"
 WIKI_SCHEMA = "wiki_pages_test_tenant"
-CONTAINER_NAME = "vespa-wiki-integration-tests"
-
-_HTTP_PORT, _CONFIG_PORT = generate_unique_ports(__name__)
+CONTAINER_NAME_PREFIX = "vespa-wiki-integration-tests"
 
 
 # ---------------------------------------------------------------------------
@@ -179,45 +177,30 @@ def _deploy_wiki_schema(config_port: int, http_port: int) -> None:
 @pytest.fixture(scope="module")
 def wiki_vespa():
     """Module-scoped real Vespa instance with the wiki_pages schema deployed."""
-    http_port = _HTTP_PORT
-    config_port = _CONFIG_PORT
-
     machine = platform.machine().lower()
     docker_platform = (
         "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
     )
 
-    subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-    subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
-
-    result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            CONTAINER_NAME,
+    container_name, http_port, config_port = start_docker_container_with_port_retry(
+        __name__,
+        name_prefix=CONTAINER_NAME_PREFIX,
+        image="vespaengine/vespa:8.668.5",
+        container_ports=(8080, 19071),
+        extra_run_args=[
             "--label",
             f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{http_port}:8080",
-            "-p",
-            f"{config_port}:19071",
             "--platform",
             docker_platform,
-            "vespaengine/vespa:8.668.5",
         ],
-        capture_output=True,
-        text=True,
+        max_attempts=5,
     )
-    if result.returncode != 0:
-        pytest.fail(f"Failed to start Vespa container: {result.stderr}")
 
     print(f"\nVespa container started on http={http_port}, config={config_port}")
 
     if not _wait_for_config_port(config_port, timeout=120):
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
+        subprocess.run(["docker", "stop", container_name], capture_output=True)
+        subprocess.run(["docker", "rm", container_name], capture_output=True)
         pytest.fail("Vespa config port did not come up within 120 s")
 
     time.sleep(10)  # Additional settle time before schema deployment
@@ -226,24 +209,28 @@ def wiki_vespa():
         _deploy_wiki_schema(config_port, http_port)
         print("Wiki schema deployed successfully")
     except Exception as exc:
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
+        subprocess.run(["docker", "stop", container_name], capture_output=True)
+        subprocess.run(["docker", "rm", container_name], capture_output=True)
         pytest.fail(f"Schema deployment failed: {exc}")
 
     if not _wait_for_data_port(http_port, timeout=120):
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
+        subprocess.run(["docker", "stop", container_name], capture_output=True)
+        subprocess.run(["docker", "rm", container_name], capture_output=True)
         pytest.fail("Vespa data port did not come up within 120 s after deployment")
 
     if not _wait_for_schema_ready(http_port, WIKI_SCHEMA, timeout=120):
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
+        subprocess.run(["docker", "stop", container_name], capture_output=True)
+        subprocess.run(["docker", "rm", container_name], capture_output=True)
         pytest.fail(f"Schema {WIKI_SCHEMA} not ready within 120 s")
 
-    yield {"http_port": http_port, "config_port": config_port}
+    yield {
+        "http_port": http_port,
+        "config_port": config_port,
+        "container_name": container_name,
+    }
 
-    subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-    subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
+    subprocess.run(["docker", "stop", container_name], capture_output=True)
+    subprocess.run(["docker", "rm", container_name], capture_output=True)
 
 
 @pytest.fixture(scope="module")
@@ -297,6 +284,11 @@ def wiki_manager(wiki_vespa):
 
 @pytest.mark.integration
 class TestWikiVespaIntegration:
+    def test_container_is_owned_by_this_pytest_process(self, wiki_vespa):
+        assert wiki_vespa["container_name"].startswith(
+            f"vespa-wiki-integration-tests-{os.getpid()}-"
+        )
+
     def test_save_session_feeds_to_vespa(self, wiki_manager):
         """save_session feeds a session document retrievable via Vespa Document API."""
         manager, port = wiki_manager
@@ -658,8 +650,13 @@ class TestWikiVespaIntegration:
 
         def worker(key, content):
             try:
-                manager._get_or_create_topic(
-                    entity=entity, new_content=content, sources=[f"src_{key}"]
+                # Each call models a separate runtime process. The public
+                # wrapper's in-process topic lock cannot coordinate replicas.
+                manager._upsert_topic(
+                    entity=entity,
+                    new_content=content,
+                    sources=[f"src_{key}"],
+                    doc_id=doc_id,
                 )
             except Exception as exc:  # surfaced by the assert below
                 errors[key] = exc

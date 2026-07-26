@@ -896,9 +896,9 @@ class TestOrchestratorComplexPatterns:
         # Workflow: [0,1] parallel → 2 sequential → [3,4] parallel
         orchestrator_with_real_agents.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
-                agent_sequence="entity_extraction,query_enhancement,profile_selection,search,summarizer",
+                agent_sequence="entity_extraction,query_enhancement,profile_selection,search,entity_extraction",
                 parallel_steps="0,1|3,4",  # First and last parallel
-                reasoning="Parallel extract+enhance, then profile, then parallel search+summarize",
+                reasoning="Parallel extract+enhance, then profile, then parallel search+extract",
             )
         )
 
