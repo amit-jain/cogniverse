@@ -823,12 +823,12 @@ stored in `output.value` at write time.
 | `annotation.confidence` | float | Annotator's confidence (1.0 for human annotations) |
 | `annotation.reasoning` | string | Why this label was chosen |
 | `annotation.annotator` | string | `"llm"`, or the human annotator id |
-| `annotation.timestamp` | string (ISO) | When the annotation was written |
+| `annotation.timestamp` | string (ISO, UTC offset) | When the annotation was written |
 | `annotation.human_reviewed` | bool | Whether a human (not just the LLM) produced this annotation |
 | `annotation.requires_review` | bool | Whether the LLM flagged this for human verification |
 | `annotation.suggested_agent` | string | If `wrong_routing`: which agent should have been used |
 | `annotation.approved_by` | string | Set by `approve_llm_annotation` when a human approves an LLM label |
-| `annotation.approval_timestamp` | string (ISO) | When the LLM label was approved |
+| `annotation.approval_timestamp` | string (ISO, UTC offset) | When the LLM label was approved |
 
 ---
 

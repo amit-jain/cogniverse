@@ -19,6 +19,10 @@ import pandas as pd
 import pytest
 
 from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
+from cogniverse_agents.routing.llm_auto_annotator import (
+    AnnotationLabel,
+    AutoAnnotation,
+)
 from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotationStorage,
 )
@@ -45,6 +49,53 @@ async def test_statistics_window_is_utc_aware_30_days():
     assert captured["end"].tzinfo == timezone.utc
     assert (captured["end"] - captured["start"]).days == 30
     assert captured["only_human_reviewed"] is False
+
+
+@pytest.mark.asyncio
+async def test_written_annotation_timestamps_are_utc_aware():
+    storage = object.__new__(RoutingAnnotationStorage)
+    writes = []
+
+    async def capture(span_id, attributes):
+        writes.append((span_id, attributes))
+        return True
+
+    storage._update_span_attributes = capture
+
+    await storage.store_llm_annotation(
+        "llm-span",
+        AutoAnnotation(
+            span_id="llm-span",
+            label=AnnotationLabel.CORRECT,
+            confidence=0.9,
+            reasoning="the selected agent matches the request",
+            suggested_correct_agent=None,
+            requires_human_review=False,
+        ),
+    )
+    await storage.store_human_annotation(
+        "human-span",
+        label=AnnotationLabel.WRONG,
+        reasoning="the request required document search",
+        annotator_id="reviewer-7",
+    )
+    await storage.approve_llm_annotation("approval-span", annotator_id="reviewer-8")
+
+    timestamp_fields = [
+        writes[0][1]["annotation.timestamp"],
+        writes[1][1]["annotation.timestamp"],
+        writes[2][1]["annotation.approval_timestamp"],
+    ]
+    assert [span_id for span_id, _ in writes] == [
+        "llm-span",
+        "human-span",
+        "approval-span",
+    ]
+    assert all(value.endswith("+00:00") for value in timestamp_fields)
+    assert all(
+        datetime.fromisoformat(value).tzinfo == timezone.utc
+        for value in timestamp_fields
+    )
 
 
 class TestBackendFailurePropagates:
