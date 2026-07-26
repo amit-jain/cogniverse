@@ -310,9 +310,7 @@ class TestPromotionStorageFailure:
 
 
 class TestBackendFailureVisibility:
-    """A backend read failure must surface at WARNING, not be silently
-    swallowed at DEBUG — otherwise a Mem0/Vespa outage is invisible at the
-    default INFO level and the agent answers with missing memory context."""
+    """Backend read failures must remain distinct from an empty data source."""
 
     def _service(self, factory):
         from unittest.mock import MagicMock
@@ -321,26 +319,15 @@ class TestBackendFailureVisibility:
 
         return FederationService(memory_manager_factory=factory, registry=MagicMock())
 
-    def test_factory_failure_logs_warning_and_returns_empty(self, caplog):
-        import logging
-
+    def test_factory_failure_propagates(self):
         def boom(tenant_id):
             raise ConnectionError("mem0 down")
 
         svc = self._service(boom)
-        with caplog.at_level(
-            logging.WARNING, logger="cogniverse_core.memory.federation"
-        ):
-            result = svc._fetch("acme:acme", "search")
+        with pytest.raises(ConnectionError, match="mem0 down"):
+            svc._fetch("acme:acme", "search")
 
-        assert result == []
-        assert any(
-            r.levelno >= logging.WARNING and "factory" in r.getMessage()
-            for r in caplog.records
-        ), "backend factory failure must log at WARNING"
-
-    def test_get_all_failure_logs_warning_and_returns_empty(self, caplog):
-        import logging
+    def test_get_all_failure_propagates(self):
         from unittest.mock import MagicMock
 
         mm = MagicMock()
@@ -348,13 +335,5 @@ class TestBackendFailureVisibility:
         mm.get_all_memories.side_effect = TimeoutError("vespa timeout")
 
         svc = self._service(lambda tenant_id: mm)
-        with caplog.at_level(
-            logging.WARNING, logger="cogniverse_core.memory.federation"
-        ):
-            result = svc._fetch("acme:acme", "search")
-
-        assert result == []
-        assert any(
-            r.levelno >= logging.WARNING and "get_all_memories" in r.getMessage()
-            for r in caplog.records
-        )
+        with pytest.raises(TimeoutError, match="vespa timeout"):
+            svc._fetch("acme:acme", "search")

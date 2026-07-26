@@ -918,7 +918,10 @@ audit.
 
 ACLs are enforced at query time: `federated_get_all` only ever reads
 from the caller's tenant + that tenant's org trunk, so cross-org leakage
-is structurally prevented.
+is structurally prevented. A missing memory manager represents an empty
+data source, but manager construction and read errors propagate to the
+caller; an unavailable backend is never reported as an empty federated
+result.
 
 ### Contradiction detection + reconciliation
 
