@@ -637,7 +637,9 @@ and `AnnotationStorage` — plus two scheduled cycles in
   `AnnotationStorage.fetch_project_spans` and passes the shared frame into every
   per-agent-type `query_annotated_spans(spans_df=...)` call instead of re-pulling the
   whole project per agent type; `run_annotation_feedback_cycle` does the same for its
-  per-agent human-reviewed-annotation counts.
+  per-agent human-reviewed-annotation counts. Enqueue timestamps must include an
+  ISO-8601 timezone offset; the queue normalizes them to UTC and records assignment,
+  deadline, and completion timestamps in UTC.
 - Reviewers work the queue over REST (`assign` / `complete`) or the dashboard;
   completion persists the label durably **before** the in-memory state flips, so a
   telemetry outage leaves the item open for retry instead of losing the label.
