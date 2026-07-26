@@ -5,6 +5,7 @@ Extracts orchestration workflow execution data from telemetry spans
 and feeds them to WorkflowIntelligence for continuous learning.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -66,6 +67,7 @@ class OrchestrationEvaluator:
         self._processed_span_ids = set()
         # Resume point for incremental evaluation; None until the first run.
         self._last_evaluation_time = None
+        self._evaluation_lock = asyncio.Lock()
 
         logger.info(
             f"🔧 Initialized OrchestrationEvaluator for tenant '{self.tenant_id}' "
@@ -73,6 +75,16 @@ class OrchestrationEvaluator:
         )
 
     async def evaluate_orchestration_spans(
+        self, lookback_hours: int = 1, batch_size: int = 50
+    ) -> Dict[str, Any]:
+        """Evaluate one incremental span window at a time."""
+        async with self._evaluation_lock:
+            return await self._evaluate_orchestration_spans(
+                lookback_hours=lookback_hours,
+                batch_size=batch_size,
+            )
+
+    async def _evaluate_orchestration_spans(
         self, lookback_hours: int = 1, batch_size: int = 50
     ) -> Dict[str, Any]:
         """
