@@ -3772,6 +3772,7 @@ The agent auto-registers a `knowledge_summary` schema (permanent,
 | Both `subject_keys` and `kinds` empty | Pulls every memory in the agent_name namespace (cap by `max_memories`). |
 | `since` or `until` set + memory missing `written_at` | Memory excluded. |
 | RLM `enabled` AND context > threshold | RLM summariser fires; `used_rlm=True`. |
+| Org-trunk promotion | Storage write runs outside the event-loop thread; a write failure propagates and no successful promotion is reported. |
 
 Capability strings: `knowledge_summarization`, `audit`,
 `federation_promoter`. Default `port=8026`.

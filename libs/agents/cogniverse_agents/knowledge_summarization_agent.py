@@ -395,7 +395,8 @@ class KnowledgeSummarizationAgent(
         # the polluted summary.
         if input.promote and synthesis_ok:
             try:
-                promoted_id = self._promote_summary(
+                promoted_id = await asyncio.to_thread(
+                    self._promote_summary,
                     tenant_id=tenant_id,
                     title=input.title,
                     summary=summary_text,
