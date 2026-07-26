@@ -4,7 +4,6 @@ Pytest configuration and fixtures for evaluation framework tests.
 
 import json
 import logging
-import os
 
 # Add project root to path
 import sys
@@ -14,10 +13,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
+import numpy as np
 import pandas as pd
 import pytest
 import requests
-import torch
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -29,14 +28,7 @@ eval_logger = logging.getLogger(__name__)
 
 # Path to schema JSON files
 EVAL_SCHEMAS_DIR = Path(__file__).resolve().parents[2] / "configs" / "schemas"
-# The heavy eval suites (test_end_to_end, seeded-document fixtures) encode
-# in-process with this model. The production default is remote-only (vLLM
-# sidecar), so those suites gate at runtime via eval_colpali_model —
-# override with a locally loadable model to run them on a dev host, e.g.
-# EVAL_COLPALI_MODEL=vidore/colSmol-500M.
-EVAL_COLPALI_MODEL = os.environ.get(
-    "EVAL_COLPALI_MODEL", "TomoroAI/tomoro-colqwen3-embed-4b"
-)
+EVAL_COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 # Schema name MUST match what ``VespaSearchBackend`` constructs from the
 # tenant_id used in tests. The runtime builds
 # ``f"{base_schema_name}_{tenant_id.replace(':', '_')}"`` (see
@@ -511,39 +503,48 @@ def eval_vespa_instance(shared_vespa):  # noqa: F811
 
 
 @pytest.fixture(scope="module")
-def eval_colpali_model():
-    """Load ColPali model once for evaluation integration tests.
-
-    Declares its dependency instead of erroring: the suite needs an
-    IN-PROCESS encoder, and the default eval model is remote-only (vLLM
-    sidecar). Skip with the override instructions rather than failing every
-    consumer with a load error.
-    """
-    from cogniverse_core.common.models import get_or_load_model, is_remote_only_model
+def eval_colpali_url(vllm_sidecar):
+    """Serve the production Tomoro embedding model through a real vLLM sidecar."""
     from cogniverse_core.query.encoders import QueryEncoderFactory
 
-    if is_remote_only_model(EVAL_COLPALI_MODEL):
-        pytest.skip(
-            f"{EVAL_COLPALI_MODEL} is remote-only (vLLM embedding sidecar); "
-            "these suites encode in-process — set EVAL_COLPALI_MODEL to a "
-            "locally loadable model (e.g. vidore/colSmol-500M) to run them"
-        )
-
-    config = {
-        "colpali_model": EVAL_COLPALI_MODEL,
-        "embedding_type": "multi_vector",
-        "model_loader": "colpali",
-    }
-    model, processor = get_or_load_model(EVAL_COLPALI_MODEL, config, eval_logger)
-    device = next(model.parameters()).device
-
-    yield model, processor, device
-
+    url = vllm_sidecar.spawn(
+        model=EVAL_COLPALI_MODEL,
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--max-model-len",
+            "4096",
+            "--gpu-memory-utilization",
+            "0.10",
+        ],
+    )
+    QueryEncoderFactory._encoder_cache.clear()
+    yield url
     QueryEncoderFactory._encoder_cache.clear()
 
 
 @pytest.fixture(scope="module")
-def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
+def eval_colpali_client(eval_colpali_url):
+    """Load the production remote ColPali client against the test sidecar."""
+    from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
+
+    loader = RemoteColPaliLoader(
+        model_name=EVAL_COLPALI_MODEL,
+        config={"remote_inference_url": eval_colpali_url},
+        logger=eval_logger,
+    )
+    client, processor = loader.load_model()
+    assert client is processor, (
+        "RemoteColPaliLoader must expose the same remote client for model and "
+        "processor calls"
+    )
+    return client
+
+
+@pytest.fixture(scope="module")
+def eval_seeded_documents(eval_vespa_instance, eval_colpali_client):
     """Feed real ColPali-embedded documents into Vespa for evaluation tests.
 
     Documents are mapped through the production ingestion path
@@ -552,16 +553,14 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
     unified MediaLocator path. Using the prod mapping means eval search runs
     against the same document shape live ingestion writes.
     """
-    model, processor, device = eval_colpali_model
     test_videos_dir = (
         Path(__file__).resolve().parents[1] / "system" / "resources" / "videos"
     )
     available_videos = sorted(test_videos_dir.glob("*.mp4"))
-    if not available_videos:
-        pytest.skip(
-            f"No test videos under {test_videos_dir}; eval seed fixture needs at "
-            "least one video so source_url resolves to real bytes for evaluators."
-        )
+    assert available_videos, (
+        f"Evaluation integration tests require at least one video under "
+        f"{test_videos_dir}"
+    )
 
     test_docs = [
         {
@@ -601,10 +600,22 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
 
     for i, doc_info in enumerate(test_docs):
         img = Image.new("RGB", (224, 224), color=doc_info["color"])
-        batch_inputs = processor.process_images([img]).to(device)
-        with torch.no_grad():
-            doc_embeddings = model(**batch_inputs)
-        embeddings_np = doc_embeddings.squeeze(0).cpu().float().numpy()
+        result = eval_colpali_client.process_images(
+            [img], model_name=EVAL_COLPALI_MODEL
+        )
+        embeddings_np = np.asarray(result["embeddings"], dtype=np.float32)
+        assert embeddings_np.ndim == 2, (
+            "Tomoro document embeddings must be a two-dimensional token matrix; "
+            f"got {embeddings_np.shape}"
+        )
+        assert embeddings_np.shape[1] == 320, (
+            "Tomoro document embeddings must match the deployed 320-dimensional "
+            f"schema; got {embeddings_np.shape[1]}"
+        )
+        assert embeddings_np.shape[0] > 0, (
+            "Tomoro document embeddings must include at least one patch token"
+        )
+        assert embeddings_np.dtype == np.float32
 
         # Cycle through the available test videos so each seeded doc has a
         # real, locator-resolvable source_url.
@@ -658,7 +669,12 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
 
 
 @pytest.fixture(scope="module")
-def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_container):
+def eval_search_client(
+    eval_vespa_instance,
+    eval_seeded_documents,
+    eval_colpali_url,
+    phoenix_container,
+):
     """FastAPI TestClient with real search router wired to test Vespa.
 
     Provides a TestClient that can execute real searches using ColPali encoder
@@ -667,12 +683,14 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    from cogniverse_core.query.encoders import QueryEncoderFactory
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.unified_config import (
         BackendProfileConfig,
         SystemConfig,
     )
+    from cogniverse_foundation.config.utils import get_config
     from cogniverse_runtime.routers import search
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
@@ -685,6 +703,10 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
         SystemConfig(
             backend_url="http://localhost",
             backend_port=eval_vespa_instance["http_port"],
+            inference_service_urls={
+                "tomoro_embedding": eval_colpali_url,
+                "vllm_colpali": eval_colpali_url,
+            },
         )
     )
     # The evaluation e2e tests issue requests with tenant_id="test:unit".
@@ -697,9 +719,31 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
             type="video",
             schema_name="video_colpali_smol500_mv_frame",
             embedding_model=EVAL_COLPALI_MODEL,
+            model_loader="colpali",
+            extra_config={
+                "inference_services": {"embedding": "tomoro_embedding"},
+            },
         ),
         tenant_id="test:unit",
     )
+
+    query_encoder = QueryEncoderFactory.create_encoder(
+        "test_colpali",
+        config=get_config(tenant_id="test:unit", config_manager=cm),
+    )
+    query_embeddings = query_encoder.encode("sunset landscape mountains")
+    assert query_embeddings.ndim == 2, (
+        "Tomoro query embeddings must be a two-dimensional token matrix; "
+        f"got {query_embeddings.shape}"
+    )
+    assert query_embeddings.shape[1] == 320, (
+        "Tomoro query embeddings must match the deployed 320-dimensional schema; "
+        f"got {query_embeddings.shape[1]}"
+    )
+    assert query_embeddings.shape[0] > 0, (
+        "Tomoro query embeddings must include at least one query token"
+    )
+    assert query_embeddings.dtype == np.float32
 
     schema_loader = FilesystemSchemaLoader(EVAL_SCHEMAS_DIR)
 
