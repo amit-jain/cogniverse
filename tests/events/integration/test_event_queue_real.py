@@ -109,9 +109,10 @@ async def test_cancel_stops_subscriber():
     # Start consumer in background
     consumer_task = asyncio.create_task(consumer())
 
-    # Enqueue one event then cancel the queue
-    await queue.enqueue(_make_status_event("task-cancel-001", "test", 0))
-    await asyncio.sleep(0.05)  # Allow consumer to receive the first event
+    # Enqueue one event then close immediately. The subscriber must drain
+    # the buffered event before terminating.
+    sent = _make_status_event("task-cancel-001", "test", 0)
+    await queue.enqueue(sent)
     await queue.close()
 
     # Wait for consumer to finish (max 2s)
@@ -121,8 +122,11 @@ async def test_cancel_stops_subscriber():
         consumer_task.cancel()
         pytest.fail("Consumer did not stop after queue.close() within 2 seconds")
 
-    assert len(received) >= 1, "Consumer must have received at least the first event"
-    assert queue.is_closed, "Queue must be marked closed"
+    await consumer_task
+    assert received == [sent]
+    assert queue.get_stats()["subscriber_count"] == 0
+    assert queue.get_stats()["event_count"] == 1
+    assert queue.is_closed
 
 
 @pytest.mark.asyncio

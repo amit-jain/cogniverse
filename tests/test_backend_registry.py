@@ -86,6 +86,7 @@ class MockSearchBackend(SearchBackend):
         self.config_manager = config_manager
         self.schema_loader = schema_loader
         self.backend_config = backend_config
+        self.profiles: Dict[str, Dict[str, Any]] = {}
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self.config = config
@@ -121,6 +122,12 @@ class MockSearchBackend(SearchBackend):
     def health_check(self) -> bool:
         return True
 
+    def add_profile(self, profile_name: str, profile_config: Dict[str, Any]) -> None:
+        self.profiles[profile_name] = dict(profile_config)
+
+    def remove_profile(self, profile_name: str) -> None:
+        self.profiles.pop(profile_name, None)
+
     def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
         """Mock implementation of get_embedding_requirements"""
         return {
@@ -140,6 +147,7 @@ class MockFullBackend(Backend):
         self.schema_loader = schema_loader
         self.backend_config = backend_config
         self.documents = {}
+        self.profiles: Dict[str, Dict[str, Any]] = {}
 
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         self.config = config
@@ -209,6 +217,12 @@ class MockFullBackend(Backend):
 
     def health_check(self) -> bool:
         return True
+
+    def add_profile(self, profile_name: str, profile_config: Dict[str, Any]) -> None:
+        self.profiles[profile_name] = dict(profile_config)
+
+    def remove_profile(self, profile_name: str) -> None:
+        self.profiles.pop(profile_name, None)
 
     def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
         """Mock implementation of get_embedding_requirements"""
@@ -386,6 +400,38 @@ class TestBackendRegistry(unittest.TestCase):
         # Config should NOT have tenant_id (search backends are shared)
         self.assertEqual(backend.config, config)
         self.assertTrue(backend.initialized)
+
+    def test_search_backend_double_mutates_profiles_exactly(self):
+        backend = MockSearchBackend()
+        source = {"schema": "video_frame", "strategies": ["semantic", "hybrid"]}
+
+        backend.add_profile("frames", source)
+        source["schema"] = "changed_after_registration"
+
+        self.assertEqual(
+            backend.profiles,
+            {
+                "frames": {
+                    "schema": "video_frame",
+                    "strategies": ["semantic", "hybrid"],
+                }
+            },
+        )
+
+        backend.remove_profile("frames")
+        self.assertEqual(backend.profiles, {})
+
+    def test_full_backend_double_mutates_profiles_exactly(self):
+        backend = MockFullBackend()
+
+        backend.add_profile("audio", {"schema": "audio_segment"})
+        backend.add_profile("frames", {"schema": "video_frame"})
+        backend.remove_profile("audio")
+
+        self.assertEqual(
+            backend.profiles,
+            {"frames": {"schema": "video_frame"}},
+        )
 
     def test_backend_instance_caching(self):
         """Test that search backend instances are cached (shared)."""

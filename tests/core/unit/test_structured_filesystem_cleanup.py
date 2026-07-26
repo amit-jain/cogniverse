@@ -7,7 +7,6 @@ run were never purged.
 
 from __future__ import annotations
 
-import json
 import os
 import time
 
@@ -96,7 +95,8 @@ async def test_expiry_encoded_in_mtime_without_sidecar(tmp_path):
     cache_path = backend._key_to_path("k")
 
     # No sidecar written; expiry lives in the mtime (~now + ttl).
-    assert not backend._get_metadata_path(cache_path).exists()
+    assert ".keys" in cache_path.parts
+    assert list(tmp_path.rglob("*.meta")) == []
     assert cache_path.stat().st_mtime == pytest.approx(time.time() + 1000, abs=5)
     assert await backend.get("k") == "data"
 
@@ -135,13 +135,24 @@ async def test_concurrent_reads_never_destroy_a_live_entry(tmp_path):
     import asyncio
     import time as _time
 
-    backend = StructuredFilesystemBackend(
-        StructuredFilesystemConfig(
-            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+    from cogniverse_core.common.cache.base import CacheConfig, CacheManager
+    from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
+
+    manager = CacheManager(
+        CacheConfig(
+            backends=[
+                {
+                    "backend_type": "structured_filesystem",
+                    "base_path": str(tmp_path),
+                    "cleanup_on_startup": False,
+                    "enable_ttl": True,
+                }
+            ]
         )
     )
-    key = "profile:video:racevid:transcript"
-    assert await backend.set(key, "v0") is True  # ttl=None → never expires
+    cache = PipelineArtifactCache(manager, ttl=3600, profile="profile")
+    video = "/videos/racevid.mp4"
+    assert await cache.set_transcript(video, {"value": "v0"}) is True
 
     stop = _time.monotonic() + 1.0
     false_miss = 0
@@ -151,73 +162,49 @@ async def test_concurrent_reads_never_destroy_a_live_entry(tmp_path):
         nonlocal set_failures
         i = 0
         while _time.monotonic() < stop:
-            if not await backend.set(key, f"v{i}"):
+            if not await cache.set_transcript(video, {"value": f"v{i}"}):
                 set_failures += 1
             i += 1
 
     async def reader():
         nonlocal false_miss
         while _time.monotonic() < stop:
-            if await backend.get(key) is None:
+            if await cache.get_transcript(video) is None:
                 false_miss += 1
 
     await asyncio.gather(writer(), reader(), reader())
 
     assert false_miss == 0, f"{false_miss} false expiries destroyed a live entry"
     assert set_failures == 0, f"{set_failures} set() calls failed mid-race"
-    assert await backend.get(key) is not None
+    assert await cache.get_transcript(video) is not None
 
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio
-async def test_rewrite_clears_legacy_sidecar(tmp_path):
-    """Re-writing a key that still carries a legacy .meta sidecar must clear
-    the sidecar — otherwise the STALE sidecar expiry governs the fresh write
-    (a past expires_at deleted freshly-written data on the next read)."""
+async def test_old_layout_is_not_read_listed_or_counted(tmp_path):
+    """Only canonical .keys files are cache entries."""
     backend = StructuredFilesystemBackend(
         StructuredFilesystemConfig(
             base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
         )
     )
-    key = "profile:video:vid9:transcript"
-    await backend.set(key, "old-data", ttl=1000)
-    cache_path = backend._key_to_path(key)
-    meta_path = backend._get_metadata_path(cache_path)
-    # Upgrade-transition state: a legacy sidecar with a stale (past) expiry.
-    meta_path.write_text(json.dumps({"expires_at": time.time() - 10}))
-
-    assert await backend.set(key, "fresh-data", ttl=3600) is True
-
-    assert not meta_path.exists(), "stale legacy sidecar must be cleared on rewrite"
-    assert await backend.get(key) == "fresh-data"
-    assert cache_path.exists()
-
-
-@pytest.mark.unit
-@pytest.mark.ci_fast
-@pytest.mark.asyncio
-async def test_legacy_meta_sidecar_still_honored(tmp_path):
-    """An entry written before mtime-encoding (a .meta sidecar) is read via the
-    sidecar, so an upgrade does not invalidate a warm cache: a future sidecar
-    expiry wins over a past mtime."""
-    backend = StructuredFilesystemBackend(
-        StructuredFilesystemConfig(
-            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
-        )
+    key = "profile:video:vid9:transcript:lang=en:model=base"
+    old_path = tmp_path / "profile" / "transcripts" / "vid9.pkl"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_bytes(backend._serialize({"text": "old"}))
+    future = time.time() + 1000
+    os.utime(old_path, (time.time(), future))
+    old_path.with_name(f"{old_path.name}.meta").write_text(
+        '{"key": "profile:video:vid9:transcript:lang=en:model=base"}'
     )
-    await backend.set("k", "data", ttl=1000)
-    cache_path = backend._key_to_path("k")
 
-    # Simulate a legacy entry: a sidecar with a FUTURE expiry over a PAST mtime.
-    backend._get_metadata_path(cache_path).write_text(
-        json.dumps({"expires_at": time.time() + 1000})
-    )
-    past = time.time() - 500
-    os.utime(cache_path, (past, past))
-
-    # The sidecar (future) wins over the mtime (past) → still readable.
-    assert await backend.get("k") == "data"
+    assert await backend.get(key) is None
+    assert await backend.exists(key) is False
+    assert await backend.list_keys() == []
+    stats = await backend.get_stats()
+    assert stats["total_files"] == 0
+    assert stats["size_bytes"] == 0
 
 
 @pytest.mark.unit
@@ -234,10 +221,15 @@ async def test_keyframe_image_round_trips_raw_for_any_frame_id(tmp_path):
         StructuredFilesystemConfig(base_path=str(tmp_path), cleanup_on_startup=False)
     )
     raw = b"\xff\xd8\xff\xe0opaque-image-bytes\xff\xd9"
-    for frame_id in (5000, 15000, 123456):
-        key = f"prof:video:vid123:keyframes:frame_{frame_id}"
+    keys = [
+        "prof:video:vid123:keyframes:frame_5000",
+        "prof:video:vid123:keyframes:frame_15000",
+        "prof:video:vid123:keyframes:frame_123456",
+        "video:vid123:keyframes:frame_7",
+    ]
+    for key in keys:
         assert await backend.set(key, raw) is True
-        assert await backend.get(key) == raw, f"frame_{frame_id} did not round-trip"
+        assert await backend.get(key) == raw, f"{key} did not round-trip"
         path = backend._key_to_path(key)
         assert path.suffix == ".jpg"
         assert path.read_bytes() == raw  # raw on disk, not a pickle envelope
@@ -246,27 +238,21 @@ async def test_keyframe_image_round_trips_raw_for_any_frame_id(tmp_path):
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio
-async def test_cleanup_drops_legacy_sidecar_alongside_expired_entry(tmp_path):
-    """The startup sweep must remove a legacy .meta sidecar together with its
-    expired data file — leaving it would orphan sidecars forever (and a later
-    same-key write already clears them, but the sweep path never ran in a
-    test)."""
+async def test_cleanup_removes_expired_canonical_entry(tmp_path):
     backend = StructuredFilesystemBackend(
         StructuredFilesystemConfig(
             base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
         )
     )
-    key = "profile:video:legacy9:transcript"
+    key = "profile:video:expired9:transcript"
     await backend.set(key, "old", ttl=1000)
     cache_path = backend._key_to_path(key)
-    meta_path = backend._get_metadata_path(cache_path)
-    # Legacy entry shape: sidecar with a PAST expiry governs the file.
-    meta_path.write_text(json.dumps({"expires_at": time.time() - 50}))
+    past = time.time() - 50
+    os.utime(cache_path, (past, past))
 
-    await backend._cleanup_expired()
+    assert await backend.cleanup_expired() == 1
 
     assert not cache_path.exists(), "expired entry must be swept"
-    assert not meta_path.exists(), "its legacy sidecar must be dropped too"
 
 
 @pytest.mark.unit
@@ -324,26 +310,29 @@ async def test_set_failure_returns_false_and_leaves_no_tmp(tmp_path, monkeypatch
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio
-async def test_failed_overwrite_leaves_legacy_entry_intact(tmp_path, monkeypatch):
-    """A failed os.replace (disk full) mid-set must not destroy the OLD entry.
+async def test_failed_overwrite_preserves_prior_public_cache_value(
+    tmp_path, monkeypatch
+):
+    from cogniverse_core.common.cache.base import CacheConfig, CacheManager
+    from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 
-    The legacy .meta sidecar was unlinked BEFORE the replace, so a failed
-    replace left the old data file without its (future-expiry) sidecar — its
-    past mtime then read as expired and the next get() deleted a live entry.
-    """
-    backend = StructuredFilesystemBackend(
-        StructuredFilesystemConfig(
-            base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
+    manager = CacheManager(
+        CacheConfig(
+            backends=[
+                {
+                    "backend_type": "structured_filesystem",
+                    "base_path": str(tmp_path),
+                    "cleanup_on_startup": False,
+                    "enable_ttl": True,
+                }
+            ]
         )
     )
-    await backend.set("k", "old-data", ttl=1000)
-    cache_path = backend._key_to_path("k")
-    # Legacy entry shape: a FUTURE-expiry sidecar governing a PAST mtime.
-    backend._get_metadata_path(cache_path).write_text(
-        json.dumps({"expires_at": time.time() + 1000})
-    )
-    past = time.time() - 500
-    os.utime(cache_path, (past, past))
+    cache = PipelineArtifactCache(manager, ttl=3600, profile="profile")
+    video = "/videos/overwrite.mp4"
+    old = {"text": "old-data", "segments": [{"text": "old"}]}
+    new = {"text": "new-data", "segments": [{"text": "new"}]}
+    assert await cache.set_transcript(video, old) is True
 
     real_replace = os.replace
 
@@ -351,12 +340,11 @@ async def test_failed_overwrite_leaves_legacy_entry_intact(tmp_path, monkeypatch
         raise OSError(28, "No space left on device")
 
     monkeypatch.setattr(os, "replace", enospc)
-    assert await backend.set("k", "new-data", ttl=3600) is False
+    assert await cache.set_transcript(video, new) is False
     monkeypatch.setattr(os, "replace", real_replace)
 
-    assert await backend.get("k") == "old-data", (
-        "failed overwrite destroyed the legacy entry"
-    )
+    assert await cache.get_transcript(video) == old
+    assert list(tmp_path.rglob("*.tmp")) == []
 
 
 @pytest.mark.unit
@@ -388,10 +376,7 @@ async def test_dotdot_key_component_cannot_escape_base_path(tmp_path):
 @pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.asyncio
-async def test_nul_byte_key_set_returns_false_not_raises(tmp_path):
-    """set() promises bool. A NUL byte in the key made the error-path cleanup
-    (tmp_path.unlink) raise ValueError past the OSError-only except, so set()
-    raised instead of returning False while get()/exists() degraded safely."""
+async def test_nul_byte_key_round_trips_through_encoded_path(tmp_path):
     backend = StructuredFilesystemBackend(
         StructuredFilesystemConfig(
             base_path=str(tmp_path), cleanup_on_startup=False, enable_ttl=True
@@ -399,6 +384,9 @@ async def test_nul_byte_key_set_returns_false_not_raises(tmp_path):
     )
     key = "pro\x00file:video:vid:transcript"
 
-    assert await backend.set(key, "x", ttl=60) is False
-    assert await backend.get(key) is None
-    assert await backend.exists(key) is False
+    assert await backend.set(key, "x", ttl=60) is True
+    path = backend._key_to_path(key)
+    assert "\x00" not in str(path)
+    assert backend._path_to_key(path) == key
+    assert await backend.get(key) == "x"
+    assert await backend.exists(key) is True

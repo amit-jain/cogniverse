@@ -106,16 +106,17 @@ class TestMem0VespaIntegration:
         assert memory_manager.health_check() is True
 
     def test_add_and_search_memory(self, memory_manager):
-        """Test adding and searching memories"""
-        # Add memory
+        """A verbatim memory is the exact semantic-search result."""
+        memory_manager.clear_agent_memory("test_tenant", "test_agent")
+        content = "User prefers video content about machine learning"
         memory_id = memory_manager.add_memory(
-            content="User prefers video content about machine learning",
+            content=content,
             tenant_id="test_tenant",
             agent_name="test_agent",
             metadata={"category": "preference"},
+            infer=False,
         )
 
-        assert memory_id is not None
         assert isinstance(memory_id, str)
 
         # Wait for indexing
@@ -129,10 +130,12 @@ class TestMem0VespaIntegration:
             top_k=5,
         )
 
-        assert len(results) > 0
-        # Mem0 returns results with 'memory' field
-        found = any("machine learning" in str(r).lower() for r in results)
-        assert found
+        assert {result["id"] for result in results} == {memory_id}
+        assert {result["memory"] for result in results} == {content}
+        assert {
+            (result.get("metadata") or {}).get("category") for result in results
+        } == {"preference"}
+        memory_manager.clear_agent_memory("test_tenant", "test_agent")
 
     def test_multi_tenant_isolation(self, memory_manager):
         """Test that memories are isolated between tenants"""
@@ -147,14 +150,16 @@ class TestMem0VespaIntegration:
         # fact extraction. With ``infer=True`` and a small local model
         # (e.g. qwen3:4b) Mem0 frequently returns empty results for short
         # factual statements, which would mask the isolation assertion.
+        tenant_1_content = "Tenant 1 loves adopting rescue cats from shelters"
+        tenant_2_content = "Tenant 2 trains therapy dogs for hospitals"
         mem1_id = memory_manager.add_memory(
-            content="Tenant 1 loves adopting rescue cats from shelters",
+            content=tenant_1_content,
             tenant_id="tenant_1",
             agent_name="test_agent",
             infer=False,
         )
         mem2_id = memory_manager.add_memory(
-            content="Tenant 2 trains therapy dogs for hospitals",
+            content=tenant_2_content,
             tenant_id="tenant_2",
             agent_name="test_agent",
             infer=False,
@@ -182,37 +187,17 @@ class TestMem0VespaIntegration:
             top_k=5,
         )
 
-        # Verify isolation - each tenant should only see their own content
-        tenant1_text = " ".join([str(r) for r in results_1]).lower()
-        tenant2_text = " ".join([str(r) for r in results_2]).lower()
-
-        # Stored verbatim (infer=False), so each tenant MUST return its own
-        # content — assert both unconditionally (not "at least one"), then assert
-        # neither leaks the other's content.
-        has_tenant1_content = "cat" in tenant1_text or "rescue" in tenant1_text
-        has_tenant2_content = "dog" in tenant2_text or "therapy" in tenant2_text
-
-        assert has_tenant1_content, (
-            f"Tenant 1 lost its own content: {tenant1_text[:100]}"
-        )
-        assert has_tenant2_content, (
-            f"Tenant 2 lost its own content: {tenant2_text[:100]}"
-        )
-
-        # Isolation: neither tenant sees the other's content.
-        assert "therapy" not in tenant1_text and "hospital" not in tenant1_text, (
-            "Tenant 1 has Tenant 2's content - isolation broken"
-        )
-        assert "rescue" not in tenant2_text and "shelter" not in tenant2_text, (
-            "Tenant 2 has Tenant 1's content - isolation broken"
-        )
+        assert {result["id"] for result in results_1} == {mem1_id}
+        assert {result["memory"] for result in results_1} == {tenant_1_content}
+        assert {result["id"] for result in results_2} == {mem2_id}
+        assert {result["memory"] for result in results_2} == {tenant_2_content}
 
         # Cleanup
         memory_manager.clear_agent_memory("tenant_1", "test_agent")
         memory_manager.clear_agent_memory("tenant_2", "test_agent")
 
     def test_get_all_memories(self, memory_manager):
-        """Test retrieving all memories for an agent"""
+        """Get-all returns every verbatim row with its exact ID."""
         # Clear first
         memory_manager.clear_agent_memory("test_tenant", "get_all_agent")
 
@@ -225,14 +210,16 @@ class TestMem0VespaIntegration:
             "User favorite food is Italian cuisine especially pasta",
         ]
 
-        added_ids = []
-        for content in contents:
-            mem_id = memory_manager.add_memory(
+        added_ids = {
+            memory_manager.add_memory(
                 content=content,
                 tenant_id="test_tenant",
                 agent_name="get_all_agent",
+                infer=False,
             )
-            added_ids.append(mem_id)
+            for content in contents
+        }
+        assert all(isinstance(memory_id, str) for memory_id in added_ids)
 
         wait_for_vespa_indexing(delay=3, description="multiple documents")
 
@@ -242,8 +229,8 @@ class TestMem0VespaIntegration:
             agent_name="get_all_agent",
         )
 
-        # Mem0 may condense or deduplicate, so we check for at least 1 memory
-        assert len(memories) >= 1, f"Expected at least 1 memory, got {len(memories)}"
+        assert {row["id"] for row in memories} == added_ids
+        assert {row["memory"] for row in memories} == set(contents)
 
         # Cleanup
         memory_manager.clear_agent_memory("test_tenant", "get_all_agent")
@@ -267,9 +254,7 @@ class TestMem0VespaIntegration:
             infer=False,
         )
 
-        assert memory_id is not None
         assert isinstance(memory_id, str)
-        assert len(memory_id) > 0
 
         wait_for_vespa_indexing(delay=2)
 
@@ -313,9 +298,7 @@ class TestMem0VespaIntegration:
             infer=False,
         )
 
-        assert memory_id is not None
         assert isinstance(memory_id, str)
-        assert len(memory_id) > 0
 
         wait_for_vespa_indexing(delay=2)
 
@@ -336,17 +319,16 @@ class TestMem0VespaIntegration:
             agent_name="update_test_agent",
             top_k=5,
         )
-        # Should find the updated memory
-        assert len(results) > 0
-        # Verify it contains the new email
-        found = any("newcompany" in str(r).lower() for r in results)
-        assert found
+        assert {result["id"] for result in results} == {memory_id}
+        assert {result["memory"] for result in results} == {
+            "User primary email address is john.doe@newcompany.com"
+        }
 
         # Cleanup
         memory_manager.clear_agent_memory("test_tenant", "update_test_agent")
 
     def test_memory_stats(self, memory_manager):
-        """Test getting memory statistics"""
+        """Statistics report the exact persisted row count."""
         # Clear first
         memory_manager.clear_agent_memory("test_tenant", "stats_agent")
 
@@ -359,12 +341,16 @@ class TestMem0VespaIntegration:
             "User favorite sport is basketball",
         ]
 
-        for content in memories_to_add:
+        ids = {
             memory_manager.add_memory(
                 content=content,
                 tenant_id="test_tenant",
                 agent_name="stats_agent",
+                infer=False,
             )
+            for content in memories_to_add
+        }
+        assert all(isinstance(memory_id, str) for memory_id in ids)
 
         wait_for_vespa_indexing(delay=3, description="multiple documents")
 
@@ -374,19 +360,24 @@ class TestMem0VespaIntegration:
             agent_name="stats_agent",
         )
 
-        assert stats["enabled"] is True
-        # Mem0 may deduplicate, so check for at least 1
-        assert stats["total_memories"] >= 1, (
-            f"Expected at least 1 memory, got {stats['total_memories']}"
+        assert stats == {
+            "enabled": True,
+            "total_memories": len(memories_to_add),
+            "tenant_id": "test_tenant",
+            "agent_name": "stats_agent",
+        }
+        memories = memory_manager.get_all_memories(
+            tenant_id="test_tenant",
+            agent_name="stats_agent",
         )
-        assert stats["tenant_id"] == "test_tenant"
-        assert stats["agent_name"] == "stats_agent"
+        assert {row["id"] for row in memories} == ids
+        assert {row["memory"] for row in memories} == set(memories_to_add)
 
         # Cleanup
         memory_manager.clear_agent_memory("test_tenant", "stats_agent")
 
     def test_clear_agent_memory(self, memory_manager):
-        """Test clearing all memory for an agent"""
+        """Clear removes the exact set of persisted agent memories."""
         # Clear first
         memory_manager.clear_agent_memory("test_tenant", "clear_test_agent")
 
@@ -399,21 +390,25 @@ class TestMem0VespaIntegration:
             "User allergic to peanuts and shellfish",
         ]
 
-        for content in memories_to_add:
+        ids = {
             memory_manager.add_memory(
                 content=content,
                 tenant_id="test_tenant",
                 agent_name="clear_test_agent",
+                infer=False,
             )
+            for content in memories_to_add
+        }
+        assert all(isinstance(memory_id, str) for memory_id in ids)
 
         wait_for_vespa_indexing(delay=3, description="multiple documents")
 
-        # Verify at least some memories exist
         memories_before = memory_manager.get_all_memories(
             tenant_id="test_tenant",
             agent_name="clear_test_agent",
         )
-        _has_memories_before = len(memories_before) >= 1
+        assert {row["id"] for row in memories_before} == ids
+        assert {row["memory"] for row in memories_before} == set(memories_to_add)
 
         # Clear all
         success = memory_manager.clear_agent_memory(
@@ -589,14 +584,9 @@ class TestMem0ProfileRegistrationIntegration:
             "otherwise we're not proving dynamic registration worked."
         )
 
-        # Reuse `test_tenant` because that's the only tenant whose
-        # agent_memories_<tenant> schema the fixture actually deploys
-        # to Vespa. Using a brand-new tenant requires auto-deploy which
-        # currently fails in the fixture (it preserves the existing
-        # `agent_memories_test_tenant` schema via a parser that chokes
-        # on the fixture's own deployed schema — orthogonal pre-existing
-        # bug, not in scope for this test).
-        tenant_id = "test_tenant"
+        # Use the canonical org:tenant identity whose derived
+        # agent_memories_test_tenant schema the fixture deploys.
+        tenant_id = "test:tenant"
         agent_name = f"propagation_agent_{uuid.uuid4().hex[:8]}"
 
         manager = Mem0MemoryManager(tenant_id=tenant_id)
@@ -623,16 +613,18 @@ class TestMem0ProfileRegistrationIntegration:
         )
 
         # Real write: a unique memory that we can search for later.
-        unique_phrase = "Rosetta Stone hieroglyphs Champollion 1822 decipherment"
+        content = (
+            "The user is researching the Rosetta Stone hieroglyphs "
+            "Champollion 1822 decipherment for a history paper."
+        )
         memory_id = manager.add_memory(
-            content=(
-                f"The user is researching the {unique_phrase} for a history paper."
-            ),
+            content=content,
             tenant_id=tenant_id,
             agent_name=agent_name,
             metadata={"category": "research_topic"},
+            infer=False,
         )
-        assert memory_id is not None and isinstance(memory_id, str)
+        assert isinstance(memory_id, str)
 
         # Let Vespa indexing settle.
         wait_for_vespa_indexing(delay=2)
@@ -646,16 +638,8 @@ class TestMem0ProfileRegistrationIntegration:
             agent_name=agent_name,
             top_k=5,
         )
-        assert len(results) > 0, (
-            "Mem0.search_memory returned zero hits — either profile "
-            "propagation regressed, Vespa isn't indexing, or the "
-            "embedder is returning vectors uncorrelated with the query."
-        )
-        found = any("champollion" in str(r).lower() for r in results)
-        assert found, (
-            f"Ingested memory about Champollion not retrievable by "
-            f"semantic search — got: {results!r}"
-        )
+        assert {result["id"] for result in results} == {memory_id}
+        assert {result["memory"] for result in results} == {content}
 
         # Cleanup
         try:
@@ -682,13 +666,17 @@ class TestGetAllMemoriesServerSideFilter:
             ("Kubernetes node pool for cluster A uses spot instances", "infra:k8s"),
             ("Quarterly budget review happens every March", "finance:budget"),
         ]
+        expected_by_subject = {"infra:k8s": set(), "finance:budget": set()}
         for content, subject_key in rows:
-            memory_manager.add_memory(
+            memory_id = memory_manager.add_memory(
                 content=content,
                 tenant_id="test_tenant",
                 agent_name=agent,
                 metadata={"subject_key": subject_key},
+                infer=False,
             )
+            assert isinstance(memory_id, str)
+            expected_by_subject[subject_key].add((memory_id, content))
         wait_for_vespa_indexing(delay=3, description="subject-keyed documents")
 
         k8s_rows = memory_manager.get_all_memories(
@@ -696,26 +684,24 @@ class TestGetAllMemoriesServerSideFilter:
             agent_name=agent,
             filters={"subject_key": "infra:k8s"},
         )
-        assert len(k8s_rows) >= 1, "expected the k8s rows to come back"
-        for row in k8s_rows:
-            meta = row.get("metadata") or {}
-            assert meta.get("subject_key") == "infra:k8s", (
-                f"server-side filter leaked a foreign subject: {meta}"
-            )
-        assert all(
-            "budget" not in str(row.get("memory", "")).lower() for row in k8s_rows
-        )
+        assert {(row["id"], row["memory"]) for row in k8s_rows} == expected_by_subject[
+            "infra:k8s"
+        ]
+        assert {(row.get("metadata") or {}).get("subject_key") for row in k8s_rows} == {
+            "infra:k8s"
+        }
 
         finance_rows = memory_manager.get_all_memories(
             tenant_id="test_tenant",
             agent_name=agent,
             filters={"subject_key": "finance:budget"},
         )
-        assert len(finance_rows) >= 1
-        assert all(
-            (row.get("metadata") or {}).get("subject_key") == "finance:budget"
-            for row in finance_rows
-        )
+        assert {
+            (row["id"], row["memory"]) for row in finance_rows
+        } == expected_by_subject["finance:budget"]
+        assert {
+            (row.get("metadata") or {}).get("subject_key") for row in finance_rows
+        } == {"finance:budget"}
 
         # Unknown subject returns nothing — the filter really runs.
         assert (

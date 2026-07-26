@@ -6,6 +6,12 @@ connection pool); the app is now cached and rebuilt only when url/port change.
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import MagicMock
+
+import pytest
+
 from cogniverse_vespa.backend import VespaBackend
 
 
@@ -65,14 +71,87 @@ def test_metadata_ops_share_one_persistent_session():
 
 
 def test_backend_close_releases_metadata_session():
-    from unittest.mock import MagicMock
-
     b = _bare_backend()
     b._vespa_ingestion_clients = {}
     b._async_ingestion_clients = {}
+    b._vespa_search_backend = None
     client = b._metadata_vespa_app()
     client._sync = MagicMock()
 
     b.close()
 
     client._sync._close_http_client.assert_called_once()
+
+
+def test_backend_close_releases_every_owned_client_once():
+    backend = _bare_backend()
+    search = MagicMock()
+    ingestion = [MagicMock(), MagicMock()]
+    metadata = MagicMock()
+    backend._vespa_search_backend = search
+    backend._vespa_ingestion_clients = {
+        "agent_memories_one": ingestion[0],
+        "agent_memories_two": ingestion[1],
+    }
+    backend._metadata_app = metadata
+
+    backend.close()
+    backend.close()
+
+    search.close.assert_called_once_with()
+    for client in ingestion:
+        client.close.assert_called_once_with()
+    metadata.close.assert_called_once_with()
+    assert backend._vespa_search_backend is None
+    assert backend._vespa_ingestion_clients == {}
+    assert backend._metadata_app is None
+
+
+def test_backend_close_is_single_execution_under_concurrency():
+    backend = _bare_backend()
+    search = MagicMock()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def delayed_close():
+        entered.set()
+        assert release.wait(timeout=2)
+
+    search.close.side_effect = delayed_close
+    backend._vespa_search_backend = search
+    backend._vespa_ingestion_clients = {}
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(backend.close) for _ in range(8)]
+        assert entered.wait(timeout=2)
+        release.set()
+        for future in futures:
+            future.result(timeout=2)
+
+    search.close.assert_called_once_with()
+
+
+def test_backend_close_attempts_every_client_before_reporting_failure():
+    backend = _bare_backend()
+    search = MagicMock()
+    ingestion = MagicMock()
+    metadata = MagicMock()
+    search.close.side_effect = OSError("search pool stuck")
+    ingestion.close.side_effect = RuntimeError("ingestion close failed")
+    backend._vespa_search_backend = search
+    backend._vespa_ingestion_clients = {"agent_memories": ingestion}
+    backend._metadata_app = metadata
+
+    with pytest.raises(RuntimeError) as exc_info:
+        backend.close()
+
+    assert str(exc_info.value) == (
+        "Failed to close Vespa backend resources: search backend: search pool stuck; "
+        "ingestion client agent_memories: ingestion close failed"
+    )
+    search.close.assert_called_once_with()
+    ingestion.close.assert_called_once_with()
+    metadata.close.assert_called_once_with()
+    assert backend._vespa_search_backend is None
+    assert backend._vespa_ingestion_clients == {}
+    assert backend._metadata_app is None

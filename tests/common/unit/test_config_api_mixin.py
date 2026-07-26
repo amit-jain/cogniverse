@@ -25,12 +25,16 @@ from tests.utils.memory_store import InMemoryConfigStore
 class ExampleSignature(dspy.Signature):
     """Test signature for module creation"""
 
+    __test__ = False
+
     input_text = dspy.InputField()
     output_text = dspy.OutputField()
 
 
 class ConfigurableAgent(DynamicDSPyMixin, ConfigAPIMixin):
     """Test agent class using both mixins"""
+
+    __test__ = False
 
     def __init__(
         self,

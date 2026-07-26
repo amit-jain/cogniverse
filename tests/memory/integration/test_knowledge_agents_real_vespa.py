@@ -28,6 +28,7 @@ agents whose value comes from real persistence round-trips.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Tuple
@@ -261,10 +262,21 @@ async def test_knowledge_summarises_real_subject_slice(
     summary_lower = summary_text.lower()
     # Each source's distinguishing fact appears in the summary, AND
     # surrounded by enough context to prove it isn't word-salad.
-    # (token-only checks pass on garbage like "30 days 14 days digital".)
-    assert "30 days" in summary_lower, summary_text
-    assert "14 days" in summary_lower or "14 additional" in summary_lower, summary_text
-    assert "digital" in summary_lower, summary_text
+    # Accept ordinary grammatical variants such as "30-day refund" while
+    # requiring the duration to stay attached to the correct policy.
+    assert re.search(
+        r"(?:refund.{0,100}\b30[- ]days?\b|\b30[- ]days?\b.{0,100}refund)",
+        summary_lower,
+    ), summary_text
+    assert re.search(
+        r"(?:eu|european union).{0,120}\b14[- ]days?\b"
+        r"|\b14[- ]days?\b.{0,120}(?:eu|european union)",
+        summary_lower,
+    ), summary_text
+    assert re.search(
+        r"digital.{0,120}(?:non-refundable|not refundable|refund denied)",
+        summary_lower,
+    ), summary_text
     # The summary is prose: long enough to contain the 3 facts in
     # context, bounded so we catch a runaway repetition. Three short
     # facts → ~150-1500 chars of natural prose.

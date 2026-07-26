@@ -358,9 +358,8 @@ class TestRealVespaSchemaIntegration:
                 agent_name="p23_real_agent",
                 top_k=5,
             )
-            assert len(hits) >= 1, (
-                "real Vespa search must return at least the seeded memory"
-            )
+            assert {hit["id"] for hit in hits} == {memory_id}
+            assert {hit["memory"] for hit in hits} == {"actively-queried fact about X"}
 
             # Round-trip assertion: last_accessed must be present AND
             # strictly newer than the baseline. This is what proves

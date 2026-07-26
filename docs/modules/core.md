@@ -522,7 +522,14 @@ agents = registry.list_agents()  # ["search_agent", ...]
 
 # Get agent by name
 agent = registry.get_agent("search_agent")  # Returns AgentEndpoint or None
+
+# Release the lazily created remote-agent connection pool at shutdown
+await registry.close()
 ```
+
+Local registry operations do not create an HTTP client. Concurrent remote
+health or discovery calls share one lazily constructed client, and `close()`
+detaches that client before awaiting connection-pool shutdown.
 
 ### BackendRegistry
 
@@ -1166,6 +1173,8 @@ memory's ``metadata["kind"]`` is looked up in the ``KnowledgeRegistry``
 and that schema's retention policy decides whether to delete it. There
 is no bulk-age fallback; a memory without a registered kind falls back
 to the registry's safe default (`permanent`) and is never auto-deleted.
+Numeric `created_at` values accept signed epoch seconds, milliseconds,
+microseconds, or nanoseconds; normalization preserves dates before 1970.
 
 | `Retention` | Behaviour |
 |---|---|
@@ -1737,9 +1746,9 @@ result = client.process_images(
 Handles VideoPrism model loading and inference:
 
 ```python
-from cogniverse_core.common.models import VideoPrismLoader
+from cogniverse_core.common.models import get_videoprism_loader
 
-loader = VideoPrismLoader(
+loader = get_videoprism_loader(
     model_name="videoprism_public_v1_base_hf",
     config={"videoprism_repo_path": "/path/to/videoprism"}
 )
@@ -1754,6 +1763,10 @@ embeddings = loader.extract_embeddings(frames)
 # Preprocess frames for model input
 video_input = loader.preprocess_frames(frames)  # (1, num_frames, 288, 288, 3)
 ```
+
+The factory snapshots the configuration and shares one loader for each
+equivalent `(model_name, config)` pair. Concurrent cold calls wait for one
+weight load; a failed candidate is not published and remains retryable.
 
 **Model Variants:**
 
