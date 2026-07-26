@@ -448,6 +448,23 @@ def test_max_memories_bounds_enforced():
         )
 
 
+def test_time_filter_requires_timezone_aware_bounds():
+    with pytest.raises(Exception, match="timezone-aware"):
+        KnowledgeSummarizationInput(
+            tenant_id="acme",
+            title="naive lower bound",
+            since="2026-01-01T00:00:00",
+            actor_id="a",
+        )
+    with pytest.raises(Exception, match="timezone-aware"):
+        KnowledgeSummarizationInput(
+            tenant_id="acme",
+            title="naive upper bound",
+            until="2026-04-01T00:00:00",
+            actor_id="a",
+        )
+
+
 def test_agent_capabilities_advertised():
     agent = KnowledgeSummarizationAgent(
         deps=KnowledgeSummarizationDeps(tenant_id="acme")
