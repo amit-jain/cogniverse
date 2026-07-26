@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import errno
+import json
 import os
 import platform
 import shutil
 import signal
+import socket
 import subprocess
 import time
+from dataclasses import dataclass
 
 PREREQUISITES = ["docker", "kubectl", "helm"]
 CLUSTER_NAME = "cogniverse"
@@ -32,6 +36,43 @@ DEFAULT_PORTS = [
     29010,
     29011,
 ]
+
+_SERVICE_BY_NODE_PORT = {
+    4317: "OTLP",
+    6443: "Kubernetes API",
+    8080: "Vespa",
+    11434: "LLM (Ollama)",
+    19071: "Vespa",
+    26006: "Phoenix",
+    2746: "Argo",
+    28000: "Runtime",
+    28501: "Dashboard",
+    29001: "inference sidecar",
+    29002: "inference sidecar",
+    29004: "inference sidecar",
+    29005: "inference sidecar",
+    29006: "inference sidecar",
+    29010: "inference sidecar",
+    29011: "inference sidecar",
+}
+
+
+class ClusterStartError(RuntimeError):
+    """A cluster start failure safe to show directly to an operator."""
+
+
+@dataclass(frozen=True)
+class _PortBinding:
+    host_ip: str
+    host_port: int
+    node_port: int
+    protocol: str
+
+    @property
+    def service(self) -> str:
+        return _SERVICE_BY_NODE_PORT.get(
+            self.node_port, f"cluster port {self.node_port}"
+        )
 
 
 def _get_arch() -> str:
@@ -366,20 +407,216 @@ def stop_cluster(name: str = CLUSTER_NAME) -> None:
     subprocess.run(["k3d", "cluster", "stop", name], check=True, timeout=300)
 
 
+def _cluster_description(name: str, subject: str) -> dict:
+    """Return one cluster's k3d JSON description or a display-safe error."""
+    try:
+        result = subprocess.run(
+            ["k3d", "cluster", "list", name, "-o", "json"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise ClusterStartError(
+            f"Could not inspect {subject} for k3d cluster {name!r}{suffix}"
+        ) from None
+    except FileNotFoundError:
+        raise ClusterStartError("k3d not found on PATH") from None
+    except subprocess.TimeoutExpired:
+        raise ClusterStartError(
+            f"Timed out inspecting {subject} for k3d cluster {name!r}"
+        ) from None
+
+    try:
+        clusters = json.loads(result.stdout or "[]")
+        return next(item for item in clusters if item.get("name") == name)
+    except (json.JSONDecodeError, StopIteration, TypeError, AttributeError):
+        raise ClusterStartError(
+            f"Could not inspect {subject} for k3d cluster {name!r}: "
+            "k3d returned an invalid cluster description"
+        ) from None
+
+
+def _stopped_loadbalancer_bindings(name: str) -> list[_PortBinding]:
+    """Read host bindings that Docker must claim when k3d starts the cluster."""
+    cluster = _cluster_description(name, "port mappings")
+    bindings: list[_PortBinding] = []
+    for node in cluster.get("nodes") or []:
+        if node.get("role") != "loadbalancer":
+            continue
+        if (node.get("State") or {}).get("Running", False):
+            continue
+        for target, published in (node.get("portMappings") or {}).items():
+            raw_node_port, _, protocol = target.partition("/")
+            try:
+                node_port = int(raw_node_port)
+            except ValueError:
+                raise ClusterStartError(
+                    f"Could not inspect port mappings for k3d cluster {name!r}: "
+                    f"invalid load balancer target {target!r}"
+                ) from None
+            for mapping in published or []:
+                try:
+                    host_port = int(mapping["HostPort"])
+                except (KeyError, TypeError, ValueError):
+                    raise ClusterStartError(
+                        f"Could not inspect port mappings for k3d cluster {name!r}: "
+                        f"invalid host binding for {target!r}"
+                    ) from None
+                bindings.append(
+                    _PortBinding(
+                        host_ip=mapping.get("HostIp", ""),
+                        host_port=host_port,
+                        node_port=node_port,
+                        protocol=protocol or "tcp",
+                    )
+                )
+    return bindings
+
+
+def _bind_addresses(host_ip: str) -> list[tuple[socket.AddressFamily, str]]:
+    if host_ip == "":
+        addresses = [(socket.AF_INET, "0.0.0.0")]
+        if socket.has_ipv6:
+            addresses.append((socket.AF_INET6, "::"))
+        return addresses
+    if ":" in host_ip:
+        return [(socket.AF_INET6, host_ip)]
+    return [(socket.AF_INET, host_ip)]
+
+
+def _binding_is_available(binding: _PortBinding) -> bool:
+    socket_type = socket.SOCK_DGRAM if binding.protocol == "udp" else socket.SOCK_STREAM
+    for family, host_ip in _bind_addresses(binding.host_ip):
+        try:
+            with socket.socket(family, socket_type) as probe:
+                if family == socket.AF_INET6:
+                    probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                probe.bind((host_ip, binding.host_port))
+        except OSError as exc:
+            if exc.errno == errno.EADDRINUSE:
+                return False
+            if family == socket.AF_INET6 and exc.errno in {
+                errno.EAFNOSUPPORT,
+                errno.EADDRNOTAVAIL,
+            }:
+                continue
+            raise ClusterStartError(
+                f"Could not check host port {binding.host_port}: {exc}"
+            ) from None
+    return True
+
+
+def _cluster_start_conflicts(name: str) -> list[_PortBinding]:
+    return [
+        binding
+        for binding in _stopped_loadbalancer_bindings(name)
+        if not _binding_is_available(binding)
+    ]
+
+
+def _port_conflict_message(name: str, conflicts: list[_PortBinding]) -> str:
+    conflict_lines = [
+        f"Host port {binding.host_port} required by {binding.service} is in use."
+        for binding in conflicts
+    ]
+    ports = ", ".join(str(binding.host_port) for binding in conflicts)
+    return "\n".join(
+        [
+            f"Cannot start k3d cluster {name!r}:",
+            *conflict_lines,
+            "k3d cannot remove or remap published ports on an existing cluster.",
+            "Free or reconfigure the host listener, then retry:",
+            f"  cogniverse start --name {name}",
+            f"Or recreate the cluster with host port {ports} excluded or remapped.",
+        ]
+    )
+
+
+def _verify_loadbalancer_network(name: str) -> None:
+    """Ensure a started load balancer can resolve and reach cluster nodes."""
+    cluster = _cluster_description(name, "load balancer network")
+    network_name = (cluster.get("network") or {}).get("name")
+    if not network_name:
+        raise ClusterStartError(
+            f"Could not inspect load balancer network for k3d cluster {name!r}: "
+            "k3d returned an invalid cluster description"
+        )
+
+    load_balancers = [
+        node
+        for node in cluster.get("nodes") or []
+        if node.get("role") == "loadbalancer"
+    ]
+    if not load_balancers and cluster.get("hasLoadbalancer", False):
+        raise ClusterStartError(
+            f"Could not inspect load balancer network for k3d cluster {name!r}: "
+            "k3d did not describe its load balancer"
+        )
+
+    for load_balancer in load_balancers:
+        container = load_balancer.get("name", "")
+        if not (load_balancer.get("State") or {}).get("Running", False):
+            raise ClusterStartError(
+                f"k3d cluster {name!r} started, but load balancer "
+                f"{container!r} is not running."
+            )
+        if network_name in (load_balancer.get("Networks") or []):
+            continue
+        raise ClusterStartError(
+            "\n".join(
+                [
+                    f"k3d cluster {name!r} started, but load balancer "
+                    f"{container!r} is not attached to network {network_name!r}.",
+                    "The cluster API and published services are unavailable.",
+                    "Repair the existing cluster without recreating it:",
+                    f"  docker network connect {network_name} {container}",
+                    f"  docker restart {container}",
+                ]
+            )
+        )
+
+
 def start_cluster(name: str = CLUSTER_NAME) -> None:
     """Start a previously stopped k3d cluster (volumes intact).
+
+    Checks the stopped load balancer's stored host bindings before k3d starts
+    any nodes, preventing a bind conflict from leaving a partially running
+    cluster.
 
     Re-pins CoreDNS upstreams on every start so clusters created before the
     pin existed converge on the working DNS configuration.
     """
-    subprocess.run(["k3d", "cluster", "start", name], check=True, timeout=600)
+    conflicts = _cluster_start_conflicts(name)
+    if conflicts:
+        raise ClusterStartError(_port_conflict_message(name, conflicts))
+    try:
+        subprocess.run(
+            ["k3d", "cluster", "start", name],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise ClusterStartError(
+            f"Could not start k3d cluster {name!r}{suffix}"
+        ) from None
+    except FileNotFoundError:
+        raise ClusterStartError("k3d not found on PATH") from None
+    except subprocess.TimeoutExpired:
+        raise ClusterStartError(f"Timed out starting k3d cluster {name!r}") from None
+    _verify_loadbalancer_network(name)
     pin_coredns_upstreams(name)
 
 
 def list_cluster_states() -> list[dict]:
     """Name and running-state of every k3d cluster on the host."""
-    import json
-
     result = subprocess.run(
         ["k3d", "cluster", "list", "-o", "json"],
         check=True,

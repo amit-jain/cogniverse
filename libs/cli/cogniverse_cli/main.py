@@ -19,6 +19,7 @@ from rich.table import Table
 from cogniverse_cli.argo import deploy_workflow_templates, install_argo_controller
 from cogniverse_cli.cluster import (
     CLUSTER_NAME,
+    ClusterStartError,
     check_prerequisites,
     cluster_exists,
     create_cluster,
@@ -644,7 +645,11 @@ def start(name: str) -> None:
         console.print(f"[red]No k3d cluster named {name!r}.[/red]")
         raise SystemExit(1)
     console.print(f"[cyan]Starting cluster {name}...[/cyan]")
-    start_cluster(name)
+    try:
+        start_cluster(name)
+    except ClusterStartError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise SystemExit(1) from None
     if name == CLUSTER_NAME:
         # The dev stack is reached through kubectl port-forwards (29xxx);
         # the e2e cluster maps NodePorts directly (33xxx) and needs none.

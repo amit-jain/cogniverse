@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
+import socket
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +18,101 @@ from cogniverse_cli.main import (
     _probe_host_llm,
     cli,
 )
+
+
+def _install_fake_cluster_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cluster_state: dict,
+    *,
+    start_returncode: int = 0,
+    start_stderr: str = "",
+    inspect_returncode: int = 0,
+    post_start_cluster_state: dict | None = None,
+) -> Path:
+    """Run cluster lifecycle tests through harmless executable boundaries."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "k3d-calls"
+    k3d = bin_dir / "k3d"
+    k3d.write_text(
+        """#!/usr/bin/env python3
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+marker = Path(os.environ["FAKE_K3D_MARKER"])
+if args[:2] == ["cluster", "list"] and "-o" in args:
+    started = marker.exists() and "start\\n" in marker.read_text()
+    with marker.open("a") as calls:
+        calls.write("inspect\\n")
+    state_key = "FAKE_K3D_POST_START_STATE" if started else "FAKE_K3D_STATE"
+    print(os.environ[state_key])
+    raise SystemExit(int(os.environ["FAKE_K3D_INSPECT_RETURNCODE"]))
+if args[:2] == ["cluster", "start"]:
+    with marker.open("a") as calls:
+        calls.write("start\\n")
+    message = os.environ.get("FAKE_K3D_START_STDERR", "")
+    if message:
+        print(message, file=sys.stderr)
+    raise SystemExit(int(os.environ["FAKE_K3D_START_RETURNCODE"]))
+raise SystemExit(0)
+"""
+    )
+    k3d.chmod(0o755)
+    kubectl = bin_dir / "kubectl"
+    kubectl.write_text(
+        """#!/usr/bin/env python3
+import sys
+
+if "configmap" in sys.argv:
+    print("forward . 1.1.1.1 8.8.8.8")
+raise SystemExit(0)
+"""
+    )
+    kubectl.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_K3D_MARKER", str(marker))
+    monkeypatch.setenv("FAKE_K3D_STATE", json.dumps([cluster_state]))
+    if post_start_cluster_state is None:
+        post_start_cluster_state = json.loads(json.dumps(cluster_state))
+        network_name = (post_start_cluster_state.get("network") or {}).get("name")
+        for node in post_start_cluster_state["nodes"]:
+            if node["role"] == "loadbalancer":
+                node["State"] = {"Running": True}
+                node["Networks"] = [network_name]
+    monkeypatch.setenv(
+        "FAKE_K3D_POST_START_STATE", json.dumps([post_start_cluster_state])
+    )
+    monkeypatch.setenv("FAKE_K3D_START_RETURNCODE", str(start_returncode))
+    monkeypatch.setenv("FAKE_K3D_START_STDERR", start_stderr)
+    monkeypatch.setenv("FAKE_K3D_INSPECT_RETURNCODE", str(inspect_returncode))
+    return marker
+
+
+def _cluster_state(host_port: int) -> dict:
+    return {
+        "name": "cogniverse",
+        "network": {"name": "k3d-cogniverse"},
+        "nodes": [
+            {
+                "name": "k3d-cogniverse-serverlb",
+                "role": "loadbalancer",
+                "portMappings": {
+                    "11434/tcp": [{"HostIp": "", "HostPort": str(host_port)}]
+                },
+                "State": {"Running": False},
+                "Networks": [],
+            },
+            {
+                "name": "k3d-cogniverse-server-0",
+                "role": "server",
+                "portMappings": {},
+                "State": {"Running": True},
+            },
+        ],
+    }
 
 
 class TestCli:
@@ -631,6 +731,201 @@ class TestStopStartCommands:
         assert result.exit_code == 0
         mock_start.assert_called_once_with("cogniverse-e2e")
         mock_forwards.assert_not_called()
+
+    @patch("cogniverse_cli.main.start_port_forwards")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    def test_start_refuses_occupied_loadbalancer_port_before_k3d(
+        self,
+        mock_exists: MagicMock,
+        mock_forwards: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            host_port = listener.getsockname()[1]
+            marker = _install_fake_cluster_tools(
+                tmp_path, monkeypatch, _cluster_state(host_port)
+            )
+
+            result = CliRunner().invoke(cli, ["start"])
+
+        assert result.exit_code == 1
+        assert marker.read_text() == "inspect\n"
+        assert f"Host port {host_port} required by LLM (Ollama) is in use." in (
+            result.output
+        )
+        assert (
+            "k3d cannot remove or remap published ports on an existing cluster."
+            in result.output
+        )
+        assert "Free or reconfigure the host listener, then retry:" in result.output
+        assert "cogniverse start --name cogniverse" in result.output
+        assert (
+            f"recreate the cluster with host port {host_port} excluded or remapped."
+            in result.output
+        )
+        assert "Cluster cogniverse started." not in result.output
+        assert "Traceback" not in result.output
+        mock_forwards.assert_not_called()
+
+    @patch("cogniverse_cli.main.start_port_forwards")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    def test_start_reports_mapping_inspection_failure_without_starting(
+        self,
+        mock_exists: MagicMock,
+        mock_forwards: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        marker = _install_fake_cluster_tools(
+            tmp_path,
+            monkeypatch,
+            _cluster_state(11434),
+            inspect_returncode=17,
+        )
+
+        result = CliRunner().invoke(cli, ["start"])
+
+        assert result.exit_code == 1
+        assert marker.read_text() == "inspect\n"
+        assert (
+            "Could not inspect port mappings for k3d cluster 'cogniverse'"
+            in result.output
+        )
+        assert "Cluster cogniverse started." not in result.output
+        assert "Traceback" not in result.output
+        mock_forwards.assert_not_called()
+
+    @patch("cogniverse_cli.main.start_port_forwards")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    def test_start_reports_k3d_failure_without_calledprocesserror_traceback(
+        self,
+        mock_exists: MagicMock,
+        mock_forwards: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            host_port = probe.getsockname()[1]
+        marker = _install_fake_cluster_tools(
+            tmp_path,
+            monkeypatch,
+            _cluster_state(host_port),
+            start_returncode=23,
+            start_stderr="server started; serverlb failed",
+        )
+
+        result = CliRunner().invoke(cli, ["start"])
+
+        assert result.exit_code == 1
+        assert marker.read_text() == "inspect\nstart\n"
+        assert (
+            "Could not start k3d cluster 'cogniverse': server started; serverlb failed"
+        ) in result.output
+        assert "Cluster cogniverse started." not in result.output
+        assert "Traceback" not in result.output
+        assert not isinstance(result.exception, subprocess.CalledProcessError)
+        mock_forwards.assert_not_called()
+
+    @patch("cogniverse_cli.main.start_port_forwards")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    def test_start_delegates_after_clean_preflight(
+        self,
+        mock_exists: MagicMock,
+        mock_forwards: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            host_port = probe.getsockname()[1]
+        marker = _install_fake_cluster_tools(
+            tmp_path, monkeypatch, _cluster_state(host_port)
+        )
+
+        result = CliRunner().invoke(cli, ["start"])
+
+        assert result.exit_code == 0, result.output
+        assert marker.read_text() == "inspect\nstart\ninspect\n"
+        assert result.output == (
+            "Starting cluster cogniverse...\nCluster cogniverse started.\n"
+        )
+        mock_forwards.assert_called_once()
+
+    @patch("cogniverse_cli.main.start_port_forwards")
+    @patch("cogniverse_cli.main.cluster_exists", return_value=True)
+    def test_start_reports_loadbalancer_detached_from_cluster_network(
+        self,
+        mock_exists: MagicMock,
+        mock_forwards: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            host_port = probe.getsockname()[1]
+        stopped_state = _cluster_state(host_port)
+        detached_state = json.loads(json.dumps(stopped_state))
+        detached_state["nodes"][0]["State"] = {"Running": True}
+        marker = _install_fake_cluster_tools(
+            tmp_path,
+            monkeypatch,
+            stopped_state,
+            post_start_cluster_state=detached_state,
+        )
+
+        result = CliRunner().invoke(cli, ["start"])
+
+        assert result.exit_code == 1
+        assert marker.read_text() == "inspect\nstart\ninspect\n"
+        assert (
+            "k3d cluster 'cogniverse' started, but load balancer "
+            "'k3d-cogniverse-serverlb' is not attached to network "
+            "'k3d-cogniverse'."
+        ) in result.output
+        assert "The cluster API and published services are unavailable." in (
+            result.output
+        )
+        assert "Repair the existing cluster without recreating it:" in result.output
+        assert (
+            "docker network connect k3d-cogniverse k3d-cogniverse-serverlb"
+            in result.output
+        )
+        assert "docker restart k3d-cogniverse-serverlb" in result.output
+        assert "Cluster cogniverse started." not in result.output
+        assert "Traceback" not in result.output
+        mock_forwards.assert_not_called()
+
+    def test_concurrent_preflights_do_not_share_cluster_state(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from cogniverse_cli.cluster import ClusterStartError, start_cluster
+
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            host_port = listener.getsockname()[1]
+            marker = _install_fake_cluster_tools(
+                tmp_path, monkeypatch, _cluster_state(host_port)
+            )
+
+            def attempt_start() -> str:
+                with pytest.raises(ClusterStartError) as exc:
+                    start_cluster("cogniverse")
+                return str(exc.value)
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                messages = list(pool.map(lambda _: attempt_start(), range(2)))
+
+        expected = f"Host port {host_port} required by LLM (Ollama) is in use."
+        assert messages == [messages[0], messages[0]]
+        assert expected in messages[0]
+        assert marker.read_text().splitlines() == ["inspect", "inspect"]
 
 
 class TestIndexCommandGate:
