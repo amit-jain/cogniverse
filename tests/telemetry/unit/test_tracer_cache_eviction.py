@@ -20,7 +20,10 @@ def _manager(max_cached_tenants: int) -> TelemetryManager:
     # Bypass the singleton/__init__; _evict_old_tracers only touches the caches
     # and config.max_cached_tenants.
     m = object.__new__(TelemetryManager)
-    m.config = SimpleNamespace(max_cached_tenants=max_cached_tenants)
+    m.config = SimpleNamespace(
+        max_cached_tenants=max_cached_tenants,
+        tenant_cache_ttl_seconds=0,
+    )
     m._tenant_tracers = {}
     m._tenant_providers = {}
     m._tracer_provider_keys = {}
@@ -86,6 +89,20 @@ def test_no_eviction_keeps_everything():
     assert "t1:proj" in m._tenant_tracers
     assert "t1:proj" in m._tenant_providers
     provider.shutdown.assert_not_called()
+
+
+def test_cache_hit_marks_tracer_as_most_recently_used():
+    m = _manager(max_cached_tenants=2)
+    tracer_a, tracer_b, tracer_c = MagicMock(), MagicMock(), MagicMock()
+    m._tenant_tracers = {"a": tracer_a, "b": tracer_b}
+    m._tracer_created_at = {"a": 1.0, "b": 2.0}
+
+    assert m._cached_tracer("a") is tracer_a
+    m._tenant_tracers["c"] = tracer_c
+    m._tracer_created_at["c"] = 3.0
+    m._evict_old_tracers()
+
+    assert list(m._tenant_tracers) == ["a", "c"]
 
 
 def _live_manager(ttl_seconds: int, max_cached_tenants: int = 10) -> TelemetryManager:

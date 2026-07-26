@@ -169,7 +169,13 @@ flowchart TB
   writes; per-tenant scoped configs (routing/telemetry/backend) are served
   from a short-TTL cache (`scoped_config_cache_ttl_s`, default 5s). Setters
   on the same manager invalidate immediately — the TTL only bounds staleness
-  for writes made by another process.
+  for writes made by another process. Concurrent cold reads for the same
+  tenant and scope share one store fetch, and a completed setter cannot be
+  overwritten by an older in-flight cache fill.
+- `ConfigUtils` parses a discovered `config.json` once per file modification
+  across concurrent callers and returns an isolated copy to each instance.
+  Invalid JSON and file-access failures propagate with the file path instead
+  of being treated as an empty configuration.
 - Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore)
 
 ```python
@@ -197,7 +203,7 @@ config_manager.set_agent_config(
 | `set_system_config(system_config)` | Set global system configuration |
 | `get_agent_config(tenant_id, agent_name)` | Get agent configuration |
 | `set_agent_config(tenant_id, agent_name, agent_config)` | Set agent configuration |
-| `get_agent_config_history(tenant_id, agent_name, limit=10)` | Get config version history |
+| `get_agent_config_history(tenant_id, agent_name, limit=10)` | Get version history after canonicalizing the tenant identifier |
 | `get_routing_config(tenant_id="your_org:production", service="gateway_agent")` | Get routing configuration |
 | `set_routing_config(routing_config, tenant_id=None, service="gateway_agent")` | Set routing configuration |
 | `get_durable_execution_config(tenant_id, service="optimization")` | Get durable-execution enablement (default off) |
@@ -208,14 +214,14 @@ config_manager.set_agent_config(
 | `set_backend_config(backend_config, tenant_id=None, service="backend")` | Set backend configuration |
 | `get_tenant_instructions_config(tenant_id)` | Get raw tenant instructions value (TTL-cached; `{"text": ..., "updated_at": ...}` or `None`) |
 | `get_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Get specific backend profile |
-| `add_backend_profile(profile, tenant_id="your_org:production", service="backend")` | Add/update backend profile |
-| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id` (defaults to `base_tenant_id`) |
+| `add_backend_profile(profile, tenant_id="your_org:production", service="backend")` | Add/update a backend profile, then notify live backends in persistence order |
+| `update_backend_profile(profile_name, overrides, base_tenant_id=SYSTEM_TENANT_ID, target_tenant_id=None, service="backend")` | Partial profile update; inherits from `base_tenant_id`, saves to `target_tenant_id`, and notifies live backends with the merged profile |
 | `list_backend_profiles(tenant_id="your_org:production", service="backend")` | List all backend profiles |
 | `delete_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Delete backend profile |
 | `get_config_value(tenant_id, scope, service, config_key, default=None)` | Get arbitrary config value by scope |
 | `set_config_value(tenant_id, scope, service, config_key, config_value)` | Set arbitrary config value by scope |
 | `get_all_configs(tenant_id, scope=None)` | Get all configs for a tenant, optionally filtered by scope |
-| `export_configs(tenant_id, output_path)` | Export all configs to JSON |
+| `export_configs(tenant_id, output_path)` | Export all configs to JSON with a timezone-aware UTC `exported_at` |
 | `get_stats()` | Get configuration statistics |
 
 ### Configuration Types
@@ -542,7 +548,12 @@ class MyAgent(DynamicDSPyMixin, ConfigAPIMixin):
 | `GET /config/modules/available` | List registered DSPy module types |
 | `GET /config/optimizers/available` | List registered DSPy optimizer types |
 
-Every mutating endpoint persists through the injected `ConfigManager`, so changes survive a restart and are versioned like any other config write.
+Every mutating endpoint persists through the injected `ConfigManager`, so
+changes survive a restart and are versioned like any other config write. The
+tenant is fixed when the routes are registered; request query parameters cannot
+redirect a write to another tenant. Mutations are serialized, synchronous store
+calls run in a worker thread, and a persistence failure restores the prior
+in-memory configuration before the endpoint returns an error.
 
 ---
 
@@ -714,7 +725,7 @@ class MyStoreRegistry(EntryPointRegistry[MyStore]):
     _entry_point_group = "myapp.stores"
     _label = "my store"
     # _tenant_scoped = False (default): klass(**config), cached by backend_url/port
-    # _tenant_scoped = True: klass() + .initialize(config|{tenant_id}), cached by tenant
+    # _tenant_scoped = True: klass() + .initialize({**config, tenant_id}), cached by tenant
 ```
 
 Implementations register via their `pyproject.toml`:
@@ -727,7 +738,13 @@ default = "my_pkg.stores.default_impl:DefaultStore"
 Callers fetch instances with `MyStoreRegistry.get(name="default",
 config={...})`. Conflict detection is always on — if two installed
 packages both register `name="default"` under the same group,
-`discover()` raises `ValueError` rather than silently picking one.
+`discover()` raises `ValueError` rather than silently picking one. For a
+tenant-scoped registry, `get()` canonicalizes its `tenant_id` argument and
+places that canonical value in the initialization mapping after caller config
+is merged, so a config payload cannot override the cache's tenant identity.
+`TelemetryRegistry` further keys providers by project plus HTTP and gRPC
+endpoints, so reconfiguring an existing project creates a provider bound to the
+new destinations.
 
 ---
 

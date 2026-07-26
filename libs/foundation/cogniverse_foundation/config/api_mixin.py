@@ -2,11 +2,13 @@
 Mixin providing REST API endpoints for dynamic agent configuration with persistence.
 """
 
+import asyncio
+import copy
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cogniverse_foundation.config.agent_config import (
     DSPyModuleType,
@@ -27,7 +29,7 @@ class ModuleConfigUpdate(BaseModel):
     max_retries: int = 3
     temperature: float = 0.7
     max_tokens: int | None = None
-    custom_params: Dict[str, Any] = {}
+    custom_params: Dict[str, Any] = Field(default_factory=dict)
 
 
 class OptimizerConfigUpdate(BaseModel):
@@ -38,8 +40,8 @@ class OptimizerConfigUpdate(BaseModel):
     max_labeled_demos: int = 16
     num_trials: int = 10
     metric: str | None = None
-    teacher_settings: Dict[str, Any] = {}
-    custom_params: Dict[str, Any] = {}
+    teacher_settings: Dict[str, Any] = Field(default_factory=dict)
+    custom_params: Dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMConfigUpdate(BaseModel):
@@ -63,7 +65,7 @@ class ConfigAPIMixin:
 
     Features:
         - All config changes persist via ConfigManager's ConfigStore (Vespa)
-        - Supports multi-tenant configuration (tenant_id parameter)
+        - Binds every mutation to the tenant supplied during route setup
         - Version tracking for all changes
         - Hot reload without restart
 
@@ -96,6 +98,7 @@ class ConfigAPIMixin:
             tenant_id, source="setup_config_endpoints"
         )
         self._config_manager = config_manager
+        self._config_update_lock = asyncio.Lock()
 
         @app.get("/config")
         async def get_config():
@@ -124,11 +127,8 @@ class ConfigAPIMixin:
             }
 
         @app.post("/config/module")
-        async def update_module_config_endpoint(
-            request: ModuleConfigUpdate, tenant_id: Optional[str] = None
-        ):
+        async def update_module_config_endpoint(request: ModuleConfigUpdate):
             """Update module configuration at runtime with persistence"""
-            # Validate module type
             try:
                 module_type = DSPyModuleType(request.module_type)
             except ValueError:
@@ -136,43 +136,45 @@ class ConfigAPIMixin:
                     status_code=400,
                     detail=f"Invalid module type: {request.module_type}. "
                     f"Valid types: {[t.value for t in DSPyModuleType]}",
-                )
+                ) from None
 
-            try:
-                # Create new module config
-                new_config = ModuleConfig(
-                    module_type=module_type,
-                    signature=request.signature,
-                    max_retries=request.max_retries,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    custom_params=request.custom_params,
-                )
+            async with self._config_update_lock:
+                previous_config = copy.deepcopy(self.agent_config)
+                previous_modules = dict(getattr(self, "_dynamic_modules", {}))
+                try:
+                    new_config = ModuleConfig(
+                        module_type=module_type,
+                        signature=request.signature,
+                        max_retries=request.max_retries,
+                        temperature=request.temperature,
+                        max_tokens=request.max_tokens,
+                        custom_params=request.custom_params,
+                    )
+                    self.update_module_config(new_config)
+                    await asyncio.to_thread(
+                        self._config_manager.set_agent_config,
+                        tenant_id=self._config_tenant_id,
+                        agent_name=self.agent_config.agent_name,
+                        agent_config=self.agent_config,
+                    )
 
-                # Update in-memory configuration
-                self.update_module_config(new_config)
+                    logger.info(
+                        f"Persisted module config for "
+                        f"{self._config_tenant_id}:{self.agent_config.agent_name}"
+                    )
 
-                # Persist to ConfigManager
-                effective_tenant_id = tenant_id or self._config_tenant_id
-                self._config_manager.set_agent_config(
-                    tenant_id=effective_tenant_id,
-                    agent_name=self.agent_config.agent_name,
-                    agent_config=self.agent_config,
-                )
+                    return {
+                        "status": "success",
+                        "message": f"Module configuration updated to {module_type.value} and persisted",
+                        "module_info": self.get_module_info(),
+                    }
 
-                logger.info(
-                    f"Persisted module config for {effective_tenant_id}:{self.agent_config.agent_name}"
-                )
-
-                return {
-                    "status": "success",
-                    "message": f"Module configuration updated to {module_type.value} and persisted",
-                    "module_info": self.get_module_info(),
-                }
-
-            except Exception as e:
-                logger.error(f"Failed to update module config: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
+                except Exception as e:
+                    self.agent_config = previous_config
+                    if hasattr(self, "_dynamic_modules"):
+                        self._dynamic_modules = previous_modules
+                    logger.error(f"Failed to update module config: {e}")
+                    raise HTTPException(status_code=500, detail=str(e))
 
         @app.get("/config/optimizer")
         async def get_optimizer_config():
@@ -188,11 +190,8 @@ class ConfigAPIMixin:
             }
 
         @app.post("/config/optimizer")
-        async def update_optimizer_config_endpoint(
-            request: OptimizerConfigUpdate, tenant_id: Optional[str] = None
-        ):
+        async def update_optimizer_config_endpoint(request: OptimizerConfigUpdate):
             """Update optimizer configuration at runtime with persistence"""
-            # Validate optimizer type
             try:
                 optimizer_type = OptimizerType(request.optimizer_type)
             except ValueError:
@@ -200,92 +199,93 @@ class ConfigAPIMixin:
                     status_code=400,
                     detail=f"Invalid optimizer type: {request.optimizer_type}. "
                     f"Valid types: {[t.value for t in OptimizerType]}",
-                )
+                ) from None
 
-            try:
-                # Create new optimizer config
-                new_config = OptimizerConfig(
-                    optimizer_type=optimizer_type,
-                    max_bootstrapped_demos=request.max_bootstrapped_demos,
-                    max_labeled_demos=request.max_labeled_demos,
-                    num_trials=request.num_trials,
-                    metric=request.metric,
-                    teacher_settings=request.teacher_settings,
-                    custom_params=request.custom_params,
-                )
+            async with self._config_update_lock:
+                previous_config = copy.deepcopy(self.agent_config)
+                try:
+                    new_config = OptimizerConfig(
+                        optimizer_type=optimizer_type,
+                        max_bootstrapped_demos=request.max_bootstrapped_demos,
+                        max_labeled_demos=request.max_labeled_demos,
+                        num_trials=request.num_trials,
+                        metric=request.metric,
+                        teacher_settings=request.teacher_settings,
+                        custom_params=request.custom_params,
+                    )
+                    self.update_optimizer_config(new_config)
+                    await asyncio.to_thread(
+                        self._config_manager.set_agent_config,
+                        tenant_id=self._config_tenant_id,
+                        agent_name=self.agent_config.agent_name,
+                        agent_config=self.agent_config,
+                    )
 
-                # Update in-memory configuration
-                self.update_optimizer_config(new_config)
+                    logger.info(
+                        f"Persisted optimizer config for "
+                        f"{self._config_tenant_id}:{self.agent_config.agent_name}"
+                    )
 
-                # Persist to ConfigManager
-                effective_tenant_id = tenant_id or self._config_tenant_id
-                self._config_manager.set_agent_config(
-                    tenant_id=effective_tenant_id,
-                    agent_name=self.agent_config.agent_name,
-                    agent_config=self.agent_config,
-                )
+                    return {
+                        "status": "success",
+                        "message": f"Optimizer configuration updated to {optimizer_type.value} and persisted",
+                        "optimizer_info": self.get_optimizer_info(),
+                    }
 
-                logger.info(
-                    f"Persisted optimizer config for {effective_tenant_id}:{self.agent_config.agent_name}"
-                )
-
-                return {
-                    "status": "success",
-                    "message": f"Optimizer configuration updated to {optimizer_type.value} and persisted",
-                    "optimizer_info": self.get_optimizer_info(),
-                }
-
-            except Exception as e:
-                logger.error(f"Failed to update optimizer config: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
+                except Exception as e:
+                    self.agent_config = previous_config
+                    logger.error(f"Failed to update optimizer config: {e}")
+                    raise HTTPException(status_code=500, detail=str(e))
 
         @app.post("/config/llm")
-        async def update_llm_config_endpoint(
-            request: LLMConfigUpdate, tenant_id: Optional[str] = None
-        ):
+        async def update_llm_config_endpoint(request: LLMConfigUpdate):
             """Update LLM configuration at runtime with persistence"""
-            try:
-                # Update LLM config fields if provided
-                if request.llm_model:
-                    self.agent_config.llm_model = request.llm_model
-                if request.llm_base_url:
-                    self.agent_config.llm_base_url = request.llm_base_url
-                if request.llm_api_key:
-                    self.agent_config.llm_api_key = request.llm_api_key
-                if request.llm_temperature is not None:
-                    self.agent_config.llm_temperature = request.llm_temperature
-                if request.llm_max_tokens:
-                    self.agent_config.llm_max_tokens = request.llm_max_tokens
+            async with self._config_update_lock:
+                previous_config = copy.deepcopy(self.agent_config)
+                try:
+                    if request.llm_model:
+                        self.agent_config.llm_model = request.llm_model
+                    if request.llm_base_url:
+                        self.agent_config.llm_base_url = request.llm_base_url
+                    if request.llm_api_key:
+                        self.agent_config.llm_api_key = request.llm_api_key
+                    if request.llm_temperature is not None:
+                        self.agent_config.llm_temperature = request.llm_temperature
+                    if request.llm_max_tokens:
+                        self.agent_config.llm_max_tokens = request.llm_max_tokens
 
-                # Reconfigure DSPy LM
-                self._configure_dspy_lm(self.agent_config)
+                    self._configure_dspy_lm(self.agent_config)
+                    await asyncio.to_thread(
+                        self._config_manager.set_agent_config,
+                        tenant_id=self._config_tenant_id,
+                        agent_name=self.agent_config.agent_name,
+                        agent_config=self.agent_config,
+                    )
 
-                # Persist to ConfigManager
-                effective_tenant_id = tenant_id or self._config_tenant_id
-                self._config_manager.set_agent_config(
-                    tenant_id=effective_tenant_id,
-                    agent_name=self.agent_config.agent_name,
-                    agent_config=self.agent_config,
-                )
+                    logger.info(
+                        f"Persisted LLM config for "
+                        f"{self._config_tenant_id}:{self.agent_config.agent_name}"
+                    )
 
-                logger.info(
-                    f"Persisted LLM config for {effective_tenant_id}:{self.agent_config.agent_name}"
-                )
+                    return {
+                        "status": "success",
+                        "message": "LLM configuration updated and persisted",
+                        "llm_config": {
+                            "model": self.agent_config.llm_model,
+                            "base_url": self.agent_config.llm_base_url,
+                            "temperature": self.agent_config.llm_temperature,
+                            "max_tokens": self.agent_config.llm_max_tokens,
+                        },
+                    }
 
-                return {
-                    "status": "success",
-                    "message": "LLM configuration updated and persisted",
-                    "llm_config": {
-                        "model": self.agent_config.llm_model,
-                        "base_url": self.agent_config.llm_base_url,
-                        "temperature": self.agent_config.llm_temperature,
-                        "max_tokens": self.agent_config.llm_max_tokens,
-                    },
-                }
-
-            except Exception as e:
-                logger.error(f"Failed to update LLM config: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
+                except Exception as e:
+                    self.agent_config = previous_config
+                    try:
+                        self._configure_dspy_lm(previous_config)
+                    except Exception:
+                        logger.exception("Failed to restore DSPy LM configuration")
+                    logger.error(f"Failed to update LLM config: {e}")
+                    raise HTTPException(status_code=500, detail=str(e))
 
         @app.get("/config/modules/available")
         async def list_available_modules():

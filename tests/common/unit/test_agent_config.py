@@ -314,7 +314,7 @@ class TestConfigManagerReservedReads:
                 ),
             )
 
-        history = cm.get_agent_config_history("acme:acme", "summarizer_agent")
+        history = cm.get_agent_config_history("acme", "summarizer_agent")
 
         assert [c.agent_version for c in history] == ["1.0.2", "1.0.1", "1.0.0"]
 

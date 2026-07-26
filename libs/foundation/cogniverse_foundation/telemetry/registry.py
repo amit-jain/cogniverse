@@ -33,16 +33,21 @@ class TelemetryRegistry(EntryPointRegistry[TelemetryProvider]):
 
     @classmethod
     def _cache_key(cls, name, config, tenant_id):
-        """Key telemetry providers per (tenant, project).
+        """Key telemetry providers by tenant, project, and endpoints.
 
         Unlike the default tenant-only key, a tenant can register distinct
         endpoints per project (manager.register_project), so projects must not
-        share one cached provider — else the second project silently reuses the
-        first's endpoints. Falls back to the tenant-only key when no project.
+        share one cached provider. Endpoint changes for an existing project
+        must also construct a new provider instead of returning a client bound
+        to stale HTTP and gRPC destinations.
         """
         base = super()._cache_key(name, config, tenant_id)
-        project = (config or {}).get("project_name")
-        return f"{base}_{project}" if project else base
+        parts = [base]
+        for key in ("project_name", "http_endpoint", "grpc_endpoint"):
+            value = (config or {}).get(key)
+            if value:
+                parts.append(f"{key}={value}")
+        return "|".join(parts)
 
 
 _telemetry_registry = TelemetryRegistry()
