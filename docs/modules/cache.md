@@ -72,7 +72,7 @@ libs/core/cogniverse_core/common/cache/
 ├── pipeline_cache.py                # Video processing artifact cache
 └── backends/
     ├── __init__.py
-    ├── structured_filesystem.py     # Filesystem backend, human-readable paths (L1)
+    ├── structured_filesystem.py     # Filesystem backend, canonical .keys layout (L1)
     └── s3.py                         # S3/MinIO shared backend, survives pod restart (L2)
 ```
 
@@ -200,79 +200,47 @@ flowchart TB
 flowchart TB
     ROOT["<span style='color:#000'>~/.cache/cogniverse/pipeline/</span>"]
     PROF["<span style='color:#000'>profile_name/<br/>Profile-based namespace</span>"]
-    KF["<span style='color:#000'>keyframes/<br/>Keyframe extraction results</span>"]
-    VID1["<span style='color:#000'>video_id_1/</span>"]
-    META1["<span style='color:#000'>metadata.pkl<br/>Keyframe metadata timestamps counts<br/>(expiry in the file mtime)</span>"]
-    F0["<span style='color:#000'>frame_0.jpg<br/>Individual keyframe images</span>"]
-    F42["<span style='color:#000'>frame_42.jpg</span>"]
-
-    TR["<span style='color:#000'>transcripts/<br/>Audio transcription results</span>"]
-    TRV1["<span style='color:#000'>video_id_1.pkl<br/>Transcript data segments text</span>"]
-
-    DESC["<span style='color:#000'>descriptions/<br/>VLM frame descriptions</span>"]
-    DESCV1["<span style='color:#000'>video_id_1.pkl<br/>Frame-level descriptions</span>"]
-
-    SEG["<span style='color:#000'>segments/<br/>Temporal segment frames</span>"]
-    SEGV1["<span style='color:#000'>video_id_1/</span>"]
-    SEG0["<span style='color:#000'>segment_0_start_0.0_end_6.0/</span>"]
-    SEGMETA["<span style='color:#000'>metadata.pkl<br/>Segment info timestamps fps</span>"]
-    SEGF0["<span style='color:#000'>frame_0.jpg<br/>Sampled frames from segment</span>"]
+    ART["<span style='color:#000'>keyframes | transcripts | descriptions | segments/<br/>Artifact namespace</span>"]
+    VID["<span style='color:#000'>video_id/<br/>16-character canonical-URI digest</span>"]
+    KEYS["<span style='color:#000'>.keys/<br/>Canonical entry marker</span>"]
+    CHUNKS["<span style='color:#000'>optional 120-character Base64URL chunks/</span>"]
+    VALUE["<span style='color:#000'>k&lt;base64url-full-key&gt;.pkl | .json | .msgpack | .jpg<br/>Exact reversible key; mtime stores expiry</span>"]
 
     ROOT --> PROF
-    PROF --> KF
-    PROF --> TR
-    PROF --> DESC
-    PROF --> SEG
-
-    KF --> VID1
-    VID1 --> META1
-    VID1 --> F0
-    VID1 --> F42
-
-    TR --> TRV1
-
-    DESC --> DESCV1
-
-    SEG --> SEGV1
-    SEGV1 --> SEG0
-    SEG0 --> SEGMETA
-    SEG0 --> SEGF0
+    PROF --> ART
+    ART --> VID
+    VID --> KEYS
+    KEYS --> CHUNKS
+    CHUNKS --> VALUE
 
     style ROOT fill:#90caf9,stroke:#1565c0,color:#000
     style PROF fill:#ffcc80,stroke:#ef6c00,color:#000
-    style KF fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style TR fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style DESC fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style SEG fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style VID1 fill:#b0bec5,stroke:#546e7a,color:#000
-    style META1 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style F0 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style F42 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style TRV1 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style DESCV1 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style SEGV1 fill:#b0bec5,stroke:#546e7a,color:#000
-    style SEG0 fill:#b0bec5,stroke:#546e7a,color:#000
-    style SEGMETA fill:#a5d6a7,stroke:#388e3c,color:#000
-    style SEGF0 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ART fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VID fill:#b0bec5,stroke:#546e7a,color:#000
+    style KEYS fill:#fff59d,stroke:#f9a825,color:#000
+    style CHUNKS fill:#b0bec5,stroke:#546e7a,color:#000
+    style VALUE fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 **Cache Key Examples** (video ID is a 16-char SHA-256 hex digest of the canonical URI):
 
-- `"profile:video:a3f2e9d8c7b6a5f4:keyframes"` → `profile/keyframes/a3f2e9d8c7b6a5f4/metadata.pkl`
+- `"profile:video:a3f2e9d8c7b6a5f4:keyframes"` → `profile/keyframes/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.pkl`
 
-- `"profile:video:a3f2e9d8c7b6a5f4:keyframes:frame_42"` → `profile/keyframes/a3f2e9d8c7b6a5f4/frame_42.jpg`
+- `"profile:video:a3f2e9d8c7b6a5f4:keyframes:frame_42"` → `profile/keyframes/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.jpg`
 
-- `"profile:video:a3f2e9d8c7b6a5f4:transcript:lang=auto:model=base"` → `profile/transcripts/a3f2e9d8c7b6a5f4.pkl`
+- `"profile:video:a3f2e9d8c7b6a5f4:transcript:lang=auto:model=base"` → `profile/transcripts/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.pkl`
 
-- `"profile:video:a3f2e9d8c7b6a5f4:segment_frames:...:frame_1"` → `profile/segments/a3f2e9d8c7b6a5f4/.../frame_1.jpg`
+- `"profile:video:a3f2e9d8c7b6a5f4:segment_frames:...:frame_1"` → `profile/segments/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.jpg`
 
 **Design Benefits:**
 
-- Human-readable paths for debugging
+- Human-readable namespace directories with exact reversible leaf keys
 
 - Easy manual inspection and cleanup
 
 - Profile-based isolation
+
+- Parameter-variant isolation without sanitized-name collisions
 
 - Efficient disk usage (deduplicated by video_id)
 
@@ -422,9 +390,9 @@ Get metadata for a cache entry (optional method).
 ```python
 metadata = await backend.get_metadata("video:abc123:keyframes")
 if metadata:
-    print(f"Created at: {metadata['created_at']}")
     print(f"Expires at: {metadata['expires_at']}")
     print(f"Size: {metadata['size_bytes']} bytes")
+    print(f"Canonical path: {metadata['relative_path']}")
 ```
 
 ---
@@ -434,7 +402,7 @@ List keys matching pattern (optional method).
 
 **Parameters:**
 
-- `pattern`: Optional glob pattern
+- `pattern`: Exact key, or a key prefix ending in `*`
 
 - `include_metadata`: Include metadata in results
 
@@ -442,8 +410,8 @@ List keys matching pattern (optional method).
 
 **Example:**
 ```python
-# List all keyframe caches
-keys = await backend.list_keys("*:keyframes", include_metadata=True)
+# List every key for one profile
+keys = await backend.list_keys("video_colpali_mv:*", include_metadata=True)
 for key, metadata in keys:
     print(f"{key}: {metadata['size_bytes']} bytes")
 ```
@@ -575,7 +543,7 @@ success = await cache_manager.set(
 )
 
 # Stored in all configured backends
-# Currently: structured_filesystem backend (persistent storage)
+# Production: structured_filesystem L1 plus shared S3/MinIO L2
 ```
 
 ---
@@ -819,57 +787,73 @@ class StructuredFilesystemConfig:
 
 **Key Features:**
 
-- Human-readable paths (no hash-based obfuscation)
+- Human-readable profile/artifact/video namespace directories
 
 - Profile-based namespacing
 
 - Artifact type separation (keyframes, transcripts, descriptions, segments)
 
-- TTL enforcement via metadata files
+- Collision-free, reversible full-key encoding under a `.keys` directory
+
+- TTL enforcement via each canonical file's mtime
 
 - Automatic cleanup of expired entries
 
-**Path Mapping Examples** (the video ID segment is a 16-char SHA-256 hex digest when generated via `PipelineArtifactCache`):
+**Canonical path layout**
+
+`PipelineArtifactCache` keys include every parameter that affects an artifact.
+The backend retains human-readable profile/artifact/video directories, then
+encodes the complete UTF-8 key as unpadded URL-safe Base64 below `.keys`.
+Encoded names are split into 120-character path components, so long model
+names and parameter sets remain below filesystem component limits. Decoding
+those components recovers the original key byte-for-byte.
 
 ```python
 # Keyframe metadata
 "profile:video:a3f2e9d8c7b6a5f4:keyframes"
-→ ~/.cache/cogniverse/pipeline/profile/keyframes/a3f2e9d8c7b6a5f4/metadata.pkl
+→ ~/.cache/cogniverse/pipeline/profile/keyframes/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.pkl
 
 # Individual keyframe
 "profile:video:a3f2e9d8c7b6a5f4:keyframes:frame_42"
-→ ~/.cache/cogniverse/pipeline/profile/keyframes/a3f2e9d8c7b6a5f4/frame_42.jpg
+→ ~/.cache/cogniverse/pipeline/profile/keyframes/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.jpg
 
 # Transcript (kwargs sorted alphabetically)
 "profile:video:a3f2e9d8c7b6a5f4:transcript:lang=auto:model=base"
-→ ~/.cache/cogniverse/pipeline/profile/transcripts/a3f2e9d8c7b6a5f4.pkl
+→ ~/.cache/cogniverse/pipeline/profile/transcripts/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.pkl
 
 # Segment frame
 "profile:video:a3f2e9d8c7b6a5f4:segment_frames:...:frame_1"
-→ ~/.cache/cogniverse/pipeline/profile/segments/a3f2e9d8c7b6a5f4/.../frame_1.jpg
+→ ~/.cache/cogniverse/pipeline/profile/segments/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.jpg
 ```
 
-**Expiry (encoded in the file mtime):**
+Only files matching this canonical `.keys` encoding are cache entries.
+Earlier path shapes such as
+`profile/transcripts/<video-id>.pkl` or
+`profile/keyframes/<video-id>/metadata.pkl` are invalid: they are not read,
+listed, counted, migrated, or used as fallbacks.
 
-Expiry is stored in each cache file's modification time rather than a per-entry
-`.meta` sidecar — `set()` `os.utime()`s the file to `expires_at` (or a
+Because the full key is encoded in the leaf path, parameter variants never
+alias. For example, `lang=en:model=base` and `lang=fr:model=base` produce two
+different files and round-trip independently.
+
+**Expiry**
+
+Expiry is stored in each canonical cache file's modification time.
+`set()` applies `os.utime()` to the temp file with `expires_at` (or a
 far-future never-expires sentinel when no ttl is given), so a cached entry costs
 one filesystem write, not two. `get`/`exists`/cleanup read the mtime.
 
 ```python
-# Cache file: abc123.pkl  (mtime == expires_at == created_at + ttl)
+# Canonical .keys file: k<base64url-full-key>.pkl
+# mtime == expires_at == write time + ttl
 # No sidecar file is written.
 ```
 
-Entries written before this change still carry a legacy `abc123.pkl.meta`
-sidecar (`{"key", "created_at", "expires_at", "ttl", "size_bytes", "format"}`);
-it is still read (and wins over the mtime) so an upgrade does not invalidate a
-warm cache. A re-write of such a key clears the stale sidecar so the fresh
-ttl governs.
-
 Writes are atomic: `set()` writes a temp file, stamps its mtime, then
 `os.replace`s it into place — a concurrent read or cleanup sweep never sees a
-half-written entry or a write-time mtime it would misread as expired.
+half-written entry or a write-time mtime it would misread as expired. If the
+replace fails, the prior canonical entry remains unchanged and the temp file
+is removed.
 
 **Caution — copying the cache tree:** because expiry lives in the mtime, any
 copy/restore that resets modification times (`cp` without `-p`, `rsync`
@@ -898,13 +882,13 @@ Convert cache key to filesystem path.
 
 **Process:**
 
-1. Split key by ":"
+1. Derive the human-readable profile/artifact/video namespace
 
-2. Extract profile, video_id, artifact_type
+2. URL-safe Base64-encode the complete key
 
-3. Build path based on artifact type
+3. Split the encoded key into 120-character components under `.keys`
 
-4. Sanitize path components (remove special chars)
+4. Select `.jpg` for frame-image keys or the configured serialization suffix
 
 **Example:**
 ```python
@@ -912,11 +896,13 @@ backend = StructuredFilesystemBackend(config)
 
 # Keyframe metadata
 path = backend._key_to_path("profile:video:abc123:keyframes")
-# → Path("~/.cache/cogniverse/pipeline/profile/keyframes/abc123/metadata.pkl")
+# → Path(".../profile/keyframes/abc123/.keys/k<base64url-full-key>.pkl")
 
 # Individual frame
 path = backend._key_to_path("profile:video:abc123:keyframes:frame_42")
-# → Path("~/.cache/cogniverse/pipeline/profile/keyframes/abc123/frame_42.jpg")
+# → Path(".../profile/keyframes/abc123/.keys/k<base64url-full-key>.jpg")
+
+assert backend._path_to_key(path) == "profile:video:abc123:keyframes:frame_42"
 ```
 
 ---
@@ -930,7 +916,7 @@ Retrieve value with TTL checking.
 
 2. Check if file exists
 
-3. Check metadata for expiration (if TTL enabled)
+3. Check the file mtime for expiration (if TTL enabled)
 
 4. Read file (binary for images, deserialize for data)
 
@@ -947,7 +933,7 @@ if metadata:
 ---
 
 #### `async set(key: str, value: Any, ttl: Optional[int] = None) -> bool`
-Store value with metadata.
+Store a value atomically.
 
 **Process:**
 
@@ -955,9 +941,9 @@ Store value with metadata.
 
 2. Create parent directories
 
-3. Serialize and write data
+3. Serialize and write to a unique temp file
 
-4. Write metadata file with TTL, size, timestamps
+4. Stamp the temp file's expiry mtime and atomically replace the destination
 
 5. Update statistics
 
@@ -978,11 +964,11 @@ Clean up expired entries on startup.
 
 **Process:**
 
-1. Walk the cache's data files
+1. Reap stale `.tmp` files left by interrupted writes
 
-2. Read each entry's expiry (its file mtime, or a legacy `.meta` sidecar)
+2. Walk files that decode as canonical `.keys` entries
 
-3. Delete expired cache files (plus any legacy sidecar)
+3. Delete entries whose mtime expiry is in the past
 
 4. Update eviction statistics
 
@@ -1534,7 +1520,7 @@ flowchart TB
     REQ["<span style='color:#000'>PIPELINE REQUEST<br/>ProcessingStrategySet.process video_path</span>"]
     PIPE["<span style='color:#000'>PIPELINE ARTIFACT LOOKUP<br/>keyframes = await pipeline_cache.get_keyframes video_path</span>"]
     PIPE_HIT["<span style='color:#000'>CACHE HIT ✓</span>"]
-    CMGET2["<span style='color:#000'>Key: profile:video:robot_soccer:keyframes:strategy=...<br/>CacheManager.get<br/>└─ Check Tier 1 Filesystem: HIT ✓<br/>   • Path: ~/.cache/.../profile/keyframes/robot_soccer/<br/>   • Read metadata.pkl<br/>   • Check TTL: OK not expired<br/>   • If load_images: load frame_*.jpg files<br/>Return: video_id robot_soccer num_keyframes 50 keyframes</span>"]
+    CMGET2["<span style='color:#000'>Key: profile:video:robot_soccer:keyframes:strategy=...<br/>CacheManager.get<br/>└─ Check Tier 1 Filesystem: HIT ✓<br/>   • Path: ~/.cache/.../profile/keyframes/robot_soccer/.keys/k&lt;base64url-full-key&gt;.pkl<br/>   • Decode exact key from canonical path<br/>   • Check mtime TTL: not expired<br/>   • If load_images: resolve each exact frame key under .keys<br/>Return: video_id robot_soccer num_keyframes 50 keyframes</span>"]
     CONT["<span style='color:#000'>PIPELINE CONTINUES<br/>• Use cached keyframes to avoid re-extraction<br/>• Total time saved: ~5-10 seconds vs recompute</span>"]
 
     REQ --> PIPE
@@ -1947,8 +1933,8 @@ cleared = await pipeline_cache.invalidate_video(video_path)
 print(f"Cleared {cleared} cache entries")
 
 # 2. PATTERN-BASED CLEARING
-# Clear all keyframes for a specific profile
-pattern = "video_colpali_mv:*:keyframes"
+# Clear every cache entry for a specific profile
+pattern = "video_colpali_mv:*"
 cleared = await cache_manager.clear(pattern)
 print(f"Cleared {cleared} keyframe entries for video_colpali_mv profile")
 

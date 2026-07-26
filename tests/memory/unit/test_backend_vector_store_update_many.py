@@ -257,6 +257,37 @@ class TestReadFaultContract:
         assert store.get("missing-id") is None
 
     @pytest.mark.unit
+    def test_get_unwraps_canonical_document_embedding(self):
+        from cogniverse_sdk.document import Document
+
+        store = self._store()
+        document = Document(
+            id="mem-embedded",
+            text_content="exact memory text",
+            metadata={
+                "user_id": "user-7",
+                "agent_id": "agent-4",
+                "created_at": 1_700_000_000,
+            },
+        )
+        document.add_embedding(
+            "embedding",
+            [0.125, -0.25, 0.5],
+            metadata={"model": "exact-test-model"},
+        )
+        store.backend.get_document.return_value = document
+
+        record = store.get("mem-embedded")
+
+        assert record.id == "mem-embedded"
+        assert record.vector == [0.125, -0.25, 0.5]
+        assert record.payload["data"] == "exact memory text"
+        assert record.payload["created_at"] == "2023-11-14T22:13:20+00:00"
+        store.backend.get_document.assert_called_once_with(
+            "mem-embedded", schema_name="agent_memories"
+        )
+
+    @pytest.mark.unit
     def test_list_raises_on_backend_failure(self):
         """A swallowed list() outage reads as an empty partition, so every
         enumerate-and-filter caller mistakes it for no-data and truncates."""

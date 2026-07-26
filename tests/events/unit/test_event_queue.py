@@ -331,6 +331,31 @@ class TestInMemoryEventQueue:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("task_id", "tenant_id", "expected"),
+        [
+            ("other-task", "tenant1", "event task_id 'other-task'"),
+            ("task_123", "other-tenant", "event tenant_id 'other-tenant'"),
+        ],
+    )
+    async def test_enqueue_rejects_events_for_another_queue(
+        self, task_id, tenant_id, expected
+    ):
+        queue = InMemoryEventQueue(task_id="task_123", tenant_id="tenant1")
+        event = create_status_event(
+            task_id=task_id,
+            tenant_id=tenant_id,
+            state=TaskState.WORKING,
+        )
+
+        with pytest.raises(ValueError, match=expected):
+            await queue.enqueue(event)
+
+        assert await queue.get_latest_offset() == 0
+        assert queue.get_stats()["event_count"] == 0
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
     async def test_cancellation(self, queue):
         """Test cancellation token"""
         assert not queue.cancellation_token.is_cancelled
@@ -543,6 +568,93 @@ class TestInMemoryQueueManager:
             tenant_id="tenant1",
         )
         assert queue1 is queue2
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_get_or_create_queue_is_atomic_under_concurrency(self, monkeypatch):
+        import cogniverse_core.events.backends.memory as memory_backend
+
+        caller_count = 8
+
+        class RacingManager(InMemoryQueueManager):
+            def __init__(self):
+                super().__init__(default_ttl_minutes=17)
+                self.waiting_callers = 0
+                self.all_callers_read = asyncio.Event()
+
+            async def get_queue(self, task_id):
+                queue = await super().get_queue(task_id)
+                if queue is None:
+                    self.waiting_callers += 1
+                    if self.waiting_callers == caller_count:
+                        self.all_callers_read.set()
+                    await asyncio.wait_for(self.all_callers_read.wait(), timeout=2)
+                return queue
+
+        manager = RacingManager()
+        construction_count = 0
+        real_queue = memory_backend.InMemoryEventQueue
+
+        def counted_queue(*args, **kwargs):
+            nonlocal construction_count
+            construction_count += 1
+            return real_queue(*args, **kwargs)
+
+        monkeypatch.setattr(memory_backend, "InMemoryEventQueue", counted_queue)
+        queues = await asyncio.gather(
+            *(
+                manager.get_or_create_queue("shared-task", "tenant1")
+                for _ in range(caller_count)
+            ),
+            return_exceptions=True,
+        )
+
+        assert not [result for result in queues if isinstance(result, Exception)]
+        assert construction_count == 1
+        assert len({id(queue) for queue in queues}) == 1
+        assert list(manager._queues) == ["shared-task"]
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_get_or_create_rejects_tenant_mismatch(self, manager):
+        existing = await manager.get_or_create_queue("shared-task", "tenant1")
+
+        with pytest.raises(
+            ValueError,
+            match="belongs to tenant 'tenant1'.*requested tenant 'tenant2'",
+        ):
+            await manager.get_or_create_queue("shared-task", "tenant2")
+
+        assert await manager.get_queue("shared-task") is existing
+        assert existing.tenant_id == "tenant1"
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_get_or_create_recovers_after_constructor_failure(
+        self, manager, monkeypatch
+    ):
+        import cogniverse_core.events.backends.memory as memory_backend
+
+        real_queue = memory_backend.InMemoryEventQueue
+        attempts = 0
+
+        def fail_once(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("queue allocation failed")
+            return real_queue(*args, **kwargs)
+
+        monkeypatch.setattr(memory_backend, "InMemoryEventQueue", fail_once)
+
+        with pytest.raises(RuntimeError, match="queue allocation failed"):
+            await manager.get_or_create_queue("retry-task", "tenant1")
+        assert manager._queues == {}
+
+        queue = await manager.get_or_create_queue("retry-task", "tenant1")
+        assert queue.task_id == "retry-task"
+        assert queue.tenant_id == "tenant1"
+        assert manager._queues == {"retry-task": queue}
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio

@@ -6,14 +6,10 @@ Tests full memory functionality with proper document cleanup.
 
 Run with: pytest tests/memory/integration/test_mem0_complete_e2e.py -v -s
 
-Tests 07/09 assert ``>= 1`` final memories by default because Mem0's
-UPDATE/DELETE/NONE pass dedups aggressively on small LLMs (gemma3:4b,
-qwen3:4b). Set ``TEST_LM_IS_STRONG=1`` to switch to the strict
-``>= len(inputs) - 2`` assertion when running against a strong vision
-or instruction model that respects topic orthogonality.
+Storage-focused cases use ``infer=False`` and assert exact IDs and content.
+LLM extraction behavior is covered by the dedicated strategy and extraction
+integration tests.
 """
-
-import os
 
 import pytest
 
@@ -25,11 +21,6 @@ from tests.utils.llm_config import (
     get_llm_base_url,
     get_llm_model,
 )
-
-
-def _strong_lm() -> bool:
-    """Operator-controlled flag: assertions get stricter when set."""
-    return os.environ.get("TEST_LM_IS_STRONG", "").lower() in ("1", "true", "yes")
 
 
 @pytest.fixture(scope="module")
@@ -152,22 +143,44 @@ class TestMemorySystemCompleteE2E:
         assert memory_manager.health_check() is True
 
     def test_04_add_memory(self, memory_manager):
-        """Test adding memory"""
+        """A verbatim memory round-trips with its ID and metadata."""
+        memory_manager.clear_agent_memory("e2e_test_tenant", "test_agent")
+        content = "User prefers video content about machine learning and AI"
         memory_id = memory_manager.add_memory(
-            content="User prefers video content about machine learning and AI",
+            content=content,
             tenant_id="e2e_test_tenant",
             agent_name="test_agent",
             metadata={"test": "e2e", "category": "preference"},
+            infer=False,
         )
 
-        assert memory_id is not None
         assert isinstance(memory_id, str)
+        memories = memory_manager.get_all_memories(
+            tenant_id="e2e_test_tenant",
+            agent_name="test_agent",
+        )
+        assert {row["id"] for row in memories} == {memory_id}
+        assert {row["memory"] for row in memories} == {content}
+        assert {(row.get("metadata") or {}).get("category") for row in memories} == {
+            "preference"
+        }
+        assert {(row.get("metadata") or {}).get("test") for row in memories} == {"e2e"}
+        memory_manager.clear_agent_memory("e2e_test_tenant", "test_agent")
 
     def test_05_search_memory(self, memory_manager):
-        """Test searching memory"""
+        """Semantic search returns the exact stored memory."""
+        memory_manager.clear_agent_memory("e2e_test_tenant", "test_agent")
+        content = "User prefers video content about machine learning and AI"
+        memory_id = memory_manager.add_memory(
+            content=content,
+            tenant_id="e2e_test_tenant",
+            agent_name="test_agent",
+            infer=False,
+        )
+        assert isinstance(memory_id, str)
 
         # Wait for indexing
-        wait_for_vespa_indexing(delay=5)
+        wait_for_vespa_indexing(delay=2)
 
         # Search
         results = memory_manager.search_memory(
@@ -177,27 +190,33 @@ class TestMemorySystemCompleteE2E:
             top_k=5,
         )
 
-        assert len(results) > 0
-
-        # Verify content
-        result_text = str(results)
-        assert "machine learning" in result_text.lower() or "AI" in result_text
+        assert {result["id"] for result in results} == {memory_id}
+        assert {result["memory"] for result in results} == {content}
+        memory_manager.clear_agent_memory("e2e_test_tenant", "test_agent")
 
     def test_06_multi_tenant_isolation(self, memory_manager, shared_memory_vespa):
         """Test tenant isolation"""
 
         # Add memory for tenant A
-        memory_manager.add_memory(
-            content="Customer Sarah owns three Persian cats named Whiskers, Mittens, and Shadow",
+        tenant_a_content = (
+            "Customer Sarah owns three Persian cats named Whiskers, Mittens, and Shadow"
+        )
+        tenant_a_id = memory_manager.add_memory(
+            content=tenant_a_content,
             tenant_id="tenant_a",
             agent_name="isolation_test",
+            infer=False,
         )
 
         # Add memory for tenant B
-        memory_manager.add_memory(
-            content="Customer Mike has two Golden Retriever dogs named Buddy and Max",
+        tenant_b_content = (
+            "Customer Mike has two Golden Retriever dogs named Buddy and Max"
+        )
+        tenant_b_id = memory_manager.add_memory(
+            content=tenant_b_content,
             tenant_id="tenant_b",
             agent_name="isolation_test",
+            infer=False,
         )
 
         wait_for_vespa_indexing(delay=5)
@@ -218,57 +237,41 @@ class TestMemorySystemCompleteE2E:
             top_k=10,
         )
 
-        # Verify isolation
-        text_a = " ".join([str(r) for r in results_a])
-        text_b = " ".join([str(r) for r in results_b])
-
-        assert (
-            "cat" in text_a.lower()
-            or "sarah" in text_a.lower()
-            or "whiskers" in text_a.lower()
-        )
-        assert (
-            "dog" in text_b.lower()
-            or "mike" in text_b.lower()
-            or "buddy" in text_b.lower()
-            or "golden" in text_b.lower()
-        )
+        # Each query must return exactly the record persisted for that tenant.
+        assert {result["id"] for result in results_a} == {tenant_a_id}
+        assert {result["memory"] for result in results_a} == {tenant_a_content}
+        assert {result["id"] for result in results_b} == {tenant_b_id}
+        assert {result["memory"] for result in results_b} == {tenant_b_content}
 
         # Cleanup
         memory_manager.clear_agent_memory("tenant_a", "isolation_test")
         memory_manager.clear_agent_memory("tenant_b", "isolation_test")
 
     def test_07_get_all_memories(self, memory_manager, shared_memory_vespa):
-        """Test getting all memories.
-
-        Drives Mem0's full LLM-driven extraction + dedup path with
-        cross-domain personal facts. Asserts ``>= 1`` because Mem0's
-        UPDATE/DELETE/NONE pass is model-quality dependent: small
-        models (gemma3:4b, qwen3:4b) tend to choose NONE for
-        subsequent adds even when the new fact is orthogonal to
-        existing memory. The CRUD contract this test verifies is
-        "the storage path completes through Mem0's full inference
-        loop and get_all returns at least the kept memory" — not a
-        specific dedup count.
-        """
+        """Get-all returns every verbatim memory with its exact ID."""
 
         # Clear first
         memory_manager.clear_agent_memory("e2e_test_tenant", "get_all_test")
 
-        for content in (
+        contents = (
             "Drives a 2019 Toyota Camry",
             "Allergic to peanuts",
             "Owns a Border Collie named Rex",
             "Plays acoustic guitar every weekend",
             "Born in Toronto in 1988",
-        ):
+        )
+        ids = {
             memory_manager.add_memory(
                 content=content,
                 tenant_id="e2e_test_tenant",
                 agent_name="get_all_test",
+                infer=False,
             )
+            for content in contents
+        }
+        assert all(isinstance(memory_id, str) for memory_id in ids)
 
-        wait_for_vespa_indexing(delay=5)
+        wait_for_vespa_indexing(delay=2)
 
         # Get all
         memories = memory_manager.get_all_memories(
@@ -276,23 +279,25 @@ class TestMemorySystemCompleteE2E:
             agent_name="get_all_test",
         )
 
-        threshold = 3 if _strong_lm() else 1
-        assert len(memories) >= threshold
+        assert {row["id"] for row in memories} == ids
+        assert {row["memory"] for row in memories} == set(contents)
 
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "get_all_test")
 
     def test_08_delete_memory(self, memory_manager, shared_memory_vespa):
-        """Test deleting specific memory"""
+        """Deleting one exact ID removes its persisted row."""
 
-        # Add memory with factual content
+        memory_manager.clear_agent_memory("e2e_test_tenant", "delete_test")
         memory_id = memory_manager.add_memory(
             content="Customer Sarah Johnson lives in Portland, Oregon",
             tenant_id="e2e_test_tenant",
             agent_name="delete_test",
+            infer=False,
         )
+        assert isinstance(memory_id, str)
 
-        wait_for_vespa_indexing(delay=5)
+        wait_for_vespa_indexing(delay=2)
 
         # Delete
         success = memory_manager.delete_memory(
@@ -302,25 +307,22 @@ class TestMemorySystemCompleteE2E:
         )
 
         assert success is True
-
-        # Cleanup
-        memory_manager.clear_agent_memory("e2e_test_tenant", "delete_test")
+        wait_for_vespa_indexing(delay=1)
+        assert (
+            memory_manager.get_all_memories(
+                tenant_id="e2e_test_tenant",
+                agent_name="delete_test",
+            )
+            == []
+        )
 
     def test_09_memory_stats(self, memory_manager, shared_memory_vespa):
-        """Test memory statistics.
-
-        Drives Mem0's full LLM-driven extraction + dedup path with
-        cross-domain personal facts. Asserts ``total_memories >= 1``
-        because the dedup count is model-quality dependent (see
-        test_07 docstring) — this test verifies the stats API
-        returns a populated structure after the storage path runs,
-        not a specific dedup count.
-        """
+        """Statistics report the exact number of persisted memories."""
 
         # Clear and add memories with personal/behavioral content
         memory_manager.clear_agent_memory("e2e_test_tenant", "stats_test")
 
-        for content in (
+        contents = (
             "Married to Sam in 2015",
             "Vegetarian since age 12",
             "Speaks fluent Japanese",
@@ -329,14 +331,19 @@ class TestMemorySystemCompleteE2E:
             "Holds a private pilot license",
             "Drives a Tesla Model 3",
             "Reads two books per month",
-        ):
+        )
+        ids = {
             memory_manager.add_memory(
                 content=content,
                 tenant_id="e2e_test_tenant",
                 agent_name="stats_test",
+                infer=False,
             )
+            for content in contents
+        }
+        assert all(isinstance(memory_id, str) for memory_id in ids)
 
-        wait_for_vespa_indexing(delay=5)
+        wait_for_vespa_indexing(delay=2)
 
         # Get stats
         stats = memory_manager.get_memory_stats(
@@ -344,11 +351,18 @@ class TestMemorySystemCompleteE2E:
             agent_name="stats_test",
         )
 
-        threshold = 5 if _strong_lm() else 1
-        assert stats["enabled"] is True
-        assert stats["total_memories"] >= threshold
-        assert stats["tenant_id"] == "e2e_test_tenant"
-        assert stats["agent_name"] == "stats_test"
+        assert stats == {
+            "enabled": True,
+            "total_memories": len(contents),
+            "tenant_id": "e2e_test_tenant",
+            "agent_name": "stats_test",
+        }
+        memories = memory_manager.get_all_memories(
+            tenant_id="e2e_test_tenant",
+            agent_name="stats_test",
+        )
+        assert {row["id"] for row in memories} == ids
+        assert {row["memory"] for row in memories} == set(contents)
 
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "stats_test")
@@ -385,16 +399,25 @@ class TestMemorySystemCompleteE2E:
         # local models (qwen3:4b) extraction frequently returns empty
         # results for short sentences, which would look like a wiring
         # failure but is really LLM flakiness.
-        success = agent.update_memory(
-            "The Amazon River flows through Brazil and is 6400 kilometers long",
-            infer=False,
+        river_memory = (
+            "The Amazon River flows through Brazil and is 6400 kilometers long"
         )
+        success_memory = (
+            "SUCCESS - Successfully answered: What is the chemical symbol for gold?. "
+            "The answer was: Gold has the chemical symbol Au from Latin aurum"
+        )
+        failure_memory = (
+            "FAILURE - Failed attempt: What year was the Eiffel Tower completed?. "
+            "Error encountered: Could not verify construction date of 1889 in "
+            "historical records"
+        )
+        success = agent.update_memory(river_memory, infer=False)
         assert success is True
 
         wait_for_vespa_indexing(delay=3)
 
-        # Context may be None if no semantic match, that's okay
-        agent.get_relevant_context("rivers in South America", top_k=5)
+        context = agent.get_relevant_context("rivers in South America", top_k=5)
+        assert river_memory in context
 
         success = agent.remember_success(
             query="What is the chemical symbol for gold?",
@@ -413,15 +436,31 @@ class TestMemorySystemCompleteE2E:
 
         wait_for_vespa_indexing(delay=8)
 
-        # Get stats
         stats = agent.get_memory_stats()
-        assert stats["enabled"] is True
-        assert stats["agent_name"] == "mixin_e2e_test"
-        assert stats["total_memories"] >= 2  # Mem0 may deduplicate similar content
+        assert stats == {
+            "enabled": True,
+            "total_memories": 3,
+            "tenant_id": "test_tenant",
+            "agent_name": "mixin_e2e_test",
+        }
+        memories = agent.memory_manager.get_all_memories(
+            tenant_id="test_tenant",
+            agent_name="mixin_e2e_test",
+        )
+        assert {row["memory"] for row in memories} == {
+            river_memory,
+            success_memory,
+            failure_memory,
+        }
 
-        # Summary
         summary = agent.get_memory_summary()
-        assert summary["enabled"] is True
+        assert summary == {
+            "enabled": True,
+            "agent_name": "mixin_e2e_test",
+            "tenant_id": "test_tenant",
+            "initialized": True,
+            "total_memories": 3,
+        }
 
         # Cleanup
         agent.clear_memory()

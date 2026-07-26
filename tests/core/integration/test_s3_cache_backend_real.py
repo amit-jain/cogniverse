@@ -6,12 +6,11 @@ against a real S3 API. The pod-restart test is the one that proves the
 multi-pod fix: a fresh pod (empty L1) still serves cached artifacts from the
 shared L2 bucket.
 
-Requires Docker. Skips cleanly when Docker is unavailable.
+Requires Docker and boto3; missing test infrastructure is a test failure.
 """
 
 from __future__ import annotations
 
-import subprocess
 import uuid
 
 import numpy as np
@@ -26,18 +25,8 @@ pytestmark = pytest.mark.integration
 VIDEO = "s3://corpus/v_cache.mp4"
 
 
-def _docker_available() -> bool:
-    try:
-        return subprocess.run(["docker", "info"], capture_output=True).returncode == 0
-    except FileNotFoundError:
-        return False
-
-
 @pytest.fixture(scope="module")
 def minio():
-    if not _docker_available():
-        pytest.skip("Docker not available")
-    pytest.importorskip("boto3")
     manager = MinIOTestManager()
     instance = manager.start()
     try:
@@ -116,20 +105,39 @@ class TestS3CacheBackendReal:
 
     async def test_pod_restart_serves_from_shared_l2(self, minio, tmp_path):
         bucket = f"cache-{uuid.uuid4().hex[:8]}"
-        meta = {"keyframes": [{"frame_id": 0, "timestamp": 0.0}]}
+        meta = {
+            "video_id": "v_cache",
+            "keyframes": [
+                {"frame_id": 0, "timestamp": 0.0, "filename": "frame_0000.jpg"}
+            ],
+            "strategy": "fps",
+            "fps": 1.25,
+        }
 
         # Pod 1: write through L1(local fs) + L2(shared s3)
-        cache1 = PipelineArtifactCache(
-            _manager(
-                [
-                    _fs_backend_dict(tmp_path / "pod1"),
-                    _s3_backend_dict(minio, bucket),
-                ]
-            ),
-            ttl=3600,
-            profile="prof",
+        manager1 = _manager(
+            [
+                _fs_backend_dict(tmp_path / "pod1"),
+                _s3_backend_dict(minio, bucket),
+            ]
         )
-        assert await cache1.set_keyframes(VIDEO, meta, strategy="fps", fps=1.0) is True
+        cache1 = PipelineArtifactCache(manager1, ttl=3600, profile="prof")
+        assert (
+            await cache1.set_keyframes(
+                VIDEO, meta, strategy="fps", fps=1.25, max_frames=17
+            )
+            is True
+        )
+        video_key = cache1._generate_video_key(VIDEO)
+        artifact_key = cache1._generate_artifact_key(
+            video_key,
+            "keyframes",
+            strategy="fps",
+            fps=1.25,
+            max_frames=17,
+        )
+        assert await manager1.backends[0].get(artifact_key) == meta
+        assert await manager1.backends[1].get(artifact_key) == meta
 
         # Pod 2: a *fresh* pod — empty L1, same shared L2 bucket
         manager2 = _manager(
@@ -139,14 +147,20 @@ class TestS3CacheBackendReal:
             ]
         )
         cache2 = PipelineArtifactCache(manager2, ttl=3600, profile="prof")
+        fresh_l1 = manager2.backends[0]
+        shared_l2 = manager2.backends[1]
+        assert await fresh_l1.exists(artifact_key) is False
+        assert (await fresh_l1.get_stats())["total_files"] == 0
+        l2_hits_before = (await shared_l2.get_stats())["hits"]
 
-        got = await cache2.get_keyframes(VIDEO, strategy="fps", fps=1.0)
+        got = await cache2.get_keyframes(VIDEO, strategy="fps", fps=1.25, max_frames=17)
 
         assert got == meta
-        # the hit was served by the shared S3 (L2) backend, not L1
-        s3_backend = manager2.backends[1]
-        assert s3_backend.__class__.__name__ == "S3CacheBackend"
-        assert (await s3_backend.get_stats())["hits"] >= 1
+        assert shared_l2.__class__.__name__ == "S3CacheBackend"
+        assert (await shared_l2.get_stats())["hits"] == l2_hits_before + 1
+        assert await fresh_l1.exists(artifact_key) is True
+        assert await fresh_l1.get(artifact_key) == meta
+        assert (await fresh_l1.get_stats())["total_files"] == 1
 
     async def test_bucket_lifecycle_expiration_applied(self, minio):
         from cogniverse_core.common.cache.backends.s3 import (

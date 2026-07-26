@@ -613,7 +613,7 @@ operations:
 | `ingest_stream(documents, schema_name)` | Stream ingestion for large datasets |
 | `update_document(document_id, document, schema_name)` | Partial or full document update; raises on backend failure or id mismatch (False means the write was rejected, never that the backend was unreachable) |
 | `delete_document(document_id, schema_name)` | Delete a single document |
-| `get_document(document_id, schema_name)` / `batch_get_documents(document_ids)` | Point lookups |
+| `get_document(document_id, schema_name)` / `batch_get_documents(document_ids)` | Point lookups that reconstruct stored Vespa tensors through `Document.add_embedding`, so `Document.get_embedding(name)` returns the embedding data rather than a storage envelope |
 | `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package |
 | `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False` — a masked outage reads as "schema missing" and lets the deploy route redeploy over live data |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
@@ -950,6 +950,7 @@ The `VespaSearchBackend` implements connection pooling for efficient Vespa clien
 - **Automatic Recovery**: Unhealthy or over-idle connections are closed and dropped; a fresh connection is created on the next demand up to `max_connections`
 - **Bounded Growth**: Pool grows from `min_connections` up to `max_connections`, blocking (with timeout) once the ceiling is reached
 - **Metrics Tracking**: Query-level latency and success/failure counts via `SearchMetrics` (separate from connection health)
+- **Ordered Shutdown**: `VespaBackend.close()` serializes concurrent callers, stops the search pool's health thread, and closes every search, ingestion, and metadata client before a service is removed
 
 ### Architecture
 
@@ -1031,9 +1032,9 @@ class VespaConnection:
 
     Queries run over a persistent VespaSync HTTP client (self._sync) so
     TCP connections are reused across searches — plain Vespa.query()
-    builds and tears down a fresh client per call. health_check() stays
-    on the per-call self.vespa.query() path since it may run from the
-    pool's background thread while the connection is checked out.
+    builds and tears down a fresh client per call. health_check() uses
+    the same fail-fast persistent session from the pool's background
+    thread, including while the connection is checked out.
 
     Attributes:
         url: Vespa endpoint URL
@@ -1261,6 +1262,7 @@ Connection health is tracked per-connection via `VespaConnection.is_healthy` (se
 2. **Reliability**: Automatic removal and replacement of connections that fail their periodic health check
 3. **Observability**: Health metrics for monitoring connection status
 4. **Bounded resource use**: One pool per backend URL grows from `min_connections` to `max_connections`, shared across every tenant schema at that URL
+5. **Deterministic shutdown**: Closing the unified backend stops the health thread before releasing its HTTP clients; repeated or concurrent closes execute once, and every client is attempted before any close failure is reported
 
 ### Configuration
 
@@ -2031,7 +2033,8 @@ same underlying `Vespa(url=...)` construction:
     `_metadata_vespa_app()`) — metadata CRUD runs on every ingest/deploy.
     The cache key is `(url, port)`; when it changes, the old
     `PersistentVespaOps` is `close()`d before a new one is built.
-    `VespaBackend.close()` also releases it.
+    `VespaBackend.close()` also releases it, together with the search
+    connection pool and every schema-specific ingestion client.
 
 ```python
 from cogniverse_vespa._vespa_factory import make_persistent_vespa_ops, make_vespa_app
@@ -2668,6 +2671,7 @@ on every call — all for free.
 - Multi-tenant isolation (user_id → tenant scoping on the backend)
 - Per-agent namespacing (agent_id)
 - Semantic search via embeddings
+- Canonical `Document.get_embedding("embedding")` reads on point lookups
 - Metadata filtering
 - Telemetry spans on every operation (inherited from the Backend impl)
 

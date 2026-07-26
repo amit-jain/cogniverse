@@ -23,7 +23,7 @@ _MAX_S_EPOCH = 4_102_444_800
 def _numeric_epoch_seconds(ts: float) -> Optional[int]:
     if not math.isfinite(ts):  # inf would never exit the loop below; nan int()s raise
         return None
-    while ts > _MAX_S_EPOCH:  # collapse ms/us/ns magnitudes down to seconds
+    while abs(ts) > _MAX_S_EPOCH:  # collapse signed ms/us/ns down to seconds
         ts /= 1000.0
     return int(ts)
 

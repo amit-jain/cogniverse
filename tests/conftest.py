@@ -141,10 +141,19 @@ def shared_denseon(vllm_sidecar):
     Mirrors the chart's ``vllm_embed`` engine: ``--runner pooling
     --convert embed`` pools to a single dense vector per input (no
     per-token reshape), matching DenseOn's dense-retrieval semantics.
+    The chart pins float32 because DenseOn can emit NaNs for ordinary
+    document-prefixed text under vLLM's lower-precision CPU default.
     """
     return vllm_sidecar.spawn(
         "lightonai/DenseOn",
-        extra_args=["--runner", "pooling", "--convert", "embed"],
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--dtype",
+            "float32",
+        ],
     )
 
 
@@ -205,12 +214,13 @@ def pytest_collection_modifyitems(items):
             item.add_marker(skip)
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_runtest_setup(item):
     """Runtime LM gate for ``requires_lm``-marked tests.
 
-    An import-time ``skipif(not is_test_lm_available(), ...)`` latches the
-    PRE-session-fixture endpoint state — ``ensure_host_ollama`` provisions
-    the LM only at session setup — so the probe must run per test."""
+    ``trylast=True`` lets pytest fill autouse fixtures first, so the availability
+    probe runs only after ``ensure_host_ollama`` provisions the session endpoint.
+    """
     if item.get_closest_marker("requires_lm") is not None:
         from tests.fixtures.llm import is_test_lm_available, resolve_base_url
 
@@ -1413,25 +1423,6 @@ def _vespa_wait_for_query_ready(data_port: int, timeout: int = 120) -> bool:
     return False
 
 
-def _vespa_cleanup_my_container(container_name: str) -> None:
-    """Remove only OUR container by exact name, not any container that
-    happens to share the prefix.
-
-    Earlier this helper used the prefix filter ``name=^backend-tests-``
-    and killed every matching container. That blew away in-use containers
-    when pytest re-evaluated the fixture mid-session (e.g. after a
-    transient setup failure), turning one bad fixture call into a
-    cascade of failed tests downstream. Exact name keeps the blast radius
-    to what we own."""
-    import subprocess
-
-    subprocess.run(
-        ["docker", "rm", "-f", container_name],
-        capture_output=True,
-        timeout=30,
-    )
-
-
 @pytest.fixture(scope="session")
 def shared_vespa():
     """One Vespa container per pytest session, pinned against OOM-kill.
@@ -1463,15 +1454,7 @@ def shared_vespa():
     import platform
     import subprocess
 
-    from tests.utils.docker_utils import generate_unique_ports
-
-    http_port, config_port = generate_unique_ports("tests.conftest")
-    container_name = f"backend-tests-{http_port}"
-
-    # Only remove OUR exact container if a prior crashed pytest left it
-    # behind. Don't touch other backend-tests-* containers — they belong
-    # to concurrent sessions or other users.
-    _vespa_cleanup_my_container(container_name)
+    from tests.utils.docker_utils import start_docker_container_with_port_retry
 
     # Reap labelled containers whose owning pytest died without teardown
     # (SIGKILL skips the finally) — a dead session's Vespa JVM holds GBs.
@@ -1484,33 +1467,24 @@ def shared_vespa():
         "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
     )
 
-    # --oom-score-adj=-1000 makes the kernel pick literally anything else
-    # before this container under memory pressure. Losing the shared Vespa
-    # mid-session breaks every downstream test; the per-test sidecars
-    # (vllm, pylate) are cheaper to lose and restart.
-    result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            container_name,
+    container_name, http_port, config_port = start_docker_container_with_port_retry(
+        "tests.conftest",
+        name_prefix="backend-tests",
+        image="vespaengine/vespa:8.668.5",
+        container_ports=(8080, 19071),
+        extra_run_args=[
+            # The owner label lets the next session reap this container
+            # when SIGKILL prevents the fixture's finally block.
             "--label",
             f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{http_port}:8080",
-            "-p",
-            f"{config_port}:19071",
             "--platform",
             docker_platform,
+            # Losing the shared Vespa mid-session breaks every downstream
+            # test; transient inference sidecars are cheaper to restart.
             "--oom-score-adj=-1000",
-            "vespaengine/vespa:8.668.5",
         ],
-        capture_output=True,
-        text=True,
+        max_attempts=5,
     )
-    if result.returncode != 0:
-        pytest.fail(f"Failed to start shared_vespa container: {result.stderr}")
 
     try:
         if not _vespa_wait_for_config_ready(config_port, timeout=120):
@@ -1576,7 +1550,14 @@ def shared_vespa():
         }
 
     finally:
-        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        try:
+            from cogniverse_core.memory.manager import Mem0MemoryManager
+            from cogniverse_core.registries.backend_registry import BackendRegistry
+
+            Mem0MemoryManager._instances.clear()
+            BackendRegistry.clear_instances()
+        finally:
+            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
 
 
 @pytest.fixture(scope="session")

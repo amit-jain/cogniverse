@@ -67,7 +67,7 @@ class TestEventQueueWithIngestionPipeline:
         )
 
         queue = InMemoryEventQueue(
-            task_id="test_ingestion",
+            task_id="test_job_123",
             tenant_id="test_tenant",
         )
 
@@ -116,7 +116,7 @@ class TestEventQueueWithIngestionPipeline:
         )
 
         queue = InMemoryEventQueue(
-            task_id="test_ingestion",
+            task_id="test_job_123",
             tenant_id="test_tenant",
         )
 
