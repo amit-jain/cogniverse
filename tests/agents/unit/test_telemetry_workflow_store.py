@@ -8,7 +8,7 @@ Phoenix/ArtifactManager round-trip is covered by the integration suite.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -72,7 +72,7 @@ def _execution(
         confidence_score=0.91,
         user_satisfaction=0.75,
         error_details=None,
-        timestamp=datetime(2026, 5, 26, 12, 0, 0),
+        timestamp=datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
         metadata={"source": "test"},
     )
 
@@ -87,7 +87,9 @@ class TestExecutions:
         # Spot-check the typed fields survived the demonstration round-trip.
         assert loaded[0].confidence_score == 0.91
         assert loaded[0].agent_sequence == ["routing", "video_search"]
-        assert loaded[0].timestamp == datetime(2026, 5, 26, 12, 0, 0)
+        assert loaded[0].timestamp == datetime(
+            2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc
+        )
         assert loaded[0].metadata == {"source": "test"}
 
     async def test_save_replaces_previous_set(self, store):
@@ -115,7 +117,7 @@ class TestAgentProfiles:
             error_rate=0.1,
             preferred_query_types=["visual", "temporal"],
             performance_trend="improving",
-            last_updated=datetime(2026, 5, 26, 9, 30, 0),
+            last_updated=datetime(2026, 5, 26, 9, 30, 0, tzinfo=timezone.utc),
         )
         await store.save_agent_profiles("t:t", [profile])
         loaded = await store.load_agent_profiles("t:t")
@@ -148,8 +150,8 @@ class TestTemplates:
             expected_execution_time=1.2,
             success_rate=0.95,
             usage_count=3,
-            created_at=datetime(2026, 5, 1, 0, 0, 0),
-            last_used=datetime(2026, 5, 20, 0, 0, 0),
+            created_at=datetime(2026, 5, 1, 0, 0, 0, tzinfo=timezone.utc),
+            last_used=datetime(2026, 5, 20, 0, 0, 0, tzinfo=timezone.utc),
         )
 
     async def test_save_load_delete_round_trip(self, store):
@@ -232,7 +234,7 @@ def _profile(name: str) -> AgentPerformance:
         error_rate=0.2,
         preferred_query_types=["search"],
         performance_trend="stable",
-        last_updated=datetime(2026, 5, 26, 9, 30, 0),
+        last_updated=datetime(2026, 5, 26, 9, 30, 0, tzinfo=timezone.utc),
     )
 
 
