@@ -1,8 +1,8 @@
 # Cogniverse Agents
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-07-26
 **Layer:** Implementation
-**Dependencies:** cogniverse-sdk, cogniverse-core, cogniverse-synthetic
+**Dependencies:** cogniverse-sdk, cogniverse-core, cogniverse-synthetic, cogniverse-vespa
 
 Agent implementations for routing, multi-modal search, and orchestration.
 
@@ -10,7 +10,8 @@ Agent implementations for routing, multi-modal search, and orchestration.
 
 The Agents package sits in the **Implementation Layer**, providing concrete agent implementations that power the Cogniverse platform. It includes routing agents with DSPy optimization, multi-modal search agents (video, image, document), OrchestratorAgent for A2A orchestration, and A2A (Agent-to-Agent) protocol tools.
 
-All agents build on the base classes from `cogniverse-core` and leverage multi-modal embeddings for video and image search.
+Agents build on the base classes from `cogniverse-core`. Search agents use
+the configured Vespa backends and query encoders from `cogniverse-vespa`.
 
 ## Package Structure
 
@@ -27,11 +28,26 @@ cogniverse_agents/
 ├── detailed_report_agent.py # Report generation
 ├── search_agent.py          # General search agent
 ├── memory_aware_mixin.py    # Memory integration (MemoryAwareMixin)
+├── graph_bindable.py        # Shared knowledge-graph binding
 ├── adapter_loader.py        # Adapter (LoRA/fine-tune) loading utilities
+├── citation_tracing_agent.py
+├── contradiction_reconciliation_agent.py
+├── cross_tenant_comparison_agent.py
+├── federated_query_agent.py
+├── kg_traversal_agent.py
+├── knowledge_summarization_agent.py
+├── multi_document_synthesis_agent.py
+├── temporal_reasoning_agent.py
+├── wiki/                   # Wiki schema and manager
+├── workflow/               # Workflow state, intelligence, telemetry store
+├── graph/                  # Knowledge-graph extraction and management
+├── inference/              # RLM inference, instrumentation, evaluation
 ├── routing/                # Routing module
 │   ├── dspy_routing_signatures.py  # DSPy routing signatures
 │   ├── dspy_relationship_router.py # Relationship-based routing
 │   ├── annotation_agent.py         # Annotation generation
+│   ├── annotation_queue.py         # UTC-aware review queue
+│   ├── annotation_storage.py       # Phoenix annotation persistence
 │   ├── llm_auto_annotator.py       # Auto-annotation
 │   ├── profile_performance_optimizer.py  # Profile optimization
 │   └── xgboost_meta_models.py      # XGBoost meta-models
@@ -41,11 +57,12 @@ cogniverse_agents/
 │   ├── learned_reranker.py      # Learned reranking
 │   └── rerankers/          # Reranker implementations
 ├── optimizer/              # DSPy optimization
-│   └── dspy_agent_optimizer.py  # DSPyAgentPromptOptimizer, DSPyAgentOptimizerPipeline
+│   ├── artifact_manager.py       # Versioned telemetry artifacts
+│   ├── dspy_agent_optimizer.py  # DSPyAgentPromptOptimizer, DSPyAgentOptimizerPipeline
+│   ├── signature_variants.py    # Served signature variants
+│   └── strategy_learner.py      # Learned strategy persistence
 ├── orchestrator/           # Orchestration utilities
-│   ├── checkpoint_storage.py    # Checkpoint persistence
 │   └── sufficient_context_signature.py
-├── tools/                  # Agent tools
 └── approval/               # Approval workflows
 ```
 
@@ -88,13 +105,12 @@ Multi-modal video search with ColPali and VideoPrism is implemented in the `cogn
 
 ### Image Search Agent (`cogniverse_agents.image_search_agent`)
 
-Visual search with multi-modal embeddings:
+Visual search with configured ColPali-compatible query encoders:
 
 **Features:**
-- CLIP-based image embeddings
+- ColPali query embeddings
 - Visual similarity search
 - Text-to-image search
-- Image classification
 - Visual reranking
 
 ### Document Agent (`cogniverse_agents.document_agent`)
@@ -195,25 +211,26 @@ pip install cogniverse-agents
 - `cogniverse-sdk`: Backend interfaces
 - `cogniverse-core`: Base classes and registries
 - `cogniverse-synthetic`: Synthetic data generation
+- `cogniverse-vespa`: Vespa backends, schemas, and query encoders
 
-**External (Machine Learning):**
-- `torch>=2.5.0`: Deep learning framework
-- `transformers>=4.50.0`: Hugging Face models
-- `colpali-engine>=0.3.12`: ColPali embeddings
-- `sentence-transformers>=5.1.0`: Sentence embeddings
+**Optional local inference (`torch-local`):**
+- `torch==2.8.0`
+- `transformers==4.56.2`
+- `colpali-engine==0.3.13`
+- `sentence-transformers==5.1.1`
+- `gliner==0.2.26`
 
 **External (Optimization):**
-- `xgboost>=3.0.5`: ML optimization
-- `scikit-learn>=1.3.0`: ML utilities
-- `scipy>=1.10.0`: Scientific computing
+- `xgboost==3.2.0`
+- `scikit-learn==1.8.0`
+- `scipy==1.17.1`
 
 **External (NLP):**
-- `spacy>=3.7.0`: NLP processing
-- `gliner>=0.2.21`: Named entity recognition
-- `langextract>=1.0.6`: Language detection
+- `spacy==3.8.14`
+- `langextract==1.2.1`
 
 **External (Tracking):**
-- `mlflow>=3.0.0`: Experiment tracking
+- `mlflow==3.11.1`
 
 ## Usage Examples
 
@@ -339,7 +356,7 @@ The Agents package provides first-class multi-modal capabilities:
 - **Cross-Modal**: Text-to-video search
 
 ### Image Search
-- **Visual Embeddings**: CLIP, ColPali, custom models
+- **Visual Embeddings**: ColPali-compatible configured encoders
 - **Text-to-Image**: Natural language image search
 - **Image-to-Image**: Visual similarity search
 
@@ -407,10 +424,14 @@ cd libs/agents
 uv pip install -e .
 
 # Run tests
-pytest tests/agents/ tests/routing/
+uv run pytest tests/agents/ tests/routing/ -v --tb=long
 
 # Run specific agent tests
-pytest tests/agents/unit/test_orchestrator_agent.py
+uv run pytest tests/agents/unit/test_orchestrator_agent.py -v --tb=long
+
+# Static checks
+uv run ruff check libs/agents/cogniverse_agents tests/agents tests/routing
+uv run ruff format --check libs/agents/cogniverse_agents tests/agents tests/routing
 ```
 
 ## Testing
@@ -426,13 +447,10 @@ The agents package includes:
 
 ## Performance
 
-- **Query Routing**: <50ms P95 latency
-- **Video Search**: <450ms P95 latency (with embeddings)
-- **Image Search**: <200ms P95 latency
-- **Document Search**: <100ms P95 latency
-- **Concurrent Agents**: Up to 10 agents in parallel
-- **Cache Hit Rate**: >90% for modality predictions
-- **Routing Accuracy**: >95% on golden dataset
+Latency and quality depend on the configured language-model and Vespa
+endpoints, active search profiles, and deployment resources. Use the
+evaluation and telemetry workflows in `docs/modules/evaluation.md` and
+`docs/modules/telemetry.md` to measure the deployed system.
 
 ## Optimization
 
