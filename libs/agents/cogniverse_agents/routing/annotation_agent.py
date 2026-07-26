@@ -105,9 +105,16 @@ class AnnotationRequest:
         timestamp = data.get("timestamp")
         if isinstance(timestamp, str):
             timestamp = pd.to_datetime(timestamp)
+        if timestamp is None:
+            timestamp = datetime.now(timezone.utc)
+        if not isinstance(timestamp, datetime):
+            raise TypeError("timestamp must be an ISO datetime")
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise ValueError("timestamp must include a timezone")
+        timestamp = timestamp.astimezone(timezone.utc)
         return cls(
             span_id=data["span_id"],
-            timestamp=timestamp or datetime.now(timezone.utc),
+            timestamp=timestamp,
             query=data.get("query", ""),
             chosen_agent=data.get("chosen_agent", ""),
             routing_confidence=float(data.get("routing_confidence", 0.0)),
