@@ -102,7 +102,7 @@ logger = logging.getLogger(__name__)
 # a dead loop would wedge; keying by id(loop) avoids that.
 _HTTP_CLIENT_TIMEOUT = httpx.Timeout(240.0, connect=10.0)
 _http_clients: Dict[int, httpx.AsyncClient] = {}
-_http_clients_lock = asyncio.Lock()
+_http_clients_lock = threading.Lock()
 
 
 async def _get_http_client() -> httpx.AsyncClient:
@@ -112,13 +112,29 @@ async def _get_http_client() -> httpx.AsyncClient:
     client = _http_clients.get(key)
     if client is not None and not client.is_closed:
         return client
-    async with _http_clients_lock:
+    with _http_clients_lock:
         client = _http_clients.get(key)
         if client is not None and not client.is_closed:
             return client
         client = httpx.AsyncClient(timeout=_HTTP_CLIENT_TIMEOUT)
         _http_clients[key] = client
         return client
+
+
+async def close_orchestrator_http_client() -> None:
+    """Close and forget the shared client owned by the current event loop."""
+    key = id(asyncio.get_running_loop())
+    with _http_clients_lock:
+        client = _http_clients.pop(key, None)
+        _orch_semaphores.pop(key, None)
+
+    if client is None or client.is_closed:
+        return
+
+    try:
+        await client.aclose()
+    except Exception as exc:
+        raise RuntimeError("Failed to close orchestrator HTTP client") from exc
 
 
 # Cap concurrent orchestrations. Each complex query fans out to 5+

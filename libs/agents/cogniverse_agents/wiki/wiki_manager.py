@@ -254,6 +254,7 @@ class WikiManager:
             orphan_pages  — topic pages with zero cross-references from any session
             stale_pages   — pages not updated in 30+ days
             empty_pages   — pages with content shorter than 50 chars
+            malformed_pages — pages whose stored timestamps violate the contract
             total_pages   — total page count examined
             issues_found  — sum of all issues
         """
@@ -279,6 +280,7 @@ class WikiManager:
         orphan_pages = []
         stale_pages = []
         empty_pages = []
+        malformed_pages = []
 
         for fields in all_pages:
             page_type = fields.get("page_type", "")
@@ -304,33 +306,46 @@ class WikiManager:
             # explicitly so a page with a malformed updated_at is counted,
             # not silently dropped from the lint and under-counted as stale.
             updated_at_raw = fields.get("updated_at", "")
-            if updated_at_raw:
-                try:
-                    updated_at = datetime.fromisoformat(updated_at_raw)
-                    if updated_at.tzinfo is None:
-                        updated_at = updated_at.replace(tzinfo=timezone.utc)
-                    delta = now - updated_at
-                    if delta > stale_threshold:
-                        stale_pages.append(
-                            {
-                                "doc_id": doc_id,
-                                "title": title,
-                                "days_since_update": delta.days,
-                            }
-                        )
-                except (ValueError, TypeError) as exc:
-                    logger.warning(
-                        "Wiki page %s has malformed updated_at %r: %s",
-                        doc_id,
-                        updated_at_raw,
-                        exc,
+            try:
+                updated_at = datetime.fromisoformat(updated_at_raw)
+                if updated_at.tzinfo is None or updated_at.utcoffset() is None:
+                    raise ValueError("updated_at must include a timezone offset")
+                delta = now - updated_at
+                if delta > stale_threshold:
+                    stale_pages.append(
+                        {
+                            "doc_id": doc_id,
+                            "title": title,
+                            "days_since_update": delta.days,
+                        }
                     )
+            except (ValueError, TypeError) as exc:
+                malformed_pages.append(
+                    {
+                        "doc_id": doc_id,
+                        "title": title,
+                        "field": "updated_at",
+                        "value": updated_at_raw,
+                    }
+                )
+                logger.warning(
+                    "Wiki page %s has malformed updated_at %r: %s",
+                    doc_id,
+                    updated_at_raw,
+                    exc,
+                )
 
-        issues_found = len(orphan_pages) + len(stale_pages) + len(empty_pages)
+        issues_found = (
+            len(orphan_pages)
+            + len(stale_pages)
+            + len(empty_pages)
+            + len(malformed_pages)
+        )
         return {
             "orphan_pages": orphan_pages,
             "stale_pages": stale_pages,
             "empty_pages": empty_pages,
+            "malformed_pages": malformed_pages,
             "total_pages": len(all_pages),
             "issues_found": issues_found,
         }

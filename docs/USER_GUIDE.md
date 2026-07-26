@@ -812,7 +812,7 @@ curl -X POST http://localhost:28000/admin/messaging/invite \
 | `/wiki search <query>` | — | Search the wiki knowledge base |
 | `/wiki topic <name>` | — | Look up a topic page by name |
 | `/wiki index` | — | Show the full wiki index |
-| `/wiki lint` | — | Check wiki for orphan, stale, or empty pages |
+| `/wiki lint` | — | Check wiki for orphan, stale, empty, or malformed pages |
 | `/instructions set <text>` | — | Set custom agent instructions for your tenant |
 | `/instructions show` | — | Show current tenant instructions |
 | `/memories list` | — | List memories (add `agent=<name>` to filter) |
@@ -973,7 +973,7 @@ Use these commands in Telegram to interact with the wiki directly:
 | `/wiki search <query>` | Search the wiki knowledge base |
 | `/wiki topic <name>` | Look up a topic page by name |
 | `/wiki index` | Show the full wiki index |
-| `/wiki lint` | Check wiki for orphan, stale, or empty pages |
+| `/wiki lint` | Check wiki for orphan, stale, empty, or malformed pages |
 
 #### REST API
 
@@ -983,8 +983,12 @@ Use these commands in Telegram to interact with the wiki directly:
 | `/wiki/search` | POST | Full-text search over wiki pages |
 | `/wiki/topic/{slug}` | GET | Retrieve a topic page by slug |
 | `/wiki/index` | GET | Return the rendered wiki index |
-| `/wiki/lint` | GET | Report orphan, stale, and empty pages |
+| `/wiki/lint` | GET | Report orphan, stale, empty, and malformed pages |
 | `/wiki/topic/{slug}` | DELETE | Delete a topic page by slug |
+
+The lint response includes `malformed_pages` entries for missing, invalid, or
+timezone-naive `updated_at` values. Each entry names the document, field, and
+stored value, and contributes to `issues_found`.
 
 ```bash
 # Save a wiki page
@@ -1531,4 +1535,3 @@ tail -f outputs/logs/*.log
 - **Deployment**: See [operations/deployment.md](operations/deployment.md) (use `cogniverse up`)
 - **Kubernetes Deployment**: See [operations/kubernetes-deployment.md](operations/kubernetes-deployment.md)
 - **Multi-Tenant Operations**: See [operations/multi-tenant-ops.md](operations/multi-tenant-ops.md)
-
