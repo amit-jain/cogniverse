@@ -9,6 +9,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -21,7 +22,11 @@ from tests.utils.markers import (
     is_ffmpeg_available,
     is_vespa_running,
 )
-from tests.utils.vllm_sidecar import OWNER_LABEL
+from tests.utils.vllm_sidecar import (
+    OWNER_LABEL,
+    _discover_dev_model_urls,
+    _discover_e2e_model_urls,
+)
 
 
 def feed_document_via_prod_mapping(
@@ -140,64 +145,21 @@ def materialise_test_pipeline_config(http_port: int) -> str:
     return str(test_config_path)
 
 
-# ---------------------------------------------------------------------------
-# Inference sidecars for tests that exercise remote-inference profiles.
-# Tests gate themselves with ``@pytest.mark.skipif(not _service_configured(...))``
-# decorators evaluated at module-import time, so the env var has to be set
-# *before* pytest imports the test module — which is what ``pytest_configure``
-# is for. We spin up the vllm-colpali container (vLLM serving
-# TomoroAI/tomoro-colqwen3-embed-4b via ColPaliForRetrieval), the videoprism JAX
-# sidecar, and the vllm-asr Whisper sidecar (vLLM serving
-# openai/whisper-large-v3-turbo via /v1/audio/transcriptions) once per
-# session, populate ``INFERENCE_SERVICE_URLS``, and tear them down on
-# session exit. Transcription hard-requires the remote vllm_asr service, so
-# any video-ingestion test that transcribes needs it running. The
-# vllm/vllm-openai-cpu image is pulled from upstream automatically;
-# videoprism is local
-# (``docker build -t cogniverse/videoprism:dev deploy/videoprism/``).
-# ---------------------------------------------------------------------------
-
-_VLLM_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
+# Inference services are resolved after collection, and only for tests that
+# name them. Explicit test URLs come first, followed by an exact workload in
+# the cogniverse-e2e cluster, the development cluster, then an identical
+# local sidecar.
 _VIDEOPRISM_IMAGE = "cogniverse/videoprism:dev"
+_STARTED_INFERENCE_CONTAINERS: list[str] = []
 _INFERENCE_SIDECARS = {
     "vllm_colpali": {
-        "image": _VLLM_IMAGE,
-        "container_name": "vllm-colpali-ingest-tests",
+        "kind": "vllm",
         "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
-        "internal_port": 8000,
-        # CPU vLLM budgets RAM from these (NOT --gpu-memory-utilization, which
-        # is a no-op on CPU). The default ~0.1 utilization + the 4B Tomoro
-        # weights OOMs on a loaded host (Vespa + videoprism + LM sidecars all
-        # running), so the container exits before /health and the colpali
-        # skip-gate stays unsatisfied. 0.05 / 2 GiB KV mirrors the proven
-        # tests/utils/vllm_sidecar.py factory used by the search/runtime side.
-        "extra_env": {
-            "VLLM_CPU_MEMORY_UTILIZATION": "0.05",
-            "VLLM_CPU_KVCACHE_SPACE": "2",
-        },
-        # Make this short-lived sidecar a more attractive OOM-kill target than
-        # the session-scoped Vespa (oom-score-adj=-1000); losing it fails only
-        # its own tests, losing Vespa cascades.
-        "run_flags": ["--oom-score-adj=500"],
-        # Upstream vLLM's ``vllm serve`` entrypoint takes the model + flags as
-        # CLI args (it ignores MODEL_NAME). On CPU it otherwise tries to grab
-        # 0.92 of host RAM (~113 GiB) and aborts, so cap it. ``--runner pooling
-        # --convert embed`` selects vLLM's pooling runner so Tomoro serves the
-        # multi-vector embeddings the ColPali ingestion path consumes — same
-        # serving config the search-side vllm_sidecar fixture uses.
-        "command": [
-            "TomoroAI/tomoro-colqwen3-embed-4b",
+        "extra_args": [
             "--runner",
             "pooling",
             "--convert",
             "embed",
-            # qwen3_vl's ViT tower makes vLLM's profiler allocate a
-            # worst-case video buffer that OOMs; Tomoro embeds image
-            # frames, never native video. Mirrors the chart deploy args.
-            "--limit-mm-per-prompt",
-            '{"video":0,"image":1}',
-            "--gpu-memory-utilization",
-            "0.3",
             "--max-model-len",
             "4096",
         ],
@@ -205,39 +167,19 @@ _INFERENCE_SIDECARS = {
     "videoprism_jax": {
         "image": _VIDEOPRISM_IMAGE,
         "container_name": "videoprism-jax-ingest-tests",
+        "kind": "health",
         "model_name": "videoprism_public_v1_base_hf",
         "internal_port": 7999,
         "extra_env": {"JAX_PLATFORM_NAME": "cpu", "JAX_PLATFORMS": "cpu"},
     },
-    # Whisper served via vLLM's OpenAI-compatible /v1/audio/transcriptions.
-    # Transcription HARD-REQUIRES this remote service (no in-process
-    # fallback), so any video-ingestion test that transcribes needs it
-    # provisioned. Mirrors the chart's vllm_transcription engine: the
-    # upstream vllm-openai-cpu image lacks the [audio] extras, so we
-    # override the ``vllm serve`` entrypoint with ``sh -c`` to pip-install
-    # soundfile + librosa, then exec ``vllm serve`` (PID 1 for signals).
-    # whisper-large-v3-turbo is ~809M and feasible on CPU.
     "vllm_asr": {
-        "image": _VLLM_IMAGE,
-        "container_name": "vllm-asr-ingest-tests",
+        "kind": "vllm",
         "model_name": "openai/whisper-large-v3-turbo",
-        "internal_port": 8000,
-        # Same CPU RAM cap rationale as vllm_colpali. Whisper's KV cache is
-        # negligible (max-model-len 448), so 1 GiB is plenty; keep the
-        # 0.05 utilization floor so it co-exists with the other sidecars.
-        "extra_env": {
-            "VLLM_CPU_MEMORY_UTILIZATION": "0.05",
-            "VLLM_CPU_KVCACHE_SPACE": "1",
-        },
-        "run_flags": ["--oom-score-adj=500"],
-        # Override the image's ``vllm serve`` ENTRYPOINT so the [audio]
-        # extras install before vLLM starts; mirrors the chart command.
-        "entrypoint": ["sh", "-c"],
-        "command": [
-            "pip install --no-cache-dir --quiet soundfile librosa || exit 1; "
-            "exec vllm serve openai/whisper-large-v3-turbo "
-            "--host 0.0.0.0 --port 8000 "
-            "--runner generate --max-model-len 448",
+        "extra_args": [
+            "--runner",
+            "generate",
+            "--max-model-len",
+            "448",
         ],
     },
 }
@@ -249,28 +191,85 @@ def _free_port_for_sidecar() -> int:
         return s.getsockname()[1]
 
 
-def _docker_image_exists(image: str) -> bool:
+def _container_logs(container: str) -> str:
     try:
-        result = subprocess.run(
-            ["docker", "image", "inspect", image], capture_output=True, timeout=5
+        logs = subprocess.run(
+            ["docker", "logs", "--tail", "200", container],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
-    except Exception:
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"unable to read container logs: {exc}"
+    return "\n".join(part for part in (logs.stdout, logs.stderr) if part).strip()
+
+
+def _health_serves_exact_model(url: str, model: str, timeout: float = 2.0) -> bool:
+    try:
+        response = requests.get(f"{url.rstrip('/')}/health", timeout=timeout)
+        payload = response.json()
+    except (requests.RequestException, ValueError):
         return False
-    return result.returncode == 0
+    return (
+        response.status_code == 200
+        and isinstance(payload, dict)
+        and payload.get("status") == "ok"
+        and payload.get("model") == model
+    )
 
 
-def _start_inference_sidecar(service: str, spec: dict) -> str | None:
-    """Boot one inference sidecar serving ``spec['model_name']`` and
-    return its local URL once /health responds. Returns ``None`` if
-    startup times out (caller logs and falls back to skipping)."""
-    subprocess.run(["docker", "rm", "-f", spec["container_name"]], capture_output=True)
+def _remove_and_raise(
+    service: str,
+    spec: dict,
+    container: str,
+    reason: str,
+) -> None:
+    logs = _container_logs(container)
+    try:
+        cleanup = subprocess.run(
+            ["docker", "rm", "-f", container],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        cleanup_detail = "\n".join(
+            part for part in (cleanup.stdout, cleanup.stderr) if part
+        ).strip()
+        cleanup_status = (
+            "cleanup completed"
+            if cleanup.returncode == 0
+            else f"cleanup exited {cleanup.returncode}: {cleanup_detail}"
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        cleanup_status = f"cleanup failed: {type(exc).__name__}: {exc}"
+    raise RuntimeError(
+        f"Failed to launch exact inference service {service!r} with model "
+        f"{spec['model_name']!r}: {reason}\ncontainer logs:\n{logs}\n"
+        f"{cleanup_status}"
+    )
+
+
+def _start_inference_sidecar(service: str, spec: dict) -> str:
+    """Start one exact non-vLLM sidecar or raise with logs and cleanup."""
     port = _free_port_for_sidecar()
+    container = f"{spec['container_name']}-{os.getpid()}-{port}"
+    try:
+        subprocess.run(
+            ["docker", "rm", "-f", container],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _remove_and_raise(service, spec, container, f"{type(exc).__name__}: {exc}")
     cmd = [
         "docker",
         "run",
         "-d",
         "--name",
-        spec["container_name"],
+        container,
         # Owner label so a SIGKILLed session's sidecar gets reaped by the
         # next run's reap_dead_owner_containers().
         "--label",
@@ -280,13 +279,6 @@ def _start_inference_sidecar(service: str, spec: dict) -> str | None:
         "-e",
         f"MODEL_NAME={spec['model_name']}",
     ]
-    # The vllm-openai images ENTRYPOINT is ``vllm serve``; the Whisper ASR
-    # sidecar needs to pip-install the [audio] extras first, so it overrides
-    # the entrypoint with ``sh -c`` and supplies the full install+serve line
-    # as its command.
-    if spec.get("entrypoint"):
-        cmd.extend(["--entrypoint", spec["entrypoint"][0]])
-    cmd.extend(spec.get("run_flags", []))
     for env_key, env_val in spec.get("extra_env", {}).items():
         cmd.extend(["-e", f"{env_key}={env_val}"])
     cmd.extend(
@@ -296,150 +288,216 @@ def _start_inference_sidecar(service: str, spec: dict) -> str | None:
             spec["image"],
         ]
     )
-    # Upstream vLLM images need the model + flags as CLI args appended to the
-    # ``vllm serve`` entrypoint; the custom videoprism image reads MODEL_NAME.
-    # With an entrypoint override (``["sh", "-c"]``) the leftover entrypoint
-    # tokens (``-c``) become the first positional args before the command.
-    cmd.extend(spec.get("entrypoint", [])[1:])
-    cmd.extend(spec.get("command", []))
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"[ingest-conftest] {service} sidecar docker run failed: {result.stderr}")
-        return None
-
-    url = f"http://127.0.0.1:{port}"
-    # ColPali / ColIdefics3 / ColQwen all download multi-GB checkpoints on
-    # first run; allow a generous wait. Subsequent runs hit the HF cache
-    # mounted from $HOME/.cache/huggingface. We also short-circuit when the
-    # container has already exited (e.g. checkpoint architecture mismatch
-    # with the colpali_engine version) so a single broken model can't burn
-    # the whole 30-min budget.
-    deadline = time.time() + 1800  # 30 min cap
-    while time.time() < deadline:
-        try:
-            r = requests.get(f"{url}/health", timeout=5)
-            if r.status_code == 200:
-                return url
-        except Exception:
-            pass
-
-        inspect = subprocess.run(
-            [
-                "docker",
-                "inspect",
-                "-f",
-                "{{.State.Status}}|{{.State.ExitCode}}",
-                spec["container_name"],
-            ],
+    try:
+        result = subprocess.run(
+            cmd,
             capture_output=True,
             text=True,
+            timeout=120,
+            check=False,
         )
+    except (OSError, subprocess.SubprocessError) as exc:
+        _remove_and_raise(service, spec, container, f"{type(exc).__name__}: {exc}")
+    if result.returncode != 0:
+        _remove_and_raise(
+            service,
+            spec,
+            container,
+            f"docker run exited {result.returncode}: {result.stderr}",
+        )
+
+    url = f"http://127.0.0.1:{port}"
+    deadline = time.monotonic() + 1800
+    while time.monotonic() < deadline:
+        if _health_serves_exact_model(url, spec["model_name"], timeout=5):
+            _STARTED_INFERENCE_CONTAINERS.append(container)
+            return url
+
+        try:
+            inspect = subprocess.run(
+                [
+                    "docker",
+                    "inspect",
+                    "-f",
+                    "{{.State.Status}}|{{.State.ExitCode}}",
+                    container,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            _remove_and_raise(
+                service,
+                spec,
+                container,
+                f"{type(exc).__name__}: {exc}",
+            )
         if inspect.returncode == 0:
             status, _, exit_code = inspect.stdout.strip().partition("|")
             if status == "exited":
-                print(
-                    f"[ingest-conftest] {service} sidecar exited with code "
-                    f"{exit_code} — aborting wait. Last logs:"
+                _remove_and_raise(
+                    service,
+                    spec,
+                    container,
+                    f"container exited with code {exit_code}",
                 )
-                logs = subprocess.run(
-                    ["docker", "logs", "--tail", "20", spec["container_name"]],
-                    capture_output=True,
-                    text=True,
-                )
-                print(logs.stdout[-2000:])
-                print(logs.stderr[-2000:])
-                subprocess.run(
-                    ["docker", "rm", "-f", spec["container_name"]],
-                    capture_output=True,
-                )
-                return None
         time.sleep(5)
 
-    print(f"[ingest-conftest] {service} sidecar did not become ready in 30 min")
-    subprocess.run(["docker", "rm", "-f", spec["container_name"]], capture_output=True)
-    return None
+    _remove_and_raise(
+        service,
+        spec,
+        container,
+        "exact health contract timed out after 1800s",
+    )
+
+
+def _explicit_service_url(service: str) -> str | None:
+    raw_urls = os.environ.get("INFERENCE_SERVICE_URLS")
+    if not raw_urls:
+        return None
+    try:
+        urls = json.loads(raw_urls)
+    except json.JSONDecodeError:
+        return None
+    url = urls.get(service) if isinstance(urls, dict) else None
+    return url if isinstance(url, str) else None
+
+
+def _resolve_health_service(service: str, spec: dict) -> str:
+    candidates = []
+    explicit_url = _explicit_service_url(service)
+    if explicit_url:
+        candidates.append(explicit_url)
+    candidates.extend(_discover_e2e_model_urls(spec["model_name"]))
+    candidates.extend(_discover_dev_model_urls(spec["model_name"]))
+    for url in candidates:
+        if _health_serves_exact_model(url, spec["model_name"]):
+            return url.rstrip("/")
+    return _start_inference_sidecar(service, spec)
+
+
+def _resolve_inference_services(required: set[str], vllm_sidecar) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    for service in sorted(required):
+        try:
+            spec = _INFERENCE_SIDECARS[service]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"No exact inference sidecar is defined for {service!r}"
+            ) from exc
+        if spec["kind"] == "vllm":
+            resolved[service] = vllm_sidecar.spawn(
+                spec["model_name"],
+                extra_args=spec["extra_args"],
+            )
+        else:
+            resolved[service] = _resolve_health_service(service, spec)
+    return resolved
 
 
 def pytest_configure(config):
-    """Boot the vllm-colpali + videoprism + vllm-asr sidecars before any test
-    module imports so that ``@requires_vllm_colpali`` skipif decorators
-    evaluated at import time see a populated ``INFERENCE_SERVICE_URLS`` env
-    var, and so transcription (which hard-requires the remote ``vllm_asr``
-    service) finds its URL during video ingestion.
+    """Do not start inference services before tests request them."""
 
-    Honours an existing env var: if the user already exported one (e.g.
-    pointing at a long-running k3d sidecar) we don't fight them. Skips
-    silently when the required image isn't available — the individual
-    tests then fall through to their own skipif and surface a clear
-    ``not configured`` reason."""
-    # Honour an existing INFERENCE_SERVICE_URLS only if every URL is
-    # actually reachable — otherwise a stale env var from a previous
-    # pytest session points at dead sidecar ports and every test that
-    # talks to the inference service spins on connection-refused.
-    existing = os.environ.get("INFERENCE_SERVICE_URLS")
-    if existing:
-        try:
-            existing_urls = json.loads(existing)
-        except json.JSONDecodeError:
-            existing_urls = None
 
-        if isinstance(existing_urls, dict):
-            all_alive = True
-            for url in existing_urls.values():
-                try:
-                    r = requests.get(f"{url}/health", timeout=2)
-                    if r.status_code != 200:
-                        all_alive = False
-                        break
-                except Exception:
-                    all_alive = False
-                    break
-            if all_alive:
-                return
-            print(
-                "[ingest-conftest] INFERENCE_SERVICE_URLS in env points at "
-                "unreachable sidecars; ignoring and respawning."
-            )
-            del os.environ["INFERENCE_SERVICE_URLS"]
+@pytest.fixture(scope="session", autouse=True)
+def requested_inference_services(request, vllm_sidecar):
+    """Resolve only inference services named by the collected ingestion tests."""
+    required = getattr(
+        request.config,
+        "_cogniverse_required_inference_services",
+        set(),
+    )
+    original_urls = os.environ.get("INFERENCE_SERVICE_URLS")
+    resolved: dict[str, str] = {}
+    try:
+        resolved = _resolve_inference_services(required, vllm_sidecar)
+        if resolved:
+            os.environ["INFERENCE_SERVICE_URLS"] = json.dumps(resolved)
+        yield resolved
+    finally:
+        active_exception = sys.exception()
+        cleanup_errors: list[str] = []
+        for container in tuple(_STARTED_INFERENCE_CONTAINERS):
+            try:
+                cleanup = subprocess.run(
+                    ["docker", "rm", "-f", container],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                if cleanup.returncode != 0:
+                    detail = "\n".join(
+                        part for part in (cleanup.stdout, cleanup.stderr) if part
+                    ).strip()
+                    cleanup_errors.append(
+                        f"{container}: docker exited {cleanup.returncode}: {detail}"
+                    )
+            except (OSError, subprocess.SubprocessError) as exc:
+                cleanup_errors.append(f"{container}: {type(exc).__name__}: {exc}")
+            finally:
+                _STARTED_INFERENCE_CONTAINERS.remove(container)
+        if original_urls is None:
+            os.environ.pop("INFERENCE_SERVICE_URLS", None)
         else:
-            del os.environ["INFERENCE_SERVICE_URLS"]
-
-    urls: dict[str, str] = {}
-    started: list[str] = []
-    for service, spec in _INFERENCE_SIDECARS.items():
-        if not _docker_image_exists(spec["image"]):
-            print(
-                f"[ingest-conftest] {service} image {spec['image']} not built locally — "
-                "skipping (run docker build to enable that test class)"
+            os.environ["INFERENCE_SERVICE_URLS"] = original_urls
+        if cleanup_errors:
+            message = "Failed to remove exact inference containers: " + "; ".join(
+                cleanup_errors
             )
-            continue
-        url = _start_inference_sidecar(service, spec)
-        if url is not None:
-            urls[service] = url
-            started.append(spec["container_name"])
-
-    if urls:
-        os.environ["INFERENCE_SERVICE_URLS"] = json.dumps(urls)
-        config._cogniverse_inference_containers = started
-        print(
-            f"[ingest-conftest] INFERENCE_SERVICE_URLS={os.environ['INFERENCE_SERVICE_URLS']}"
-        )
+            if active_exception is not None:
+                active_exception.add_note(message)
+            else:
+                raise RuntimeError(message)
 
 
-def pytest_unconfigure(config):
-    """Tear down any sidecars ``pytest_configure`` started."""
-    started = getattr(config, "_cogniverse_inference_containers", None) or []
-    for name in started:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+def _inference_requirement(marker) -> str | None:
+    reason = marker.kwargs.get("reason")
+    if not isinstance(reason, str):
+        return None
+    for service in _INFERENCE_SIDECARS:
+        if reason.startswith(service):
+            return service
+    return None
 
 
-def pytest_collection_modifyitems(items):
-    """Auto-skip tests marked requires_ffmpeg / requires_vespa / requires_docker
-    when the corresponding service is unavailable."""
+_KEYWORD_INFERENCE_REQUIREMENTS = {
+    "requires_colpali": "vllm_colpali",
+    "requires_colqwen": "vllm_colpali",
+    "requires_videoprism": "videoprism_jax",
+}
+_INFERENCE_DEPENDENCIES = {
+    "vllm_colpali": {"vllm_asr"},
+    "videoprism_jax": {"vllm_asr"},
+}
+
+
+def _require_inference_service(required: set[str], service: str) -> None:
+    required.add(service)
+    required.update(_INFERENCE_DEPENDENCIES.get(service, ()))
+
+
+def pytest_collection_modifyitems(config, items):
+    """Resolve named inference and apply non-inference capability markers."""
+    required_inference: set[str] = set()
     ffmpeg_ok = is_ffmpeg_available()
     vespa_ok = is_vespa_running()
     docker_ok = is_docker_available()
     for item in items:
+        for keyword, service in _KEYWORD_INFERENCE_REQUIREMENTS.items():
+            if keyword in item.keywords:
+                _require_inference_service(required_inference, service)
+        for node, marker in tuple(item.iter_markers_with_node(name="skipif")):
+            service = _inference_requirement(marker)
+            if service is not None:
+                _require_inference_service(required_inference, service)
+                node.own_markers = [
+                    candidate
+                    for candidate in node.own_markers
+                    if candidate is not marker
+                ]
         if "requires_ffmpeg" in item.keywords and not ffmpeg_ok:
             item.add_marker(
                 pytest.mark.skip(
@@ -454,6 +512,7 @@ def pytest_collection_modifyitems(items):
             item.add_marker(
                 pytest.mark.skip(reason="Docker not available in this environment")
             )
+    config._cogniverse_required_inference_services = required_inference
 
 
 # Re-export the canonical session-scoped Vespa from the project root.
@@ -504,8 +563,8 @@ def ingestion_vespa_backend(shared_vespa):  # noqa: F811
         base_schema_name="video_colpali_smol500_mv_frame",
     )
 
-    # Seed SystemConfig with the inference-service URLs pytest_configure
-    # populated. Profiles that route embedding through a remote service
+    # Seed SystemConfig with the exact inference-service URLs requested by
+    # collected tests. Profiles that route embedding through a remote service
     # need this so the pipeline doesn't raise "no URL configured".
     from cogniverse_foundation.config.unified_config import SystemConfig
     from cogniverse_foundation.config.utils import (
