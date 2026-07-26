@@ -9,49 +9,29 @@ schema's field names for feeding — schemas declare their mapping, the
 serializer stays pure.
 """
 
+import math
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 
-def _as_epoch_seconds(value: Any, field_name: str) -> int:
-    """Coerce a stored timestamp to epoch seconds, failing with context.
-
-    Accepts int/float seconds, digit strings, and millisecond epochs
-    (converted); anything else raises instead of storing a mistyped value
-    the backend's long field rejects much later.
-    """
-    if value is None:
-        return int(time.time())
-    # numpy scalars first: np.float64 IS a float subclass (handled below) but
-    # np.int64 is NOT an int subclass and np.bool_ is NOT a bool subclass, so a
-    # created_at read from a pandas/parquet row (naturally np.int64) would fall
-    # through to the raise. Coerce to the Python scalar so the checks apply
-    # uniformly (and np.bool_ still gets rejected as a bool below).
-    if type(value).__module__ == "numpy" and hasattr(value, "item"):
-        value = value.item()
-    if isinstance(value, bool):
-        raise TypeError(f"Document.from_dict: {field_name} must be a timestamp")
-    if isinstance(value, str):
-        if not value.strip().isdigit():
-            raise TypeError(
-                f"Document.from_dict: {field_name} must be an integer "
-                f"timestamp, got {value!r}"
-            )
-        value = int(value.strip())
-    if isinstance(value, float):
-        value = int(value)
-    if not isinstance(value, int):
+def _as_epoch_seconds(
+    value: Any, field_name: str, boundary: str = "Document.from_dict"
+) -> int:
+    """Require the canonical integer-seconds representation."""
+    if type(value) is not int:
         raise TypeError(
-            f"Document.from_dict: {field_name} must be an integer timestamp, "
+            f"{boundary}: {field_name} must be an integer timestamp, "
             f"got {type(value).__name__}"
         )
-    if value >= 1_000_000_000_000:  # milliseconds epoch
-        value //= 1000
+    if abs(value) >= 1_000_000_000_000:
+        raise TypeError(
+            f"{boundary}: {field_name} must use epoch seconds, got {value!r}"
+        )
     return value
 
 
@@ -88,11 +68,50 @@ class DocumentFieldMapping:
     _FORMATS = ("epoch", "epoch_ms", "iso")
 
     def __post_init__(self):
+        self._validate_canonical_state()
+
+    def _validate_canonical_state(self) -> None:
+        string_fields = (
+            "id",
+            "title",
+            "text_content",
+            "description",
+            "content_type",
+            "content_id",
+            "content_path",
+            "created_at",
+            "updated_at",
+        )
+        for field_name in string_fields:
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(
+                    f"DocumentFieldMapping.{field_name} must be a str or None, "
+                    f"got {type(value).__name__}"
+                )
         if self.created_at_format not in self._FORMATS:
             raise ValueError(
                 f"DocumentFieldMapping: created_at_format must be one of "
                 f"{self._FORMATS}, got {self.created_at_format!r}"
             )
+        if not isinstance(self.include_metadata, bool):
+            raise TypeError(
+                "DocumentFieldMapping.include_metadata must be a bool, "
+                f"got {type(self.include_metadata).__name__}"
+            )
+        for field_name in ("metadata_fields", "embeddings"):
+            mapping = getattr(self, field_name)
+            if not isinstance(mapping, dict):
+                raise TypeError(
+                    f"DocumentFieldMapping.{field_name} must be a dict, "
+                    f"got {type(mapping).__name__}"
+                )
+            for source, target in mapping.items():
+                if not isinstance(source, str) or not isinstance(target, str):
+                    raise ValueError(
+                        f"DocumentFieldMapping.{field_name} must map str to str, "
+                        f"got {source!r} -> {target!r}"
+                    )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DocumentFieldMapping":
@@ -118,6 +137,25 @@ class DocumentFieldMapping:
         unknown = set(data) - known
         if unknown:
             raise ValueError(f"document_mapping has unknown keys: {sorted(unknown)}")
+        string_fields = known - {
+            "embeddings",
+            "metadata_fields",
+            "include_metadata",
+        }
+        for field_name in string_fields:
+            value = data.get(field_name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(
+                    f"document_mapping.{field_name} must be a str or None, "
+                    f"got {type(value).__name__}"
+                )
+        if "include_metadata" in data and not isinstance(
+            data["include_metadata"], bool
+        ):
+            raise TypeError(
+                "document_mapping.include_metadata must be a bool, "
+                f"got {type(data['include_metadata']).__name__}"
+            )
         metadata_fields = data.get("metadata_fields")
         if metadata_fields is not None:
             if not isinstance(metadata_fields, dict):
@@ -167,6 +205,10 @@ class DocumentFieldMapping:
         schema declares no mapping and ``required`` is False; raises ValueError
         naming the schema when ``required`` and the block is absent.
         """
+        if schema_json is not None and not isinstance(schema_json, dict):
+            raise TypeError(
+                f"schema_json must be a dict or None, got {type(schema_json).__name__}"
+            )
         mapping_cfg = (schema_json or {}).get("document_mapping")
         if not mapping_cfg:
             if required:
@@ -239,10 +281,66 @@ class Document:
         """Post-initialization processing."""
         if self.content_path:
             self.content_path = Path(self.content_path)
+        self._validate_canonical_state()
 
         # Auto-detect content type from content_path if not specified
         if self.content_type == ContentType.DOCUMENT and self.content_path:
             self._auto_detect_type()
+
+    def _validate_canonical_state(self) -> None:
+        if not isinstance(self.content_type, ContentType):
+            raise TypeError(
+                "Document.content_type must be a ContentType, "
+                f"got {type(self.content_type).__name__}"
+            )
+        if not isinstance(self.status, ProcessingStatus):
+            raise TypeError(
+                "Document.status must be a ProcessingStatus, "
+                f"got {type(self.status).__name__}"
+            )
+        if not isinstance(self.embeddings, dict):
+            raise TypeError(
+                f"Document.embeddings must be a dict, "
+                f"got {type(self.embeddings).__name__}"
+            )
+        wrapper_fields = {"data", "metadata", "created_at"}
+        for name, stored in self.embeddings.items():
+            if not isinstance(name, str):
+                raise TypeError(
+                    f"Document embedding name must be a str, got {type(name).__name__}"
+                )
+            if not isinstance(stored, dict):
+                raise TypeError(
+                    f"Document.embeddings[{name!r}] must be an embedding wrapper dict"
+                )
+            unknown = set(stored) - wrapper_fields
+            if unknown:
+                raise ValueError(
+                    f"Document.embeddings[{name!r}] has unknown fields: "
+                    f"{sorted(unknown)}"
+                )
+            missing = wrapper_fields - set(stored)
+            if missing:
+                raise ValueError(
+                    f"Document.embeddings[{name!r}] has missing fields: "
+                    f"{sorted(missing)}"
+                )
+            if not isinstance(stored["metadata"], dict):
+                raise TypeError(
+                    f"Document.embeddings[{name!r}].metadata must be a dict, "
+                    f"got {type(stored['metadata']).__name__}"
+                )
+            _as_epoch_seconds(
+                stored["created_at"],
+                "created_at",
+                f"Document.embeddings[{name!r}]",
+            )
+        if not isinstance(self.metadata, dict):
+            raise TypeError(
+                f"Document.metadata must be a dict, got {type(self.metadata).__name__}"
+            )
+        self.created_at = _as_epoch_seconds(self.created_at, "created_at", "Document")
+        self.updated_at = _as_epoch_seconds(self.updated_at, "updated_at", "Document")
 
     def _auto_detect_type(self):
         """Auto-detect content type from file extension."""
@@ -268,25 +366,39 @@ class Document:
         metadata: Optional[Dict] = None,
     ):
         """Add an embedding with optional metadata."""
+        if not isinstance(name, str):
+            raise TypeError(f"name must be a str, got {type(name).__name__}")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise TypeError(
+                f"metadata must be a dict or None, got {type(metadata).__name__}"
+            )
         self.embeddings[name] = {
             "data": embedding,
-            "metadata": metadata or {},
+            "metadata": metadata if metadata is not None else {},
             "created_at": int(time.time()),
         }
         self.updated_at = int(time.time())
 
     def get_embedding(self, name: str) -> Optional[Any]:
         """Get embedding data by name."""
-        return self.embeddings.get(name, {}).get("data")
+        self._validate_canonical_state()
+        value = self.embeddings.get(name)
+        return value["data"] if value is not None else None
 
     def get_embedding_metadata(self, name: str) -> Optional[Dict]:
         """Get embedding metadata by name."""
-        return self.embeddings.get(name, {}).get("metadata")
+        self._validate_canonical_state()
+        value = self.embeddings.get(name)
+        return value["metadata"] if value is not None else None
 
     def set_processing_status(
         self, status: ProcessingStatus, error_message: Optional[str] = None
     ):
         """Update processing status."""
+        if not isinstance(status, ProcessingStatus):
+            raise TypeError(
+                f"status must be a ProcessingStatus, got {type(status).__name__}"
+            )
         self.status = status
         self.error_message = error_message
         self.updated_at = int(time.time())
@@ -317,14 +429,31 @@ class Document:
 
         Metadata keys pass through verbatim (they are schema-specific by
         contract); mapped core fields overwrite a colliding metadata key so
-        the Document's own values win deterministically. Embedding values
-        unwrap both the wrapped ``add_embedding`` shape and raw vectors.
+        the Document's own values win deterministically. Embedding values use
+        the canonical wrapper created by ``add_embedding``.
         Fields whose generic value is None are omitted, as are generic
         fields the mapping does not name.
         """
+        if not isinstance(mapping, DocumentFieldMapping):
+            raise TypeError(
+                f"mapping must be a DocumentFieldMapping, got {type(mapping).__name__}"
+            )
+        mapping._validate_canonical_state()
+        self._validate_canonical_state()
         fields_out: Dict[str, Any] = {}
         if mapping.include_metadata:
-            fields_out.update(self.metadata)
+            renamed_sources = {
+                source
+                for source, target in mapping.metadata_fields.items()
+                if source != target
+            }
+            fields_out.update(
+                {
+                    key: value
+                    for key, value in self.metadata.items()
+                    if key not in renamed_sources
+                }
+            )
 
         # Explicit metadata-key -> schema-field renames (e.g. segment_index ->
         # segment_id). These win over a raw passthrough of the same source key
@@ -344,27 +473,19 @@ class Document:
         if mapping.description and self.description is not None:
             core[mapping.description] = self.description
         if mapping.content_type:
-            # content_type is normally a ContentType enum, but a caller may set
-            # it to a raw string ("video"); coerce through the enum so a bad
-            # value raises a clear ValueError instead of an opaque AttributeError.
-            ct = self.content_type
-            if not isinstance(ct, ContentType):
-                ct = ContentType(ct)
-            core[mapping.content_type] = ct.value
+            core[mapping.content_type] = self.content_type.value
         if mapping.content_id and self.content_id is not None:
             core[mapping.content_id] = self.content_id
         if mapping.content_path and self.content_path is not None:
             core[mapping.content_path] = str(self.content_path)
 
         def _stamp(value: int) -> Any:
-            # created_at is an epoch in SECONDS; land it as the schema field
-            # wants: an ISO string, milliseconds, or seconds — always an int for
-            # the numeric forms (a float must not reach a Vespa long field).
+            # created_at is epoch seconds; land it in the schema's declared unit.
             if mapping.created_at_format == "iso":
-                return datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat()
+                return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
             if mapping.created_at_format == "epoch_ms":
-                return int(value) * 1000
-            return int(value)
+                return value * 1000
+            return value
 
         if mapping.created_at:
             core[mapping.created_at] = _stamp(self.created_at)
@@ -375,16 +496,13 @@ class Document:
         for emb_name, schema_field in mapping.embeddings.items():
             if emb_name not in self.embeddings:
                 continue
-            emb_data = self.embeddings[emb_name]
-            if isinstance(emb_data, dict) and "data" in emb_data:
-                fields_out[schema_field] = emb_data["data"]
-            else:
-                fields_out[schema_field] = emb_data
+            fields_out[schema_field] = self.embeddings[emb_name]["data"]
 
         return fields_out
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
+        self._validate_canonical_state()
         return {
             "id": self.id,
             "content_type": self.content_type.value,
@@ -411,48 +529,58 @@ class Document:
         map) detonates far from here otherwise, inside whatever backend
         consumes it.
         """
-        embeddings = data.get("embeddings") or {}
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"Document.from_dict: payload must be a dict, got {type(data).__name__}"
+            )
+        expected = {item.name for item in fields(cls)}
+        unknown = set(data) - expected
+        if unknown:
+            raise ValueError(f"Document.from_dict: unknown fields: {sorted(unknown)}")
+        missing = expected - set(data)
+        if missing:
+            raise ValueError(f"Document.from_dict: missing fields: {sorted(missing)}")
+
+        embeddings = data["embeddings"]
         if not isinstance(embeddings, dict):
             raise TypeError(
                 f"Document.from_dict: embeddings must be a dict, "
                 f"got {type(embeddings).__name__}"
             )
-        metadata = data.get("metadata") or {}
+        metadata = data["metadata"]
         if not isinstance(metadata, dict):
             raise TypeError(
                 f"Document.from_dict: metadata must be a dict, "
                 f"got {type(metadata).__name__}"
             )
         try:
-            content_type = ContentType(data.get("content_type", "document"))
+            content_type = ContentType(data["content_type"])
         except ValueError:
             raise ValueError(
-                f"Document.from_dict: unknown content_type {data.get('content_type')!r}"
+                f"Document.from_dict: unknown content_type {data['content_type']!r}"
             ) from None
         try:
-            status = ProcessingStatus(data.get("status", "pending"))
+            status = ProcessingStatus(data["status"])
         except ValueError:
             raise ValueError(
-                f"Document.from_dict: unknown status {data.get('status')!r}"
+                f"Document.from_dict: unknown status {data['status']!r}"
             ) from None
 
         doc = cls(
-            id=data.get("id", str(uuid.uuid4())),
+            id=data["id"],
             content_type=content_type,
-            content_path=(
-                Path(data["content_path"]) if data.get("content_path") else None
-            ),
-            content_id=data.get("content_id"),
-            title=data.get("title"),
-            text_content=data.get("text_content"),
-            description=data.get("description"),
+            content_path=(Path(data["content_path"]) if data["content_path"] else None),
+            content_id=data["content_id"],
+            title=data["title"],
+            text_content=data["text_content"],
+            description=data["description"],
             embeddings=embeddings,
             status=status,
-            processing_time=data.get("processing_time"),
-            error_message=data.get("error_message"),
+            processing_time=data["processing_time"],
+            error_message=data["error_message"],
             metadata=metadata,
-            created_at=_as_epoch_seconds(data.get("created_at"), "created_at"),
-            updated_at=_as_epoch_seconds(data.get("updated_at"), "updated_at"),
+            created_at=_as_epoch_seconds(data["created_at"], "created_at"),
+            updated_at=_as_epoch_seconds(data["updated_at"], "updated_at"),
         )
         return doc
 
@@ -480,9 +608,19 @@ class SearchResult:
         score: float,
         highlights: Optional[Dict[str, Any]] = None,
     ):
+        if not isinstance(document, Document):
+            raise TypeError(
+                f"document must be a Document, got {type(document).__name__}"
+            )
+        if type(score) is not float or not math.isfinite(score):
+            raise TypeError(f"score must be a finite float, got {score!r}")
+        if highlights is not None and not isinstance(highlights, dict):
+            raise TypeError(
+                f"highlights must be a dict or None, got {type(highlights).__name__}"
+            )
         self.document = document
         self.score = score
-        self.highlights = highlights or {}
+        self.highlights = {} if highlights is None else highlights
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
@@ -504,7 +642,12 @@ class SearchResult:
         end = self.document.metadata.get("end_time")
         if start is not None and end is not None:
             temporal: Dict[str, Any] = {"start_time": start, "end_time": end}
-            if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+            if (
+                isinstance(start, (int, float))
+                and not isinstance(start, bool)
+                and isinstance(end, (int, float))
+                and not isinstance(end, bool)
+            ):
                 temporal["duration"] = end - start
             result["temporal_info"] = temporal
 

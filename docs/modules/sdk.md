@@ -145,7 +145,10 @@ Single `Document` class for all content types:
 Defines the contract for all backend implementations (Vespa, Qdrant, etc.):
 
 ```python
-from cogniverse_sdk.interfaces.backend import Backend, SearchBackend, IngestionBackend
+from threading import Lock
+from typing import Any, Dict
+
+from cogniverse_sdk.interfaces.backend import IngestionBackend, SearchBackend
 
 class Backend(IngestionBackend, SearchBackend):
     """Combined search and ingestion backend interface"""
@@ -154,15 +157,20 @@ class Backend(IngestionBackend, SearchBackend):
         """Initialize backend with a name for identification"""
         self.name = name
         self._initialized = False
+        self._initialization_lock = Lock()
 
     def initialize(self, config: Dict[str, Any]) -> None:
-        """Concrete: initializes once and delegates to _initialize_backend()"""
-        if not self._initialized:
+        """Initialize once across concurrent callers."""
+        if self._initialized:
+            return
+        with self._initialization_lock:
+            if self._initialized:
+                return
             self._initialize_backend(config)
             self._initialized = True
 
     # _initialize_backend(config) -> None: abstract - subclasses implement
-    # backend-specific connection setup; called exactly once by initialize()
+    # backend-specific connection setup.
 
     # Inherited from SearchBackend (abstract - must implement):
     # search(query_dict) -> List[SearchResult]
@@ -384,6 +392,13 @@ class ConfigEntry:
         return f"{self.tenant_id}:{self.scope.value}:{self.service}:{self.config_key}"
 ```
 
+`created_at` and `updated_at` must be timezone-aware datetimes. Construction
+normalizes them to UTC. `from_dict()` accepts exactly the fields emitted by
+`to_dict()` and requires canonical UTC ISO-8601 strings; missing fields,
+unknown fields, alternate offsets, and obsolete payload shapes raise
+`ValueError`. Identifiers are strings, `scope` is a `ConfigScope`,
+`config_value` is a dictionary, and `version` is a positive Python integer.
+
 **Benefits:**
 
 - **Storage-Agnostic**: Pluggable backend via `ConfigStore` interface (e.g., Vespa)
@@ -487,8 +502,8 @@ class WorkflowStore(ABC):
     @abstractmethod
     async def load_query_patterns(self, tenant_id: str) -> Dict[str, List[str]]: ...
 
-    # Concrete template method (not abstract): writes the three corpora as one
-    # unit — executions last, previous corpus restored on any failure.
+    # Concrete template method (not abstract): serializes writes per tenant,
+    # writes executions last, and restores every prior channel after a failure.
     async def save_learning_corpus(
         self,
         tenant_id: str,
@@ -510,8 +525,19 @@ class WorkflowStore(ABC):
     def get_stats(self) -> Dict[str, Any]: ...
 ```
 
+`save_learning_corpus()` replaces every channel, so an empty `patterns` mapping
+clears stale patterns. Saves for the same tenant cannot interleave, while
+different tenants retain independent locks. If a forward write fails, every
+restore step is attempted. A successful restore re-raises the forward error; if
+any restore also fails, an `ExceptionGroup` contains the forward error followed
+by each restore error.
+
 **Data Classes:**
 ```python
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
 @dataclass
 class WorkflowExecution:
     workflow_id: str
@@ -525,7 +551,9 @@ class WorkflowExecution:
     confidence_score: float
     user_satisfaction: Optional[float] = None
     error_details: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
@@ -538,7 +566,9 @@ class AgentPerformance:
     error_rate: float = 0.0
     preferred_query_types: List[str] = field(default_factory=list)
     performance_trend: str = "stable"
-    last_updated: datetime = field(default_factory=datetime.now)
+    last_updated: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
 @dataclass
 class WorkflowTemplate:
@@ -550,9 +580,31 @@ class WorkflowTemplate:
     expected_execution_time: float
     success_rate: float
     usage_count: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     last_used: Optional[datetime] = None
 ```
+
+Workflow record datetimes follow the same canonical form: defaults are UTC,
+aware offsets are normalized to UTC, naive datetimes are rejected, and stored
+payloads use timezone-bearing ISO-8601 strings. Each record accepts exactly its
+declared fields and validates values during both direct construction and
+deserialization:
+
+- Execution durations are finite, non-negative Python floats; efficiencies,
+  confidence scores, and optional satisfaction scores are floats between zero
+  and one. Success is a boolean, task counts are non-negative Python integers,
+  agent sequences contain only strings, and metadata is a dictionary.
+- Performance counts are non-negative Python integers, successful executions
+  cannot exceed total executions, timing is a finite non-negative float, and
+  confidence and error rate are floats between zero and one. Preferred query
+  types contain only strings, and trend is `improving`, `degrading`, or
+  `stable`.
+- Template query patterns contain only strings and task sequences contain only
+  dictionaries. Expected timing is a finite non-negative float, success rate is
+  a float between zero and one, and usage count is a non-negative Python
+  integer.
 
 ### 6. Adapter Store Interface
 
@@ -691,8 +743,8 @@ cogniverse_sdk/
 - `get_statistics()`: Get search backend statistics
 - `health_check()`: Check backend health
 - `get_embedding_requirements(schema_name)`: Get embedding requirements for schema
-- `add_profile(profile_name, profile_config)`: Register a new ranking/retrieval profile at runtime (concrete, default no-op; override to support hot-reload without a restart)
-- `remove_profile(profile_name)`: Unregister a profile at runtime (concrete, default no-op)
+- `add_profile(profile_name, profile_config)`: Required runtime registration of a new ranking/retrieval profile
+- `remove_profile(profile_name)`: Required runtime removal of a ranking/retrieval profile
 
 **Methods (IngestionBackend):**
 
@@ -706,7 +758,7 @@ cogniverse_sdk/
 
 **Methods (Backend — schema management and metadata ops):**
 
-- `_initialize_backend(config)`: Abstract; backend-specific connection/client setup, called exactly once by the concrete `initialize()`
+- `_initialize_backend(config)`: Abstract backend-specific connection/client setup; concurrent calls on one instance invoke it once after a successful initialization, while a raised exception leaves initialization retryable
 - `deploy_schemas(schema_definitions)`: Deploy multiple schemas together
 - `delete_schema(schema_name, tenant_id)`: Delete tenant schema(s); returns `List[str]` of deleted names
 - `schema_exists(schema_name, tenant_id)`: Check if schema exists
@@ -778,9 +830,10 @@ cogniverse_sdk/
 - `save_agent_profiles(tenant_id, profiles)` / `load_agent_profiles(tenant_id)`
 - `save_query_patterns(tenant_id, patterns)` / `load_query_patterns(tenant_id)`
 - `save_learning_corpus(tenant_id, executions, profiles, patterns)`: concrete
-  template method — writes all three corpora as one unit (executions last;
-  previous corpus restored on any failure) so a mid-sequence outage never
-  leaves executions referencing missing profiles
+  template method — replaces all three corpora, including an empty patterns
+  mapping; same-tenant calls are serialized, executions are written last, and
+  every prior channel is restored after a failure. Restore failures are
+  collected with the forward error in an `ExceptionGroup`.
 - `save_template(tenant_id, template)`: Create or update a template
 - `load_templates(tenant_id)`: Load all templates for tenant
 - `delete_template(tenant_id, template_id)`: Delete a template by id
@@ -910,13 +963,23 @@ names:
   `"iso"` (UTC string).
 - `metadata_fields`: `{metadata_key: schema_field}` renames a value carried in
   `Document.metadata` to a schema field name (e.g. `{"segment_index":
-  "segment_id"}`).
+  "segment_id"}`). When the source and destination names differ, the source
+  key is consumed rather than also being passed through, so feeds contain only
+  the schema's declared destination field.
 - `embeddings`: `{embedding_name: schema_field}` maps a stored embedding to its
-  field. Backends that hex/binary-encode embeddings (the ingestion path)
-  override these with their processed vectors.
+  field. Stored embeddings use the exact `add_embedding()` wrapper:
+  `data`, `metadata`, and an integer-second `created_at`. Backends that
+  hex/binary-encode embeddings (the ingestion path) override these with their
+  processed vectors.
 - `include_metadata`: when `false`, only the explicitly mapped/renamed fields
   are fed (no blanket passthrough of every metadata key) — used by schemas whose
   values all live in metadata under non-matching names.
+
+Mapping construction, loading, and serialization reject unknown keys,
+mistyped field names, booleans, and mapping dictionaries.
+`from_schema_json` likewise requires a dictionary (or `None`), so malformed
+schema data fails with the boundary field named instead of surfacing later
+during a feed.
 
 Backends apply this automatically: `VespaBackend.put_document(document, schema_name=..., base_schema_name=...)` loads the base schema's `document_mapping`, serializes, and feeds — raising `ValueError` when the schema declares no mapping rather than guessing field names.
 
@@ -947,6 +1010,10 @@ result_dict = result.to_dict()
 #     # start_time and end_time are present in doc.metadata
 # }
 ```
+
+`document` must be a `Document`, `score` must be a finite Python `float`, and
+`highlights` must be a dictionary or `None`. Invalid values raise at
+construction instead of reaching API serialization.
 
 ### Backend Interface
 
@@ -1255,8 +1322,13 @@ video_doc.set_processing_status(ProcessingStatus.COMPLETED)
 # Serialize to dict
 doc_dict = video_doc.to_dict()
 
-# Save to JSON
+# Save to JSON. Convert numpy arrays before serialization; Document.to_dict()
+# preserves embedding values and does not silently change their types.
 import json
+for stored_embedding in doc_dict["embeddings"].values():
+    data = stored_embedding.get("data")
+    if hasattr(data, "tolist"):
+        stored_embedding["data"] = data.tolist()
 with open("document.json", "w") as f:
     json.dump(doc_dict, f)
 
@@ -1269,6 +1341,14 @@ if loaded_doc.content_type == ContentType.VIDEO:
 elif loaded_doc.content_type == ContentType.DATAFRAME:
     print(f"Processing dataframe with {loaded_doc.metadata.get('rows')} rows")
 ```
+
+`Document.from_dict()` consumes only the exact `to_dict()` field set. It
+rejects missing or unknown fields, null metadata/embedding mappings, and
+alternate timestamp encodings; `created_at` and `updated_at` must be Python
+integers containing epoch seconds. Construction and serialization enforce the
+same field types: `content_type` and `status` are enum values, mappings are
+dictionaries, and timestamps are never coerced from strings, floats, NumPy
+scalars, or milliseconds.
 
 ### Example 3: Config Store Interface
 
@@ -1447,30 +1527,29 @@ dependencies = [
 
 ### Running Tests
 
-The SDK package contains only interface definitions and has no dedicated test suite. Interface implementations and their integration with the SDK are tested in the project-level `tests/` directory:
+SDK data-record and interface contracts, concrete implementations, and
+real-service round trips are tested in the project-level `tests/` directory:
 
 ```bash
-# Test Vespa backend implementation (implements Backend, ConfigStore, etc.)
-uv run pytest tests/backends/ -v
-
-# Test ingestion pipeline (exercises IngestionBackend interface)
-uv run pytest tests/ingestion/ -v
-
-# Test all unit tests
-uv run pytest tests/ -v -m "unit"
+uv run pytest \
+  tests/backends/unit/test_sdk_document_contracts.py \
+  tests/backends/unit/test_backend_interface_contract.py \
+  tests/backends/unit/test_backend_bool_contracts.py \
+  -v --tb=long > /tmp/sdk-tests.log 2>&1
 ```
 
 ### Test Structure
 
-Note: The SDK package currently does not have a dedicated test suite, as it only defines interfaces. Interface implementations are tested in the project-level `tests/` directory (e.g., `tests/backends/`, `tests/ingestion/`).
-
-### Example Tests
-
-The SDK package defines interfaces only. Testing examples can be found in the project-level `tests/` directory:
-
-- **Backend interface tests**: See `tests/backends/` for VespaBackend implementation tests
-- **ConfigStore tests**: See `tests/backends/` for VespaConfigStore tests
-- **Ingestion tests**: See `tests/ingestion/` for backend ingestion tests
+- `tests/backends/unit/test_sdk_document_contracts.py` pins document, config,
+  and workflow-record serialization boundaries.
+- `tests/backends/unit/test_backend_interface_contract.py` verifies concrete
+  backend method signatures against SDK contracts.
+- `tests/backends/unit/test_backend_bool_contracts.py` verifies boolean return
+  contracts.
+- `tests/backends/integration/test_document_mapping_roundtrip.py` exercises
+  document mapping against a real Vespa service.
+- Concrete ConfigStore, WorkflowStore, and AdapterStore tests live alongside
+  their implementations under `tests/backends/` and `tests/agents/`.
 
 ---
 
@@ -1557,4 +1636,3 @@ uv publish --token $PYPI_TOKEN
 - **Implementation**: See `cogniverse-vespa` for Backend implementation
 - **Usage**: See `cogniverse-core` for how SDK is used
 - **Foundation**: See `cogniverse-foundation` for config base classes
-

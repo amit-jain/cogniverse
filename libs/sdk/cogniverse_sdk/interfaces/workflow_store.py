@@ -15,20 +15,84 @@ trivial lifecycle/health methods stay sync.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-def _known_fields(cls, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop unknown keys so a payload written by a newer schema still
-    deserializes — cls(**data) raised TypeError on the first extra key."""
+def _canonical_payload(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Require the exact field set emitted by the record's serializer."""
+    if not isinstance(data, dict):
+        raise ValueError(f"payload must be a dict, got {type(data).__name__}")
     names = {f.name for f in fields(cls)}
-    return {k: v for k, v in data.items() if k in names}
+    unknown = set(data) - names
+    if unknown:
+        raise ValueError(f"unknown fields: {sorted(unknown)}")
+    missing = names - set(data)
+    if missing:
+        raise ValueError(f"missing fields: {sorted(missing)}")
+    return dict(data)
+
+
+def _utc_datetime(value: Any, field_name: str) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError(f"{field_name} must be a datetime, got {type(value).__name__}")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must include timezone information")
+    return value.astimezone(timezone.utc)
+
+
+def _datetime_from_payload(value: Any, field_name: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field_name} must be an ISO-8601 string, got {type(value).__name__}"
+        )
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} is not valid ISO-8601: {exc}") from None
+    canonical = _utc_datetime(parsed, field_name)
+    if value != canonical.isoformat():
+        raise ValueError(
+            f"{field_name} must use canonical UTC ISO-8601 form, got {value!r}"
+        )
+    return canonical
+
+
+def _require_string(value: Any, field_name: str) -> None:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a str, got {type(value).__name__}")
+
+
+def _require_nonnegative_integer(value: Any, field_name: str) -> None:
+    if type(value) is not int or value < 0:
+        raise TypeError(f"{field_name} must be a non-negative integer")
+
+
+def _require_finite_float(
+    value: Any,
+    field_name: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> None:
+    if type(value) is not float or not math.isfinite(value):
+        raise TypeError(f"{field_name} must be a finite float")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{field_name} must be at least {minimum:g}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{field_name} must be between {minimum:g} and {maximum:g}")
+
+
+def _require_string_list(value: Any, field_name: str) -> None:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise TypeError(f"{field_name} must be a list of str")
 
 
 @dataclass
@@ -46,8 +110,46 @@ class WorkflowExecution:
     confidence_score: float
     user_satisfaction: Optional[float] = None
     error_details: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _require_string(self.workflow_id, "workflow_id")
+        _require_string(self.query, "query")
+        _require_string(self.query_type, "query_type")
+        _require_finite_float(self.execution_time, "execution_time", minimum=0.0)
+        if type(self.success) is not bool:
+            raise TypeError(
+                f"success must be a bool, got {type(self.success).__name__}"
+            )
+        _require_string_list(self.agent_sequence, "agent_sequence")
+        _require_nonnegative_integer(self.task_count, "task_count")
+        _require_finite_float(
+            self.parallel_efficiency,
+            "parallel_efficiency",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        _require_finite_float(
+            self.confidence_score,
+            "confidence_score",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        if self.user_satisfaction is not None:
+            _require_finite_float(
+                self.user_satisfaction,
+                "user_satisfaction",
+                minimum=0.0,
+                maximum=1.0,
+            )
+        if self.error_details is not None and not isinstance(self.error_details, str):
+            raise TypeError("error_details must be a str or None")
+        if not isinstance(self.metadata, dict):
+            raise TypeError(
+                f"metadata must be a dict, got {type(self.metadata).__name__}"
+            )
+        self.timestamp = _utc_datetime(self.timestamp, "timestamp")
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -56,10 +158,8 @@ class WorkflowExecution:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowExecution":
-        data = _known_fields(cls, data)
-        ts = data.get("timestamp")
-        if isinstance(ts, str):
-            data["timestamp"] = datetime.fromisoformat(ts)
+        data = _canonical_payload(cls, data)
+        data["timestamp"] = _datetime_from_payload(data["timestamp"], "timestamp")
         return cls(**data)
 
 
@@ -75,7 +175,39 @@ class AgentPerformance:
     error_rate: float = 0.0
     preferred_query_types: List[str] = field(default_factory=list)
     performance_trend: str = "stable"  # improving, degrading, stable
-    last_updated: datetime = field(default_factory=datetime.now)
+    last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        _require_string(self.agent_name, "agent_name")
+        _require_nonnegative_integer(self.total_executions, "total_executions")
+        _require_nonnegative_integer(
+            self.successful_executions, "successful_executions"
+        )
+        if self.successful_executions > self.total_executions:
+            raise ValueError("successful_executions cannot exceed total_executions")
+        _require_finite_float(
+            self.average_execution_time,
+            "average_execution_time",
+            minimum=0.0,
+        )
+        _require_finite_float(
+            self.average_confidence,
+            "average_confidence",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        _require_finite_float(
+            self.error_rate,
+            "error_rate",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        _require_string_list(self.preferred_query_types, "preferred_query_types")
+        if self.performance_trend not in {"improving", "degrading", "stable"}:
+            raise ValueError(
+                "performance_trend must be improving, degrading, or stable"
+            )
+        self.last_updated = _utc_datetime(self.last_updated, "last_updated")
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -84,10 +216,10 @@ class AgentPerformance:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AgentPerformance":
-        data = _known_fields(cls, data)
-        lu = data.get("last_updated")
-        if isinstance(lu, str):
-            data["last_updated"] = datetime.fromisoformat(lu)
+        data = _canonical_payload(cls, data)
+        data["last_updated"] = _datetime_from_payload(
+            data["last_updated"], "last_updated"
+        )
         return cls(**data)
 
 
@@ -103,8 +235,33 @@ class WorkflowTemplate:
     expected_execution_time: float
     success_rate: float
     usage_count: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_used: Optional[datetime] = None
+
+    def __post_init__(self) -> None:
+        _require_string(self.template_id, "template_id")
+        _require_string(self.name, "name")
+        _require_string(self.description, "description")
+        _require_string_list(self.query_patterns, "query_patterns")
+        if not isinstance(self.task_sequence, list) or any(
+            not isinstance(task, dict) for task in self.task_sequence
+        ):
+            raise TypeError("task_sequence must be a list of dict")
+        _require_finite_float(
+            self.expected_execution_time,
+            "expected_execution_time",
+            minimum=0.0,
+        )
+        _require_finite_float(
+            self.success_rate,
+            "success_rate",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        _require_nonnegative_integer(self.usage_count, "usage_count")
+        self.created_at = _utc_datetime(self.created_at, "created_at")
+        if self.last_used is not None:
+            self.last_used = _utc_datetime(self.last_used, "last_used")
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -114,13 +271,10 @@ class WorkflowTemplate:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowTemplate":
-        data = _known_fields(cls, data)
-        ca = data.get("created_at")
-        if isinstance(ca, str):
-            data["created_at"] = datetime.fromisoformat(ca)
-        lu = data.get("last_used")
-        if isinstance(lu, str):
-            data["last_used"] = datetime.fromisoformat(lu)
+        data = _canonical_payload(cls, data)
+        data["created_at"] = _datetime_from_payload(data["created_at"], "created_at")
+        if data["last_used"] is not None:
+            data["last_used"] = _datetime_from_payload(data["last_used"], "last_used")
         return cls(**data)
 
 
@@ -193,31 +347,58 @@ class WorkflowStore(ABC):
         profiles are missing. Two guards: executions (the only corpus that
         references agents) is written LAST, so a failure before it never
         persists a dangling reference; and on any failure the previous corpus is
-        restored so a partial write is undone.
+        restored so a partial write is undone. Writes for one tenant are
+        serialized; different tenants use independent locks.
         """
+        locks = self.__dict__.setdefault("_learning_corpus_locks", {})
+        lock = locks.setdefault(tenant_id, asyncio.Lock())
+        async with lock:
+            await self._save_learning_corpus_locked(
+                tenant_id, executions, profiles, patterns
+            )
+
+    async def _save_learning_corpus_locked(
+        self,
+        tenant_id: str,
+        executions: List[WorkflowExecution],
+        profiles: List[AgentPerformance],
+        patterns: Dict[str, List[str]],
+    ) -> None:
         prev_profiles = await self.load_agent_profiles(tenant_id)
         prev_patterns = await self.load_query_patterns(tenant_id)
         prev_executions = await self.load_executions(tenant_id)
         try:
             await self.save_agent_profiles(tenant_id, profiles)
-            if patterns:
-                await self.save_query_patterns(tenant_id, patterns)
+            await self.save_query_patterns(tenant_id, patterns)
             await self.save_executions(tenant_id, executions)
-        except Exception:
-            try:
-                await self.save_agent_profiles(tenant_id, prev_profiles)
-                await self.save_query_patterns(tenant_id, prev_patterns)
-                await self.save_executions(tenant_id, prev_executions)
-                logger.warning(
-                    "Learning-corpus save failed for %s; restored previous corpus",
+        except Exception as forward_error:
+            restore_errors = []
+            restore_steps = [
+                ("agent profiles", self.save_agent_profiles, prev_profiles),
+                ("query patterns", self.save_query_patterns, prev_patterns),
+                ("executions", self.save_executions, prev_executions),
+            ]
+            for label, restore, previous in restore_steps:
+                try:
+                    await restore(tenant_id, previous)
+                except Exception as restore_error:
+                    restore_error.add_note(
+                        f"while restoring {label} for tenant {tenant_id!r}"
+                    )
+                    restore_errors.append(restore_error)
+            if restore_errors:
+                logger.error(
+                    "Learning-corpus save and restore failed for %s",
                     tenant_id,
                 )
-            except Exception:
-                logger.exception(
-                    "Learning-corpus save failed for %s and the restore also "
-                    "failed; the corpus may be inconsistent",
-                    tenant_id,
-                )
+                raise ExceptionGroup(
+                    f"Learning-corpus save and restore failed for {tenant_id!r}",
+                    [forward_error, *restore_errors],
+                ) from forward_error
+            logger.warning(
+                "Learning-corpus save failed for %s; restored previous corpus",
+                tenant_id,
+            )
             raise
 
     # ==================== Workflow Templates ====================

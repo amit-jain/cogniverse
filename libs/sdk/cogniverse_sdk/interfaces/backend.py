@@ -6,6 +6,7 @@ to integrate with the Cogniverse system.
 """
 
 from abc import ABC, abstractmethod
+from threading import Lock
 from typing import Any, Dict, Iterator, List, Optional
 
 from cogniverse_sdk.document import Document, SearchResult
@@ -207,19 +208,16 @@ class SearchBackend(ABC):
     # added dynamically (via ConfigManager.add_backend_profile or
     # POST /admin/profiles), the runtime's BackendRegistry fans the
     # change out to every cached backend by invoking these hooks.
-    #
-    # Default implementations are no-ops so older backends remain
-    # compatible — the cost of that is that such a backend won't pick
-    # up runtime profile changes until a restart. Any backend that
-    # supports query-time profile resolution should override these.
 
+    @abstractmethod
     def add_profile(self, profile_name: str, profile_config: Dict[str, Any]) -> None:
-        """Register a new profile at runtime. Default: no-op."""
-        return None
+        """Register a new profile at runtime."""
+        pass
 
+    @abstractmethod
     def remove_profile(self, profile_name: str) -> None:
-        """Unregister a profile at runtime. Default: no-op."""
-        return None
+        """Unregister a profile at runtime."""
+        pass
 
     @abstractmethod
     def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
@@ -264,14 +262,18 @@ class Backend(IngestionBackend, SearchBackend):
         """
         self.name = name
         self._initialized = False
+        self._initialization_lock = Lock()
 
     def initialize(self, config: Dict[str, Any]) -> None:
         """Initialize both ingestion and search capabilities."""
         if self._initialized:
             return
 
-        self._initialize_backend(config)
-        self._initialized = True
+        with self._initialization_lock:
+            if self._initialized:
+                return
+            self._initialize_backend(config)
+            self._initialized = True
 
     @abstractmethod
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
