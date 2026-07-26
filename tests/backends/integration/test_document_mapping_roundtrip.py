@@ -15,7 +15,7 @@ import pytest
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from cogniverse_sdk.document import ContentType, Document
+from cogniverse_sdk.document import ContentType, Document, DocumentFieldMapping
 
 TENANT = f"docmap{uuid.uuid4().hex[:6]}"
 BASE_SCHEMA = "document_text"
@@ -120,3 +120,28 @@ class TestDocumentMappingRoundTrip:
             backend.get_document_fields("refused-1", schema_name="agent_memories")
             is None
         )
+
+    def test_metadata_rename_feeds_only_the_declared_schema_field(self, mapped_backend):
+        backend, schema_name = mapped_backend
+        document_id = "mapped-metadata-rename"
+        doc = Document(
+            id=document_id,
+            metadata={"metadata_title": "Canonical Title"},
+        )
+        mapping = DocumentFieldMapping(
+            id="document_id",
+            metadata_fields={"metadata_title": "document_title"},
+        )
+
+        fields = doc.to_schema_fields(mapping)
+        assert fields == {
+            "document_id": document_id,
+            "document_title": "Canonical Title",
+        }
+
+        backend.put_document_fields(document_id, fields, schema_name=schema_name)
+
+        stored = backend.get_document_fields(document_id, schema_name=schema_name)
+        assert stored["document_id"] == document_id
+        assert stored["document_title"] == "Canonical Title"
+        assert "metadata_title" not in stored

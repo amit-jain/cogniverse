@@ -1,4 +1,4 @@
-"""Real-Phoenix coverage for empty-set replacement in the workflow store.
+"""Real-Phoenix coverage for learning-corpus replacement.
 
 ``save_executions`` / ``save_agent_profiles`` must honour "replace with the
 empty set": an empty list clears the stored demonstrations so a later load
@@ -8,18 +8,22 @@ rollback and the orchestrator reads an agent profile whose executions never
 persisted.
 
 Exercises the real ``TelemetryWorkflowStore`` resolved through the registry over
-a real Phoenix Docker instance; the only injected fault is the outermost
-provider call for the executions step.
+a real Phoenix Docker instance, including empty patterns, same-tenant
+concurrency, and a provider failure during the executions step.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
-from cogniverse_agents.workflow.telemetry_workflow_store import _EXECUTIONS_KIND
+from cogniverse_agents.workflow.telemetry_workflow_store import (
+    _EXECUTIONS_KIND,
+    _PROFILES_KIND,
+)
 from cogniverse_core.registries import WorkflowStoreRegistry
 from cogniverse_sdk.interfaces.workflow_store import (
     AgentPerformance,
@@ -54,7 +58,7 @@ def _execution(workflow_id: str) -> WorkflowExecution:
         confidence_score=0.9,
         user_satisfaction=0.7,
         error_details=None,
-        timestamp=datetime(2026, 5, 26, 12, 0, 0),
+        timestamp=datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
         metadata={},
     )
 
@@ -69,7 +73,7 @@ def _profile(name: str) -> AgentPerformance:
         error_rate=0.0,
         preferred_query_types=["video_search"],
         performance_trend="stable",
-        last_updated=datetime(2026, 5, 26, 9, 0, 0),
+        last_updated=datetime(2026, 5, 26, 9, 0, 0, tzinfo=timezone.utc),
     )
 
 
@@ -99,6 +103,89 @@ class TestEmptyReplacementClears:
 
         await store.save_executions(tenant, [])
         assert await store.load_executions(tenant) == []
+
+    @pytest.mark.asyncio
+    async def test_empty_patterns_replace_stale_patterns(self, real_provider):
+        tenant = f"wf-clear-pattern-{uuid.uuid4().hex[:8]}"
+        store = _store(real_provider)
+
+        await store.save_learning_corpus(
+            tenant,
+            [_execution("wf-old")],
+            [_profile("agent_old")],
+            {"video_search": ["find old"]},
+        )
+        await store.save_learning_corpus(
+            tenant,
+            [_execution("wf-new")],
+            [_profile("agent_new")],
+            {},
+        )
+
+        assert await store.load_query_patterns(tenant) == {}
+        assert [item.workflow_id for item in await store.load_executions(tenant)] == [
+            "wf-new"
+        ]
+        assert [
+            item.agent_name for item in await store.load_agent_profiles(tenant)
+        ] == ["agent_new"]
+
+
+class TestConcurrentCorpusReplacement:
+    @pytest.mark.asyncio
+    async def test_same_tenant_concurrent_saves_finish_as_one_corpus(
+        self, real_provider
+    ):
+        tenant = f"wf-concurrent-{uuid.uuid4().hex[:8]}"
+        store = _store(real_provider)
+        a_profile_written = asyncio.Event()
+        release_a = asyncio.Event()
+        b_execution_written = asyncio.Event()
+        real_save_profiles = store.save_agent_profiles
+        real_save_executions = store.save_executions
+
+        async def controlled_profiles(tenant_id, profiles):
+            await real_save_profiles(tenant_id, profiles)
+            if profiles and profiles[0].agent_name == "agent_a":
+                a_profile_written.set()
+                await release_a.wait()
+
+        async def observed_executions(tenant_id, executions):
+            await real_save_executions(tenant_id, executions)
+            if executions and executions[0].workflow_id == "wf-b":
+                b_execution_written.set()
+
+        store.save_agent_profiles = controlled_profiles
+        store.save_executions = observed_executions
+        save_a = asyncio.create_task(
+            store.save_learning_corpus(
+                tenant,
+                [_execution("wf-a")],
+                [_profile("agent_a")],
+                {"a": ["pattern-a"]},
+            )
+        )
+        await asyncio.wait_for(a_profile_written.wait(), timeout=10)
+        save_b = asyncio.create_task(
+            store.save_learning_corpus(
+                tenant,
+                [_execution("wf-b")],
+                [_profile("agent_b")],
+                {"b": ["pattern-b"]},
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(b_execution_written.wait(), timeout=2)
+        release_a.set()
+        await asyncio.gather(save_a, save_b)
+
+        assert [item.workflow_id for item in await store.load_executions(tenant)] == [
+            "wf-b"
+        ]
+        assert [
+            item.agent_name for item in await store.load_agent_profiles(tenant)
+        ] == ["agent_b"]
+        assert await store.load_query_patterns(tenant) == {"b": ["pattern-b"]}
 
 
 class TestEmptyPriorRestoreClearsProfile:
@@ -130,7 +217,7 @@ class TestEmptyPriorRestoreClearsProfile:
 
         monkeypatch.setattr(real_provider.datasets, "replace_dataset", replace_or_fail)
 
-        with pytest.raises(ConnectionError):
+        with pytest.raises(ConnectionError, match="executions replace"):
             await store.save_learning_corpus(
                 tenant,
                 [_execution("wf-new")],
@@ -144,3 +231,60 @@ class TestEmptyPriorRestoreClearsProfile:
         assert await store.load_agent_profiles(tenant) == []
         assert await store.load_query_patterns(tenant) == {}
         assert await store.load_executions(tenant) == []
+
+    @pytest.mark.asyncio
+    async def test_restore_failure_surfaces_both_errors_and_continues_compensation(
+        self, real_provider, monkeypatch
+    ):
+        tenant = f"wf-restore-fail-{uuid.uuid4().hex[:8]}"
+        store = _store(real_provider)
+        await store.save_learning_corpus(
+            tenant,
+            [_execution("wf-old")],
+            [_profile("agent_old")],
+            {"old": ["pattern-old"]},
+        )
+
+        am = store._am(tenant)
+        executions_dataset = am._demo_dataset_name(_EXECUTIONS_KIND)
+        profiles_dataset = am._demo_dataset_name(_PROFILES_KIND)
+        real_replace = real_provider.datasets.replace_dataset
+        calls = {"executions": 0, "profiles": 0}
+
+        async def replace_or_fail(name, data, metadata=None):
+            if name == executions_dataset:
+                calls["executions"] += 1
+                if calls["executions"] == 1:
+                    raise ConnectionError("forward executions failed")
+            if name == profiles_dataset:
+                calls["profiles"] += 1
+                if calls["profiles"] == 2:
+                    raise RuntimeError("profile restore failed")
+            return await real_replace(name=name, data=data, metadata=metadata)
+
+        monkeypatch.setattr(real_provider.datasets, "replace_dataset", replace_or_fail)
+
+        with pytest.raises(ExceptionGroup) as exc_info:
+            await store.save_learning_corpus(
+                tenant,
+                [_execution("wf-new")],
+                [_profile("agent_new")],
+                {"new": ["pattern-new"]},
+            )
+
+        assert [type(error) for error in exc_info.value.exceptions] == [
+            ConnectionError,
+            RuntimeError,
+        ]
+        assert [str(error) for error in exc_info.value.exceptions] == [
+            "forward executions failed",
+            "profile restore failed",
+        ]
+        assert calls == {"executions": 2, "profiles": 2}
+        assert [item.workflow_id for item in await store.load_executions(tenant)] == [
+            "wf-old"
+        ]
+        assert await store.load_query_patterns(tenant) == {"old": ["pattern-old"]}
+        assert [
+            item.agent_name for item in await store.load_agent_profiles(tenant)
+        ] == ["agent_new"]

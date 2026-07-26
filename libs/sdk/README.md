@@ -1,253 +1,194 @@
 # Cogniverse SDK
 
-**Last Updated:** 2025-11-13
-**Layer:** Foundation
-**Dependencies:** None (zero internal Cogniverse dependencies)
+Foundation contracts and shared data records for Cogniverse backends and
+storage providers. The package has no dependency on another Cogniverse package.
 
-Pure backend interfaces for Cogniverse implementations.
+## Package contents
 
-## Overview
-
-The SDK package sits at the **Foundation Layer** of the Cogniverse architecture, providing pure interface definitions with zero dependencies on other Cogniverse packages. All backend implementations and storage providers must satisfy these interfaces.
-
-This package defines the contract for:
-- **Backend**: Document/vector storage interface (search + ingestion)
-- **ConfigStore**: Configuration persistence interface
-- **SchemaLoader**: Schema template loading interface
-- **Document**: Universal multi-modal document model
-
-## Package Structure
-
-```
+```text
 cogniverse_sdk/
 ├── __init__.py
-├── document.py              # Universal document model with multi-modal support
+├── document.py
 └── interfaces/
-    ├── backend.py           # Backend interface (search, ingestion, deletion)
-    ├── config_store.py      # Configuration storage interface
-    └── schema_loader.py     # Schema template loader interface
+    ├── __init__.py
+    ├── adapter_store.py
+    ├── backend.py
+    ├── config_store.py
+    ├── schema_loader.py
+    └── workflow_store.py
 ```
 
-## Key Modules
+- `document.py` defines `Document`, `DocumentFieldMapping`, `SearchResult`,
+  `ContentType`, and `ProcessingStatus`.
+- `backend.py` defines the `IngestionBackend`, `SearchBackend`, and combined
+  `Backend` abstract contracts.
+- `config_store.py` defines scoped, versioned configuration records and the
+  `ConfigStore` contract.
+- `schema_loader.py` defines schema-loading and schema-validation contracts.
+- `adapter_store.py` defines persistence operations for trained adapters.
+- `workflow_store.py` defines workflow execution, performance, template, and
+  learning-corpus records and storage operations.
 
-### Document Model (`cogniverse_sdk.document`)
+## Documents
 
-Universal document representation supporting multiple content types:
-- **Text**: Plain text and structured text content
-- **Image**: Image documents with visual embeddings
-- **Video**: Video documents with frame-level embeddings
-- **Audio**: Audio documents with temporal features
-- **Multi-modal**: Mixed content types in a single document
-
-**Key Classes:**
-- `Document`: Core document model with metadata, embeddings, and content
-- `ContentType`: Enum for content type classification
-- `DocumentMetadata`: Structured metadata container
-
-### Backend Interface (`cogniverse_sdk.interfaces.backend`)
-
-Abstract interface for document storage and retrieval backends:
-- **Search Operations**: Vector search, hybrid search, filtering
-- **Ingestion**: Batch and streaming document insertion
-- **Schema Management**: Index and schema creation
-- **Multi-tenancy**: Tenant-aware operations
-
-**Key Classes:**
-- `Backend`: Abstract base class for all backend implementations
-- `SearchRequest`: Search query parameters
-- `SearchResponse`: Search results with rankings and metadata
-
-### ConfigStore Interface (`cogniverse_sdk.interfaces.config_store`)
-
-Configuration persistence abstraction:
-- **CRUD Operations**: Create, read, update, delete configurations
-- **Versioning**: Configuration version tracking
-- **Validation**: Schema-based config validation
-
-### SchemaLoader Interface (`cogniverse_sdk.interfaces.schema_loader`)
-
-Schema template management:
-- **Template Loading**: Load Jinja2 schema templates
-- **Variable Substitution**: Dynamic schema generation
-- **Validation**: Schema correctness checking
-
-## Installation
-
-```bash
-uv add cogniverse-sdk
-```
-
-Or with pip:
-```bash
-pip install cogniverse-sdk
-```
-
-## Usage Examples
-
-### Implementing a Custom Backend
+`Document` is a dataclass that carries core content, flexible metadata, and any
+number of named embeddings:
 
 ```python
-from cogniverse_sdk.interfaces.backend import Backend
-from cogniverse_sdk.document import Document, ContentType
-from typing import List, Optional
+from pathlib import Path
 
-class MyVectorBackend(Backend):
-    """Custom vector database backend implementation."""
+from cogniverse_sdk.document import ContentType, Document
 
-    def _initialize_backend(self, config: dict) -> None:
-        """Initialize connection to your vector database."""
-        self.db = YourVectorDB(config)
-
-    async def search(
-        self,
-        query: str,
-        embedding: Optional[List[float]] = None,
-        top_k: int = 10,
-        filters: Optional[dict] = None,
-        tenant_id: Optional[str] = None
-    ) -> List[Document]:
-        """Execute vector similarity search."""
-        results = await self.db.search(
-            embedding=embedding,
-            limit=top_k,
-            filter=filters
-        )
-        return [self._to_document(r) for r in results]
-
-    async def ingest(
-        self,
-        documents: List[Document],
-        tenant_id: Optional[str] = None
-    ) -> dict:
-        """Ingest documents into the backend."""
-        await self.db.insert(documents)
-        return {"inserted": len(documents)}
-```
-
-### Creating Multi-Modal Documents
-
-```python
-from cogniverse_sdk.document import Document, ContentType
-import numpy as np
-
-# Text document
-text_doc = Document(
-    id="doc_001",
-    content="Introduction to machine learning",
-    content_type=ContentType.TEXT,
-    metadata={
-        "source": "textbook",
-        "chapter": 1
-    },
-    embedding=np.random.rand(768).tolist()
-)
-
-# Video document with multi-modal embeddings
-video_doc = Document(
-    id="video_001",
-    content="path/to/video.mp4",
+document = Document(
+    id="video-001",
     content_type=ContentType.VIDEO,
+    content_path=Path("videos/tutorial.mp4"),
+    title="Python tutorial",
+    text_content="Transcript text",
     metadata={
         "duration": 120.5,
         "fps": 30,
-        "resolution": "1920x1080"
+        "resolution": [1920, 1080],
     },
-    embedding=np.random.rand(512).tolist(),  # Video-level embedding
-    frame_embeddings=[  # Frame-level embeddings
-        np.random.rand(512).tolist() for _ in range(10)
-    ]
+)
+document.add_embedding(
+    "videoprism_global",
+    [0.1, 0.2, 0.3],
+    metadata={"model": "videoprism"},
 )
 
-# Image document
-image_doc = Document(
-    id="img_001",
-    content="path/to/image.jpg",
-    content_type=ContentType.IMAGE,
-    metadata={
-        "width": 1920,
-        "height": 1080,
-        "format": "JPEG"
-    },
-    embedding=np.random.rand(1024).tolist()  # Visual embedding
-)
+assert document.get_embedding("videoprism_global") == [0.1, 0.2, 0.3]
+assert document.get_embedding_metadata("videoprism_global") == {
+    "model": "videoprism"
+}
 ```
 
-### Using the ConfigStore Interface
+Embedding entries use only the wrapper created by `add_embedding`. Each wrapper
+contains exactly `data`, `metadata`, and an integer-second `created_at`;
+direct raw-vector entries and incomplete or additional wrapper fields are
+invalid.
+
+### Schema field mapping
+
+Schemas can declare a `document_mapping` block that translates generic
+document fields into their own field names:
 
 ```python
-from cogniverse_sdk.interfaces.config_store import ConfigStore
+from cogniverse_sdk.document import DocumentFieldMapping
 
-class SQLiteConfigStore(ConfigStore):
-    """SQLite-based configuration storage."""
+mapping = DocumentFieldMapping.from_dict(
+    {
+        "id": "document_id",
+        "title": "document_title",
+        "text_content": "full_text",
+        "created_at": "creation_timestamp",
+        "created_at_format": "epoch",
+        "metadata_fields": {"metadata_category": "category"},
+        "embeddings": {"videoprism_global": "embedding"},
+    }
+)
 
-    def save_config(self, key: str, config: dict, tenant_id: str) -> None:
-        """Save configuration to SQLite."""
-        self.db.execute(
-            "INSERT OR REPLACE INTO configs VALUES (?, ?, ?)",
-            (tenant_id, key, json.dumps(config))
-        )
-
-    def load_config(self, key: str, tenant_id: str) -> Optional[dict]:
-        """Load configuration from SQLite."""
-        row = self.db.execute(
-            "SELECT config FROM configs WHERE tenant_id=? AND key=?",
-            (tenant_id, key)
-        ).fetchone()
-        return json.loads(row[0]) if row else None
+fields = document.to_schema_fields(mapping)
 ```
 
-## Architecture Position
+When `metadata_fields` renames a key, the source key is consumed and only the
+destination schema field is emitted. Set `include_metadata` to `false` in JSON
+configuration to emit only explicitly mapped core and metadata fields.
 
+Mapping construction, loading, and serialization reject unknown keys,
+mistyped field names, mapping dictionaries, and booleans before a backend feed
+begins.
+
+## Backend contracts
+
+`IngestionBackend` and `SearchBackend` can be implemented separately.
+`Backend` combines both and adds document updates, deletes, schema deployment,
+and embedding-requirement methods. All interface methods are synchronous.
+
+```python
+from cogniverse_sdk.interfaces.backend import Backend
+
+
+def require_ready(backend: Backend, config: dict) -> None:
+    backend.initialize(config)
+    if not backend.health_check():
+        raise RuntimeError(f"{backend.name} is not healthy")
 ```
-Foundation Layer (SDK):
-  cogniverse-sdk ← YOU ARE HERE (zero dependencies)
-    ↓
-  cogniverse-foundation (config base, telemetry interfaces)
-    ↓
-Core Layer:
-  cogniverse-core, cogniverse-evaluation
-    ↓
-Implementation Layer:
-  cogniverse-agents, cogniverse-vespa, cogniverse-synthetic
-    ↓
-Application Layer:
-  cogniverse-runtime, cogniverse-dashboard
+
+Concrete implementations must implement every abstract method with the exact
+SDK signature. Calls to `Backend.initialize()` on one instance are serialized:
+the backend-specific hook runs once after success, and an exception leaves the
+instance retryable. Separate backend instances use independent locks.
+
+## Configuration records
+
+`ConfigEntry` stores one scoped, versioned configuration value:
+
+```python
+from datetime import datetime, timezone
+
+from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
+
+now = datetime.now(timezone.utc)
+entry = ConfigEntry(
+    tenant_id="acme:acme",
+    scope=ConfigScope.SYSTEM,
+    service="video-search",
+    config_key="ranking_profile",
+    config_value={"name": "hybrid"},
+    version=1,
+    created_at=now,
+    updated_at=now,
+)
+
+payload = entry.to_dict()
+restored = ConfigEntry.from_dict(payload)
+assert restored == entry
 ```
 
-## External Dependencies
+`ConfigStore` provides save, load, delete, list, active-version, and history
+operations for these records. Its concrete implementations own persistence.
+Config and workflow record datetimes must be timezone-aware; they are normalized
+to UTC and stored as timezone-bearing ISO-8601 strings. Configuration
+identifiers are strings, values are dictionaries, and versions are positive
+Python integers.
 
-Minimal external dependencies for maximum portability:
-- `numpy>=1.24.0`: For embedding array operations
+## Workflow and adapter storage
 
-No dependencies on other Cogniverse packages.
+`WorkflowStore` records workflow executions, agent performance, reusable
+templates, learned patterns, and complete learning corpora. Its serialized
+datetimes use the same canonical UTC form. Complete-corpus replacement is
+serialized per tenant and replaces empty pattern mappings as well as non-empty
+ones. Compensation attempts every channel; a failed compensation surfaces
+alongside the forward failure in an `ExceptionGroup`.
 
-## Design Principles
+Workflow records accept only their declared fields and canonical Python value
+types. Durations are finite non-negative floats; efficiency, confidence,
+satisfaction, success-rate, and error-rate values are floats between zero and
+one. Counts are non-negative integers, successful executions cannot exceed
+total executions, string sequences reject non-string members, and template
+task sequences contain dictionaries. Performance trends are `improving`,
+`degrading`, or `stable`.
 
-1. **Pure Interfaces**: No concrete implementations, only abstract base classes
-2. **Zero Coupling**: No dependencies on other Cogniverse packages
-3. **Multi-Modal First**: Built-in support for text, image, video, audio
-4. **Provider Agnostic**: Works with any backend (Vespa, Weaviate, Qdrant, etc.)
-5. **Type Safe**: Full type hints and Pydantic validation
+`AdapterStore` persists adapter metadata, artifacts, training examples,
+metrics, and activation state. Model types default to `"llm"` where the
+interface declares that default.
 
-## Multi-Modal Support
+## Dependencies
 
-The SDK provides first-class support for multi-modal documents:
-- **Unified Document Model**: Single model for all content types
-- **Content-Type Aware**: Explicit content type classification
-- **Flexible Embeddings**: Support for document-level and granular embeddings
-- **Rich Metadata**: Extensible metadata for modality-specific attributes
+The package has no internal Cogniverse dependency. Its project metadata
+currently pins `numpy==2.4.4`; the SDK source itself uses standard-library
+types, while callers may store NumPy arrays as embedding values.
 
 ## Development
 
-```bash
-# Install in editable mode
-cd libs/sdk
-uv pip install -e .
+Run project commands from the repository root:
 
-# Run tests
-pytest tests/
+```bash
+uv run ruff check libs/sdk
+uv run ruff format --check libs/sdk
+uv run pytest tests/backends/unit/test_sdk_document_contracts.py -v --tb=long
 ```
 
-## License
-
-MIT
+See [`docs/modules/sdk.md`](../../docs/modules/sdk.md) for the complete API
+guide.

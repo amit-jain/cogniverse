@@ -6,8 +6,8 @@ Supports multiple implementations: SQLite, Vespa, Elasticsearch, etc.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, fields
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +22,34 @@ class ConfigScope(Enum):
     SCHEMA = "schema"
     BACKEND = "backend"
     DURABLE = "durable"
+
+
+def _utc_datetime(value: Any, field_name: str) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError(
+            f"ConfigEntry.{field_name} must be a datetime, got {type(value).__name__}"
+        )
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"ConfigEntry.{field_name} must include timezone information")
+    return value.astimezone(timezone.utc)
+
+
+def _datetime_from_payload(data: Dict[str, Any], field_name: str) -> datetime:
+    value = data[field_name]
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field_name} must be an ISO-8601 string, got {type(value).__name__}"
+        )
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} is not valid ISO-8601: {exc}") from None
+    canonical = _utc_datetime(parsed, field_name)
+    if value != canonical.isoformat():
+        raise ValueError(
+            f"{field_name} must use canonical UTC ISO-8601 form, got {value!r}"
+        )
+    return canonical
 
 
 @dataclass
@@ -49,6 +77,31 @@ class ConfigEntry:
     created_at: datetime
     updated_at: datetime
 
+    def __post_init__(self) -> None:
+        for field_name in ("tenant_id", "service", "config_key"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str):
+                raise TypeError(
+                    f"ConfigEntry.{field_name} must be a str, "
+                    f"got {type(value).__name__}"
+                )
+        if not isinstance(self.scope, ConfigScope):
+            raise TypeError(
+                f"ConfigEntry.scope must be a ConfigScope, "
+                f"got {type(self.scope).__name__}"
+            )
+        if not isinstance(self.config_value, dict):
+            raise TypeError(
+                f"ConfigEntry.config_value must be a dict, "
+                f"got {type(self.config_value).__name__}"
+            )
+        if type(self.version) is not int or self.version < 1:
+            raise ValueError(
+                f"ConfigEntry.version must be a positive integer, got {self.version!r}"
+            )
+        self.created_at = _utc_datetime(self.created_at, "created_at")
+        self.updated_at = _utc_datetime(self.updated_at, "updated_at")
+
     def get_config_id(self) -> str:
         """Generate unique config ID: tenant_id:scope:service:config_key"""
         return f"{self.tenant_id}:{self.scope.value}:{self.service}:{self.config_key}"
@@ -74,21 +127,30 @@ class ConfigEntry:
         field instead of a bare KeyError/ValueError with no context.
         """
         try:
+            if not isinstance(data, dict):
+                raise ValueError(f"payload must be a dict, got {type(data).__name__}")
+            expected = {item.name for item in fields(cls)}
+            unknown = set(data) - expected
+            if unknown:
+                raise ValueError(f"unknown fields: {sorted(unknown)}")
+            missing = expected - set(data)
+            if missing:
+                raise ValueError(f"missing fields: {sorted(missing)}")
             return cls(
                 tenant_id=data["tenant_id"],
                 scope=ConfigScope(data["scope"]),
                 service=data["service"],
                 config_key=data["config_key"],
                 config_value=data["config_value"],
-                version=data.get("version", 1),
-                created_at=datetime.fromisoformat(data["created_at"]),
-                updated_at=datetime.fromisoformat(data["updated_at"]),
+                version=data["version"],
+                created_at=_datetime_from_payload(data, "created_at"),
+                updated_at=_datetime_from_payload(data, "updated_at"),
             )
         except KeyError as e:
             raise ValueError(
                 f"ConfigEntry.from_dict: missing required field {e.args[0]!r}"
             ) from None
-        except ValueError as e:
+        except (TypeError, ValueError) as e:
             raise ValueError(f"ConfigEntry.from_dict: {e}") from None
 
 
