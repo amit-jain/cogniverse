@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
@@ -386,3 +388,63 @@ class TestMemoryOutage:
                     ],
                 )
             )
+
+
+@pytest.mark.asyncio
+async def test_subject_memory_read_does_not_block_the_event_loop():
+    entered = threading.Event()
+    release = threading.Event()
+    rows = [_row("a", "v1 policy", written_at="2026-01-15T00:00:00Z")]
+
+    def factory(tenant_id):
+        mm = MagicMock()
+        mm.memory = MagicMock()
+
+        def get_all_memories(**kwargs):
+            entered.set()
+            release.wait(timeout=1)
+            return rows
+
+        mm.get_all_memories = get_all_memories
+        return mm
+
+    agent = TemporalReasoningAgent(
+        deps=TemporalReasoningDeps(tenant_id="acme"),
+        memory_manager_factory=factory,
+    )
+    unblock_timer = threading.Timer(1, release.set)
+    unblock_timer.start()
+    task = asyncio.create_task(
+        agent._process_impl(
+            TemporalReasoningInput(
+                tenant_id="acme",
+                subject_key="policy:refunds",
+                windows=[
+                    TimeWindow(
+                        label="Q1",
+                        start="2026-01-01T00:00:00Z",
+                        end="2026-04-01T00:00:00Z",
+                    ),
+                    TimeWindow(
+                        label="Q2",
+                        start="2026-04-01T00:00:00Z",
+                        end="2026-07-01T00:00:00Z",
+                    ),
+                ],
+            )
+        )
+    )
+
+    try:
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.001)
+        assert entered.is_set()
+        assert release.is_set() is False
+    finally:
+        unblock_timer.cancel()
+        release.set()
+
+    out = await task
+    assert [view.matching_memory_ids for view in out.window_views] == [["a"], []]

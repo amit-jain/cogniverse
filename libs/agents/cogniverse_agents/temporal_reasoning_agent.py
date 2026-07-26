@@ -281,7 +281,12 @@ class TemporalReasoningAgent(
         )
 
         agent_name = input.agent_name_filter or "_promoted"
-        rows = self._fetch_subject_rows(tenant_id, agent_name, input.subject_key)
+        rows = await asyncio.to_thread(
+            self._fetch_subject_rows,
+            tenant_id,
+            agent_name,
+            input.subject_key,
+        )
 
         # Bucket per window; track undated separately.
         bucketed, undated = self._bucket_rows_by_window(rows, input.windows)
