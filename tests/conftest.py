@@ -185,7 +185,7 @@ def _whisper_local_installed() -> bool:
 
 
 def pytest_collection_modifyitems(items):
-    """Location-derived markers + whisper auto-skip.
+    """Location-derived markers, selective LM setup, and whisper auto-skip.
 
     Tests under a ``unit/`` (``integration/``) directory get the ``unit``
     (``integration``) marker from their location — the directory IS the
@@ -197,6 +197,21 @@ def pytest_collection_modifyitems(items):
     from tests.fixtures.markers import apply_location_markers
 
     apply_location_markers(items)
+
+    for item in items:
+        roles: set[str] = set()
+        explicitly_requested = "ensure_host_ollama" in item.fixturenames
+        if item.get_closest_marker("requires_lm") is not None:
+            roles.add("primary")
+        if item.get_closest_marker("requires_teacher_model") is not None:
+            roles.update(("primary", "teacher"))
+        if explicitly_requested:
+            roles.update(("primary", "teacher"))
+        if not roles:
+            continue
+        item._cogniverse_lm_roles = frozenset(roles)
+        if not explicitly_requested:
+            item.fixturenames.append("ensure_host_ollama")
 
     # Auto-skip ``requires_whisper`` tests when the whisper-local extra isn't
     # installed, mirroring the runtime image's opt-in boundary.
@@ -218,8 +233,9 @@ def pytest_collection_modifyitems(items):
 def pytest_runtest_setup(item):
     """Runtime LM gate for ``requires_lm``-marked tests.
 
-    ``trylast=True`` lets pytest fill autouse fixtures first, so the availability
-    probe runs only after ``ensure_host_ollama`` provisions the session endpoint.
+    Collection injects ``ensure_host_ollama`` only for LM-marked tests.
+    ``trylast=True`` lets pytest provision the selected exact endpoints before
+    this hook verifies that the primary endpoint remains reachable.
     """
     if item.get_closest_marker("requires_lm") is not None:
         from tests.fixtures.llm import is_test_lm_available, resolve_base_url
@@ -804,9 +820,9 @@ def _install_ollama_to_home() -> Path:
     return bin_path
 
 
-@pytest.fixture(scope="session", autouse=True)
-def ensure_host_ollama(cogniverse_test_config):
-    """Guarantee the distinct exact production LMs for LM-dependent tests."""
+@pytest.fixture(scope="session")
+def ensure_host_ollama(request, cogniverse_test_config):
+    """Guarantee only the exact production LM roles selected by tests."""
     from tests.utils.hermetic_llm import (
         MODEL,
         TEACHER_MODEL,
@@ -823,8 +839,17 @@ def ensure_host_ollama(cogniverse_test_config):
         or original_config
         or Path(__file__).resolve().parent.parent / "configs" / "config.json"
     )
+    required_roles = {
+        role
+        for item in request.session.items
+        for role in getattr(item, "_cogniverse_lm_roles", ())
+    }
+    if not required_roles:
+        required_roles = {"primary", "teacher"}
     primary_api_base = ensure_llm(model=MODEL)
-    teacher_api_base = ensure_llm(model=TEACHER_MODEL)
+    teacher_api_base = (
+        ensure_llm(model=TEACHER_MODEL) if "teacher" in required_roles else None
+    )
     session_config = activate_llms(
         primary_api_base,
         teacher_api_base,

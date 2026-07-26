@@ -3,8 +3,8 @@
 ``ensure_llm()`` first reuses a configured endpoint only when its OpenAI
 model-list contract names the requested production model exactly.
 Otherwise it provisions that identical model in a local vLLM sidecar.
-``activate_llms()`` then writes both distinct production roles into the
-session config.
+``activate_llms()`` then writes the selected exact production roles into
+the session config.
 
 Each model has a fixed container name and is reused across pytest
 sessions. On a ROCm host the sidecar runs GPU-accelerated; elsewhere it
@@ -95,20 +95,72 @@ def _container_logs(container: str) -> str:
     return "\n".join(part for part in (out.stdout, out.stderr) if part).strip()
 
 
+def _wait_for_container_absence(container: str, timeout: float = 30.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", container],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(
+                f"docker could not verify removal of {container!r}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        detail = "\n".join(
+            part for part in (result.stdout, result.stderr) if part
+        ).strip()
+        if result.returncode != 0 and "No such" in detail:
+            return True
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"docker could not inspect exact-model container {container!r}: "
+                f"{detail or f'exit {result.returncode}'}"
+            )
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+
+
 def _remove_container(container: str) -> None:
-    result = subprocess.run(
-        ["docker", "rm", "-f", container],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
-    if result.returncode != 0 and "No such container" not in detail:
+    try:
+        result = subprocess.run(
+            ["docker", "rm", "-f", container],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        if _wait_for_container_absence(container):
+            return
+        raise RuntimeError(
+            f"docker removal timed out and exact-model container "
+            f"{container!r} still exists"
+        ) from exc
+    except OSError as exc:
         raise RuntimeError(
             f"docker could not remove exact-model container {container!r}: "
-            f"{detail or f'exit {result.returncode}'}"
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    if result.returncode == 0 or "No such container" in detail:
+        return
+    if "removal" in detail and "in progress" in detail:
+        if _wait_for_container_absence(container):
+            return
+        raise RuntimeError(
+            f"docker removal remained in progress and exact-model container "
+            f"{container!r} still exists"
         )
+    raise RuntimeError(
+        f"docker could not remove exact-model container {container!r}: "
+        f"{detail or f'exit {result.returncode}'}"
+    )
 
 
 def _cleanup_container(container: str) -> str:
@@ -201,19 +253,21 @@ def _spawn(
 
 def _write_session_config(
     primary_api_base: str,
-    teacher_api_base: str,
+    teacher_api_base: str | None,
     *,
     source_config: Path = SOURCE_CONFIG,
 ) -> Path:
     config = json.loads(source_config.read_text())
     llm = config.setdefault("llm_config", {})
-    for key, model, api_base in (
-        ("primary", MODEL, primary_api_base),
-        ("teacher", TEACHER_MODEL, teacher_api_base),
-    ):
-        endpoint = llm.setdefault(key, {})
-        endpoint["model"] = f"openai/{model}"
-        endpoint["api_base"] = api_base
+    primary = llm.setdefault("primary", {})
+    primary["model"] = f"openai/{MODEL}"
+    primary["api_base"] = primary_api_base
+    if teacher_api_base is None:
+        llm.pop("teacher", None)
+    else:
+        teacher = llm.setdefault("teacher", {})
+        teacher["model"] = f"openai/{TEACHER_MODEL}"
+        teacher["api_base"] = teacher_api_base
     HERMETIC_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     config_path = HERMETIC_CONFIG_DIR / f"config-{os.getpid()}.json"
     pending = config_path.with_name(f".{config_path.name}.{threading.get_ident()}.tmp")
@@ -227,13 +281,14 @@ def _write_session_config(
 
 def activate_llms(
     primary_api_base: str,
-    teacher_api_base: str,
+    teacher_api_base: str | None = None,
     *,
     source_config: Path = SOURCE_CONFIG,
 ) -> Path:
-    """Publish verified, distinct student and teacher endpoints to the process."""
+    """Publish the verified exact LM roles selected for this process."""
     primary_api_base = f"{_server_base(primary_api_base)}/v1"
-    teacher_api_base = f"{_server_base(teacher_api_base)}/v1"
+    if teacher_api_base is not None:
+        teacher_api_base = f"{_server_base(teacher_api_base)}/v1"
     config_path = _write_session_config(
         primary_api_base,
         teacher_api_base,
