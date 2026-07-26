@@ -4033,6 +4033,10 @@ for member in out.resolved:
     print(member.memory_id, "survived" if member.survived else "dropped")
 ```
 
+Requested conflict members are fetched outside the event-loop thread.
+A missing memory is reported in `metadata.missing`, while a backend
+read failure propagates instead of being treated as a deleted member.
+
 V1 is deterministic: it applies `reconcile()` from
 `cogniverse_core.memory.contradiction` directly. An RLM trajectory for
 fetching extra evidence per side is not yet implemented; that enrichment is
