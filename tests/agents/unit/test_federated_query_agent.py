@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
@@ -347,3 +349,81 @@ def test_matches_query_tolerates_non_string_memory_values():
 
     assert _matches_query({"memory": 5}, "cat") is False
     assert _matches_query({"memory": 5}, "5") is True
+
+
+@pytest.mark.asyncio
+async def test_federated_read_does_not_block_the_event_loop():
+    entered = threading.Event()
+    release = threading.Event()
+
+    def factory(tenant_id: str):
+        mm = MagicMock()
+        mm.memory = MagicMock()
+
+        def get_all_memories(*, tenant_id=tenant_id, agent_name):
+            if tenant_id == "acme:alpha":
+                entered.set()
+                release.wait(timeout=1)
+                return [_row("m1", "Paris is the capital")]
+            return []
+
+        mm.get_all_memories = get_all_memories
+        return mm
+
+    agent = FederatedQueryAgent(
+        deps=FederatedQueryDeps(tenant_id="acme:production"),
+        memory_manager_factory=factory,
+        registry=build_default_registry(),
+    )
+    unblock_timer = threading.Timer(1, release.set)
+    unblock_timer.start()
+    task = asyncio.create_task(
+        agent._process_impl(
+            FederatedQueryInput(
+                tenant_id="acme:production",
+                query="Paris",
+                tenant_ids=["acme:alpha"],
+                actor_role="org_admin",
+                actor_id="oadm",
+            )
+        )
+    )
+
+    try:
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.001)
+        assert entered.is_set()
+        assert release.is_set() is False
+    finally:
+        unblock_timer.cancel()
+        release.set()
+
+    out = await task
+    assert [(hit.tenant_id, hit.memory_id) for hit in out.hits] == [
+        ("acme:alpha", "m1")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_federated_read_failure_propagates():
+    def factory(tenant_id: str):
+        raise ConnectionError(f"mem0 unavailable for {tenant_id}")
+
+    agent = FederatedQueryAgent(
+        deps=FederatedQueryDeps(tenant_id="acme:production"),
+        memory_manager_factory=factory,
+        registry=build_default_registry(),
+    )
+
+    with pytest.raises(ConnectionError, match="mem0 unavailable for acme:alpha"):
+        await agent._process_impl(
+            FederatedQueryInput(
+                tenant_id="acme:production",
+                query="Paris",
+                tenant_ids=["acme:alpha"],
+                actor_role="org_admin",
+                actor_id="oadm",
+            )
+        )
