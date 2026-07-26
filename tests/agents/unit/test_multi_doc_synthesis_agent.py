@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
@@ -181,6 +183,56 @@ class TestSynthesisPath:
                 )
             )
         assert persisted == []
+
+    async def test_memory_fetch_does_not_block_the_event_loop(self):
+        agent = _build_agent_with_stub_synth("answer from requested source")
+        agent.is_memory_enabled = lambda: True  # type: ignore[assignment]
+        entered = threading.Event()
+        release = threading.Event()
+
+        def _get(memory_id):
+            entered.set()
+            release.wait(timeout=1)
+            return {
+                "id": memory_id,
+                "memory": "requested source body",
+                "metadata": {"kind": "external_doc"},
+            }
+
+        fake_mm = MagicMock()
+        fake_mm.memory = MagicMock()
+        fake_mm.memory.get.side_effect = _get
+        agent.memory_manager = fake_mm
+
+        unblock_timer = threading.Timer(1, release.set)
+        unblock_timer.start()
+        task = asyncio.create_task(
+            agent._process_impl(
+                MultiDocSynthesisInput(
+                    tenant_id="acme",
+                    query="what?",
+                    documents=[DocumentRef(memory_id="m_requested", label="source")],
+                    persist=False,
+                )
+            )
+        )
+
+        try:
+            for _ in range(100):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.001)
+            assert entered.is_set()
+            assert release.is_set() is False
+        finally:
+            unblock_timer.cancel()
+            release.set()
+
+        out = await task
+        assert out.answer == "answer from requested source"
+        assert out.citation_refs == [
+            {"ref_kind": "memory", "ref_id": "m_requested", "label": "source"}
+        ]
 
 
 @pytest.mark.asyncio

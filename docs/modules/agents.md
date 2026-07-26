@@ -3997,7 +3997,7 @@ print(out.answer, out.persisted_memory_id, out.used_rlm)
 
 | Behaviour | Outcome |
 |---|---|
-| `documents` referenced by `memory_id` | Fetched via `Mem0.memory.get()`; rendered in the prompt with the supplied `label`. |
+| `documents` referenced by `memory_id` | Fetched via `Mem0.memory.get()` outside the event-loop thread; rendered in the prompt with the supplied `label`. A read failure propagates so a partial synthesis is never persisted as complete. |
 | `documents` supplied as inline `content` | Rendered directly; cited as an external ref using the `label`. |
 | `rlm.enabled=True` or auto-detect over threshold | Synthesis runs through `RLMInference`; `used_rlm=True`. |
 | `persist=True` | Output written as a `synthesis_fact` memory with full provenance. |

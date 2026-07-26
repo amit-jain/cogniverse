@@ -385,7 +385,10 @@ class MultiDocumentSynthesisAgent(
             # that silently drops the requested source and persists a partial
             # synthesis as if it were complete. Let a backend failure propagate;
             # a real absence returns None/empty and falls through to None below.
-            memory = self.memory_manager.memory.get(ref.memory_id)
+            memory = await asyncio.to_thread(
+                self.memory_manager.memory.get,
+                ref.memory_id,
+            )
             if isinstance(memory, dict):
                 return memory.get("memory") or memory.get("content") or ""
             if isinstance(memory, list) and memory and isinstance(memory[0], dict):
