@@ -89,46 +89,47 @@ pip install cogniverse-foundation
 - `cogniverse-sdk`: Pure backend interfaces
 
 **External:**
-- `opentelemetry-api>=1.20.0`: OpenTelemetry interfaces
-- `opentelemetry-sdk>=1.20.0`: OpenTelemetry SDK
-- `pydantic>=2.0.0`: Data validation
-- `sqlalchemy>=2.0.0`: Database support
-- `pandas>=2.0.0`: Data manipulation
+- `fastapi==0.135.3`: Dynamic configuration REST endpoints
+- `opentelemetry-api==1.41.0`: OpenTelemetry interfaces
+- `opentelemetry-sdk==1.41.0`: OpenTelemetry SDK
+- `pydantic==2.12.5`: Data validation
+- `sqlalchemy==2.0.49`: Database support
+- `pandas==2.3.3`: Data manipulation
 
 ## Usage Examples
 
 ### Configuration Management
 
 ```python
-from cogniverse_foundation.config.agent_config import AgentConfig
+from cogniverse_foundation.config.agent_config import (
+    AgentConfig,
+    DSPyModuleType,
+    ModuleConfig,
+)
 from cogniverse_foundation.config.manager import ConfigManager
 
-# Define custom agent configuration
-class MyAgentConfig(AgentConfig):
-    model_name: str = "gpt-4"
-    temperature: float = 0.7
-    max_tokens: int = 2000
-
-    class Config:
-        extra = "allow"
-
-# Use configuration manager
-config_manager = ConfigManager()
-config_manager.save_config(
+# ConfigStore is an injected cogniverse-sdk implementation.
+config_manager = ConfigManager(store=config_store)
+agent_config = AgentConfig(
+    agent_name="summarizer",
+    agent_version="1.0.0",
+    agent_description="Summarizes documents",
+    agent_url="http://summarizer:8000",
+    capabilities=["summarization"],
+    skills=[],
+    module_config=ModuleConfig(
+        module_type=DSPyModuleType.PREDICT,
+        signature="document -> summary",
+    ),
+    llm_model="openai/gpt-4.1",
+)
+config_manager.set_agent_config(
     tenant_id="acme",
-    config_key="my_agent_config",
-    config=MyAgentConfig(
-        model_name="claude-sonnet-4.5",
-        temperature=0.9
-    )
+    agent_name="summarizer",
+    agent_config=agent_config,
 )
 
-# Load configuration
-config = config_manager.load_config(
-    tenant_id="acme",
-    config_key="my_agent_config",
-    config_class=MyAgentConfig
-)
+config = config_manager.get_agent_config("acme", "summarizer")
 ```
 
 ### Telemetry Integration
@@ -140,7 +141,7 @@ from cogniverse_foundation.telemetry import TelemetryManager, TelemetryConfig
 telemetry_config = TelemetryConfig(
     service_name="my-service",
     environment="production",
-    endpoint="http://localhost:4317"
+    otlp_endpoint="localhost:4317",
 )
 
 telemetry_manager = TelemetryManager(telemetry_config)
@@ -151,31 +152,20 @@ with telemetry_manager.span("process_request", tenant_id="acme") as span:
     result = process_query(query)
 ```
 
-### Custom Telemetry Provider
+### Telemetry Provider Discovery
 
 ```python
 from cogniverse_foundation.telemetry.registry import TelemetryRegistry
-from opentelemetry import trace
 
-class CustomTelemetryProvider:
-    """Custom telemetry provider implementation."""
-
-    def __init__(self, config: dict):
-        self.config = config
-        self.tracer = trace.get_tracer(__name__)
-
-    def get_tracer(self, name: str):
-        return self.tracer
-
-    def export_span(self, span):
-        # Custom export logic
-        pass
-
-# Register custom provider
-TelemetryRegistry.register("custom", CustomTelemetryProvider)
-
-# Use custom provider
-telemetry = TelemetryRegistry.get("custom")(config={"endpoint": "..."})
+provider = TelemetryRegistry.get(
+    name="phoenix",
+    tenant_id="acme",
+    config={
+        "project_name": "search",
+        "http_endpoint": "http://phoenix:6006",
+        "grpc_endpoint": "phoenix:4317",
+    },
+)
 ```
 
 ### System Configuration
@@ -186,11 +176,10 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Load configuration via ConfigManager
 config_manager = create_default_config_manager()
-system_config = config_manager.get_system_config(tenant_id="acme")
+system_config = config_manager.get_system_config()
 
 # Or create directly
 system_config = SystemConfig(
-    tenant_id="acme",
     backend_url="http://localhost",
     backend_port=8080,
     environment="production",

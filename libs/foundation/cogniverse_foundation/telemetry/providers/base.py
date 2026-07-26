@@ -257,8 +257,8 @@ class DatasetStore(ABC):
         contents are pre-read and restored if the create fails after the delete
         committed, so a torn replace never destroys the prior dataset (mirrors
         ArtifactManager.save_blob's last-write-wins compensation). Only a genuine
-        not-found on the pre-read (KeyError/ValueError) is treated as "nothing to
-        restore"; any other pre-read error propagates BEFORE the destructive
+        not-found on the pre-read (KeyError/DatasetNotFoundError) is treated as
+        "nothing to restore"; any other pre-read error propagates BEFORE the destructive
         delete, so a flapping backend can never destroy the prior dataset.
 
         This is a single-writer, last-write-wins operation: it is NOT atomic
@@ -272,13 +272,13 @@ class DatasetStore(ABC):
         """
         try:
             previous = await self.get_dataset(name)
-        except (KeyError, ValueError):
+        except (KeyError, DatasetNotFoundError):
             previous = None  # no prior dataset — nothing to restore
         await self.delete_dataset(name)
         try:
             return await self.create_dataset(name, data, metadata)
         except Exception:
-            if previous is not None and not previous.empty:
+            if previous is not None:
                 try:
                     await self.create_dataset(name, previous, metadata)
                 except Exception:

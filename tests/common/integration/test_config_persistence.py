@@ -5,6 +5,7 @@ Tests complete flow: ConfigManager → Vespa → ConfigAPIMixin → Hot Reload
 
 import logging
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -166,6 +167,50 @@ class TestConfigPersistence:
         assert loaded_config.module_config.max_retries == 5
         assert loaded_config.llm_model == "test-llm"
 
+    def test_agent_history_canonicalizes_tenant_and_isolates_results(
+        self, config_manager
+    ):
+        def agent_config(description):
+            return AgentConfig(
+                agent_name="history_agent",
+                agent_version="1.0.0",
+                agent_description=description,
+                agent_url="http://localhost:9999",
+                capabilities=["history"],
+                skills=[],
+                module_config=ModuleConfig(
+                    module_type=DSPyModuleType.PREDICT,
+                    signature="HistorySignature",
+                ),
+            )
+
+        config_manager.set_agent_config(
+            "history_acme",
+            "history_agent",
+            agent_config("acme first"),
+        )
+        config_manager.set_agent_config(
+            "history_acme",
+            "history_agent",
+            agent_config("acme second"),
+        )
+        config_manager.set_agent_config(
+            "history_globex",
+            "history_agent",
+            agent_config("globex only"),
+        )
+
+        history = config_manager.get_agent_config_history(
+            "history_acme",
+            "history_agent",
+            limit=2,
+        )
+
+        assert [item.agent_description for item in history] == [
+            "acme second",
+            "acme first",
+        ]
+
     def test_config_versioning(self, config_manager):
         """Test configuration version tracking"""
         # Create initial config
@@ -250,7 +295,10 @@ class TestConfigPersistence:
             exported = json.load(f)
 
         assert exported["tenant_id"] == tenant_id
-        assert "configs" in exported
+        assert datetime.fromisoformat(
+            exported["exported_at"]
+        ).utcoffset() == timezone.utc.utcoffset(None)
+        assert set(exported) == {"tenant_id", "exported_at", "configs"}
         # SystemConfig is global (not per-tenant), so only routing config is exported
         assert len(exported["configs"]) == 1
 

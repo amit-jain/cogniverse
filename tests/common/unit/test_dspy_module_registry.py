@@ -12,7 +12,7 @@ from cogniverse_core.common.dspy_module_registry import (
 from cogniverse_foundation.config.agent_config import DSPyModuleType, OptimizerType
 
 
-class TestSignature(dspy.Signature):
+class ExampleSignature(dspy.Signature):
     """Test signature for module creation"""
 
     input_text = dspy.InputField()
@@ -41,15 +41,17 @@ class TestDSPyModuleRegistry:
 
     def test_create_module_predict(self):
         """Test creating Predict module"""
-        module = DSPyModuleRegistry.create_module(DSPyModuleType.PREDICT, TestSignature)
+        module = DSPyModuleRegistry.create_module(
+            DSPyModuleType.PREDICT, ExampleSignature
+        )
 
         assert isinstance(module, dspy.Predict)
-        assert module.signature == TestSignature
+        assert module.signature == ExampleSignature
 
     def test_create_module_chain_of_thought(self):
         """Test creating ChainOfThought module"""
         module = DSPyModuleRegistry.create_module(
-            DSPyModuleType.CHAIN_OF_THOUGHT, TestSignature
+            DSPyModuleType.CHAIN_OF_THOUGHT, ExampleSignature
         )
 
         assert isinstance(module, dspy.ChainOfThought)
@@ -57,7 +59,7 @@ class TestDSPyModuleRegistry:
     def test_create_module_with_custom_params(self):
         """Test creating module with custom parameters"""
         module = DSPyModuleRegistry.create_module(
-            DSPyModuleType.PREDICT, TestSignature, max_retries=5
+            DSPyModuleType.PREDICT, ExampleSignature, max_retries=5
         )
 
         assert isinstance(module, dspy.Predict)

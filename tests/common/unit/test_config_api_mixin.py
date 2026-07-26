@@ -1,10 +1,10 @@
-"""
-Unit tests for ConfigAPIMixin.
-"""
+"""Unit tests for ConfigAPIMixin."""
 
+import threading
 from unittest.mock import patch
 
 import dspy
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,16 +18,18 @@ from cogniverse_foundation.config.agent_config import (
     OptimizerType,
 )
 from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
+from cogniverse_foundation.config.manager import ConfigManager
+from tests.utils.memory_store import InMemoryConfigStore
 
 
-class TestSignature(dspy.Signature):
+class ExampleSignature(dspy.Signature):
     """Test signature for module creation"""
 
     input_text = dspy.InputField()
     output_text = dspy.OutputField()
 
 
-class TestAgent(DynamicDSPyMixin, ConfigAPIMixin):
+class ConfigurableAgent(DynamicDSPyMixin, ConfigAPIMixin):
     """Test agent class using both mixins"""
 
     def __init__(
@@ -48,7 +50,7 @@ class TestConfigAPIMixin:
     def agent_config(self):
         """Create test AgentConfig"""
         module_config = ModuleConfig(
-            module_type=DSPyModuleType.PREDICT, signature="TestSignature"
+            module_type=DSPyModuleType.PREDICT, signature="ExampleSignature"
         )
 
         return AgentConfig(
@@ -67,7 +69,7 @@ class TestConfigAPIMixin:
     def agent_config_with_optimizer(self):
         """Create test AgentConfig with optimizer"""
         module_config = ModuleConfig(
-            module_type=DSPyModuleType.CHAIN_OF_THOUGHT, signature="TestSignature"
+            module_type=DSPyModuleType.CHAIN_OF_THOUGHT, signature="ExampleSignature"
         )
         optimizer_config = OptimizerConfig(
             optimizer_type=OptimizerType.BOOTSTRAP_FEW_SHOT,
@@ -100,8 +102,8 @@ class TestConfigAPIMixin:
     def client(self, agent_config, app, config_manager):
         """Create test client with agent"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app, config_manager)
-            agent.register_signature("test_sig", TestSignature)
+            agent = ConfigurableAgent(agent_config, app, config_manager)
+            agent.register_signature("test_sig", ExampleSignature)
         return TestClient(app)
 
     def test_get_config_endpoint(self, client):
@@ -130,7 +132,7 @@ class TestConfigAPIMixin:
         """Test POST /config/module with valid data updates configuration"""
         request_data = {
             "module_type": "chain_of_thought",
-            "signature": "TestSignature",
+            "signature": "ExampleSignature",
             "max_retries": 5,
             "temperature": 0.9,
         }
@@ -147,7 +149,7 @@ class TestConfigAPIMixin:
         """Test POST /config/module with invalid module type returns 400"""
         request_data = {
             "module_type": "invalid_module",
-            "signature": "TestSignature",
+            "signature": "ExampleSignature",
         }
 
         response = client.post("/config/module", json=request_data)
@@ -160,8 +162,8 @@ class TestConfigAPIMixin:
     ):
         """Test GET /config/optimizer endpoint returns optimizer info"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config_with_optimizer, app, config_manager)
-            agent.register_signature("test_sig", TestSignature)
+            agent = ConfigurableAgent(agent_config_with_optimizer, app, config_manager)
+            agent.register_signature("test_sig", ExampleSignature)
 
         client = TestClient(app)
         response = client.get("/config/optimizer")
@@ -212,8 +214,8 @@ class TestConfigAPIMixin:
     def test_post_llm_config_update_model(self, agent_config, app, config_manager):
         """Test POST /config/llm updates LLM model"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app, config_manager)
-            agent.register_signature("test_sig", TestSignature)
+            agent = ConfigurableAgent(agent_config, app, config_manager)
+            agent.register_signature("test_sig", ExampleSignature)
 
         client = TestClient(app)
 
@@ -235,8 +237,8 @@ class TestConfigAPIMixin:
     def test_post_llm_config_update_base_url(self, agent_config, app, config_manager):
         """Test POST /config/llm updates base URL"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app, config_manager)
-            agent.register_signature("test_sig", TestSignature)
+            agent = ConfigurableAgent(agent_config, app, config_manager)
+            agent.register_signature("test_sig", ExampleSignature)
 
         client = TestClient(app)
 
@@ -262,13 +264,6 @@ class TestConfigAPIMixin:
         assert data["status"] == "success"
         assert "available_modules" in data
 
-        # Verify all module types are present. Only the three actually
-        # registered + consumed by any agent: predict / chain_of_thought
-        # / react. multi_chain_comparison and program_of_thought used
-        # to be in the enum but had zero consumers in any commit —
-        # removed along with the matching
-        # dspy.MultiChainComparison / dspy.ProgramOfThought entries
-        # on DSPyModuleRegistry.
         modules = data["available_modules"]
         assert modules.keys() == {"predict", "chain_of_thought", "react"}
 
@@ -292,8 +287,8 @@ class TestConfigAPIMixin:
     def test_post_module_config_clears_cache(self, agent_config, app, config_manager):
         """Test updating module config clears cached modules"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app, config_manager)
-            agent.register_signature("test_sig", TestSignature)
+            agent = ConfigurableAgent(agent_config, app, config_manager)
+            agent.register_signature("test_sig", ExampleSignature)
 
             # Create initial module
             agent.create_module("test_sig")
@@ -304,7 +299,7 @@ class TestConfigAPIMixin:
         # Update module config
         request_data = {
             "module_type": "chain_of_thought",
-            "signature": "TestSignature",
+            "signature": "ExampleSignature",
         }
 
         response = client.post("/config/module", json=request_data)
@@ -312,6 +307,88 @@ class TestConfigAPIMixin:
         assert response.status_code == 200
         # Verify cache was cleared
         assert len(agent._dynamic_modules) == 0
+
+
+class _FailingSetStore(InMemoryConfigStore):
+    def set_config(self, *args, **kwargs):
+        raise ConnectionError("configuration persistence unavailable")
+
+
+class _TrackingSetStore(InMemoryConfigStore):
+    def __init__(self):
+        super().__init__()
+        self.set_thread_ids = []
+
+    def set_config(self, *args, **kwargs):
+        self.set_thread_ids.append(threading.get_ident())
+        return super().set_config(*args, **kwargs)
+
+
+def _api_agent_config():
+    return AgentConfig(
+        agent_name="test_agent",
+        agent_version="1.0.0",
+        agent_description="Test agent",
+        agent_url="http://localhost:8000",
+        capabilities=["test"],
+        skills=[],
+        module_config=ModuleConfig(
+            module_type=DSPyModuleType.PREDICT,
+            signature="ExampleSignature",
+        ),
+        llm_model="gpt-4",
+    )
+
+
+def test_module_persistence_failure_restores_in_memory_config():
+    app = FastAPI()
+    manager = ConfigManager(store=_FailingSetStore())
+    with patch("dspy.LM"):
+        agent = ConfigurableAgent(_api_agent_config(), app, manager, tenant_id="acme")
+        agent.register_signature("test_sig", ExampleSignature)
+        agent.create_module("test_sig")
+    cached_modules = dict(agent._dynamic_modules)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/config/module",
+        json={
+            "module_type": "chain_of_thought",
+            "signature": "ExampleSignature",
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "configuration persistence unavailable"}
+    assert agent.agent_config.module_config.module_type == DSPyModuleType.PREDICT
+    assert agent._dynamic_modules == cached_modules
+
+
+@pytest.mark.asyncio
+async def test_module_persistence_runs_off_event_loop():
+    app = FastAPI()
+    store = _TrackingSetStore()
+    manager = ConfigManager(store=store)
+    with patch("dspy.LM"):
+        agent = ConfigurableAgent(_api_agent_config(), app, manager, tenant_id="acme")
+        agent.register_signature("test_sig", ExampleSignature)
+    event_loop_thread = threading.get_ident()
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/config/module",
+            json={
+                "module_type": "chain_of_thought",
+                "signature": "ExampleSignature",
+            },
+        )
+
+    assert response.status_code == 200
+    assert len(store.set_thread_ids) == 1
+    assert store.set_thread_ids[0] != event_loop_thread
 
 
 if __name__ == "__main__":

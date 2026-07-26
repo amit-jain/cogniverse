@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -88,6 +89,7 @@ class ConfigManager:
 
         self.store = store
         self._backend_lock = threading.Lock()
+        self._profile_change_lock = threading.RLock()
         self._profile_change_listener = profile_change_listener
         # System config doesn't change after the runtime applies its env
         # overrides at startup, but `get_system_config` is hot — every
@@ -96,6 +98,7 @@ class ConfigManager:
         # reachable burns ~20s per test). The cache is busted by
         # `set_system_config` so live updates still propagate.
         self._system_config_cache: Optional[SystemConfig] = None
+        self._system_config_lock = threading.Lock()
         # Per-tenant scoped configs (routing/telemetry/backend) are read on
         # every request via ConfigUtils' ensure cascade — each read was a
         # separate store round-trip (a YQL query against Vespa). Cache the
@@ -110,6 +113,7 @@ class ConfigManager:
         self._scoped_config_cache: "OrderedDict[tuple, tuple[float, Optional[dict]]]" = OrderedDict()
         self._scoped_config_cache_max = 512
         self._scoped_config_lock = threading.Lock()
+        self._scoped_fill_locks = tuple(threading.Lock() for _ in range(64))
 
         logger.info(
             "ConfigManager initialized with %s, profile_change_listener=%s",
@@ -169,21 +173,25 @@ class ConfigManager:
         if self._system_config_cache is not None:
             return copy.deepcopy(self._system_config_cache)
 
-        entry = self.store.get_config(
-            tenant_id=self._SYSTEM_TENANT_ID,
-            scope=ConfigScope.SYSTEM,
-            service="system",
-            config_key="system_config",
-        )
+        with self._system_config_lock:
+            if self._system_config_cache is not None:
+                return copy.deepcopy(self._system_config_cache)
 
-        if entry is None:
-            logger.warning("No system config found, using defaults")
-            cfg = SystemConfig()
-        else:
-            cfg = SystemConfig.from_dict(entry.config_value)
+            entry = self.store.get_config(
+                tenant_id=self._SYSTEM_TENANT_ID,
+                scope=ConfigScope.SYSTEM,
+                service="system",
+                config_key="system_config",
+            )
 
-        self._system_config_cache = cfg
-        return copy.deepcopy(cfg)
+            if entry is None:
+                logger.warning("No system config found, using defaults")
+                cfg = SystemConfig()
+            else:
+                cfg = SystemConfig.from_dict(entry.config_value)
+
+            self._system_config_cache = cfg
+            return copy.deepcopy(cfg)
 
     def set_system_config(self, system_config: SystemConfig) -> SystemConfig:
         """Set system-wide infrastructure configuration.
@@ -203,7 +211,8 @@ class ConfigManager:
         )
         # Bust the get_system_config cache so the new write is visible
         # on the next read in this process.
-        self._system_config_cache = system_config
+        with self._system_config_lock:
+            self._system_config_cache = copy.deepcopy(system_config)
 
         logger.info("System config updated")
         return system_config
@@ -286,6 +295,9 @@ class ConfigManager:
         Returns:
             List of AgentConfig ordered by version descending
         """
+        tenant_id = require_tenant_id(
+            tenant_id, source="ConfigManager.get_agent_config_history"
+        )
         entries = self.store.get_config_history(
             tenant_id=tenant_id,
             scope=ConfigScope.AGENT,
@@ -316,29 +328,45 @@ class ConfigManager:
             if hit is not None and now - hit[0] < self._scoped_config_cache_ttl_s:
                 self._scoped_config_cache.move_to_end(key)  # mark MRU
                 return copy.deepcopy(hit[1])
-        entry = self.store.get_config(
-            tenant_id=tenant_id,
-            scope=scope,
-            service=service,
-            config_key=config_key,
-        )
-        value = entry.config_value if entry is not None else None
-        with self._scoped_config_lock:
-            self._scoped_config_cache[key] = (now, value)
-            self._scoped_config_cache.move_to_end(key)
-            while len(self._scoped_config_cache) > self._scoped_config_cache_max:
-                self._scoped_config_cache.popitem(last=False)
-        return copy.deepcopy(value)
+
+        fill_lock = self._scoped_fill_lock(scope, tenant_id)
+        with fill_lock:
+            now = time.monotonic()
+            with self._scoped_config_lock:
+                hit = self._scoped_config_cache.get(key)
+                if hit is not None and now - hit[0] < self._scoped_config_cache_ttl_s:
+                    self._scoped_config_cache.move_to_end(key)
+                    return copy.deepcopy(hit[1])
+
+            entry = self.store.get_config(
+                tenant_id=tenant_id,
+                scope=scope,
+                service=service,
+                config_key=config_key,
+            )
+            value = entry.config_value if entry is not None else None
+            with self._scoped_config_lock:
+                self._scoped_config_cache[key] = (time.monotonic(), value)
+                self._scoped_config_cache.move_to_end(key)
+                while len(self._scoped_config_cache) > self._scoped_config_cache_max:
+                    self._scoped_config_cache.popitem(last=False)
+            return copy.deepcopy(value)
+
+    def _scoped_fill_lock(self, scope: ConfigScope, tenant_id: str) -> threading.Lock:
+        """Return the bounded lock serializing one tenant/scope cache fill."""
+        index = hash((scope, tenant_id)) % len(self._scoped_fill_locks)
+        return self._scoped_fill_locks[index]
 
     def _invalidate_scoped_config(self, scope: ConfigScope, tenant_id: str) -> None:
         """Drop cached entries for a (scope, tenant) after a write."""
-        with self._scoped_config_lock:
-            for key in [
-                k
-                for k in self._scoped_config_cache
-                if k[0] == scope and k[1] == tenant_id
-            ]:
-                del self._scoped_config_cache[key]
+        with self._scoped_fill_lock(scope, tenant_id):
+            with self._scoped_config_lock:
+                for key in [
+                    k
+                    for k in self._scoped_config_cache
+                    if k[0] == scope and k[1] == tenant_id
+                ]:
+                    del self._scoped_config_cache[key]
 
     # ========== Tenant Instructions ==========
 
@@ -643,25 +671,26 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.add_backend_profile"
         )
-        with self._backend_lock:
-            backend_config = self.get_backend_config(
-                tenant_id=tenant_id, service=service
-            )
-            backend_config.add_profile(profile)
-            self.set_backend_config(
-                backend_config, tenant_id=tenant_id, service=service
-            )
+        with self._profile_change_lock:
+            with self._backend_lock:
+                backend_config = self.get_backend_config(
+                    tenant_id=tenant_id, service=service
+                )
+                backend_config.add_profile(profile)
+                self.set_backend_config(
+                    backend_config, tenant_id=tenant_id, service=service
+                )
 
-            logger.info(
-                f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
-            )
+                logger.info(
+                    f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
+                )
 
-        # Notify outside the lock to avoid holding _backend_lock across
-        # potentially slow listener work (e.g. backend dict updates).
-        profile_dict = (
-            profile.to_dict() if hasattr(profile, "to_dict") else dict(profile.__dict__)
-        )
-        self._notify_profile_change("added", profile.profile_name, profile_dict)
+            profile_dict = (
+                profile.to_dict()
+                if hasattr(profile, "to_dict")
+                else dict(profile.__dict__)
+            )
+            self._notify_profile_change("added", profile.profile_name, profile_dict)
         return profile
 
     def update_backend_profile(
@@ -705,25 +734,32 @@ class ConfigManager:
         if target_tenant_id is None:
             target_tenant_id = base_tenant_id
 
-        with self._backend_lock:
-            # Get base profile (may be from default tenant or another tenant)
-            base_config = self.get_backend_config(
-                tenant_id=base_tenant_id, service=service
-            )
-            merged_profile = base_config.merge_profile(profile_name, overrides)
+        with self._profile_change_lock:
+            with self._backend_lock:
+                # Get base profile (may be from default tenant or another tenant)
+                base_config = self.get_backend_config(
+                    tenant_id=base_tenant_id, service=service
+                )
+                merged_profile = base_config.merge_profile(profile_name, overrides)
 
-            # Save to target tenant
-            target_config = self.get_backend_config(
-                tenant_id=target_tenant_id, service=service
-            )
-            target_config.add_profile(merged_profile)
-            self.set_backend_config(
-                target_config, tenant_id=target_tenant_id, service=service
-            )
+                # Save to target tenant
+                target_config = self.get_backend_config(
+                    tenant_id=target_tenant_id, service=service
+                )
+                target_config.add_profile(merged_profile)
+                self.set_backend_config(
+                    target_config, tenant_id=target_tenant_id, service=service
+                )
 
-            logger.info(
-                f"Updated backend profile '{profile_name}' for {target_tenant_id}:{service} "
-                f"(based on {base_tenant_id})"
+                logger.info(
+                    f"Updated backend profile '{profile_name}' for "
+                    f"{target_tenant_id}:{service} (based on {base_tenant_id})"
+                )
+
+            self._notify_profile_change(
+                "added",
+                profile_name,
+                merged_profile.to_dict(),
             )
             return merged_profile
 
@@ -766,31 +802,31 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.delete_backend_profile"
         )
-        with self._backend_lock:
-            backend_config = self.get_backend_config(
-                tenant_id=tenant_id, service=service
-            )
-
-            # Check if profile exists
-            if profile_name not in backend_config.profiles:
-                logger.warning(
-                    f"Profile '{profile_name}' not found for {tenant_id}:{service}"
+        with self._profile_change_lock:
+            with self._backend_lock:
+                backend_config = self.get_backend_config(
+                    tenant_id=tenant_id, service=service
                 )
-                return False
 
-            # Remove profile
-            del backend_config.profiles[profile_name]
+                # Check if profile exists
+                if profile_name not in backend_config.profiles:
+                    logger.warning(
+                        f"Profile '{profile_name}' not found for {tenant_id}:{service}"
+                    )
+                    return False
 
-            # Save updated config
-            self.set_backend_config(
-                backend_config, tenant_id=tenant_id, service=service
-            )
+                # Remove profile
+                del backend_config.profiles[profile_name]
 
-            logger.info(
-                f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
-            )
-        # Notify outside the lock so listeners can't deadlock on _backend_lock.
-        self._notify_profile_change("removed", profile_name, None)
+                # Save updated config
+                self.set_backend_config(
+                    backend_config, tenant_id=tenant_id, service=service
+                )
+
+                logger.info(
+                    f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
+                )
+            self._notify_profile_change("removed", profile_name, None)
         return True
 
     # ========== Generic Configuration Access ==========
@@ -907,7 +943,7 @@ class ConfigManager:
             json.dump(
                 {
                     "tenant_id": tenant_id,
-                    "exported_at": __import__("datetime").datetime.now().isoformat(),
+                    "exported_at": datetime.now(timezone.utc).isoformat(),
                     "configs": configs,
                 },
                 f,

@@ -136,6 +136,34 @@ class TestDynamicConfigIntegration:
         )
         assert agent.agent_config.module_config.max_retries == 5
 
+    def test_config_update_cannot_override_scoped_tenant(
+        self, fresh_agent, config_manager
+    ):
+        _, fresh_app = fresh_agent
+        client = TestClient(fresh_app)
+
+        response = client.post(
+            "/config/module?tenant_id=api_override_globex",
+            json={
+                "module_type": "chain_of_thought",
+                "signature": "TextAnalysisSignature",
+                "max_retries": 7,
+            },
+        )
+
+        assert response.status_code == 200
+        scoped = config_manager.get_agent_config(
+            "test_tenant",
+            "text_analysis_agent",
+        )
+        overridden = config_manager.get_agent_config(
+            "api_override_globex",
+            "text_analysis_agent",
+        )
+        assert scoped.module_config.module_type == DSPyModuleType.CHAIN_OF_THOUGHT
+        assert scoped.module_config.max_retries == 7
+        assert overridden is None
+
     def test_update_module_config_clears_module_cache(self, fresh_agent):
         """Test updating module config clears cached modules"""
         agent, fresh_app = fresh_agent
