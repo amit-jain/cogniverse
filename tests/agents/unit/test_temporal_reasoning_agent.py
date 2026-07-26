@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from datetime import datetime
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
@@ -74,9 +75,9 @@ class TestParseIso:
     def test_offset(self):
         assert _parse_iso("2026-01-01T00:00:00+00:00") is not None
 
-    def test_naive_assumed_utc(self):
-        out = _parse_iso("2026-01-01T00:00:00")
-        assert out is not None and out.tzinfo is not None
+    def test_naive_timestamp_rejected(self):
+        assert _parse_iso("2026-01-01T00:00:00") is None
+        assert _parse_iso(datetime(2026, 1, 1)) is None
 
     def test_returns_none_on_garbage(self):
         assert _parse_iso("garbage") is None
@@ -116,6 +117,16 @@ class TestTimeWindowValidation:
     def test_unparseable_end_rejected(self):
         with pytest.raises(Exception):
             TimeWindow(label="x", start="2026-01-01T00:00:00Z", end="bad")
+
+    def test_naive_bounds_rejected(self):
+        with pytest.raises(Exception, match="timezone-aware"):
+            TimeWindow(label="x", start="2026-01-01T00:00:00")
+        with pytest.raises(Exception, match="timezone-aware"):
+            TimeWindow(
+                label="x",
+                start="2026-01-01T00:00:00Z",
+                end="2026-04-01T00:00:00",
+            )
 
     def test_open_ended_window(self):
         w = TimeWindow(label="x", start="2026-01-01T00:00:00Z", end=None)

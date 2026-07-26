@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import dspy
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from cogniverse_agents._coercion import coerce_float
 from cogniverse_agents.graph.graph_schema import normalize_name
@@ -98,6 +98,15 @@ class KnowledgeSummarizationInput(AgentInput):
     )
     actor_id: str = Field(..., description="Caller actor id (audit)")
     rlm: Optional[RLMOptions] = Field(None)
+
+    @field_validator("since", "until")
+    @classmethod
+    def _time_bound_is_timezone_aware(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or _parse_iso(value) is not None:
+            return value
+        raise ValueError(
+            f"time bound {value!r} is not a timezone-aware ISO-8601 timestamp"
+        )
 
 
 class KGVideoSummaryOut(AgentInput):

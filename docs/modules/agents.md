@@ -3770,7 +3770,7 @@ The agent auto-registers a `knowledge_summary` schema (permanent,
 | No matching memories | Empty summary; `metadata.reason = no_matching_memories`; promotion skipped. |
 | `actor_role` < `tenant_admin` + `promote=True` | Promotion refused (logged warning); summary still returned. |
 | Both `subject_keys` and `kinds` empty | Pulls every memory in the agent_name namespace (cap by `max_memories`). |
-| `since` or `until` set + memory missing `written_at` | Memory excluded. |
+| `since` or `until` set | Bounds must be timezone-aware ISO-8601 values; a matching memory without a valid timezone-aware `written_at` is excluded. |
 | RLM `enabled` AND context > threshold | RLM summariser fires; `used_rlm=True`. |
 | Org-trunk promotion | Storage write runs outside the event-loop thread; a write failure propagates and no successful promotion is reported. |
 
@@ -3817,6 +3817,7 @@ exceeds the RLM threshold.
 | Property | Behaviour |
 |---|---|
 | Memories without `written_at` | Counted in `undated_count`, excluded from windows. |
+| Window bounds | `start` and `end` must be timezone-aware ISO-8601 values; naive timestamps are rejected. |
 | `windows[i].end` is `None` | Open-ended (matches everything ≥ `start`). |
 | Same content in two windows | One distinct signature (knowledge unchanged). |
 | Subject filter | Strict `metadata.subject_key == subject_key` match. |
