@@ -51,6 +51,7 @@ graph TD
     Root --> Code["<span style='color:#000'>code.py<br/>Interactive coding agent REPL</span>"]
     Root --> Streaming["<span style='color:#000'>streaming.py<br/>SSE streaming for the coding REPL</span>"]
     Root --> Index["<span style='color:#000'>index.py<br/>Directory indexing into Vespa</span>"]
+    Root --> ModalInference["<span style='color:#000'>modal_inference_config.py<br/>Pinned cloud inference contracts</span>"]
     Root --> Constants["<span style='color:#000'>constants.py<br/>NAMESPACE, RUNTIME_URL</span>"]
 
     style Root fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -68,10 +69,40 @@ graph TD
     style Code fill:#81d4fa,stroke:#0288d1,color:#000
     style Streaming fill:#81d4fa,stroke:#0288d1,color:#000
     style Index fill:#81d4fa,stroke:#0288d1,color:#000
+    style ModalInference fill:#81d4fa,stroke:#0288d1,color:#000
     style Constants fill:#81d4fa,stroke:#0288d1,color:#000
 ```
 
 All modules are flat files directly under `cogniverse_cli/` (no subpackages).
+
+`modal_inference_config.py` is the model-contract registry for Modal inference
+deployments. `INFERENCE_SERVICE_SPECS` is a read-only
+`Mapping[str, InferenceServiceSpec]`; `get_inference_service_spec(name)` returns
+one entry and raises `KeyError` for an unknown service. `InferenceServiceSpec`
+is a frozen, slotted dataclass with the model identity, response dimension,
+ordered GPU candidates, endpoint authentication, Modal object name, health and
+model-list paths, and scale-to-zero settings. Its `modal_app` property derives
+an independent app name as `cogniverse-<service-name>` with underscores
+replaced by hyphens.
+
+Every current entry uses bearer authentication, the Modal object `Inference`,
+`/health` and `/v1/models`, a 300-second scale-down window, and zero minimum
+containers. Model revisions must be non-empty and cannot be the mutable names
+`main`, `master`, or `latest`; every service must have at least one GPU
+candidate.
+
+| Service | Model ID | Pinned revision | Output dimension | GPU candidates |
+|---|---|---|---:|---|
+| `vllm_colpali` | `TomoroAI/tomoro-colqwen3-embed-4b` | `bf790bd8780b098b86453444632a184bb770be1a` | 320 | L4, A10, L40S |
+| `colbert_pylate` | `lightonai/LateOn` | `c01907b70557ee5c7753680d4819a5cce1674b83` | 128 | T4, L4 |
+| `code_colbert_pylate` | `lightonai/LateOn-Code-edge` | `07ef20f406c86badca122464808f4cac2f6e4b25` | 128 | T4, L4 |
+| `denseon` | `lightonai/DenseOn` | `cb9947ebccb33862d24e3c7ca2edb25e51acd887` | 768 | T4, L4 |
+| `gliner` | `urchade/gliner_medium-v2.1` | `40ec419335d09393f298636f471328b722c6da9e` | — | T4, L4 |
+| `videoprism_jax` | `videoprism_public_v1_base_hf` | `d481d91b9bf8c9d330d1e526e511a359c799bbe1` | 768 | T4, L4 |
+| `vllm_llm_student` | `google/gemma-4-E4B-it` | `ee0ef6023621cff504d758262d4e04895a5af4a2` | — | L4, A10, L40S |
+| `vllm_asr` | `openai/whisper-large-v3-turbo` | `41f01f3fe87f28c78e2fbf8b568835947dd65ed9` | — | T4, L4 |
+| `clap_embed` | `laion/clap-htsat-unfused` | `8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a` | 512 | T4, L4 |
+| `face_embed` | `buffalo_l` | `insightface==0.7.3:buffalo_l` | 512 | T4, L4 |
 
 ---
 
@@ -242,7 +273,7 @@ Environment variables read across CLI commands:
 uv run pytest tests/cli/unit/ -v --tb=long
 ```
 
-One test module per source module: `test_main.py` (`up`/`down`/`status`/`logs`/`start`/`stop`, host-LLM probing, port-forward start/reap wiring), `test_cluster.py` (prerequisite checks, k3d lifecycle, orphan-free port-forward restart/stop), `test_config.py` (chart/workflow path resolution in dev vs. installed mode), `test_deploy.py` (Helm install/upgrade/uninstall, release-existence classification), `test_images.py` (torch-backend detection, image build/import), `test_argo.py` (WorkflowTemplate/CronWorkflow filtering), `test_health.py` (URL polling and health snapshots), `test_secrets_sync.py` (hf-token sync), `test_sandbox_cli.py` (OpenShell gateway install/sync/status), `test_code_cli.py` (A2A request building, SSE event parsing, the REPL session, slash commands, and `index.py`'s `collect_files` filtering), and `test_admin_and_graph_cli.py` (orphan reconciliation, graph stats/search/upsert payloads) — each against a mocked `subprocess`/`kubectl`/`helm`/`httpx` boundary.
+One test module per source module: `test_main.py` (`up`/`down`/`status`/`logs`/`start`/`stop`, host-LLM probing, port-forward start/reap wiring), `test_cluster.py` (prerequisite checks, k3d lifecycle, orphan-free port-forward restart/stop), `test_config.py` (chart/workflow path resolution in dev vs. installed mode), `test_deploy.py` (Helm install/upgrade/uninstall, release-existence classification), `test_images.py` (torch-backend detection, image build/import), `test_argo.py` (WorkflowTemplate/CronWorkflow filtering), `test_health.py` (URL polling and health snapshots), `test_secrets_sync.py` (hf-token sync), `test_sandbox_cli.py` (OpenShell gateway install/sync/status), `test_code_cli.py` (A2A request building, SSE event parsing, the REPL session, slash commands, and `index.py`'s `collect_files` filtering), `test_admin_and_graph_cli.py` (orphan reconciliation, graph stats/search/upsert payloads), and `test_modal_inference_config.py` (exact model identities and dimensions, immutable revisions, independent scale-to-zero app names, and unknown-service rejection). Command-facing tests isolate their `subprocess`/`kubectl`/`helm`/`httpx` boundaries; the model registry tests exercise its immutable in-process contract directly.
 
 `tests/e2e/test_coding_cli_e2e.py` and `tests/e2e/test_graph_cli_e2e.py` exercise the `index`, `code`, and `graph` commands against a real running runtime (upload → ingest → graph upsert round-trip).
 
@@ -269,7 +300,8 @@ flowchart TB
 
 `cogniverse-cli` does not import from and is not imported by any other `libs/*` package — it drives the deployed stack over `kubectl`/`helm` and the runtime's HTTP API rather than in-process calls.
 
-**Dependencies:** `click`, `rich`, `httpx`, `httpx-sse`, `pyyaml`
+**Dependencies:** `click`, `rich`, `httpx`, `httpx-sse`, `modal`, `pyyaml`,
+`setuptools-scm`
 
 **Dependents:** none (standalone entry point)
 

@@ -8,6 +8,7 @@ dependencies = [
     "rich==14.3.4",
     "httpx==0.28.1",
     "httpx-sse==0.4.3",
+    "modal==1.4.1",
     "pyyaml==6.0.3",
     # Derive the git version for local dev image tags (same tool hatch-vcs uses),
     # so a `cogniverse up` image is stamped with the exact commit it was built from.
