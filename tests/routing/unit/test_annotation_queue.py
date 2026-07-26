@@ -116,6 +116,16 @@ class TestAnnotationQueueStateTransitions:
         result = queue.assign("span-1", reviewer="bob", sla_hours=48)
         assert result.sla_deadline > before + timedelta(hours=47)
 
+    def test_assign_with_zero_hour_sla(self):
+        queue = AnnotationQueue()
+        queue.enqueue(_make_request("span-1"))
+
+        before = datetime.now(timezone.utc)
+        result = queue.assign("span-1", reviewer="bob", sla_hours=0)
+        after = datetime.now(timezone.utc)
+
+        assert before <= result.sla_deadline <= after
+
     def test_assign_missing_span_raises(self):
         queue = AnnotationQueue()
         with pytest.raises(KeyError, match="not found"):

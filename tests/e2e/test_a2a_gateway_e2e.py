@@ -263,7 +263,6 @@ class TestGatewaySeededSearchContract:
         assert downstream["profile"] == PROFILE
         assert downstream["results_count"] == len(downstream["results"])
         video_ids = [result["metadata"]["video_id"] for result in downstream["results"]]
-        assert video_ids
         assert set(video_ids) == {SAMPLE_VIDEO_ID}
         scores = [result["score"] for result in downstream["results"]]
         assert scores == sorted(scores, reverse=True)
@@ -274,12 +273,9 @@ class TestGatewaySeededSearchContract:
         assert document_data["gateway"]["complexity"] == "simple"
         assert document_data["gateway"]["modality"] == "document"
         assert document_data["gateway"]["routed_to"] == "document_agent"
-        document_results = document_data.get("downstream_result", {}).get(
-            "results",
-            [],
-        )
+        document_results = document_data["downstream_result"]["results"]
         assert SAMPLE_VIDEO_ID not in {
-            result.get("metadata", {}).get("video_id") for result in document_results
+            result["metadata"]["video_id"] for result in document_results
         }
 
 

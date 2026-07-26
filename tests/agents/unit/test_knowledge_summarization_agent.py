@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from cogniverse_agents.knowledge_summarization_agent import (
     SUMMARY_KIND,
@@ -420,7 +421,7 @@ def test_summary_kind_auto_registered():
 
 
 def test_input_requires_title():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         KnowledgeSummarizationInput(
             tenant_id="acme",
             subject_keys=["x"],
@@ -430,7 +431,7 @@ def test_input_requires_title():
 
 
 def test_max_memories_bounds_enforced():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         KnowledgeSummarizationInput(
             tenant_id="acme",
             subject_keys=["x"],
@@ -438,7 +439,7 @@ def test_max_memories_bounds_enforced():
             actor_id="a",
             max_memories=0,
         )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         KnowledgeSummarizationInput(
             tenant_id="acme",
             subject_keys=["x"],
@@ -449,14 +450,14 @@ def test_max_memories_bounds_enforced():
 
 
 def test_time_filter_requires_timezone_aware_bounds():
-    with pytest.raises(Exception, match="timezone-aware"):
+    with pytest.raises(ValidationError, match="timezone-aware"):
         KnowledgeSummarizationInput(
             tenant_id="acme",
             title="naive lower bound",
             since="2026-01-01T00:00:00",
             actor_id="a",
         )
-    with pytest.raises(Exception, match="timezone-aware"):
+    with pytest.raises(ValidationError, match="timezone-aware"):
         KnowledgeSummarizationInput(
             tenant_id="acme",
             title="naive upper bound",

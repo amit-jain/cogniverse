@@ -92,7 +92,11 @@ class AnnotationQueue:
             )
 
         now = datetime.now(timezone.utc)
-        hours = sla_hours or self._sla_hours.get(request.priority, 24)
+        hours = (
+            self._sla_hours.get(request.priority, 24)
+            if sla_hours is None
+            else sla_hours
+        )
 
         request.status = AnnotationStatus.ASSIGNED
         request.assigned_to = reviewer

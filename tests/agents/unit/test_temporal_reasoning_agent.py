@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from cogniverse_agents.temporal_reasoning_agent import (
     TemporalReasoningAgent,
@@ -111,17 +112,17 @@ class TestContentSignature:
 
 class TestTimeWindowValidation:
     def test_unparseable_start_rejected(self):
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(ValidationError):
             TimeWindow(label="x", start="garbage")
 
     def test_unparseable_end_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TimeWindow(label="x", start="2026-01-01T00:00:00Z", end="bad")
 
     def test_naive_bounds_rejected(self):
-        with pytest.raises(Exception, match="timezone-aware"):
+        with pytest.raises(ValidationError, match="timezone-aware"):
             TimeWindow(label="x", start="2026-01-01T00:00:00")
-        with pytest.raises(Exception, match="timezone-aware"):
+        with pytest.raises(ValidationError, match="timezone-aware"):
             TimeWindow(
                 label="x",
                 start="2026-01-01T00:00:00Z",
@@ -286,7 +287,7 @@ class TestBucketing:
 @pytest.mark.asyncio
 class TestEdgeCases:
     async def test_single_window_rejected_by_validation(self):
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(ValidationError):
             TemporalReasoningInput(
                 tenant_id="acme",
                 subject_key="x",
@@ -296,7 +297,7 @@ class TestEdgeCases:
             )
 
     async def test_no_subject_key_rejected(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TemporalReasoningInput(
                 tenant_id="acme",
                 subject_key="",
