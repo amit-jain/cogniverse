@@ -17,6 +17,7 @@ summarisation can plug in later via the same pattern as the other agents.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -260,7 +261,11 @@ class CrossTenantComparisonAgent(
         all_signatures: set = set()
 
         for tid in input.tenant_ids:
-            view_rows = federation.federated_get_all(tid, agent_filter)
+            view_rows = await asyncio.to_thread(
+                federation.federated_get_all,
+                tid,
+                agent_filter,
+            )
             matching = [
                 r
                 for r in view_rows

@@ -3867,8 +3867,10 @@ print(out.summary)  # populated when RLM ran
 Default `agent_name_filter="_promoted"` so the agent reads from the
 canonical promoted-knowledge namespace; pass an explicit value to scope
 to a different agent's namespace. `top_k_per_tenant` (default 20) caps
-per-tenant fan-in. The optional RLM summariser only fires when both
-`rlm.enabled` and the merged context exceeds the RLM threshold.
+per-tenant fan-in. Federated reads run outside the event-loop thread,
+and memory-manager construction or read failures propagate instead of
+being returned as an empty hit list. The optional RLM summariser only
+fires when both `rlm.enabled` and the merged context exceeds the RLM threshold.
 Capability strings: `federated_query`, `audit`, `federation_consumer`.
 Default `port=8024`.
 
@@ -3909,7 +3911,9 @@ for view in out.tenant_views:
 | Any `tenant_ids[i]` outside the caller's org | Rejected — never reads cross-org. |
 
 `distinct_signatures_count` collapses tenants by content signature so
-callers can quickly tell agreement from disagreement.
+callers can quickly tell agreement from disagreement. Per-tenant
+federated reads run outside the event-loop thread, and backend failures
+propagate instead of producing an apparently empty tenant view.
 Capability strings: `cross_tenant_comparison`, `audit`,
 `federation_consumer`. Default `port=8023`.
 
