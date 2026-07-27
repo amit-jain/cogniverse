@@ -923,32 +923,51 @@ def _stamp_e2e_fingerprint(fingerprint: str) -> None:
     )
 
 
-def _e2e_cluster_reusable(fingerprint: str) -> bool:
-    """A warm ``cogniverse-e2e`` cluster can be reused iff it is running,
-    reachable, its runtime answers, and it was built from the SAME deployed
-    content (fingerprint). Any of those failing → boot fresh."""
-    listed = subprocess.run(
-        ["k3d", "cluster", "list", E2E_CLUSTER_NAME],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if listed.returncode != 0 or E2E_CLUSTER_NAME not in listed.stdout:
-        return False
+def _e2e_cluster_state(fingerprint: str) -> tuple[str, str]:
+    """Inspect the shared cluster without changing its lifecycle."""
+    from cogniverse_cli.cluster import list_cluster_states
+
+    try:
+        cluster = next(
+            (
+                state
+                for state in list_cluster_states()
+                if state["name"] == E2E_CLUSTER_NAME
+            ),
+            None,
+        )
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError) as exc:
+        return "unhealthy", f"cluster inventory inspection failed: {exc}"
+    if cluster is None:
+        return "absent", ""
+    servers_running = cluster["servers_running"]
+    servers_count = cluster["servers_count"]
+    if servers_running == 0:
+        return "stopped", ""
+    if servers_running != servers_count:
+        return (
+            "unhealthy",
+            f"{servers_running} of {servers_count} server nodes are running",
+        )
     if (
         _kubectl_e2e("get", "ns", "cogniverse", "-o", "name", timeout=15).returncode
         != 0
     ):
-        return False
+        return "unhealthy", "the cogniverse namespace is unreachable"
     if not runtime_available():
-        return False
-    return _read_e2e_fingerprint() == fingerprint
+        return "unhealthy", f"runtime readiness failed at {RUNTIME}"
+    deployed_fingerprint = _read_e2e_fingerprint()
+    if deployed_fingerprint != fingerprint:
+        return (
+            "stale",
+            f"found {deployed_fingerprint or '<missing>'!r}, expected {fingerprint!r}",
+        )
+    return "reusable", ""
 
 
 @pytest.fixture(scope="session", autouse=True)
 def e2e_stack():
-    """Provide a healthy, bootstrapped e2e stack — reusing a warm cluster
-    when the deployed content is unchanged, booting fresh otherwise.
+    """Provide a healthy, bootstrapped e2e stack without replacing shared state.
 
     The cluster is a dedicated k3d deployment whose loadbalancer maps the
     offset 33xxx HOST ports onto the chart's canonical NodePorts (see
@@ -962,18 +981,22 @@ def e2e_stack():
         fingerprint matches the current ``libs``/``configs``/``charts`` is
         already up, reuse it (~seconds). Editing only ``tests/`` keeps the
         fingerprint, so assertion iteration is fast.
-      * FRESH — otherwise (no cluster / unhealthy / deployed code changed /
-        ``E2E_FRESH`` set) stop any dev cluster (RAM + ports), rebuild
-        images, create the cluster, deploy, wait, and stamp the fingerprint.
-        The fresh path is what proves the first-install contract.
-      * TEARDOWN — the cluster is LEFT WARM for the next run; only
-        ``E2E_FRESH=1`` deletes it. Reset manually with
-        ``k3d cluster delete cogniverse-e2e``.
+      * CREATE — only when no ``cogniverse-e2e`` cluster exists, stop any dev
+        cluster (RAM + ports), build, deploy, wait, and stamp the fingerprint.
+      * START — resume a stopped shared cluster through the supported project
+        lifecycle, then inspect it again before reuse.
+      * REJECT — a stale or unhealthy existing shared cluster is never
+        replaced. Repair it or explicitly delete it before rerunning.
+        ``E2E_FRESH`` likewise requires the shared cluster to be absent.
+      * TEARDOWN — the cluster is left warm unless this session created it for
+        an ``E2E_FRESH`` run. A session never deletes a cluster it did not own.
 
     After the stack is healthy (reused or fresh) the E2E tenant + schemas +
     sample data are (idempotently) bootstrapped and CronWorkflows suspended
     for the session.
     """
+    from cogniverse_cli.cluster import start_cluster
+
     from tests.e2e.deployment.conftest import (
         create_test_cluster,
         delete_test_cluster,
@@ -982,18 +1005,39 @@ def e2e_stack():
 
     fingerprint = _e2e_deploy_fingerprint()
     force_fresh = os.environ.get("E2E_FRESH", "").lower() in ("1", "true", "yes")
+    cluster_state, state_detail = _e2e_cluster_state(fingerprint)
+    created_this_session = False
+    reset_command = f"k3d cluster delete {E2E_CLUSTER_NAME}"
 
-    if not force_fresh and _e2e_cluster_reusable(fingerprint):
+    if cluster_state != "absent" and force_fresh:
+        pytest.fail(
+            f"E2E_FRESH cannot replace existing shared e2e cluster "
+            f"{E2E_CLUSTER_NAME!r}. Delete it explicitly with `{reset_command}`, "
+            "then rerun."
+        )
+    if cluster_state == "stopped":
+        _stop_dev_cluster_and_free_ports()
+        start_cluster(E2E_CLUSTER_NAME)
+        cluster_state, state_detail = _e2e_cluster_state(fingerprint)
+    if cluster_state == "unhealthy":
+        pytest.fail(
+            f"Existing shared e2e cluster {E2E_CLUSTER_NAME!r} is unhealthy "
+            f"({state_detail}). Repair it, or delete it explicitly with "
+            f"`{reset_command}`, then rerun."
+        )
+    if cluster_state == "stale":
+        pytest.fail(
+            f"Existing shared e2e cluster {E2E_CLUSTER_NAME!r} deploy "
+            f"fingerprint is stale ({state_detail}). Delete it explicitly with "
+            f"`{reset_command}`, then rerun."
+        )
+
+    if cluster_state == "reusable":
         print(
             f"Reusing warm e2e cluster {E2E_CLUSTER_NAME} "
             f"(deploy fingerprint {fingerprint} unchanged)"
         )
     else:
-        # A crashed previous session leaves its disposable cluster — and its
-        # 33xxx port bindings — behind, and a stale-fingerprint cluster must
-        # be replaced. Reap it before the port check, or the leftover reads
-        # as "another process holds the ports".
-        delete_test_cluster(E2E_CLUSTER_NAME)
         _stop_dev_cluster_and_free_ports()
 
         create_test_cluster(
@@ -1001,6 +1045,7 @@ def e2e_stack():
             ports=[f"{host}:{node}" for host, node in E2E_HOST_PORTS.items()],
             share_host_storage=False,
         )
+        created_this_session = True
         # Test-cluster-only helm overrides (never touch the shipped chart):
         #  - teacher LM off: only the opt-in teacher-optimization e2e uses it,
         #    and it can't coexist with colpali + student during GPU weight
@@ -1070,9 +1115,8 @@ def e2e_stack():
         finally:
             _restore_cronworkflows(cron_restore)
     finally:
-        # Leave the cluster warm for reuse; only a forced-fresh run tears
-        # it down (so CI / first-install verification stays hermetic).
-        if force_fresh:
+        # Only delete a disposable cluster created and owned by this session.
+        if force_fresh and created_this_session:
             delete_test_cluster(E2E_CLUSTER_NAME)
 
 

@@ -263,7 +263,11 @@ def create_test_cluster(
     and cannot touch the dev cluster's persisted state.
     """
     if _cluster_exists(cluster_name):
-        _cmd(["k3d", "cluster", "delete", cluster_name], check=False, timeout=60)
+        pytest.fail(
+            f"Refusing to replace existing deployment-test cluster "
+            f"{cluster_name!r}. Delete it explicitly with "
+            f"`k3d cluster delete {cluster_name}`, then rerun."
+        )
 
     import os
 

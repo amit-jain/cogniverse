@@ -19,6 +19,7 @@ import time
 
 import pytest
 
+import tests.e2e.conftest as e2e_conftest
 from tests.e2e.conftest import (
     _TEST_TENANT_PREFIXES,
     skip_if_no_runtime,
@@ -62,6 +63,397 @@ _LEGACY_PREFIXES = (
     "search_e2e_",
     "ingest_e2e_",
 )
+
+
+class TestSharedClusterOwnership:
+    @pytest.fixture(scope="class", autouse=True)
+    def e2e_stack(self):
+        """Do not start a real cluster while testing the stack fixture itself."""
+        yield
+
+    def _start_stack(self, monkeypatch, *, cluster_states, force_fresh):
+        import cogniverse_cli.cluster as cluster_cli
+
+        from tests.e2e.deployment import conftest as deployment_conftest
+
+        calls = {
+            "start": [],
+            "stop_dev": [],
+            "create": [],
+            "deploy": [],
+            "healthy": [],
+            "stamp": [],
+            "delete": [],
+        }
+        if force_fresh:
+            monkeypatch.setenv("E2E_FRESH", "1")
+        else:
+            monkeypatch.delenv("E2E_FRESH", raising=False)
+        monkeypatch.setattr(
+            e2e_conftest, "_e2e_deploy_fingerprint", lambda: "current-build"
+        )
+        monkeypatch.setattr(cluster_cli, "list_cluster_states", lambda: cluster_states)
+        monkeypatch.setattr(
+            cluster_cli, "start_cluster", lambda name: calls["start"].append(name)
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: type("Result", (), {"returncode": 0})(),
+        )
+        monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
+        monkeypatch.setattr(
+            e2e_conftest, "_read_e2e_fingerprint", lambda: "current-build"
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_stop_dev_cluster_and_free_ports",
+            lambda: calls["stop_dev"].append(None),
+        )
+        monkeypatch.setattr(
+            deployment_conftest,
+            "create_test_cluster",
+            lambda name, **kwargs: calls["create"].append((name, kwargs)),
+        )
+        monkeypatch.setattr(
+            deployment_conftest,
+            "deploy_stack",
+            lambda *args, **kwargs: calls["deploy"].append((args, kwargs)),
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_ensure_stack_running",
+            lambda: calls["healthy"].append(None) or True,
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_stamp_e2e_fingerprint",
+            lambda value: calls["stamp"].append(value),
+        )
+        monkeypatch.setattr(
+            deployment_conftest,
+            "delete_test_cluster",
+            lambda name: calls["delete"].append(name),
+        )
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda *args, **kwargs: type(
+                "Result", (), {"returncode": 0, "stdout": "", "stderr": ""}
+            )(),
+        )
+        monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
+        monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
+        monkeypatch.setattr(
+            e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
+        )
+
+        stack = e2e_conftest.e2e_stack.__wrapped__()
+        next(stack)
+        return stack, calls
+
+    def test_absent_shared_cluster_is_created_with_exact_deployment(self, monkeypatch):
+        stack, calls = self._start_stack(
+            monkeypatch, cluster_states=[], force_fresh=False
+        )
+
+        assert calls["create"] == [
+            (
+                "cogniverse-e2e",
+                {
+                    "ports": [
+                        "33080:8080",
+                        "33071:19071",
+                        "33000:28000",
+                        "33501:28501",
+                        "33006:26006",
+                        "33317:4317",
+                        "33434:11434",
+                        "33746:2746",
+                        "33901:29001",
+                        "33902:29002",
+                        "33904:29004",
+                        "33905:29005",
+                        "33906:29006",
+                        "33910:29010",
+                        "33911:29011",
+                    ],
+                    "share_host_storage": False,
+                },
+            )
+        ]
+        assert calls["deploy"] == [
+            (
+                ("cogniverse-e2e", "cogniverse"),
+                {
+                    "extra_set": {
+                        "inference.vllm_llm_teacher.enabled": "false",
+                        "inference.vllm_colpali.livenessProbe.initialDelaySeconds": "1200",
+                        "inference.vllm_colpali.livenessProbe.failureThreshold": "60",
+                        "inference.vllm_asr.livenessProbe.initialDelaySeconds": "1200",
+                        "inference.vllm_asr.livenessProbe.failureThreshold": "60",
+                        "inference.vllm_llm_student.livenessProbe.initialDelaySeconds": "1200",
+                        "inference.vllm_llm_student.livenessProbe.failureThreshold": "60",
+                    }
+                },
+            )
+        ]
+        assert calls["healthy"] == [None]
+        assert calls["stamp"] == ["current-build"]
+        stack.close()
+
+    def test_reusable_shared_cluster_has_no_lifecycle_mutations(self, monkeypatch):
+        stack, calls = self._start_stack(
+            monkeypatch,
+            cluster_states=[
+                {
+                    "name": "cogniverse-e2e",
+                    "servers_running": 1,
+                    "servers_count": 1,
+                }
+            ],
+            force_fresh=False,
+        )
+        stack.close()
+
+        assert calls["start"] == []
+        assert calls["create"] == []
+        assert calls["deploy"] == []
+        assert calls["stamp"] == []
+        assert calls["delete"] == []
+
+    def test_normally_created_shared_cluster_is_left_warm(self, monkeypatch):
+        stack, calls = self._start_stack(
+            monkeypatch, cluster_states=[], force_fresh=False
+        )
+        stack.close()
+
+        assert calls["create"][0][0] == "cogniverse-e2e"
+        assert calls["delete"] == []
+
+    def test_fresh_created_shared_cluster_is_deleted_once(self, monkeypatch):
+        stack, calls = self._start_stack(
+            monkeypatch, cluster_states=[], force_fresh=True
+        )
+        assert calls["delete"] == []
+        stack.close()
+
+        assert calls["create"][0][0] == "cogniverse-e2e"
+        assert calls["delete"] == ["cogniverse-e2e"]
+
+    @pytest.mark.parametrize(
+        ("force_fresh", "runtime_ready", "deployed_fingerprint", "reason"),
+        [
+            (False, True, "stale-build", "deploy fingerprint is stale"),
+            (False, False, "current-build", "is unhealthy"),
+            (True, True, "current-build", "E2E_FRESH cannot replace"),
+        ],
+    )
+    def test_existing_shared_cluster_is_never_deleted(
+        self,
+        monkeypatch,
+        force_fresh,
+        runtime_ready,
+        deployed_fingerprint,
+        reason,
+    ):
+        """A session may reject shared state, but it must never destroy it."""
+        import cogniverse_cli.cluster as cluster_cli
+
+        from tests.e2e.deployment import conftest as deployment_conftest
+
+        deleted: list[str] = []
+        monkeypatch.setattr(
+            cluster_cli,
+            "list_cluster_states",
+            lambda: [
+                {
+                    "name": "cogniverse-e2e",
+                    "servers_running": 1,
+                    "servers_count": 1,
+                }
+            ],
+        )
+        monkeypatch.setattr(
+            e2e_conftest, "_e2e_deploy_fingerprint", lambda: "current-build"
+        )
+        monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: runtime_ready)
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_read_e2e_fingerprint",
+            lambda: deployed_fingerprint,
+        )
+        monkeypatch.setattr(
+            e2e_conftest, "_stop_dev_cluster_and_free_ports", lambda: None
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: type(
+                "Result", (), {"returncode": 0, "stdout": "namespace/cogniverse"}
+            )(),
+        )
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda *args, **kwargs: type(
+                "Result",
+                (),
+                {"returncode": 0, "stdout": "cogniverse-e2e\n", "stderr": ""},
+            )(),
+        )
+        if force_fresh:
+            monkeypatch.setenv("E2E_FRESH", "1")
+        else:
+            monkeypatch.delenv("E2E_FRESH", raising=False)
+        monkeypatch.setattr(
+            deployment_conftest,
+            "delete_test_cluster",
+            lambda cluster_name: deleted.append(cluster_name),
+        )
+        monkeypatch.setattr(
+            deployment_conftest,
+            "create_test_cluster",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                RuntimeError("cluster creation attempted")
+            ),
+        )
+
+        stack = e2e_conftest.e2e_stack.__wrapped__()
+        with pytest.raises(BaseException) as raised:
+            next(stack)
+
+        assert deleted == []
+        assert reason in str(raised.value)
+        assert "k3d cluster delete cogniverse-e2e" in str(raised.value)
+
+    def test_stopped_shared_cluster_is_started_then_reused(self, monkeypatch):
+        """A stopped shared cluster resumes through the supported lifecycle."""
+        import cogniverse_cli.cluster as cluster_cli
+
+        from tests.e2e.deployment import conftest as deployment_conftest
+
+        inspections: list[None] = []
+        states = iter(
+            [
+                [
+                    {
+                        "name": "cogniverse-e2e",
+                        "servers_running": 0,
+                        "servers_count": 1,
+                    }
+                ],
+                [
+                    {
+                        "name": "cogniverse-e2e",
+                        "servers_running": 1,
+                        "servers_count": 1,
+                    }
+                ],
+            ]
+        )
+        started: list[str] = []
+        created: list[str] = []
+        deleted: list[str] = []
+
+        def list_states():
+            inspections.append(None)
+            return next(states)
+
+        monkeypatch.delenv("E2E_FRESH", raising=False)
+        monkeypatch.setattr(
+            e2e_conftest, "_e2e_deploy_fingerprint", lambda: "current-build"
+        )
+        monkeypatch.setattr(cluster_cli, "list_cluster_states", list_states)
+        monkeypatch.setattr(
+            cluster_cli, "start_cluster", lambda name: started.append(name)
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: type("Result", (), {"returncode": 0})(),
+        )
+        monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
+        monkeypatch.setattr(
+            e2e_conftest, "_read_e2e_fingerprint", lambda: "current-build"
+        )
+        monkeypatch.setattr(
+            deployment_conftest,
+            "create_test_cluster",
+            lambda name, **kwargs: created.append(name),
+        )
+        monkeypatch.setattr(
+            deployment_conftest,
+            "delete_test_cluster",
+            lambda name: deleted.append(name),
+        )
+        monkeypatch.setattr(
+            deployment_conftest, "deploy_stack", lambda *args, **kwargs: None
+        )
+        monkeypatch.setattr(
+            e2e_conftest, "_stop_dev_cluster_and_free_ports", lambda: None
+        )
+        monkeypatch.setattr(e2e_conftest, "_ensure_stack_running", lambda: True)
+        monkeypatch.setattr(e2e_conftest, "_stamp_e2e_fingerprint", lambda value: None)
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda *args, **kwargs: type(
+                "Result", (), {"returncode": 0, "stdout": "", "stderr": ""}
+            )(),
+        )
+        monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
+        monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
+        monkeypatch.setattr(
+            e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
+        )
+
+        stack = e2e_conftest.e2e_stack.__wrapped__()
+        next(stack)
+        stack.close()
+
+        assert inspections == [None, None]
+        assert started == ["cogniverse-e2e"]
+        assert created == []
+        assert deleted == []
+
+    def test_deployment_helper_refuses_to_replace_existing_cluster(self, monkeypatch):
+        """The disposable helper may only delete a cluster it just created."""
+        import cogniverse_cli.cluster as cluster_cli
+
+        from tests.e2e.deployment import conftest as deployment_conftest
+
+        commands: list[list[str]] = []
+        monkeypatch.setattr(deployment_conftest, "_cluster_exists", lambda name: True)
+        monkeypatch.setattr(
+            deployment_conftest,
+            "_cmd",
+            lambda args, **kwargs: commands.append(args),
+        )
+        monkeypatch.setattr(
+            cluster_cli,
+            "create_cluster",
+            lambda **kwargs: (_ for _ in ()).throw(
+                RuntimeError("cluster creation attempted")
+            ),
+        )
+
+        with pytest.raises(BaseException) as raised:
+            deployment_conftest.create_test_cluster(
+                deployment_conftest.CLUSTER_NAME,
+                ports=[],
+                share_host_storage=True,
+            )
+
+        assert commands == []
+        assert (
+            "Refusing to replace existing deployment-test cluster "
+            "'cogniverse-deploy-test'"
+        ) in str(raised.value)
 
 
 @pytest.mark.e2e
