@@ -171,6 +171,41 @@ uv run pytest tests/agents/unit/test_search_agent.py -v
 uv run pytest tests/agents/unit/test_search_agent.py::TestSearchAgent::test_search_by_text -v
 ```
 
+### Shared e2e cluster lifecycle
+
+Tests that need the shared `cogniverse-e2e` cluster create it when absent and
+reuse it across pytest processes and working sessions. They intentionally leave
+it running between commands because a complete verification campaign can span
+multiple packages and several days.
+
+If the cluster exists but is stopped, the fixture starts it through the
+Cogniverse cluster lifecycle and inspects its health and deployed-content
+fingerprint again before reuse. A healthy, current cluster is reused as-is. A
+stale or unhealthy cluster fails the test session without deleting or replacing
+shared state; repair it, or perform the explicit reset below.
+
+Do not stop the cluster after an individual pytest command. Once every
+integration and end-to-end check in the campaign has finished, stop it
+explicitly to release its CPU, RAM, and accelerator allocations:
+
+```bash
+cogniverse stop --name cogniverse-e2e
+```
+
+The next test requiring the cluster starts it again. Deleting the cluster is a
+separate explicit reset for stale or damaged state:
+
+```bash
+k3d cluster delete cogniverse-e2e
+```
+
+`E2E_FRESH=1` does not authorize replacement: the cluster must already be
+absent. A fresh session deletes the cluster at teardown only when that same
+session created it; ordinary sessions always leave the shared cluster warm.
+
+There is no idle reaper: only the person or automation that knows the whole
+campaign is complete can safely decide when to stop the shared cluster.
+
 ### Test Markers
 
 Markers are registered in the root `pytest.ini` (`--strict-markers` rejects
