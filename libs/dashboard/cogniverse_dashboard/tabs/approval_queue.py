@@ -214,18 +214,24 @@ def _persist_decision(decision: ReviewDecision, item) -> None:
     ``approved_synthetic_data`` training dataset so the finetuning orchestrator
     picks it up on its next run. ``record_decision`` alone only wrote the
     decision span, so approved items never reached training.
+
+    On approval the dataset append runs BEFORE the decision is recorded.
+    ``record_decision`` writes the annotation that makes an item stop
+    showing as pending, so recording it first and then failing to append
+    would leave the item durably marked approved while silently missing
+    from training, with no pending-queue entry left to retry it from. With
+    the append first, a failure there raises before any decision is
+    recorded, so the item is untouched and still shows up as pending.
     """
     storage = st.session_state.get("approval_storage")
     if storage is None:
         raise RuntimeError("approval storage not initialized")
 
     async def _persist() -> None:
-        await storage.record_decision(decision, item)
         if decision.approved:
             item.status = ApprovalStatus.APPROVED
-            await storage.append_to_training_dataset(
-                "approved_synthetic_data", [item]
-            )
+            await storage.append_to_training_dataset("approved_synthetic_data", [item])
+        await storage.record_decision(decision, item)
 
     asyncio.run(_persist())
 
