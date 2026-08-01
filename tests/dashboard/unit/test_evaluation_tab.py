@@ -86,6 +86,59 @@ class TestPhoenixFaultContract:
             thread.join(timeout=5)
             server.server_close()
 
+    def test_experiment_data_for_dataset_raises_on_dead_endpoint(self, monkeypatch):
+        """Regression: the experiment-listing fetch swallowed every
+        exception into st.error and fell through to an empty result, which
+        the 60s cache then served silently as "no experiments" for the rest
+        of the TTL window with the error never shown again."""
+        from cogniverse_dashboard.tabs import evaluation as tab
+
+        monkeypatch.setitem(
+            __import__("streamlit").session_state,
+            "phoenix_url",
+            "http://127.0.0.1:29071",
+        )
+        tab.st.cache_data.clear()
+        try:
+            with pytest.raises(tab.PhoenixUnavailableError, match="unreachable"):
+                tab.get_all_experiment_data_for_dataset("dataset-dead")
+        finally:
+            tab.st.cache_data.clear()
+
+    def test_experiment_data_for_dataset_raises_on_error_status(self, monkeypatch):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from cogniverse_dashboard.tabs import evaluation as tab
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(503)
+                self.end_headers()
+                self.wfile.write(b"unavailable")
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), _Handler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            monkeypatch.setitem(
+                __import__("streamlit").session_state,
+                "phoenix_url",
+                f"http://127.0.0.1:{port}",
+            )
+            tab.st.cache_data.clear()
+            with pytest.raises(tab.PhoenixUnavailableError, match="HTTP 503"):
+                tab.get_all_experiment_data_for_dataset("dataset-503")
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+            tab.st.cache_data.clear()
+
     def test_requests_carry_timeouts(self):
         """Every Phoenix call in the tab is bounded — a hung Phoenix must not
         freeze the dashboard indefinitely."""

@@ -168,33 +168,41 @@ def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
     """
     experiment_data = {}
 
-    # Get experiments for this dataset using the correct Phoenix API endpoint
+    # Get experiments for this dataset using the correct Phoenix API endpoint.
+    # A connection failure or non-200 here must raise PhoenixUnavailableError,
+    # same contract as the rest of this module -- the caller distinguishes
+    # that from a dataset that legitimately has zero experiments, and the
+    # result is cached for 60s so a swallowed outage would otherwise read as
+    # "no experiments" for the whole TTL window with no error re-shown.
     experiment_ids = []
 
     try:
-        # Use the correct API endpoint: /v1/datasets/{dataset_id}/experiments
         response = requests.get(
             f"{_phoenix_base_url()}/v1/datasets/{dataset_id}/experiments",
             timeout=30,
         )
-        if response.status_code == 200:
-            experiments_response = response.json()
-
-            # Extract experiment IDs from the response
-            if "data" in experiments_response:
-                for exp in experiments_response["data"]:
-                    experiment_ids.append(exp["id"])
-            elif isinstance(experiments_response, list):
-                # If it returns a list directly
-                for exp in experiments_response:
-                    if isinstance(exp, dict) and "id" in exp:
-                        experiment_ids.append(exp["id"])
-                    elif isinstance(exp, str):
-                        # If it returns just IDs
-                        experiment_ids.append(exp)
-
-    except Exception as e:
-        st.error(f"Error fetching experiments: {e}")
+    except requests.RequestException as exc:
+        raise PhoenixUnavailableError(
+            f"Phoenix unreachable while listing experiments for dataset "
+            f"{dataset_id}: {exc}"
+        ) from exc
+    if response.status_code != 200:
+        raise PhoenixUnavailableError(
+            f"Phoenix returned HTTP {response.status_code} listing "
+            f"experiments for dataset {dataset_id}"
+        )
+    experiments_response = response.json()
+    if "data" in experiments_response:
+        for exp in experiments_response["data"]:
+            experiment_ids.append(exp["id"])
+    elif isinstance(experiments_response, list):
+        # If it returns a list directly
+        for exp in experiments_response:
+            if isinstance(exp, dict) and "id" in exp:
+                experiment_ids.append(exp["id"])
+            elif isinstance(exp, str):
+                # If it returns just IDs
+                experiment_ids.append(exp)
 
     # Load each experiment
     for exp_id in experiment_ids:
