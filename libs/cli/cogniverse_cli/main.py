@@ -273,10 +273,14 @@ def up(
             console.print("[cyan]Creating k3d cluster...[/cyan]")
             # Exclude LLM port if host LLM is running (avoids port conflict)
             exclude = [11434] if host_llm_detected else None
-            create_cluster(
-                exclude_ports=exclude,
-                workspace_path=str(project_root) if project_root else None,
-            )
+            try:
+                create_cluster(
+                    exclude_ports=exclude,
+                    workspace_path=str(project_root) if project_root else None,
+                )
+            except ClusterStartError as exc:
+                console.print(f"[red]{exc}[/red]", soft_wrap=True)
+                sys.exit(1)
         else:
             console.print("[cyan]Using existing k3d cluster.[/cyan]")
         # Label the node with amd.com/gpu.present / nvidia.com/gpu.present

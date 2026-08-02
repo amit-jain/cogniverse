@@ -40,7 +40,10 @@ from cogniverse_finetuning.training.backend import (
     TrainingJobConfig,
 )
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.providers.base import (
+    DatasetNotFoundError,
+    TelemetryProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -545,13 +548,17 @@ class FinetuningOrchestrator:
         self, config: OrchestrationConfig
     ) -> List[Dict[str, Any]]:
         """Approved synthetic examples for this agent from the
-        ``approved_synthetic_data`` dataset (empty on the first run)."""
+        ``approved_synthetic_data`` dataset.
+
+        Missing datasets are treated as empty on the first run. Other failures
+        propagate so callers can see real telemetry outages.
+        """
         try:
             df = await self.provider.datasets.get_dataset(
                 name="approved_synthetic_data"
             )
-        except Exception as e:
-            logger.info(f"No approved synthetic dataset yet: {e}")
+        except DatasetNotFoundError:
+            logger.info("No approved synthetic dataset yet")
             return []
         return load_approved_synthetic_examples(df, config.agent_type)
 
