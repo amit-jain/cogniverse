@@ -627,7 +627,19 @@ upload_adapter(
     destination_uri="hf://myorg/my-adapter"
 )
 
-# Download from HuggingFace Hub
+# Upload to S3-compatible object storage
+upload_adapter(
+    local_path="outputs/adapters/sft_routing/",
+    destination_uri="s3://adapter-bucket/adapters/my-adapter"
+)
+
+# Upload to a Modal volume
+upload_adapter(
+    local_path="outputs/adapters/sft_routing/",
+    destination_uri="modal://adapter-volume/adapters/my-adapter"
+)
+
+# Download from storage
 local_path = download_adapter(
     source_uri="hf://myorg/my-adapter",
     local_path="/tmp/adapters/"
@@ -674,7 +686,7 @@ config = OrchestrationConfig(
     agent_type="routing",
     enable_registry=True,           # Auto-register after training
     adapter_version="1.0.0",        # Version for registered adapter
-    adapter_storage_uri="hf://org/repo"  # Optional: upload to HuggingFace
+    adapter_storage_uri="s3://adapter-bucket/adapters"  # Optional: upload to hf://, s3://, or modal:// storage
 )
 
 result = await orchestrator.run(config)
@@ -972,7 +984,7 @@ class OrchestrationConfig:
     adapter_version: str = "1.0.0"  # Version for registered adapter
 
     # Storage
-    adapter_storage_uri: Optional[str] = None  # Storage URI to upload adapters (hf://org/repo, file://, etc.)
+    adapter_storage_uri: Optional[str] = None  # Storage URI to upload adapters (hf://, s3://, modal://, file://, or plain path)
     hf_token: Optional[str] = None  # HuggingFace token for hf:// storage
 
     # Output

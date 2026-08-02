@@ -2,10 +2,13 @@
 Adapter Storage Abstraction
 
 Handles uploading and downloading adapter files to/from various storage backends.
-Supports local filesystem now, extensible for Modal volumes and cloud storage.
+Supports local filesystem, Hugging Face Hub, S3-compatible object stores, and
+Modal volumes.
 """
 
+import asyncio
 import logging
+import os
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -21,8 +24,9 @@ class AdapterStorage(ABC):
 
     Implementations:
     - LocalStorage: Local filesystem (file://)
-    - ModalVolumeStorage: Modal persistent volumes (modal://) [future]
-    - S3Storage: AWS S3 or S3-compatible (s3://) [future]
+    - HuggingFaceStorage: Hugging Face Hub (hf://)
+    - S3Storage: AWS S3 or S3-compatible object storage (s3://)
+    - ModalVolumeStorage: Modal persistent volumes (modal://)
     """
 
     @abstractmethod
@@ -177,6 +181,368 @@ class HuggingFaceStorage(AdapterStorage):
             return False
 
 
+class S3Storage(AdapterStorage):
+    """
+    S3-compatible storage for adapter directories.
+
+    URIs: s3://bucket/path/to/adapter
+
+    The bucket comes from the URI netloc and the object prefix comes from the
+    URI path. A directory upload stores files recursively under that prefix.
+    """
+
+    def __init__(
+        self,
+        endpoint_url: Optional[str] = None,
+        access_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+        region: Optional[str] = None,
+    ):
+        self.endpoint_url = endpoint_url
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.region = (
+            region
+            or os.environ.get("AWS_DEFAULT_REGION")
+            or os.environ.get("AWS_REGION")
+            or "us-east-1"
+        )
+
+    @staticmethod
+    def _parse_uri(uri: str) -> tuple[str, str]:
+        parsed = urlparse(uri)
+        if parsed.scheme != "s3":
+            raise ValueError(f"Invalid S3 URI: {uri}")
+
+        bucket = parsed.netloc
+        key = parsed.path.lstrip("/")
+        if not bucket:
+            raise ValueError(f"S3 URI must include a bucket name: {uri}")
+        if not key:
+            raise ValueError(f"S3 URI must include an adapter path: {uri}")
+        return bucket, key
+
+    @staticmethod
+    def _not_found_code(exc) -> bool:
+        from botocore.exceptions import ClientError
+
+        if not isinstance(exc, ClientError):
+            return False
+        code = exc.response.get("Error", {}).get("Code")
+        return code in {"404", "NoSuchKey", "NotFound", "NoSuchBucket"}
+
+    def _client(self):
+        import boto3
+        from botocore.config import Config
+
+        endpoint_url = (
+            self.endpoint_url
+            or os.environ.get("MINIO_ENDPOINT")
+            or os.environ.get("S3_ENDPOINT_URL")
+        )
+        access_key = (
+            self.access_key
+            or os.environ.get("MINIO_ACCESS_KEY")
+            or os.environ.get("AWS_ACCESS_KEY_ID")
+        )
+        secret_key = (
+            self.secret_key
+            or os.environ.get("MINIO_SECRET_KEY")
+            or os.environ.get("AWS_SECRET_ACCESS_KEY")
+        )
+
+        client_kwargs = {
+            "region_name": self.region,
+            "config": Config(signature_version="s3v4"),
+        }
+        if endpoint_url:
+            client_kwargs["endpoint_url"] = endpoint_url
+        if access_key:
+            client_kwargs["aws_access_key_id"] = access_key
+        if secret_key:
+            client_kwargs["aws_secret_access_key"] = secret_key
+
+        return boto3.client("s3", **client_kwargs)
+
+    @staticmethod
+    def _bucket_uri(bucket: str, key: str) -> str:
+        return f"s3://{bucket}/{key.lstrip('/')}"
+
+    def upload(self, local_path: str, destination_uri: str) -> str:
+        source = Path(local_path)
+        if not source.exists():
+            raise FileNotFoundError(f"Source adapter not found: {local_path}")
+
+        bucket, key = self._parse_uri(destination_uri)
+        client = self._client()
+
+        try:
+            if source.is_dir():
+                prefix = key.rstrip("/")
+                if not prefix:
+                    raise ValueError(
+                        f"S3 destination URI must include an object prefix: {destination_uri}"
+                    )
+                uploaded = False
+                for file_path in sorted(source.rglob("*")):
+                    if not file_path.is_file():
+                        continue
+                    rel_path = file_path.relative_to(source).as_posix()
+                    object_key = f"{prefix}/{rel_path}"
+                    client.upload_file(str(file_path), bucket, object_key)
+                    uploaded = True
+                if not uploaded:
+                    raise ValueError(f"Adapter directory is empty: {local_path}")
+                return self._bucket_uri(bucket, prefix)
+
+            object_key = (
+                key.rstrip("/")
+                if not key.endswith("/")
+                else f"{key.rstrip('/')}/{source.name}"
+            )
+            if not object_key:
+                raise ValueError(
+                    f"S3 destination URI must include an object key: {destination_uri}"
+                )
+            client.upload_file(str(source), bucket, object_key)
+            return self._bucket_uri(bucket, object_key)
+        except Exception as exc:
+            raise RuntimeError(
+                f"failed to upload adapter to {destination_uri}: {exc}"
+            ) from exc
+
+    def download(self, source_uri: str, local_path: str) -> str:
+        bucket, key = self._parse_uri(source_uri)
+        client = self._client()
+        dest = Path(local_path)
+        prefix = key.rstrip("/")
+
+        try:
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            dest.mkdir(parents=True, exist_ok=True)
+
+            paginator = client.get_paginator("list_objects_v2")
+            matching_keys: list[str] = []
+            for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/"):
+                matching_keys.extend(
+                    obj["Key"] for obj in page.get("Contents", []) or []
+                )
+
+            if matching_keys:
+                for object_key in matching_keys:
+                    relative_key = object_key[len(prefix) + 1 :]
+                    target = dest / relative_key
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    client.download_file(bucket, object_key, str(target))
+                return str(dest)
+
+            target = dest / Path(prefix).name
+            client.download_file(bucket, prefix, str(target))
+            return str(dest)
+        except Exception as exc:
+            from botocore.exceptions import ClientError
+
+            if isinstance(exc, ClientError) and self._not_found_code(exc):
+                raise FileNotFoundError(
+                    f"Source adapter not found: {source_uri}"
+                ) from exc
+            raise RuntimeError(
+                f"failed to download adapter from {source_uri}: {exc}"
+            ) from exc
+
+    def exists(self, uri: str) -> bool:
+        bucket, key = self._parse_uri(uri)
+        client = self._client()
+
+        try:
+            client.head_object(Bucket=bucket, Key=key)
+            return True
+        except Exception as exc:
+            if not self._not_found_code(exc):
+                raise RuntimeError(f"failed to check adapter at {uri}: {exc}") from exc
+
+        try:
+            response = client.list_objects_v2(
+                Bucket=bucket,
+                Prefix=f"{key.rstrip('/')}/",
+                MaxKeys=1,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"failed to check adapter at {uri}: {exc}") from exc
+
+        return bool(response.get("Contents"))
+
+
+class ModalVolumeStorage(AdapterStorage):
+    """
+    Modal volume storage for adapter directories.
+
+    URIs: modal://volume-name/path/to/adapter
+    """
+
+    def __init__(
+        self,
+        volume_name: str,
+        volume_path: str = "",
+        *,
+        environment_name: Optional[str] = None,
+        create_if_missing: bool = False,
+        volume=None,
+    ):
+        self.volume_name = volume_name
+        self.volume_path = volume_path.strip("/")
+        self.environment_name = environment_name
+        self.create_if_missing = create_if_missing
+        self._volume = volume
+
+    @staticmethod
+    def _parse_uri(uri: str) -> tuple[str, str]:
+        parsed = urlparse(uri)
+        if parsed.scheme != "modal":
+            raise ValueError(f"Invalid Modal URI: {uri}")
+
+        volume_name = parsed.netloc
+        volume_path = parsed.path.lstrip("/")
+        if not volume_name:
+            raise ValueError(f"Modal URI must include a volume name: {uri}")
+        if not volume_path:
+            raise ValueError(f"Modal URI must include an adapter path: {uri}")
+        return volume_name, volume_path
+
+    def _resolve_volume(self):
+        if self._volume is not None:
+            return self._volume
+
+        import modal
+
+        return modal.Volume.from_name(
+            self.volume_name,
+            environment_name=self.environment_name,
+            create_if_missing=self.create_if_missing,
+        )
+
+    def _volume_root(self) -> str:
+        return f"/{self.volume_path}" if self.volume_path else "/"
+
+    def _canonical_uri(self) -> str:
+        path = self.volume_path.strip("/")
+        return (
+            f"modal://{self.volume_name}/{path}"
+            if path
+            else f"modal://{self.volume_name}"
+        )
+
+    @staticmethod
+    def _local_root(local_path: str) -> Path:
+        return Path(local_path)
+
+    async def _upload_async(self, local_path: str, destination_uri: str) -> str:
+        source = self._local_root(local_path)
+        if not source.exists():
+            raise FileNotFoundError(f"Source adapter not found: {local_path}")
+
+        volume = self._resolve_volume()
+        remote_root = self._volume_root()
+
+        try:
+            async with volume.batch_upload(force=True) as batch:
+                if source.is_dir():
+                    await asyncio.to_thread(
+                        batch.put_directory, str(source), remote_root
+                    )
+                else:
+                    remote_path = remote_root.rstrip("/") or "/"
+                    if remote_path == "/":
+                        remote_path = f"/{source.name}"
+                    else:
+                        remote_path = f"{remote_path}/{source.name}"
+                    await asyncio.to_thread(batch.put_file, str(source), remote_path)
+        except Exception as exc:
+            raise RuntimeError(
+                f"failed to upload adapter to {destination_uri}: {exc}"
+            ) from exc
+
+        return self._canonical_uri()
+
+    async def _download_async(self, source_uri: str, local_path: str) -> str:
+        volume = self._resolve_volume()
+        remote_root = self._volume_root()
+        dest = Path(local_path)
+
+        try:
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            dest.mkdir(parents=True, exist_ok=True)
+
+            entries = await asyncio.to_thread(
+                volume.listdir, remote_root, recursive=True
+            )
+            file_entries = [
+                entry
+                for entry in entries
+                if getattr(entry.type, "name", None) == "FILE"
+            ]
+            if not file_entries:
+                raise FileNotFoundError(f"Source adapter not found: {source_uri}")
+
+            remote_base = remote_root.lstrip("/")
+            for entry in file_entries:
+                entry_path = entry.path.lstrip("/")
+                if remote_base and entry_path == remote_base:
+                    relative_path = Path(entry_path).name
+                elif remote_base and entry_path.startswith(f"{remote_base}/"):
+                    relative_path = entry_path[len(remote_base) + 1 :]
+                else:
+                    relative_path = entry_path
+
+                target = dest / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("wb") as fh:
+                    await asyncio.to_thread(
+                        volume.read_file_into_fileobj, entry.path, fh
+                    )
+            return str(dest)
+        except FileNotFoundError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"failed to download adapter from {source_uri}: {exc}"
+            ) from exc
+
+    async def _exists_async(self, uri: str) -> bool:
+        volume = self._resolve_volume()
+        remote_root = self._volume_root()
+        try:
+            entries = await asyncio.to_thread(
+                volume.listdir, remote_root, recursive=True
+            )
+        except FileNotFoundError:
+            return False
+        except Exception as exc:
+            raise RuntimeError(f"failed to check adapter at {uri}: {exc}") from exc
+        return bool(entries)
+
+    @staticmethod
+    def _run_async(coro):
+        return asyncio.run(coro)
+
+    def upload(self, local_path: str, destination_uri: str) -> str:
+        return self._run_async(self._upload_async(local_path, destination_uri))
+
+    def download(self, source_uri: str, local_path: str) -> str:
+        return self._run_async(self._download_async(source_uri, local_path))
+
+    def exists(self, uri: str) -> bool:
+        return self._run_async(self._exists_async(uri))
+
+
 class LocalStorage(AdapterStorage):
     """
     Local filesystem storage for adapters.
@@ -261,7 +627,9 @@ def get_storage_backend(uri: str, **kwargs) -> AdapterStorage:
 
     Args:
         uri: Storage URI (file://, hf://, s3://, etc.)
-        **kwargs: Additional arguments passed to storage backend (e.g., token for HF)
+        **kwargs: Additional arguments passed to storage backend (e.g., token for
+            HF, endpoint_url/access_key/secret_key for S3, volume injection for
+            Modal tests)
 
     Returns:
         AdapterStorage implementation
@@ -272,12 +640,8 @@ def get_storage_backend(uri: str, **kwargs) -> AdapterStorage:
     Supported schemes:
         - file:// or plain path: Local filesystem
         - hf://org/repo: HuggingFace Hub (recommended for production)
-
-    Unsupported (raises ``NotImplementedError`` — no caller in the
-    repo currently emits these URIs, but the factory rejects them
-    explicitly so a typo in a profile fails loudly):
-        - s3://bucket/path
-        - modal://volume/path
+        - s3://bucket/path: S3-compatible object storage
+        - modal://volume/path: Modal persistent volumes
     """
     parsed = urlparse(uri)
     scheme = parsed.scheme or "file"
@@ -287,14 +651,21 @@ def get_storage_backend(uri: str, **kwargs) -> AdapterStorage:
     elif scheme == "hf":
         return HuggingFaceStorage(token=kwargs.get("token"))
     elif scheme == "s3":
-        raise NotImplementedError(
-            "S3 storage not yet implemented. "
-            "Add cogniverse_finetuning.registry.storage_s3 for S3 support."
+        S3Storage._parse_uri(uri)
+        return S3Storage(
+            endpoint_url=kwargs.get("endpoint_url"),
+            access_key=kwargs.get("access_key"),
+            secret_key=kwargs.get("secret_key"),
+            region=kwargs.get("region"),
         )
     elif scheme == "modal":
-        raise NotImplementedError(
-            "Modal volume storage not yet implemented. "
-            "Add cogniverse_finetuning.registry.storage_modal for Modal support."
+        volume_name, volume_path = ModalVolumeStorage._parse_uri(uri)
+        return ModalVolumeStorage(
+            volume_name=volume_name,
+            volume_path=volume_path,
+            environment_name=kwargs.get("environment_name"),
+            create_if_missing=kwargs.get("create_if_missing", False),
+            volume=kwargs.get("volume"),
         )
     else:
         raise ValueError(f"Unsupported storage scheme: {scheme}")

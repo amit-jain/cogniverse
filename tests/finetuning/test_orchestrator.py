@@ -849,7 +849,8 @@ class TestPhoenixLoggingUsesTelemetryManager:
 class TestAdapterStorageUpload:
     """``config.hf_token`` must reach the storage backend on hf:// uploads."""
 
-    def test_hf_token_forwarded_to_upload_adapter(self):
+    @pytest.mark.asyncio
+    async def test_hf_token_forwarded_to_upload_adapter(self):
         orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
         config = OrchestrationConfig(
             tenant_id="acme",
@@ -871,13 +872,14 @@ class TestAdapterStorageUpload:
             return destination_uri
 
         with patch("cogniverse_finetuning.registry.upload_adapter", _fake_upload):
-            final_uri = orch._upload_adapter_to_storage(config, result)
+            final_uri = await orch._upload_adapter_to_storage(config, result)
 
         assert captured["token"] == "hf_secret_abc"
         assert captured["destination_uri"] == "hf://myorg/adapters/sft_routing_v2.1.0"
         assert final_uri == "hf://myorg/adapters/sft_routing_v2.1.0"
 
-    def test_register_adapter_raises_when_storage_upload_fails(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_register_adapter_raises_when_storage_upload_fails(self, tmp_path):
         orch = FinetuningOrchestrator(
             telemetry_provider=_NoTracerProvider(), registry=MagicMock()
         )
@@ -905,6 +907,6 @@ class TestAdapterStorageUpload:
         )
 
         with pytest.raises(NotADirectoryError):
-            orch._register_adapter(config, result, "run_1")
+            await orch._register_adapter(config, result, "run_1")
 
         orch.registry.register_adapter.assert_not_called()
