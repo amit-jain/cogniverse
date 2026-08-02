@@ -23,7 +23,7 @@ class AdapterInfo:
     name: str
     version: str
     base_model: str
-    adapter_uri: str  # Effective URI (file://, s3://, modal://)
+    adapter_uri: str  # Effective URI (file://, hf://, s3://, modal://)
     adapter_path: str  # Local path (for file:// URIs)
 
 
@@ -141,7 +141,7 @@ def resolve_adapter_path(adapter_uri: str, cache_dir: str) -> str:
     Args:
         adapter_uri: Adapter URI. Accepted schemes: ``file://`` (path
             after scheme is returned verbatim), plain path (returned
-            verbatim), ``s3://`` / ``gs://`` / ``modal://`` (downloaded
+            verbatim), ``hf://`` / ``s3://`` / ``modal://`` (downloaded
             under ``cache_dir``).
         cache_dir: Directory to download cloud-backed adapters into.
             REQUIRED — no default, no branching. Even file:// /
@@ -168,7 +168,13 @@ def resolve_adapter_path(adapter_uri: str, cache_dir: str) -> str:
     if adapter_uri.startswith("file://"):
         return adapter_uri[7:]  # Strip file://
 
-    if not adapter_uri.startswith(("s3://", "gs://", "modal://")):
+    if adapter_uri.startswith("gs://"):
+        raise ValueError(
+            "gs:// adapter URIs are not supported; use s3://, hf://, modal://, "
+            "file://, or a plain local path"
+        )
+
+    if not adapter_uri.startswith(("hf://", "s3://", "modal://")):
         # Plain local path
         return adapter_uri
 
@@ -181,13 +187,13 @@ def resolve_adapter_path(adapter_uri: str, cache_dir: str) -> str:
     cache_path.mkdir(parents=True, exist_ok=True)
 
     # Generate local path from URI
-    # e.g., s3://bucket/adapters/<name> -> <cache_dir>/<name>
+    # e.g., hf://org/repo/<name> -> <cache_dir>/<name>
     uri_parts = adapter_uri.split("/")
     adapter_name = uri_parts[-1] if uri_parts[-1] else uri_parts[-2]
     if not adapter_name:
         raise ValueError(
             f"cannot derive an adapter name from {adapter_uri!r}; "
-            "expected a URI like s3://bucket/adapters/<name>"
+            "expected a URI with an adapter name at the end"
         )
     local_path = str(cache_path / adapter_name)
 

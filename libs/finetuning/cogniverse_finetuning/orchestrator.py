@@ -9,6 +9,7 @@ Combines all components into a high-level API:
 - Adapter registration
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -274,7 +275,7 @@ class FinetuningOrchestrator:
         self.approval_agent = approval_agent
         self.registry = registry
 
-    def _upload_adapter_to_storage(
+    async def _upload_adapter_to_storage(
         self,
         config: "OrchestrationConfig",
         result: "OrchestrationResult",
@@ -312,14 +313,17 @@ class FinetuningOrchestrator:
         destination_uri = f"{base_uri}/{adapter_name}"
 
         logger.info(f"Uploading adapter to storage: {destination_uri}")
-        final_uri = upload_adapter(
-            result.adapter_path, destination_uri, token=config.hf_token
+        final_uri = await asyncio.to_thread(
+            upload_adapter,
+            result.adapter_path,
+            destination_uri,
+            token=config.hf_token,
         )
         logger.info(f"Adapter uploaded successfully: {final_uri}")
 
         return final_uri
 
-    def _register_adapter(
+    async def _register_adapter(
         self,
         config: "OrchestrationConfig",
         result: "OrchestrationResult",
@@ -353,7 +357,7 @@ class FinetuningOrchestrator:
         try:
             # Upload to storage first so a configured storage failure is not
             # masked by a later registry write.
-            adapter_uri = self._upload_adapter_to_storage(config, result)
+            adapter_uri = await self._upload_adapter_to_storage(config, result)
         except Exception as e:
             logger.error(f"Failed to upload adapter to storage: {e}")
             raise
@@ -735,7 +739,9 @@ class FinetuningOrchestrator:
             )
 
             # Register adapter in registry
-            adapter_id = self._register_adapter(config, orchestration_result, run_id)
+            adapter_id = await self._register_adapter(
+                config, orchestration_result, run_id
+            )
             orchestration_result.adapter_id = adapter_id
 
             return orchestration_result
@@ -850,7 +856,9 @@ class FinetuningOrchestrator:
             )
 
             # Register adapter in registry
-            adapter_id = self._register_adapter(config, orchestration_result, run_id)
+            adapter_id = await self._register_adapter(
+                config, orchestration_result, run_id
+            )
             orchestration_result.adapter_id = adapter_id
 
             return orchestration_result
@@ -994,7 +1002,7 @@ class FinetuningOrchestrator:
         )
 
         # 7. Register adapter in registry
-        adapter_id = self._register_adapter(config, orchestration_result, run_id)
+        adapter_id = await self._register_adapter(config, orchestration_result, run_id)
         orchestration_result.adapter_id = adapter_id
 
         return orchestration_result
@@ -1081,7 +1089,7 @@ class FinetuningOrchestrator:
         )
 
         # Register adapter in registry
-        adapter_id = self._register_adapter(config, orchestration_result, run_id)
+        adapter_id = await self._register_adapter(config, orchestration_result, run_id)
         orchestration_result.adapter_id = adapter_id
 
         return orchestration_result
