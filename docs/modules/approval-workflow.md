@@ -423,8 +423,11 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 85
   (`agent.get_pending_items(context_filter)`, filtered by `current_tenant`), falling back to
   the last synthetic-data batch held in session state when no agent is initialized yet
 - Review individual items with confidence score, retry count, and generation metadata
-- Approve/reject with optional feedback text and corrected entities; each decision is
-  persisted via `storage.record_decision()` before the local session state updates
+- Approve/reject with optional feedback text and corrected entities; each decision
+  flips the item's status annotation via `storage.update_item()` (removing it from
+  the pending queue), appends approved items to the `approved_synthetic_data`
+  training dataset, and records an `approval_decision` span via
+  `storage.record_decision()` before the local session state updates
 - Approved/rejected items and the confidence-distribution chart are tracked in the
   Streamlit session for the duration of the session (not re-queried from storage)
 - Auto-approval threshold is resolved from `ApprovalConfig` via

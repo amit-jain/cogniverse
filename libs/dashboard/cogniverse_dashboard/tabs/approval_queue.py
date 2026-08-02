@@ -210,18 +210,20 @@ def _render_review_item(item, idx: int):
 def _persist_decision(decision: ReviewDecision, item) -> None:
     """Persist a review decision via the approval storage (sync wrapper).
 
-    Writes the decision span AND, on approval, appends the item to the
-    ``approved_synthetic_data`` training dataset so the finetuning orchestrator
-    picks it up on its next run. ``record_decision`` alone only wrote the
-    decision span, so approved items never reached training.
+    Marks the item approved/rejected in the annotation store AND, on
+    approval, appends it to the ``approved_synthetic_data`` training dataset
+    so the finetuning orchestrator picks it up on its next run.
 
-    On approval the dataset append runs BEFORE the decision is recorded.
-    ``record_decision`` writes the annotation that makes an item stop
-    showing as pending, so recording it first and then failing to append
-    would leave the item durably marked approved while silently missing
-    from training, with no pending-queue entry left to retry it from. With
-    the append first, a failure there raises before any decision is
-    recorded, so the item is untouched and still shows up as pending.
+    The pending queue is reconstructed from each item's
+    ``item_status_update`` / ``human_approval`` annotations, so the durable
+    status flip is ``update_item``. ``record_decision`` only writes a
+    diagnostic ``approval_decision`` span that nothing reads back for
+    status, so calling it alone left the item pending: it reappeared on the
+    next refresh and a re-approval duplicated the training append.
+
+    On approval the training append runs BEFORE the status is flipped, so an
+    append failure raises with the item still pending and retryable instead
+    of marking it approved with its training row missing.
     """
     storage = st.session_state.get("approval_storage")
     if storage is None:
@@ -231,6 +233,9 @@ def _persist_decision(decision: ReviewDecision, item) -> None:
         if decision.approved:
             item.status = ApprovalStatus.APPROVED
             await storage.append_to_training_dataset("approved_synthetic_data", [item])
+        else:
+            item.status = ApprovalStatus.REJECTED
+        await storage.update_item(item)
         await storage.record_decision(decision, item)
 
     asyncio.run(_persist())
