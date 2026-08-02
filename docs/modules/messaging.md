@@ -101,7 +101,7 @@ Running the module directly (`python -m cogniverse_messaging.gateway`) reads `TE
 
 ### Outbound delivery
 
-Alongside inbound handling, the gateway runs a background `_outbound_drain_loop` — started in both `run_polling` and `run_webhook`, cancelled in their shutdown `finally`. Every `GATEWAY_OUTBOUND_POLL_SECONDS` (default 5) it calls `RuntimeClient.drain_outbound()` (`GET /admin/messaging/outbound/drain`) and sends each returned `{chat_id, text}` via the bot. A drain failure (runtime blip) is logged and retried next tick; a per-message send failure is logged and skipped so one bad chat never stops the others. This is the delivery side of the runtime's `POST /messaging/send` — the path job-completion notifications reach a tenant's linked chats.
+Alongside inbound handling, the gateway runs a background `_outbound_drain_loop` — started in both `run_polling` and `run_webhook`, cancelled in their shutdown `finally`. Every `GATEWAY_OUTBOUND_POLL_SECONDS` (default 5) it calls `RuntimeClient.drain_outbound()` (`GET /admin/messaging/outbound/drain`) and sends each returned `{chat_id, text}` via the bot. A drain failure (runtime blip) is logged and retried next tick. Because the runtime clears a message on the drain that returns it, a failed send keeps the message in the gateway's in-memory retry buffer and re-attempts it on later ticks — after `OUTBOUND_SEND_MAX_ATTEMPTS` (3) failed sends it is dropped with an error, so one dead chat never stops the others or grows the buffer without bound. A message missing `chat_id`/`text` is dropped immediately (it can never send). This is the delivery side of the runtime's `POST /messaging/send` — the path job-completion notifications reach a tenant's linked chats.
 
 ---
 
