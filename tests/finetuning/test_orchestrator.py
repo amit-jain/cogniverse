@@ -6,6 +6,7 @@ Tests validation functions and orchestration flows for SFT, DPO, and embedding d
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from cogniverse_finetuning.orchestrator import (
@@ -16,6 +17,8 @@ from cogniverse_finetuning.orchestrator import (
     validate_embedding_dataset,
     validate_sft_dataset,
 )
+from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
+from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
 
 class _NoTracerProvider:
@@ -150,6 +153,11 @@ class TestOrchestrationFlows:
         """Test SFT orchestration flow with mocked components"""
         # Create mock telemetry provider
         mock_provider = MagicMock()
+        mock_provider.datasets.get_dataset = AsyncMock(
+            side_effect=DatasetNotFoundError(
+                "Dataset not found: approved_synthetic_data"
+            )
+        )
 
         # Create orchestrator
         orchestrator = FinetuningOrchestrator(
@@ -251,6 +259,11 @@ class TestOrchestrationFlows:
         """Test DPO orchestration flow with mocked components"""
         # Create mock telemetry provider
         mock_provider = MagicMock()
+        mock_provider.datasets.get_dataset = AsyncMock(
+            side_effect=DatasetNotFoundError(
+                "Dataset not found: approved_synthetic_data"
+            )
+        )
 
         # Create orchestrator
         orchestrator = FinetuningOrchestrator(
@@ -521,6 +534,34 @@ class TestOrchestrationFlows:
             mock_remote_backend.assert_called_once()
             call_args = mock_remote_backend.call_args
             assert call_args[1]["provider"] == "modal"
+
+    @pytest.mark.asyncio
+    async def test_approved_synthetic_load_propagates_transport_errors(
+        self, unused_tcp_port
+    ):
+        """Test approved synthetic loading does not hide Phoenix outages."""
+        provider = PhoenixProvider()
+        provider.initialize(
+            {
+                "tenant_id": "tenant1",
+                "http_endpoint": f"http://127.0.0.1:{unused_tcp_port}",
+                "grpc_endpoint": f"http://127.0.0.1:{unused_tcp_port + 1}",
+            }
+        )
+        orchestrator = FinetuningOrchestrator(
+            telemetry_provider=provider,
+            synthetic_service=None,
+            approval_agent=None,
+        )
+        config = OrchestrationConfig(
+            tenant_id="tenant1",
+            project="cogniverse-tenant1",
+            model_type="llm",
+            agent_type="routing",
+        )
+
+        with pytest.raises(httpx.ConnectError):
+            await orchestrator._load_approved_synthetic(config)
 
 
 @pytest.mark.unit

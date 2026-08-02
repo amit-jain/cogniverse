@@ -318,7 +318,10 @@ def create_cluster(
             mapping = f"{mapping}:{mapping}"
         cmd.extend(["-p", f"{mapping}@loadbalancer"])
     subprocess.run(cmd, check=True, timeout=120)
-    pin_coredns_upstreams(name)
+    if not pin_coredns_upstreams(name):
+        raise ClusterStartError(
+            f"Could not pin CoreDNS upstreams for k3d cluster {name!r}"
+        )
 
 
 _COREDNS_HOST_FORWARD = "forward . /etc/resolv.conf"
@@ -612,7 +615,10 @@ def start_cluster(name: str = CLUSTER_NAME) -> None:
     except subprocess.TimeoutExpired:
         raise ClusterStartError(f"Timed out starting k3d cluster {name!r}") from None
     _verify_loadbalancer_network(name)
-    pin_coredns_upstreams(name)
+    if not pin_coredns_upstreams(name):
+        raise ClusterStartError(
+            f"Could not pin CoreDNS upstreams for k3d cluster {name!r}"
+        )
 
 
 def list_cluster_states() -> list[dict]:
