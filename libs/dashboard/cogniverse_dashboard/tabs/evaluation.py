@@ -3,11 +3,14 @@
 Phoenix evaluation tab with EXACT tabbed format like generate_tabbed_html_report.py
 """
 
+import logging
 from typing import Any, Dict, List
 
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 
 def _phoenix_base_url() -> str:
@@ -308,6 +311,9 @@ def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
                 f"Phoenix unreachable while loading experiment {exp_id}: {exc}"
             ) from exc
         except Exception:
+            logger.exception(
+                "Skipping experiment %s: unparseable response shape", exp_id
+            )
             continue
 
     # Aggregate ONCE, after every experiment is loaded — not inside the
