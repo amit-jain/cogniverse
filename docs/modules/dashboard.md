@@ -355,7 +355,7 @@ render_enhanced_optimization_tab()
 
 - Approve, or reject with free-text feedback and optional entity corrections
 
-- Decisions persisted via `ApprovalStorage.record_decision()` as `approval_decision` telemetry spans
+- Decisions flip the item's status annotation via `ApprovalStorage.update_item()` (removing the item from the pending queue), append approved items to the `approved_synthetic_data` training dataset, and record an `approval_decision` telemetry span via `ApprovalStorage.record_decision()`
 
 - Per-status confidence-score statistics (mean confidence by status)
 
