@@ -876,3 +876,35 @@ class TestAdapterStorageUpload:
         assert captured["token"] == "hf_secret_abc"
         assert captured["destination_uri"] == "hf://myorg/adapters/sft_routing_v2.1.0"
         assert final_uri == "hf://myorg/adapters/sft_routing_v2.1.0"
+
+    def test_register_adapter_raises_when_storage_upload_fails(self, tmp_path):
+        orch = FinetuningOrchestrator(
+            telemetry_provider=_NoTracerProvider(), registry=MagicMock()
+        )
+
+        source_dir = tmp_path / "adapter_src"
+        source_dir.mkdir()
+        (source_dir / "config.json").write_text("{}")
+
+        blocked_destination = tmp_path / "adapter_dest"
+        blocked_destination.write_text("not a directory")
+
+        config = OrchestrationConfig(
+            tenant_id="acme",
+            project="proj",
+            model_type="llm",
+            agent_type="routing",
+            base_model="HuggingFaceTB/SmolLM-135M",
+            adapter_version="2.1.0",
+            adapter_storage_uri=str(blocked_destination),
+        )
+        result = MagicMock(
+            adapter_path=str(source_dir),
+            training_method="sft",
+            metrics={"train_loss": 0.1},
+        )
+
+        with pytest.raises(NotADirectoryError):
+            orch._register_adapter(config, result, "run_1")
+
+        orch.registry.register_adapter.assert_not_called()
