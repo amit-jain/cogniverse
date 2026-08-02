@@ -41,6 +41,11 @@ logger = logging.getLogger(__name__)
 # file cannot pin gateway memory.
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
 
+# The runtime forgets an outbound message the moment a drain returns it, so a
+# failed Telegram send keeps the message in a local buffer and retries on later
+# ticks, up to this many total attempts before it is dropped with an error.
+OUTBOUND_SEND_MAX_ATTEMPTS = 3
+
 
 class PhotoTooLargeError(Exception):
     """Raised when a photo exceeds MAX_PHOTO_BYTES; the message is user-facing."""
@@ -79,6 +84,9 @@ class MessagingGateway:
         self.webhook_path = webhook_path
         self.runtime_client = RuntimeClient(runtime_url)
         self._outbound_poll_seconds = outbound_poll_seconds
+        # (message, attempts) pairs whose send failed; owned solely by the
+        # drain-loop task and re-attempted at the start of the next tick.
+        self._outbound_retry: list = []
 
         self._app: Application = None
         # user_id -> (tenant_id, expiry). Only positive resolves are cached
@@ -577,11 +585,13 @@ class MessagingGateway:
         """Deliver messages the runtime enqueued for this tenant's chats.
 
         Every ``self._outbound_poll_seconds`` the loop drains the runtime's
-        outbound queue and sends each message via the bot. A drain failure
-        (runtime blip) is logged and retried next tick; a malformed message
-        is logged and skipped; a per-message send failure is logged and
-        skipped so one bad chat never stops the others or the loop. Runs
-        until cancelled on shutdown.
+        outbound queue and sends each message via the bot. The runtime clears
+        a message on the drain that returns it, so a failed send keeps the
+        message in ``self._outbound_retry`` for the next tick; after
+        ``OUTBOUND_SEND_MAX_ATTEMPTS`` failed sends it is dropped with an
+        error so one dead chat cannot grow the buffer without bound. A drain
+        failure (runtime blip) is logged and retried next tick; a malformed
+        message is logged and dropped. Runs until cancelled on shutdown.
         """
         while True:
             try:
@@ -589,18 +599,40 @@ class MessagingGateway:
             except Exception as exc:  # noqa: BLE001 — retry next tick, never die
                 logger.error("Outbound drain failed: %s", exc)
                 messages = []
-            for msg in messages or []:
+            pending = self._outbound_retry
+            self._outbound_retry = []
+            pending.extend((m, 0) for m in messages or [])
+            for msg, attempts in pending:
                 if not isinstance(msg, dict):
                     logger.error("Malformed outbound message skipped: %r", msg)
                     continue
                 chat_id = msg.get("chat_id")
                 text = msg.get("text")
                 if not chat_id or not text:
+                    logger.error(
+                        "Outbound message missing chat_id/text dropped: %r", msg
+                    )
                     continue
                 try:
                     await self._app.bot.send_message(chat_id=chat_id, text=text)
                 except Exception as exc:  # noqa: BLE001 — isolate one bad chat
-                    logger.error("Outbound send to chat %s failed: %s", chat_id, exc)
+                    attempts += 1
+                    if attempts < OUTBOUND_SEND_MAX_ATTEMPTS:
+                        self._outbound_retry.append((msg, attempts))
+                        logger.warning(
+                            "Outbound send to chat %s failed (attempt %d/%d): %s",
+                            chat_id,
+                            attempts,
+                            OUTBOUND_SEND_MAX_ATTEMPTS,
+                            exc,
+                        )
+                    else:
+                        logger.error(
+                            "Outbound send to chat %s dropped after %d attempts: %s",
+                            chat_id,
+                            attempts,
+                            exc,
+                        )
             await asyncio.sleep(self._outbound_poll_seconds)
 
     async def run_polling(self) -> None:
