@@ -351,8 +351,8 @@ class FinetuningOrchestrator:
 
                 self.registry = AdapterRegistry()
             except Exception as e:
-                logger.warning(f"Failed to initialize registry: {e}")
-                return None
+                logger.error(f"Failed to initialize registry: {e}")
+                raise RuntimeError("Failed to initialize registry") from e
 
         try:
             # Upload to storage first so a configured storage failure is not
