@@ -400,7 +400,7 @@ class FinetuningOrchestrator:
 
         except Exception as e:
             logger.error(f"Failed to register adapter: {e}")
-            return None
+            raise RuntimeError("Failed to register adapter in registry") from e
 
     def _log_experiment_to_phoenix(
         self,
