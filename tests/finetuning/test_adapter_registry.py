@@ -741,6 +741,70 @@ class TestGetStorageBackend:
 
         assert storage.token == "hf_secret_abc"
 
+    def test_get_s3_storage_reads_connection_settings_from_env(self, monkeypatch):
+        from cogniverse_finetuning.registry.storage import (
+            S3Storage,
+            S3StorageConfig,
+            get_storage_backend,
+        )
+
+        monkeypatch.setenv("MINIO_ENDPOINT", "http://minio.example:9000")
+        monkeypatch.setenv("MINIO_ACCESS_KEY", "minio_access")
+        monkeypatch.setenv("MINIO_SECRET_KEY", "minio_secret")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-west-2")
+
+        storage = get_storage_backend("s3://adapter-bucket/adapters/model")
+
+        assert isinstance(storage, S3Storage)
+        assert storage.config == S3StorageConfig(
+            endpoint_url="http://minio.example:9000",
+            access_key="minio_access",
+            secret_key="minio_secret",
+            region="eu-west-2",
+        )
+
+    def test_s3_storage_uses_explicit_config(self, monkeypatch):
+        import boto3
+
+        from cogniverse_finetuning.registry.storage import (
+            S3Storage,
+            S3StorageConfig,
+        )
+
+        monkeypatch.setenv("MINIO_ENDPOINT", "http://env-endpoint")
+        monkeypatch.setenv("MINIO_ACCESS_KEY", "env-access")
+        monkeypatch.setenv("MINIO_SECRET_KEY", "env-secret")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "env-region")
+
+        captured = {}
+
+        def _fake_client(service_name, **kwargs):
+            captured["service_name"] = service_name
+            captured["kwargs"] = kwargs
+
+            class _DummyClient:
+                pass
+
+            return _DummyClient()
+
+        monkeypatch.setattr(boto3, "client", _fake_client)
+
+        storage = S3Storage(
+            S3StorageConfig(
+                endpoint_url="http://explicit-endpoint:9000",
+                access_key="explicit-access",
+                secret_key="explicit-secret",
+                region="eu-central-1",
+            )
+        )
+        storage._client()
+
+        assert captured["service_name"] == "s3"
+        assert captured["kwargs"]["endpoint_url"] == "http://explicit-endpoint:9000"
+        assert captured["kwargs"]["aws_access_key_id"] == "explicit-access"
+        assert captured["kwargs"]["aws_secret_access_key"] == "explicit-secret"
+        assert captured["kwargs"]["region_name"] == "eu-central-1"
+
     def test_upload_adapter_forwards_token_to_backend(self, monkeypatch):
         from cogniverse_finetuning.registry import storage as storage_mod
 

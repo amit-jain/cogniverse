@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cogniverse_finetuning.registry.storage import S3Storage
+from cogniverse_finetuning.registry.storage import S3Storage, S3StorageConfig
 from tests.system.minio_test_manager import MinIOTestManager
 
 pytestmark = pytest.mark.integration
@@ -44,6 +44,16 @@ def _build_adapter_tree(root: Path, index: int) -> tuple[Path, dict[str, bytes]]
     }
 
 
+def _build_s3_storage(minio):
+    return S3Storage(
+        S3StorageConfig(
+            endpoint_url=minio.endpoint,
+            access_key=minio.access_key,
+            secret_key=minio.secret_key,
+        )
+    )
+
+
 @pytest.mark.requires_docker
 class TestS3AdapterStorageReal:
     def test_directory_round_trip_preserves_nested_files(self, minio, tmp_path):
@@ -53,11 +63,7 @@ class TestS3AdapterStorageReal:
 
         source, expected = _build_adapter_tree(tmp_path, 0)
 
-        storage = S3Storage(
-            endpoint_url=minio.endpoint,
-            access_key=minio.access_key,
-            secret_key=minio.secret_key,
-        )
+        storage = _build_s3_storage(minio)
         destination_uri = f"s3://{bucket}/adapters/routing_sft_v1.0.0"
 
         uploaded_uri = storage.upload(str(source), destination_uri)
@@ -87,11 +93,7 @@ class TestS3AdapterStorageReal:
         client = minio.boto3_client()
         client.create_bucket(Bucket=bucket)
 
-        storage = S3Storage(
-            endpoint_url=minio.endpoint,
-            access_key=minio.access_key,
-            secret_key=minio.secret_key,
-        )
+        storage = _build_s3_storage(minio)
 
         barrier = threading.Barrier(4)
         expected: dict[str, bytes] = {}
@@ -127,9 +129,11 @@ class TestS3AdapterStorageReal:
 
     def test_download_raises_when_endpoint_is_unreachable(self, tmp_path):
         storage = S3Storage(
-            endpoint_url="http://127.0.0.1:65535",
-            access_key="dummy",
-            secret_key="dummy",
+            S3StorageConfig(
+                endpoint_url="http://127.0.0.1:65535",
+                access_key="dummy",
+                secret_key="dummy",
+            )
         )
 
         with pytest.raises(
