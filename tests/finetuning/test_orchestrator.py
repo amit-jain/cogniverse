@@ -175,6 +175,7 @@ class TestOrchestrationFlows:
             base_model="HuggingFaceTB/SmolLM-135M",
             backend="local",
             generate_synthetic=False,
+            enable_registry=False,
         )
 
         # Mock the selector to return SFT recommendation
@@ -281,6 +282,7 @@ class TestOrchestrationFlows:
             base_model="HuggingFaceTB/SmolLM-135M",
             backend="local",
             generate_synthetic=False,
+            enable_registry=False,
         )
 
         # Mock the selector to return DPO recommendation
@@ -380,6 +382,7 @@ class TestOrchestrationFlows:
             modality="video",
             base_model="sentence-transformers/all-MiniLM-L6-v2",
             backend="local",
+            enable_registry=False,
         )
 
         # Mock the extractor to return triplets
@@ -596,6 +599,7 @@ class TestMultiTurnOrchestrationFlow:
             multi_turn=True,
             min_turns_per_session=2,
             system_prompt="You are a video search assistant.",
+            enable_registry=False,
         )
 
         # Build mock trajectory dataset
@@ -678,6 +682,7 @@ class TestMultiTurnOrchestrationFlow:
             model_type="llm",
             agent_type="routing",
             multi_turn=True,
+            enable_registry=False,
         )
 
         turns = [
@@ -910,3 +915,39 @@ class TestAdapterStorageUpload:
             await orch._register_adapter(config, result, "run_1")
 
         orch.registry.register_adapter.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_adapter_raises_when_registry_write_fails(
+        self, unused_tcp_port
+    ):
+        orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
+
+        from cogniverse_finetuning.registry import AdapterRegistry
+        from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
+
+        orch.registry = AdapterRegistry(
+            store=VespaAdapterStore(
+                backend_url="http://127.0.0.1",
+                backend_port=unused_tcp_port,
+            )
+        )
+
+        config = OrchestrationConfig(
+            tenant_id="acme",
+            project="proj",
+            model_type="llm",
+            agent_type="routing",
+            base_model="HuggingFaceTB/SmolLM-135M",
+            adapter_version="2.1.0",
+            enable_registry=True,
+        )
+        result = MagicMock(
+            adapter_path="/tmp/adapter",
+            training_method="sft",
+            metrics={"train_loss": 0.1},
+        )
+
+        with pytest.raises(
+            RuntimeError, match="Failed to register adapter in registry"
+        ):
+            await orch._register_adapter(config, result, "run_1")
