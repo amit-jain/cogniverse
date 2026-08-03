@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -61,6 +62,16 @@ class AdapterStorage(ABC):
     def exists(self, uri: str) -> bool:
         """Check if adapter exists at URI."""
         pass
+
+
+@dataclass(frozen=True, slots=True)
+class S3StorageConfig:
+    """Connection settings for S3-compatible adapter storage."""
+
+    endpoint_url: Optional[str] = None
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    region: Optional[str] = None
 
 
 class HuggingFaceStorage(AdapterStorage):
@@ -187,26 +198,14 @@ class S3Storage(AdapterStorage):
 
     URIs: s3://bucket/path/to/adapter
 
-    The bucket comes from the URI netloc and the object prefix comes from the
-    URI path. A directory upload stores files recursively under that prefix.
+    Connection settings come from ``S3StorageConfig``. The bucket comes from
+    the URI netloc and the object prefix comes from the URI path. A directory
+    upload stores files recursively under that prefix.
     """
 
-    def __init__(
-        self,
-        endpoint_url: Optional[str] = None,
-        access_key: Optional[str] = None,
-        secret_key: Optional[str] = None,
-        region: Optional[str] = None,
-    ):
-        self.endpoint_url = endpoint_url
-        self.access_key = access_key
-        self.secret_key = secret_key
-        self.region = (
-            region
-            or os.environ.get("AWS_DEFAULT_REGION")
-            or os.environ.get("AWS_REGION")
-            or "us-east-1"
-        )
+    def __init__(self, config: S3StorageConfig):
+        """Initialize S3 storage with explicit connection settings."""
+        self.config = config
 
     @staticmethod
     def _parse_uri(uri: str) -> tuple[str, str]:
@@ -235,26 +234,13 @@ class S3Storage(AdapterStorage):
         import boto3
         from botocore.config import Config
 
-        endpoint_url = (
-            self.endpoint_url
-            or os.environ.get("MINIO_ENDPOINT")
-            or os.environ.get("S3_ENDPOINT_URL")
-        )
-        access_key = (
-            self.access_key
-            or os.environ.get("MINIO_ACCESS_KEY")
-            or os.environ.get("AWS_ACCESS_KEY_ID")
-        )
-        secret_key = (
-            self.secret_key
-            or os.environ.get("MINIO_SECRET_KEY")
-            or os.environ.get("AWS_SECRET_ACCESS_KEY")
-        )
-
         client_kwargs = {
-            "region_name": self.region,
+            "region_name": self.config.region or "us-east-1",
             "config": Config(signature_version="s3v4"),
         }
+        endpoint_url = self.config.endpoint_url
+        access_key = self.config.access_key
+        secret_key = self.config.secret_key
         if endpoint_url:
             client_kwargs["endpoint_url"] = endpoint_url
         if access_key:
@@ -651,12 +637,23 @@ def get_storage_backend(uri: str, **kwargs) -> AdapterStorage:
     elif scheme == "hf":
         return HuggingFaceStorage(token=kwargs.get("token"))
     elif scheme == "s3":
+        # Resolve S3 connection settings here so S3Storage stays config-only.
         S3Storage._parse_uri(uri)
         return S3Storage(
-            endpoint_url=kwargs.get("endpoint_url"),
-            access_key=kwargs.get("access_key"),
-            secret_key=kwargs.get("secret_key"),
-            region=kwargs.get("region"),
+            S3StorageConfig(
+                endpoint_url=kwargs.get("endpoint_url")
+                or os.environ.get("MINIO_ENDPOINT")
+                or os.environ.get("S3_ENDPOINT_URL"),
+                access_key=kwargs.get("access_key")
+                or os.environ.get("MINIO_ACCESS_KEY")
+                or os.environ.get("AWS_ACCESS_KEY_ID"),
+                secret_key=kwargs.get("secret_key")
+                or os.environ.get("MINIO_SECRET_KEY")
+                or os.environ.get("AWS_SECRET_ACCESS_KEY"),
+                region=kwargs.get("region")
+                or os.environ.get("AWS_DEFAULT_REGION")
+                or os.environ.get("AWS_REGION"),
+            )
         )
     elif scheme == "modal":
         volume_name, volume_path = ModalVolumeStorage._parse_uri(uri)

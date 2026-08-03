@@ -583,7 +583,14 @@ The Adapter Registry provides complete lifecycle management for trained adapters
 | `VespaAdapterStore` | `libs/vespa/cogniverse_vespa/registry/adapter_store.py` | Vespa-backed storage (discovered via registry) |
 | `LocalStorage` | `storage.py` | Local filesystem storage backend |
 | `HuggingFaceStorage` | `storage.py` | HuggingFace Hub storage backend |
+| `S3StorageConfig` | `storage.py` | Explicit connection settings for S3-compatible storage |
+| `S3Storage` | `storage.py` | S3-compatible object-store backend |
+| `ModalVolumeStorage` | `storage.py` | Modal persistent-volume storage backend |
 | Inference Helpers | `inference.py` | vLLM integration utilities |
+
+`S3Storage` takes an explicit `S3StorageConfig`. The bucket still comes from
+each `s3://bucket/...` URI, and only `get_storage_backend()` plus the
+convenience helpers resolve environment variables for connection settings.
 
 #### Core Features
 
