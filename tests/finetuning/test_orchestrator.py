@@ -951,3 +951,30 @@ class TestAdapterStorageUpload:
             RuntimeError, match="Failed to register adapter in registry"
         ):
             await orch._register_adapter(config, result, "run_1")
+
+    @pytest.mark.asyncio
+    async def test_register_adapter_raises_when_registry_init_fails(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("BACKEND_URL", "http://127.0.0.1")
+        monkeypatch.setenv("BACKEND_PORT", "8080")
+
+        orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
+        config = OrchestrationConfig(
+            tenant_id="acme",
+            project="proj",
+            model_type="llm",
+            agent_type="routing",
+            base_model="HuggingFaceTB/SmolLM-135M",
+            adapter_version="2.1.0",
+            enable_registry=True,
+        )
+        result = MagicMock(
+            adapter_path="/tmp/adapter",
+            training_method="sft",
+            metrics={"train_loss": 0.1},
+        )
+
+        with pytest.raises(RuntimeError, match="Failed to initialize registry"):
+            await orch._register_adapter(config, result, "run_1")
