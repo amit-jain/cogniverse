@@ -10,6 +10,8 @@ import asyncio
 import logging
 import os
 import shutil
+import tempfile
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -302,15 +304,18 @@ class S3Storage(AdapterStorage):
         client = self._client()
         dest = Path(local_path)
         prefix = key.rstrip("/")
+        dest_parent = dest.parent
+        dest_name = dest.name or "adapter"
+        dest_parent.mkdir(parents=True, exist_ok=True)
+        staging_dir = Path(
+            tempfile.mkdtemp(
+                prefix=f".{dest_name}.staging-",
+                dir=str(dest_parent),
+            )
+        )
+        backup_dir: Path | None = None
 
         try:
-            if dest.exists():
-                if dest.is_dir():
-                    shutil.rmtree(dest)
-                else:
-                    dest.unlink()
-            dest.mkdir(parents=True, exist_ok=True)
-
             paginator = client.get_paginator("list_objects_v2")
             matching_keys: list[str] = []
             for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/"):
@@ -321,13 +326,31 @@ class S3Storage(AdapterStorage):
             if matching_keys:
                 for object_key in matching_keys:
                     relative_key = object_key[len(prefix) + 1 :]
-                    target = dest / relative_key
+                    target = staging_dir / relative_key
                     target.parent.mkdir(parents=True, exist_ok=True)
                     client.download_file(bucket, object_key, str(target))
-                return str(dest)
+            else:
+                target = staging_dir / Path(prefix).name
+                client.download_file(bucket, prefix, str(target))
 
-            target = dest / Path(prefix).name
-            client.download_file(bucket, prefix, str(target))
+            if dest.exists():
+                backup_dir = dest_parent / f".{dest_name}.backup-{uuid.uuid4().hex}"
+                os.replace(dest, backup_dir)
+
+            try:
+                os.replace(staging_dir, dest)
+            except Exception:
+                if backup_dir is not None:
+                    os.replace(backup_dir, dest)
+                    backup_dir = None
+                raise
+
+            if backup_dir is not None:
+                if backup_dir.is_dir():
+                    shutil.rmtree(backup_dir, ignore_errors=True)
+                else:
+                    backup_dir.unlink(missing_ok=True)
+
             return str(dest)
         except Exception as exc:
             from botocore.exceptions import ClientError
@@ -339,6 +362,8 @@ class S3Storage(AdapterStorage):
             raise RuntimeError(
                 f"failed to download adapter from {source_uri}: {exc}"
             ) from exc
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
     def exists(self, uri: str) -> bool:
         bucket, key = self._parse_uri(uri)
