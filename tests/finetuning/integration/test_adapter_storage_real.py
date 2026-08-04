@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -44,6 +45,14 @@ def _build_adapter_tree(root: Path, index: int) -> tuple[Path, dict[str, bytes]]
     }
 
 
+def _snapshot_tree(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
 def _build_s3_storage(minio):
     return S3Storage(
         S3StorageConfig(
@@ -62,9 +71,13 @@ class TestS3AdapterStorageReal:
         client.create_bucket(Bucket=bucket)
 
         source, expected = _build_adapter_tree(tmp_path, 0)
+        stale_source, stale_expected = _build_adapter_tree(tmp_path / "stale", 9)
 
         storage = _build_s3_storage(minio)
         destination_uri = f"s3://{bucket}/adapters/routing_sft_v1.0.0"
+        downloaded = tmp_path / "downloaded"
+        shutil.copytree(stale_source, downloaded)
+        assert _snapshot_tree(downloaded) == stale_expected
 
         uploaded_uri = storage.upload(str(source), destination_uri)
         assert uploaded_uri == destination_uri
@@ -79,14 +92,34 @@ class TestS3AdapterStorageReal:
             "adapters/routing_sft_v1.0.0/nested/weights.bin",
         ]
 
-        downloaded = tmp_path / "downloaded"
         result_path = Path(storage.download(destination_uri, str(downloaded)))
         assert result_path == downloaded
-        assert (downloaded / "README.txt").read_bytes() == expected["README.txt"]
-        assert (downloaded / "config.json").read_bytes() == expected["config.json"]
-        assert (downloaded / "nested" / "weights.bin").read_bytes() == expected[
-            "nested/weights.bin"
-        ]
+        assert _snapshot_tree(downloaded) == expected
+
+    def test_download_preserves_existing_content_when_source_missing(
+        self, minio, tmp_path
+    ):
+        bucket = f"adapter-{uuid.uuid4().hex[:8]}"
+        client = minio.boto3_client()
+        client.create_bucket(Bucket=bucket)
+
+        existing_source, existing_expected = _build_adapter_tree(tmp_path, 1)
+        downloaded = tmp_path / "downloaded"
+        shutil.copytree(existing_source, downloaded)
+        before = _snapshot_tree(downloaded)
+
+        storage = _build_s3_storage(minio)
+
+        with pytest.raises(
+            FileNotFoundError,
+            match="Source adapter not found: s3://",
+        ):
+            storage.download(
+                f"s3://{bucket}/adapters/missing_adapter",
+                str(downloaded),
+            )
+
+        assert _snapshot_tree(downloaded) == before == existing_expected
 
     def test_concurrent_uploads_do_not_cross_contaminate(self, minio, tmp_path):
         bucket = f"adapter-{uuid.uuid4().hex[:8]}"
