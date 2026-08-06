@@ -361,6 +361,7 @@ class TestCodeSearchVespaEndToEnd:
                 "yql": f"select * from {schema_name} where true",
                 "hits": 5,
                 "ranking.profile": "float_float",
+                "model.restrict": schema_name,
                 "input.query(qt)": {"cells": qt_cells},
             },
             timeout=10,
