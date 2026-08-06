@@ -397,6 +397,74 @@ async def test_sigterm_routes_through_graceful_shutdown():
 
 
 @pytest.mark.asyncio
+async def test_sigterm_flushes_pending_outbound_retry_to_the_log(caplog):
+    """A message mid-retry-backoff at SIGTERM has no persistence across
+    restarts — the shutdown path must at least log it (and clear the
+    buffer) instead of the process exiting with no record it existed."""
+    import logging
+    import os
+    import signal as signal_mod
+
+    gw = MessagingGateway(bot_token="123:FAKE", runtime_url="http://runtime")
+    gw._outbound_retry = [
+        ({"chat_id": "42", "text": "job done"}, 1),
+        ({"chat_id": "43", "text": "job done too"}, 2),
+    ]
+
+    started = asyncio.Event()
+
+    async def fake_polling():
+        started.set()
+        await asyncio.Event().wait()
+
+    gw.run_polling = fake_polling
+
+    task = asyncio.create_task(gw.run())
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    with caplog.at_level(logging.ERROR, logger="cogniverse_messaging.gateway"):
+        os.kill(os.getpid(), signal_mod.SIGTERM)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+
+    # The buffer is cleared and each dropped message left its own log line
+    # naming the chat and how many attempts it had already burned.
+    assert gw._outbound_retry == []
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("chat 42" in m and "attempt 1/3" in m for m in messages), messages
+    assert any("chat 43" in m and "attempt 2/3" in m for m in messages), messages
+
+
+@pytest.mark.asyncio
+async def test_sigterm_with_empty_outbound_retry_logs_nothing_extra(caplog):
+    """An empty buffer at shutdown must not manufacture a spurious drop log."""
+    import logging
+    import os
+    import signal as signal_mod
+
+    gw = MessagingGateway(bot_token="123:FAKE", runtime_url="http://runtime")
+    assert gw._outbound_retry == []
+
+    started = asyncio.Event()
+
+    async def fake_polling():
+        started.set()
+        await asyncio.Event().wait()
+
+    gw.run_polling = fake_polling
+
+    task = asyncio.create_task(gw.run())
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    with caplog.at_level(logging.ERROR, logger="cogniverse_messaging.gateway"):
+        os.kill(os.getpid(), signal_mod.SIGTERM)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+
+    assert not any("in-memory retry buffer" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_webhook_shutdown_survives_delete_webhook_failure():
     """A failing delete_webhook during shutdown must not skip the local
     teardown — stop/shutdown/close still run."""
