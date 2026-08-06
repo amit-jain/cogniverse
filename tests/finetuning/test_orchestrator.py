@@ -958,7 +958,7 @@ class TestAdapterStorageUpload:
     ):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("BACKEND_URL", "http://127.0.0.1")
-        monkeypatch.setenv("BACKEND_PORT", "8080")
+        monkeypatch.setenv("BACKEND_PORT", "29071")
 
         orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
         config = OrchestrationConfig(
