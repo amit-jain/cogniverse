@@ -214,17 +214,25 @@ def _mark_stale_stack_for_runtime(item) -> list[tuple[object, object]]:
 
 
 def _requests_teacher_lm(item) -> bool:
-    """Return whether a test or fixture closure reads a teacher LM explicitly."""
-    callables = [getattr(item, "obj", None)]
+    """Return whether the item's fixture closure reads a teacher LM.
+
+    Only fixture code counts: a fixture is how a test consumes a provisioned
+    endpoint. A test body that merely reads a ``teacher_lm`` attribute on an
+    object it builds itself (wiring assertions against fake endpoints) needs
+    no live teacher; ``requires_teacher_model`` is the explicit opt-in for
+    body-level consumers, and an unprovisioned teacher fails loudly via the
+    ``_UNPROVISIONED_TEACHER_MODEL`` sentinel.
+    """
     fixture_defs = getattr(
         getattr(item, "_fixtureinfo", None),
         "name2fixturedefs",
         {},
     )
-    for definitions in fixture_defs.values():
-        callables.extend(
-            getattr(fixture_def, "func", None) for fixture_def in (definitions or ())
-        )
+    callables = [
+        getattr(fixture_def, "func", None)
+        for definitions in fixture_defs.values()
+        for fixture_def in (definitions or ())
+    ]
     return "teacher_lm" in item.fixturenames or any(
         "teacher_lm" in getattr(getattr(callable_obj, "__code__", None), "co_names", ())
         for callable_obj in callables
