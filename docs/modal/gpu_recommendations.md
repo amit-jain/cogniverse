@@ -48,9 +48,10 @@ embeddings) are separate model families with their own sidecars — see
 ### Production Setup (Recommended)
 - **ColPali / ColQwen3 / Image / Document-visual (shared Tomoro sidecar)**: A100-40GB (~$3.00/hour for ingestion, minimal for search)
 - **VideoPrism (Chunk-Based)**: L4 (~$1.00/hour for ingestion)
-- **CLAP (Audio Semantic)**: CPU only — no GPU required (see [CLAP](#4-clap-audio-semantic-embeddings))
+- **CLAP (Audio Semantic)**: Modal uses T4 first and L4 as fallback.
+  The Docker/k3d sidecar remains CPU-only (see [CLAP](#4-clap-audio-semantic-embeddings)).
 - **LateOn / LateOn-Code-edge (Document & Code Text)**: L4 or T4 (~$1.00/hour for ingestion)
-- **Total**: ~$200-250 one-time ingestion per 1000 videos + minimal search costs
+- **Total**: ~$200-250 one-time ingestion per 1000 videos before usage-based CLAP Modal runtime + minimal search costs
 
 ### Budget Setup
 - **ColPali / ColQwen3 (shared sidecar)**: L4 GPU (~$1.00/hour, tight fit)
@@ -417,17 +418,18 @@ def encode_images_budget(images: list):
 ### 4. CLAP (Audio Semantic Embeddings)
 
 **Model:** `laion/clap-htsat-unfused`, served by the `clap_embed` FastAPI
-sidecar (`libs/runtime/cogniverse_runtime/sidecars/clap_embed.py`), used by
+sidecar (`cogniverse_cli.modal_inference.servers.clap`), used by
 the `audio_clap_semantic` backend profile.
 **Content Types:** AUDIO
 
-#### GPU Requirements: none
+#### GPU Requirements by deployment
 
 The `clap_embed` sidecar image (`deploy/clap_embed/Dockerfile`) installs
 CPU-only `torch` from the PyTorch CPU wheel index specifically to keep this
-service GPU-free — CLAP (~150M params) runs fast enough on CPU for the
-ingestion and query-time volumes this profile sees. Deploy it as a CPU-only
-Modal function/container; no GPU line item is needed for this model.
+Docker/k3d service GPU-free. The Modal deployment is a separate CUDA image:
+its canonical service contract requests a T4 first and an L4 second, and runs
+the server with `CLAP_EMBED_DEVICE=cuda`. Do not use the Docker image's CPU
+configuration to size or describe the Modal function.
 
 #### API Shape
 
@@ -487,7 +489,8 @@ produce wrong-but-valid-shaped 128-dim token vectors.
 
 - Transcribed with `openai/whisper-large-v3-turbo` via the remote `vllm_asr` inference service (`AudioTranscriptionStrategy`); text transcripts indexed via BM25 text search
 - Separately, semantically embedded with CLAP (`laion/clap-htsat-unfused`) for acoustic similarity search (`audio_clap_semantic` profile)
-- GPU: whisper-large-v3-turbo needs a GPU-backed `vllm_asr` sidecar (L4/T4-class); CLAP embedding is CPU-only (see [CLAP](#4-clap-audio-semantic-embeddings))
+- GPU: `vllm_asr` and Modal CLAP each use T4 then L4.
+  The Docker/k3d CLAP sidecar runs on CPU (see [CLAP](#4-clap-audio-semantic-embeddings)).
 
 ### IMAGE Content
 
@@ -529,8 +532,8 @@ produce wrong-but-valid-shaped 128-dim token vectors.
 | ColPali/ColQwen3 (shared Tomoro sidecar: frames, chunks, image, document-visual) | A100-40GB | 50 | $3.00 | $150 |
 | VideoPrism (chunks) | L4 | 60 | $1.00 | $60 |
 | LateOn (document/code text) | L4 | 20 | $1.00 | $20 |
-| CLAP (audio semantic) | CPU only | — | $0.00 | $0 |
-| **Total** | | | | **$230** |
+| CLAP (audio semantic, Modal) | T4 (L4 fallback) | Usage-dependent | $0.60-$1.00 | Usage-dependent |
+| **Subtotal before CLAP runtime** | | | | **$230** |
 
 **Budget Alternative** (local fallback checkpoint instead of the shared sidecar):
 | Model | GPU | Hours | Cost/Hour | Total Cost |
@@ -778,18 +781,19 @@ nvidia-smi dmon -s u -d 1
 
 1. **ColPali / ColQwen3 (Frame Video, Chunk Video, Image, Document-Visual)**: one shared `TomoroAI/tomoro-colqwen3-embed-4b` vLLM sidecar — A100-40GB recommended, L4 budget option, local `vidore/colpali-v1.2`/`v1.3-hf`/`colqwen2-v0.1` fallback for smaller deployments
 2. **VideoPrism (Chunk-Based Video)**: L4 recommended (114M params base, also 354M large and LVT single-vector variants), T4 budget option
-3. **CLAP (Audio Semantic)**: CPU only — no GPU needed
+3. **CLAP (Audio Semantic)**: Modal uses T4 then L4.
+   The Docker/k3d sidecar uses its CPU-only image.
 4. **LateOn / LateOn-Code-edge (Document & Code Text)**: L4 recommended, T4 budget option
 5. **Multi-Modal Support**: All six content types supported (VIDEO, AUDIO, IMAGE, DOCUMENT, TEXT, DATAFRAME)
-6. **Cost Efficiency**: ~$200-250 per 1000 videos one-time ingestion, ~$50-100/month search
+6. **Cost Efficiency**: ~$200-250 per 1000 videos before usage-based CLAP Modal runtime, plus ~$50-100/month search
 
 **Recommended Production Setup:**
 
-- **Ingestion**: A100-40GB (shared ColPali/ColQwen3 sidecar) + L4 (VideoPrism) + L4 (LateOn) + CPU (CLAP)
+- **Ingestion**: A100-40GB (shared ColPali/ColQwen3 sidecar) + L4 (VideoPrism) + L4 (LateOn) + T4 with L4 fallback (CLAP on Modal)
 
 - **Search**: T4 or L4 (or CPU for text-based)
 
-- **Total**: ~$200-250 per 1000 videos ingestion, minimal ongoing costs
+- **Total**: ~$200-250 per 1000 videos before usage-based CLAP Modal runtime, with minimal ongoing costs
 
 ---
 

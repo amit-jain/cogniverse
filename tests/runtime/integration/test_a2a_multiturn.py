@@ -60,11 +60,14 @@ def _send_message(
 
 
 def _extract_task_id(body: dict) -> str:
-    """Extract taskId from A2A JSON-RPC response."""
+    """Extract the task id from an A2A JSON-RPC message/send response.
+
+    The result is a Task, whose identifier is ``id``; ``taskId`` only appears
+    nested inside ``history`` entries, never at the result's top level.
+    """
     result = body["result"]
-    # Response may be a Task or contain status with taskId
-    task_id = result.get("id") or result.get("taskId")
-    assert task_id, f"No taskId in response: {result}"
+    task_id = result["id"]
+    assert task_id, f"Empty task id in response: {result}"
     return task_id
 
 

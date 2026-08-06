@@ -281,8 +281,10 @@ def test_ensure_utc_handles_string_and_epoch_cells() -> None:
     assert f(np.datetime64("2026-01-01T10:00:00")).tzinfo is not None
     # None / NaT pass through
     assert f(None) is None
-    # An uncoercible value returns without raising
-    assert f(object()) is not None or True
+    # An uncoercible value is handed back untouched. Returning None here would
+    # send every span through the zero-duration branch of the analytics reader.
+    sentinel = object()
+    assert f(sentinel) is sentinel
 
 
 def test_ensure_utc_reads_numeric_epoch_as_seconds_not_nanoseconds() -> None:

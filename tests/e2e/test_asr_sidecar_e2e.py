@@ -30,9 +30,8 @@ import numpy as np
 import pytest
 
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
-from tests.e2e.conftest import skip_if_no_runtime
 
-pytestmark = [pytest.mark.e2e, skip_if_no_runtime]
+pytestmark = [pytest.mark.e2e]
 
 
 def _free_port() -> int:
@@ -44,10 +43,9 @@ def _free_port() -> int:
 @pytest.fixture(scope="session")
 def asr_sidecar_url():
     """Open a kubectl port-forward to ``svc/cogniverse-vllm-asr`` so the
-    test can POST audio multipart at it. Skips if kubectl is missing or
-    the service isn't deployed."""
+    test can POST audio multipart at it."""
     if shutil.which("kubectl") is None:
-        pytest.skip("kubectl not in PATH; cluster ASR e2e cannot reach the sidecar")
+        pytest.fail("kubectl is required to reach the cluster ASR sidecar")
 
     probe = subprocess.run(
         [
@@ -65,9 +63,9 @@ def asr_sidecar_url():
         timeout=10,
     )
     if probe.returncode != 0:
-        pytest.skip(
-            "cogniverse-vllm-asr service not present in 'cogniverse' namespace; "
-            "deploy with `cogniverse up` first"
+        pytest.fail(
+            "cogniverse-vllm-asr service is absent from namespace cogniverse: "
+            f"{probe.stderr.strip()[:500]}"
         )
 
     local_port = _free_port()

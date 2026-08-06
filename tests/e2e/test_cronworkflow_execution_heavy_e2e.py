@@ -16,7 +16,6 @@ the test must prove that landed.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import time
 
@@ -35,16 +34,12 @@ POLL_INTERVAL_S = 10.0
 # kubectl plumbing in one place; the heavy tier only differs in
 # duration and per-cron post-state assertion.
 from tests.e2e.test_cronworkflow_execution_e2e import (  # noqa: E402
-    _cronworkflow_exists,
     _delete_workflow,
+    _require_cronworkflow,
     _submit_workflow_from_cron,
     _wait_for_workflow_terminal,
     _workflow_pod_logs,
 )
-
-
-def _kubectl_available() -> bool:
-    return shutil.which("kubectl") is not None
 
 
 def _submit_and_wait_succeeded_heavy(cron_name: str) -> str:
@@ -90,20 +85,31 @@ def _phoenix_dataset_names() -> set[str]:
     """
     names: set[str] = set()
     cursor: str | None = None
+    params: dict[str, str] | None = None
+    endpoint = f"{_phoenix_url()}/v1/datasets"
     try:
         with httpx.Client(timeout=30.0) as client:
             while True:
                 params = {"cursor": cursor} if cursor else None
-                r = client.get(f"{_phoenix_url()}/v1/datasets", params=params)
+                r = client.get(endpoint, params=params)
                 if r.status_code != 200:
-                    return names
+                    pytest.fail(
+                        f"Phoenix prerequisite endpoint failed: GET {endpoint} "
+                        f"params={params!r}\nHTTP {r.status_code} body={r.text!r}",
+                        pytrace=False,
+                    )
                 payload = r.json()
                 names.update(d.get("name", "") for d in payload.get("data") or [])
                 cursor = payload.get("next_cursor")
                 if not cursor:
                     break
-    except (httpx.HTTPError, OSError):
-        pass
+    except (httpx.HTTPError, OSError) as exc:
+        pytest.fail(
+            f"Phoenix prerequisite endpoint failed: GET {endpoint} "
+            f"params={params!r}\n"
+            f"error={type(exc).__name__}: {exc}",
+            pytrace=False,
+        )
     return names
 
 
@@ -112,7 +118,7 @@ def _phoenix_dataset_names() -> set[str]:
 # ---------------------------------------------------------------------------
 
 
-def _wait_runtime_ready(timeout_s: float = 300.0) -> bool:
+def _require_runtime_ready(timeout_s: float = 300.0) -> None:
     """Poll until the runtime /health/live returns 200.
 
     Used at the start of tests in this file that follow an upstream
@@ -122,16 +128,26 @@ def _wait_runtime_ready(timeout_s: float = 300.0) -> bool:
     take 2-3 minutes to fully come back. Without this wait, downstream
     tests' probes race the rollout and read connection errors.
     """
+    endpoint = f"{RUNTIME}/health/live"
     deadline = time.monotonic() + timeout_s
+    last_result = "no response"
     while time.monotonic() < deadline:
         try:
             with httpx.Client(timeout=10.0) as client:
-                if client.get(f"{RUNTIME}/health/live").status_code == 200:
-                    return True
-        except (httpx.HTTPError, OSError):
-            pass
+                response = client.get(endpoint)
+                if response.status_code == 200:
+                    return
+                last_result = (
+                    f"HTTP {response.status_code} body={response.text[:300]!r}"
+                )
+        except (httpx.HTTPError, OSError) as exc:
+            last_result = f"{type(exc).__name__}: {exc}"
         time.sleep(3.0)
-    return False
+    pytest.fail(
+        f"Runtime prerequisite endpoint did not return 200 within {timeout_s}s: "
+        f"GET {endpoint}\nlast_result={last_result}",
+        pytrace=False,
+    )
 
 
 def _count_learned_strategies(tenant_full_id: str) -> int:
@@ -146,24 +162,29 @@ def _count_learned_strategies(tenant_full_id: str) -> int:
 
     Polls a few seconds because the upstream test in the same sweep
     triggers a runtime rollout, and this probe can race the rollout
-    window where the runtime returns ConnectError / 503. Returns -1
-    only if the runtime is still unavailable after the retry window.
+    window where the runtime returns ConnectError / 503. If the endpoint
+    stays unavailable, the failure includes the exact URL and last result.
     """
+    endpoint = f"{RUNTIME}/admin/tenant/{tenant_full_id}/memories"
+    params = {"type": "strategy", "limit": 200}
     deadline = time.monotonic() + 90.0
+    last_result = "no response"
     while time.monotonic() < deadline:
         try:
             with httpx.Client(timeout=30.0) as client:
-                r = client.get(
-                    f"{RUNTIME}/admin/tenant/{tenant_full_id}/memories",
-                    params={"type": "strategy", "limit": 200},
-                )
+                r = client.get(endpoint, params=params)
                 if r.status_code == 200:
                     body = r.json()
                     return int(body.get("count", len(body.get("memories", []))))
-        except (httpx.HTTPError, OSError):
-            pass
+                last_result = f"HTTP {r.status_code} body={r.text[:300]!r}"
+        except (httpx.HTTPError, OSError) as exc:
+            last_result = f"{type(exc).__name__}: {exc}"
         time.sleep(3.0)
-    return -1
+    pytest.fail(
+        f"Runtime prerequisite endpoint failed: GET {endpoint} params={params!r}\n"
+        f"last_result={last_result}",
+        pytrace=False,
+    )
 
 
 def _runtime_deployment_generation() -> int:
@@ -193,17 +214,13 @@ def _runtime_deployment_generation() -> int:
 
 
 @pytest.mark.e2e_heavy
-@pytest.mark.skipif(
-    not _kubectl_available(), reason="kubectl not available in test environment"
-)
 class TestAgentOptimizationWorkflow:
     """Weekly agent-optimization trains every DSPy module in parallel and
     then bounces the runtime so the new artifacts load. Functional intent:
     artifact version bumped + rollout observedGeneration advanced."""
 
     def test_workflow_runs_all_optimizer_steps_and_restarts_runtime(self):
-        if not _cronworkflow_exists("cogniverse-agent-optimization"):
-            pytest.skip("cogniverse-agent-optimization CronWorkflow not deployed")
+        _require_cronworkflow("cogniverse-agent-optimization")
 
         # Pre: capture rollout generation. The pipeline has 5 parallel
         # optimizer steps + a sequential workflow-optimization step +
@@ -238,9 +255,6 @@ class TestAgentOptimizationWorkflow:
 
 
 @pytest.mark.e2e_heavy
-@pytest.mark.skipif(
-    not _kubectl_available(), reason="kubectl not available in test environment"
-)
 class TestScheduledDistillationWorkflow:
     """Scheduled-distillation runs quality_monitor_cli --once which audits
     quality + distills strategies. Functional intent: at least one
@@ -248,19 +262,15 @@ class TestScheduledDistillationWorkflow:
     confirmation_count bump."""
 
     def test_workflow_runs_against_strategy_store_without_regression(self):
-        if not _cronworkflow_exists("cogniverse-scheduled-distillation"):
-            pytest.skip("cogniverse-scheduled-distillation CronWorkflow not deployed")
+        _require_cronworkflow("cogniverse-scheduled-distillation")
 
         # Wait for runtime to be HTTP-ready before the pre-probe.
         # The agent-optimization test above bounces the runtime as its
         # functional outcome; its observedGeneration assertion fires
         # the moment the controller schedules the new replica, NOT
         # when it's accepting HTTP. Without this wait the pre-probe
-        # below races the rollout and reads -1.
-        assert _wait_runtime_ready(), (
-            "Runtime did not come back HTTP-ready within 5 min after "
-            "the upstream agent-optimization rollout"
-        )
+        # below races the rollout and reports a prerequisite endpoint failure.
+        _require_runtime_ready()
 
         # Data-agnostic functional contract: the cron Succeeds, the
         # strategy-store endpoint is reachable both before and after
@@ -296,17 +306,13 @@ class TestScheduledDistillationWorkflow:
 
 
 @pytest.mark.e2e_heavy
-@pytest.mark.skipif(
-    not _kubectl_available(), reason="kubectl not available in test environment"
-)
 class TestSyntheticGenerationWorkflow:
     """Weekly synthetic-generation produces training datasets in Phoenix
     for every optimizer type. Functional intent: at least one new
     Phoenix dataset matching ``synthetic-*`` exists after the workflow."""
 
     def test_workflow_creates_synthetic_datasets_for_each_optimizer(self):
-        if not _cronworkflow_exists("cogniverse-synthetic-generation"):
-            pytest.skip("cogniverse-synthetic-generation CronWorkflow not deployed")
+        _require_cronworkflow("cogniverse-synthetic-generation")
 
         wf = _submit_and_wait_succeeded_heavy("cogniverse-synthetic-generation")
         logs = _workflow_pod_logs(wf)

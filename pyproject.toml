@@ -265,7 +265,6 @@ ignore = [
     "B904",  # raise statements don't always need 'from' chains
     "UP006", # dict/Dict and list/List are both fine
     "UP035", # typing.Dict vs dict is stylistic
-    "UP038", # isinstance((int, float)) vs int | float is stylistic 
     "UP045", # Optional[T] vs T | None is stylistic
     "C401",  # set comprehensions vs generator is minor optimization
     "C408",  # dict() vs {} is stylistic

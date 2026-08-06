@@ -684,7 +684,7 @@ class TestDSPyAgentArtifactRoundTrip:
         # Save a template index + template blob (the format load_historical_data expects)
         template_id = "tmpl_test_001"
         await mgr.save_blob("workflow", "template_index", json.dumps([template_id]))
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         template_data = {
             "template_id": template_id,
@@ -698,7 +698,7 @@ class TestDSPyAgentArtifactRoundTrip:
             "expected_execution_time": 5.0,
             "success_rate": 0.85,
             "usage_count": 10,
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "last_used": None,
         }
         await mgr.save_blob(
@@ -758,7 +758,7 @@ class TestWorkflowStoreRoundTrip:
     @pytest.mark.asyncio
     async def test_save_via_store_load_via_intelligence(self, real_provider):
         import uuid
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
         from cogniverse_core.registries import WorkflowStoreRegistry
@@ -783,7 +783,7 @@ class TestWorkflowStoreRoundTrip:
                 confidence_score=0.91,
                 user_satisfaction=0.75,
                 error_details=None,
-                timestamp=datetime(2026, 5, 26, 12, 0, 0),
+                timestamp=datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
                 metadata={"source": "roundtrip"},
             )
         ]
@@ -797,7 +797,7 @@ class TestWorkflowStoreRoundTrip:
                 error_rate=0.1,
                 preferred_query_types=["visual"],
                 performance_trend="improving",
-                last_updated=datetime(2026, 5, 26, 9, 0, 0),
+                last_updated=datetime(2026, 5, 26, 9, 0, 0, tzinfo=timezone.utc),
             )
         ]
         patterns = {"video_search": ["find *", "show me *"]}
@@ -810,7 +810,7 @@ class TestWorkflowStoreRoundTrip:
             expected_execution_time=1.2,
             success_rate=0.95,
             usage_count=3,
-            created_at=datetime(2026, 5, 1, 0, 0, 0),
+            created_at=datetime(2026, 5, 1, 0, 0, 0, tzinfo=timezone.utc),
             last_used=None,
         )
 
@@ -844,7 +844,7 @@ class TestWorkflowStoreRoundTrip:
         template-matches against patterns whose executions were rolled back.
         """
         import uuid
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         from cogniverse_agents.workflow.telemetry_workflow_store import (
             _EXECUTIONS_KIND,
@@ -877,7 +877,7 @@ class TestWorkflowStoreRoundTrip:
             confidence_score=0.9,
             user_satisfaction=0.7,
             error_details=None,
-            timestamp=datetime(2026, 5, 26, 12, 0, 0),
+            timestamp=datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
             metadata={},
         )
         profile = AgentPerformance(
@@ -889,7 +889,7 @@ class TestWorkflowStoreRoundTrip:
             error_rate=0.0,
             preferred_query_types=["video_search"],
             performance_trend="stable",
-            last_updated=datetime(2026, 5, 26, 9, 0, 0),
+            last_updated=datetime(2026, 5, 26, 9, 0, 0, tzinfo=timezone.utc),
         )
 
         # Fail exactly the forward executions write at the provider boundary; the
@@ -1395,7 +1395,7 @@ class TestArtifactAffectsBehavior:
         at planning time to inject template context into the DSPy planner.
         """
         import json
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
@@ -1421,7 +1421,7 @@ class TestArtifactAffectsBehavior:
             "expected_execution_time": 5.0,
             "success_rate": 0.9,
             "usage_count": 50,
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "last_used": None,
         }
         await mgr.save_blob(

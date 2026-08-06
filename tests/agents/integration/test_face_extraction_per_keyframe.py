@@ -14,7 +14,6 @@ segment_id, and the FaceMention dataclass shape.
 """
 
 import base64
-import importlib.util
 import io
 import json
 import socket
@@ -29,6 +28,7 @@ import httpx
 import numpy as np
 import pytest
 import requests
+from cogniverse_cli.modal_inference.servers import face as face_embed_server
 from PIL import Image
 
 from cogniverse_agents.graph.face_extractor import (
@@ -37,11 +37,16 @@ from cogniverse_agents.graph.face_extractor import (
 )
 from cogniverse_agents.graph.graph_schema import FaceMention
 
-SERVER_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "libs/runtime/cogniverse_runtime/sidecars/face_embed.py"
-)
 GOLDEN_DIR = Path(__file__).parent / "goldens"
+FACE_MODEL_NAME = "buffalo_l"
+FACE_MODEL_REVISION = "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f"
+FACE_MODEL_FILES = (
+    "1k3d68.onnx",
+    "2d106det.onnx",
+    "det_10g.onnx",
+    "genderage.onnx",
+    "w600k_r50.onnx",
+)
 
 pytestmark = pytest.mark.integration
 
@@ -109,8 +114,18 @@ class _ColorAwareFaceAnalysis:
     the corresponding pinned face list.
     """
 
-    def __init__(self, name: str = "buffalo_l") -> None:
+    last_root: str | None = None
+
+    def __init__(
+        self,
+        name: str = FACE_MODEL_NAME,
+        root: str | None = None,
+        providers: list[str] | None = None,
+    ) -> None:
         self.name = name
+        self.root = root
+        self.providers = providers
+        type(self).last_root = root
 
     def prepare(self, ctx_id: int = -1, det_size=(640, 640)) -> None:  # noqa: ARG002
         return None
@@ -139,7 +154,17 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def face_embed_url(monkeypatch_session=None):
+def face_model_root(tmp_path_factory):
+    root = tmp_path_factory.mktemp("face-model")
+    model_dir = root / "models" / FACE_MODEL_NAME
+    model_dir.mkdir(parents=True)
+    for filename in FACE_MODEL_FILES:
+        (model_dir / filename).write_bytes(b"test model artifact")
+    return root
+
+
+@pytest.fixture(scope="module")
+def face_embed_url(face_model_root, monkeypatch_session=None):
     """Yield a live face-embed sidecar URL with the stub model loaded."""
     fake_insightface = types.ModuleType("insightface")
     fake_app_module = types.ModuleType("insightface.app")
@@ -150,17 +175,14 @@ def face_embed_url(monkeypatch_session=None):
     sys.modules["insightface"] = fake_insightface
     sys.modules["insightface.app"] = fake_app_module
 
-    spec = importlib.util.spec_from_file_location(
-        "face_embed_server_integration", str(SERVER_PATH)
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = face_embed_server
     mod._MODEL = None
+    app = mod.build_app(mod.FaceEmbedConfig(model_root=str(face_model_root)))
 
     import uvicorn  # noqa: PLC0415
 
     port = _free_port()
-    config = uvicorn.Config(mod.app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -241,6 +263,28 @@ def test_total_record_count(face_embed_url, debate_processing_results):
         debate_processing_results, "debate_30s", face_embed_url
     )
     assert len(records) == 4
+
+
+def test_sidecar_reports_pinned_model_revision(face_embed_url):
+    response = requests.get(f"{face_embed_url}/health", timeout=1)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "model": FACE_MODEL_NAME,
+        "model_revision": FACE_MODEL_REVISION,
+    }
+
+
+def test_sidecar_loads_model_from_configured_root(
+    face_embed_url, face_model_root, debate_processing_results
+):
+    records = extract_faces_per_keyframe(
+        debate_processing_results, "debate_30s", face_embed_url
+    )
+
+    assert len(records) == 4
+    assert _ColorAwareFaceAnalysis.last_root == str(face_model_root)
 
 
 # --------------------------------------------------------------------- #
@@ -460,3 +504,83 @@ def test_keyframes_posted_concurrently():
         )
 
     assert records == []
+
+
+def test_modal_face_client_uses_environment_credential(monkeypatch):
+    token = "shared-production-key"
+    created = []
+
+    class _CredentialCapturingClient:
+        def __init__(self, *, headers):
+            self.headers = dict(headers)
+            self.calls = []
+            self.closed = False
+            created.append(self)
+
+        def post(self, url, *, json, timeout):
+            self.calls.append((url, json, timeout))
+            return httpx.Response(200, json={"faces": []})
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", token)
+    monkeypatch.setattr(
+        "cogniverse_agents.graph.face_extractor.httpx.Client",
+        _CredentialCapturingClient,
+    )
+    image_b64 = _solid_b64(_EMPTY_COLOR)
+
+    records = extract_faces_per_keyframe(
+        {
+            "keyframes": {
+                "items": [
+                    {
+                        "segment_id": "frame_0_0",
+                        "ts_start": 0.0,
+                        "image_b64": image_b64,
+                    }
+                ]
+            }
+        },
+        "debate_30s",
+        "https://face.modal.run",
+    )
+
+    assert records == []
+    assert len(created) == 1
+    assert created[0].headers == {"Authorization": f"Bearer {token}"}
+    assert created[0].calls == [
+        (
+            "https://face.modal.run/embed",
+            {"image_b64": image_b64},
+            30.0,
+        )
+    ]
+    assert created[0].closed is True
+
+
+def test_modal_face_client_requires_environment_credential(monkeypatch):
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Modal inference endpoint requires COGNIVERSE_INFERENCE_API_KEY",
+    ):
+        extract_faces_per_keyframe(
+            {"keyframes": {"items": []}},
+            "debate_30s",
+            "https://face.modal.run",
+        )
+
+
+def test_modal_face_client_rejects_caller_headers(monkeypatch):
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+
+    with pytest.raises(ValueError, match="headers.*Modal"):
+        extract_faces_per_keyframe(
+            {"keyframes": {"items": []}},
+            "debate_30s",
+            "https://face.modal.run",
+            headers={"Authorization": "Bearer caller-specific-key"},
+        )

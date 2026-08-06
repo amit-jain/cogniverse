@@ -1072,8 +1072,10 @@ class TestDSPyComponentsIntegration:
         # Live aggregation: entities are surfaced as-is.
         assert out["entities"] == entities
         # Deduplication actually ran — the duplicate did NOT slip through.
-        relations = out.get("relationships") or out.get("entity_relationships")
-        assert relations is not None
+        # Read the key the production consumers read (agent_dispatcher and the
+        # extraction evaluators both read ``relationships``); an alias here
+        # would let a renamed output key ship green.
+        relations = out["relationships"]
         assert len(relations) == 2, (
             f"expected dedup to collapse 3→2 relationships; got {len(relations)}: "
             f"{relations}"
@@ -1084,10 +1086,7 @@ class TestDSPyComponentsIntegration:
             ("urban environments", "contains", "intersections"),
         ]
         # Relationship-type aggregation ran — sorted unique relations.
-        assert sorted(out.get("relationship_types", [])) == [
-            "contains",
-            "navigating",
-        ]
+        assert sorted(out["relationship_types"]) == ["contains", "navigating"]
 
     def test_composable_module_forward_signature(self):
         """The downstream ``ComposableQueryAnalysisModule.forward`` signature

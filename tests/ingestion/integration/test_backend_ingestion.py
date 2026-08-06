@@ -18,44 +18,6 @@ from tests.utils.markers import (
 )
 
 
-def _service_configured(service_name: str) -> bool:
-    """True iff ``service_name`` is wired in the ``INFERENCE_SERVICE_URLS`` env.
-
-    Profiles that declare ``inference_services.embedding: <name>`` route their
-    embedding generation to a pod URL. When that URL isn't configured the
-    pipeline fails loud at init (``ValueError: Profile ... specifies
-    inference_services.embedding=...``) — so tests that exercise such profiles must
-    skip cleanly when the pod isn't deployed. Reads env directly to keep
-    skip-evaluation cheap and free of bootstrap dependencies.
-    """
-    import json
-    import os
-
-    raw = os.environ.get("INFERENCE_SERVICE_URLS", "")
-    if not raw:
-        return False
-    try:
-        urls = json.loads(raw)
-    except json.JSONDecodeError:
-        return False
-    return isinstance(urls, dict) and bool(urls.get(service_name))
-
-
-requires_vllm_colpali = pytest.mark.skipif(
-    not _service_configured("vllm_colpali"),
-    reason="vllm_colpali inference pod not configured (set INFERENCE_SERVICE_URLS)",
-)
-
-requires_videoprism_jax = pytest.mark.skipif(
-    not _service_configured("videoprism_jax"),
-    reason=(
-        "videoprism_jax inference pod not configured — build with "
-        "`docker build -t cogniverse/videoprism:dev deploy/videoprism/` "
-        "and the conftest will spawn the sidecar at session start"
-    ),
-)
-
-
 @pytest.mark.integration
 @pytest.mark.requires_cv2
 class TestRealProcessorExtraction:
@@ -166,92 +128,69 @@ class TestVespaBackendIngestion:
 
         manager = VespaTestManager(app_name="test-ingestion", http_port=8082)
 
-        # Start Vespa container (no schema deployment)
-        if not manager.setup_application_directory():
-            pytest.skip("Failed to setup application directory")
-
-        if not manager.deploy_test_application():
-            pytest.skip("Failed to deploy Vespa test application")
-
-        # Set BACKEND_URL for the tests to use
-        old_backend_url = os.environ.get("BACKEND_URL")
-        old_cogniverse_config = os.environ.get("COGNIVERSE_CONFIG")
-        os.environ["BACKEND_URL"] = "http://localhost"
-        os.environ["BACKEND_PORT"] = str(manager.http_port)
-
-        # Materialise a test config.json (per-profile frame-count caps +
-        # backend port pointing at the test Vespa) and route the pipeline
-        # at it. See ``conftest.materialise_test_pipeline_config`` for
-        # rationale; both Vespa fixtures need this or the pipeline talks
-        # to localhost:8080 (k3d) and runs 100+ frames per profile.
-        from tests.ingestion.integration.conftest import (
-            materialise_test_pipeline_config,
-        )
-
-        os.environ["COGNIVERSE_CONFIG"] = materialise_test_pipeline_config(
-            manager.http_port
-        )
-
-        # Seed SystemConfig in the freshly-started Vespa so the pipeline's
-        # ``create_default_config_manager`` resolves to a config that
-        # carries the conftest-spawned vllm_colpali / videoprism_jax
-        # / etc. URLs. Without this, the pipeline reads an empty
-        # ``inference_service_urls`` from the new Vespa container and
-        # raises ``ValueError: Profile X specifies inference_services
-        # .embedding=Y but no URL is configured. Deployed services: []``
-        # the moment a remote-inference profile is touched.
-        import json
-
-        from cogniverse_foundation.config.unified_config import SystemConfig
-        from cogniverse_foundation.config.utils import (
-            create_default_config_manager,
-        )
-
-        raw_urls = os.environ.get("INFERENCE_SERVICE_URLS", "")
         try:
-            inference_service_urls = json.loads(raw_urls) if raw_urls else {}
-        except json.JSONDecodeError:
-            inference_service_urls = {}
+            # Start Vespa container (no schema deployment)
+            if not manager.setup_application_directory():
+                pytest.fail("Could not create the isolated Vespa application directory")
+            if not manager.deploy_test_application():
+                pytest.fail("Could not deploy the isolated Vespa application")
 
-        cm = create_default_config_manager()
-        cm.set_system_config(
-            SystemConfig(
-                backend_url="http://localhost",
-                backend_port=manager.http_port,
-                inference_service_urls=inference_service_urls,
-            )
-        )
+            with pytest.MonkeyPatch.context() as environment:
+                environment.setenv("BACKEND_URL", "http://localhost")
+                environment.setenv("BACKEND_PORT", str(manager.http_port))
 
-        yield manager
+                # Materialise a test config.json (per-profile frame-count caps +
+                # backend port pointing at the test Vespa) and route the pipeline
+                # at it. See ``conftest.materialise_test_pipeline_config`` for
+                # rationale; both Vespa fixtures need this or the pipeline talks
+                # to localhost:8080 (k3d) and runs 100+ frames per profile.
+                from tests.ingestion.integration.conftest import (
+                    materialise_test_pipeline_config,
+                )
 
-        # Cleanup environment
-        if old_backend_url is not None:
-            os.environ["BACKEND_URL"] = old_backend_url
-        elif "BACKEND_URL" in os.environ:
-            del os.environ["BACKEND_URL"]
-        if "BACKEND_PORT" in os.environ:
-            del os.environ["BACKEND_PORT"]
-        if old_cogniverse_config is not None:
-            os.environ["COGNIVERSE_CONFIG"] = old_cogniverse_config
-        elif "COGNIVERSE_CONFIG" in os.environ:
-            del os.environ["COGNIVERSE_CONFIG"]
+                environment.setenv(
+                    "COGNIVERSE_CONFIG",
+                    materialise_test_pipeline_config(manager.http_port),
+                )
 
-        # Cleanup container
-        manager.cleanup()
+                # Seed SystemConfig in the freshly-started Vespa so the pipeline's
+                # ``create_default_config_manager`` resolves to a config that
+                # carries the conftest-spawned inference URLs.
+                import json
+
+                from cogniverse_foundation.config.unified_config import SystemConfig
+                from cogniverse_foundation.config.utils import (
+                    create_default_config_manager,
+                )
+
+                raw_urls = os.environ.get("INFERENCE_SERVICE_URLS", "")
+                inference_service_urls = json.loads(raw_urls) if raw_urls else {}
+
+                cm = create_default_config_manager()
+                cm.set_system_config(
+                    SystemConfig(
+                        backend_url="http://localhost",
+                        backend_port=manager.http_port,
+                        inference_service_urls=inference_service_urls,
+                    )
+                )
+
+                yield manager
+        finally:
+            manager.cleanup()
 
     @pytest.fixture
-    def vespa_test_videos(self):
-        """Get test videos for Vespa integration."""
-        test_dir = Path("data/testset/evaluation/sample_videos")
-        if test_dir.exists():
-            return list(test_dir.glob("*.mp4"))[:2]  # Limit to 2 videos
-        else:
-            pytest.fail(
-                "Test videos not available at data/testset/evaluation/sample_videos"
-            )
+    def vespa_test_videos(self, vespa_backend):
+        """Use the exact tracked videos copied into the isolated test directory."""
+        videos = sorted(Path(vespa_backend.test_videos_dir).glob("*.mp4"))
+        assert tuple(video.name for video in videos) == (
+            "v_-6dz6tBH77I.mp4",
+            "v_-D1gdv_gQyw.mp4",
+        )
+        return videos
 
     @pytest.mark.slow
-    @requires_vllm_colpali
+    @pytest.mark.requires_inference("vllm_colpali")
     @pytest.mark.asyncio
     async def test_lightweight_vespa_ingestion(
         self, vespa_backend, vespa_test_videos, tmp_path
@@ -294,9 +233,8 @@ class TestVespaBackendIngestion:
         assert result["video_id"] == vespa_test_videos[0].stem
 
     @pytest.mark.local_only
-    @pytest.mark.requires_colpali
+    @pytest.mark.requires_inference("vllm_colpali")
     @skip_heavy_models_in_ci
-    @requires_vllm_colpali
     @pytest.mark.asyncio
     async def test_colpali_vespa_ingestion(
         self, vespa_backend, vespa_test_videos, tmp_path
@@ -332,8 +270,7 @@ class TestVespaBackendIngestion:
         assert "embeddings" in result.get("results", {})
 
     @pytest.mark.local_only
-    @pytest.mark.requires_videoprism
-    @requires_videoprism_jax
+    @pytest.mark.requires_inference("videoprism_jax")
     @skip_heavy_models_in_ci
     @skip_if_low_memory
     @pytest.mark.asyncio
@@ -370,8 +307,7 @@ class TestVespaBackendIngestion:
         assert "embeddings" in result.get("results", {})
 
     @pytest.mark.local_only
-    @pytest.mark.requires_videoprism
-    @requires_videoprism_jax
+    @pytest.mark.requires_inference("videoprism_jax")
     @skip_heavy_models_in_ci
     @skip_if_low_memory
     @pytest.mark.asyncio
@@ -455,9 +391,8 @@ class TestVespaBackendIngestion:
         assert src1.endswith(v1.name), f"{v1.stem} carries wrong source_url {src1!r}"
 
     @pytest.mark.local_only
-    @pytest.mark.requires_colqwen
+    @pytest.mark.requires_inference("vllm_colpali")
     @skip_heavy_models_in_ci
-    @requires_vllm_colpali
     @pytest.mark.asyncio
     async def test_colqwen_vespa_ingestion(
         self, vespa_backend, vespa_test_videos, tmp_path
@@ -607,20 +542,17 @@ class TestComprehensiveIngestion:
 
     @pytest.fixture
     def all_test_videos(self):
-        """Get all available test videos."""
-        test_dir = Path("data/testset/evaluation/sample_videos")
-        if test_dir.exists():
-            return list(test_dir.glob("*.mp4"))
-        else:
-            pytest.fail(
-                "Test videos not available at data/testset/evaluation/sample_videos"
-            )
+        """Get all committed test videos (present on every checkout)."""
+        test_dir = Path("tests/system/resources/videos")
+        videos = list(test_dir.glob("*.mp4"))
+        if not videos:
+            pytest.fail(f"Test videos not available at {test_dir}")
+        return videos
 
     @pytest.mark.slow
     @pytest.mark.requires_vespa
-    @pytest.mark.requires_videoprism
-    @requires_videoprism_jax
-    @requires_vllm_colpali
+    @pytest.mark.requires_inference("videoprism_jax")
+    @pytest.mark.requires_inference("vllm_colpali")
     @pytest.mark.asyncio
     async def test_multi_profile_ingestion(
         self, ingestion_vespa_backend, all_test_videos, tmp_path
@@ -675,7 +607,7 @@ class TestComprehensiveIngestion:
 
     @pytest.mark.benchmark
     @pytest.mark.requires_vespa
-    @requires_vllm_colpali
+    @pytest.mark.requires_inference("vllm_colpali")
     @pytest.mark.asyncio
     async def test_ingestion_performance(
         self, ingestion_vespa_backend, all_test_videos, tmp_path

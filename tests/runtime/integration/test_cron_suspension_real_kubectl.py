@@ -1,12 +1,12 @@
 """Integration test for the e2e cronworkflow suspend/restore fixture.
 
-Uses real kubectl against the live k3d cluster. Skips if either
-``kubectl`` is unavailable or the Argo CronWorkflow CRD isn't
-installed — same skip pattern as other infrastructure-dependent
-integration tests in this repo (``_openshell_cli_available`` etc).
+Uses real kubectl against a Kubernetes API server the session boots
+itself (``ephemeral_k8s_cluster``), which carries the Argo CronWorkflow
+CRD, so the suspend/restore helpers are exercised against a live API
+without touching a developer's cluster.
 
 The test creates a throwaway CronWorkflow in the cogniverse namespace,
-runs the suspend helper against the live cluster, verifies the live
+runs the suspend helper against the live API, verifies the live
 object's ``spec.suspend`` flipped to ``true``, then runs the restore
 helper and verifies the flag flipped back to ``false``. Real
 kubectl, real CRD, real spec — no subprocess mocks.
@@ -15,7 +15,6 @@ kubectl, real CRD, real spec — no subprocess mocks.
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import uuid
 
@@ -27,25 +26,14 @@ from tests.e2e.conftest import (
 )
 
 NAMESPACE = "cogniverse"
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 
 
-def _kubectl_available() -> bool:
-    if shutil.which("kubectl") is None:
-        return False
-    result = subprocess.run(
-        ["kubectl", "get", "cronworkflows", "-n", NAMESPACE],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
-    return result.returncode == 0
-
-
-skip_if_no_argo = pytest.mark.skipif(
-    not _kubectl_available(),
-    reason="kubectl + Argo CronWorkflow CRD not available",
-)
+@pytest.fixture(autouse=True)
+def _use_test_owned_cluster(ephemeral_k8s_cluster, monkeypatch):
+    """Point kubectl — ours and the suspend/restore helpers' — at the
+    session's own API server, never a developer's cluster."""
+    monkeypatch.setenv("KUBECONFIG", ephemeral_k8s_cluster["kubeconfig"])
 
 
 def _apply_cronworkflow(name: str, suspend: bool) -> None:
@@ -107,7 +95,7 @@ def _delete_cronworkflow(name: str) -> None:
 
 
 @pytest.fixture
-def fresh_cronworkflow():
+def fresh_cronworkflow(_use_test_owned_cluster):
     """Create + tear down a uniquely-named test CronWorkflow."""
     name = f"cv-integration-cron-{uuid.uuid4().hex[:10]}"
     created: list[str] = []
@@ -117,7 +105,6 @@ def fresh_cronworkflow():
         _delete_cronworkflow(n)
 
 
-@skip_if_no_argo
 class TestSuspendRestoreAgainstLiveCluster:
     def test_unsuspended_cron_is_flipped_to_suspended_then_restored(
         self, fresh_cronworkflow

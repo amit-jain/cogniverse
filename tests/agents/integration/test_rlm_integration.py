@@ -25,16 +25,20 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def search_agent_with_vespa_rlm(vespa_with_schema):
+def search_agent_with_vespa_rlm(vespa_with_schema, tomoro_inference_url):
     """
     SearchAgent configured with RLM support and real Vespa backend.
 
     Uses vespa_with_schema fixture for Vespa container lifecycle management.
+    The visual profiles bind ``inference_services.embedding='vllm_colpali'``
+    (Tomoro is remote-only), so the sidecar URL must land on this fixture's
+    SystemConfig before SearchAgent builds its query encoder.
     """
     from pathlib import Path
 
     from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from tests.agents.integration.conftest import inject_tomoro_url
 
     # Get Vespa connection info from fixture
     vespa_http_port = vespa_with_schema["http_port"]
@@ -44,6 +48,7 @@ def search_agent_with_vespa_rlm(vespa_with_schema):
 
     # Use config manager from VespaTestManager (has correct ports)
     config_manager = vespa_with_schema["manager"].config_manager
+    inject_tomoro_url(config_manager, tomoro_inference_url)
 
     # Create schema loader pointing to test schemas
     schema_loader = FilesystemSchemaLoader(

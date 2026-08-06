@@ -24,6 +24,7 @@ class InferenceServiceSpec:
     model_revision: str
     output_dimension: int | None
     gpu_candidates: tuple[str, ...]
+    source_revision: str | None = None
     auth: EndpointAuth = EndpointAuth.BEARER
     modal_object: str = "Inference"
     health_path: str = "/health"
@@ -56,6 +57,7 @@ def _spec(
     model_revision: str,
     output_dimension: int | None,
     *gpu_candidates: str,
+    source_revision: str | None = None,
 ) -> InferenceServiceSpec:
     return InferenceServiceSpec(
         name=name,
@@ -63,6 +65,7 @@ def _spec(
         model_revision=model_revision,
         output_dimension=output_dimension,
         gpu_candidates=gpu_candidates,
+        source_revision=source_revision,
     )
 
 
@@ -89,7 +92,7 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "code_colbert_pylate",
             "lightonai/LateOn-Code-edge",
             "07ef20f406c86badca122464808f4cac2f6e4b25",
-            128,
+            48,
             "T4",
             "L4",
         ),
@@ -103,8 +106,8 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
         ),
         "gliner": _spec(
             "gliner",
-            "urchade/gliner_medium-v2.1",
-            "40ec419335d09393f298636f471328b722c6da9e",
+            "urchade/gliner_large-v2.1",
+            "abd49a1f1ebc12af1be84d06f6848221cf96dcad",
             None,
             "T4",
             "L4",
@@ -112,14 +115,15 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
         "videoprism_jax": _spec(
             "videoprism_jax",
             "videoprism_public_v1_base_hf",
-            "d481d91b9bf8c9d330d1e526e511a359c799bbe1",
+            "be719a406d563b66f0ac969e7c94bab8e997c81a",
             768,
             "T4",
             "L4",
+            source_revision="d481d91b9bf8c9d330d1e526e511a359c799bbe1",
         ),
         "vllm_llm_student": _spec(
             "vllm_llm_student",
-            "google/gemma-4-E4B-it",
+            "google/gemma-4-e4b-it",
             "ee0ef6023621cff504d758262d4e04895a5af4a2",
             None,
             "L4",
@@ -145,7 +149,7 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
         "face_embed": _spec(
             "face_embed",
             "buffalo_l",
-            "insightface==0.7.3:buffalo_l",
+            "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
             512,
             "T4",
             "L4",

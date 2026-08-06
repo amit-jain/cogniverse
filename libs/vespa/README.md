@@ -343,11 +343,12 @@ export TENANT_ID="acme_corp"
 
 ## Schema Format
 
-JSON schema files follow this structure:
+The production ColPali schema uses
+`TomoroAI/tomoro-colqwen3-embed-4b` with 320-dimensional patch embeddings:
 
 ```json
 {
-  "name": "video_colpali_mv_frame",
+  "name": "video_colpali_smol500_mv_frame",
   "document": {
     "fields": [
       {
@@ -357,7 +358,7 @@ JSON schema files follow this structure:
       },
       {
         "name": "embedding",
-        "type": "tensor<float>(x[1024])",
+        "type": "tensor<bfloat16>(patch{}, v[320])",
         "indexing": "summary | attribute | index"
       },
       {
@@ -384,7 +385,7 @@ The package automatically handles tenant isolation:
 
 | Base Schema | Tenant ID | Actual Schema Name |
 |-------------|-----------|-------------------|
-| `video_colpali_mv_frame` | `acme_corp` | `video_colpali_mv_frame_acme_corp` |
+| `video_colpali_smol500_mv_frame` | `acme_corp` | `video_colpali_smol500_mv_frame_acme_corp` |
 | `video_videoprism_base` | `globex_inc` | `video_videoprism_base_globex_inc` |
 | `agent_memories` | `default` | `agent_memories_default` |
 
@@ -442,7 +443,7 @@ print(f"Schema exists: {exists}")
 
 **4. Document Feed Fails**
 - Check document format matches schema fields
-- Ensure tensor dimensions match schema definition (128 for ColPali patch, 768 for base, 1024 for large)
+- Ensure tensor dimensions match the schema definition: production ColPali uses `TomoroAI/tomoro-colqwen3-embed-4b` with 320-dimensional patches; VideoPrism uses 768 dimensions for base and 1024 for large
 
 ---
 

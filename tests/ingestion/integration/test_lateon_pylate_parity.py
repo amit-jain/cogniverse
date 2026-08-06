@@ -1,26 +1,31 @@
-"""Real vLLM LateOn parity — vLLM-served per-token embeddings vs pylate oracle.
+"""Real PyLate-service LateOn parity — served per-token embeddings vs the
+in-process pylate oracle.
 
-Spawns ``vllm/vllm-openai-cpu`` serving ``lightonai/LateOn`` (forced to the
-``ColBERTModernBertModel`` architecture via ``--hf-overrides``) and drives text
-through ``RemoteColBERTLoader``. Asserts:
+Resolves the ``colbert_pylate`` service through the shared inference
+fixture (locally: the ``deploy/pylate`` image built and run by the
+fixture) and drives text through ``RemoteColBERTLoader``. Asserts:
 
-- the per-token matrix is 2-D, 128-dim (LateOn stays 128), L2-normalized, and
-- PARITY against the in-process ``pylate.models.ColBERT`` oracle: cosine ≥ 0.99
-  per token for both ``is_query=True`` and ``is_query=False``.
+- the per-token matrix is 2-D, 128-dim (LateOn stays 128), L2-normalized,
+- PARITY against the in-process ``pylate.models.ColBERT`` oracle at the
+  same pinned revision: cosine ≥ 0.99 per token for both ``is_query=True``
+  and ``is_query=False``, and
+- MaxSim ranks a relevant document above a distractor through the remote
+  path.
 
-The vLLM wrapper reproduces pylate's full per-token contract client-side: it
-prepends ``[Q] ``/``[D] `` (each a single vocabulary token, identical to pylate's
-marker insertion) and, for documents, drops the same punctuation tokens pylate
-removes via ``ColBERT.skiplist_mask``. The pylate oracle applies the same marker
-and skiplist, so remote and oracle stay like-for-like under both ``is_query``
-flags. A drift in the served projection head, the client prefix, the document
-skiplist, or the /pooling response parsing breaks the cosine check.
+Both sides run pylate's canonical encode — the service inside the
+container, the oracle in-process — so any drift in the served revision,
+the ``/pooling`` request contract, or the response parsing breaks the
+cosine check. The stock vLLM ``/pooling`` route cannot pass this test:
+its request schema carries no attention mask, so PyLate's query expansion
+(mask padding excluded from attention) is unreproducible there and
+query-side per-token cosine tops out near 0.88.
 """
 
 from __future__ import annotations
 
 import logging
 import shutil
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -32,6 +37,7 @@ pytestmark = [
     pytest.mark.requires_models,
     pytest.mark.slow,
     pytest.mark.integration,
+    pytest.mark.requires_inference("colbert_pylate"),
     pytest.mark.skipif(
         shutil.which("docker") is None,
         reason="docker CLI not installed",
@@ -39,35 +45,38 @@ pytestmark = [
 ]
 
 LATEON_MODEL = "lightonai/LateOn"
+LATEON_REVISION = "c01907b70557ee5c7753680d4819a5cce1674b83"
 EMBED_DIM = 128
 
 
 @pytest.fixture(scope="module")
-def lateon_url(vllm_sidecar):
-    return vllm_sidecar.spawn(
-        model=LATEON_MODEL,
-        extra_args=[
-            "--hf-overrides",
-            '{"architectures": ["ColBERTModernBertModel"]}',
-        ],
-    )
-
-
-@pytest.fixture(scope="module")
-def remote_lateon(lateon_url):
+def remote_lateon(resolved_inference_endpoints):
+    endpoint = resolved_inference_endpoints["colbert_pylate"]
     loader = RemoteColBERTLoader(
         model_name=LATEON_MODEL,
-        config={"remote_inference_url": lateon_url},
+        config={"remote_inference_url": endpoint.base_url},
         logger=logging.getLogger("test"),
+        _resolved_headers=dict(endpoint.headers),
     )
     model, _ = loader.load_model()
-    return model
+    yield model
+    model._close()
 
 
 @pytest.fixture(scope="module")
 def pylate_oracle():
+    """The in-process reference at the exact served revision, loaded from
+    the writable test-owned cache the service containers also use."""
     pylate_models = pytest.importorskip("pylate.models")
-    return pylate_models.ColBERT(LATEON_MODEL, device="cpu")
+
+    from tests.utils.vllm_sidecar import writable_test_hf_cache
+
+    return pylate_models.ColBERT(
+        LATEON_MODEL,
+        device="cpu",
+        revision=LATEON_REVISION,
+        cache_folder=str(Path(writable_test_hf_cache()) / "hub"),
+    )
 
 
 def _l2(matrix: np.ndarray) -> np.ndarray:
@@ -121,9 +130,9 @@ def test_remote_lateon_matches_pylate_oracle(remote_lateon, pylate_oracle, is_qu
 
     assert remote_tokens.shape == oracle_tokens.shape, (
         f"is_query={is_query}: remote shape {remote_tokens.shape} must match "
-        f"pylate oracle shape {oracle_tokens.shape} for like-for-like token "
-        f"cosine comparison (both apply the same [Q]/[D] marker, and for "
-        f"documents both drop the punctuation skiplist tokens)"
+        f"pylate oracle shape {oracle_tokens.shape} — both sides run pylate's "
+        f"canonical encode (query expansion, document skiplist), so any shape "
+        f"drift means the service is not serving the pinned PyLate contract"
     )
     assert remote_tokens.shape[1] == EMBED_DIM
 
@@ -141,10 +150,9 @@ def _maxsim(query_tokens: np.ndarray, doc_tokens: np.ndarray) -> float:
 
 
 def test_remote_lateon_maxsim_ranks_relevant_above_distractor(remote_lateon):
-    """Encode query + relevant/distractor docs ALL via the vLLM path and assert
-    the relevant doc out-scores the distractor under MaxSim. Proves the
-    document-side skiplist masking preserves retrieval quality (the punctuation
-    rows pylate drops carry no signal), not just pylate shape parity.
+    """Encode query + relevant/distractor docs ALL via the remote path and
+    assert the relevant doc out-scores the distractor under MaxSim. Proves
+    the served encode preserves retrieval quality, not just shape parity.
     """
     query = "how does Vespa store token embeddings"
     relevant = "Vespa stores token embeddings as tensor<bfloat16>(token{}, v[128])."
@@ -162,5 +170,5 @@ def test_remote_lateon_maxsim_ranks_relevant_above_distractor(remote_lateon):
     dist_score = _maxsim(q, dist)
     assert rel_score > dist_score, (
         f"relevant doc MaxSim {rel_score:.4f} must exceed distractor "
-        f"{dist_score:.4f} via the vLLM path"
+        f"{dist_score:.4f} via the PyLate service path"
     )

@@ -316,7 +316,7 @@ Profiles are defined in `config.json`:
     "profiles": {
       "video_colpali_smol500_mv_frame": {
         "type": "video",
-        "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings",
+        "description": "Frame-based ColPali using TomoroAI/tomoro-colqwen3-embed-4b for 320-dimensional per-patch visual embeddings",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "embedding_type": "multi_vector",
         "schema_config": {
@@ -334,7 +334,7 @@ Profiles are defined in `config.json`:
       },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
-        "description": "ColQwen2 visual document retrieval served by the cogniverse/colpali sidecar. 128-dim per-patch multi-vector embeddings.",
+        "description": "ColQwen3 visual retrieval using TomoroAI/tomoro-colqwen3-embed-4b for 320-dimensional per-patch embeddings",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "embedding_type": "multi_vector",
         "schema_config": {

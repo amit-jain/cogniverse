@@ -66,10 +66,11 @@ class GraphManager:
             tenant_id: Tenant identifier.
             schema_name: Tenant-specific schema name
                          (e.g. "knowledge_graph_acme_production").
-            colbert_endpoint_url: URL of the colbert_pylate sidecar that
-                serves /pooling for ColBERT multi-vector encoding.
-            colbert_model: HF model id the sidecar serves; passed
-                through in /pooling requests for diagnostic logging.
+            colbert_endpoint_url: URL of the colbert_pylate PyLate service
+                that serves /pooling for ColBERT multi-vector encoding.
+            colbert_model: HF model id the service serves; sent in every
+                /pooling request and validated against the service's
+                pinned model.
         """
         if not colbert_endpoint_url:
             raise ValueError(

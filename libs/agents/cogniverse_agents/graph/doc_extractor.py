@@ -219,9 +219,10 @@ class DocExtractor:
     def _get_gliner(self):
         """Lazily load the GLiNER model, caching the instance.
 
-        Prefers the deployed ``deploy/gliner`` sidecar URL when one is
-        registered in ``SystemConfig.inference_service_urls`` so the
-        runtime image doesn't need the heavy local gliner+torch stack.
+        Prefers the deployed GLiNER inference service URL when one is registered
+        in ``SystemConfig.inference_service_urls`` so the runtime image doesn't
+        need the heavy local gliner+torch stack. The canonical server is
+        ``cogniverse_cli.modal_inference.servers.gliner``.
         Falls back to a local-load (which usually fails in the slim
         production image) only when the env doesn't expose the URL.
         """
@@ -243,7 +244,7 @@ class DocExtractor:
 
     @staticmethod
     def _discover_gliner_url():
-        """Return the GLiNER sidecar URL from SystemConfig or env."""
+        """Return the GLiNER inference service URL from SystemConfig or env."""
         import os as _os
 
         try:
@@ -434,7 +435,7 @@ class DocExtractor:
                 gliner_chunks += 1
                 try:
                     # 0.3 chosen empirically against the production
-                    # gliner_large-v2.1 sidecar: at 0.5 the model
+                    # gliner_large-v2.1 inference service: at 0.5 the model
                     # silently drops named entities scoring well above
                     # the threshold (observed against a real video
                     # transcript — 'Bear Grylls' at 0.917 was returned
@@ -506,7 +507,11 @@ class DocExtractor:
         # failed — would otherwise return a knowledge graph built entirely from
         # regex-fallback noise while the ingest reports success. Fail loud so the
         # outage surfaces instead of silently degrading KG quality.
-        if gliner is not None and gliner_chunks > 0 and gliner_failures == gliner_chunks:
+        if (
+            gliner is not None
+            and gliner_chunks > 0
+            and gliner_failures == gliner_chunks
+        ):
             raise RuntimeError(
                 f"GLiNER entity extraction failed on all {gliner_chunks} "
                 f"chunk(s) (sidecar outage); refusing to return a regex-only "

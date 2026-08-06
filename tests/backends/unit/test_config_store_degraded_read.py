@@ -8,7 +8,7 @@ A genuinely-absent config (empty hits, no errors, coverage not degraded) must
 still return None.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -69,8 +69,13 @@ def _clean_absent_response():
     )
 
 
+_STORED_AT = datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc)
+
+
 def _healthy_hit_response():
-    now = datetime(2026, 7, 20, 12, 0, 0).isoformat()
+    # set_config writes ``datetime.now(timezone.utc).isoformat()``, so a
+    # stored row always carries the UTC offset.
+    now = _STORED_AT.isoformat()
     return _FakeQueryResponse(
         {
             "root": {
@@ -118,6 +123,8 @@ def test_get_config_returns_entry_on_healthy_hit():
     assert entry.config_key == "poll_state"
     assert entry.version == 7
     assert entry.config_value == {"last_run": 42}
+    assert entry.created_at == _STORED_AT
+    assert entry.updated_at == _STORED_AT
 
 
 def test_get_config_history_raises_on_soft_timeout():

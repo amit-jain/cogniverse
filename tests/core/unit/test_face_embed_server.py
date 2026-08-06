@@ -1,10 +1,10 @@
 """Contract test for the face-embed FastAPI sidecar.
 
-Loads ``cogniverse_runtime/sidecars/face_embed.py`` with InsightFace's
-``FaceAnalysis`` class mocked so the test doesn't pull the 210 MiB
-Buffalo_L weights. Verifies:
+Imports ``cogniverse_cli.modal_inference.servers.face`` with InsightFace's
+``FaceAnalysis`` class mocked while preserving the pinned Buffalo_L artifact
+contract. Verifies:
 
-* ``GET /health`` returns ``{"status": "ok"}``.
+* ``GET /health`` identifies the exact model and artifact revision.
 * ``POST /embed`` with a valid base64-encoded image returns a response
   whose face count, bbox shape, embedding dimensionality, and detection
   scores match what the cogniverse face-cluster consumer expects.
@@ -15,7 +15,6 @@ Buffalo_L weights. Verifies:
 from __future__ import annotations
 
 import base64
-import importlib.util
 import io
 import sys
 import types
@@ -23,12 +22,22 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from cogniverse_cli.modal_inference.servers import face as face_embed_server
 from fastapi.testclient import TestClient
 from PIL import Image
 
-SERVER_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "libs/runtime/cogniverse_runtime/sidecars/face_embed.py"
+DOCKERFILE_PATH = Path(__file__).resolve().parents[3] / "deploy/face_embed/Dockerfile"
+FACE_MODEL_NAME = "buffalo_l"
+FACE_MODEL_REVISION = "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f"
+FACE_MODEL_URL = (
+    "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+)
+FACE_MODEL_FILES = (
+    "1k3d68.onnx",
+    "2d106det.onnx",
+    "det_10g.onnx",
+    "genderage.onnx",
+    "w600k_r50.onnx",
 )
 
 
@@ -46,8 +55,15 @@ class _FakeFace:
 class _FakeFaceAnalysis:
     """Stand-in for ``insightface.app.FaceAnalysis`` used only in tests."""
 
-    def __init__(self, name: str = "buffalo_l") -> None:
+    def __init__(
+        self,
+        name: str = FACE_MODEL_NAME,
+        root: str | None = None,
+        providers: list[str] | None = None,
+    ) -> None:
         self.name = name
+        self.root = root
+        self.providers = providers
 
     def prepare(self, ctx_id: int = -1, det_size=(640, 640)) -> None:  # noqa: ARG002
         return None
@@ -71,7 +87,17 @@ class _FakeFaceAnalysis:
 
 
 @pytest.fixture
-def server_module(monkeypatch):
+def face_model_root(tmp_path):
+    root = tmp_path / "insightface"
+    model_dir = root / "models" / FACE_MODEL_NAME
+    model_dir.mkdir(parents=True)
+    for filename in FACE_MODEL_FILES:
+        (model_dir / filename).write_bytes(b"test model artifact")
+    return root
+
+
+@pytest.fixture
+def server_module(monkeypatch, face_model_root):
     """Import ``server.py`` with insightface mocked. Return the module."""
     fake_insightface = types.ModuleType("insightface")
     fake_app_module = types.ModuleType("insightface.app")
@@ -80,13 +106,10 @@ def server_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "insightface", fake_insightface)
     monkeypatch.setitem(sys.modules, "insightface.app", fake_app_module)
 
-    spec = importlib.util.spec_from_file_location(
-        "face_embed_server_under_test", str(SERVER_PATH)
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = face_embed_server
     # Reset the module-level singleton between tests.
     mod._MODEL = None
+    mod.app = mod.build_app(mod.FaceEmbedConfig(model_root=str(face_model_root)))
     return mod
 
 
@@ -107,10 +130,35 @@ def sample_png_b64() -> str:
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestHealth:
-    def test_health_returns_ok(self, client):
+    def test_health_returns_ready(self, client):
         resp = client.get("/health")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        assert resp.json() == {
+            "status": "ready",
+            "model": FACE_MODEL_NAME,
+            "model_revision": FACE_MODEL_REVISION,
+        }
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestImageArtifact:
+    def test_image_pins_official_model_artifact_and_exact_layout(self):
+        dockerfile = DOCKERFILE_PATH.read_text()
+
+        assert f"ARG FACE_MODEL_URL={FACE_MODEL_URL}" in dockerfile
+        assert f"ARG FACE_MODEL_SHA256={FACE_MODEL_REVISION}" in dockerfile
+        assert "ENV FACE_EMBED_MODEL_ROOT=/opt/insightface" in dockerfile
+        assert (
+            "python -m zipfile -e /tmp/buffalo_l.zip "
+            '"${FACE_EMBED_MODEL_ROOT}/models/buffalo_l"'
+        ) in dockerfile
+        for filename in FACE_MODEL_FILES:
+            assert (
+                f'test -f "${{FACE_EMBED_MODEL_ROOT}}/models/buffalo_l/{filename}"'
+                in dockerfile
+            )
+        assert "INSIGHTFACE_HOME" not in dockerfile
 
 
 @pytest.mark.unit
@@ -144,12 +192,16 @@ class TestEmbedResponseShape:
         assert body["faces"][1]["bbox"] == [100, 100, 190, 190]
         assert body["faces"][1]["det_score"] == pytest.approx(0.812, abs=1e-6)
 
-    def test_model_loaded_lazily(self, server_module, client, sample_png_b64):
+    def test_model_loaded_lazily(
+        self, server_module, client, sample_png_b64, face_model_root
+    ):
         # Pre-request: model not initialised.
         assert server_module._MODEL is None
         client.post("/embed", json={"image_b64": sample_png_b64})
         # Post-request: model loaded and reused.
         assert server_module._MODEL is not None
+        assert server_module._MODEL.name == FACE_MODEL_NAME
+        assert server_module._MODEL.root == str(face_model_root)
         first_instance = server_module._MODEL
         client.post("/embed", json={"image_b64": sample_png_b64})
         assert server_module._MODEL is first_instance
@@ -254,21 +306,31 @@ class TestImageUrlBranch:
         assert len(body["faces"][1]["vec"]) == 512
 
     @pytest.mark.unit
-    def test_url_fetch_honours_url_timeout_config(self, server_module, png_server):
+    def test_url_fetch_honours_url_timeout_config(
+        self, server_module, png_server, face_model_root
+    ):
         """A server slower than url_timeout_s is a 400 fetch failure; the
         same URL succeeds when the configured timeout exceeds the delay —
         the config value, not a hardcoded timeout, governs the fetch."""
         slow_url = f"{png_server}/slow.png"
 
         tight = TestClient(
-            server_module.build_app(server_module.FaceEmbedConfig(url_timeout_s=0.3))
+            server_module.build_app(
+                server_module.FaceEmbedConfig(
+                    model_root=str(face_model_root), url_timeout_s=0.3
+                )
+            )
         )
         resp = tight.post("/embed", json={"image_url": slow_url})
         assert resp.status_code == 400
         assert resp.json()["detail"].startswith("image_url fetch failed")
 
         generous = TestClient(
-            server_module.build_app(server_module.FaceEmbedConfig(url_timeout_s=5.0))
+            server_module.build_app(
+                server_module.FaceEmbedConfig(
+                    model_root=str(face_model_root), url_timeout_s=5.0
+                )
+            )
         )
         resp_ok = generous.post("/embed", json={"image_url": slow_url})
         assert resp_ok.status_code == 200, resp_ok.text

@@ -28,6 +28,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 from cogniverse_runtime.ingestion_worker import queue
 from cogniverse_runtime.ingestion_worker import status_api as ingest_status
 from cogniverse_runtime.ingestion_worker.queue import IngestJob
@@ -155,6 +156,22 @@ async def _failed_envelope_processor(job: IngestJob) -> dict:
         "error": "embedding model OOM",
         "error_type": "ContentProcessingError",
         "results": {},
+    }
+
+
+async def _explicit_embedding_error_processor(job: IngestJob) -> dict:
+    processing_results = {
+        "embeddings": {"error": "Embedding generator not initialized"}
+    }
+    status, error, errors = VideoIngestionPipeline._embedding_run_status(
+        processing_results
+    )
+    return {
+        "video_id": job.ingest_id,
+        "status": status,
+        "error": error,
+        "errors": errors,
+        "results": processing_results,
     }
 
 
@@ -339,6 +356,53 @@ class TestEnqueueAndWorker:
                 tenant_id="acme",
             )
             assert second.existing is False
+        finally:
+            stop.set()
+            await asyncio.wait_for(worker_task, timeout=30)
+
+    @pytest.mark.asyncio
+    async def test_embedding_error_reaches_exact_failed_terminal_event(
+        self, env_redis, redis_container
+    ):
+        worker_task, stop = await _spawn_worker(
+            redis_container, _explicit_embedding_error_processor
+        )
+        try:
+            submission = await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/missing-generator.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+                wait=True,
+                wait_timeout=10,
+            )
+
+            assert submission.state == "failed"
+            assert submission.final_event == {
+                "state": "failed",
+                "ingest_id": submission.ingest_id,
+                "error": (
+                    "embedding stage failed: Embedding generator not initialized"
+                ),
+                "error_type": "IngestPipelineError",
+            }
+
+            events = [
+                event
+                for _, event in await queue.read_status_since(
+                    env_redis, submission.ingest_id
+                )
+            ]
+            assert [event["state"] for event in events] == [
+                "queued",
+                "running",
+                "failed",
+            ]
+            assert await env_redis.get(f"ingest:done:{submission.sha}") is None
+            assert await env_redis.get(f"ingest:by_sha:{submission.sha}") is None
+            assert await queue.get_active(env_redis, "acme") == 0
+            pending = await env_redis.xpending(queue.QUEUE_STREAM, "ingestors")
+            assert pending["pending"] == 0
         finally:
             stop.set()
             await asyncio.wait_for(worker_task, timeout=30)

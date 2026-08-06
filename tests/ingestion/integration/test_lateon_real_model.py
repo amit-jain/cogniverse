@@ -12,16 +12,31 @@ run. Run explicitly via: ``uv run pytest -m requires_models -v``.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.requires_models, pytest.mark.slow, pytest.mark.integration]
 
+LATEON_REVISION = "c01907b70557ee5c7753680d4819a5cce1674b83"
+
 
 @pytest.fixture(scope="module")
 def lateon_model():
+    """The pinned LateOn revision loaded from the writable test-owned cache
+    (the personal ~/.cache/huggingface can hold root-owned entries written
+    by earlier containers, which break host-side loads)."""
     pylate_models = pytest.importorskip("pylate.models")
-    return pylate_models.ColBERT("lightonai/LateOn", device="cpu")
+
+    from tests.utils.vllm_sidecar import writable_test_hf_cache
+
+    return pylate_models.ColBERT(
+        "lightonai/LateOn",
+        device="cpu",
+        revision=LATEON_REVISION,
+        cache_folder=str(Path(writable_test_hf_cache()) / "hub"),
+    )
 
 
 def test_lateon_encodes_document_to_128_dim_per_token(lateon_model):

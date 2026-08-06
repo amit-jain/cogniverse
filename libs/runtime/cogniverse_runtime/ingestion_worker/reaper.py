@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from functools import partial
 
 import redis.asyncio as aioredis
 
@@ -133,7 +134,7 @@ async def run_reaper_once(
     config: WorkerConfig,
     *,
     min_idle_ms: int,
-    processor=_default_processor,
+    processor=None,
     count: int = 1,
 ) -> int:
     """One full PEL sweep. Returns the number of entries recovered
@@ -146,6 +147,8 @@ async def run_reaper_once(
     reaper reclaims the tail entry and both re-drive it concurrently —
     duplicate ingestion and a double-decremented tenant counter.
     """
+    if processor is None:
+        processor = partial(_default_processor, config=config)
     recovered = 0
     cursor = "0-0"
     while True:
@@ -194,7 +197,7 @@ async def reaper_loop(
     config: WorkerConfig,
     stop: asyncio.Event,
     *,
-    processor=_default_processor,
+    processor,
 ) -> None:
     """Sweep every ``config.reaper_interval_s`` until ``stop`` is set.
 

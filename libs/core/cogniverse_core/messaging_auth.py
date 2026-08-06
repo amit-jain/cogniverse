@@ -75,14 +75,6 @@ class InviteTokenManager:
 
         if value is None:
             return None
-        if isinstance(value, str):
-            import json
-
-            try:
-                value = json.loads(value)
-            except ValueError:
-                logger.error(f"Unparseable invite token value: {token[:8]}...")
-                return None
 
         if value.get("used"):
             logger.warning(f"Token already used: {token[:8]}...")

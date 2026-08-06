@@ -572,9 +572,8 @@ async def _optimize_agent(
     module = dspy.ChainOfThought(signature)
 
     try:
-        # The compile must run with the LM configured — initialize_language_model
-        # only sets optimizer.lm, it does not configure DSPy's global LM (unlike
-        # the sibling modes which call dspy.configure). Scope it to the compile.
+        # initialize_language_model only sets optimizer.lm, so the compile gets
+        # it task-locally — the same binding every other mode uses.
         with dspy.context(lm=optimizer.lm):
             compiled = teleprompter.compile(module, trainset=train)
 
@@ -1783,7 +1782,7 @@ async def run_simba_optimization(
     llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
-    dspy.configure(lm=create_dspy_lm(llm_endpoint))
+    optimization_lm = create_dspy_lm(llm_endpoint)
 
     module = QueryEnhancementModule()
 
@@ -1793,7 +1792,11 @@ async def run_simba_optimization(
     )
 
     try:
-        compiled = teleprompter.compile(module, trainset=trainset)
+        # DSPy's ambient binding belongs to whichever async task configured it
+        # first and raises for every other task, so the student LM is bound
+        # task-locally around the compile that reads it.
+        with dspy.context(lm=optimization_lm):
+            compiled = teleprompter.compile(module, trainset=trainset)
 
         # Save compiled module via ArtifactManager
         import json as _json
@@ -2444,7 +2447,7 @@ async def run_profile_optimization(
     llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
-    dspy.configure(lm=create_dspy_lm(llm_endpoint))
+    optimization_lm = create_dspy_lm(llm_endpoint)
 
     module = ProfileSelectionModule()
 
@@ -2454,7 +2457,11 @@ async def run_profile_optimization(
     )
 
     try:
-        compiled = teleprompter.compile(module, trainset=trainset)
+        # DSPy's ambient binding belongs to whichever async task configured it
+        # first and raises for every other task, so the student LM is bound
+        # task-locally around the compile that reads it.
+        with dspy.context(lm=optimization_lm):
+            compiled = teleprompter.compile(module, trainset=trainset)
 
         import json as _json
 
@@ -2565,7 +2572,7 @@ async def run_entity_extraction_optimization(
     llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
-    dspy.configure(lm=create_dspy_lm(llm_endpoint))
+    optimization_lm = create_dspy_lm(llm_endpoint)
 
     module = EntityExtractionModule()
 
@@ -2575,7 +2582,11 @@ async def run_entity_extraction_optimization(
     )
 
     try:
-        compiled = teleprompter.compile(module, trainset=trainset)
+        # DSPy's ambient binding belongs to whichever async task configured it
+        # first and raises for every other task, so the student LM is bound
+        # task-locally around the compile that reads it.
+        with dspy.context(lm=optimization_lm):
+            compiled = teleprompter.compile(module, trainset=trainset)
 
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
@@ -2631,20 +2642,18 @@ async def run_synthetic_generation(
     telemetry_manager = get_telemetry_manager()
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-    # Synthetic generators that wrap DSPy modules (RoutingGenerator)
-    # need a configured LM. The other optimizer modes (simba, profile,
-    # entity-extraction) call ``dspy.configure(lm=create_dspy_lm(...))``
-    # at the synchronous top level; this function runs in an asyncio task
-    # so ``dspy.configure`` would raise (it can only be called from the
-    # same async task that first called it). Use a process-wide thread-
-    # local equivalent: set ``dspy.settings.lm`` directly. DSPy modules
-    # read this attribute when no explicit ``lm=`` is passed.
+    # Synthetic generators that wrap DSPy modules (RoutingGenerator) need a
+    # bound LM. This runs inside an asyncio task, where DSPy only lets the
+    # task that first configured the ambient binding write it again — both
+    # ``dspy.configure`` and ``dspy.settings.lm = ...`` raise for anyone else.
+    # ``dspy.context`` is task-local and always available, so the binding is
+    # scoped to the generate call.
     import dspy
 
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
 
     llm_endpoint = config.get_llm_config().primary
-    dspy.settings.lm = create_dspy_lm(llm_endpoint)
+    synthetic_lm = create_dspy_lm(llm_endpoint)
 
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
@@ -2727,7 +2736,8 @@ async def run_synthetic_generation(
                 count=count,
                 tenant_id=tenant_id,
             )
-            response = await service.generate(request)
+            with dspy.context(lm=synthetic_lm):
+                response = await service.generate(request)
 
             # Save as demonstrations with approval_status=pending
             demos = []

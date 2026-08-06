@@ -20,16 +20,89 @@ import time
 import httpx
 import pytest
 
-from tests.e2e.conftest import (
-    TENANT_ID,
-    skip_if_no_runtime,
-)
+from tests.e2e.conftest import TENANT_ID
 
 pytestmark = pytest.mark.slow
 
 KUBECTL_CONTEXT = "k3d-cogniverse"
 NAMESPACE = "cogniverse"
 RUNTIME = "http://localhost:33000"
+
+
+def _run_stack_command(
+    command: list[str], *, timeout: int
+) -> subprocess.CompletedProcess:
+    command_text = " ".join(command)
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        pytest.fail(
+            f"kubectl executable unavailable after E2E stack setup; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; error={exc}",
+            pytrace=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"Argo readiness command timed out after E2E stack setup; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; "
+            f"timeout={exc.timeout}s; stdout={exc.stdout!r}; stderr={exc.stderr!r}",
+            pytrace=False,
+        )
+    if result.returncode != 0:
+        pytest.fail(
+            f"Argo readiness command failed after E2E stack setup; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; "
+            f"returncode={result.returncode}; stdout={result.stdout!r}; "
+            f"stderr={result.stderr!r}",
+            pytrace=False,
+        )
+    return result
+
+
+@pytest.fixture(scope="module", autouse=True)
+def require_argo_workflows() -> None:
+    """Require the Argo CRD and controller after E2E stack initialization."""
+    _run_stack_command(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "get",
+            "crd",
+            "workflows.argoproj.io",
+            "-o",
+            "name",
+        ],
+        timeout=15,
+    )
+    controller_command = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "-n",
+        NAMESPACE,
+        "get",
+        "pods",
+        "-l",
+        "app.kubernetes.io/component=workflow-controller",
+        "--field-selector=status.phase=Running",
+        "-o",
+        "name",
+    ]
+    controller = _run_stack_command(controller_command, timeout=15)
+    if not controller.stdout.strip():
+        pytest.fail(
+            f"Argo workflow controller unavailable after E2E stack setup; "
+            f"command={' '.join(controller_command)!r}; "
+            f"context={KUBECTL_CONTEXT!r}; namespace={NAMESPACE!r}; "
+            f"stdout={controller.stdout!r}; stderr={controller.stderr!r}",
+            pytrace=False,
+        )
 
 
 def _kubectl_get_workflow(name: str) -> dict | None:
@@ -62,38 +135,7 @@ def _kubectl_get_workflow(name: str) -> dict | None:
     return json.loads(result.stdout)
 
 
-def _argo_available() -> bool:
-    """Detect whether the k3d cluster has Argo installed."""
-    result = subprocess.run(
-        [
-            "kubectl",
-            "--context",
-            KUBECTL_CONTEXT,
-            "-n",
-            NAMESPACE,
-            "get",
-            "crd",
-            "workflows.argoproj.io",
-            "--ignore-not-found",
-            "-o",
-            "name",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return result.returncode == 0 and bool(result.stdout.strip())
-
-
-skip_if_no_argo = pytest.mark.skipif(
-    not _argo_available(),
-    reason="Argo CRDs not installed in k3d cluster — run with --set argo.enabled=true",
-)
-
-
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_argo
 class TestManualOptimizationE2E:
     """End-to-end: POST /admin/tenant/{id}/optimize creates a real Argo Workflow."""
 
@@ -261,8 +303,6 @@ def _kubectl_main_container_log(workflow_name: str) -> str:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_argo
 @pytest.mark.slow
 class TestManualOptimizationDeepE2E:
     """Deep integration: submit a Workflow, wait for it to run to completion

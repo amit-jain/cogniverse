@@ -13,31 +13,23 @@ import pytest
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
+# Repo-committed real videos — present on every checkout, unlike the
+# gitignored data/testset downloads.
 _SAMPLE_VIDEO_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "data"
-    / "testset"
-    / "evaluation"
-    / "sample_videos"
+    Path(__file__).resolve().parents[3] / "tests" / "system" / "resources" / "videos"
 )
 
 
-def _sample_video() -> Path | None:
-    """Return path to the smallest available sample video, or None."""
-    if not _SAMPLE_VIDEO_DIR.exists():
-        return None
+def _sample_video() -> Path:
+    """Return the path to the smallest committed sample video."""
     candidates = sorted(_SAMPLE_VIDEO_DIR.glob("*.mp4")) + sorted(
         _SAMPLE_VIDEO_DIR.glob("*.mkv")
     )
-    return candidates[0] if candidates else None
+    assert candidates, f"No committed sample videos found in {_SAMPLE_VIDEO_DIR}"
+    return candidates[0]
 
 
 _video = _sample_video()
-
-skip_if_no_video = pytest.mark.skipif(
-    _video is None,
-    reason=f"No sample videos found in {_SAMPLE_VIDEO_DIR}",
-)
 
 skip_if_no_cv2 = pytest.mark.skipif(
     not __import__("importlib").util.find_spec("cv2"),
@@ -62,7 +54,6 @@ def output_dir(tmp_path):
 
 
 @pytest.mark.integration
-@skip_if_no_video
 @skip_if_no_cv2
 def test_pipeline_processes_test_video(sample_video_path, output_dir):
     """

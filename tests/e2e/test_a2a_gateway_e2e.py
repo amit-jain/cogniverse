@@ -20,7 +20,6 @@ from tests.e2e.conftest import (
     PHOENIX_URL,
     RUNTIME,
     TENANT_ID,
-    skip_if_no_runtime,
 )
 
 PROFILE = "video_colpali_smol500_mv_frame"
@@ -32,7 +31,6 @@ PROFILE = "video_colpali_smol500_mv_frame"
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGatewaySimpleRouting:
     """Gateway classifies simple video queries and dispatches to search_agent."""
 
@@ -232,7 +230,6 @@ class TestGatewaySimpleRouting:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGatewayComplexRouting:
     """Gateway classifies complex/multi-modal queries and dispatches
     to orchestrator for multi-agent coordination."""
@@ -388,7 +385,6 @@ class TestGatewayComplexRouting:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGatewaySearchPipeline:
     """End-to-end: gateway classifies simple query, routes to search_agent,
     and returns actual Vespa hits."""
@@ -496,7 +492,6 @@ class TestGatewaySearchPipeline:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGatewayAgentThin:
     """The gateway agent is a thin decision-maker: GLiNER classification +
     fast-path vs orchestrator routing. POST to gateway_agent/process goes
@@ -659,7 +654,6 @@ class TestGatewayAgentThin:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestEntityExtractionAgent:
     """Entity extraction agent is an internal orchestration agent.
     It is callable via REST through generic A2A dispatch, and also
@@ -795,7 +789,6 @@ class TestEntityExtractionAgent:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestQueryEnhancementAgent:
     """Query enhancement agent — callable via REST and internally by orchestrator."""
 
@@ -935,7 +928,6 @@ class TestQueryEnhancementAgent:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestProfileSelectionAgent:
     """Profile selection agent — callable via REST and internally by orchestrator."""
 
@@ -1007,7 +999,6 @@ class TestProfileSelectionAgent:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTelemetrySpans:
     """After running a query through the gateway, verify telemetry spans
     were emitted to Phoenix."""

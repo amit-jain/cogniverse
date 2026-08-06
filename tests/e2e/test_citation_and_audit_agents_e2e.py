@@ -33,7 +33,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 VESPA_HTTP_PORT = 8080
 VESPA_CONFIG_PORT = 33071
@@ -149,7 +149,6 @@ def _write_with_provenance(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestCitationTracingAgentWalksToPrimary:
     """3-deep chain ROOT←MID←LEAF; trace from LEAF returns the full ordered chain."""
 
@@ -215,7 +214,6 @@ class TestCitationTracingAgentWalksToPrimary:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestCitationTracingAgentTruncatesAtMaxDepth:
     """3-deep chain (LEAF←MID←ROOT) walked at max_depth=1 → truncated + 2 nodes."""
 
@@ -305,7 +303,6 @@ def _write_entity_fact_no_prov(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestAuditExplanationAgentSurfacesTrustAndContradictions:
     """Synthesis derived from two conflicting facts → audit shows both + conflict."""
 

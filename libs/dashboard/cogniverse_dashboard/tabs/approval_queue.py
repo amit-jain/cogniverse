@@ -223,9 +223,7 @@ def _persist_decision(decision: ReviewDecision, item) -> None:
         await storage.record_decision(decision, item)
         if decision.approved:
             item.status = ApprovalStatus.APPROVED
-            await storage.append_to_training_dataset(
-                "approved_synthetic_data", [item]
-            )
+            await storage.append_to_training_dataset("approved_synthetic_data", [item])
 
     asyncio.run(_persist())
 

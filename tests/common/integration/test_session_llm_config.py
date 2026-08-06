@@ -15,15 +15,13 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from tests.fixtures.llm import is_test_lm_available
 from tests.utils.llm_config import _load_config
 
-pytestmark = pytest.mark.integration
-
-skip_if_no_lm = pytest.mark.skipif(
-    not is_test_lm_available(),
-    reason="No test LM provisioned for this session",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.requires_lm,
+    pytest.mark.requires_teacher_model,
+]
 
 
 def _bare_model(model: str) -> str:
@@ -44,7 +42,6 @@ def _served_model_ids(api_base: str) -> set[str]:
     return {row.get("id", "") for row in resp.json().get("data") or []}
 
 
-@skip_if_no_lm
 @pytest.mark.parametrize("role", ["primary", "teacher"])
 def test_session_llm_endpoint_serves_its_configured_model(role):
     llm_config = _load_config().get("llm_config")

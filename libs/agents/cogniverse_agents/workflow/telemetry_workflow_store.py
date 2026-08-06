@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Dict, List, Type, TypeVar
 
 from cogniverse_sdk.interfaces.workflow_store import (
@@ -28,6 +29,8 @@ from cogniverse_sdk.interfaces.workflow_store import (
     WorkflowStore,
     WorkflowTemplate,
 )
+
+logger = logging.getLogger(__name__)
 
 # Demonstration-dataset kinds (executions, agent profiles).
 _EXECUTIONS_KIND = "workflow"
@@ -75,7 +78,8 @@ class TelemetryWorkflowStore(WorkflowStore):
         for demo in demos or []:
             try:
                 out.append(cls.from_dict(json.loads(demo["input"])))
-            except (ValueError, TypeError, KeyError):
+            except (ValueError, TypeError, KeyError) as exc:
+                logger.debug(f"Dropping malformed {cls.__name__} demonstration: {exc}")
                 continue
         return out
 
@@ -179,12 +183,13 @@ class TelemetryWorkflowStore(WorkflowStore):
         blobs = await asyncio.gather(
             *(am.load_blob(_BLOB_KIND, _template_key(tid)) for tid in template_ids)
         )
-        for blob in blobs:
+        for tid, blob in zip(template_ids, blobs):
             if not blob:
                 continue
             try:
                 templates.append(WorkflowTemplate.from_dict(json.loads(blob)))
-            except (ValueError, TypeError, KeyError):
+            except (ValueError, TypeError, KeyError) as exc:
+                logger.debug(f"Dropping malformed template blob {tid!r}: {exc}")
                 continue
         return templates
 

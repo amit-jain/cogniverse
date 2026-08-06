@@ -173,9 +173,10 @@ uv run pytest tests/agents/unit/test_search_agent.py::TestSearchAgent::test_sear
 
 ### Test Markers
 
-Markers are registered in the root `pytest.ini` (`--strict-markers` rejects
-any unregistered marker) plus per-package overrides in `tests/ingestion/pytest.ini`
-and `tests/routing/pytest.ini`. The commonly used ones:
+Static markers are registered in the root `pytest.ini` (`--strict-markers`
+rejects any unregistered marker) plus a per-package override in
+`tests/ingestion/pytest.ini`. Exact inference markers are registered by
+`tests/fixtures/inference.py`. The commonly used ones:
 
 - `unit`, `integration`, `e2e`, `system` — test tier. `unit` and
   `integration` are also applied automatically from the test's location
@@ -198,8 +199,14 @@ and `tests/routing/pytest.ini`. The commonly used ones:
 - `requires_vespa`, `requires_docker`, `requires_gpu`, `requires_ollama`,
   `requires_gliner`, `requires_models`, `requires_cv2`, `requires_ffmpeg` —
   infrastructure/model dependencies
-- `requires_colpali`, `requires_videoprism`, `requires_colqwen`,
-  `requires_whisper` — specific ML model dependencies
+- `requires_inference("vllm_colpali")` — exact ColPali/ColQwen HTTP embedding
+  service; `requires_inference("videoprism_jax")` — exact VideoPrism service.
+  Both also request their `vllm_asr` dependency during collection.
+- `requires_modal_inference("vllm_llm_student")` — explicitly opt an exact
+  service into paid Modal provisioning; ordinary `requires_inference` tests
+  prefer reusable cluster endpoints and local fixture-owned services.
+- `requires_whisper` — Whisper model dependency outside the exact inference
+  fixture
 - `requires_teacher_model` — scales up the vllm-llm-teacher pod (off by default)
 - `requires_optimizer_data` — exercises non-router optimizers end-to-end
   against the live cluster (off by default)
@@ -727,9 +734,9 @@ uv run pytest tests/ \
 
 Coverage is not configured in `pyproject.toml` or the root `pytest.ini` — it's
 specified per invocation via `--cov=<path>` flags, either on the command line
-or in a workflow's test step. Per-package `pytest.ini` files (e.g.
-`tests/ingestion/pytest.ini`, `tests/routing/pytest.ini`) explicitly note this
-in their `addopts` comments ("no coverage here — handled by CI/Make targets").
+or in a workflow's test step. The per-package `tests/ingestion/pytest.ini`
+explicitly notes this in its `addopts` comment ("no coverage here — handled
+by CI/Make targets").
 
 ### Coverage Targets
 

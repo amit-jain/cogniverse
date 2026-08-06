@@ -12,16 +12,102 @@ reducing memory usage and enabling better scaling.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import subprocess
+import threading
+import weakref
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from types import MappingProxyType
+from typing import (
+    Any,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Tuple,
+    runtime_checkable,
+)
 
 import numpy as np
 import requests
 
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
+from cogniverse_foundation.config.inference_auth import inference_headers
+
+
+@runtime_checkable
+class _CacheResource(Protocol):
+    def _close(self) -> None: ...
+
+
+def _close_cached_value(value: Any) -> None:
+    resources = value if isinstance(value, tuple) else (value,)
+    closed: set[int] = set()
+    for resource in resources:
+        identity = id(resource)
+        if identity in closed:
+            continue
+        closed.add(identity)
+        if isinstance(resource, _CacheResource):
+            resource._close()
+
+
+def _store_bounded_cache(
+    cache: OrderedDict,
+    key: Any,
+    value: Any,
+    *,
+    capacity: int,
+    label: str,
+) -> None:
+    displaced = None
+    displaced_key = key
+    restore_as_lru = False
+    if key in cache:
+        displaced = cache.pop(key)
+    elif len(cache) >= capacity:
+        displaced_key, displaced = cache.popitem(last=False)
+        restore_as_lru = True
+
+    if displaced is not None:
+        try:
+            _close_cached_value(displaced)
+        except Exception as exc:
+            cache[displaced_key] = displaced
+            if restore_as_lru:
+                cache.move_to_end(displaced_key, last=False)
+            replacement_error = None
+            try:
+                _close_cached_value(value)
+            except Exception as cleanup_exc:
+                replacement_error = cleanup_exc
+            detail = f"{label} eviction failed to close {displaced_key!r}: {exc}"
+            if replacement_error is not None:
+                detail += f"; replacement cleanup failed: {replacement_error}"
+            raise RuntimeError(detail) from exc
+
+    cache[key] = value
+    cache.move_to_end(key)
+
+
+def _resolved_inference_headers(
+    endpoint_url: str,
+    api_key: Optional[str],
+) -> Mapping[str, str]:
+    configured_headers = inference_headers(endpoint_url)
+    if configured_headers:
+        if api_key is not None:
+            raise ValueError("api_key must not be supplied for a Modal endpoint")
+        return configured_headers
+    if api_key is None:
+        return {}
+    if not api_key or api_key != api_key.strip():
+        raise ValueError("api_key must be a non-empty canonical value")
+    return MappingProxyType({"Authorization": f"Bearer {api_key}"})
 
 
 class ModelLoader(ABC):
@@ -87,6 +173,8 @@ class RemoteInferenceClient:
         endpoint_url: str,
         api_key: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
     ):
         self.endpoint_url = endpoint_url.rstrip("/")
         self.api_key = api_key
@@ -97,8 +185,15 @@ class RemoteInferenceClient:
         # tens of ms, so 30s is a generous ceiling that fails fast under outage.
         self.query_encode_timeout_s: float = 30.0
 
-        if self.api_key:
-            self.session.headers["Authorization"] = f"Bearer {self.api_key}"
+        if _resolved_headers is not None:
+            if api_key is not None:
+                raise ValueError("api_key and _resolved_headers are mutually exclusive")
+            resolved_headers = _resolved_headers
+        else:
+            resolved_headers = _resolved_inference_headers(
+                self.endpoint_url, self.api_key
+            )
+        self.session.headers.update(resolved_headers)
 
         # Per-endpoint breaker: a down inference pod trips it so calls fail fast
         # (CircuitOpenError) instead of burning their retry budget each time.
@@ -119,6 +214,9 @@ class RemoteInferenceClient:
                 ),
             )
         )
+
+    def _close(self) -> None:
+        self.session.close()
 
     def process_images(self, images: list, **kwargs) -> Dict[str, Any]:
         """Send images to the inference endpoint, guarded by the breaker.
@@ -451,6 +549,8 @@ class RemoteColPaliLoader(ModelLoader):
         model_name: str,
         config: Dict[str, Any],
         logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
     ):
         super().__init__(model_name, config, logger)
 
@@ -461,7 +561,14 @@ class RemoteColPaliLoader(ModelLoader):
         if not self.remote_url:
             raise ValueError("remote_inference_url required for remote model loader")
 
-        self.client = RemoteInferenceClient(self.remote_url, self.api_key, self.logger)
+        resolved_headers = _resolved_headers or _resolved_inference_headers(
+            self.remote_url, self.api_key
+        )
+        self.client = RemoteInferenceClient(
+            self.remote_url,
+            logger=self.logger,
+            _resolved_headers=resolved_headers,
+        )
         # Bind the OpenAI-compat path so callers that only see the
         # client surface (model, processor) hit the vLLM contract.
         self.client.process_images = self.client.process_images_vllm  # type: ignore[method-assign]
@@ -492,6 +599,8 @@ class RemoteVideoPrismLoader(ModelLoader):
         model_name: str,
         config: Dict[str, Any],
         logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
     ):
         super().__init__(model_name, config, logger)
 
@@ -501,7 +610,14 @@ class RemoteVideoPrismLoader(ModelLoader):
         if not self.remote_url:
             raise ValueError("remote_inference_url required for remote model loader")
 
-        self.client = RemoteInferenceClient(self.remote_url, self.api_key, self.logger)
+        resolved_headers = _resolved_headers or _resolved_inference_headers(
+            self.remote_url, self.api_key
+        )
+        self.client = RemoteInferenceClient(
+            self.remote_url,
+            logger=self.logger,
+            _resolved_headers=resolved_headers,
+        )
 
     def load_model(self) -> Tuple[Any, Any]:
         """Return remote client for VideoPrism inference."""
@@ -511,14 +627,18 @@ class RemoteVideoPrismLoader(ModelLoader):
 
         # Create a wrapper that matches VideoPrism interface
         class VideoPrismRemoteWrapper:
-            def __init__(self, client):
+            def __init__(self, client, model_name: str):
                 self.client = client
+                self.model_name = model_name
 
             def process_video_segment(
                 self, video_path: Path, start_time: float, end_time: float
             ) -> Dict[str, Any]:
                 result = self.client.process_video_segment(
-                    video_path, start_time, end_time
+                    video_path,
+                    start_time,
+                    end_time,
+                    model_name=self.model_name,
                 )
                 # Convert to VideoPrism expected format
                 return {
@@ -526,15 +646,23 @@ class RemoteVideoPrismLoader(ModelLoader):
                     "processing_time": result.get("processing_time", 0),
                 }
 
-        wrapper = VideoPrismRemoteWrapper(self.client)
+            def _close(self) -> None:
+                self.client._close()
+
+        wrapper = VideoPrismRemoteWrapper(self.client, self.model_name)
         return wrapper, None  # No separate processor for VideoPrism
 
 
 class RemoteColBERTLoader(ModelLoader):
-    """Remote ColBERT model loader using text embedding inference endpoints.
+    """Remote ColBERT model loader against a PyLate inference service.
 
     Returns a wrapper with an .encode() method matching pylate.models.ColBERT,
     so EmbeddingGeneratorImpl can use it interchangeably with local ColBERT.
+    The service (``cogniverse_cli/modal_inference/servers/pylate.py``) runs
+    the canonical PyLate tokenization and forward pass — query expansion with
+    masked attention and the document punctuation skiplist — so the client
+    sends raw text plus ``is_query`` and returns the per-token matrices
+    unchanged.
     """
 
     def __init__(
@@ -542,58 +670,31 @@ class RemoteColBERTLoader(ModelLoader):
         model_name: str,
         config: Dict[str, Any],
         logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
     ):
         super().__init__(model_name, config, logger)
         self.remote_url = config.get("remote_inference_url")
         self.api_key = config.get("remote_inference_api_key")
         if not self.remote_url:
             raise ValueError("remote_inference_url required for remote ColBERT loader")
+        self._resolved_headers = _resolved_headers or _resolved_inference_headers(
+            self.remote_url, self.api_key
+        )
 
     def load_model(self) -> Tuple[Any, Any]:
         """Return a ColBERT-compatible wrapper that calls the remote endpoint."""
         self.logger.info(f"Initialized remote ColBERT inference at {self.remote_url}")
 
         class ColBERTRemoteWrapper:
-            def __init__(
-                self,
-                endpoint_url,
-                api_key,
-                model_name,
-                logger,
-                query_prefix="[Q] ",
-                document_prefix="[D] ",
-            ):
+            def __init__(self, endpoint_url, headers, model_name):
                 self.endpoint_url = endpoint_url.rstrip("/")
                 self.model_name = model_name
-                self.logger = logger
-                self.query_prefix = query_prefix
-                self.document_prefix = document_prefix
                 self.session = requests.Session()
-                if api_key:
-                    self.session.headers["Authorization"] = f"Bearer {api_key}"
-                self._tokenizer = None
-                self._skiplist_ids = None
+                self.session.headers.update(headers)
 
-            def _load_tokenizer(self):
-                """Lazily load the model tokenizer and build the document skiplist.
-
-                The ``[Q] ``/``[D] `` markers are single tokens in the tokenizer
-                vocabulary, so prepending the literal text reproduces pylate's
-                marker insertion exactly. The document skiplist is the punctuation
-                token ids pylate drops from document embeddings via
-                ``ColBERT.skiplist_mask``.
-                """
-                if self._tokenizer is not None:
-                    return
-                import string
-
-                from transformers import AutoTokenizer
-
-                self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-                self._skiplist_ids = {
-                    self._tokenizer.convert_tokens_to_ids(word)
-                    for word in string.punctuation
-                }
+            def _close(self) -> None:
+                self.session.close()
 
             def encode(
                 self,
@@ -602,71 +703,76 @@ class RemoteColBERTLoader(ModelLoader):
                 batch_size: int = 32,
                 **kwargs,
             ) -> list:
-                """Encode texts via remote /pooling, reproducing pylate's contract.
+                """Encode texts via the PyLate service's ``/pooling`` route.
 
-                Matches ``pylate.models.ColBERT.encode()``. The ``[Q] ``/``[D] ``
-                marker is prepended client-side as literal text (each marker is a
-                single vocabulary token, identical to pylate's marker insertion);
-                vLLM ``/pooling`` rejects unknown fields such as ``is_query``.
-
-                For documents (``is_query=False``) pylate drops punctuation tokens
-                from the per-token matrix (``ColBERT.skiplist_mask``); vLLM
-                ``/pooling`` returns one embedding per token in tokenizer order, so
-                we drop the same rows client-side. Queries keep all tokens.
+                Matches ``pylate.models.ColBERT.encode()``. The service owns
+                the canonical PyLate behavior for both directions — query
+                expansion with masked attention and the document punctuation
+                skiplist — so raw text plus ``is_query`` goes over the wire
+                and the per-token matrices come back unchanged.
                 """
-                self._load_tokenizer()
-                prefix = self.query_prefix if is_query else self.document_prefix
                 all_embeddings = []
                 for i in range(0, len(texts), batch_size):
                     chunk = texts[i : i + batch_size]
-                    batch = [f"{prefix}{t}" for t in chunk]
-                    resp = self.session.post(
-                        f"{self.endpoint_url}/pooling",
-                        json={"input": batch, "model": self.model_name},
-                        timeout=120,
-                    )
-                    resp.raise_for_status()
-                    items = resp.json().get("data", [])
-                    for text, item in zip(batch, items):
-                        matrix = item.get("data", item.get("embedding", []))
-                        if not is_query:
-                            matrix = self._drop_skiplist_rows(text, matrix)
+                    payload = {
+                        "input": chunk,
+                        "model": self.model_name,
+                        "is_query": is_query,
+                    }
+                    try:
+                        resp = self.session.post(
+                            f"{self.endpoint_url}/pooling",
+                            json=payload,
+                            timeout=120,
+                        )
+                        resp.raise_for_status()
+                    except requests.RequestException as exc:
+                        raise RuntimeError(
+                            "remote ColBERT pooling failed for model "
+                            f"{self.model_name!r} at {self.endpoint_url}"
+                        ) from exc
+                    try:
+                        response_payload = resp.json()
+                    except ValueError as exc:
+                        raise RuntimeError(
+                            "remote ColBERT pooling returned invalid JSON for model "
+                            f"{self.model_name!r} at {self.endpoint_url}"
+                        ) from exc
+                    if not isinstance(response_payload, dict):
+                        raise RuntimeError(
+                            "remote ColBERT pooling returned a non-object payload for "
+                            f"model {self.model_name!r} at {self.endpoint_url}"
+                        )
+                    items = response_payload.get("data")
+                    if not isinstance(items, list) or len(items) != len(chunk):
+                        item_count = (
+                            len(items) if isinstance(items, list) else "non-list"
+                        )
+                        raise RuntimeError(
+                            "remote ColBERT pooling returned "
+                            f"{item_count} embeddings for {len(chunk)} inputs from "
+                            f"model {self.model_name!r} at {self.endpoint_url}"
+                        )
+                    for item in items:
+                        if not isinstance(item, dict):
+                            raise RuntimeError(
+                                "remote ColBERT pooling returned a non-object embedding "
+                                f"for model {self.model_name!r} at {self.endpoint_url}"
+                            )
+                        matrix = item.get("data")
+                        if not isinstance(matrix, list):
+                            raise RuntimeError(
+                                "remote ColBERT pooling returned a non-list embedding for "
+                                f"model {self.model_name!r} at {self.endpoint_url}"
+                            )
                         all_embeddings.append(matrix)
 
                 return all_embeddings
 
-            def _drop_skiplist_rows(self, prefixed_text, matrix):
-                """Remove punctuation-token rows from a document per-token matrix.
-
-                ``/pooling`` returns embeddings aligned with the tokenizer's
-                ``input_ids`` (CLS first, SEP last, specials included), so the
-                token ids re-derived from the same prefixed string select exactly
-                the rows pylate's skiplist mask removes.
-                """
-                token_ids = self._tokenizer(prefixed_text, add_special_tokens=True)[
-                    "input_ids"
-                ]
-                if len(token_ids) != len(matrix):
-                    self.logger.warning(
-                        "Token/embedding length mismatch for remote ColBERT "
-                        "document (%d ids vs %d rows); returning unmasked matrix",
-                        len(token_ids),
-                        len(matrix),
-                    )
-                    return matrix
-                return [
-                    row
-                    for tid, row in zip(token_ids, matrix)
-                    if tid not in self._skiplist_ids
-                ]
-
         wrapper = ColBERTRemoteWrapper(
             self.remote_url,
-            self.api_key,
+            self._resolved_headers,
             self.model_name,
-            self.logger,
-            query_prefix=self.config.get("query_prefix", "[Q] "),
-            document_prefix=self.config.get("document_prefix", "[D] "),
         )
         return wrapper, None
 
@@ -685,12 +791,17 @@ class RemoteWhisperLoader(ModelLoader):
         model_name: str,
         config: Dict[str, Any],
         logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
     ):
         super().__init__(model_name, config, logger)
         self.remote_url = config.get("remote_inference_url")
         self.api_key = config.get("remote_inference_api_key")
         if not self.remote_url:
             raise ValueError("remote_inference_url required for remote Whisper loader")
+        self._resolved_headers = _resolved_headers or _resolved_inference_headers(
+            self.remote_url, self.api_key
+        )
 
     def load_model(self) -> Tuple[Any, Any]:
         """Return a Whisper-compatible wrapper that calls the remote endpoint."""
@@ -700,13 +811,15 @@ class RemoteWhisperLoader(ModelLoader):
         )
 
         class WhisperRemoteWrapper:
-            def __init__(self, endpoint_url, api_key, model_name, logger):
+            def __init__(self, endpoint_url, headers, model_name, logger):
                 self.endpoint_url = endpoint_url.rstrip("/")
                 self.model_name = model_name
                 self.logger = logger
                 self.session = requests.Session()
-                if api_key:
-                    self.session.headers["Authorization"] = f"Bearer {api_key}"
+                self.session.headers.update(headers)
+
+            def _close(self) -> None:
+                self.session.close()
 
             def transcribe(
                 self, audio_path: str, language: Optional[str] = None, **kwargs
@@ -731,7 +844,7 @@ class RemoteWhisperLoader(ModelLoader):
                 return resp.json()
 
         wrapper = WhisperRemoteWrapper(
-            self.remote_url, self.api_key, self.model_name, self.logger
+            self.remote_url, self._resolved_headers, self.model_name, self.logger
         )
         return wrapper, None
 
@@ -1017,11 +1130,16 @@ class ModelLoaderFactory:
         "colqwen": RemoteColPaliLoader,
         "videoprism": RemoteVideoPrismLoader,
         "colbert": RemoteColBERTLoader,
+        "whisper": RemoteWhisperLoader,
     }
 
     @staticmethod
     def create_loader(
-        model_name: str, config: Dict[str, Any], logger: Optional[logging.Logger] = None
+        model_name: str,
+        config: Dict[str, Any],
+        logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
     ) -> ModelLoader:
         """
         Create model loader based on config["model_loader"].
@@ -1048,7 +1166,16 @@ class ModelLoaderFactory:
                     f"No remote loader for model_loader={loader_key!r}. "
                     f"Available: {sorted(ModelLoaderFactory.REMOTE_LOADERS.keys())}"
                 )
-            return remote_cls(model_name, config, logger)
+            resolved_headers = _resolved_headers or _resolved_inference_headers(
+                config["remote_inference_url"],
+                config.get("remote_inference_api_key"),
+            )
+            return remote_cls(
+                model_name,
+                config,
+                logger,
+                _resolved_headers=resolved_headers,
+            )
 
         loader_cls = ModelLoaderFactory.LOADERS.get(loader_key)
         if not loader_cls:
@@ -1059,15 +1186,18 @@ class ModelLoaderFactory:
         return loader_cls(model_name, config, logger)
 
 
-# Global model cache to avoid reloading.
+# Global bounded LRU model cache to avoid reloading.
 # Thread lock prevents concurrent from_pretrained calls which cause
 # meta tensor corruption in accelerate's dispatch hooks.
-import threading
-
-_model_cache: Dict[str, Tuple[Any, Any]] = {}
+_MODEL_CACHE_CAPACITY = 16
+_GLINER_CACHE_CAPACITY = 16
+_model_cache: OrderedDict[str, Tuple[Any, Any]] = OrderedDict()
 _model_lock = threading.Lock()
-# One lock per cache key so cold loads don't serialize unrelated models.
-_model_key_locks: Dict[str, threading.Lock] = {}
+# Weak entries live only while a load holds the lock, so distinct historical
+# endpoint/credential keys cannot accumulate lock objects indefinitely.
+_model_key_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+    weakref.WeakValueDictionary()
+)
 
 
 def get_or_load_model(
@@ -1083,8 +1213,17 @@ def get_or_load_model(
     global state (meta tensor dispatch hooks). The lock serializes model loads.
     """
     cache_key = model_name
+    resolved_headers: Optional[Mapping[str, str]] = None
     if config.get("remote_inference_url"):
-        cache_key = f"{model_name}@{config['remote_inference_url']}"
+        resolved_headers = _resolved_inference_headers(
+            config["remote_inference_url"],
+            config.get("remote_inference_api_key"),
+        )
+        authorization = resolved_headers.get("Authorization", "")
+        credential_fingerprint = hashlib.sha256(authorization.encode()).hexdigest()
+        cache_key = (
+            f"{model_name}@{config['remote_inference_url']}|{credential_fingerprint}"
+        )
 
     def _cached_entry():
         """Return the valid cached pair, evicting invalid entries. Caller
@@ -1104,6 +1243,7 @@ def get_or_load_model(
                     return None
             if logger:
                 logger.info(f"Using cached model: {cache_key}")
+            _model_cache.move_to_end(cache_key)
             return cached_model, cached_processor
         except (StopIteration, RuntimeError):
             if logger:
@@ -1128,40 +1268,103 @@ def get_or_load_model(
                 return cached
 
         # Load outside the global lock — only same-key callers wait here.
-        loader = ModelLoaderFactory.create_loader(model_name, config, logger)
+        loader = ModelLoaderFactory.create_loader(
+            model_name,
+            config,
+            logger,
+            _resolved_headers=resolved_headers,
+        )
         model, processor = loader.load_model()
 
         with _model_lock:
-            _model_cache[cache_key] = (model, processor)
+            _store_bounded_cache(
+                _model_cache,
+                cache_key,
+                (model, processor),
+                capacity=_MODEL_CACHE_CAPACITY,
+                label="model cache",
+            )
         return model, processor
 
 
-# Module-level GLiNER cache. Loaded once per (model_name) and reused across
-# every agent instance — gateway, entity_extraction, routing all want the
-# same 1.4GB model. Without this, the dispatcher's per-request agent
-# instantiation would reload it every call, blowing memory through the
-# suite (PyTorch's caching allocator never returns memory to the OS).
-_gliner_cache: Dict[str, Any] = {}
+# Module-level GLiNER cache. Local models share by model/device; remote clients
+# additionally include endpoint and a one-way credential fingerprint.
+_gliner_cache: OrderedDict[Tuple[str, str, str, str], Any] = OrderedDict()
 
 
 class RemoteGlinerClient:
-    """HTTP client wrapping the deploy/gliner sidecar.
+    """HTTP client for the GLiNER inference service.
 
     Exposes the same ``predict_entities(text, labels, threshold=...)``
     surface the in-process ``GLiNER`` class does so GatewayAgent can
     treat local + remote loaders interchangeably.
     """
 
+    _ENTITY_FIELDS = ("text", "label", "score", "start", "end")
+
     def __init__(
         self,
         url: str,
         model_name: str,
+        api_key: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
     ) -> None:
         self._url = url.rstrip("/")
         self._model_name = model_name
         self._logger = logger or logging.getLogger(__name__)
         self._session = requests.Session()
+        if _resolved_headers is not None:
+            if api_key is not None:
+                raise ValueError("api_key and _resolved_headers are mutually exclusive")
+            resolved_headers = _resolved_headers
+        else:
+            resolved_headers = _resolved_inference_headers(self._url, api_key)
+        self._session.headers.update(resolved_headers)
+
+    def _close(self) -> None:
+        self._session.close()
+
+    def _validated_entities(self, data: Any) -> List[Dict[str, Any]]:
+        endpoint = f"{self._url}/predict_entities"
+        prefix = f"Remote GLiNER response from {endpoint}"
+        if not isinstance(data, dict):
+            raise ValueError(f"{prefix} must be a JSON object")
+        if "entities" not in data:
+            raise ValueError(f"{prefix} must contain 'entities'")
+
+        entities = data["entities"]
+        if not isinstance(entities, list):
+            raise ValueError(f"{prefix} 'entities' must be a list")
+
+        expected_fields = set(self._ENTITY_FIELDS)
+        for index, entity in enumerate(entities):
+            item_prefix = f"{prefix} entity at index {index}"
+            if not isinstance(entity, dict):
+                raise ValueError(f"{item_prefix} must be an object")
+            if set(entity) != expected_fields:
+                raise ValueError(
+                    f"{item_prefix} must have exactly fields "
+                    f"{list(self._ENTITY_FIELDS)}"
+                )
+            for field in ("text", "label"):
+                if not isinstance(entity[field], str):
+                    raise ValueError(f"{item_prefix} field '{field}' must be a string")
+            if isinstance(entity["score"], bool) or not isinstance(
+                entity["score"], (int, float)
+            ):
+                raise ValueError(f"{item_prefix} field 'score' must be a number")
+            for field in ("start", "end"):
+                value = entity[field]
+                if value is not None and (
+                    isinstance(value, bool) or not isinstance(value, int)
+                ):
+                    raise ValueError(
+                        f"{item_prefix} field '{field}' must be an integer or null"
+                    )
+
+        return entities
 
     def predict_entities(
         self, text: str, labels: List[str], threshold: float = 0.4
@@ -1176,7 +1379,7 @@ class RemoteGlinerClient:
             resp = self._session.post(
                 f"{self._url}/predict_entities",
                 json=payload,
-                # First request per (sidecar, model) cold-loads HF
+                # First request per (inference service, model) cold-loads HF
                 # weights; on CPU that takes ~30-60s for medium and
                 # ~90s for large. Subsequent requests are sub-second.
                 timeout=240,
@@ -1184,17 +1387,17 @@ class RemoteGlinerClient:
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
-            # A sidecar outage (down / 5xx / timeout / connection reset) is NOT
-            # a genuine "no entities" result — swallowing it to [] made the
-            # gateway's entity_extraction_failed degrade branch unreachable on
+            # An inference service outage (down / 5xx / timeout / connection
+            # reset) is NOT a genuine "no entities" result. Swallowing it to []
+            # made the gateway's entity_extraction_failed branch unreachable on
             # the remote path, so an outage read as a low-confidence route. Raise
-            # so the caller can flag the routing decision as sidecar-degraded; a
+            # so the caller can flag the routing decision as service-degraded; a
             # real HTTP-200 with an empty entity list still returns [].
             self._logger.error(
                 "Remote GLiNER prediction failed (url=%s): %s", self._url, exc
             )
             raise
-        return list(data.get("entities", []) or [])
+        return self._validated_entities(data)
 
 
 def get_or_load_gliner(
@@ -1202,24 +1405,44 @@ def get_or_load_gliner(
     logger: Optional[logging.Logger] = None,
     inference_url: Optional[str] = None,
     device: Optional[str] = None,
-) -> Optional[Any]:
+    api_key: Optional[str] = None,
+) -> Any:
     """Return a cached GLiNER instance, loading once per model name.
 
     When ``inference_url`` is provided, return a ``RemoteGlinerClient``
-    that POSTs to the deploy/gliner sidecar. Local mode loads via
-    ``gliner.GLiNER.from_pretrained`` and requires the heavy torch
-    stack the runtime image normally omits.
+    that POSTs to the GLiNER inference service implemented by
+    ``cogniverse_cli.modal_inference.servers.gliner``. Modal URLs obtain their
+    bearer credential from ``COGNIVERSE_INFERENCE_API_KEY``; ``api_key``
+    authenticates non-Modal endpoints. The credential participates in cache
+    isolation only through a one-way fingerprint. Local mode loads via
+    ``gliner.GLiNER.from_pretrained`` and requires the heavy torch stack the
+    runtime image normally omits.
 
     ``device`` moves a locally-loaded model onto the given torch device
     (e.g. ``"cuda"``); ``"cpu"`` / None leaves it where from_pretrained put
-    it. Ignored for the remote client (the sidecar owns its device).
+    it. Ignored for the remote client (the inference service owns its device).
 
-    Returns None on load failure (callers must handle missing extractor).
+    Local load and device-placement failures raise ``RuntimeError`` with the
+    exact model and requested device rather than returning an unusable model.
     """
-    cache_key = (model_name, inference_url or "_local_", device or "default")
+    if api_key is not None and not inference_url:
+        raise ValueError("api_key requires inference_url")
+    authorization = ""
+    resolved_headers: Optional[Mapping[str, str]] = None
+    if inference_url:
+        resolved_headers = _resolved_inference_headers(inference_url, api_key)
+        authorization = resolved_headers.get("Authorization", "")
+    credential_fingerprint = hashlib.sha256(authorization.encode()).hexdigest()
+    cache_key = (
+        model_name,
+        inference_url or "_local_",
+        device or "default",
+        credential_fingerprint,
+    )
     with _model_lock:
         cached = _gliner_cache.get(cache_key)
         if cached is not None:
+            _gliner_cache.move_to_end(cache_key)
             if logger:
                 logger.info(
                     f"Using cached GLiNER model: {model_name} "
@@ -1227,8 +1450,19 @@ def get_or_load_gliner(
                 )
             return cached
         if inference_url:
-            instance = RemoteGlinerClient(inference_url, model_name, logger=logger)
-            _gliner_cache[cache_key] = instance
+            instance = RemoteGlinerClient(
+                inference_url,
+                model_name,
+                logger=logger,
+                _resolved_headers=resolved_headers,
+            )
+            _store_bounded_cache(
+                _gliner_cache,
+                cache_key,
+                instance,
+                capacity=_GLINER_CACHE_CAPACITY,
+                label="GLiNER cache",
+            )
             if logger:
                 logger.info(
                     f"Initialised remote GLiNER client: {model_name} "
@@ -1241,20 +1475,31 @@ def get_or_load_gliner(
             if logger:
                 logger.info(f"Loading GLiNER model: {model_name}")
             instance = GLiNER.from_pretrained(model_name)
-            if device and device.lower() != "cpu":
-                try:
-                    instance = instance.to(device)
-                except Exception as exc:
-                    if logger:
-                        logger.warning(
-                            f"GLiNER device move to {device} failed, staying on "
-                            f"default device: {exc}"
-                        )
-            _gliner_cache[cache_key] = instance
-            if logger:
-                logger.info(f"GLiNER loaded: {model_name}")
-            return instance
+            if instance is None:
+                raise RuntimeError("GLiNER.from_pretrained returned no model")
         except Exception as exc:
-            if logger:
-                logger.error(f"GLiNER load failed for {model_name}: {exc}")
-            return None
+            raise RuntimeError(
+                f"Failed to load local GLiNER model '{model_name}': {exc}"
+            ) from exc
+
+        if device and device.lower() != "cpu":
+            try:
+                moved_instance = instance.to(device)
+                if moved_instance is None:
+                    raise RuntimeError("model.to returned no model")
+                instance = moved_instance
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to move local GLiNER model '{model_name}' to device "
+                    f"'{device}': {exc}"
+                ) from exc
+        _store_bounded_cache(
+            _gliner_cache,
+            cache_key,
+            instance,
+            capacity=_GLINER_CACHE_CAPACITY,
+            label="GLiNER cache",
+        )
+        if logger:
+            logger.info(f"GLiNER loaded: {model_name}")
+        return instance

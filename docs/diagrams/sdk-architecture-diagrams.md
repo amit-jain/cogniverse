@@ -702,11 +702,6 @@ flowchart TB
         SandboxPool["<span style='color:#000'>SandboxPool<br/>sandbox_pool.py</span>"]
     end
 
-    subgraph SidecarsSubg["<span style='color:#000'>Sidecars (sidecars/)</span>"]
-        ClapEmbed["<span style='color:#000'>clap_embed.py</span>"]
-        FaceEmbed["<span style='color:#000'>face_embed.py</span>"]
-    end
-
     subgraph OptCLISubg["<span style='color:#000'>Optimizer CLI</span>"]
         OptimizationCLI["<span style='color:#000'>optimization_cli.py<br/>run / promote / rollback</span>"]
         QualityMonitorCLI["<span style='color:#000'>quality_monitor_cli.py</span>"]
@@ -737,8 +732,6 @@ flowchart TB
     RuntimePkg --> SandboxManager
     RuntimePkg --> GatewayHealthProbe
     RuntimePkg --> SandboxPool
-    RuntimePkg --> ClapEmbed
-    RuntimePkg --> FaceEmbed
     RuntimePkg --> OptimizationCLI
     RuntimePkg --> QualityMonitorCLI
 
@@ -778,8 +771,6 @@ flowchart TB
     style SandboxManager fill:#64b5f6,stroke:#1565c0,color:#000
     style GatewayHealthProbe fill:#64b5f6,stroke:#1565c0,color:#000
     style SandboxPool fill:#64b5f6,stroke:#1565c0,color:#000
-    style ClapEmbed fill:#64b5f6,stroke:#1565c0,color:#000
-    style FaceEmbed fill:#64b5f6,stroke:#1565c0,color:#000
     style OptimizationCLI fill:#64b5f6,stroke:#1565c0,color:#000
     style QualityMonitorCLI fill:#64b5f6,stroke:#1565c0,color:#000
 ```
@@ -961,6 +952,8 @@ flowchart TB
     HealthMod["<span style='color:#000'>health.py</span>"]
     StreamingMod["<span style='color:#000'>streaming.py</span>"]
     CodeMod["<span style='color:#000'>code.py</span>"]
+    ModalInference["<span style='color:#000'><b>modal_inference/</b><br/>Modal app definitions</span>"]
+    ModalServers["<span style='color:#000'><b>servers/</b><br/>clap.py / face.py / gliner.py / videoprism.py</span>"]
 
     CliPkg --> MainCli
     MainCli --> GraphGroup
@@ -975,6 +968,8 @@ flowchart TB
     MainCli --> HealthMod
     MainCli --> CodeMod
     CodeMod --> StreamingMod
+    CliPkg --> ModalInference
+    ModalInference --> ModalServers
 
     style CliPkg fill:#90caf9,stroke:#1565c0,stroke-width:3px,color:#000
     style MainCli fill:#90caf9,stroke:#1565c0,color:#000
@@ -990,6 +985,8 @@ flowchart TB
     style HealthMod fill:#64b5f6,stroke:#1565c0,color:#000
     style StreamingMod fill:#64b5f6,stroke:#1565c0,color:#000
     style CodeMod fill:#64b5f6,stroke:#1565c0,color:#000
+    style ModalInference fill:#64b5f6,stroke:#1565c0,color:#000
+    style ModalServers fill:#64b5f6,stroke:#1565c0,color:#000
 ```
 
 ---
@@ -1667,7 +1664,7 @@ This diagram collection provides comprehensive visual documentation of the **lay
 6. **Knowledge Subsystem**: Full memory/ subsystem — provenance, contradiction, trust, federation, pinning, lifecycle
 7. **All 23 Agents**: Generation + routing (7), search + analysis (5), research + coding (2), and knowledge-graph/multi-tenant agents (9) — see the `cogniverse_agents Package Structure` diagram
 8. **Sandbox Policy Flow**: SandboxPolicy REQUIRED/OPTIONAL/DISABLED decision tree with GatewayHealthProbe
-9. **cogniverse_runtime Structure**: Runtime package internals including 12 FastAPI routers, the async ingestion worker, sandbox, sidecars, and optimizer CLI
+9. **Application Package Structure**: Runtime internals include 12 FastAPI routers, the async ingestion worker, sandbox, and optimizer CLI; `cogniverse_cli/modal_inference/servers/` owns the CLAP, face, GLiNER, and VideoPrism services
 
 **Layered Architecture Layers:**
 

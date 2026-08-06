@@ -52,11 +52,11 @@ jobs:
             backend: rocm
           - repo: gliner
             dockerfile: deploy/gliner/Dockerfile
-            context: deploy/gliner
+            context: .
             backend: ""
           - repo: videoprism
             dockerfile: deploy/videoprism/Dockerfile
-            context: deploy/videoprism
+            context: .
             backend: ""
           - repo: clap-embed
             dockerfile: deploy/clap_embed/Dockerfile

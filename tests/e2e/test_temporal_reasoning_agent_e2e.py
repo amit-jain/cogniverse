@@ -30,7 +30,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 
 def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 120.0) -> None:
@@ -145,7 +145,6 @@ def _write_at(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTemporalWindowsReturnPerWindowViews:
     """4 written_at values across 2024 → H1 holds 2, H2 holds 2."""
 
@@ -230,7 +229,6 @@ class TestTemporalWindowsReturnPerWindowViews:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestEmptyWindowReportsZeroFacts:
     """A 2025-Q1 window over a subject with only 2024 data → empty bucket."""
 

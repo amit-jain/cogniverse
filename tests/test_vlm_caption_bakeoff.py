@@ -87,9 +87,9 @@ def test_winner_tie_break_is_deterministic():
         "model-b": {"overall": 8.0},
         "model-a": {"overall": 8.0},
     }
-    # Same overall for two reruns must yield the same winner.
-    assert select_winner(agg) == select_winner(agg)
-    assert select_winner(agg) in ("model-a", "model-b")
+    # The tie-break ranks by name, so an equal overall resolves to the
+    # lexicographically first model, not to either arbitrarily.
+    assert select_winner(agg) == "model-a"
 
 
 def test_model_averaged_only_over_scored_frames():

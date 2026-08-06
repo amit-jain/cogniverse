@@ -13,6 +13,7 @@ without being short-circuited.
 Requires: docker, k3d, kubectl, helm installed.
 """
 
+import os
 import subprocess
 import sys
 import time
@@ -21,21 +22,19 @@ import httpx
 import pytest
 
 
-def _runtime_already_up() -> bool:
-    """Return True if a cogniverse runtime is already reachable.
+def _probe_existing_runtime() -> httpx.Response | None:
+    """Return the default-stack response when a runtime is already reachable.
 
     Probes the default ``cogniverse up`` NodePort (localhost:28000). If the
     developer has a stack running, the deployment-lifecycle tests have
-    nothing to prove — they'd either collide with the existing cluster or
-    duplicate coverage the regular e2e suite already provides.
+    to fail explicitly because their isolated-cluster contract cannot be
+    established safely.
     """
-    import httpx
-
     try:
-        r = httpx.get("http://localhost:28000/health/live", timeout=2.0)
-        return r.status_code == 200
+        response = httpx.get("http://localhost:28000/health/live", timeout=2.0)
+        return response if response.status_code == 200 else None
     except (httpx.ConnectError, httpx.ReadTimeout, OSError):
-        return False
+        return None
 
 
 def refresh_workload_pods_if_devmode(
@@ -154,7 +153,7 @@ def refresh_workload_pods_if_devmode(
 
 
 @pytest.fixture(scope="session", autouse=True)
-def e2e_stack():
+def e2e_stack(resolved_inference_endpoints):
     """Override the parent ``tests/e2e/conftest.py`` autouse ``e2e_stack``.
 
     The parent fixture assumes a running ``cogniverse up`` stack. Tests in
@@ -164,18 +163,21 @@ def e2e_stack():
 
     Behaviour:
       * If ``cogniverse up`` is already running (runtime reachable at
-        localhost:28000), skip this whole subsuite — the deployment
-        lifecycle is what ``cogniverse up`` just did, and the regular
-        e2e suite covers the running-stack path.
+        localhost:28000), fail with the conflicting endpoint details so the
+        isolated deployment is never silently left untested.
       * Otherwise yield so ``k3d_cluster`` / ``deployed_stack`` can
         bring up their own isolated test cluster.
     """
-    if _runtime_already_up():
-        pytest.skip(
-            "cogniverse runtime already reachable at localhost:28000 — "
-            "deployment-lifecycle tests are a no-op when a stack is up. "
-            "Run 'cogniverse down' first if you want to exercise the "
-            "fresh-install path."
+    response = _probe_existing_runtime()
+    if response is not None:
+        pytest.fail(
+            "deployment-lifecycle isolation prerequisite failed because an "
+            "existing runtime answered the default-stack probe; method='GET'; "
+            "url='http://localhost:28000/health/live'; timeout=2.0s; "
+            f"status={response.status_code}; body={response.text[:500]!r}; "
+            "required_state='default endpoint unreachable'; action=\"run "
+            "'cogniverse down' before exercising the fresh-install path\"",
+            pytrace=False,
         )
     yield
 
@@ -263,9 +265,10 @@ def create_test_cluster(
     and cannot touch the dev cluster's persisted state.
     """
     if _cluster_exists(cluster_name):
-        _cmd(["k3d", "cluster", "delete", cluster_name], check=False, timeout=60)
-
-    import os
+        raise RuntimeError(
+            f"refusing to replace existing k3d cluster {cluster_name!r}; "
+            "inspect it and delete it explicitly before creating a fresh cluster"
+        )
 
     from cogniverse_cli.cluster import create_cluster
     from cogniverse_cli.images import detect_torch_backend
@@ -347,14 +350,25 @@ def delete_test_cluster(cluster_name: str) -> None:
 @pytest.fixture(scope="session")
 def k3d_cluster():
     """Isolated cluster for the deployment-lifecycle tests (port-forward
-    access, so no loadbalancer mappings)."""
+    access, so no loadbalancer mappings).
+
+    The cluster stays available after the focused run. Stop it explicitly with
+    ``k3d cluster stop cogniverse-deploy-test`` when the run has finished.
+    """
+    force_fresh = os.environ.get("E2E_FRESH", "").lower() in ("1", "true", "yes")
+    if _cluster_exists(CLUSTER_NAME):
+        if not force_fresh:
+            pytest.fail(
+                f"existing {CLUSTER_NAME} cluster was left intact; inspect it, then "
+                "rerun with E2E_FRESH=1 to replace it explicitly"
+            )
+        delete_test_cluster(CLUSTER_NAME)
     create_test_cluster(CLUSTER_NAME, ports=[], share_host_storage=True)
     yield {
         "cluster_name": CLUSTER_NAME,
         "namespace": NAMESPACE,
         "ports": PORTS,
     }
-    delete_test_cluster(CLUSTER_NAME)
 
 
 def deploy_stack(
@@ -504,10 +518,38 @@ def deploy_stack(
         "runtime.sandbox.enabled": "false",
     }
     helm_set_overrides.update(
-        dev_image_set_values(project_root, torch_backend=backend, version=image_version)
+        # Same overlays helm is about to apply: the tag overrides are emitted
+        # per ENABLED sidecar, so computing them from chart defaults while
+        # helm enables more (the device overlay turns on code_colbert_pylate)
+        # leaves those deployments on the static placeholder tag that was
+        # never built — ErrImageNeverPull on a Never-pull cluster.
+        dev_image_set_values(
+            project_root,
+            torch_backend=backend,
+            values_files=helm_values,
+            version=image_version,
+        )
     )
     if extra_set:
         helm_set_overrides.update(extra_set)
+
+    # Every sidecar helm is about to enable must be pinned to a tag that was
+    # actually built and imported. Anything left on the chart's static
+    # placeholder cannot be pulled (pullPolicy=Never) and surfaces minutes
+    # later as ErrImageNeverPull on a pod, far from its cause.
+    from cogniverse_cli.images import enabled_sidecars
+
+    unpinned = [
+        svc
+        for svc in enabled_sidecars(project_root, helm_values)
+        if f"inference.{svc}.image.tag" not in helm_set_overrides
+    ]
+    assert not unpinned, (
+        f"enabled sidecars {unpinned} have no image.tag override; they would "
+        f"deploy on the chart's placeholder tag, which was never built. "
+        f"Overrides cover: "
+        f"{sorted(k for k in helm_set_overrides if k.endswith('.image.tag'))}"
+    )
 
     def _dump_pod_state() -> None:
         """Snapshot cluster state to pytest's captured stdout — runs on

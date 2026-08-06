@@ -397,8 +397,8 @@ splits each agent's rows into `low_scoring`/`high_scoring` by `category`, and fo
    than `min_reflective_failures` (the threshold checks the split trainset, not the raw failing-row
    count).
 2. Compiles a `dspy.ChainOfThought` over the matching signature with `BootstrapFewShot` on the
-   trainset, scoped inside `dspy.context(lm=...)` (because `initialize_language_model` only sets
-   `optimizer.lm`, it does not call the global `dspy.configure`).
+   trainset, scoped inside `dspy.context(lm=optimizer.lm)` (`initialize_language_model` only sets
+   `optimizer.lm`; the compile reads the LM from the task-local binding).
 3. Scores the compiled candidate against the currently-active baseline (`_holdout_scores` via
    `_probe_score`): for `summary`/`report`, held-out positives contribute token-F1 to the labeled
    output and the low-scoring rows become known-bad probes (`_negative_probes`) that reward NOT
@@ -743,6 +743,10 @@ more optimizer types (default `["query_enhancement", "profile", "workflow"]`) vi
 type's output as demonstrations (`ArtifactManager.save_demonstrations(f"synthetic_{opt_type}", demos)`)
 tagged `metadata.approval_status: "pending"` for the approval workflow.
 
+Generators that wrap DSPy modules run under `llm_config.primary`, bound for the
+duration of each `generate` call with `dspy.context(lm=...)` — task-local, so
+concurrent runs never share or overwrite one another's LM.
+
 ```bash
 uv run python -m cogniverse_runtime.optimization_cli \
   --mode synthetic --tenant-id acme:production --agents profile,routing
@@ -1036,7 +1040,11 @@ selection:
 - ≥ 50 examples → `BootstrapFewShot(max_bootstrapped_demos=8, max_labeled_demos=16, max_rounds=2, max_errors=10)`
 
 All three pass `teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())}`, so the
-bootstrap teacher runs on the centralized `llm_config.teacher` endpoint. `triggered` (the
+bootstrap teacher runs on the centralized `llm_config.teacher` endpoint. The student LM
+(`llm_config.resolve("optimization")`) is bound with `with dspy.context(lm=...)` around the
+`teleprompter.compile(...)` call that reads it — task-local, so a mode runs no matter which async
+task in the process already owns DSPy's ambient binding, and concurrent runs never share or
+overwrite one another's LM. `triggered` (the
 `search`/`summary`/`report` agents) does not go through `_create_teleprompter` —
 `_optimize_agent` builds `BootstrapFewShot` directly from
 `DSPyAgentPromptOptimizer.optimization_settings` (a fixed configuration —

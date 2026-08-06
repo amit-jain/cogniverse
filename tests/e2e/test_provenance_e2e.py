@@ -40,7 +40,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 # k3d-cogniverse-serverlb forwards these. Same constants as the
 # knowledge-schema e2e tests; if those pass, the host port mapping is correct.
@@ -210,7 +210,6 @@ def _wait_for_provenance(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestProvenanceRoundTripThroughVespa:
     """Write ROOT then CHILD-with-derived_from-ROOT; walk must rebuild the chain."""
 
@@ -275,7 +274,6 @@ class TestProvenanceRoundTripThroughVespa:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestCitationTraceHTTPRoute:
     """The /admin/tenants/{t}/knowledge/citations/trace JSON shape is pinned."""
 
@@ -339,7 +337,6 @@ class TestCitationTraceHTTPRoute:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestProvenanceRequiredEnforcement:
     """external_doc requires provenance — write without it must raise."""
 
@@ -369,7 +366,6 @@ class TestProvenanceRequiredEnforcement:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestExternalCitationLeafSurvivesWalk:
     """A memory whose only derived_from is an external URL surfaces as primary."""
 
@@ -420,7 +416,6 @@ class TestExternalCitationLeafSurvivesWalk:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestPerTenantProvenanceSchemaIsolation:
     """Provenance written in tenant A must not be readable from tenant B's manager."""
 

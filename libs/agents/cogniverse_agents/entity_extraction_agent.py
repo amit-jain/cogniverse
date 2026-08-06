@@ -92,7 +92,7 @@ class EntityExtractionDeps(AgentDeps):
     gliner_inference_url: Optional[str] = Field(
         None,
         description=(
-            "Optional remote GLiNER service URL (deploy/gliner sidecar). "
+            "Optional remote GLiNER inference service URL. "
             "When set, the fast path posts to this endpoint instead of "
             "loading gliner in-process — required on slim runtime images."
         ),

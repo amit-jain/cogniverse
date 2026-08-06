@@ -3,17 +3,17 @@
 The messaging deployment reads TELEGRAM_BOT_TOKEN from
 ``<release>-messaging-secrets`` key ``telegram-bot-token``. Nothing created
 that Secret, so enabling messaging left the gateway pod unable to start. This
-drives the real sync against the real cluster with kubectl and reads the Secret
-back, asserting the stored value is exactly the token that was supplied and that
-it lives under the key and name the chart mounts — a Secret with the right name
-but the wrong key fails here just as loudly as a missing one.
+drives the real sync with real kubectl against a Kubernetes API server the
+session boots itself (``ephemeral_k8s_cluster``) and reads the Secret back,
+asserting the stored value is exactly the token that was supplied and that
+it lives under the key and name the chart mounts — a Secret with the right
+name but the wrong key fails here just as loudly as a missing one.
 """
 
 from __future__ import annotations
 
 import base64
 import json
-import shutil
 import subprocess
 import uuid
 
@@ -28,25 +28,11 @@ from cogniverse_cli.secrets import (
 pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 
 
-def _cluster_reachable() -> bool:
-    if shutil.which("kubectl") is None:
-        return False
-    probe = subprocess.run(
-        ["kubectl", "get", "namespace", NAMESPACE],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    return probe.returncode == 0
-
-
-pytestmark.append(
-    pytest.mark.skipif(
-        not _cluster_reachable(),
-        reason=f"kubectl cannot reach the {NAMESPACE} namespace",
-    )
-)
+@pytest.fixture(autouse=True)
+def _use_test_owned_cluster(ephemeral_k8s_cluster, monkeypatch):
+    """Point kubectl — ours and the sync helper's — at the session's own
+    API server, never a developer's cluster."""
+    monkeypatch.setenv("KUBECONFIG", ephemeral_k8s_cluster["kubeconfig"])
 
 
 def _read_secret_value(name: str, key: str) -> str | None:
@@ -66,7 +52,7 @@ def _read_secret_value(name: str, key: str) -> str | None:
 
 
 @pytest.fixture
-def restore_secret():
+def restore_secret(_use_test_owned_cluster):
     """Preserve and restore whatever the cluster already had."""
     original = _read_secret_value(MESSAGING_SECRET, TELEGRAM_TOKEN_KEY)
     yield

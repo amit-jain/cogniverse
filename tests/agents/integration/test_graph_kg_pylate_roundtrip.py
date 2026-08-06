@@ -1,10 +1,11 @@
-"""End-to-end round-trip of the KG → vLLM /pooling → Vespa write path.
+"""End-to-end round-trip of the KG → PyLate /pooling → Vespa write path.
 
 Spins up an HTTP stub that mimics both:
-  - the vLLM token-embed (LateOn) ``POST /pooling`` endpoint (returns
+  - the PyLate service (LateOn) ``POST /pooling`` endpoint (returns
     canonical (N, 128) per-token embeddings); query vs document is
-    distinguished by the client-side ``[Q] ``/``[D] `` prefix, never an
-    ``is_query`` field
+    carried by the ``is_query`` request field — the service applies the
+    ``[Q] ``/``[D] `` markers and query expansion itself, so the client
+    sends raw text
   - Vespa's Document v1 ``PUT /document/v1/...`` (records the payload)
 
 Routes a node upsert through GraphManager and asserts the wire-format
@@ -25,9 +26,9 @@ import socket
 import threading
 from binascii import unhexlify
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from cogniverse_agents.graph.graph_manager import GraphManager
 from cogniverse_agents.graph.graph_schema import ExtractionResult, Node
@@ -42,10 +43,11 @@ def _free_port() -> int:
 
 
 class _StubHandler(BaseHTTPRequestHandler):
-    """Two-faced stub: /pooling for vLLM token-embed, /document/v1 for Vespa."""
+    """Two-faced stub: /pooling for the PyLate service, /document/v1 for Vespa."""
 
     pooling_requests: list[dict] = []
     feed_payloads: list[tuple[str, dict]] = []  # (path, payload)
+    search_requests: list[dict] = []
     pooling_n_tokens: int = 4
 
     def log_message(self, format, *args):  # silence stderr
@@ -57,10 +59,10 @@ class _StubHandler(BaseHTTPRequestHandler):
 
         if self.path == "/pooling":
             _StubHandler.pooling_requests.append(body)
-            # vLLM /pooling must NOT receive is_query — query vs document
-            # is encoded client-side via the [Q] / [D] prefix.
-            assert "is_query" not in body, (
-                f"is_query must not be sent to vLLM /pooling; got keys: "
+            # The PyLate service owns query vs document encoding — the
+            # client must send raw text plus an explicit is_query flag.
+            assert isinstance(body.get("is_query"), bool), (
+                f"/pooling requires a boolean is_query field; got keys: "
                 f"{list(body.keys())}"
             )
             n = _StubHandler.pooling_n_tokens
@@ -89,6 +91,18 @@ class _StubHandler(BaseHTTPRequestHandler):
             self.wfile.write(b'{"id": "ok"}')
             return
 
+        if self.path == "/search/":
+            _StubHandler.search_requests.append(body)
+            payload = json.dumps(
+                {"root": {"fields": {"totalCount": 0}, "children": []}}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -97,6 +111,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 def stub():
     _StubHandler.pooling_requests = []
     _StubHandler.feed_payloads = []
+    _StubHandler.search_requests = []
     port = _free_port()
     server = ThreadingHTTPServer(("127.0.0.1", port), _StubHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -109,12 +124,29 @@ def stub():
         thread.join(timeout=2)
 
 
+class _DocumentV1Backend:
+    """Backend seam driving the same ``POST /document/v1/...`` pyvespa
+    issues, so the stub records the true Vespa wire payload."""
+
+    def __init__(self, port: int):
+        self._url = "http://127.0.0.1"
+        self._port = port
+
+    def put_document_fields(
+        self, document_id, fields, schema_name=None, namespace=None
+    ):
+        response = requests.post(
+            f"{self._url}:{self._port}/document/v1/{namespace}/{schema_name}"
+            f"/docid/{document_id}",
+            json={"fields": fields},
+            timeout=5,
+        )
+        response.raise_for_status()
+
+
 def _make_manager(port: int) -> GraphManager:
-    backend = MagicMock()
-    backend._url = "http://127.0.0.1"
-    backend._port = port
     return GraphManager(
-        backend=backend,
+        backend=_DocumentV1Backend(port),
         tenant_id="test_tenant",
         schema_name="knowledge_graph_test_tenant",
         colbert_endpoint_url=f"http://127.0.0.1:{port}",
@@ -151,14 +183,14 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(stub):
     )
 
     counts = manager.upsert(result)
-    assert counts == {"nodes_upserted": 1, "edges_upserted": 0}
+    assert counts == {"nodes_upserted": 1, "edges_upserted": 0, "failed_ids": []}
 
-    # 1. Stub saw a /pooling request with the [D] document prefix and no
-    #    is_query field (vLLM contract).
+    # 1. Stub saw a /pooling request carrying the raw node text with
+    #    is_query false (the service applies the document marker itself).
     assert len(capture.pooling_requests) == 1
     pool_req = capture.pooling_requests[0]
-    assert "is_query" not in pool_req
-    assert pool_req["input"] == ["[D] Alpha\nFirst node under test"]
+    assert pool_req["is_query"] is False
+    assert pool_req["input"] == ["Alpha\nFirst node under test"]
 
     # 2. Stub saw exactly one PUT to /document/v1/... for the node.
     assert len(capture.feed_payloads) == 1
@@ -194,23 +226,46 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(stub):
         )
 
 
-def test_query_encoding_prefixes_query_and_builds_block_inputs(stub):
+def test_query_encoding_sends_raw_text_with_is_query(stub):
     port, capture = stub
     manager = _make_manager(port)
 
-    # search_nodes encodes the query with the [Q] prefix and POSTs to
-    # /search/. Our stub doesn't implement /search/ — it'll 404, which is
-    # fine for this test: we only care that the encoder prefixed the query
-    # with [Q] (and sent no is_query) and that no exception escaped (search
-    # falls back to YQL visit on transport errors).
-    manager.search_nodes("find me alpha", top_k=5)
+    results = manager.search_nodes("find me alpha", top_k=5)
+    assert results == []
 
-    # The stub saw at least one /pooling call for the query side.
-    query_reqs = [
-        req for req in capture.pooling_requests if req["input"] == ["[Q] find me alpha"]
-    ]
-    assert query_reqs, "search_nodes must encode the query with the [Q] prefix"
-    assert "is_query" not in query_reqs[0]
+    # The encoder sent the raw query text with is_query true — the service
+    # applies the [Q] marker and query expansion itself.
+    assert len(capture.pooling_requests) == 1
+    query_req = capture.pooling_requests[0]
+    assert query_req["input"] == ["find me alpha"]
+    assert query_req["is_query"] is True
+
+    # The encoded query reached /search/ as per-token MaxSim inputs: one
+    # block per stub token for both the bfloat16 and binary query tensors.
+    assert len(capture.search_requests) == 1
+    search_req = capture.search_requests[0]
+    n_tokens = capture.pooling_n_tokens
+    assert search_req["yql"] == (
+        "select * from sources knowledge_graph_test_tenant "
+        'where tenant_id contains "test_tenant" '
+        'and doc_type contains "node" and userQuery() limit 5'
+    )
+    assert search_req["query"] == "find me alpha"
+    assert search_req["ranking.profile"] == "hybrid_binary_bm25"
+    assert search_req["model.restrict"] == "knowledge_graph_test_tenant"
+    qt_blocks = search_req["input.query(qt)"]["blocks"]
+    qtb_blocks = search_req["input.query(qtb)"]["blocks"]
+    assert set(qt_blocks.keys()) == {str(i) for i in range(n_tokens)}
+    assert all(len(block) == 128 for block in qt_blocks.values())
+    assert qt_blocks["0"] == pytest.approx([0.4] * 128)
+    # Sign-packed binary of the stub embeddings: positive tokens (0, 2) pack
+    # to 0xFF bytes (int8 -1), negative tokens (1, 3) to 0x00.
+    assert qtb_blocks == {
+        "0": [-1] * 16,
+        "1": [0] * 16,
+        "2": [-1] * 16,
+        "3": [0] * 16,
+    }
 
 
 def test_edge_upsert_omits_embedding_fields(stub):
@@ -240,7 +295,7 @@ def test_edge_upsert_omits_embedding_fields(stub):
         ],
     )
     counts = manager.upsert(result)
-    assert counts == {"nodes_upserted": 0, "edges_upserted": 1}
+    assert counts == {"nodes_upserted": 0, "edges_upserted": 1, "failed_ids": []}
 
     assert len(capture.feed_payloads) == 1
     _, payload = capture.feed_payloads[0]

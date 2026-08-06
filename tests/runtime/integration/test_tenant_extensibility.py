@@ -8,6 +8,7 @@ routing with real LLM.
 """
 
 import logging
+import time
 
 import pytest
 
@@ -18,7 +19,11 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 
 logger = logging.getLogger(__name__)
 
-TENANT_ID = "test_extensibility"
+# Canonical org:tenant form. ConfigManager.set_config_value canonicalizes the
+# tenant id before writing, while cm.store.get_config/list_configs match the
+# passed id exactly — a bare id here would write under one scope and read
+# from another, matching nothing.
+TENANT_ID = "test_extensibility:test_extensibility"
 
 
 def _llm_available():
@@ -176,7 +181,9 @@ class TestTenantJobsRealVespa:
         assert job_id in job_ids
 
     def test_soft_delete_job(self, tenant_config_manager):
-        """Soft-deleted jobs don't appear in listing."""
+        """A created job appears in the listing until soft-deleted, then
+        disappears — the presence check first, so the absence check below
+        cannot pass vacuously against an empty listing."""
         cm = tenant_config_manager
         job_id = "test_job_delete"
 
@@ -193,6 +200,20 @@ class TestTenantJobsRealVespa:
                 "post_actions": [],
             },
         )
+
+        entries = cm.store.list_configs(
+            tenant_id=TENANT_ID,
+            scope=ConfigScope.SYSTEM,
+            service="tenant_jobs",
+        )
+
+        listed_ids = []
+        for entry in entries or []:
+            v = entry.config_value
+            if isinstance(v, dict) and "job_id" in v and not v.get("deleted"):
+                listed_ids.append(v["job_id"])
+
+        assert job_id in listed_ids
 
         # Soft delete
         cm.set_config_value(
@@ -223,39 +244,66 @@ class TestTenantJobsRealVespa:
 class TestMemoryManagementRealMem0:
     """Memory management with real Mem0/Vespa.
 
-    Full Mem0 add → search → delete round-trip is tested in
-    tests/memory/integration/test_mem0_vespa_integration.py using the
-    shared_memory_vespa fixture which correctly handles port assignment.
-
-    The runtime integration conftest's memory_manager has a known
-    VespaSearchBackend port issue for search (config.json port 8080 leaks).
-    These tests verify the add_memory path (which uses the feed API on the
-    correct port) and the clear_agent_memory path.
+    Covers the add → search and add → clear paths through the runtime
+    integration conftest's memory_manager, which shares one Vespa container
+    and one agent_memories_test_unit schema with the rest of the session.
     """
 
     def test_add_then_search_round_trip(self, memory_manager):
-        """Add memory via Mem0, search it back from real Vespa."""
+        """Semantic search returns exactly the memories Mem0 persisted for the
+        namespace, each with the exact stored text."""
         mm = memory_manager
+        agent_name = "_test_tenant_ext_rt"
 
-        mm.add_memory(
+        # The agent_memories_test_unit schema is shared for the whole session,
+        # so start from a namespace holding only what this test writes.
+        mm.clear_agent_memory(tenant_id="test:unit", agent_name=agent_name)
+
+        memory_id = mm.add_memory(
             content="I always prefer using ColPali model for video searches",
             tenant_id="test:unit",
-            agent_name="_test_tenant_ext_rt",
+            agent_name=agent_name,
+        )
+        assert memory_id, (
+            "Mem0 persisted nothing for the content, so there is no memory to "
+            "search back"
         )
 
-        results = mm.search_memory(
-            query="ColPali video search preference",
-            tenant_id="test:unit",
-            agent_name="_test_tenant_ext_rt",
-            top_k=5,
-        )
+        # Vespa indexes a feed asynchronously: the write is not necessarily
+        # searchable the instant add_memory returns, and how far it lags
+        # depends on what else is feeding the shared container. Poll to a
+        # deadline instead of racing it.
+        stored: dict[str, str] = {}
+        found: dict[str, str] = {}
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            stored = {
+                m["id"]: m["memory"]
+                for m in mm.get_all_memories(
+                    tenant_id="test:unit",
+                    agent_name=agent_name,
+                )
+            }
+            found = {
+                r["id"]: r["memory"]
+                for r in mm.search_memory(
+                    query="ColPali video search preference",
+                    tenant_id="test:unit",
+                    agent_name=agent_name,
+                    top_k=20,
+                )
+            }
+            if stored and found == stored:
+                break
+            time.sleep(1)
 
-        assert len(results) >= 1, (
-            "Should find the memory we just added via real Vespa search"
+        assert memory_id in stored, (
+            f"add_memory returned {memory_id!r} but the namespace holds "
+            f"{sorted(stored)}"
         )
-        all_text = " ".join(r.get("memory", "") for r in results).lower()
-        assert "colpali" in all_text or "video" in all_text or "search" in all_text, (
-            f"Memory should reference ColPali/video/search, got: {all_text}"
+        assert found == stored, (
+            f"Vespa semantic search returned {found!r}, expected every stored "
+            f"memory {stored!r}"
         )
 
     def test_clear_agent_memory_removes_all(self, memory_manager):

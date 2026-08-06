@@ -27,11 +27,8 @@ telemetry or operator-supplied config:
      with parseable input/output). A run that "succeeds" with empty
      output is a bug.
 
-Marked ``slow`` and ``requires_optimizer_data`` so it never runs in
-the default e2e sweep — bring it up explicitly:
-
-    pytest -m "slow and requires_optimizer_data" \\
-        tests/e2e/test_optimizer_persistence_e2e.py
+Marked ``slow`` and ``requires_optimizer_data`` to identify its runtime cost.
+The tests provision the optimizer inputs and configuration they consume.
 """
 
 from __future__ import annotations
@@ -44,14 +41,14 @@ import time
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
+from tests.e2e.conftest import E2E_CLUSTER_NAME, RUNTIME, TENANT_ID
 
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.requires_optimizer_data,
 ]
 
-KUBECTL_CONTEXT = "k3d-cogniverse"
+KUBECTL_CONTEXT = f"k3d-{E2E_CLUSTER_NAME}"
 NAMESPACE = "cogniverse"
 RUNTIME_DEPLOYMENT = "deploy/cogniverse-runtime"
 RUNTIME_CONTAINER = "runtime"
@@ -64,23 +61,62 @@ OPTIMIZER_TIMEOUT_S = int(os.environ.get("OPTIMIZER_TIMEOUT_S", "1800"))
 
 
 def _kubectl_exec(*shell_argv: str, timeout: int = OPTIMIZER_TIMEOUT_S):
-    return subprocess.run(
-        [
-            "kubectl",
-            "--context",
-            KUBECTL_CONTEXT,
-            "-n",
-            NAMESPACE,
-            "exec",
-            RUNTIME_DEPLOYMENT,
-            "-c",
-            RUNTIME_CONTAINER,
-            "--",
-            *shell_argv,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
+    command = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "-n",
+        NAMESPACE,
+        "exec",
+        RUNTIME_DEPLOYMENT,
+        "-c",
+        RUNTIME_CONTAINER,
+        "--",
+        *shell_argv,
+    ]
+    command_text = " ".join(command)
+    try:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        pytest.fail(
+            "optimizer runtime prerequisite executable is unavailable; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; error={exc!r}",
+            pytrace=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            "optimizer runtime command timed out; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; "
+            f"timeout={exc.timeout}s; stdout={exc.stdout!r}; stderr={exc.stderr!r}",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def optimizer_runtime_ready() -> None:
+    """Prove the optimizer CLI can execute in this suite's runtime pod."""
+    probe = _kubectl_exec(
+        "python3",
+        "-c",
+        "print('__OPTIMIZER_RUNTIME_READY__')",
+        timeout=60,
+    )
+    assert probe.returncode == 0, (
+        "optimizer runtime prerequisite probe failed; "
+        f"context={KUBECTL_CONTEXT!r}; namespace={NAMESPACE!r}; "
+        f"deployment={RUNTIME_DEPLOYMENT!r}; container={RUNTIME_CONTAINER!r}; "
+        f"returncode={probe.returncode}; stdout={probe.stdout!r}; "
+        f"stderr={probe.stderr!r}"
+    )
+    assert probe.stdout.strip() == "__OPTIMIZER_RUNTIME_READY__", (
+        "optimizer runtime prerequisite probe returned unexpected output; "
+        f"context={KUBECTL_CONTEXT!r}; stdout={probe.stdout!r}; "
+        f"stderr={probe.stderr!r}"
     )
 
 
@@ -98,24 +134,42 @@ def _drive_orchestrator_traffic(queries: list[str], wait_for_spans_s: int = 8) -
     round of traffic.
     """
     success = 0
+    failures: list[dict[str, object]] = []
+    endpoint = f"{RUNTIME}/agents/orchestrator_agent/process"
     # AgentTask schema: agent_name in body, tenant_id under context.
     # The runtime refuses requests without tenant_id in context (no
     # bootstrap-tenant fallback), so omitting it 422s every call.
     with httpx.Client(timeout=120.0) as client:
         for q in queries:
             try:
-                r = client.post(
-                    f"{RUNTIME}/agents/orchestrator_agent/process",
+                response = client.post(
+                    endpoint,
                     json={
                         "agent_name": "orchestrator_agent",
                         "query": q,
                         "context": {"tenant_id": TENANT_ID},
                     },
                 )
-                if r.status_code == 200:
+                if response.status_code == 200:
                     success += 1
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.HTTPError):
-                continue
+                else:
+                    failures.append(
+                        {
+                            "query": q,
+                            "status": response.status_code,
+                            "body": response.text[:500],
+                        }
+                    )
+            except httpx.HTTPError as exc:
+                failures.append({"query": q, "error": repr(exc)})
+    if success == 0:
+        pytest.fail(
+            "orchestrator traffic prerequisite produced no successful requests; "
+            f"method='POST'; url={endpoint!r}; timeout=120.0s; "
+            f"tenant_id={TENANT_ID!r}; attempts={len(queries)}; "
+            f"failures={json.dumps(failures, default=str)}",
+            pytrace=False,
+        )
     # BatchSpanProcessor schedules every 500ms with 30s flush ceiling
     # (see TelemetryConfig.batch_config). 8s is comfortably above the
     # schedule_delay so spans land before the optimizer queries Phoenix.
@@ -124,7 +178,6 @@ def _drive_orchestrator_traffic(queries: list[str], wait_for_spans_s: int = 8) -
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestWorkflowOptimizationPersistence:
     """Run optimization_cli --mode workflow and verify it writes the
     query_patterns blob (and template_index when patterns produce
@@ -263,7 +316,6 @@ class TestWorkflowOptimizationPersistence:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSyntheticGenerationPersistence:
     """Run synthetic data generation end-to-end and verify the demos
     land in the per-tenant demos dataset.

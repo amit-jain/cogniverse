@@ -22,6 +22,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import dspy
 import pytest
@@ -461,7 +462,10 @@ class TestTelemetrySpansInPhoenix:
 
     @pytest.mark.asyncio
     async def test_gateway_custom_span_has_query_text(self, real_telemetry):
-        """GatewayAgent emits cogniverse.gateway span with actual query text."""
+        """GatewayAgent's cogniverse.gateway span carries the query on
+        ``input.value`` and the routing decision it returned on
+        ``output.value``, tagged ``operation="gateway"`` and scoped to the
+        canonical tenant."""
         from cogniverse_agents.gateway_agent import (
             GatewayAgent,
             GatewayDeps,
@@ -472,7 +476,7 @@ class TestTelemetrySpansInPhoenix:
         agent.set_telemetry_manager(real_telemetry)
 
         test_query = "find robotics engineering videos"
-        await agent.process(
+        decision = await agent.process(
             GatewayInput(query=test_query, tenant_id="telemetry_a2a_test")
         )
 
@@ -481,45 +485,34 @@ class TestTelemetrySpansInPhoenix:
         # The gateway canonicalizes the tenant (require_tenant_id) before
         # emitting, so spans land in the canonical project; get_project_name
         # doesn't canonicalize, so the querier must (per its docstring).
-        project_name = real_telemetry.config.get_project_name(
-            canonical_tenant_id("telemetry_a2a_test")
-        )
+        canonical_tenant = canonical_tenant_id("telemetry_a2a_test")
+        project_name = real_telemetry.config.get_project_name(canonical_tenant)
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
 
-        span = _query_phoenix_for_span("cogniverse.gateway", project_name, phoenix_url)
+        # Sibling tests in this class emit cogniverse.gateway spans into the
+        # same project, so pin the row by the query this call carried.
+        span = _query_phoenix_for_span(
+            "cogniverse.gateway",
+            project_name,
+            phoenix_url,
+            where={"attributes.input.value": test_query},
+        )
         assert span is not None, (
-            "cogniverse.gateway custom span not found in Phoenix. "
+            f"cogniverse.gateway span with input.value=={test_query!r} not found "
+            f"in Phoenix project {project_name}. "
             "GatewayAgent._emit_gateway_span may not be firing."
         )
 
-        # Phoenix DataFrame stores span attributes as dotted column names:
-        # "attributes.gateway" contains {"query": "...", "complexity": "...", ...}
-        gateway_attrs = span.get("attributes.gateway") if hasattr(span, "get") else None
-        if gateway_attrs is None:
-            # Try index-based access for pandas Series
-            try:
-                gateway_attrs = span["attributes.gateway"]
-            except (KeyError, TypeError):
-                gateway_attrs = None
-
-        assert gateway_attrs is not None, (
-            f"Span should have 'attributes.gateway' column. "
-            f"Available columns: {list(span.index) if hasattr(span, 'index') else 'unknown'}"
-        )
-
-        # gateway_attrs is a dict with query, complexity, modality, etc.
-        if isinstance(gateway_attrs, dict):
-            gateway_query = gateway_attrs.get("query", "")
-        else:
-            gateway_query = str(gateway_attrs)
-
-        assert (
-            "robotics" in gateway_query.lower()
-            or "engineering" in gateway_query.lower()
-        ), (
-            f"Span gateway.query should contain 'robotics' or 'engineering', "
-            f"got: {gateway_query!r}"
-        )
+        assert span["attributes.operation"] == "gateway"
+        # Phoenix nests dotted attribute keys, so "tenant.id" lands as a dict.
+        assert span["attributes.tenant"] == {"id": canonical_tenant}
+        assert json.loads(span["attributes.output.value"]) == {
+            "complexity": decision.complexity,
+            "modality": decision.modality,
+            "generation_type": decision.generation_type,
+            "routed_to": decision.routed_to,
+            "confidence": decision.confidence,
+        }
 
 
 def _query_phoenix_for_span(
@@ -527,8 +520,13 @@ def _query_phoenix_for_span(
     project_name: str,
     phoenix_http_url: str,
     max_wait: int = 30,
+    where: Optional[Dict[str, Any]] = None,
 ):
     """Poll Phoenix for a span with the given name.
+
+    ``where`` narrows the match to rows whose attribute columns equal the
+    given values exactly — several tests emit the same span name into one
+    project, so the name alone can resolve to another test's span.
 
     Returns the matched span row (or None) by polling for up to max_wait
     seconds to account for Phoenix ingestion delay.
@@ -540,12 +538,20 @@ def _query_phoenix_for_span(
     deadline = time.time() + max_wait
     while time.time() < deadline:
         try:
+            # get_spans_dataframe's own default timeout is short enough that a
+            # loaded project reads back as "no spans"; set it explicitly.
             spans_df = client.spans.get_spans_dataframe(
                 project_identifier=project_name,
                 limit=200,
+                timeout=30,
             )
             if spans_df is not None and not spans_df.empty:
                 matches = spans_df[spans_df["name"] == span_name]
+                for column, value in (where or {}).items():
+                    if column not in matches.columns:
+                        matches = matches.iloc[0:0]
+                        break
+                    matches = matches[matches[column] == value]
                 if not matches.empty:
                     return matches.iloc[0]
         except Exception:

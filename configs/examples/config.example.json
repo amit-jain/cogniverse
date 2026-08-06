@@ -540,7 +540,7 @@
     "profiles": {
       "video_colpali_smol500_mv_frame": {
         "type": "video",
-        "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings. Extracts keyframes and generates 128-dim patch embeddings for fine-grained matching.",
+        "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings. Extracts keyframes and generates 320-dim patch embeddings for fine-grained matching.",
         "schema_name": "video_colpali_smol500_mv_frame",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "model_config": {
@@ -598,7 +598,7 @@
       },
       "image_colpali_mv": {
         "type": "image",
-        "description": "ColPali multi-vector embeddings for image search. Loads images directly and generates 128-dim patch embeddings for fine-grained visual matching.",
+        "description": "ColPali multi-vector embeddings for image search. Loads images directly and generates 320-dim patch embeddings for fine-grained visual matching.",
         "schema_name": "image_colpali_mv",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "model_config": {
@@ -727,10 +727,13 @@
       },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
-        "description": "ColQwen-Omni for 30-second video chunk embeddings with multimodal understanding. Processes audio and visual content together.",
+        "description": "ColQwen3 visual document retrieval served by the Cogniverse ColPali service. 320-dim per-patch multi-vector embeddings.",
         "schema_name": "video_colqwen_omni_mv_chunk_30s",
-        "embedding_model": "vidore/colqwen-omni-v0.1",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "process_type": "video_chunks",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": false,
           "transcribe_audio": true,
@@ -778,12 +781,13 @@
         },
         "schema_config": {
           "schema_name": "video_colqwen_omni_mv_chunk_30s",
-          "model_name": "ColQwen-Omni",
+          "model_name": "ColQwen3",
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         },
         "inference_services": {
+          "embedding": "vllm_colpali",
           "transcription": "vllm_asr"
         }
       },
@@ -1037,7 +1041,7 @@
       },
       "code_lateon_mv": {
         "type": "code",
-        "description": "Source code semantic search with LateOn-Code-edge multi-vector embeddings (128-dim). Tree-sitter AST chunking by function/class/method.",
+        "description": "Source code semantic search with LateOn-Code-edge multi-vector embeddings (48-dim). Tree-sitter AST chunking by function/class/method.",
         "schema_name": "code_lateon_mv",
         "embedding_model": "lightonai/LateOn-Code-edge",
         "pipeline_config": {

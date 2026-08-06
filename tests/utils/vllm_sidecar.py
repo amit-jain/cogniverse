@@ -32,13 +32,46 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 import requests
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
 DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
-HOST_HF_CACHE = os.path.expanduser("~/.cache/huggingface")
+# Test-owned Hugging Face cache, deliberately separate from the user's
+# ~/.cache/huggingface: containers previously ran as root and wrote
+# root-owned entries into the personal cache, which breaks host-side
+# (in-process) model loads with permission errors. Test containers mount
+# this directory at /hf-cache and run as the invoking user, so every
+# entry stays user-owned; host-side oracles share it via ``hub/``.
+TEST_HF_CACHE = os.path.expanduser("~/.cache/cogniverse-tests/huggingface")
+CONTAINER_HF_CACHE = "/hf-cache"
+
+
+def writable_test_hf_cache() -> str:
+    """Create the test-owned HF cache and prove it is writable.
+
+    Raises with context instead of letting a model load fail later with an
+    opaque permission error mid-download.
+    """
+    hub = Path(TEST_HF_CACHE) / "hub"
+    try:
+        hub.mkdir(parents=True, exist_ok=True)
+        probe = hub / f".writable-probe-{os.getpid()}"
+        probe.write_bytes(b"")
+        probe.unlink()
+    except OSError as exc:
+        raise RuntimeError(
+            f"test HF cache {TEST_HF_CACHE} is not writable "
+            f"({type(exc).__name__}: {exc}); remove foreign-owned entries or "
+            "free the path"
+        ) from exc
+    return TEST_HF_CACHE
+
+
 E2E_CONTEXT = "k3d-cogniverse-e2e"
 E2E_CLUSTER = "cogniverse-e2e"
 DEV_CONTEXT = "k3d-cogniverse"
@@ -437,6 +470,10 @@ def _append_image_command(
         command.extend([image, "--model", model, *serve_args])
         return
     serve_command = shlex.join(["vllm", "serve", model, *serve_args])
+    # The container runs as the invoking (non-root) user, so pip cannot
+    # write into the image's root-owned venv — install the audio extras
+    # into the writable cache mount and expose them via PYTHONPATH.
+    extras_dir = f"{CONTAINER_HF_CACHE}/.pip-audio-extras"
     command.extend(
         [
             "--entrypoint",
@@ -444,7 +481,9 @@ def _append_image_command(
             image,
             "-c",
             (
-                "pip install --no-cache-dir --quiet soundfile librosa || exit 1; "
+                f"pip install --no-cache-dir --quiet --target {extras_dir} "
+                "soundfile librosa || exit 1; "
+                f'export PYTHONPATH="{extras_dir}${{PYTHONPATH:+:$PYTHONPATH}}"; '
                 f"exec {serve_command}"
             ),
         ]
@@ -475,6 +514,59 @@ class _SpawnedSidecar:
     base_url: str
 
 
+def _prepare_pinned_snapshot(
+    model: str,
+    revision: str,
+    required_files: tuple[str, ...],
+) -> None:
+    if not required_files:
+        raise ValueError("Pinned model snapshots require an explicit file contract")
+
+    cache_dir = os.path.join(writable_test_hf_cache(), "hub")
+    snapshot_path: str | None = None
+    try:
+        snapshot_path = snapshot_download(
+            repo_id=model,
+            revision=revision,
+            cache_dir=cache_dir,
+            local_files_only=True,
+        )
+    except LocalEntryNotFoundError:
+        pass
+
+    missing = (
+        list(required_files)
+        if snapshot_path is None
+        else [
+            relative_path
+            for relative_path in required_files
+            if not os.path.isfile(os.path.join(snapshot_path, relative_path))
+        ]
+    )
+    if missing:
+        try:
+            snapshot_path = snapshot_download(
+                repo_id=model,
+                revision=revision,
+                cache_dir=cache_dir,
+                local_files_only=False,
+            )
+        except (HfHubHTTPError, LocalEntryNotFoundError, OSError) as exc:
+            raise RuntimeError(
+                f"Failed to provision pinned model {model!r} at {revision}: {exc}"
+            ) from exc
+        missing = [
+            relative_path
+            for relative_path in required_files
+            if not os.path.isfile(os.path.join(snapshot_path, relative_path))
+        ]
+    if missing:
+        raise RuntimeError(
+            f"Pinned model {model!r} at {revision} is missing required files: "
+            + ", ".join(missing)
+        )
+
+
 @dataclass
 class VllmSidecarFactory:
     """Per-session manager for exact remote services and local sidecars."""
@@ -491,6 +583,8 @@ class VllmSidecarFactory:
         self,
         model: str,
         *,
+        model_revision: str | None = None,
+        required_snapshot_files: tuple[str, ...] = (),
         extra_args: Optional[list[str]] = None,
         image: Optional[str] = None,
         device: str = "cpu",
@@ -500,6 +594,8 @@ class VllmSidecarFactory:
         image = image or self.image
         key = (
             model,
+            model_revision,
+            required_snapshot_files,
             image,
             tuple(extra_args or ()),
             device,
@@ -520,6 +616,21 @@ class VllmSidecarFactory:
                     container=None, base_url=configured_url
                 )
                 return configured_url
+
+            resolved_env = dict(env or {})
+            resolved_args = list(extra_args or ())
+            if model_revision is not None:
+                if "--revision" in resolved_args:
+                    raise ValueError(
+                        "Pass the pinned revision through model_revision only"
+                    )
+                _prepare_pinned_snapshot(
+                    model,
+                    model_revision,
+                    required_snapshot_files,
+                )
+                resolved_args.extend(["--revision", model_revision])
+                resolved_env["HF_HUB_OFFLINE"] = "1"
 
             # Reclaim RAM from sidecars whose owning session was SIGKILLed
             # before its teardown could run.
@@ -543,7 +654,7 @@ class VllmSidecarFactory:
                 "VLLM_CPU_KVCACHE_SPACE=2",
                 "--oom-score-adj=500",
             ]
-            for env_key, env_value in (env or {}).items():
+            for env_key, env_value in resolved_env.items():
                 cmd.extend(["-e", f"{env_key}={env_value}"])
             if device == "rocm":
                 cmd.extend(
@@ -560,13 +671,33 @@ class VllmSidecarFactory:
                         "seccomp=unconfined",
                     ]
                 )
-            if os.path.isdir(HOST_HF_CACHE):
-                cmd.extend(["-v", f"{HOST_HF_CACHE}:/root/.cache/huggingface"])
+            # Run as the invoking user against the test-owned cache so model
+            # downloads and engine caches stay user-owned on the host. HOME
+            # inside the mount keeps every ~-derived cache path writable;
+            # LOGNAME/USER keep getpass.getuser() working for a uid with no
+            # container passwd entry (torch inductor derives its cache dir
+            # from it and crashes on KeyError otherwise).
+            cmd.extend(
+                [
+                    "--user",
+                    f"{os.getuid()}:{os.getgid()}",
+                    "-e",
+                    f"HOME={CONTAINER_HF_CACHE}",
+                    "-e",
+                    f"HF_HOME={CONTAINER_HF_CACHE}",
+                    "-e",
+                    "LOGNAME=cogniverse",
+                    "-e",
+                    "USER=cogniverse",
+                    "-v",
+                    f"{writable_test_hf_cache()}:{CONTAINER_HF_CACHE}",
+                ]
+            )
             _append_image_command(
                 cmd,
                 image,
                 model,
-                _merge_serve_args(model, extra_args),
+                _merge_serve_args(model, resolved_args),
             )
 
             base_url = f"http://127.0.0.1:{port}"

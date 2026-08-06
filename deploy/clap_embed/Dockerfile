@@ -1,6 +1,6 @@
 # Cogniverse clap-embed sidecar. Serves CLAP (laion/clap-htsat-unfused)
-# acoustic + text embeddings on CPU. The application module lives in the
-# runtime package; build from the REPO ROOT:
+# acoustic + text embeddings on CPU. The application module lives in the CLI
+# modal-inference package; build from the REPO ROOT:
 #   docker build -f deploy/clap_embed/Dockerfile -t cogniverse/clap-embed .
 FROM python:3.12-slim AS final
 
@@ -19,9 +19,9 @@ WORKDIR /app
 COPY deploy/clap_embed/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# The module is import-free of cogniverse packages by design, so the
-# image carries just this one file plus requirements.txt.
-COPY libs/runtime/cogniverse_runtime/sidecars/clap_embed.py ./server.py
+# The canonical server is import-free of Cogniverse packages, so the image
+# carries just this one file plus requirements.txt.
+COPY libs/cli/cogniverse_cli/modal_inference/servers/clap.py ./server.py
 
 ENV CLAP_EMBED_MODEL=laion/clap-htsat-unfused \
     CLAP_EMBED_SAMPLE_RATE=48000 \

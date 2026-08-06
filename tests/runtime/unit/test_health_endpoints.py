@@ -47,9 +47,18 @@ def _stub_backend():
 @pytest.fixture(autouse=True)
 def _clear_health_cache():
     """The AgentRegistry is cached process-wide; reset between tests so each
-    test's patched dependencies are actually re-read."""
+    test's patched dependencies are actually re-read. /health also prefers a
+    registry injected into the agents router, and an earlier test that booted
+    the real app lifespan can leave one behind — save it, run against None so
+    the fallback build (the one these tests patch) is exercised, restore."""
+    from cogniverse_runtime.routers import agents as agents_router
+
+    saved = (agents_router._agent_registry, agents_router._dispatcher)
+    agents_router._agent_registry = None
+    agents_router._dispatcher = None
     health._get_agent_registry.cache_clear()
     yield
+    agents_router._agent_registry, agents_router._dispatcher = saved
     health._get_agent_registry.cache_clear()
 
 

@@ -32,7 +32,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 
 def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 120.0) -> None:
@@ -160,7 +160,6 @@ _INLINE_DOCS = [
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSynthesisOverInlineDocuments:
     """5 inline docs → answer + citations + persisted memory."""
 
@@ -235,7 +234,6 @@ class TestSynthesisOverInlineDocuments:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSynthesisLargeDocumentTriggersRLM:
     """50 large docs (~5KB each) with rlm.auto_detect=True → used_rlm flips True.
 
@@ -308,7 +306,6 @@ class TestSynthesisLargeDocumentTriggersRLM:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSynthesisFromMemoryIds:
     """3 pre-written external_doc memories → citation_refs reference their ids."""
 

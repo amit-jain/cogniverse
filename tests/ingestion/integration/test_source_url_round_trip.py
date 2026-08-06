@@ -3,14 +3,15 @@
 Builds a production :class:`Document`, maps it to Vespa fields through the real
 ingestion mapping (:meth:`VespaPyClient.process` — the same code path live
 ingestion uses), feeds it through a real Vespa instance managed by the
-``ingestion_vespa_backend`` fixture (Docker container via ``VespaTestManager``),
+``ingestion_vespa_backend`` fixture (the shared session Vespa container),
 queries it back, and asserts ``source_url`` round-trips exactly. This exercises
 the prod field mapping, so it would catch prod dropping source_url — not a
 test-only document builder. No mocking the Vespa boundary.
 
-The fixture deploys metadata schemas only; this test redeploys with the
-``video_colpali_smol500_mv_frame`` schema added so documents of that type
-can be fed. Skips cleanly via ``requires_docker`` when Docker isn't there.
+This module deploys its own tenant-scoped copy of the
+``video_colpali_smol500_mv_frame`` schema via SchemaRegistry (merge-safe, so
+other schemas on the shared Vespa stay intact) and feeds documents of that
+type. Skips cleanly via ``requires_docker`` when Docker isn't there.
 """
 
 from __future__ import annotations
@@ -21,15 +22,12 @@ from pathlib import Path
 import pytest
 
 from tests.ingestion.integration.conftest import feed_document_via_prod_mapping
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
 
-SCHEMA = "video_colpali_smol500_mv_frame"
-VIDEO_SCHEMA_JSON = (
-    Path(__file__).resolve().parents[2]
-    / "system"
-    / "resources"
-    / "schemas"
-    / f"{SCHEMA}_schema.json"
-)
+BASE_SCHEMA = "video_colpali_smol500_mv_frame"
+TENANT_ID = "test:source_url_rt"
+SCHEMA = schema_full_name(BASE_SCHEMA, TENANT_ID)
+SCHEMAS_DIR = Path("configs/schemas")
 
 
 def _wait_for_searchable(vespa_app, doc_id: str, timeout: float = 60.0) -> dict | None:
@@ -47,40 +45,20 @@ def _wait_for_searchable(vespa_app, doc_id: str, timeout: float = 60.0) -> dict 
     return None
 
 
-def _deploy_video_schema_alongside_metadata(config_port: int, http_port: int) -> None:
-    """Redeploy the cogniverse application with metadata + video schemas."""
+def _deploy_video_schema(ingestion_vespa_backend) -> None:
+    """Deploy the tenant-scoped video schema via SchemaRegistry (merge-safe)."""
     import requests
-    from vespa.package import ApplicationPackage
 
-    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-    from cogniverse_vespa.metadata_schemas import (
-        create_adapter_registry_schema,
-        create_config_metadata_schema,
-        create_organization_metadata_schema,
-        create_tenant_metadata_schema,
+    deployed = deploy_tenant_schema(
+        ingestion_vespa_backend,
+        tenant_id=TENANT_ID,
+        base_schema_name=BASE_SCHEMA,
     )
-    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-    parser = JsonSchemaParser()
-    video_schema = parser.load_schema_from_json_file(str(VIDEO_SCHEMA_JSON))
-
-    schemas = [
-        create_organization_metadata_schema(),
-        create_tenant_metadata_schema(),
-        create_config_metadata_schema(),
-        create_adapter_registry_schema(),
-        video_schema,
-    ]
-
-    schema_manager = VespaSchemaManager(
-        backend_endpoint="http://localhost",
-        backend_port=config_port,
-    )
-    app_package = ApplicationPackage(name="cogniverse", schema=schemas)
-    schema_manager._deploy_package(app_package, allow_schema_removal=True)
+    assert deployed == SCHEMA, f"registry deployed {deployed!r}, tests use {SCHEMA!r}"
 
     # Wait for the new document type to be queryable. Vespa returns 200 on
     # prepareandactivate before the schema is actually active for feeds.
+    http_port = ingestion_vespa_backend["http_port"]
     yql = f"select * from {SCHEMA} where true limit 0"
     deadline = time.time() + 60.0
     while time.time() < deadline:
@@ -106,10 +84,7 @@ def _deploy_video_schema_alongside_metadata(config_port: int, http_port: int) ->
 def vespa_app(ingestion_vespa_backend):
     from vespa.application import Vespa
 
-    _deploy_video_schema_alongside_metadata(
-        ingestion_vespa_backend["config_port"],
-        ingestion_vespa_backend["http_port"],
-    )
+    _deploy_video_schema(ingestion_vespa_backend)
     return Vespa(url=ingestion_vespa_backend["backend_url"])
 
 
@@ -122,7 +97,8 @@ class TestSourceUrlRoundTrip:
             vespa_app,
             ingestion_vespa_backend["http_port"],
             SCHEMA,
-            VIDEO_SCHEMA_JSON.parent,
+            SCHEMAS_DIR,
+            base_schema_name=BASE_SCHEMA,
             video_id="roundtrip_v",
             video_title="Round-Trip Test",
             source_url=canonical_uri,
@@ -139,7 +115,8 @@ class TestSourceUrlRoundTrip:
             vespa_app,
             ingestion_vespa_backend["http_port"],
             SCHEMA,
-            VIDEO_SCHEMA_JSON.parent,
+            SCHEMAS_DIR,
+            base_schema_name=BASE_SCHEMA,
             video_id="roundtrip_v_pvc",
             video_title="PVC Round-Trip Test",
             source_url=canonical_uri,
@@ -157,7 +134,8 @@ class TestSourceUrlRoundTrip:
             vespa_app,
             ingestion_vespa_backend["http_port"],
             SCHEMA,
-            VIDEO_SCHEMA_JSON.parent,
+            SCHEMAS_DIR,
+            base_schema_name=BASE_SCHEMA,
             video_id="roundtrip_v_file",
             video_title="File Round-Trip Test",
             source_url=canonical_uri,

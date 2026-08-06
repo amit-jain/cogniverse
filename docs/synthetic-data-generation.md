@@ -626,9 +626,10 @@ uv run python -m cogniverse_runtime.optimization_cli \
 ```
 
 `--agents` is a comma-separated list of optimizer types (defaults to
-`simba,profile,workflow` if omitted). `RoutingGenerator`'s DSPy module is
-configured from the tenant's LM settings before generation runs, since the
-mode executes inside an asyncio task where `dspy.configure` cannot be called.
+`simba,profile,workflow` if omitted). `RoutingGenerator`'s DSPy module runs
+under the tenant's LM, bound with `dspy.context(lm=...)` around each `generate`
+call, since the mode executes inside an asyncio task where `dspy.configure`
+cannot be called.
 
 ## Integration with Optimizers
 

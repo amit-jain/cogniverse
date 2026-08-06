@@ -26,7 +26,7 @@ from cogniverse_agents.optimizer.signature_variants import (
     SignatureVariantRegistry,
     variant_qualified_agent_key,
 )
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 # ---------------------------------------------------------------------------
 # 1. register — idempotent for identical defs, raises on conflict
@@ -34,7 +34,6 @@ from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRegisterVariantIdempotent:
     """Re-registering identical pin returns the same instance; conflict raises."""
 
@@ -69,7 +68,6 @@ class TestRegisterVariantIdempotent:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSelectedForTenantFallback:
     """Missing / wrong tenant selection collapses to default with a warning."""
 
@@ -115,7 +113,6 @@ class TestSelectedForTenantFallback:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestVariantQualifiedAgentKey:
     """Default variant returns bare agent_type; custom gets ``::variant=`` suffix."""
 
@@ -143,7 +140,6 @@ class TestVariantQualifiedAgentKey:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestVariantsHaveSeparateArtifactKeys:
     """ArtifactManager.qualified_agent_key produces distinct keys per variant.
 
@@ -172,7 +168,6 @@ class TestVariantsHaveSeparateArtifactKeys:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSetVariantViaHTTP:
     """PUT /signature_variants/{agent} stores; GET returns exact dict equality."""
 

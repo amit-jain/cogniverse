@@ -5,6 +5,7 @@ description = "CLI for deploying and managing Cogniverse"
 requires-python = ">=3.12"
 dependencies = [
     "click==8.1.8",
+    "fastapi==0.135.3",
     "rich==14.3.4",
     "httpx==0.28.1",
     "httpx-sse==0.4.3",

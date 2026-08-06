@@ -13,11 +13,10 @@ Features tested:
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
+from tests.e2e.conftest import RUNTIME, TENANT_ID
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestDeepResearchE2E:
     """Deep research agent through the runtime HTTP API."""
 
@@ -55,7 +54,6 @@ class TestDeepResearchE2E:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestAnnotationQueueE2E:
     """Annotation queue REST endpoints through the runtime."""
 

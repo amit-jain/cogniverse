@@ -19,6 +19,7 @@ rather than adding a wipe helper here that other tests would mis-use.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict
 
@@ -117,3 +118,24 @@ def load_raw_schema_json(base_schema_name: str) -> Dict[str, Any]:
             f"No schema definition for base name {base_schema_name!r} at {path}"
         )
     return json.loads(path.read_text())
+
+
+def schema_tensor_dim(base_schema_name: str, field_name: str) -> int:
+    """The ``v[N]`` width declared for a tensor field in configs/schemas/.
+
+    Tests that hand-feed documents size their vectors from this rather than
+    a literal, so a model swap that changes the embedding width surfaces as
+    a schema/encoder mismatch instead of a 400 from every feed.
+    """
+    schema = load_raw_schema_json(base_schema_name)
+    for field in schema["document"]["fields"]:
+        if field["name"] != field_name:
+            continue
+        match = re.search(r"v\[(\d+)\]", field["type"])
+        if match is None:
+            raise ValueError(
+                f"{base_schema_name}.{field_name} is {field['type']!r}, "
+                f"which declares no v[N] dimension"
+            )
+        return int(match.group(1))
+    raise KeyError(f"{base_schema_name} has no field named {field_name!r}")

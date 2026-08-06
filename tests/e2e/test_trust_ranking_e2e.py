@@ -40,7 +40,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 VESPA_HTTP_PORT = 8080
 VESPA_CONFIG_PORT = 33071
@@ -126,7 +126,6 @@ def _fetch_memory(mm: Mem0MemoryManager, memory_id: str) -> Dict[str, Any] | Non
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestInitialTrustFromDerivationKind:
     """compute_initial_trust pins (default_trust × _DERIVATION_WEIGHTS[kind])."""
 
@@ -171,7 +170,6 @@ class TestInitialTrustFromDerivationKind:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestEndorsementBumpsTrust:
     """POST /endorse increments trust by the role's delta and persists it."""
 
@@ -256,7 +254,6 @@ def _synthetic(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRankWithTrustOrdersByComposite:
     """rank_with_trust orders by exactly (relevance × trust × confidence)."""
 
@@ -276,7 +273,6 @@ class TestRankWithTrustOrdersByComposite:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestEndorseUnknownRoleRejected:
     """Unknown endorser_role => HTTP 400 with substring "unknown endorser_role='random'"."""
 

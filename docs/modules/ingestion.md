@@ -444,7 +444,7 @@ sequenceDiagram
 - **Frame/Chunk/Window** (`_process_multi_documents` / `_process_single_document`, default path): ColPali multi-vector per frame, ColQwen multi-vector per chunk, or VideoPrism single-vector per segment/global — dispatch is by `storage_mode` (`multi_doc` vs `single_doc`), not a `processing_type` field
 - **Document ColBERT** (`document_files` present → `_process_document_segments`): ColBERT 128-dim per-token multi-vector for text documents
 - **Document Visual ColPali** (`document_pages` present → `_process_document_visual_segments`): ColPali (Tomoro ColQwen3) 320-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
-- **Code ColBERT** (`code_files` present → `_process_code_segments`): ColBERT 128-dim per-token multi-vector for source-code chunks (`CodeSegmentationStrategy` → `CodeTextEmbeddingStrategy`)
+- **Code ColBERT** (`code_files` present → `_process_code_segments`): LateOn-Code-edge 48-dim per-token multi-vector for source-code chunks (`CodeSegmentationStrategy` → `CodeTextEmbeddingStrategy`)
 - **Audio Dual** (`audio_files` present → `_process_audio_segments`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content
 
 ---
@@ -562,14 +562,13 @@ flowchart TB
     MoreBatches -->|Yes| UploadLoop
     MoreBatches -->|No| Verify["<span style='color:#000'>Verify Upload</span>"]
 
-    Verify --> CheckCounts["<span style='color:#000'>Check Document Counts</span>"]
-    CheckCounts --> CountMatch{"<span style='color:#000'>documents_fed == total_documents?</span>"}
+    Verify --> CheckCounts["<span style='color:#000'>Check Counts and Errors</span>"]
+    CheckCounts --> CountMatch{"<span style='color:#000'>All documents fed with no errors?</span>"}
 
     CountMatch -->|Yes| Success["<span style='color:#000'>Upload Success</span>"]
-    CountMatch -->|No| PartialSuccess["<span style='color:#000'>Partial Upload - Log Errors</span>"]
+    CountMatch -->|No| Failed["<span style='color:#000'>Upload Failed with Exact Counts</span>"]
 
     Success --> Complete["<span style='color:#000'>Upload Complete</span>"]
-    PartialSuccess --> Complete
 
     style Start fill:#90caf9,stroke:#1565c0,color:#000
     style Builder fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -623,12 +622,12 @@ flowchart TB
     style VespaAPI1 fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Result1 fill:#b0bec5,stroke:#546e7a,color:#000
     style TrackSuccess1 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style TrackError1 fill:#e53935,stroke:#c62828,color:#fff
+    style TrackError1 fill:#e53935,stroke:#c62828,color:#000
     style Batch2 fill:#b0bec5,stroke:#546e7a,color:#000
     style VespaAPI2 fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Result2 fill:#b0bec5,stroke:#546e7a,color:#000
     style TrackSuccess2 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style TrackError2 fill:#e53935,stroke:#c62828,color:#fff
+    style TrackError2 fill:#e53935,stroke:#c62828,color:#000
     style MoreBatches fill:#b0bec5,stroke:#546e7a,color:#000
     style Verify fill:#ffcc80,stroke:#ef6c00,color:#000
     style CheckCounts fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -636,7 +635,7 @@ flowchart TB
     style Success fill:#a5d6a7,stroke:#388e3c,color:#000
     style PartialSuccess fill:#ffcc80,stroke:#ef6c00,color:#000
     style Complete fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Error fill:#e53935,stroke:#c62828,color:#fff
+    style Error fill:#e53935,stroke:#c62828,color:#000
 ```
 
 **Vespa Upload Key Features:**
@@ -680,7 +679,7 @@ Operational scripts:
 **Purpose**: Main orchestrator for video processing with async optimizations
 
 **Constructor**:
-```python
+```text
 def __init__(
     self,
     tenant_id: str,  # REQUIRED - no default
@@ -720,7 +719,7 @@ object-store-configured `MediaLocator`), pass the local `Path` plus
 `s3://` URL) rather than the temporary local path — answer-time keyframe
 resolution derives the object-store bucket from that recorded source_url.
 
-```python
+```text
 result = await pipeline.process_video_async(Path("video.mp4"))
 # Returns:
 # {
@@ -745,7 +744,7 @@ Process multiple videos concurrently with resource control. When
 (set via `VideoIngestionPipelineBuilder.with_concurrency(...)`, default 3); a
 per-call value still overrides it.
 
-```python
+```text
 video_files = [Path("v1.mp4"), Path("v2.mp4"), Path("v3.mp4")]
 results = await pipeline.process_videos_concurrent(video_files, max_concurrent=2)
 # Process 2 videos at once, queue remaining
@@ -763,7 +762,7 @@ results = await pipeline.process_videos_concurrent(video_files, max_concurrent=2
 
 Synchronous entry point for batch processing.
 
-```python
+```text
 results = pipeline.process_directory(
     video_dir=Path("videos/"),
     max_concurrent=3
@@ -784,7 +783,7 @@ results = pipeline.process_directory(
 
 #### `@classmethod create_from_profile_config(profile_config: dict[str, Any]) -> ProcessingStrategySet`
 
-```python
+```text
 profile_config = {
     "strategies": {
         "segmentation": {
@@ -844,7 +843,7 @@ is an opt-in contract, and `**kwargs` deliberately does not count as
 opting in (a `**kwargs` constructor absorbs the kwarg and silently
 drops it, so the factory would believe it was delivered).
 
-```python
+```text
 # Strategy opts in by declaring the parameter:
 class AudioTranscriptionStrategy(BaseStrategy):
     def __init__(
@@ -868,12 +867,12 @@ observable.
 **Purpose**: Container for processing strategies with execution orchestration
 
 **Constructor**:
-```python
+```text
 def __init__(self, **strategies)
 ```
 
 Accepts any number of named strategies:
-```python
+```text
 strategy_set = ProcessingStrategySet(
     segmentation=FrameSegmentationStrategy(fps=0.5),
     transcription=AudioTranscriptionStrategy(),
@@ -887,7 +886,7 @@ strategy_set = ProcessingStrategySet(
 
 Execute all strategies, respecting their data dependencies.
 
-```python
+```text
 results = await strategy_set.process(
     video_path=Path("video.mp4"),
     processor_manager=proc_manager,
@@ -922,7 +921,7 @@ concrete `endpoint` URL before construction. Pass `{}` when no remote
 inference services are deployed — strategies that request one then raise at
 init instead of silently falling back to a local model.
 
-```python
+```text
 manager = ProcessorManager(logger)
 manager.initialize_from_strategies(strategy_set, service_urls={})
 # Internally calls strategy.get_required_processors() for each strategy
@@ -932,7 +931,7 @@ manager.initialize_from_strategies(strategy_set, service_urls={})
 
 Retrieve processor instance by name.
 
-```python
+```text
 keyframe_proc = manager.get_processor("keyframe")
 audio_proc = manager.get_processor("audio")
 ```
@@ -953,7 +952,7 @@ audio_proc = manager.get_processor("audio")
 `generate_embeddings(video_data, output_dir) -> EmbeddingResult` contract.
 `EmbeddingResult` is the dataclass returned by every generator:
 
-```python
+```text
 @dataclass
 class EmbeddingResult:
     video_id: str
@@ -967,6 +966,14 @@ class EmbeddingResult:
 
 The concrete implementation is `EmbeddingGeneratorImpl` (below), constructed via
 `EmbeddingGeneratorFactory` / `create_embedding_generator`.
+When an embedding stage runs, its result must contain the non-negative integer
+fields `total_documents`, `documents_processed`, and `documents_fed`, plus an
+`errors` list containing only non-empty strings. Processed documents cannot
+exceed the total, and fed documents cannot exceed the processed count. An
+explicit stage `error`, a malformed result, a non-empty `errors` list, or any
+partial feed produces a terminal failure with the embedding-stage context.
+Only the absence of the `embeddings` result key means that the optional stage
+did not run and may complete successfully.
 
 ### 6. EmbeddingGeneratorImpl
 
@@ -989,7 +996,7 @@ which key is present in `video_data`, checked in this order):
 
 - `_process_document_visual_segments()` - `document_pages` present: ColPali multi-vector page-image embeddings for PDF pages
 - `_process_document_segments()` - `document_files` present: ColBERT 128-dim per-token multi-vector embeddings for text documents
-- `_process_code_segments()` - `code_files` present: ColBERT 128-dim per-token multi-vector embeddings for source-code chunks
+- `_process_code_segments()` - `code_files` present: LateOn-Code-edge 48-dim per-token multi-vector embeddings for source-code chunks
 - `_process_audio_segments()` - `audio_files` present: CLAP 512-dim acoustic + ColBERT 128-dim semantic dual embeddings for audio
 - `_process_single_document()` / `_process_multi_documents()` - fallback for frame/chunk/window segments, chosen by `storage_mode`
 
@@ -1015,7 +1022,7 @@ which key is present in `video_data`, checked in this order):
 - `with_concurrency(max_concurrent)` — sets the pipeline's default `max_concurrent` (this is the "configured value" `process_videos_concurrent` falls back to when its own `max_concurrent` argument is omitted)
 - `build() -> VideoIngestionPipeline` — raises `ValueError` if `tenant_id` or `config_manager` was never set
 
-```python
+```text
 pipeline = (
     VideoIngestionPipelineBuilder()
     .with_tenant_id("your_org:production")
@@ -1043,7 +1050,7 @@ pipeline = (
 - `max_frames`: Maximum frames to extract (default 3000)
 
 **Usage**:
-```python
+```text
 strategy = FrameSegmentationStrategy(fps=0.5, threshold=0.999, max_frames=3000)
 requirements = strategy.get_required_processors()
 # Returns: {"keyframe": {"fps": 0.5, "threshold": 0.999, "max_frames": 3000}}
@@ -1062,7 +1069,7 @@ requirements = strategy.get_required_processors()
 - `cache_chunks`: Cache extracted chunks (default True)
 
 **Usage**:
-```python
+```text
 strategy = ChunkSegmentationStrategy(chunk_duration=30.0, chunk_overlap=0.0)
 requirements = strategy.get_required_processors()
 # Returns: {"chunk": {"chunk_duration": 30.0, "chunk_overlap": 0.0, "cache_chunks": True}}
@@ -1086,7 +1093,7 @@ requirements = strategy.get_required_processors()
 - `store_as_single_doc`: Store all segments in one document (default False)
 
 **Usage**:
-```python
+```text
 strategy = SingleVectorSegmentationStrategy(
     strategy="sliding_window",
     segment_duration=6.0,
@@ -1103,7 +1110,7 @@ strategy = SingleVectorSegmentationStrategy(
 #### `async segment(video_path: Path, pipeline_context: Any, transcript_data: dict | None) -> dict[str, Any]`
 
 Directly processes video and returns segmented data:
-```python
+```text
 result = await strategy.segment(
     video_path=Path("video.mp4"),
     pipeline_context=pipeline,
@@ -1123,7 +1130,7 @@ result = await strategy.segment(
 - `inference_service`: Optional named remote service (e.g. `"vllm_asr"`); when set, `AudioProcessor` POSTs to the vLLM Whisper pod's `/v1/audio/transcriptions` instead of loading a local model (default `None`)
 
 **Usage**:
-```python
+```text
 strategy = AudioTranscriptionStrategy(model="whisper-large-v3", language="auto")
 ```
 
@@ -1140,7 +1147,7 @@ strategy = AudioTranscriptionStrategy(model="whisper-large-v3", language="auto")
 - `vlm_concurrency`: Keyframe describe-requests kept in flight against an OpenAI-compatible `/v1` (vLLM) endpoint (default 8). Concurrent requests are what feed vLLM's continuous batching — the chat API returns one completion per request, so there is no single-request multi-image describe. Raise it on a GPU that can serve a bigger batch; keep it low on a small one. Ignored by the Modal zip-batch path.
 
 **Usage**:
-```python
+```text
 strategy = VLMDescriptionStrategy(
     vlm_endpoint="https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
     batch_size=500
@@ -1159,7 +1166,7 @@ strategy = VLMDescriptionStrategy(
 - `inference_service`: Optional named remote service for ColPali/ColQwen inference (default `None`)
 
 **Usage**:
-```python
+```text
 strategy = MultiVectorEmbeddingStrategy(model_name="TomoroAI/tomoro-colqwen3-embed-4b")
 ```
 
@@ -1173,7 +1180,7 @@ Wraps `results` with `video_id`/`video_path` and delegates to
 `pipeline_context.generate_embeddings()`, which routes through `EmbeddingGeneratorImpl`.
 The processor manager is read off `pipeline_context.processor_manager` rather than
 passed in:
-```python
+```text
 embeddings = await strategy.generate_embeddings_with_processor(
     results={"keyframes": [...]},
     pipeline_context=pipeline,
@@ -1190,7 +1197,7 @@ embeddings = await strategy.generate_embeddings_with_processor(
 - `inference_service`: Optional named remote service for VideoPrism inference (default `None`)
 
 **Usage**:
-```python
+```text
 strategy = SingleVectorEmbeddingStrategy(model_name="google/videoprism-lvt-base")
 ```
 
@@ -1202,7 +1209,7 @@ strategy = SingleVectorEmbeddingStrategy(model_name="google/videoprism-lvt-base"
 - `NoTranscriptionStrategy` — `get_required_processors()` returns `{}`; used for non-video content (images, documents, code) that has no audio track.
 
 **Usage**:
-```python
+```text
 strategy_set = ProcessingStrategySet(
     segmentation=ImageSegmentationStrategy(),
     transcription=NoTranscriptionStrategy(),
@@ -1222,7 +1229,7 @@ same shape `FrameSegmentationStrategy` produces, so `MultiVectorEmbeddingStrateg
 - `inference_service`: Optional named remote inference service (default `None`)
 
 **Usage**:
-```python
+```text
 strategy = ImageSegmentationStrategy(max_images=5000)
 requirements = strategy.get_required_processors()
 # Returns: {"image": {"max_images": 5000}}
@@ -1241,7 +1248,7 @@ Discovery for the `image` requirement key is handled inline by
 - `max_files`: Maximum audio files to discover (default 10000)
 
 **Usage**:
-```python
+```text
 strategy = AudioFileSegmentationStrategy(max_files=1000)
 # get_required_processors() -> {"audio_file": {"max_files": 1000}}
 ```
@@ -1256,7 +1263,7 @@ strategy = AudioFileSegmentationStrategy(max_files=1000)
 - `colbert_model`: ColBERT model for semantic embeddings (default `"lightonai/LateOn"`)
 
 **Usage**:
-```python
+```text
 strategy = AudioEmbeddingStrategy(
     clap_model="laion/clap-htsat-unfused",
     colbert_model="lightonai/LateOn",
@@ -1273,7 +1280,7 @@ strategy = AudioEmbeddingStrategy(
 - `max_files`: Maximum document files to discover (default 10000)
 
 **Usage**:
-```python
+```text
 strategy = DocumentSegmentationStrategy(max_files=2000)
 # get_required_processors() -> {"document_file": {"max_files": 2000}}
 ```
@@ -1288,7 +1295,7 @@ strategy = DocumentSegmentationStrategy(max_files=2000)
 - `dpi`: Rendering resolution in DPI (default 150)
 
 **Usage**:
-```python
+```text
 strategy = DocumentVisualSegmentationStrategy(max_files=500, dpi=150)
 # get_required_processors() -> {"document_page": {"max_files": 500, "dpi": 150}}
 ```
@@ -1303,7 +1310,7 @@ strategy = DocumentVisualSegmentationStrategy(max_files=500, dpi=150)
 - `max_files`: Maximum source files to discover (default 50000)
 
 **Usage**:
-```python
+```text
 strategy = CodeSegmentationStrategy(languages=["python", "go"], max_files=10000)
 # get_required_processors() -> {"code_file": {"languages": [...], "max_files": 10000}}
 ```
@@ -1320,14 +1327,14 @@ strategy = CodeSegmentationStrategy(languages=["python", "go"], max_files=10000)
 - `inference_service`: Optional named remote inference service (default `None`)
 
 **Usage**:
-```python
+```text
 strategy = DocumentTextEmbeddingStrategy(colbert_model="lightonai/LateOn")
 # get_required_processors() -> {"embedding": {"type": "document_text", "colbert_model": ...}}
 ```
 
 ### 16. DocumentVisualEmbeddingStrategy
 
-**Purpose**: Generate ColPali multi-vector embeddings (128-dim per patch) for the PDF page images `DocumentVisualSegmentationStrategy` renders.
+**Purpose**: Generate ColPali multi-vector embeddings (320-dim per patch) for the PDF page images `DocumentVisualSegmentationStrategy` renders.
 
 **Parameters**:
 
@@ -1335,21 +1342,21 @@ strategy = DocumentTextEmbeddingStrategy(colbert_model="lightonai/LateOn")
 - `inference_service`: Optional named remote inference service (default `None`)
 
 **Usage**:
-```python
+```text
 strategy = DocumentVisualEmbeddingStrategy(colpali_model="TomoroAI/tomoro-colqwen3-embed-4b")
 # get_required_processors() -> {"embedding": {"type": "document_visual", "colpali_model": ...}}
 ```
 
 ### 17. CodeTextEmbeddingStrategy
 
-**Purpose**: Generate ColBERT multi-vector embeddings (128-dim per token) for source-code chunks produced by `CodeSegmentationStrategy`.
+**Purpose**: Generate LateOn-Code-edge multi-vector embeddings (48-dim per token) for source-code chunks produced by `CodeSegmentationStrategy`.
 
 **Parameters**:
 
 - `colbert_model`: ColBERT model (default `"lightonai/LateOn-Code-edge"`)
 
 **Usage**:
-```python
+```text
 strategy = CodeTextEmbeddingStrategy(colbert_model="lightonai/LateOn-Code-edge")
 # get_required_processors() -> {"embedding": {"type": "code_text", "colbert_model": ...}}
 ```
@@ -1368,7 +1375,7 @@ strategy = CodeTextEmbeddingStrategy(colbert_model="lightonai/LateOn-Code-edge")
 
 Extract keyframes using histogram or FPS method.
 
-```python
+```text
 processor = KeyframeProcessor(logger, threshold=0.999, max_frames=3000, fps=0.5)
 result = processor.extract_keyframes(
     video_path=Path("video.mp4"),
@@ -1404,9 +1411,12 @@ result = processor.extract_keyframes(
 
 #### `def extract_chunks(video_path: Path, output_dir: Path = None) -> dict[str, Any]`
 
-Extract video chunks with optional overlap.
+Extract video chunks with optional overlap. Each chunk is re-encoded so it is
+independently decodable even when its boundary does not coincide with a source
+keyframe. FFmpeg failures and timeouts abort the extraction with the source path
+and exact time span; partial chunk sets are never returned as success.
 
-```python
+```text
 processor = ChunkProcessor(logger, chunk_duration=30.0, chunk_overlap=0.0)
 result = processor.extract_chunks(
     video_path=Path("video.mp4"),
@@ -1426,7 +1436,9 @@ result = processor.extract_chunks(
 
 **FFmpeg Command**:
 ```bash
-ffmpeg -y -i video.mp4 -ss 0.0 -t 30.0 -c copy -avoid_negative_ts make_zero chunk_0000.mp4
+ffmpeg -y -ss 0.0 -i video.mp4 -t 30.0 -map 0:v:0 -map '0:a?' \
+  -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac \
+  -avoid_negative_ts make_zero chunk_0000.mp4
 ```
 
 **Output**:
@@ -1444,7 +1456,7 @@ ffmpeg -y -i video.mp4 -ss 0.0 -t 30.0 -c copy -avoid_negative_ts make_zero chun
 
 Transcribe audio with caching support.
 
-```python
+```text
 processor = AudioProcessor(logger, model="whisper-large-v3", language="auto")
 result = processor.transcribe_audio(
     video_path=Path("video.mp4"),
@@ -1484,7 +1496,7 @@ result = processor.transcribe_audio(
 
 #### `def generate_descriptions(frames_data: dict[str, Any]) -> dict[str, Any]`
 
-```python
+```text
 processor = VLMProcessor(
     logger,
     vlm_endpoint="https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
@@ -1507,7 +1519,7 @@ result = processor.generate_descriptions(frames_data)
 
 Process video into segments with transcript alignment.
 
-```python
+```text
 processor = SingleVectorVideoProcessor(
     logger,
     strategy="sliding_window",
@@ -1529,7 +1541,7 @@ result = processor.process_video(
 ```
 
 **VideoSegment Structure**:
-```python
+```text
 @dataclass
 class VideoSegment:
     segment_id: int
@@ -1548,7 +1560,7 @@ These plain classes back the processors above and are not auto-discovered by
 `ProcessorManager` themselves:
 
 - `AudioTranscriber` (`audio_transcriber.py`) — Whisper model loading and the core transcription call; used by `AudioProcessor`.
-- `AudioEmbeddingGenerator` (`audio_embedding_generator.py`) — lazy CLAP loading and acoustic embedding generation; used by `EmbeddingGeneratorImpl._process_audio_segments()`. Remote (`clap_endpoint_url`) calls reuse one pooled `httpx.Client` across the instance instead of opening a connection per segment; `close()` releases that pooled client.
+- `AudioEmbeddingGenerator` (`audio_embedding_generator.py`) — lazy CLAP loading and acoustic embedding generation; used by `EmbeddingGeneratorImpl._process_audio_segments()`. Concurrent local cold starts build and atomically publish one CLAP model/processor pair and one semantic embedder per generator; a failed build publishes no partial instance and can be retried. Remote calls require `clap_endpoint_url`. Modal URLs obtain their bearer credential from `COGNIVERSE_INFERENCE_API_KEY` and reject caller-supplied headers; non-Modal URLs may supply one canonical bearer mapping. The generator resolves the credential once, reuses one pooled `httpx.Client` across the instance, and releases it through `close()`.
 - `VLMDescriptor` (`vlm_descriptor.py`) — Modal VLM service HTTP client and auto-start logic; used by `VLMProcessor`.
 - `EmbeddingGeneratorFactory` (`embedding_generator/embedding_generator_factory.py`) — exposes `create_embedding_generator(...)`, the factory function used to construct `EmbeddingGeneratorImpl`.
 - `BackendFactory` (`embedding_generator/backend_factory.py`) — `BackendFactory.create(backend_type, tenant_id, config, ...)` builds the `IngestionBackend` (Vespa) client fed to `EmbeddingGeneratorImpl`.
@@ -1864,7 +1876,7 @@ video_colqwen_omni_mv_chunk_30s:
 
 ### Example 5: Custom Strategy Configuration
 
-```python
+```text
 import asyncio
 from pathlib import Path
 from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
@@ -1997,7 +2009,7 @@ pipeline_cache:
 ### 2. Error Handling
 
 **Pipeline Exceptions**:
-```python
+```text
 from cogniverse_runtime.ingestion.exceptions import PipelineException
 
 try:
@@ -2017,7 +2029,7 @@ except PipelineException as e:
 ### 3. Monitoring
 
 **Metrics to Track**:
-```python
+```text
 # Per-video metrics
 - Processing time (segmentation, transcription, embedding)
 - Document counts (total, processed, fed)
@@ -2031,7 +2043,7 @@ except PipelineException as e:
 ```
 
 **Logging**:
-```python
+```text
 # Profile-specific logs
 outputs/logs/video_processing_{profile}_{timestamp}.log
 
@@ -2075,7 +2087,7 @@ outputs/processing/
 ### 5. Scalability
 
 **Horizontal Scaling**:
-```python
+```text
 # Distribute videos across multiple machines
 import socket
 
@@ -2092,7 +2104,7 @@ pipeline.process_videos_concurrent(assigned_videos, max_concurrent=3)
 ```
 
 **Profile-Based Scaling**:
-```python
+```text
 # Process different profiles on different GPUs
 profiles_gpu0 = ["video_colpali_smol500_mv_frame"]
 profiles_gpu1 = ["video_videoprism_base_mv_chunk_30s"]
@@ -2187,7 +2199,7 @@ The `tests/ingestion/` suite has 49 files (28 unit, 20 integration, 1 shared
 | `test_clap_remote_embedding.py` | `AudioEmbeddingGenerator` remote path ↔ `clap_embed` sidecar |
 | `test_colbert_remote_roundtrip.py` | Remote ColBERT path round-trip |
 | `test_lateon_real_model.py` | LateOn real-model smoke test |
-| `test_lateon_vllm_parity.py` | vLLM-served LateOn per-token embeddings vs pylate oracle |
+| `test_lateon_pylate_parity.py` | PyLate-service LateOn per-token embeddings vs pylate oracle |
 | `test_denseon_vllm_real.py` | Real vLLM DenseOn vs sentence-transformers oracle |
 | `test_tomoro_serving_real.py` | Real vLLM Tomoro serving (320-dim normalization + pooling gate) |
 | `test_whisper_remote_roundtrip.py` | Remote Whisper transcription round-trip |
@@ -2196,7 +2208,7 @@ The `tests/ingestion/` suite has 49 files (28 unit, 20 integration, 1 shared
 
 ### Example Test Scenarios
 
-```python
+```text
 # Test frame extraction
 def test_keyframe_extraction_histogram():
     processor = KeyframeProcessor(logger, threshold=0.999, max_frames=100)
@@ -2249,7 +2261,7 @@ The `VideoIngestionPipeline` integrates with the A2A EventQueue for real-time pr
 
 ### Enabling EventQueue
 
-```python
+```text
 from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
 from cogniverse_core.events import get_queue_manager
 
@@ -2280,7 +2292,7 @@ When ingestion runs with EventQueue configured:
 
 ### Subscribing to Progress
 
-```python
+```text
 # In another process (dashboard/CLI)
 async for event in queue.subscribe():
     if event.event_type == "progress":
@@ -2292,7 +2304,7 @@ async for event in queue.subscribe():
 
 ### Cancellation
 
-```python
+```text
 # Cancel running ingestion
 await manager.cancel_task("ingestion_job_123", reason="User cancelled")
 

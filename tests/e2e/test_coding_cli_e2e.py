@@ -7,6 +7,8 @@ the live k3d runtime at localhost:33000. Assertions verify real data flow:
 - REPL session state survives multi-turn round-trips
 """
 
+import json
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -20,14 +22,139 @@ from cogniverse_cli.streaming import (
     stream_coding_response,
 )
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
+from tests.e2e.conftest import E2E_CLUSTER_NAME, RUNTIME, TENANT_ID
 
 SEARCH_AGENT_URL = f"{RUNTIME}/agents/search_agent/process"
 CODING_AGENT_URL = f"{RUNTIME}/agents/coding_agent/process"
+KUBECTL_CONTEXT = f"k3d-{E2E_CLUSTER_NAME}"
+
+
+def _run_prerequisite_command(
+    command: list[str], *, timeout: int
+) -> subprocess.CompletedProcess:
+    command_text = " ".join(command)
+    try:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        pytest.fail(
+            "coding sandbox prerequisite executable is unavailable; "
+            f"command={command_text!r}; error={exc!r}",
+            pytrace=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            "coding sandbox prerequisite command timed out; "
+            f"command={command_text!r}; timeout={exc.timeout}s; "
+            f"stdout={exc.stdout!r}; stderr={exc.stderr!r}",
+            pytrace=False,
+        )
+
+
+@pytest.fixture()
+def runtime_sandbox_ready() -> None:
+    """Provision OpenShell and prove a real exec from the runtime pod."""
+    context_command = ["kubectl", "config", "current-context"]
+    context = _run_prerequisite_command(context_command, timeout=10)
+    assert context.returncode == 0, (
+        "could not resolve kubectl context for coding sandbox setup; "
+        f"command={' '.join(context_command)!r}; returncode={context.returncode}; "
+        f"stdout={context.stdout!r}; stderr={context.stderr!r}"
+    )
+    assert context.stdout.strip() == KUBECTL_CONTEXT, (
+        "coding sandbox setup would target the wrong cluster; "
+        f"expected_context={KUBECTL_CONTEXT!r}; "
+        f"actual_context={context.stdout.strip()!r}; "
+        f"command={' '.join(context_command)!r}"
+    )
+
+    from cogniverse_cli.sandbox import ensure_sandbox_ready
+
+    try:
+        ready = ensure_sandbox_ready()
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        pytest.fail(
+            "OpenShell host gateway setup raised before the runtime probe; "
+            f"kubectl_context={KUBECTL_CONTEXT!r}; "
+            f"operation='ensure_sandbox_ready'; error={exc!r}",
+            pytrace=False,
+        )
+    assert ready, (
+        "OpenShell host gateway setup returned false; "
+        f"kubectl_context={KUBECTL_CONTEXT!r}; "
+        "operation='ensure_sandbox_ready'; expected=True"
+    )
+
+    probe_code = (
+        "import json\n"
+        "from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy\n"
+        "mgr = SandboxManager(policy=SandboxPolicy.REQUIRED)\n"
+        "out = mgr.exec_in_sandbox(\n"
+        "    'coding_agent',\n"
+        "    ['python3', '-c', \"print('coding-sandbox-ready')\"],\n"
+        "    timeout_seconds=60,\n"
+        ")\n"
+        "print('__SANDBOX_PROBE__' + json.dumps(out))\n"
+    )
+    probe_command = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "-n",
+        "cogniverse",
+        "exec",
+        "deploy/cogniverse-runtime",
+        "-c",
+        "runtime",
+        "--",
+        "python3",
+        "-c",
+        probe_code,
+    ]
+    probe = _run_prerequisite_command(probe_command, timeout=180)
+    assert probe.returncode == 0, (
+        "runtime pod could not execute the OpenShell prerequisite probe; "
+        f"command={' '.join(probe_command)!r}; returncode={probe.returncode}; "
+        f"stdout={probe.stdout!r}; stderr={probe.stderr!r}"
+    )
+    marker = next(
+        (
+            line.removeprefix("__SANDBOX_PROBE__")
+            for line in probe.stdout.splitlines()
+            if line.startswith("__SANDBOX_PROBE__")
+        ),
+        None,
+    )
+    assert marker is not None, (
+        "runtime sandbox probe did not emit its result marker; "
+        f"command={' '.join(probe_command)!r}; "
+        f"stdout={probe.stdout!r}; stderr={probe.stderr!r}"
+    )
+    try:
+        payload = json.loads(marker)
+    except json.JSONDecodeError as exc:
+        pytest.fail(
+            "runtime sandbox probe emitted malformed JSON; "
+            f"marker={marker!r}; stdout={probe.stdout!r}; error={exc!r}",
+            pytrace=False,
+        )
+    assert payload is not None, (
+        "runtime SandboxManager returned no execution result; "
+        f"kubectl_context={KUBECTL_CONTEXT!r}; payload={payload!r}"
+    )
+    assert payload.get("exit_code") == 0, (
+        "runtime OpenShell prerequisite exec failed; "
+        f"kubectl_context={KUBECTL_CONTEXT!r}; payload={payload!r}"
+    )
+    assert payload.get("stdout") == "coding-sandbox-ready\n", payload
+    assert payload.get("stderr") == "", payload
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestIndexCommand:
     """cogniverse index — real file collection + Vespa ingestion."""
 
@@ -113,7 +240,6 @@ class TestIndexCommand:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestA2AStreamingClient:
     """stream_coding_response — real A2A SSE against the live runtime."""
 
@@ -138,8 +264,8 @@ class TestA2AStreamingClient:
     def test_stream_to_search_agent_returns_parsed_result(self):
         """Stream a real search via A2A SSE and verify result structure.
 
-        Uses search_agent instead of coding_agent because coding requires
-        a sandbox which isn't deployed. This test still exercises the full
+        Uses search_agent because this streaming test does not need the
+        coding sandbox. It still exercises the full
         CLI streaming path: build request → POST /a2a → consume SSE → parse.
         """
         result = stream_coding_response(
@@ -154,7 +280,6 @@ class TestA2AStreamingClient:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestCodingAgentDispatch:
     """Verify coding agent dispatch path — request reaches CodingAgent."""
 
@@ -168,7 +293,7 @@ class TestCodingAgentDispatch:
         assert data["name"] == "coding_agent"
         assert "coding" in data["capabilities"]
 
-    def test_coding_agent_full_execution_with_sandbox(self):
+    def test_coding_agent_full_execution_with_sandbox(self, runtime_sandbox_ready):
         """Full plan → code → sandbox execute → evaluate loop.
 
         Requires the OpenShell gateway running on the host with the runtime
@@ -209,13 +334,16 @@ class TestCodingAgentDispatch:
             "Execution results should exist (sandbox executed the code)"
         )
         first_exec = exec_results[0]
-        assert "exit_code" in first_exec
-        assert "stdout" in first_exec
-        assert "stderr" in first_exec
+        assert first_exec.get("exit_code") == 0, (
+            "coding agent sandbox execution failed; "
+            f"stdout={first_exec.get('stdout')!r}; "
+            f"stderr={first_exec.get('stderr')!r}; result={first_exec!r}"
+        )
+        assert "stdout" in first_exec, first_exec
+        assert "stderr" in first_exec, first_exec
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestCodingSession:
     """CodingSession maintains state across turns with real HTTP."""
 

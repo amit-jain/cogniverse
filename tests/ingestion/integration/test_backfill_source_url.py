@@ -17,48 +17,23 @@ from pathlib import Path
 import pytest
 import requests
 
-SCHEMA = "video_colpali_smol500_mv_frame"
-VIDEO_SCHEMA_JSON = (
-    Path(__file__).resolve().parents[2]
-    / "system"
-    / "resources"
-    / "schemas"
-    / f"{SCHEMA}_schema.json"
-)
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
+
+BASE_SCHEMA = "video_colpali_smol500_mv_frame"
+TENANT_ID = "test:backfill_url"
+SCHEMA = schema_full_name(BASE_SCHEMA, TENANT_ID)
 
 
-def _deploy_video_schema(config_port: int, http_port: int) -> None:
-    from vespa.package import ApplicationPackage
-
-    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-    from cogniverse_vespa.metadata_schemas import (
-        create_adapter_registry_schema,
-        create_config_metadata_schema,
-        create_organization_metadata_schema,
-        create_tenant_metadata_schema,
+def _deploy_video_schema(ingestion_vespa_backend) -> None:
+    """Deploy the tenant-scoped video schema via SchemaRegistry (merge-safe)."""
+    deployed = deploy_tenant_schema(
+        ingestion_vespa_backend,
+        tenant_id=TENANT_ID,
+        base_schema_name=BASE_SCHEMA,
     )
-    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+    assert deployed == SCHEMA, f"registry deployed {deployed!r}, tests use {SCHEMA!r}"
 
-    parser = JsonSchemaParser()
-    video_schema = parser.load_schema_from_json_file(str(VIDEO_SCHEMA_JSON))
-
-    schemas = [
-        create_organization_metadata_schema(),
-        create_tenant_metadata_schema(),
-        create_config_metadata_schema(),
-        create_adapter_registry_schema(),
-        video_schema,
-    ]
-
-    schema_manager = VespaSchemaManager(
-        backend_endpoint="http://localhost",
-        backend_port=config_port,
-    )
-    schema_manager._deploy_package(
-        ApplicationPackage(name="cogniverse", schema=schemas),
-        allow_schema_removal=True,
-    )
-
+    http_port = ingestion_vespa_backend["http_port"]
     yql = f"select * from {SCHEMA} where true limit 0"
     deadline = time.time() + 60
     while time.time() < deadline:
@@ -89,10 +64,7 @@ def _import_backfill_module():
 def vespa_app(ingestion_vespa_backend):
     from vespa.application import Vespa
 
-    _deploy_video_schema(
-        ingestion_vespa_backend["config_port"],
-        ingestion_vespa_backend["http_port"],
-    )
+    _deploy_video_schema(ingestion_vespa_backend)
     return Vespa(url=ingestion_vespa_backend["backend_url"])
 
 

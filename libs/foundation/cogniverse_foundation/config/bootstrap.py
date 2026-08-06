@@ -9,6 +9,71 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
+
+INFERENCE_API_KEY_ENV = "COGNIVERSE_INFERENCE_API_KEY"
+_INFERENCE_URLS_ERROR = (
+    "INFERENCE_SERVICE_URLS must be a JSON object of root HTTP(S) URLs"
+)
+
+
+def inference_api_key_from_environment() -> str:
+    """Read the canonical inference bearer key at a startup boundary."""
+
+    api_key = os.environ.get(INFERENCE_API_KEY_ENV)
+    if not api_key or api_key != api_key.strip():
+        raise RuntimeError(f"Modal inference endpoint requires {INFERENCE_API_KEY_ENV}")
+    return api_key
+
+
+def parse_inference_service_urls(raw: str) -> dict[str, str]:
+    """Parse the canonical inference endpoint map without accepting aliases."""
+
+    if not raw:
+        return {}
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(_INFERENCE_URLS_ERROR)
+            result[key] = value
+        return result
+
+    try:
+        parsed = json.loads(raw, object_pairs_hook=unique_object)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(_INFERENCE_URLS_ERROR) from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(_INFERENCE_URLS_ERROR)
+
+    endpoints: dict[str, str] = {}
+    for service, url in parsed.items():
+        if (
+            not isinstance(service, str)
+            or not service
+            or service != service.strip()
+            or not isinstance(url, str)
+            or not url
+            or url != url.strip()
+        ):
+            raise ValueError(_INFERENCE_URLS_ERROR)
+        try:
+            endpoint = urlsplit(url)
+        except ValueError as exc:
+            raise ValueError(_INFERENCE_URLS_ERROR) from exc
+        if (
+            endpoint.scheme not in {"http", "https"}
+            or not endpoint.hostname
+            or endpoint.username is not None
+            or endpoint.password is not None
+            or endpoint.path not in {"", "/"}
+            or endpoint.query
+            or endpoint.fragment
+        ):
+            raise ValueError(_INFERENCE_URLS_ERROR)
+        endpoints[service] = url.rstrip("/")
+    return endpoints
 
 
 @dataclass

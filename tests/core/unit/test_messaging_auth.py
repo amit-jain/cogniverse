@@ -95,22 +95,27 @@ class TestInviteTokenManager:
         )
         assert token_manager.validate_token("naivetok") == "acme:alice"
 
-    def test_json_string_value_parsed(self, token_manager, config_manager_memory):
-        """VespaConfigStore can hand back config_value as a JSON string;
-        validate must parse it rather than reject the token."""
-        _write_token_value(
-            config_manager_memory,
-            "strtok",
-            json.dumps(
-                {
-                    "tenant_id": "acme:alice",
-                    "token": "strtok",
-                    "expires_at": "2099-12-31T23:59:59+00:00",
-                    "used": False,
-                }
-            ),
-        )
-        assert token_manager.validate_token("strtok") == "acme:alice"
+    def test_json_string_token_value_rejected_by_the_store(
+        self, token_manager, config_manager_memory
+    ):
+        """A token value must be stored as a dict, never as a JSON string.
+
+        The store rejects the write, so ``validate_token`` never has to read
+        a double-encoded entry back; the token stays absent afterwards."""
+        with pytest.raises(TypeError, match="config_value must be a dict, got str"):
+            _write_token_value(
+                config_manager_memory,
+                "strtok",
+                json.dumps(
+                    {
+                        "tenant_id": "acme:alice",
+                        "token": "strtok",
+                        "expires_at": "2099-12-31T23:59:59+00:00",
+                        "used": False,
+                    }
+                ),
+            )
+        assert token_manager.validate_token("strtok") is None
 
     def test_validate_raises_on_store_outage(self):
         """A config-store outage must RAISE, not read as "invalid token" —

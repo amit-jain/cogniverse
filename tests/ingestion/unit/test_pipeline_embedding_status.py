@@ -31,6 +31,7 @@ class TestEmbeddingRunStatus:
             {
                 "embeddings": {
                     "total_documents": 5,
+                    "documents_processed": 5,
                     "documents_fed": 0,
                     "errors": ["Vespa 400 on seg_0", "Vespa 400 on seg_1"],
                 }
@@ -42,24 +43,34 @@ class TestEmbeddingRunStatus:
 
     def test_all_fed_is_completed(self):
         status, error, errors = VideoIngestionPipeline._embedding_run_status(
-            {"embeddings": {"total_documents": 5, "documents_fed": 5, "errors": []}}
-        )
-        assert status == "completed"
-        assert error is None
-        assert errors == []
-
-    def test_partial_feed_completed_but_surfaces_errors(self):
-        status, error, errors = VideoIngestionPipeline._embedding_run_status(
             {
                 "embeddings": {
                     "total_documents": 5,
-                    "documents_fed": 3,
-                    "errors": ["Vespa 400 on seg_4"],
+                    "documents_processed": 5,
+                    "documents_fed": 5,
+                    "errors": [],
                 }
             }
         )
         assert status == "completed"
         assert error is None
+        assert errors == []
+
+    def test_partial_feed_is_failed_with_exact_counts(self):
+        status, error, errors = VideoIngestionPipeline._embedding_run_status(
+            {
+                "embeddings": {
+                    "total_documents": 5,
+                    "documents_processed": 5,
+                    "documents_fed": 3,
+                    "errors": ["Vespa 400 on seg_4"],
+                }
+            }
+        )
+        assert status == "failed"
+        assert (
+            error == "embedding stage reported 1 error after feeding 3 of 5 documents"
+        )
         assert errors == ["Vespa 400 on seg_4"]
 
     def test_no_embedding_stage_is_completed(self):
@@ -70,13 +81,147 @@ class TestEmbeddingRunStatus:
         assert error is None
         assert errors == []
 
-    def test_embeddings_not_a_dict_is_completed(self):
-        # e.g. generate_embeddings returned {"error": "..."} handled elsewhere
+    def test_present_non_object_embedding_result_is_failed(self):
         status, error, errors = VideoIngestionPipeline._embedding_run_status(
             {"embeddings": "generator not initialized"}
         )
-        assert status == "completed"
-        assert error is None
+        assert status == "failed"
+        assert (
+            error
+            == "embedding stage returned malformed result: expected an object, got str"
+        )
+        assert errors == []
+
+    def test_explicit_embedding_error_is_failed_with_exact_context(self):
+        status, error, errors = VideoIngestionPipeline._embedding_run_status(
+            {"embeddings": {"error": "Embedding generator not initialized"}}
+        )
+        assert status == "failed"
+        assert error == "embedding stage failed: Embedding generator not initialized"
+        assert errors == ["Embedding generator not initialized"]
+
+    @pytest.mark.parametrize(
+        "missing_field",
+        ["total_documents", "documents_processed", "documents_fed", "errors"],
+    )
+    def test_missing_canonical_field_is_failed(self, missing_field):
+        embedding_result = {
+            "total_documents": 1,
+            "documents_processed": 1,
+            "documents_fed": 1,
+            "errors": [],
+        }
+        del embedding_result[missing_field]
+
+        status, error, errors = VideoIngestionPipeline._embedding_run_status(
+            {"embeddings": embedding_result}
+        )
+
+        assert status == "failed"
+        assert (
+            error == "embedding stage returned malformed result: "
+            f"missing required field '{missing_field}'"
+        )
+        assert errors == []
+
+    @pytest.mark.parametrize(
+        ("field", "invalid_value", "type_name"),
+        [
+            ("total_documents", True, "bool"),
+            ("documents_processed", 1.0, "float"),
+            ("documents_fed", -1, "int"),
+        ],
+    )
+    def test_invalid_count_field_is_failed(self, field, invalid_value, type_name):
+        embedding_result = {
+            "total_documents": 1,
+            "documents_processed": 1,
+            "documents_fed": 1,
+            "errors": [],
+        }
+        embedding_result[field] = invalid_value
+
+        status, error, errors = VideoIngestionPipeline._embedding_run_status(
+            {"embeddings": embedding_result}
+        )
+
+        assert status == "failed"
+        assert (
+            error == "embedding stage returned malformed result: "
+            f"field '{field}' must be a non-negative integer, got {type_name}"
+        )
+        assert errors == []
+
+    def test_non_list_errors_field_is_failed(self):
+        status, error, errors = VideoIngestionPipeline._embedding_run_status(
+            {
+                "embeddings": {
+                    "total_documents": 1,
+                    "documents_processed": 1,
+                    "documents_fed": 1,
+                    "errors": "Vespa rejected the document",
+                }
+            }
+        )
+
+        assert status == "failed"
+        assert (
+            error == "embedding stage returned malformed result: "
+            "field 'errors' must be a list of strings, got str"
+        )
+        assert errors == []
+
+    def test_blank_error_entry_is_failed(self):
+        status, error, errors = VideoIngestionPipeline._embedding_run_status(
+            {
+                "embeddings": {
+                    "total_documents": 1,
+                    "documents_processed": 1,
+                    "documents_fed": 1,
+                    "errors": ["   "],
+                }
+            }
+        )
+
+        assert status == "failed"
+        assert (
+            error == "embedding stage returned malformed result: "
+            "field 'errors[0]' must be a non-empty string"
+        )
+        assert errors == []
+
+    @pytest.mark.parametrize(
+        ("embedding_result", "expected_error"),
+        [
+            (
+                {
+                    "total_documents": 1,
+                    "documents_processed": 2,
+                    "documents_fed": 1,
+                    "errors": [],
+                },
+                "embedding stage returned malformed result: field "
+                "'documents_processed' (2) must not exceed 'total_documents' (1)",
+            ),
+            (
+                {
+                    "total_documents": 2,
+                    "documents_processed": 1,
+                    "documents_fed": 2,
+                    "errors": [],
+                },
+                "embedding stage returned malformed result: field "
+                "'documents_fed' (2) must not exceed 'documents_processed' (1)",
+            ),
+        ],
+    )
+    def test_impossible_counts_are_failed(self, embedding_result, expected_error):
+        status, error, errors = VideoIngestionPipeline._embedding_run_status(
+            {"embeddings": embedding_result}
+        )
+
+        assert status == "failed"
+        assert error == expected_error
         assert errors == []
 
 
@@ -143,13 +288,16 @@ class TestFailedSegmentEmbeddingsAreReported:
             {
                 "embeddings": {
                     "total_documents": result.total_documents,
+                    "documents_processed": result.documents_processed,
                     "documents_fed": result.documents_fed,
                     "errors": result.errors,
                 }
             }
         )
-        assert status == "completed"
-        assert error is None
+        assert status == "failed"
+        assert (
+            error == "embedding stage reported 1 error after feeding 2 of 3 documents"
+        )
 
     def test_multi_doc_all_segments_failed_derives_failed_status(self, monkeypatch):
         gen = _generator_with_failing_frames(
@@ -173,6 +321,7 @@ class TestFailedSegmentEmbeddingsAreReported:
             {
                 "embeddings": {
                     "total_documents": result.total_documents,
+                    "documents_processed": result.documents_processed,
                     "documents_fed": result.documents_fed,
                     "errors": result.errors,
                 }
@@ -194,3 +343,18 @@ class TestFailedSegmentEmbeddingsAreReported:
         assert result.errors == [
             "Segment 1: embedding generation returned no output (see error log)"
         ]
+        status, error, errors = VideoIngestionPipeline._embedding_run_status(
+            {
+                "embeddings": {
+                    "total_documents": result.total_documents,
+                    "documents_processed": result.documents_processed,
+                    "documents_fed": result.documents_fed,
+                    "errors": result.errors,
+                }
+            }
+        )
+        assert status == "failed"
+        assert (
+            error == "embedding stage reported 1 error after feeding 1 of 1 documents"
+        )
+        assert errors == result.errors

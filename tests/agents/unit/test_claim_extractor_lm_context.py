@@ -228,3 +228,27 @@ def test_output_budget_raised_above_endpoint_default() -> None:
     assert ClaimExtractor(llm_config=roomy)._llm_config.max_tokens == 8000
 
     assert ClaimExtractor(llm_config=None)._llm_config is None
+
+
+def test_extraction_decodes_greedily_regardless_of_tenant_temperature() -> None:
+    """Sampling temperatures let the model mis-attribute claim subjects (a 4B
+    model at 0.1 swaps the SPO subject on real transcript segments), so the
+    extractor pins its decoding temperature to 0.0 while carrying every other
+    endpoint field through unchanged."""
+    from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    sampled = LLMEndpointConfig(
+        model="openai/auto",
+        api_base="http://llm.test:8000/v1",
+        temperature=0.1,
+        max_tokens=8000,
+    )
+    extractor = ClaimExtractor(llm_config=sampled)
+    assert extractor._llm_config.temperature == 0.0
+    assert extractor._llm_config.model == "openai/auto"
+    assert extractor._llm_config.api_base == "http://llm.test:8000/v1"
+    assert extractor._llm_config.max_tokens == 8000
+
+    greedy = LLMEndpointConfig(model="openai/auto", temperature=0.0, max_tokens=8000)
+    assert ClaimExtractor(llm_config=greedy)._llm_config.temperature == 0.0

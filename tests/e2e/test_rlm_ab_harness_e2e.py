@@ -26,7 +26,6 @@ import httpx
 import pytest
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import skip_if_no_runtime
 
 
 def _free_port() -> int:
@@ -111,7 +110,6 @@ def _import_ab() -> tuple:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestABRunReturnsBothArmsWithSharedAbId:
     """Both arm metadata blocks carry the same ab_id; arm strings pinned."""
 
@@ -148,7 +146,6 @@ class TestABRunReturnsBothArmsWithSharedAbId:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestABComparisonArithmeticIsPure:
     """comparison.tokens_delta / latency_delta_ms equal the per-arm subtraction."""
 
@@ -185,7 +182,6 @@ class TestABComparisonArithmeticIsPure:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestJudgeFnIntegration:
     """A pure-function judge lands its scores on both arms verbatim."""
 
@@ -223,7 +219,6 @@ class TestJudgeFnIntegration:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestABTelemetryDictShape:
     """ABResult.to_telemetry_dict key set is the Phoenix span contract."""
 

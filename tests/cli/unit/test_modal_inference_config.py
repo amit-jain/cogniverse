@@ -19,7 +19,7 @@ EXPECTED_MODELS = {
     "code_colbert_pylate": (
         "lightonai/LateOn-Code-edge",
         "07ef20f406c86badca122464808f4cac2f6e4b25",
-        128,
+        48,
     ),
     "denseon": (
         "lightonai/DenseOn",
@@ -27,17 +27,17 @@ EXPECTED_MODELS = {
         768,
     ),
     "gliner": (
-        "urchade/gliner_medium-v2.1",
-        "40ec419335d09393f298636f471328b722c6da9e",
+        "urchade/gliner_large-v2.1",
+        "abd49a1f1ebc12af1be84d06f6848221cf96dcad",
         None,
     ),
     "videoprism_jax": (
         "videoprism_public_v1_base_hf",
-        "d481d91b9bf8c9d330d1e526e511a359c799bbe1",
+        "be719a406d563b66f0ac969e7c94bab8e997c81a",
         768,
     ),
     "vllm_llm_student": (
-        "google/gemma-4-E4B-it",
+        "google/gemma-4-e4b-it",
         "ee0ef6023621cff504d758262d4e04895a5af4a2",
         None,
     ),
@@ -53,7 +53,7 @@ EXPECTED_MODELS = {
     ),
     "face_embed": (
         "buffalo_l",
-        "insightface==0.7.3:buffalo_l",
+        "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
         512,
     ),
 }
@@ -75,6 +75,13 @@ def test_tomoro_definition_retains_the_production_encoder_dimension():
     assert spec.output_dimension == 320
     assert spec.auth is EndpointAuth.BEARER
     assert spec.min_containers == 0
+
+
+def test_videoprism_definition_pins_source_and_checkpoint_independently():
+    spec = get_inference_service_spec("videoprism_jax")
+
+    assert spec.source_revision == "d481d91b9bf8c9d330d1e526e511a359c799bbe1"
+    assert spec.model_revision == "be719a406d563b66f0ac969e7c94bab8e997c81a"
 
 
 def test_each_service_has_an_independent_scale_to_zero_app():

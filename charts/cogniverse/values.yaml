@@ -730,7 +730,7 @@ llm:
     # Models pulled by the post-install init job (only when engine=ollama).
     # vLLM downloads on first request via HF cache instead.
     # Embedding model intentionally absent: DenseOn is served by the
-    # ``denseon`` sidecar pod (the colbert_pylate sidecar in mode=dense), not Ollama.
+    # ``denseon`` inference pod (vLLM /v1/embeddings), not Ollama.
     models:
       - "gemma3:4b"
     resources:
@@ -915,17 +915,21 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 24
 
-  # ColBERT-family text multi-vector retrieval served by stock vLLM
-  # (``vllm_token_embed`` engine, /pooling endpoint). Used by profiles with
-  # ``inference_service: "colbert_pylate"`` (e.g., document_text_semantic,
-  # lateon_mv); the key keeps its historical name. Swap model via ``model:``
-  # — vLLM serves any ColBERT-family checkpoint with the matching
-  # ``--hf-overrides`` architecture. If you want a second ColBERT pod (e.g.
-  # for a different model in parallel), add another entry with a distinct key.
+  # ColBERT-family text multi-vector retrieval served by the PyLate
+  # sidecar (``pylate`` engine, deploy/pylate image, /pooling endpoint).
+  # Used by profiles with ``inference_service: "colbert_pylate"`` (e.g.,
+  # document_text_semantic, lateon_mv). LateOn needs PyLate's exact encode
+  # — query expansion over masked padding positions — which stock vLLM
+  # cannot reproduce (its /pooling request carries no attention mask).
+  # Swap model via ``model:`` + ``modelRevision:`` — the same image serves
+  # any PyLate-loadable ColBERT checkpoint. If you want a second ColBERT
+  # pod (e.g. for a different model in parallel), add another entry with a
+  # distinct key.
   colbert_pylate:
     enabled: true
-    engine: vllm_token_embed
+    engine: pylate
     model: lightonai/LateOn
+    modelRevision: c01907b70557ee5c7753680d4819a5cce1674b83
     type: multi_vector
     device: cpu                    # cpu | cuda | rocm | mps
     gpuCount: 1
@@ -937,24 +941,10 @@ inference:
       port: 8000
       nodePort: 29002
     image:
-      repository: vllm/vllm-openai-cpu
-      tag: v0.23.0-arm64
+      repository: cogniverse/pylate
+      tag: "0.1.0"
       pullPolicy: IfNotPresent
     imagesByDevice: {}
-    dtype: float32
-    # ``--hf-overrides`` forces vLLM to load the ColBERTModernBertModel
-    # multi-vector architecture; without it vLLM serves a plain dense
-    # ModernBert and the per-token outputs LateOn retrieval needs vanish.
-    extraArgs:
-      - "--max-model-len"
-      - "8192"
-      - "--hf-overrides"
-      - '{"architectures": ["ColBERTModernBertModel"]}'
-    # LateOn's sentence_bert_config.json carries max_seq_length=299 (an ST
-    # truncation default); vLLM's CPU build clamps derived max_model_len to
-    # it and refuses 8192 even though the model's position table is 8192.
-    env:
-      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
     resources:
       limits:
         cpu: "4"
@@ -985,8 +975,9 @@ inference:
   # via ``inference_service: "code_colbert_pylate"``.
   code_colbert_pylate:
     enabled: false
-    engine: vllm_token_embed
+    engine: pylate
     model: lightonai/LateOn-Code-edge
+    modelRevision: 07ef20f406c86badca122464808f4cac2f6e4b25
     type: multi_vector
     device: cpu                    # cpu | cuda | rocm | mps
     gpuCount: 1
@@ -998,22 +989,10 @@ inference:
       port: 8000
       nodePort: 29004
     image:
-      repository: vllm/vllm-openai-cpu
-      tag: v0.23.0-arm64
+      repository: cogniverse/pylate
+      tag: "0.1.0"
       pullPolicy: IfNotPresent
     imagesByDevice: {}
-    dtype: float32
-    # See colbert_pylate — multi-vector ColBERT arch override.
-    extraArgs:
-      - "--max-model-len"
-      - "8192"
-      - "--hf-overrides"
-      - '{"architectures": ["ColBERTModernBertModel"]}'
-    # LateOn's sentence_bert_config.json carries max_seq_length=299 (an ST
-    # truncation default); vLLM's CPU build clamps derived max_model_len to
-    # it and refuses 8192 even though the model's position table is 8192.
-    env:
-      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
     resources:
       limits:
         cpu: "2"
@@ -1091,17 +1070,15 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 5
 
-  # GLiNER zero-shot NER served by the FastAPI sidecar in deploy/gliner.
+  # GLiNER zero-shot NER served by the canonical CLI server image.
   # GatewayAgent + EntityExtractionAgent post text + label sets to
   # /predict_entities; the slim runtime image excludes torch+gliner by
   # design (commits 8e2e3f2e + 34195f75) so they MUST route through
-  # this sidecar. The sidecar loads multiple models on demand keyed
-  # by request.model — gateway uses gliner_large-v2.1, entity
-  # extraction uses gliner_mediumv2.1.
+  # this sidecar. Every caller uses the same pinned production model.
   gliner:
     enabled: true
     engine: gliner
-    model: urchade/gliner_mediumv2.1
+    model: urchade/gliner_large-v2.1
     type: ner
     device: cpu                    # gliner runs comfortably on CPU
     nodeSelector: {}
@@ -1117,7 +1094,7 @@ inference:
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     extraArgs: []
-    hfTokenSecret: ""              # gliner_mediumv2.1 is ungated
+    hfTokenSecret: ""              # gliner_large-v2.1 is ungated
     resources:
       limits:
         cpu: "4"
@@ -1126,8 +1103,7 @@ inference:
         cpu: "1"
         memory: "3Gi"
     livenessProbe:
-      httpGet:
-        path: /health
+      tcpSocket:
         port: 8080
       initialDelaySeconds: 60
       periodSeconds: 30
@@ -1443,12 +1419,8 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 24
 
-  # InsightFace Buffalo_L sidecar serving 512-dim ArcFace face
-  # embeddings + RetinaFace detection. The cross-modal face-cluster
-  # consumer POSTs one keyframe per request, clusters the returned
-  # vectors per source_doc_id, and attributes each cluster to the
-  # temporally-aligned named Person. CPU-only; the model pack
-  # (~210 MiB) downloads on first /embed call.
+  # CLAP acoustic and text embeddings served in one shared vector space.
+  # CPU-only; /health loads the pinned model before reporting readiness.
   clap_embed:
     enabled: false
     engine: fastapi
@@ -1472,8 +1444,7 @@ inference:
         cpu: "500m"
         memory: "2Gi"
     livenessProbe:
-      httpGet:
-        path: /health
+      tcpSocket:
         port: 8000
       initialDelaySeconds: 30
       periodSeconds: 30
@@ -1488,6 +1459,12 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 5
 
+  # InsightFace Buffalo_L sidecar serving 512-dim ArcFace face
+  # embeddings + RetinaFace detection. The cross-modal face-cluster
+  # consumer POSTs one keyframe per request, clusters the returned
+  # vectors per source_doc_id, and attributes each cluster to the
+  # temporally-aligned named Person. CPU-only; /health loads the model
+  # artifact installed in the image before reporting readiness.
   face_embed:
     enabled: false
     engine: fastapi
@@ -1499,7 +1476,7 @@ inference:
     service:
       type: NodePort
       port: 8000
-      nodePort: 29007
+      nodePort: 29009
     env:
       FACE_EMBED_MODEL: buffalo_l
       FACE_EMBED_CTX_ID: "-1"            # -1 = CPU; set to a GPU index for CUDA
@@ -1511,8 +1488,7 @@ inference:
         cpu: "500m"
         memory: "1Gi"
     livenessProbe:
-      httpGet:
-        path: /health
+      tcpSocket:
         port: 8000
       initialDelaySeconds: 30
       periodSeconds: 30
