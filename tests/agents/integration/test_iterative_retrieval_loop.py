@@ -93,6 +93,7 @@ def assert_golden_json(actual, name: str) -> None:
 
 
 def assert_golden_text(actual: str, name: str) -> None:
+    assert actual.strip(), f"Refusing vacuous golden for {name}: empty text"
     path = GOLDEN_DIR / name
     if RECORD_GOLDEN:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -474,7 +475,8 @@ async def test_final_answer_text_byte_equal_golden(captured_spans, dspy_lm):
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
     loop_result, agent_results = await _run_loop(orchestrator)
     aggregated = orchestrator._aggregate_results(CANONICAL_QUERY, agent_results)
-    answer_text = aggregated.get("aggregated_result") or aggregated.get("answer") or ""
+    answer_text = aggregated["aggregated_content"]
+    assert "Marie Curie discovered radium" in answer_text
     assert_golden_text(answer_text, "iter_loop_answer.txt")
     # Sanity: loop emitted the joint-trace evidence the answer is grounded on
     assert len(loop_result.evidence) >= 1
@@ -548,7 +550,8 @@ async def test_token_budget_breach_exits_at_iter1(captured_spans, dspy_lm, monke
     assert loop_result.iterations_executed == 1
 
     aggregated = orchestrator._aggregate_results(CANONICAL_QUERY, agent_results)
-    answer_text = aggregated.get("aggregated_result") or aggregated.get("answer") or ""
+    answer_text = aggregated["aggregated_content"]
+    assert "Marie Curie discovered radium" in answer_text
     assert_golden_text(answer_text, "iter_loop_answer_budget_breach.txt")
 
 
