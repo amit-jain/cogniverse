@@ -334,3 +334,35 @@ async def test_concurrent_enqueue_and_drain_preserves_every_message():
     seen.update(m.content for m in await q.drain())
 
     assert seen == expected
+
+
+# --------------------------------------------------------------------- #
+# Close landing while a sender waits on the drain lock                  #
+# --------------------------------------------------------------------- #
+
+
+async def test_enqueue_waiting_on_drain_lock_raises_when_close_lands_first():
+    """A sender that reached ``enqueue`` while a drain held the lock must
+    observe a close that completes before it acquires the lock.
+
+    Interleaving executed here: the sender blocks on the queue lock (a
+    final drain in progress), the agent finishes and ``close_queue`` runs,
+    then the lock frees. The sender must get ``QueueClosedError`` — the
+    HTTP route maps it to 404 — never a silent append into a buffer no
+    consumer will drain (the caller would see 202 for a dropped message).
+    """
+    registry = InboundQueueRegistry()
+    queue = await registry.get_or_create_queue("sess-1", "acme:acme")
+
+    await queue._lock.acquire()
+    enqueue_task = asyncio.create_task(queue.enqueue(_msg("stop")))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert not enqueue_task.done()
+
+    assert await registry.close_queue("sess-1") is True
+    queue._lock.release()
+
+    with pytest.raises(QueueClosedError):
+        await enqueue_task
+    assert await queue.drain() == []

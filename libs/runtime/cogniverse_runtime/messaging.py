@@ -116,16 +116,19 @@ class InboundQueue:
         """Append ``msg`` to the buffer.
 
         Raises :class:`QueueClosedError` if the queue has been closed
-        (agent's ``process()`` returned). Past-deadline messages are
-        accepted at enqueue and dropped at drain — letting senders
-        race a deadline without seeing different success codes.
+        (agent's ``process()`` returned). The closed check happens under
+        the drain lock: a close that lands while this sender waits for a
+        concurrent drain raises instead of appending to a buffer nobody
+        will ever drain. Past-deadline messages are accepted at enqueue
+        and dropped at drain — letting senders race a deadline without
+        seeing different success codes.
         """
-        if self._closed:
-            raise QueueClosedError(
-                f"queue '{self._session_id}' is closed; agent session "
-                "has already finished"
-            )
         async with self._lock:
+            if self._closed:
+                raise QueueClosedError(
+                    f"queue '{self._session_id}' is closed; agent session "
+                    "has already finished"
+                )
             self._buffer.append(msg)
 
     async def drain(self) -> List[InboundMessage]:
