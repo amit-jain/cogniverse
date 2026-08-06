@@ -1494,6 +1494,40 @@ def test_transitive_teacher_lm_consumer_requests_teacher_role(monkeypatch, tmp_p
     assert item._cogniverse_lm_roles == frozenset({"primary", "teacher"})
 
 
+def test_body_only_teacher_lm_reference_requests_no_lm_roles(monkeypatch, tmp_path):
+    """A test whose own body reads ``teacher_lm`` on an object it builds itself,
+    with no LM fixture or marker, gets no LM roles and no injected LM fixture."""
+    import tests.conftest as root_conftest
+
+    def wiring_assertion(optimizer):
+        return optimizer.teacher_lm
+
+    class FixtureInfo:
+        initialnames = ()
+        name2fixturedefs = {}
+
+    class Item:
+        path = tmp_path / "tests" / "agents" / "unit" / "test_wiring.py"
+        fixturenames: list = []
+        own_markers: list = []
+        _fixtureinfo = FixtureInfo()
+        obj = staticmethod(wiring_assertion)
+
+        def get_closest_marker(self, name):
+            return None
+
+        def add_marker(self, marker):
+            self.own_markers.append(marker.mark)
+
+    monkeypatch.setattr(root_conftest, "_whisper_local_installed", lambda: True)
+    item = Item()
+
+    root_conftest.pytest_collection_modifyitems([item])
+
+    assert not hasattr(item, "_cogniverse_lm_roles")
+    assert item.fixturenames == []
+
+
 @pytest.mark.parametrize(
     "stale_reason",
     [
