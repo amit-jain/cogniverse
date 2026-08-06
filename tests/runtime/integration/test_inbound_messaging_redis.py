@@ -365,3 +365,57 @@ async def test_list_active_queues_filters_by_tenant_cross_pod(reg_a, reg_b):
     assert sorted(e["session_id"] for e in bob_from_a) == ["bob-1"]
     # All entries from a tenant-scoped query carry that tenant id.
     assert all(e["tenant_id"] == "alice" for e in alice_from_b)
+
+
+# --------------------------------------------------------------------- #
+# Close racing an in-flight enqueue                                       #
+# --------------------------------------------------------------------- #
+
+
+async def test_close_racing_enqueue_never_orphans_a_list_key(redis_client):
+    """A close that lands inside an in-flight enqueue must not leave an
+    orphaned inbound list behind.
+
+    The facade wraps the REAL Redis client and sequences the interleave:
+    the first read of the session's active-marker fires ``close_queue``
+    (marker + list deleted) before the enqueue proceeds. A non-atomic
+    enqueue whose push runs client-side after its open-check would
+    recreate the just-deleted list — the message reads as accepted (the
+    route already returned 202) but no consumer will ever drain it.
+    Invariant: once the last ``close_queue`` completes, the session's
+    inbound list does not exist, and an enqueue that lost the race
+    surfaced ``QueueClosedError``.
+    """
+    reg = RedisInboundQueueRegistry(redis_client, active_ttl_seconds=60)
+    await reg.get_or_create_queue("sess-race", "tenant-x")
+    q = await reg.get_queue("sess-race")
+    assert q is not None
+
+    close_fired = {"done": False}
+
+    class _CloseOnMarkerRead:
+        def __getattr__(self, name):
+            return getattr(redis_client, name)
+
+        async def get(self, key):
+            value = await redis_client.get(key)
+            if key == "session:sess-race:tenant" and not close_fired["done"]:
+                close_fired["done"] = True
+                await reg.close_queue("sess-race")
+            return value
+
+    q._redis = _CloseOnMarkerRead()
+
+    enqueue_raised = False
+    try:
+        await q.enqueue(_msg("racing"))
+    except QueueClosedError:
+        enqueue_raised = True
+
+    if not close_fired["done"]:
+        assert await reg.close_queue("sess-race") is True
+
+    assert await redis_client.exists("inbound:tenant-x:sess-race") == 0
+    assert await reg.get_queue("sess-race") is None
+    if close_fired["done"]:
+        assert enqueue_raised
