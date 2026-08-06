@@ -11,6 +11,7 @@ authors = [
 
 dependencies = [
     "cogniverse-sdk",
+    "cogniverse-foundation",
     "cogniverse-core",
     "cogniverse-synthetic",
     # Required, not optional: main.py mounts the search and ingestion
@@ -94,6 +95,7 @@ all = ["cogniverse-vespa", "cogniverse-agents"]
 
 [tool.uv.sources]
 cogniverse-sdk = { workspace = true }
+cogniverse-foundation = { workspace = true }
 cogniverse-core = { workspace = true }
 cogniverse-synthetic = { workspace = true }
 cogniverse-vespa = { workspace = true }

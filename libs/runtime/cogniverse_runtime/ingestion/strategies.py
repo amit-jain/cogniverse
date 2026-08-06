@@ -638,7 +638,7 @@ class DocumentTextEmbeddingStrategy(BaseStrategy):
 
 
 class DocumentVisualEmbeddingStrategy(BaseStrategy):
-    """Generate ColPali multi-vector embeddings (128-dim per patch) for PDF pages.
+    """Generate ColPali multi-vector embeddings (320-dim per patch) for PDF pages.
 
     Each rendered page image is embedded with ColPali by EmbeddingGeneratorImpl
     (loaded lazily via the colpali model loader). This strategy wraps the page
@@ -766,7 +766,7 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
 
 
 class CodeTextEmbeddingStrategy(BaseStrategy):
-    """Generate ColBERT multi-vector embeddings (128-dim per token) for source code.
+    """Generate ColBERT multi-vector embeddings (48-dim per token) for source code.
 
     Uses LateOn-Code-edge (or another ColBERT model) loaded through
     ModelLoaderFactory → ColBERTModelLoader in EmbeddingGeneratorImpl.

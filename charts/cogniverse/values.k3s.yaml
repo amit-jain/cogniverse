@@ -68,14 +68,21 @@ inference:
   # host's hardware budget.
   #
   # Dev override: expose the LateOn text pod on a NodePort. Engine is
-  # vllm_token_embed (base values), served by the CPU vLLM image.
+  # pylate (base values), served by the locally built cogniverse/pylate
+  # image (dev tag, built + imported by `cogniverse up`).
   colbert_pylate:
     service:
       type: NodePort
+    image:
+      tag: "0.1.0-dev"
+      pullPolicy: Never
   # Dev override for the code-search pod (disabled by default).
   code_colbert_pylate:
     service:
       type: NodePort
+    image:
+      tag: "0.1.0-dev"
+      pullPolicy: Never
   # Dev override for the DenseOn dense-embedding pod.
   denseon:
     service:

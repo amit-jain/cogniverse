@@ -1,10 +1,11 @@
 """
-Integration tests for messaging gateway with real services.
+End-to-end tests for messaging gateway with real services.
 
 Tests the full flow: mock Telegram updates → gateway handler → real runtime API.
 Real Mem0 for conversation history. Real invite token flow.
 
-Requires: Runtime at localhost:33000, the configured LM endpoint.
+Requires the deployed cluster: runtime at localhost:33000 and the configured
+LM endpoint.
 """
 
 import logging
@@ -17,30 +18,33 @@ from cogniverse_messaging.telegram_handler import format_agent_response
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.e2e]
+
 RUNTIME_URL = "http://localhost:33000"
 
 
-def _runtime_available() -> bool:
+async def _assert_runtime_ready() -> None:
     # /health/live is cheap; /health does backend + registry lookups and
-    # can block under LLM load, producing false-negative skips.
+    # can block under LLM load.
     try:
-        return httpx.get(f"{RUNTIME_URL}/health/live", timeout=10.0).status_code == 200
-    except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError):
-        return False
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{RUNTIME_URL}/health/live")
+    except httpx.HTTPError as exc:
+        raise AssertionError(
+            f"Runtime liveness endpoint must be reachable at {RUNTIME_URL}"
+        ) from exc
+    assert response.status_code == 200, (
+        f"Runtime liveness must return HTTP 200; got {response.status_code}: "
+        f"{response.text}"
+    )
+    assert response.json() == {"status": "alive"}, response.json()
 
 
-skip_if_no_runtime = pytest.mark.skipif(
-    not _runtime_available(),
-    reason="Runtime not available at localhost:33000",
-)
-
-
-@pytest.mark.integration
-@skip_if_no_runtime
 class TestRuntimeClientIntegration:
     """Test RuntimeClient against real runtime API."""
 
     async def test_health_check(self):
+        await _assert_runtime_ready()
         client = RuntimeClient(RUNTIME_URL)
         try:
             result = await client.health()
@@ -50,6 +54,7 @@ class TestRuntimeClientIntegration:
 
     async def test_dispatch_gateway_agent(self):
         """Dispatch a query to gateway_agent via real runtime."""
+        await _assert_runtime_ready()
         client = RuntimeClient(RUNTIME_URL)
         try:
             response = await client.dispatch_agent(
@@ -68,6 +73,7 @@ class TestRuntimeClientIntegration:
 
     async def test_dispatch_search_agent(self):
         """Dispatch a search query via real runtime."""
+        await _assert_runtime_ready()
         client = RuntimeClient(RUNTIME_URL)
         try:
             response = await client.dispatch_agent(
@@ -83,13 +89,12 @@ class TestRuntimeClientIntegration:
             await client.close()
 
 
-@pytest.mark.integration
-@skip_if_no_runtime
 class TestInviteTokenIntegration:
     """Test invite token creation via real admin API."""
 
     async def test_create_invite_token_via_api(self):
         """Create invite token through the admin endpoint."""
+        await _assert_runtime_ready()
         client = RuntimeClient(RUNTIME_URL)
         try:
             token = await client.create_invite_token(
@@ -102,13 +107,12 @@ class TestInviteTokenIntegration:
             await client.close()
 
 
-@pytest.mark.integration
-@skip_if_no_runtime
 class TestMessageHandlingIntegration:
     """Test message handling flow with real runtime."""
 
     async def test_full_message_flow(self):
         """Parse command → dispatch to runtime → format response."""
+        await _assert_runtime_ready()
         parsed = parse_message(text="/search videos of cats playing")
         assert parsed.agent_name == "search_agent"
 
@@ -130,6 +134,7 @@ class TestMessageHandlingIntegration:
 
     async def test_plain_text_routes_through_gateway_agent(self):
         """Plain text → gateway_agent → response formatted."""
+        await _assert_runtime_ready()
         parsed = parse_message(text="What videos do you have about cooking?")
         assert parsed.agent_name == "gateway_agent"
 

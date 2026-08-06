@@ -618,15 +618,17 @@ class TestWikiVespaIntegration:
             f"Document {topic_doc_id} still retrievable from Vespa after delete_page()."
         )
 
-    def test_concurrent_same_entity_filing_preserves_both_contents(
+    def test_concurrent_same_entity_upsert_preserves_both_contents(
         self, wiki_manager, monkeypatch
     ):
-        """Two overlapping filings of the SAME entity must not lose either
-        writer's content. Both threads read the topic before either writes, so
-        without a test-and-set the second full-put clobbers the first. The
-        conditional put runs against real Vespa — its create+condition
-        semantics are exactly what the retry loop relies on — and the final
-        document read back from Vespa must contain BOTH contents.
+        """Two replicas filing the SAME entity must not lose either writer's
+        content. ``_upsert_topic`` is the read-merge-write body a second
+        runtime process races — the per-topic lock in ``_get_or_create_topic``
+        does not span processes, so only the test-and-set protects the merge.
+        Both threads read the topic before either writes, so without the
+        conditional put the second full-put clobbers the first. The condition
+        runs against real Vespa, and the document read back must carry BOTH
+        contents.
         """
         manager, port = wiki_manager
         entity = "cas_race_topic"
@@ -637,15 +639,15 @@ class TestWikiVespaIntegration:
 
         barrier = threading.Barrier(2, timeout=30)
         original_get = manager._get_document_http
-        synced: set = set()
-        synced_lock = threading.Lock()
+        reads: list = []
+        reads_lock = threading.Lock()
 
         def barriered_get(read_doc_id):
             result = original_get(read_doc_id)
             tid = threading.get_ident()
-            with synced_lock:
-                first_read = tid not in synced
-                synced.add(tid)
+            with reads_lock:
+                first_read = tid not in reads
+                reads.append(tid)
             if first_read:
                 # Hold until BOTH threads have read the pre-write state, forcing
                 # the interleaving that loses a write without a test-and-set.
@@ -658,8 +660,11 @@ class TestWikiVespaIntegration:
 
         def worker(key, content):
             try:
-                manager._get_or_create_topic(
-                    entity=entity, new_content=content, sources=[f"src_{key}"]
+                manager._upsert_topic(
+                    entity=entity,
+                    new_content=content,
+                    sources=[f"src_{key}"],
+                    doc_id=doc_id,
                 )
             except Exception as exc:  # surfaced by the assert below
                 errors[key] = exc
@@ -675,8 +680,86 @@ class TestWikiVespaIntegration:
         assert not any(t.is_alive() for t in threads), "concurrent filing hung"
         assert errors == {}, f"concurrent filing raised: {errors}"
 
+        # Two base reads plus exactly one re-read: the writer whose condition
+        # Vespa rejected re-merged against the winner's page.
+        assert len(reads) == 3, f"expected one CAS retry, got reads: {reads}"
+
         doc = _get_vespa_doc(port, doc_id)
         assert doc is not None, f"topic {doc_id} missing after concurrent filing"
+        fields = doc["fields"]
+        content = fields.get("content", "")
+        assert content_a in content, f"lost content_a; final content: {content!r}"
+        assert content_b in content, f"lost content_b; final content: {content!r}"
+        assert int(fields["update_count"]) == 2
+
+    def test_same_process_filing_serializes_on_the_topic_lock(
+        self, wiki_manager, monkeypatch
+    ):
+        """Two same-process filings of one entity run their read-merge-write
+        one after the other, so neither burns a rejected conditional put: the
+        per-topic lock in ``_get_or_create_topic`` holds the second filing
+        until the first has fed."""
+        manager, port = wiki_manager
+        entity = "serialized_topic"
+        safe = TENANT_ID.replace(":", "_")
+        doc_id = f"wiki_topic_{safe}_{generate_slug(entity)}"
+        content_a = "LOCK_ALPHA_distinct_marker_one"
+        content_b = "LOCK_BETA_distinct_marker_two"
+
+        original_get = manager._get_document_http
+        original_feed = manager._conditional_feed_topic
+        events: list = []
+        events_lock = threading.Lock()
+        inside_lock = threading.Event()
+        keys = {}
+
+        def record(phase):
+            with events_lock:
+                events.append(f"{keys[threading.get_ident()]}:{phase}")
+
+        def tracked_get(read_doc_id):
+            result = original_get(read_doc_id)
+            record("read")
+            inside_lock.set()
+            # Hold the topic lock long enough for the other filing to reach it.
+            time.sleep(1.0)
+            return result
+
+        def tracked_feed(page, embedding, expected_update_count):
+            applied = original_feed(page, embedding, expected_update_count)
+            record("feed" if applied else "rejected")
+            return applied
+
+        monkeypatch.setattr(manager, "_get_document_http", tracked_get)
+        monkeypatch.setattr(manager, "_conditional_feed_topic", tracked_feed)
+
+        errors: dict = {}
+
+        def worker(key, content):
+            keys[threading.get_ident()] = key
+            try:
+                manager._get_or_create_topic(
+                    entity=entity, new_content=content, sources=[f"src_{key}"]
+                )
+            except Exception as exc:  # surfaced by the assert below
+                errors[key] = exc
+
+        first = threading.Thread(target=worker, args=("a", content_a))
+        second = threading.Thread(target=worker, args=("b", content_b))
+        first.start()
+        assert inside_lock.wait(30), "first filing never reached the topic read"
+        second.start()
+        for thread in (first, second):
+            thread.join(90)
+        assert not any(t.is_alive() for t in (first, second)), "filing hung"
+        assert errors == {}, f"serialized filing raised: {errors}"
+
+        # Full serialization: the second filing's read happens after the
+        # first's feed, so no conditional put is ever rejected.
+        assert events == ["a:read", "a:feed", "b:read", "b:feed"], events
+
+        doc = _get_vespa_doc(port, doc_id)
+        assert doc is not None, f"topic {doc_id} missing after serialized filing"
         fields = doc["fields"]
         content = fields.get("content", "")
         assert content_a in content, f"lost content_a; final content: {content!r}"

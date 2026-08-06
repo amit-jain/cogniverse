@@ -1011,6 +1011,31 @@ class AgentDispatcher:
             context.get("tenant_id"), source="AgentTask.context"
         )
 
+        from cogniverse_agents.memory_aware_mixin import clear_request_tenant
+
+        try:
+            return await self._dispatch_for_tenant(
+                agent, agent_name, query, context, tenant_id, top_k
+            )
+        finally:
+            # The request-scoped tenant bound during this dispatch must not
+            # survive into a later caller on the same context.
+            clear_request_tenant()
+
+    async def _dispatch_for_tenant(
+        self,
+        agent: Any,
+        agent_name: str,
+        query: str,
+        context: Dict[str, Any],
+        tenant_id: str,
+        top_k: int,
+    ) -> Dict[str, Any]:
+        """Route one dispatch to the agent's execution path.
+
+        ``dispatch`` wraps this and clears the request-scoped tenant
+        context when it returns.
+        """
         request_seed = str(
             context.get("request_id") or context.get("request_seed") or ""
         )

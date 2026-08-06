@@ -36,6 +36,10 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
 
         tm.set_config_manager(config_manager)
         tm.set_schema_loader(FilesystemSchemaLoader(Path("configs/schemas")))
+        # get_backend() caches a module-global backend; an instance cached by
+        # an earlier suite would ignore the config manager set above, so drop
+        # it and rebuild against this test's Vespa.
+        tm.backend = None
         backend = tm.get_backend()
 
         org_id = "monthly_rep_org"
@@ -139,6 +143,10 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
                 )
             except Exception:
                 pass
+            # Drop the module-global binding this test installed so later
+            # suites build their own backend instead of inheriting this one.
+            tm.backend = None
+            tm.set_config_manager(None)
 
     @pytest.mark.asyncio
     async def test_phoenix_outage_surfaces_as_failed_and_nonzero_exit(
@@ -157,6 +165,10 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
 
         tm.set_config_manager(config_manager)
         tm.set_schema_loader(FilesystemSchemaLoader(Path("configs/schemas")))
+        # get_backend() caches a module-global backend; an instance cached by
+        # an earlier suite would ignore the config manager set above, so drop
+        # it and rebuild against this test's Vespa.
+        tm.backend = None
         backend = tm.get_backend()
 
         org_id = "monthly_rep_fault_org"
@@ -219,8 +231,16 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
             assert result.get("failed"), (
                 "a Phoenix outage on every tenant must surface at the top level"
             )
-            assert sorted(result["failed"]) == sorted(tenant_ids), (
-                f"failed must name the errored tenants; got {result.get('failed')!r}"
+            # run_monthly_reports enumerates every registered tenant, so scope
+            # the exact-set check to the org this test owns: all of its tenants
+            # must be reported failed, and no other id under this org may
+            # appear.
+            owned_failed = sorted(
+                t for t in result["failed"] if t.startswith(f"{org_id}:")
+            )
+            assert owned_failed == sorted(tenant_ids), (
+                f"failed must name every errored tenant of {org_id}; "
+                f"got {result.get('failed')!r}"
             )
             assert _run_failed(result) is True, (
                 "the cron exit gate must treat a Phoenix outage as a failure"
@@ -239,3 +259,7 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
                 )
             except Exception:
                 pass
+            # Drop the module-global binding this test installed so later
+            # suites build their own backend instead of inheriting this one.
+            tm.backend = None
+            tm.set_config_manager(None)

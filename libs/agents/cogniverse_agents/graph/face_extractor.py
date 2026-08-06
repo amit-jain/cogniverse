@@ -16,14 +16,27 @@ from __future__ import annotations
 
 import dataclasses
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Mapping, Tuple
 
 import httpx
 
 from cogniverse_agents.graph.graph_schema import FaceMention
+from cogniverse_foundation.config.inference_auth import inference_headers
 
 _EMBED_PATH = "/embed"
 _DEFAULT_TIMEOUT_S = 30.0
+
+
+def _canonical_bearer_headers(headers: Mapping[str, str] | None) -> Dict[str, str]:
+    if not headers:
+        return {}
+    if set(headers) != {"Authorization"}:
+        raise ValueError("headers must contain only Authorization")
+    authorization = headers["Authorization"]
+    scheme, separator, token = authorization.partition(" ")
+    if scheme != "Bearer" or not separator or not token or token != token.strip():
+        raise ValueError("headers Authorization must be a canonical bearer value")
+    return {"Authorization": authorization}
 
 
 def _iter_keyframes(processing_results: Dict[str, Any]):
@@ -90,6 +103,7 @@ def extract_faces_per_keyframe(
     source_doc_id: str,
     face_embed_url: str,
     *,
+    headers: Mapping[str, str] | None = None,
     client: httpx.Client | None = None,
 ) -> List[FaceMention]:
     """Return a deterministic list of ``FaceMention`` records.
@@ -101,9 +115,16 @@ def extract_faces_per_keyframe(
     status code embedded in the message when the sidecar returns non-200
     OR the request itself fails.
     """
+    explicit_headers = _canonical_bearer_headers(headers)
+    configured_headers = inference_headers(face_embed_url.rstrip("/"))
+    if configured_headers and explicit_headers:
+        raise ValueError("headers must not be supplied for a Modal endpoint")
+    resolved_headers = configured_headers or explicit_headers
+    if resolved_headers and client is not None:
+        raise ValueError("headers and client cannot both be supplied")
     owns_client = client is None
     if client is None:
-        client = httpx.Client()
+        client = httpx.Client(headers=resolved_headers)
     records: List[FaceMention] = []
     try:
         keyframes = list(_iter_keyframes(processing_results))

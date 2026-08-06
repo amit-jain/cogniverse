@@ -33,6 +33,18 @@ _MEMORY_TENANT_ID: ContextVar[Optional[str]] = ContextVar(
 )
 
 
+def clear_request_tenant() -> None:
+    """Clear the request-scoped tenant bound by ``set_tenant_for_context``.
+
+    The dispatcher calls this when a dispatch completes, so a later caller on
+    the same context (a worker draining jobs sequentially, a sync caller on
+    the main thread) never inherits the previous request's tenant. Instance
+    attributes are left alone — they are the deliberate fallback for callers
+    that bind a tenant directly.
+    """
+    _MEMORY_TENANT_ID.set(None)
+
+
 class MemoryAwareMixin:
     """
     Mixin class that adds memory capabilities to agents.

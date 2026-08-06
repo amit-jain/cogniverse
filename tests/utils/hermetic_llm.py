@@ -206,6 +206,7 @@ def _spawn(
         "docker",
         "run",
         "-d",
+        "--init",
         "--name",
         container,
         "-p",
@@ -262,12 +263,15 @@ def _write_session_config(
     primary = llm.setdefault("primary", {})
     primary["model"] = f"openai/{MODEL}"
     primary["api_base"] = primary_api_base
-    if teacher_api_base is None:
-        llm.pop("teacher", None)
-    else:
-        teacher = llm.setdefault("teacher", {})
-        teacher["model"] = f"openai/{TEACHER_MODEL}"
-        teacher["api_base"] = teacher_api_base
+    # LLMConfig.from_dict requires a teacher entry, so config load must
+    # succeed even in primary-only sessions. Point an unprovisioned teacher
+    # at the dead sentinel port (nothing ever listens there — see the
+    # BACKEND_PORT fixture in tests/conftest.py) so any teacher call outside
+    # a requires_teacher_model test fails at connect, identically local and
+    # CI, instead of reaching a leftover teacher sidecar.
+    teacher = llm.setdefault("teacher", {})
+    teacher["model"] = f"openai/{TEACHER_MODEL}"
+    teacher["api_base"] = teacher_api_base or "http://127.0.0.1:29071/v1"
     HERMETIC_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     config_path = HERMETIC_CONFIG_DIR / f"config-{os.getpid()}.json"
     pending = config_path.with_name(f".{config_path.name}.{threading.get_ident()}.tmp")
@@ -314,16 +318,24 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
             return f"{configured}/v1"
 
         local_base = f"http://127.0.0.1:{host_port}"
+        provisioning_deadline = time.monotonic() + deadline_s
+        # A pre-existing container gets a bounded slice of the budget, never
+        # all of it: a container that has already had minutes to warm up and
+        # still isn't serving is presumed wedged, and the remaining budget
+        # must stay available for replacing it with a fresh spawn.
+        preexisting_wait_s = min(180.0, deadline_s / 3)
 
-        def _await_ready(budget_s: float) -> bool:
-            deadline = time.monotonic() + budget_s
-            while time.monotonic() < deadline:
+        def _await_ready(until: float | None = None) -> bool:
+            wait_deadline = provisioning_deadline if until is None else until
+            while time.monotonic() < wait_deadline:
                 model_ids = listed_model_ids(local_base)
                 if model_ids is not None:
                     return model in model_ids
                 if _container_state(container) != "running":
                     return False
-                time.sleep(5)
+                remaining = wait_deadline - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(5, remaining))
             return False
 
         try:
@@ -336,7 +348,7 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                 elif _healthy(local_base, model):
                     return f"{local_base}/v1"
             if state == "running":
-                if _await_ready(deadline_s):
+                if _await_ready(time.monotonic() + preexisting_wait_s):
                     return f"{local_base}/v1"
                 _remove_container(container)
                 state = None
@@ -348,7 +360,7 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                     capture_output=True,
                     text=True,
                 )
-                if _await_ready(deadline_s):
+                if _await_ready(time.monotonic() + preexisting_wait_s):
                     return f"{local_base}/v1"
                 _remove_container(container)
 
@@ -361,6 +373,11 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
             errors: list[str] = []
             for dev, util in attempts:
                 _remove_container(container)
+                if time.monotonic() >= provisioning_deadline:
+                    errors.append(
+                        f"total {deadline_s}-second provisioning deadline exhausted"
+                    )
+                    break
                 try:
                     _spawn(
                         model,
@@ -369,7 +386,7 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                         dev,
                         gpu_utilization=util,
                     )
-                    if _await_ready(deadline_s):
+                    if _await_ready():
                         return f"{local_base}/v1"
                     errors.append(
                         f"{dev} sidecar did not serve {model!r}; "
@@ -380,6 +397,11 @@ def ensure_llm(model: str = MODEL, deadline_s: float = 900.0) -> str:
                         f"{dev} sidecar failed: {exc}; "
                         f"container logs:\n{_container_logs(container)}"
                     )
+                if time.monotonic() >= provisioning_deadline:
+                    errors.append(
+                        f"total {deadline_s}-second provisioning deadline exhausted"
+                    )
+                    break
 
             detail = "; ".join(errors) or "no local launch attempt completed"
             raise RuntimeError(

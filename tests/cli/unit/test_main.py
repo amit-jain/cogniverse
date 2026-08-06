@@ -1199,3 +1199,228 @@ class TestGraphWrappers:
                 cli, ["graph", "path", "A", "B", "--tenant", "acme:acme"]
             )
         assert result.exit_code == 4
+
+
+class _ModalLifecycleStub:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self.close_calls = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+        return False
+
+    def close(self):
+        self.close_calls += 1
+
+    @staticmethod
+    def _status(service: str, active_containers: int):
+        status = MagicMock()
+        status.service = service
+        status.web_url = f"https://{service}.modal.run"
+        status.active_containers = active_containers
+        return status
+
+    def deploy(self, services):
+        self.calls.append(("deploy", services))
+        return tuple(self._status(service, 0) for service in services)
+
+    def warm(self, services):
+        self.calls.append(("warm", services))
+        endpoints = []
+        for service in services:
+            endpoint = MagicMock()
+            endpoint.service = service
+            endpoint.base_url = f"https://{service}.modal.run"
+            endpoint.model_id = f"model/{service}"
+            endpoints.append(endpoint)
+        return tuple(endpoints)
+
+    def release(self, services):
+        self.calls.append(("release", services))
+        return tuple(self._status(service, 0) for service in services)
+
+    def status(self, services):
+        self.calls.append(("status", services))
+        return tuple(self._status(service, 1) for service in services)
+
+    def qualify(self, service, candidates):
+        self.calls.append(("qualify", (service, candidates)))
+        result = MagicMock()
+        result.service = service
+        result.selected_gpu = "L4"
+        result.considered_gpus = ("L4", "A10")
+        return result
+
+    def undeploy(self, service, confirmation):
+        self.calls.append(("undeploy", (service, confirmation)))
+
+
+class TestModalInferenceCommands:
+    @pytest.mark.parametrize(
+        ("operation", "expected_output", "expected_active"),
+        [
+            (
+                "deploy",
+                "vllm_colpali: https://vllm_colpali.modal.run (active_containers=0)",
+                0,
+            ),
+            (
+                "release",
+                "vllm_colpali: https://vllm_colpali.modal.run (active_containers=0)",
+                0,
+            ),
+            (
+                "status",
+                "vllm_colpali: https://vllm_colpali.modal.run (active_containers=1)",
+                1,
+            ),
+        ],
+    )
+    def test_status_commands_forward_all_services_and_print_exact_state(
+        self,
+        operation: str,
+        expected_output: str,
+        expected_active: int,
+    ) -> None:
+        lifecycle = _ModalLifecycleStub()
+        with patch(
+            "cogniverse_cli.main._build_modal_inference_lifecycle",
+            return_value=lifecycle,
+        ):
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "inference",
+                    "modal",
+                    operation,
+                    "vllm_colpali",
+                    "denseon",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert lifecycle.calls == [(operation, ("vllm_colpali", "denseon"))]
+        assert lifecycle.close_calls == 1
+        assert result.output.splitlines() == [
+            expected_output,
+            f"denseon: https://denseon.modal.run (active_containers={expected_active})",
+        ]
+
+    def test_warm_prints_the_verified_model_endpoint_and_live_runner_count(
+        self,
+    ) -> None:
+        lifecycle = _ModalLifecycleStub()
+        with patch(
+            "cogniverse_cli.main._build_modal_inference_lifecycle",
+            return_value=lifecycle,
+        ):
+            result = CliRunner().invoke(
+                cli,
+                ["inference", "modal", "warm", "vllm_colpali"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert lifecycle.calls == [
+            ("warm", ("vllm_colpali",)),
+            ("status", ("vllm_colpali",)),
+        ]
+        assert lifecycle.close_calls == 1
+        assert result.output == (
+            "vllm_colpali: https://vllm_colpali.modal.run "
+            "(model=model/vllm_colpali, active_containers=1)\n"
+        )
+
+    def test_qualify_forwards_candidates_and_prints_ordered_decision(self) -> None:
+        lifecycle = _ModalLifecycleStub()
+        with patch(
+            "cogniverse_cli.main._build_modal_inference_lifecycle",
+            return_value=lifecycle,
+        ):
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "inference",
+                    "modal",
+                    "qualify",
+                    "vllm_colpali",
+                    "--gpu",
+                    "A10",
+                    "--gpu",
+                    "L4",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert lifecycle.calls == [("qualify", ("vllm_colpali", ("A10", "L4")))]
+        assert lifecycle.close_calls == 1
+        assert result.output == ("vllm_colpali: selected L4 from L4, A10\n")
+
+    def test_undeploy_requires_and_forwards_byte_exact_confirmation(self) -> None:
+        lifecycle = _ModalLifecycleStub()
+        with patch(
+            "cogniverse_cli.main._build_modal_inference_lifecycle",
+            return_value=lifecycle,
+        ):
+            missing = CliRunner().invoke(
+                cli,
+                ["inference", "modal", "undeploy", "vllm_colpali"],
+            )
+            confirmed = CliRunner().invoke(
+                cli,
+                [
+                    "inference",
+                    "modal",
+                    "undeploy",
+                    "vllm_colpali",
+                    "--confirm-service",
+                    "vllm_colpali",
+                ],
+            )
+
+        assert missing.exit_code == 2
+        assert "Missing option '--confirm-service'" in missing.output
+        assert confirmed.exit_code == 0, confirmed.output
+        assert lifecycle.calls == [("undeploy", ("vllm_colpali", "vllm_colpali"))]
+        assert lifecycle.close_calls == 1
+        assert confirmed.output == "vllm_colpali: undeployed\n"
+
+    def test_lifecycle_error_is_a_concise_cli_error_without_traceback(self) -> None:
+        from cogniverse_cli.modal_inference_lifecycle import ModalLifecycleError
+
+        lifecycle = _ModalLifecycleStub()
+        lifecycle.warm = MagicMock(
+            side_effect=ModalLifecycleError("vllm_colpali: probe denied for [redacted]")
+        )
+        with patch(
+            "cogniverse_cli.main._build_modal_inference_lifecycle",
+            return_value=lifecycle,
+        ):
+            result = CliRunner().invoke(
+                cli,
+                ["inference", "modal", "warm", "vllm_colpali"],
+            )
+
+        assert result.exit_code == 1
+        assert result.output == ("Error: vllm_colpali: probe denied for [redacted]\n")
+        assert "Traceback" not in result.output
+        assert lifecycle.close_calls == 1
+
+    def test_factory_reads_the_bearer_key_from_process_environment(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import cogniverse_cli.main as main_module
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "expected-key")
+        with patch(
+            "cogniverse_cli.modal_inference_lifecycle.ModalInferenceLifecycle"
+        ) as lifecycle_class:
+            built = main_module._build_modal_inference_lifecycle()
+
+        assert built is lifecycle_class.return_value
+        credentials = lifecycle_class.call_args.kwargs["credentials"]
+        assert credentials.bearer_token == "expected-key"

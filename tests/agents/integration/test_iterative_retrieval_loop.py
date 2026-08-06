@@ -40,7 +40,11 @@ from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-pytestmark = pytest.mark.integration
+# Every case here drives the real LM through ``dspy_lm``. The marker both
+# arms the reachability gate and tells the session provisioner this module
+# needs the primary endpoint only — without it the provisioner falls back to
+# starting the 26B teacher as well.
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +71,8 @@ def assert_golden_gate(actual, name: str) -> None:
     ``missing_aspects`` are byte-locked; ``confidence`` is an LM-sampled
     float compared as a tight band; the free-prose ``rationale`` re-words
     across identical runs at temperature 0.1, so the contract is that it
-    GROUNDS the verdict — quoting the evidence fact — not its byte stream."""
+    GROUNDS the verdict — naming every fact the question asks about, drawn
+    from the evidence — not its byte stream."""
     path = GOLDEN_DIR / name
     actual_json = json.dumps(actual, indent=2, sort_keys=True, default=str)
     if RECORD_GOLDEN:
@@ -88,12 +93,12 @@ def assert_golden_gate(actual, name: str) -> None:
     assert 50 <= len(rationale) <= 1000, (
         f"{name}: rationale length {len(rationale)} outside bounds: {rationale[:200]!r}"
     )
-    assert "Marie Curie discovered radium" in rationale, (
-        f"{name}: rationale never quotes the evidence fact:\n{rationale}"
-    )
-    assert "1898" in rationale, (
-        f"{name}: rationale never cites the year the question asks for:\n{rationale}"
-    )
+    # The question asks what she discovered and where she worked in 1898;
+    # a grounded rationale names all three, sourced from the seg_3 snippet.
+    for fact in ("radium", "Sorbonne", "1898"):
+        assert fact in rationale, (
+            f"{name}: rationale never cites {fact!r}:\n{rationale}"
+        )
 
     assert got == expected, (
         f"Golden mismatch for {name} (structural fields).\n"
@@ -484,10 +489,11 @@ async def test_final_answer_text_byte_equal_golden(captured_spans, dspy_lm):
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
     loop_result, agent_results = await _run_loop(orchestrator)
     aggregated = orchestrator._aggregate_results(CANONICAL_QUERY, agent_results)
-    answer_text = aggregated.get("aggregated_result") or aggregated.get("answer") or ""
+    answer_text = aggregated["aggregated_content"]
     assert_golden_text(answer_text, "iter_loop_answer.txt")
-    # Sanity: loop emitted the joint-trace evidence the answer is grounded on
-    assert len(loop_result.evidence) >= 1
+    # The answer is grounded on the three snippets the two iterations
+    # accumulated (seg_3, seg_4, curie_sorbonne seg_2).
+    assert len(loop_result.evidence) == 3, loop_result.evidence
 
 
 # ---------------------------------------------------------------------------
@@ -558,8 +564,10 @@ async def test_token_budget_breach_exits_at_iter1(captured_spans, dspy_lm, monke
     assert loop_result.iterations_executed == 1
 
     aggregated = orchestrator._aggregate_results(CANONICAL_QUERY, agent_results)
-    answer_text = aggregated.get("aggregated_result") or aggregated.get("answer") or ""
+    answer_text = aggregated["aggregated_content"]
     assert_golden_text(answer_text, "iter_loop_answer_budget_breach.txt")
+    # Only iteration 1's snippet made it in before the cap tripped.
+    assert len(loop_result.evidence) == 1, loop_result.evidence
 
 
 # ---------------------------------------------------------------------------

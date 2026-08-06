@@ -437,9 +437,11 @@ class TestA2AMultiTurn:
         resp1 = client.post("/", json=turn1)
         assert resp1.status_code == 200
 
-        # Extract task_id from turn 1 response for turn 2
+        # Extract task_id from turn 1 response for turn 2. A message/send
+        # result is a Task, whose identifier is `id`; `taskId` only ever
+        # appears nested inside history entries.
         result1 = resp1.json()["result"]
-        task_id = result1.get("id") or result1.get("taskId")
+        task_id = result1["id"]
 
         # Turn 2 — same contextId, references the task
         turn2 = {

@@ -39,7 +39,7 @@ def test_schema_name_populated_when_keyed_by_name(tmp_path):
         {
             "name": "video_colpali_sv_test",
             "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
-            "rank-profiles": [_FLOAT_PROFILE],
+            "rank_profiles": [_FLOAT_PROFILE],
         },
     )
 
@@ -56,7 +56,7 @@ def test_lvt_schema_enables_nearest_neighbor(tmp_path):
             "document": {
                 "fields": [{"name": "embedding", "type": "tensor<float>(x[128])"}]
             },
-            "rank-profiles": [
+            "rank_profiles": [
                 {**_FLOAT_PROFILE, "first_phase": "closeness(field, embedding)"}
             ],
         },
@@ -77,7 +77,7 @@ def test_sv_schema_still_enables_nearest_neighbor(tmp_path):
             "document": {
                 "fields": [{"name": "embedding", "type": "tensor<float>(x[128])"}]
             },
-            "rank-profiles": [
+            "rank_profiles": [
                 {**_FLOAT_PROFILE, "first_phase": "closeness(field, embedding)"}
             ],
         },
@@ -94,7 +94,7 @@ def test_extract_all_strips_only_trailing_schema_suffix(tmp_path):
             {
                 "schema": "code_schema_index",
                 "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
-                "rank-profiles": [_FLOAT_PROFILE],
+                "rank_profiles": [_FLOAT_PROFILE],
             }
         )
     )
@@ -116,7 +116,7 @@ def test_extract_all_ranking_strategies_memoized_and_invalidates(tmp_path):
         {
             "schema": "memo_probe",
             "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
-            "rank-profiles": [_FLOAT_PROFILE],
+            "rank_profiles": [_FLOAT_PROFILE],
         },
     )
 
@@ -209,7 +209,7 @@ def test_vanished_schema_file_is_skipped_not_fatal(tmp_path, monkeypatch):
         {
             "schema": "survivor",
             "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
-            "rank-profiles": [_FLOAT_PROFILE],
+            "rank_profiles": [_FLOAT_PROFILE],
         },
     )
     ghost = tmp_path / "ghost_schema.json"  # in the listing, never on disk
@@ -244,7 +244,7 @@ def test_memo_keeps_a_single_entry_per_directory(tmp_path):
         {
             "schema": "memo_bound",
             "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
-            "rank-profiles": [_FLOAT_PROFILE],
+            "rank_profiles": [_FLOAT_PROFILE],
         },
     )
     schema_file = tmp_path / "s_schema.json"
@@ -271,7 +271,7 @@ def test_memo_hit_returns_a_fresh_dict_not_the_shared_one(tmp_path):
         {
             "schema": "poison_probe",
             "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
-            "rank-profiles": [_FLOAT_PROFILE],
+            "rank_profiles": [_FLOAT_PROFILE],
         },
     )
 
@@ -308,7 +308,7 @@ def test_wiki_hybrid_profile_gets_nearestneighbor(tmp_path):
         {
             "name": "wiki_pages",
             "document": _WIKI_FIELDS,
-            "rank-profiles": [
+            "rank_profiles": [
                 {
                     "name": "hybrid",
                     "inputs": [{"name": "query(q)", "type": "tensor<float>(d0[768])"}],
@@ -335,7 +335,7 @@ def test_wiki_semantic_search_profile_gets_nearestneighbor(tmp_path):
         {
             "name": "wiki_pages",
             "document": _WIKI_FIELDS,
-            "rank-profiles": [
+            "rank_profiles": [
                 {
                     "name": "semantic_search",
                     "inputs": [{"name": "query(q)", "type": "tensor<float>(d0[768])"}],
@@ -366,7 +366,7 @@ def test_function_indirection_resolves_to_nearestneighbor(tmp_path):
         {
             "name": "video_test_sv_chunk",
             "document": _SV_FIELDS,
-            "rank-profiles": [
+            "rank_profiles": [
                 {
                     "name": "hybrid_float_bm25",
                     "inputs": [{"name": "query(qt)", "type": "tensor<float>(v[768])"}],
@@ -397,7 +397,7 @@ def test_attribute_first_phase_uses_binary_pair(tmp_path):
         {
             "name": "video_test_sv_chunk",
             "document": _SV_FIELDS,
-            "rank-profiles": [
+            "rank_profiles": [
                 {
                     "name": "float_binary",
                     "inputs": [
@@ -429,7 +429,7 @@ def test_binary_first_phase_prefers_binary_tensor(tmp_path):
         {
             "name": "video_test_sv_chunk",
             "document": _SV_FIELDS,
-            "rank-profiles": [
+            "rank_profiles": [
                 {
                     "name": "phased",
                     "inputs": [
@@ -459,7 +459,7 @@ def test_text_first_phase_stays_off_ann(tmp_path):
         {
             "name": "video_test_sv_chunk",
             "document": _SV_FIELDS,
-            "rank-profiles": [
+            "rank_profiles": [
                 {
                     "name": "hybrid_bm25_binary",
                     "inputs": [{"name": "query(qtb)", "type": "tensor<int8>(v[96])"}],
@@ -495,7 +495,7 @@ def test_mapped_tensor_field_never_ann(tmp_path):
                     }
                 ]
             },
-            "rank-profiles": [
+            "rank_profiles": [
                 {
                     "name": "float_float",
                     "inputs": [
@@ -532,7 +532,7 @@ def test_substring_text_in_name_does_not_classify_text(tmp_path):
         {
             "name": "video_test_sv_chunk",
             "document": _SV_FIELDS,
-            "rank-profiles": [
+            "rank_profiles": [
                 {
                     "name": "context_boost",
                     "inputs": [{"name": "query(qt)", "type": "tensor<float>(v[768])"}],

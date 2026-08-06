@@ -135,16 +135,22 @@ class TestChunkProcessor:
 
     @patch("subprocess.run")
     def test_extract_chunk_error(self, mock_subprocess, processor, temp_dir):
-        """Test chunk extraction error handling."""
+        """Chunk extraction surfaces ffmpeg's exact failure."""
         video_path = Path("/test/video.mp4")
         chunk_path = temp_dir / "chunk.mp4"
 
-        mock_subprocess.side_effect = subprocess.CalledProcessError(1, "ffmpeg")
+        mock_subprocess.side_effect = subprocess.CalledProcessError(
+            1, "ffmpeg", stderr="invalid media"
+        )
 
-        success = processor._extract_chunk(video_path, chunk_path, 10.0, 30.0)
-
-        assert success is False
-        processor.logger.error.assert_called()
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                r"ffmpeg failed for /test/video\.mp4 at 10\.000s for "
+                r"30\.000s with exit 1: invalid media"
+            ),
+        ):
+            processor._extract_chunk(video_path, chunk_path, 10.0, 30.0)
 
     @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("builtins.open", create=True)
@@ -260,7 +266,7 @@ class TestChunkProcessor:
     def test_extract_chunks_with_failed_extraction(
         self, mock_output_manager, processor, temp_dir, sample_video_path
     ):
-        """Test handling when some chunk extractions fail."""
+        """A missing chunk aborts the whole extraction with its time span."""
         # Mock output manager
         mock_manager = Mock()
         mock_manager.get_processing_dir.return_value = temp_dir
@@ -284,25 +290,19 @@ class TestChunkProcessor:
             patch("builtins.open", create=True),
             patch("json.dump"),
         ):
-            result = processor.extract_chunks(sample_video_path)
+            with pytest.raises(
+                RuntimeError,
+                match=(
+                    rf"ffmpeg reported no output for {sample_video_path} at "
+                    r"28\.000s for 30\.000s"
+                ),
+            ):
+                processor.extract_chunks(sample_video_path)
 
-        # Should only include successful chunks (1st and 3rd succeed)
-        chunks = result["chunks"]
-        assert len(chunks) == 2  # Only successful extractions
-
-        # Chunk numbers reflect successful extraction order, not original positions
-        # The code increments chunk_idx only when extraction succeeds
-        assert chunks[0]["chunk_number"] == 0  # First successful extraction
-        assert chunks[1]["chunk_number"] == 1  # Second successful extraction
-
-        # But the timestamps should show which original chunks these were
-        assert chunks[0]["start_time"] == 0.0  # Original chunk 0: [0-30]
-        assert chunks[1]["start_time"] == 56.0  # Original chunk 2: [56-86]
-
-    def test_extract_chunks_legacy_output_dir(
+    def test_extract_chunks_with_explicit_output_dir(
         self, processor, temp_dir, sample_video_path
     ):
-        """Test legacy output directory support."""
+        """An explicit output directory owns the chunk path."""
         with (
             patch.object(processor, "_get_video_duration", return_value=30.0),
             patch.object(processor, "_extract_chunk", return_value=True),
@@ -311,7 +311,6 @@ class TestChunkProcessor:
         ):
             result = processor.extract_chunks(sample_video_path, output_dir=temp_dir)
 
-        # Should work with legacy path structure
         assert result["video_id"] == "test_video"
         expected_chunks_dir = str(temp_dir / "chunks" / "test_video")
         assert result["chunks_dir"] == expected_chunks_dir

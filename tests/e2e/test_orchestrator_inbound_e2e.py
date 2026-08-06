@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -57,17 +58,6 @@ RUNTIME_BASE = os.environ.get(
     "COGNIVERSE_RUNTIME_BASE",
     "http://localhost:33000",
 )
-
-
-def _runtime_reachable() -> bool:
-    """Skip the suite cleanly when the runtime isn't on the host."""
-    try:
-        with httpx.Client(timeout=2.0) as c:
-            r = c.get(f"{RUNTIME_BASE}/health")
-        return r.status_code == 200
-    except Exception:
-        return False
-
 
 pytestmark = [pytest.mark.e2e]
 
@@ -412,7 +402,7 @@ def test_cross_tenant_post_to_active_session_returns_404_live():
 # Goldens-driven byte-equal end-to-end                                    #
 # --------------------------------------------------------------------- #
 
-_GOLDENS_DIR = pytest.importorskip("pathlib").Path(__file__).parent / "goldens"
+_GOLDENS_DIR = Path(__file__).parent / "goldens"
 
 
 def _load_golden(name: str) -> dict:
@@ -781,19 +771,23 @@ def test_with_constraint_response_payload_exposes_loop_trajectory_fields():
 # --------------------------------------------------------------------- #
 
 
-def _phoenix_reachable() -> bool:
+def _require_phoenix_traces() -> None:
+    endpoint = "http://localhost:33006/v1/traces"
     try:
         with httpx.Client(timeout=2.0) as c:
-            r = c.get("http://localhost:33006/v1/traces")
-        return r.status_code == 200
-    except Exception:
-        return False
+            response = c.get(endpoint)
+    except httpx.HTTPError as exc:
+        pytest.fail(
+            f"Phoenix prerequisite request failed after E2E stack setup; "
+            f"method='GET'; url={endpoint!r}; timeout=2.0s; error={exc!r}",
+            pytrace=False,
+        )
+    assert response.status_code == 200, (
+        f"Phoenix prerequisite returned HTTP {response.status_code}; "
+        f"method='GET'; url={endpoint!r}; body={response.text[:500]!r}"
+    )
 
 
-@pytest.mark.skipif(
-    not _phoenix_reachable(),
-    reason="Phoenix not reachable at localhost:33006",
-)
 def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
     """End-to-end Phoenix span check: a /process call with a constraint
     MUST emit a ``retrieval_iteration`` span for every iteration the
@@ -813,6 +807,8 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
     import uuid
 
     from phoenix.client import Client
+
+    _require_phoenix_traces()
 
     # The helper retries the /process + constraint POST internally
     # up to 3 times until the constraint lands. Each retry uses a

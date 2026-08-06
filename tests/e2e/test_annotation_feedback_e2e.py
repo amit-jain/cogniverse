@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import shutil
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -52,10 +51,42 @@ SPAWNED_LABEL = "trigger=annotation-feedback"
 POLL_INTERVAL_S = 5.0
 WORKFLOW_TIMEOUT_S = 600.0
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("kubectl") is None or shutil.which("helm") is None,
-    reason="kubectl/helm CLI not installed — cluster e2e requires both",
-)
+pytestmark = pytest.mark.e2e
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _require_cluster_cli_tools() -> None:
+    commands = (
+        ["kubectl", "version", "--client"],
+        ["helm", "version", "--short"],
+    )
+    for command in commands:
+        command_text = " ".join(command)
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except FileNotFoundError as exc:
+            pytest.fail(
+                "cluster CLI prerequisite executable is unavailable after E2E "
+                f"stack setup; command={command_text!r}; error={exc!r}",
+                pytrace=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            pytest.fail(
+                "cluster CLI prerequisite command timed out after E2E stack setup; "
+                f"command={command_text!r}; timeout={exc.timeout}s; "
+                f"stdout={exc.stdout!r}; stderr={exc.stderr!r}",
+                pytrace=False,
+            )
+        assert result.returncode == 0, (
+            "cluster CLI prerequisite command failed after E2E stack setup; "
+            f"command={command_text!r}; returncode={result.returncode}; "
+            f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+        )
 
 
 def _kubectl(*args: str, input_text: str | None = None) -> subprocess.CompletedProcess:

@@ -25,31 +25,38 @@ DASHBOARD_REPOS_BY_BACKEND = {
     "cuda": "cogniverse/dashboard-cuda",
     "rocm": "cogniverse/dashboard-rocm",
 }
-# GLiNER sidecar — backend-agnostic CPU-only NER server (deploy/gliner). Its
+# GLiNER sidecar — backend-agnostic CPU-only NER server. Its
 # chart image uses pullPolicy: Never, so k3d must have it built+imported or
 # the pod ErrImageNeverPulls on a fresh deploy. One image, all backends.
 GLINER_REPO = "cogniverse/gliner"
 # Optional embedder sidecars — each backs a real opt-in feature (VideoPrism
 # embeddings, acoustic search, face re-ID). Built only when their
 # inference.<svc>.enabled resolves true in the deploy values, so a default
-# build stays fast but flipping one on "just works". clap/face COPY from libs/
-# and deploy/, so their build context is the repo root; videoprism is
-# self-contained in its own directory. Keyed by inference service name.
+# build stays fast but flipping one on "just works". Their canonical servers
+# live in the CLI modal-inference package, so every sidecar build uses the
+# repository root as its context. Keyed by inference service name.
 SIDECAR_BUILDS = {
     "videoprism_jax": (
         "cogniverse/videoprism",
         "deploy/videoprism/Dockerfile",
-        "deploy/videoprism",
+        ".",
     ),
     "clap_embed": ("cogniverse/clap-embed", "deploy/clap_embed/Dockerfile", "."),
     "face_embed": ("cogniverse/face-embed", "deploy/face_embed/Dockerfile", "."),
+    # Both LateOn services run the same PyLate image — LateOn retrieval
+    # needs PyLate's exact encode (query expansion over masked padding),
+    # which stock vLLM cannot reproduce. build_images dedupes the shared
+    # tag so enabling both services builds the image once.
+    "colbert_pylate": ("cogniverse/pylate", "deploy/pylate/Dockerfile", "."),
+    "code_colbert_pylate": ("cogniverse/pylate", "deploy/pylate/Dockerfile", "."),
 }
-# colpali, whisper, and the LateOn/DenseOn text embedders are served by vLLM,
-# not built here:
+# The PyLate image bakes the host-matching torch wheel, like runtime/dashboard.
+_TORCH_BACKEND_SIDECARS = frozenset({"colbert_pylate", "code_colbert_pylate"})
+# colpali, whisper, and the DenseOn dense embedder are served by vLLM, not
+# built here:
 # TomoroAI/tomoro-colqwen3-embed-4b via inference.vllm_colpali (vllm/vllm-openai-cpu)
 # openai/whisper-large-v3-turbo via inference.vllm_asr (vllm/vllm-openai-cpu)
-# lightonai/LateOn + lightonai/DenseOn via inference.colbert_pylate / denseon
-# (vllm_token_embed / vllm_embed engines on vllm/vllm-openai-cpu)
+# lightonai/DenseOn via inference.denseon (vllm_embed engine)
 # Operators pull vllm/vllm-openai-cpu (or per-device variants) directly.
 
 
@@ -180,11 +187,13 @@ def build_images(
 
     Builds the runtime + dashboard variants matching ``torch_backend``
     (auto-detected when None) plus the backend-agnostic GLiNER sidecar. The
-    optional embedder sidecars (videoprism / clap-embed / face-embed) build only
-    when their ``inference.<svc>.enabled`` resolves true across ``values_files``
-    (the same overlays ``cogniverse up`` hands helm), so a default build stays
-    fast while flipping a sidecar on "just works". ColPali, Whisper, and the
-    LateOn/DenseOn text embedders are served by vLLM and pulled directly by k3d.
+    optional embedder sidecars (videoprism / clap-embed / face-embed / pylate)
+    build only when their ``inference.<svc>.enabled`` resolves true across
+    ``values_files`` (the same overlays ``cogniverse up`` hands helm), so a
+    default build stays fast while flipping a sidecar on "just works". The
+    PyLate image is shared by colbert_pylate and code_colbert_pylate and
+    builds once. ColPali, Whisper, and DenseOn are served by vLLM and pulled
+    directly by k3d.
     """
     version = version or dev_version(project_root)
     backend = torch_backend or detect_torch_backend()
@@ -210,20 +219,30 @@ def build_images(
             ".",
             workspace_arg,
         ),
-        # GLiNER takes no TORCH_BACKEND arg and builds from its own context.
+        # GLiNER takes no TORCH_BACKEND arg and uses the repository-root
+        # context for its canonical CLI modal-inference server.
         (
             _dev_tag(GLINER_REPO, version),
             "deploy/gliner/Dockerfile",
-            "deploy/gliner",
+            ".",
             [],
         ),
     ]
     for svc in enabled_sidecars(project_root, values_files):
         repo, dockerfile, context = SIDECAR_BUILDS[svc]
-        builds.append((_dev_tag(repo, version), dockerfile, context, []))
+        sidecar_args = (
+            ["--build-arg", f"TORCH_BACKEND={backend}"]
+            if svc in _TORCH_BACKEND_SIDECARS
+            else []
+        )
+        builds.append((_dev_tag(repo, version), dockerfile, context, sidecar_args))
 
     built: list[str] = []
+    seen_tags: set[str] = set()
     for tag, dockerfile, context, extra_args in builds:
+        if tag in seen_tags:
+            continue
+        seen_tags.add(tag)
         subprocess.run(
             ["docker", "build", "-f", dockerfile, *extra_args, "-t", tag, context],
             cwd=str(project_root),

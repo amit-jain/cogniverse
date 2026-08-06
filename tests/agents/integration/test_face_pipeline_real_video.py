@@ -4,9 +4,9 @@ WHAT'S REAL HERE
 ================
 
 * Real InsightFace ``buffalo_l`` model running in a real FastAPI
-  sidecar process at ``localhost:29007``. The 210 MiB model pack is
-  downloaded on cold-load and cached at ``~/.insightface/``.
-* Real video file (``data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4``,
+  sidecar container. The official v0.7 model pack is checksum-verified
+  and stored in the image at ``/opt/insightface/models/buffalo_l``.
+* Real video file (``tests/system/resources/videos/v_-D1gdv_gQyw.mp4``,
   ~18s at 30 fps, 1280×720). cv2 extracts the actual frames; no
   synthetic colours.
 * Real ``extract_faces_per_keyframe`` → real ``cluster_faces`` →
@@ -28,8 +28,8 @@ WHAT'S HAND-BUILT
 PRE-REQS (the test will fail loudly if any are missing)
 ========================================================
 
-* Real face-embed sidecar reachable at ``localhost:29007``. Start
-  locally via ``PORT=29007 uv run python -m cogniverse_runtime.sidecars.face_embed``.
+* Docker, used by ``face_embed_container`` to build and start the real
+  face-embed sidecar with its pinned model artifact.
 * Session Vespa container (``shared_vespa``) and the vLLM-served LateOn
   ColBERT endpoint (``pylate_server``) — both self-provisioned.
 * ``cv2`` installed (``uv pip install opencv-python-headless``).
@@ -60,9 +60,11 @@ from cogniverse_agents.graph.graph_schema import (
 pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SAMPLE_VIDEO = REPO_ROOT / "data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4"
+SAMPLE_VIDEO = REPO_ROOT / "tests/system/resources/videos/v_-D1gdv_gQyw.mp4"
 TENANT_ID = "test_face_real"
 VESPA_HOST = "localhost"
+FACE_MODEL_NAME = "buffalo_l"
+FACE_MODEL_REVISION = "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f"
 
 
 # --------------------------------------------------------------------- #
@@ -77,22 +79,13 @@ def _service_up(url: str, timeout: float = 3.0) -> bool:
         return False
 
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not SAMPLE_VIDEO.exists(),
-        reason=f"sample video missing: {SAMPLE_VIDEO}",
-    ),
-]
-
-
 @pytest.fixture(scope="module", autouse=True)
 def _warm_face_embed_model(face_embed_container):
-    """Absorb the sidecar's cold start before any test issues real work.
+    """Initialize the model session before any test issues real work.
 
-    The first /embed on a fresh sidecar triggers the ~210 MiB buffalo_l
-    download; until it finishes, requests 500/stall and the first test
-    fails on infrastructure rather than behavior.
+    The image already contains the pinned artifact. The first ``/embed``
+    initializes InsightFace and ONNX Runtime, which can still take longer
+    than a normal request timeout.
     """
     import httpx
 
@@ -268,6 +261,17 @@ def graph_manager_live(shared_vespa, pylate_server):
 # --------------------------------------------------------------------- #
 # Real face extraction → real model                                       #
 # --------------------------------------------------------------------- #
+
+
+def test_real_sidecar_reports_pinned_model_revision(face_embed_container):
+    response = requests.get(f"{face_embed_container}/health", timeout=3)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "model": FACE_MODEL_NAME,
+        "model_revision": FACE_MODEL_REVISION,
+    }
 
 
 def test_real_face_extraction_detects_one_face_per_keyframe(

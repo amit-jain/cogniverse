@@ -26,7 +26,7 @@ from typing import Iterator
 
 import pytest
 
-from tests.e2e.conftest import skip_if_no_runtime, unique_id
+from tests.e2e.conftest import unique_id
 
 # OpenShell CLI lives at .venv/bin/openshell (installed via the openshell
 # Python package as a console script). uv run resolves it on PATH.
@@ -130,7 +130,6 @@ def _import_sandbox():
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRequiredPolicyRefusesBootOnUnreachableGateway:
     """policy=REQUIRED with a bogus endpoint must raise SandboxGatewayUnavailableError."""
 
@@ -160,7 +159,6 @@ class TestRequiredPolicyRefusesBootOnUnreachableGateway:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestOptionalPolicyDegradesQuietly:
     """policy=OPTIONAL with a bogus endpoint must construct without raising."""
 
@@ -185,7 +183,6 @@ class TestOptionalPolicyDegradesQuietly:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestDisabledPolicySkipsConnect:
     """policy=DISABLED must not connect even when a live endpoint is available."""
 
@@ -208,7 +205,6 @@ class TestDisabledPolicySkipsConnect:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRequiredPolicyAcceptsBootOnLiveGateway:
     """policy=REQUIRED + working gateway → manager boots and reports available."""
 
@@ -228,7 +224,6 @@ class TestRequiredPolicyAcceptsBootOnLiveGateway:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestExecSpanAttributesEmitted:
     """A successful exec_in_sandbox emits a sandbox.exec_in_sandbox parent span
     with the policy attribute pinned and a child sandbox.exec span carrying

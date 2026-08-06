@@ -7,26 +7,27 @@ Sets up BACKEND_URL environment variable required by BootstrapConfig.
 
 import json
 import os
-import socket
-import subprocess
-import sys
-import time
 from pathlib import Path
 
 import pytest
-import requests
 
+from tests.fixtures import inference as _inference_plugin
 from tests.system.minio_test_manager import MinIOTestManager
 from tests.utils.markers import (
     is_docker_available,
     is_ffmpeg_available,
-    is_vespa_running,
 )
-from tests.utils.vllm_sidecar import (
-    OWNER_LABEL,
-    _discover_dev_model_urls,
-    _discover_e2e_model_urls,
-)
+
+_INFERENCE_PLUGIN_NAME = "tests.fixtures.inference"
+
+
+def _register_inference_plugin(plugin_manager):
+    if not plugin_manager.hasplugin(_INFERENCE_PLUGIN_NAME):
+        plugin_manager.register(_inference_plugin, _INFERENCE_PLUGIN_NAME)
+
+
+def pytest_configure(config):
+    _register_inference_plugin(config.pluginmanager)
 
 
 def feed_document_via_prod_mapping(
@@ -35,12 +36,17 @@ def feed_document_via_prod_mapping(
     schema_name: str,
     schemas_dir: Path,
     *,
+    base_schema_name: str,
     video_id: str,
     video_title: str,
     source_url: str,
 ) -> str:
     """Feed a production ``Document`` into Vespa through the real ingestion
     field mapping (``VespaPyClient.process``) and return the doc id.
+
+    ``schema_name`` is the deployed (tenant-scoped) schema the document is fed
+    to; ``base_schema_name`` is the base definition the client loads fields and
+    strategies from — the same split ``VespaBackend`` uses for tenant schemas.
 
     Round-trip tests use this instead of a test-only document builder so they
     actually validate that the production mapping carries ``source_url`` (and
@@ -54,6 +60,7 @@ def feed_document_via_prod_mapping(
     client = VespaPyClient(
         {
             "schema_name": schema_name,
+            "base_schema_name": base_schema_name,
             "url": "http://localhost",
             "port": http_port,
             "schema_loader": FilesystemSchemaLoader(schemas_dir),
@@ -145,378 +152,56 @@ def materialise_test_pipeline_config(http_port: int) -> str:
     return str(test_config_path)
 
 
-# Inference services are resolved after collection, and only for tests that
-# name them. Explicit test URLs come first, followed by an exact workload in
-# the cogniverse-e2e cluster, the development cluster, then an identical
-# local sidecar.
-_VIDEOPRISM_IMAGE = "cogniverse/videoprism:dev"
-_STARTED_INFERENCE_CONTAINERS: list[str] = []
-_INFERENCE_SIDECARS = {
-    "vllm_colpali": {
-        "kind": "vllm",
-        "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
-        "extra_args": [
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    },
-    "videoprism_jax": {
-        "image": _VIDEOPRISM_IMAGE,
-        "container_name": "videoprism-jax-ingest-tests",
-        "kind": "health",
-        "model_name": "videoprism_public_v1_base_hf",
-        "internal_port": 7999,
-        "extra_env": {"JAX_PLATFORM_NAME": "cpu", "JAX_PLATFORMS": "cpu"},
-    },
-    "vllm_asr": {
-        "kind": "vllm",
-        "model_name": "openai/whisper-large-v3-turbo",
-        "extra_args": [
-            "--runner",
-            "generate",
-            "--max-model-len",
-            "448",
-        ],
-    },
-}
-
-
-def _free_port_for_sidecar() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _container_logs(container: str) -> str:
-    try:
-        logs = subprocess.run(
-            ["docker", "logs", "--tail", "200", container],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return f"unable to read container logs: {exc}"
-    return "\n".join(part for part in (logs.stdout, logs.stderr) if part).strip()
-
-
-def _health_serves_exact_model(url: str, model: str, timeout: float = 2.0) -> bool:
-    try:
-        response = requests.get(f"{url.rstrip('/')}/health", timeout=timeout)
-        payload = response.json()
-    except (requests.RequestException, ValueError):
-        return False
-    return (
-        response.status_code == 200
-        and isinstance(payload, dict)
-        and payload.get("status") == "ok"
-        and payload.get("model") == model
-    )
-
-
-def _remove_and_raise(
-    service: str,
-    spec: dict,
-    container: str,
-    reason: str,
-) -> None:
-    logs = _container_logs(container)
-    try:
-        cleanup = subprocess.run(
-            ["docker", "rm", "-f", container],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        cleanup_detail = "\n".join(
-            part for part in (cleanup.stdout, cleanup.stderr) if part
-        ).strip()
-        cleanup_status = (
-            "cleanup completed"
-            if cleanup.returncode == 0
-            else f"cleanup exited {cleanup.returncode}: {cleanup_detail}"
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        cleanup_status = f"cleanup failed: {type(exc).__name__}: {exc}"
-    raise RuntimeError(
-        f"Failed to launch exact inference service {service!r} with model "
-        f"{spec['model_name']!r}: {reason}\ncontainer logs:\n{logs}\n"
-        f"{cleanup_status}"
-    )
-
-
-def _start_inference_sidecar(service: str, spec: dict) -> str:
-    """Start one exact non-vLLM sidecar or raise with logs and cleanup."""
-    port = _free_port_for_sidecar()
-    container = f"{spec['container_name']}-{os.getpid()}-{port}"
-    try:
-        subprocess.run(
-            ["docker", "rm", "-f", container],
-            capture_output=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        _remove_and_raise(service, spec, container, f"{type(exc).__name__}: {exc}")
-    cmd = [
-        "docker",
-        "run",
-        "-d",
-        "--name",
-        container,
-        # Owner label so a SIGKILLed session's sidecar gets reaped by the
-        # next run's reap_dead_owner_containers().
-        "--label",
-        f"{OWNER_LABEL}={os.getpid()}",
-        "-p",
-        f"{port}:{spec['internal_port']}",
-        "-e",
-        f"MODEL_NAME={spec['model_name']}",
-    ]
-    for env_key, env_val in spec.get("extra_env", {}).items():
-        cmd.extend(["-e", f"{env_key}={env_val}"])
-    cmd.extend(
-        [
-            "-v",
-            f"{Path.home()}/.cache/huggingface:/root/.cache/huggingface",
-            spec["image"],
-        ]
-    )
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        _remove_and_raise(service, spec, container, f"{type(exc).__name__}: {exc}")
-    if result.returncode != 0:
-        _remove_and_raise(
-            service,
-            spec,
-            container,
-            f"docker run exited {result.returncode}: {result.stderr}",
-        )
-
-    url = f"http://127.0.0.1:{port}"
-    deadline = time.monotonic() + 1800
-    while time.monotonic() < deadline:
-        if _health_serves_exact_model(url, spec["model_name"], timeout=5):
-            _STARTED_INFERENCE_CONTAINERS.append(container)
-            return url
-
-        try:
-            inspect = subprocess.run(
-                [
-                    "docker",
-                    "inspect",
-                    "-f",
-                    "{{.State.Status}}|{{.State.ExitCode}}",
-                    container,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            _remove_and_raise(
-                service,
-                spec,
-                container,
-                f"{type(exc).__name__}: {exc}",
-            )
-        if inspect.returncode == 0:
-            status, _, exit_code = inspect.stdout.strip().partition("|")
-            if status == "exited":
-                _remove_and_raise(
-                    service,
-                    spec,
-                    container,
-                    f"container exited with code {exit_code}",
-                )
-        time.sleep(5)
-
-    _remove_and_raise(
-        service,
-        spec,
-        container,
-        "exact health contract timed out after 1800s",
-    )
-
-
-def _explicit_service_url(service: str) -> str | None:
-    raw_urls = os.environ.get("INFERENCE_SERVICE_URLS")
-    if not raw_urls:
-        return None
-    try:
-        urls = json.loads(raw_urls)
-    except json.JSONDecodeError:
-        return None
-    url = urls.get(service) if isinstance(urls, dict) else None
-    return url if isinstance(url, str) else None
-
-
-def _resolve_health_service(service: str, spec: dict) -> str:
-    candidates = []
-    explicit_url = _explicit_service_url(service)
-    if explicit_url:
-        candidates.append(explicit_url)
-    candidates.extend(_discover_e2e_model_urls(spec["model_name"]))
-    candidates.extend(_discover_dev_model_urls(spec["model_name"]))
-    for url in candidates:
-        if _health_serves_exact_model(url, spec["model_name"]):
-            return url.rstrip("/")
-    return _start_inference_sidecar(service, spec)
-
-
-def _resolve_inference_services(required: set[str], vllm_sidecar) -> dict[str, str]:
-    resolved: dict[str, str] = {}
-    for service in sorted(required):
-        try:
-            spec = _INFERENCE_SIDECARS[service]
-        except KeyError as exc:
-            raise RuntimeError(
-                f"No exact inference sidecar is defined for {service!r}"
-            ) from exc
-        if spec["kind"] == "vllm":
-            resolved[service] = vllm_sidecar.spawn(
-                spec["model_name"],
-                extra_args=spec["extra_args"],
-            )
-        else:
-            resolved[service] = _resolve_health_service(service, spec)
-    return resolved
-
-
-def pytest_configure(config):
-    """Do not start inference services before tests request them."""
-
-
-@pytest.fixture(scope="session", autouse=True)
-def requested_inference_services(request, vllm_sidecar):
-    """Resolve only inference services named by the collected ingestion tests."""
-    required = getattr(
-        request.config,
-        "_cogniverse_required_inference_services",
-        set(),
-    )
-    original_urls = os.environ.get("INFERENCE_SERVICE_URLS")
-    resolved: dict[str, str] = {}
-    try:
-        resolved = _resolve_inference_services(required, vllm_sidecar)
-        if resolved:
-            os.environ["INFERENCE_SERVICE_URLS"] = json.dumps(resolved)
-        yield resolved
-    finally:
-        active_exception = sys.exception()
-        cleanup_errors: list[str] = []
-        for container in tuple(_STARTED_INFERENCE_CONTAINERS):
-            try:
-                cleanup = subprocess.run(
-                    ["docker", "rm", "-f", container],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    check=False,
-                )
-                if cleanup.returncode != 0:
-                    detail = "\n".join(
-                        part for part in (cleanup.stdout, cleanup.stderr) if part
-                    ).strip()
-                    cleanup_errors.append(
-                        f"{container}: docker exited {cleanup.returncode}: {detail}"
-                    )
-            except (OSError, subprocess.SubprocessError) as exc:
-                cleanup_errors.append(f"{container}: {type(exc).__name__}: {exc}")
-            finally:
-                _STARTED_INFERENCE_CONTAINERS.remove(container)
-        if original_urls is None:
-            os.environ.pop("INFERENCE_SERVICE_URLS", None)
-        else:
-            os.environ["INFERENCE_SERVICE_URLS"] = original_urls
-        if cleanup_errors:
-            message = "Failed to remove exact inference containers: " + "; ".join(
-                cleanup_errors
-            )
-            if active_exception is not None:
-                active_exception.add_note(message)
-            else:
-                raise RuntimeError(message)
-
-
-def _inference_requirement(marker) -> str | None:
-    reason = marker.kwargs.get("reason")
-    if not isinstance(reason, str):
-        return None
-    for service in _INFERENCE_SIDECARS:
-        if reason.startswith(service):
-            return service
-    return None
-
-
-_KEYWORD_INFERENCE_REQUIREMENTS = {
-    "requires_colpali": "vllm_colpali",
-    "requires_colqwen": "vllm_colpali",
-    "requires_videoprism": "videoprism_jax",
-}
-_INFERENCE_DEPENDENCIES = {
-    "vllm_colpali": {"vllm_asr"},
-    "videoprism_jax": {"vllm_asr"},
-}
-
-
-def _require_inference_service(required: set[str], service: str) -> None:
-    required.add(service)
-    required.update(_INFERENCE_DEPENDENCIES.get(service, ()))
-
-
 def pytest_collection_modifyitems(config, items):
-    """Resolve named inference and apply non-inference capability markers."""
-    required_inference: set[str] = set()
+    """Apply non-inference capability markers."""
     ffmpeg_ok = is_ffmpeg_available()
-    vespa_ok = is_vespa_running()
     docker_ok = is_docker_available()
     for item in items:
-        for keyword, service in _KEYWORD_INFERENCE_REQUIREMENTS.items():
-            if keyword in item.keywords:
-                _require_inference_service(required_inference, service)
-        for node, marker in tuple(item.iter_markers_with_node(name="skipif")):
-            service = _inference_requirement(marker)
-            if service is not None:
-                _require_inference_service(required_inference, service)
-                node.own_markers = [
-                    candidate
-                    for candidate in node.own_markers
-                    if candidate is not marker
-                ]
         if "requires_ffmpeg" in item.keywords and not ffmpeg_ok:
             item.add_marker(
                 pytest.mark.skip(
                     reason="FFmpeg/ffprobe not available in this environment"
                 )
             )
-        if "requires_vespa" in item.keywords and not vespa_ok:
-            item.add_marker(
-                pytest.mark.skip(reason="Vespa not running in this environment")
-            )
         if "requires_docker" in item.keywords and not docker_ok:
             item.add_marker(
                 pytest.mark.skip(reason="Docker not available in this environment")
             )
-    config._cogniverse_required_inference_services = required_inference
+
+
+@pytest.fixture(autouse=True)
+def _test_owned_telemetry():
+    """Keep pipeline/worker span export off the default localhost:4317.
+
+    The real ingestion paths call ``get_telemetry_manager()``; without a
+    collector the batch exporter sprays connection failures after every
+    successful run. When no test-owned collector is configured
+    (``TELEMETRY_OTLP_ENDPOINT``, set by ``phoenix_container``), pre-build
+    the singleton disabled so spans no-op instead of exporting into the
+    void. Tests that assert real span export depend on
+    ``phoenix_container``, which sets the env var and resets the manager.
+    """
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    if os.environ.get("TELEMETRY_OTLP_ENDPOINT"):
+        yield
+        return
+    installed = None
+    if telemetry_manager_module._telemetry_manager is None:
+        installed = TelemetryManager(TelemetryConfig(enabled=False))
+        telemetry_manager_module._telemetry_manager = installed
+    yield
+    if (
+        installed is not None
+        and telemetry_manager_module._telemetry_manager is installed
+    ):
+        telemetry_manager_module._telemetry_manager = None
 
 
 # Re-export the canonical session-scoped Vespa from the project root.
-from tests.conftest import shared_vespa  # noqa: F401, E402
+from tests.conftest import phoenix_container, shared_vespa  # noqa: F401, E402
 
 
 @pytest.fixture(scope="module")
@@ -657,7 +342,7 @@ def populated_minio_corpus(minio_instance):
         uploaded.append((video_path.stem, key))
 
     if not uploaded:
-        pytest.skip(
+        pytest.fail(
             f"No test videos under {TEST_VIDEO_RESOURCE_DIR}; nothing to upload"
         )
 

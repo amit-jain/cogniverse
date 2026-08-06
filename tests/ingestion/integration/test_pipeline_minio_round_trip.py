@@ -33,49 +33,26 @@ from cogniverse_core.common.media import (
     S3BackendConfig,
 )
 from tests.ingestion.integration.conftest import feed_document_via_prod_mapping
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
 
-SCHEMA = "video_colpali_smol500_mv_frame"
-VIDEO_SCHEMA_JSON = (
-    Path(__file__).resolve().parents[2]
-    / "system"
-    / "resources"
-    / "schemas"
-    / f"{SCHEMA}_schema.json"
-)
+BASE_SCHEMA = "video_colpali_smol500_mv_frame"
+TENANT_ID = "test:pipeline_minio_rt"
+SCHEMA = schema_full_name(BASE_SCHEMA, TENANT_ID)
+SCHEMAS_DIR = Path("configs/schemas")
 
 
-def _deploy_video_schema(config_port: int, http_port: int) -> None:
-    """Redeploy the cogniverse application with metadata + video schemas."""
+def _deploy_video_schema(ingestion_vespa_backend) -> None:
+    """Deploy the tenant-scoped video schema via SchemaRegistry (merge-safe)."""
     import requests
-    from vespa.package import ApplicationPackage
 
-    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-    from cogniverse_vespa.metadata_schemas import (
-        create_adapter_registry_schema,
-        create_config_metadata_schema,
-        create_organization_metadata_schema,
-        create_tenant_metadata_schema,
+    deployed = deploy_tenant_schema(
+        ingestion_vespa_backend,
+        tenant_id=TENANT_ID,
+        base_schema_name=BASE_SCHEMA,
     )
-    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+    assert deployed == SCHEMA, f"registry deployed {deployed!r}, tests use {SCHEMA!r}"
 
-    parser = JsonSchemaParser()
-    video_schema = parser.load_schema_from_json_file(str(VIDEO_SCHEMA_JSON))
-
-    schemas = [
-        create_organization_metadata_schema(),
-        create_tenant_metadata_schema(),
-        create_config_metadata_schema(),
-        create_adapter_registry_schema(),
-        video_schema,
-    ]
-
-    schema_manager = VespaSchemaManager(
-        backend_endpoint="http://localhost",
-        backend_port=config_port,
-    )
-    app_package = ApplicationPackage(name="cogniverse", schema=schemas)
-    schema_manager._deploy_package(app_package, allow_schema_removal=True)
-
+    http_port = ingestion_vespa_backend["http_port"]
     yql = f"select * from {SCHEMA} where true limit 0"
     deadline = time.time() + 60.0
     while time.time() < deadline:
@@ -114,10 +91,7 @@ def media_locator(populated_minio_corpus, tmp_path_factory):
 def vespa_app(ingestion_vespa_backend):
     from vespa.application import Vespa
 
-    _deploy_video_schema(
-        ingestion_vespa_backend["config_port"],
-        ingestion_vespa_backend["http_port"],
-    )
+    _deploy_video_schema(ingestion_vespa_backend)
     return Vespa(url=ingestion_vespa_backend["backend_url"])
 
 
@@ -190,7 +164,8 @@ class TestPipelineMinioRoundTrip:
             vespa_app,
             ingestion_vespa_backend["http_port"],
             SCHEMA,
-            VIDEO_SCHEMA_JSON.parent,
+            SCHEMAS_DIR,
+            base_schema_name=BASE_SCHEMA,
             video_id=f"minio_e2e_{video_id}",
             video_title="MinIO end-to-end round-trip",
             source_url=canonical_uri,

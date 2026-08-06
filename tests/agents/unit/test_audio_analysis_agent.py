@@ -5,11 +5,18 @@ Tests audio transcription with Whisper, audio search, and Vespa integration.
 """
 
 import asyncio
+import json
+import re
 import threading
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
+import requests
 
 from cogniverse_agents.audio_analysis_agent import (
     AudioAnalysisAgent,
@@ -19,6 +26,74 @@ from cogniverse_agents.audio_analysis_agent import (
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+
+@contextmanager
+def _transcription_server(
+    response: object | Callable[[bytes], object],
+    *,
+    raw_body: bytes | None = None,
+    arrival_barrier: threading.Barrier | None = None,
+    release_response: threading.Event | None = None,
+) -> Iterator[tuple[str, list[dict[str, object]]]]:
+    captured_requests: list[dict[str, object]] = []
+    request_lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            content_length = int(self.headers["Content-Length"])
+            request_body = self.rfile.read(content_length)
+            with request_lock:
+                captured_requests.append(
+                    {
+                        "path": self.path,
+                        "authorization": self.headers.get("Authorization"),
+                        "content_type": self.headers.get("Content-Type"),
+                        "body": request_body,
+                    }
+                )
+            if arrival_barrier is not None:
+                arrival_barrier.wait(timeout=5)
+            if release_response is not None:
+                assert release_response.wait(timeout=5)
+
+            if raw_body is not None:
+                response_body = raw_body
+            else:
+                payload = response(request_body) if callable(response) else response
+                response_body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            try:
+                self.wfile.write(response_body)
+            except BrokenPipeError:
+                pass
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        yield f"http://{host}:{port}", captured_requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _agent_for_remote_transcription(base_url: str, authorization: str):
+    return AudioAnalysisAgent(
+        deps=AudioAnalysisDeps(
+            tenant_id="test_tenant",
+            whisper_endpoint=base_url,
+            whisper_headers={"Authorization": authorization},
+        )
+    )
 
 
 class TestAudioAnalysisAgent:
@@ -42,6 +117,183 @@ class TestAudioAnalysisAgent:
         assert self.agent._whisper_model_size == "base"
         assert self.agent._vespa_endpoint == "http://localhost:8080"
 
+    def test_whisper_headers_reject_non_bearer_credentials(self):
+        with pytest.raises(ValueError, match="whisper_headers.*Authorization"):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                whisper_endpoint="https://whisper.internal.example.com",
+                whisper_headers={"Modal-Key": "wrong-auth-scheme"},
+            )
+
+    def test_whisper_headers_require_endpoint(self):
+        with pytest.raises(
+            ValueError, match="whisper_headers requires whisper_endpoint"
+        ):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                whisper_headers={"Authorization": "Bearer custom-whisper-key"},
+            )
+
+    def test_custom_whisper_endpoint_accepts_one_canonical_mapping(self):
+        agent = AudioAnalysisAgent(
+            deps=AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                whisper_endpoint="https://whisper.internal.example.com",
+                whisper_headers={"Authorization": "Bearer custom-whisper-key"},
+            )
+        )
+
+        assert agent._whisper_headers == {"Authorization": "Bearer custom-whisper-key"}
+        with pytest.raises(TypeError):
+            agent._whisper_headers["Authorization"] = "Bearer replacement"
+
+    def test_modal_whisper_credentials_are_resolved_once_across_revalidation(
+        self, monkeypatch
+    ):
+        initial_token = "initial-modal-whisper-key"
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", initial_token)
+        deps = AudioAnalysisDeps(
+            tenant_id="test_tenant",
+            whisper_endpoint="https://whisper.modal.run",
+        )
+
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "rotated-modal-whisper-key")
+        revalidated = AudioAnalysisDeps.model_validate(deps)
+        agent = AudioAnalysisAgent(deps=revalidated)
+
+        assert revalidated is deps
+        assert deps.whisper_headers == {}
+        assert agent._whisper_headers == {"Authorization": f"Bearer {initial_token}"}
+
+    @pytest.mark.parametrize(
+        "headers",
+        [{"Authorization": "Bearer caller-specific-key"}, {}],
+    )
+    def test_modal_whisper_endpoint_rejects_dependency_headers(
+        self, monkeypatch, headers
+    ):
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+
+        with pytest.raises(ValueError, match="whisper_headers.*Modal"):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                whisper_endpoint="https://whisper.modal.run",
+                whisper_headers=headers,
+            )
+
+    @patch("requests.post")
+    def test_modal_whisper_endpoint_requires_https_before_request(
+        self, mock_post, monkeypatch
+    ):
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+
+        with pytest.raises(ValueError, match="Modal inference endpoints require HTTPS"):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                whisper_endpoint="http://whisper.modal.run",
+            )
+
+        mock_post.assert_not_called()
+
+    @patch("requests.post")
+    def test_modal_whisper_endpoint_requires_environment_credential_before_request(
+        self, mock_post, monkeypatch
+    ):
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+
+        with pytest.raises(
+            RuntimeError,
+            match="Modal inference endpoint requires COGNIVERSE_INFERENCE_API_KEY",
+        ):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                whisper_endpoint="https://whisper.modal.run",
+            )
+
+        mock_post.assert_not_called()
+
+    @patch("requests.post")
+    def test_modal_whisper_endpoint_rejects_blank_credential_before_request(
+        self, mock_post, monkeypatch
+    ):
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "   ")
+
+        with pytest.raises(
+            RuntimeError,
+            match="Modal inference endpoint requires COGNIVERSE_INFERENCE_API_KEY",
+        ):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                whisper_endpoint="https://whisper.modal.run",
+            )
+
+        mock_post.assert_not_called()
+
+    def test_clap_headers_reject_non_bearer_credentials(self):
+        with pytest.raises(ValueError, match="clap_headers.*Authorization"):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                clap_endpoint="https://clap.modal.run",
+                clap_headers={"Modal-Key": "wrong-auth-scheme"},
+            )
+
+    def test_clap_headers_require_endpoint(self):
+        with pytest.raises(ValueError, match="clap_headers requires clap_endpoint"):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                clap_headers={"Authorization": "Bearer modal-clap-secret"},
+            )
+
+    def test_embedding_generator_receives_environment_clap_credentials(
+        self, monkeypatch
+    ):
+        initial_token = "initial-production-key"
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", initial_token)
+        deps = AudioAnalysisDeps(
+            tenant_id="test_tenant",
+            clap_endpoint="https://clap.modal.run",
+        )
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY")
+
+        revalidated = AudioAnalysisDeps.model_validate(deps)
+        agent = AudioAnalysisAgent(deps=revalidated)
+
+        generator = agent.embedding_generator
+
+        assert revalidated is deps
+        assert deps.clap_headers == {}
+        assert generator._clap_endpoint_url == "https://clap.modal.run"
+        assert generator._clap_headers == {"Authorization": f"Bearer {initial_token}"}
+        with pytest.raises(TypeError):
+            generator._clap_headers["Authorization"] = "Bearer replacement"
+        assert initial_token not in repr(agent.deps)
+
+    @pytest.mark.parametrize(
+        "headers",
+        [{"Authorization": "Bearer caller-specific-key"}, {}],
+    )
+    def test_modal_clap_endpoint_rejects_dependency_headers(self, monkeypatch, headers):
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+
+        with pytest.raises(ValueError, match="clap_headers.*Modal"):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                clap_endpoint="https://clap.modal.run",
+                clap_headers=headers,
+            )
+
+    def test_modal_clap_endpoint_requires_environment_credential(self, monkeypatch):
+        monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+
+        with pytest.raises(
+            RuntimeError,
+            match="Modal inference endpoint requires COGNIVERSE_INFERENCE_API_KEY",
+        ):
+            AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                clap_endpoint="https://clap.modal.run",
+            )
+
     @patch("cogniverse_agents.audio_analysis_agent.AudioTranscriber")
     def test_audio_transcriber_lazy_loading(self, mock_transcriber_class):
         """Test AudioTranscriber is lazy loaded on first access"""
@@ -54,6 +306,85 @@ class TestAudioAnalysisAgent:
         # Verify transcriber was loaded
         assert transcriber == mock_transcriber
         mock_transcriber_class.assert_called_once_with(model_size="base")
+
+    def test_concurrent_first_transcriber_access_builds_one_instance(self, monkeypatch):
+        callers = threading.Barrier(12)
+        constructions = 0
+        constructed = object()
+        construction_changed = threading.Condition()
+        release_construction = threading.Event()
+
+        def build(*, model_size):
+            nonlocal constructions
+            assert model_size == "base"
+            with construction_changed:
+                constructions += 1
+                construction_changed.notify_all()
+            assert release_construction.wait(timeout=3)
+            return constructed
+
+        monkeypatch.setattr(
+            "cogniverse_agents.audio_analysis_agent.AudioTranscriber",
+            build,
+        )
+
+        def load(_):
+            callers.wait(timeout=3)
+            return self.agent.audio_transcriber
+
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            futures = [executor.submit(load, index) for index in range(12)]
+            with construction_changed:
+                construction_changed.wait_for(
+                    lambda: constructions == 12,
+                    timeout=0.5,
+                )
+            release_construction.set()
+            loaded = [future.result(timeout=3) for future in futures]
+
+        assert not callers.broken
+        assert constructions == 1
+        assert loaded == [constructed] * 12
+
+    def test_concurrent_first_embedding_generator_access_builds_one_instance(
+        self, monkeypatch
+    ):
+        callers = threading.Barrier(12)
+        constructions = 0
+        constructed = object()
+        construction_changed = threading.Condition()
+        release_construction = threading.Event()
+
+        def build():
+            nonlocal constructions
+            with construction_changed:
+                constructions += 1
+                construction_changed.notify_all()
+            assert release_construction.wait(timeout=3)
+            return constructed
+
+        monkeypatch.setattr(
+            "cogniverse_agents.audio_analysis_agent.AudioEmbeddingGenerator",
+            build,
+        )
+
+        def load(_):
+            callers.wait(timeout=3)
+            return self.agent.embedding_generator
+
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            futures = [executor.submit(load, index) for index in range(12)]
+            with construction_changed:
+                construction_changed.wait_for(
+                    lambda: constructions == 12,
+                    timeout=0.5,
+                )
+            release_construction.set()
+            loaded = [future.result(timeout=3) for future in futures]
+
+        assert not callers.broken
+        assert constructions == 1
+        assert loaded == [constructed] * 12
 
     @pytest.mark.asyncio
     @patch("requests.post")
@@ -161,8 +492,7 @@ class TestAudioAnalysisAgent:
         assert result.confidence == 1.0
 
     @pytest.mark.asyncio
-    @patch("requests.post")
-    async def test_transcribe_audio_via_vllm_sidecar(self, mock_post, tmp_path):
+    async def test_transcribe_audio_via_vllm_sidecar(self, tmp_path, monkeypatch):
         """Sidecar path POSTs multipart to vLLM /v1/audio/transcriptions.
 
         Pins the agent against the vLLM Whisper contract — the chart-deployed
@@ -174,32 +504,45 @@ class TestAudioAnalysisAgent:
         clip = tmp_path / "audio.wav"
         clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        response = {
             "text": "hello world",
             "language": "en",
-            "duration": 1.23,
+            "duration": "1.23",
             "segments": [
                 {"start": 0.0, "end": 1.0, "text": "hello"},
                 {"start": 1.0, "end": 1.23, "text": "world"},
             ],
         }
-        mock_post.return_value = mock_response
 
-        self.agent._whisper_endpoint = "http://vllm-asr:8000"
-        self.agent._whisper_model = "openai/whisper-large-v3-turbo"
-        self.agent._locator = MagicMock()
-        self.agent._locator.localize.return_value = clip
-        self.agent._locator.to_canonical_uri.return_value = f"file://{clip}"
+        token = "modal-whisper-secret"
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", token)
+        agent = AudioAnalysisAgent(
+            deps=AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                whisper_endpoint="https://whisper.modal.run",
+            )
+        )
+        monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "rotated-after-startup")
+        monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
 
-        result = await self.agent.transcribe_audio(f"file://{clip}")
+        with _transcription_server(response) as (base_url, captured_requests):
+            agent._whisper_endpoint = base_url
+            result = await agent.transcribe_audio(f"file://{clip}")
 
-        assert mock_post.call_count == 1
-        call = mock_post.call_args
-        assert call.args[0] == "http://vllm-asr:8000/v1/audio/transcriptions"
-        assert "files" in call.kwargs and "file" in call.kwargs["files"]
-        assert call.kwargs["data"]["model"] == "openai/whisper-large-v3-turbo"
+        assert len(captured_requests) == 1
+        request = captured_requests[0]
+        assert request["path"] == "/v1/audio/transcriptions"
+        assert request["authorization"] == f"Bearer {token}"
+        assert str(request["content_type"]).startswith("multipart/form-data; boundary=")
+        request_body = request["body"]
+        assert isinstance(request_body, bytes)
+        assert b'filename="audio.wav"' in request_body
+        assert b"RIFF\x00\x00\x00\x00WAVE" in request_body
+        assert b'name="model"\r\n\r\nopenai/whisper-large-v3-turbo' in request_body
+        assert b'name="response_format"\r\n\r\nverbose_json' in request_body
+        with pytest.raises(TypeError):
+            agent._whisper_headers["Authorization"] = "Bearer replacement"
+        assert token not in repr(agent.deps)
 
         assert result.text == "hello world"
         assert result.language == "en"
@@ -208,9 +551,321 @@ class TestAudioAnalysisAgent:
         assert result.segments[0]["text"] == "hello"
 
     @pytest.mark.asyncio
-    @patch("requests.post")
+    async def test_transcription_outage_propagates_without_leaking_key(
+        self, tmp_path, monkeypatch
+    ):
+        clip = tmp_path / "audio.wav"
+        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+        token = "remote-whisper-secret"
+        unavailable = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
+        host, port = unavailable.server_address
+        unavailable.server_close()
+        agent = _agent_for_remote_transcription(
+            f"http://{host}:{port}", f"Bearer {token}"
+        )
+        monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+
+        with pytest.raises(requests.ConnectionError) as caught:
+            await agent.transcribe_audio(f"file://{clip}")
+
+        assert token not in str(caught.value)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_modal_transcriptions_are_isolated_and_non_blocking(
+        self, monkeypatch, tmp_path
+    ):
+        request_count = 8
+        token = "remote-whisper-secret"
+        clips = []
+        for index in range(request_count):
+            clip = tmp_path / f"clip-{index}.wav"
+            clip.write_bytes(f"RIFF-audio-{index}".encode())
+            clips.append(clip)
+
+        all_requests_started = threading.Barrier(request_count)
+        release = threading.Event()
+
+        def response_for(request_body: bytes):
+            match = re.search(rb'filename="clip-(\d+)\.wav"', request_body)
+            assert match is not None
+            index = int(match.group(1))
+            return {
+                "text": f"transcript-{index}",
+                "language": "en",
+                "duration": str(index + 0.5),
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": index + 0.5,
+                        "text": f"transcript-{index}",
+                    }
+                ],
+            }
+
+        async def prove_event_loop_progress():
+            await asyncio.sleep(0.05)
+            release.set()
+            return "event-loop-progressed"
+
+        with _transcription_server(
+            response_for,
+            arrival_barrier=all_requests_started,
+            release_response=release,
+        ) as (base_url, captured_requests):
+            agent = _agent_for_remote_transcription(base_url, f"Bearer {token}")
+            monkeypatch.setattr(agent, "_get_audio_path", lambda audio_url: audio_url)
+            gathered = await asyncio.wait_for(
+                asyncio.gather(
+                    *(agent.transcribe_audio(str(clip)) for clip in clips),
+                    prove_event_loop_progress(),
+                ),
+                timeout=6,
+            )
+
+        results = gathered[:-1]
+        assert gathered[-1] == "event-loop-progressed"
+        assert [result.text for result in results] == [
+            f"transcript-{index}" for index in range(request_count)
+        ]
+        assert [result.language for result in results] == ["en"] * request_count
+        assert [result.confidence for result in results] == [1.0] * request_count
+        assert [result.segments for result in results] == [
+            [
+                {
+                    "start": 0.0,
+                    "end": index + 0.5,
+                    "text": f"transcript-{index}",
+                }
+            ]
+            for index in range(request_count)
+        ]
+        assert len(captured_requests) == request_count
+        assert {request["path"] for request in captured_requests} == {
+            "/v1/audio/transcriptions"
+        }
+        assert {request["authorization"] for request in captured_requests} == {
+            f"Bearer {token}"
+        }
+        captured_bodies = [request["body"] for request in captured_requests]
+        for index in range(request_count):
+            assert any(
+                f'filename="clip-{index}.wav"'.encode() in body
+                and f"RIFF-audio-{index}".encode() in body
+                for body in captured_bodies
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("response", "message"),
+        [
+            ([], "$: expected an object"),
+            (
+                {"language": "en", "duration": "1.0", "segments": []},
+                "$.text: field is required",
+            ),
+            (
+                {
+                    "text": 7,
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [],
+                },
+                "$.text: expected a string",
+            ),
+            (
+                {"text": "ok", "duration": "1.0", "segments": []},
+                "$.language: field is required",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": 7,
+                    "duration": "1.0",
+                    "segments": [],
+                },
+                "$.language: expected a non-empty string",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "   ",
+                    "duration": "1.0",
+                    "segments": [],
+                },
+                "$.language: expected a non-empty string",
+            ),
+            (
+                {"text": "ok", "language": "en", "segments": []},
+                "$.duration: field is required",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": 1.0,
+                    "segments": [],
+                },
+                "$.duration: expected a finite non-negative decimal string",
+            ),
+            (
+                {"text": "ok", "language": "en", "duration": False, "segments": []},
+                "$.duration: expected a finite non-negative decimal string",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "-0.1",
+                    "segments": [],
+                },
+                "$.duration: expected a finite non-negative decimal string",
+            ),
+            (
+                {"text": "ok", "language": "en", "duration": "1.0"},
+                "$.segments: field is required",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": {},
+                },
+                "$.segments: expected a list",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [7],
+                },
+                "$.segments[0]: expected an object",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [{"end": 1.0, "text": "ok"}],
+                },
+                "$.segments[0].start: field is required",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [{"start": "0.0", "end": 1.0, "text": "ok"}],
+                },
+                "$.segments[0].start: expected a finite non-negative number",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [{"start": -0.1, "end": 1.0, "text": "ok"}],
+                },
+                "$.segments[0].start: expected a finite non-negative number",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [{"start": 0.0, "text": "ok"}],
+                },
+                "$.segments[0].end: field is required",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [{"start": 0.0, "end": False, "text": "ok"}],
+                },
+                "$.segments[0].end: expected a finite non-negative number",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [{"start": 0.75, "end": 0.5, "text": "ok"}],
+                },
+                "$.segments[0].end: must be greater than or equal to start",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [{"start": 0.0, "end": 1.1, "text": "ok"}],
+                },
+                "$.segments[0].end: must not exceed $.duration",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [{"start": 0.0, "end": 1.0}],
+                },
+                "$.segments[0].text: field is required",
+            ),
+            (
+                {
+                    "text": "ok",
+                    "language": "en",
+                    "duration": "1.0",
+                    "segments": [{"start": 0.0, "end": 1.0, "text": 7}],
+                },
+                "$.segments[0].text: expected a string",
+            ),
+        ],
+    )
+    async def test_remote_transcription_rejects_malformed_success_response(
+        self, response, message, tmp_path, monkeypatch
+    ):
+        clip = tmp_path / "audio.wav"
+        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+
+        with _transcription_server(response) as (base_url, captured_requests):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+
+            with pytest.raises(ValueError, match=re.escape(message)) as caught:
+                await agent.transcribe_audio(f"file://{clip}")
+
+        assert len(captured_requests) == 1
+        assert f"{base_url}/v1/audio/transcriptions" in str(caught.value)
+
+    @pytest.mark.asyncio
+    async def test_remote_transcription_rejects_non_json_success_response(
+        self, tmp_path, monkeypatch
+    ):
+        clip = tmp_path / "audio.wav"
+        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+
+        with _transcription_server({}, raw_body=b"not-json") as (base_url, _):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+
+            with pytest.raises(
+                ValueError, match="response body is not valid JSON"
+            ) as caught:
+                await agent.transcribe_audio(f"file://{clip}")
+
+        assert f"{base_url}/v1/audio/transcriptions" in str(caught.value)
+
+    @pytest.mark.asyncio
     async def test_transcribe_audio_sidecar_empty_segments_surfaced(
-        self, mock_post, tmp_path
+        self, tmp_path, monkeypatch
     ):
         """Empty segments from vLLM are returned as-is, not synthesised.
 
@@ -222,23 +877,20 @@ class TestAudioAnalysisAgent:
         clip = tmp_path / "audio.wav"
         clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        response = {
             "text": "ok",
             "language": "en",
-            "duration": 0.5,
+            "duration": "0.5",
             "segments": [],
         }
-        mock_post.return_value = mock_response
 
-        self.agent._whisper_endpoint = "http://vllm-asr:8000"
-        self.agent._whisper_model = "openai/whisper-large-v3-turbo"
-        self.agent._locator = MagicMock()
-        self.agent._locator.localize.return_value = clip
-        self.agent._locator.to_canonical_uri.return_value = f"file://{clip}"
+        with _transcription_server(response) as (base_url, _):
+            agent = _agent_for_remote_transcription(
+                base_url, "Bearer remote-whisper-secret"
+            )
+            monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+            result = await agent.transcribe_audio(f"file://{clip}")
 
-        result = await self.agent.transcribe_audio(f"file://{clip}")
         assert result.text == "ok"
         assert result.segments == []
 
@@ -420,7 +1072,7 @@ class TestAudioSearchEventLoop:
                     "text": "hello world",
                     "language": "en",
                     "segments": [],
-                    "duration": 1.0,
+                    "duration": "1.0",
                 }
 
         def blocking_post(url, **kwargs):
@@ -429,7 +1081,9 @@ class TestAudioSearchEventLoop:
 
         monkeypatch.setattr("requests.post", blocking_post)
         agent = self._bare_agent(
-            _whisper_endpoint="http://asr:8000", _whisper_model="whisper-1"
+            _whisper_endpoint="http://asr:8000",
+            _whisper_headers={},
+            _whisper_model="whisper-1",
         )
         monkeypatch.setattr(agent, "_get_audio_path", lambda url: str(audio))
 

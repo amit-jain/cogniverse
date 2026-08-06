@@ -114,27 +114,120 @@ cogniverse_runtime/
 │   ├── status_api.py
 │   ├── backpressure.py
 │   └── idempotency.py
-└── sidecars/                        # Standalone inference sidecars
-    ├── clap_embed.py                # CLAP /embed/audio + /embed/text
-    │                                # (joint acoustic space); shipped via
-    │                                # deploy/clap_embed/Dockerfile
-    └── face_embed.py                # InsightFace /embed FastAPI service;
-                                     # shipped alone via deploy/face_embed/
-                                     # Dockerfile (no cogniverse imports)
 ```
 
-LateOn (ColBERT) and DenseOn text embeddings are served by stock vLLM
-(`vllm_token_embed` / `vllm_embed` chart engines), not a custom sidecar —
-the former `colbert_pylate.py` FastAPI server has been retired. See
+LateOn (ColBERT) text embeddings are served by the PyLate sidecar
+(`pylate` chart engine, canonical server in
+`cogniverse_cli/modal_inference/servers/pylate.py`) because LateOn needs
+PyLate's exact query expansion, which stock vLLM's `/pooling` cannot
+reproduce (no attention-mask input). DenseOn dense embeddings stay on
+stock vLLM (`vllm_embed` engine). See
 `docs/operations/models-and-inference.md` for the serving details.
 
 The face-embed sidecar runs as its own container: `FaceEmbedConfig` is plain
 data, `build_app(cfg)` is the app factory, and `main()` is the deployed
 entrypoint — the only place the container env (`FACE_EMBED_MODEL`,
-`FACE_EMBED_CTX_ID`, `FACE_EMBED_URL_TIMEOUT_S`, `HOST`, `PORT`) is read.
-Run locally with `uv run python -m cogniverse_runtime.sidecars.face_embed`;
+`FACE_EMBED_MODEL_REVISION`, `FACE_EMBED_MODEL_ROOT`, `FACE_EMBED_CTX_ID`,
+`FACE_EMBED_URL_TIMEOUT_S`, `HOST`, `PORT`) is read.
+`POST /embed` returns `n` and a `faces` list. Every face record contains a
+four-coordinate `bbox`, an L2-normalized 512-value ArcFace `vec`, and
+`det_score`, the RetinaFace detection confidence in `[0, 1]`.
+`GET /health` loads the pinned model before returning
+`{"status":"ready","model":"buffalo_l",`
+`"model_revision":"80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f"}`.
+A load failure returns HTTP 503 with
+`{"detail":"face_embed: model buffalo_l load failed (<ExceptionType>): <cause>"}`.
+The canonical application is
+`cogniverse_cli.modal_inference.servers.face`. Run it locally with
+`uv run python -m cogniverse_cli.modal_inference.servers.face`;
 build the image from the repo root with
 `docker build -f deploy/face_embed/Dockerfile .`.
+
+The CLI Modal-inference package also owns the production CLAP server at
+`cogniverse_cli.modal_inference.servers.clap`.
+`CLAP_EMBED_MODEL_REVISION` must identify the immutable Hugging Face revision;
+`CLAP_EMBED_DEVICE` selects the device used for both model placement and request
+tensors. The defaults pin `laion/clap-htsat-unfused` at revision
+`8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a` on `cpu`. Its `GET /health`
+loads the pinned model and returns exactly
+`{"status":"ready","model":"laion/clap-htsat-unfused",`
+`"model_revision":"8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a"}`. The Modal CLAP wrapper
+passes the same service definition into the container environment, production
+app, and authenticated `/v1/models` wrapper. A load failure returns HTTP 503
+whose `detail` matches
+`clap_embed: model laion/clap-htsat-unfused load failed (<ExceptionType>): <cause>`.
+Run the sidecar locally with
+`uv run python -m cogniverse_cli.modal_inference.servers.clap`.
+
+For both sidecars, the Helm readiness probe calls the model-backed `/health`
+route. Their liveness probe checks only the TCP serving socket, so a model load
+failure removes the pod from service without creating a restart loop.
+
+### Modal inference serving
+
+The installed modules under `cogniverse_cli.modal_inference` expose each stateless
+inference model as an independently scalable Modal App. `serving.py` wraps an
+existing production FastAPI application without changing its request or
+response schemas. Every route requires
+`Authorization: Bearer <COGNIVERSE_INFERENCE_API_KEY>`; the wrapper removes the
+credential before delegation and owns `/v1/models`, which reports exactly one
+pinned model identifier and immutable revision.
+
+`vllm.py` builds the OpenAI-compatible vLLM services from the canonical service
+definitions. It mounts a persistent `cogniverse-huggingface-cache` Volume,
+starts one loopback vLLM process per cold container under concurrent requests,
+and streams the production response unchanged. A process that exits or cannot
+accept a request produces a contextual HTTP 503 response. A startup timeout
+terminates the unreachable child before a retry, and a request failure retires
+only the process generation that handled that request; concurrent retries then
+single-flight one replacement. The public Modal function is named `Inference`,
+starts at zero containers, and uses the service's ordered GPU candidates and
+scaledown window.
+
+Create the Modal Secret `cogniverse-inference-api-key` with the key
+`COGNIVERSE_INFERENCE_API_KEY` before deployment. The gated Gemma service also
+requires the `hf-token` Secret with the key `HF_TOKEN`. The public API key is
+stripped from the loopback child process, while `HF_TOKEN` remains in that
+process's environment so vLLM can access the gated model. Neither credential is
+included in vLLM command arguments or returned in an error response.
+
+Integration sessions resolve and warm stateless inference before the final E2E
+run. An explicit endpoint is authoritative. Generic integration selection then
+checks the `cogniverse-e2e` cluster, the `cogniverse` development cluster, and a
+test-owned service; the presence of Modal credentials never changes that order
+or allocates a paid container. Tests marked
+`requires_modal_inference("<service>")` select Modal only for that named
+service, and a Modal authentication, deployment, warm-up, health, or identity
+failure ends setup. Non-Modal custom services validate their exact model
+identifier and immutable revision through `/health`. vLLM services and every
+Modal candidate validate identity through `/v1/models`; Modal warm-up also
+probes `/health` for readiness. Teardown returns warmed Modal services to
+scale-to-zero and stops test-owned sidecars. Discovered k3d workloads are
+borrowed and their replicas are never mutated by the fixture.
+
+The API runtime and ingestion worker share the same strict
+`INFERENCE_SERVICE_URLS` startup parser. The value must be a duplicate-free JSON
+object whose keys are non-empty service names and whose values are root HTTP(S)
+URLs without credentials, paths, queries, or fragments. Invalid configuration
+raises before either process installs graph or ingestion dependencies; an
+absent value clears stale in-memory endpoints.
+
+Only the final E2E run scales the stateful application stack (Vespa, Phoenix,
+Redis, MinIO, runtime, dashboard, and workers). The stack is intentionally left
+available across focused E2E invocations so a multi-session run can reuse its
+state. After the focused run has finished, shut it down explicitly:
+
+```bash
+k3d cluster stop cogniverse-e2e
+# After a deployment-lifecycle run:
+k3d cluster stop cogniverse-deploy-test
+```
+
+Use `k3d cluster delete` only when the next run must start from a new cluster;
+test teardown does not delete either cluster automatically. If an existing E2E
+cluster is unhealthy or its deployed-content fingerprint is stale, the fixture
+also leaves it untouched and fails with a diagnostic. Inspect it first, then set
+`E2E_FRESH=1` on the next focused run to authorize replacement.
 
 `SearchResult` and `SearchBackend` are imported from `cogniverse_sdk.document` / `cogniverse_sdk.interfaces.backend` — the runtime has no local search ABC any more (the dead duplicates were removed).
 
@@ -169,7 +262,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 11. Configure DSPy LM and the synthetic data service
 12. Start the `GatewayHealthProbe` and the OpenShell mTLS cert rotator (when sandboxing is enabled)
 
-```python
+```text
 # From main.py (simplified)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -236,7 +329,7 @@ The server uses modular routers for different functionality:
 | `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
 | `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
 
-```python
+```text
 # Router registration in main.py
 app.include_router(health.router, tags=["health"])
 app.include_router(agents.router, prefix="/agents", tags=["agents"])
@@ -261,7 +354,7 @@ app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 
 The central class for video processing:
 
-```python
+```text
 from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 
@@ -301,6 +394,8 @@ results = pipeline.process_directory(
 **PipelineConfig:**
 
 ```python
+from dataclasses import dataclass
+
 @dataclass
 class PipelineConfig:
     """Configuration for the video processing pipeline."""
@@ -405,7 +500,7 @@ class CustomProcessor(BaseProcessor):
 
 Manages processor lifecycle and auto-discovery:
 
-```python
+```text
 from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 
 # Initialize
@@ -1180,7 +1275,7 @@ The admin system provides multi-tenant organization and profile management.
 
 FastAPI endpoints for organization and tenant CRUD operations:
 
-```python
+```http
 # Architecture: org:tenant format
 # Examples: "acme:production", "startup:dev"
 
@@ -1223,6 +1318,9 @@ DELETE /admin/tenants/acme:production
 Data models for organization and tenant management:
 
 ```python
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
 @dataclass
 class Organization:
     org_id: str           # e.g., "acme"
@@ -1252,6 +1350,10 @@ class Tenant:
 Pydantic models for backend profile CRUD operations:
 
 ```python
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel
+
 class ProfileCreateRequest(BaseModel):
     profile_name: str          # Unique identifier
     tenant_id: str              # Required: tenant identifier for isolation
@@ -1300,6 +1402,8 @@ defines the `generate_embeddings(video_data, output_dir) -> EmbeddingResult`
 contract. `EmbeddingResult` is the dataclass returned by every generator:
 
 ```python
+from dataclasses import dataclass
+
 @dataclass
 class EmbeddingResult:
     video_id: str
@@ -1321,7 +1425,7 @@ uniformly and feeds documents to the backend client. Construct it through
 `EmbeddingGeneratorFactory` / `create_embedding_generator` (below) rather than
 directly:
 
-```python
+```text
 from cogniverse_runtime.ingestion.processors.embedding_generator import (
     EmbeddingGeneratorImpl,
     EmbeddingResult,
@@ -1339,7 +1443,7 @@ result: EmbeddingResult = generator.generate_embeddings(
 
 Factory for creating embedding generators based on backend type:
 
-```python
+```text
 from cogniverse_runtime.ingestion.processors.embedding_generator import (
     EmbeddingGeneratorFactory,
     create_embedding_generator,
@@ -1391,7 +1495,7 @@ Document building is handled internally by backend implementations. Users should
 
 Creates backend clients using the backend registry:
 
-```python
+```text
 from cogniverse_runtime.ingestion.processors.embedding_generator import (
     BackendFactory,
 )
@@ -1457,7 +1561,7 @@ Every `exec_in_sandbox` call emits a `sandbox.exec_in_sandbox` OpenTelemetry spa
 
 `GatewayHealthProbe` runs as a background asyncio task calling `SandboxClient.health()` every 30 s (configurable via `COGNIVERSE_SANDBOX_PROBE_INTERVAL`). Each probe emits an `openshell.gateway_health` span with `openshell.gateway_available` (0/1) and `openshell.gateway_latency_ms`. Availability reads the `HealthResponse.status` field, not merely whether `health()` raised: `SERVICE_STATUS_HEALTHY`, an empty response left at `SERVICE_STATUS_UNSPECIFIED`, or a response with no `status` attribute at all count as available, while `SERVICE_STATUS_UNHEALTHY`/`SERVICE_STATUS_DEGRADED` records `available=0` with the status name in `openshell.gateway_error`. A raised exception (including a probe timeout) is also recorded as `available=0`, with the exception's class name in `openshell.gateway_error`. The Phoenix dashboard reads these spans for the gateway-status tile.
 
-```python
+```text
 from cogniverse_runtime.openshell_health import GatewayHealthProbe
 
 probe = GatewayHealthProbe(sandbox_manager=mgr, interval_seconds=30)

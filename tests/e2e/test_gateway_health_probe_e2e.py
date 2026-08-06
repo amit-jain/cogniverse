@@ -22,7 +22,7 @@ from typing import Iterator
 
 import pytest
 
-from tests.e2e.conftest import run_async, skip_if_no_runtime
+from tests.e2e.conftest import run_async
 
 _GATEWAY_NAME = "cogniverse-test-gw"
 _GATEWAY_PORT = 19090
@@ -113,7 +113,6 @@ def _make_manager():
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestProbeOnceLiveGatewayReportsAvailable:
     """probe_once returns (True, latency in (0, 5000ms]) and records state."""
 
@@ -136,7 +135,6 @@ class TestProbeOnceLiveGatewayReportsAvailable:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestProbeEmitsOpenshellGatewayHealthSpan:
     """A single probe emits an openshell.gateway_health span with required attrs."""
 
@@ -177,7 +175,6 @@ class TestProbeEmitsOpenshellGatewayHealthSpan:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestProbeLoopRunsOnSchedule:
     """interval_seconds=0.5; sleep 1.6s; expect at least 3 spans (3 ticks)."""
 
@@ -224,7 +221,6 @@ class TestProbeLoopRunsOnSchedule:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestProbeFlipsToUnavailableWhenClientGone:
     """Forcing manager._client = None makes probe_once return (False, latency_ms).
 

@@ -35,7 +35,6 @@ import requests
 from cogniverse_agents.graph.graph_manager import GraphManager
 from cogniverse_agents.graph.graph_schema import Mention
 from tests.fixtures.llm import (
-    is_test_lm_available,
     resolve_api_key,
     resolve_base_url,
     resolve_prefixed_model,
@@ -54,12 +53,10 @@ def _configure_dspy_lm():
     test in the module sees ``No LM is loaded``. Function-scope autouse
     re-configures DSPy before each test in this file so the production
     ``ClaimExtractor`` invocations inside ``_extract_graph_per_segment``
-    have a real LM to talk to.
+    have a real LM to talk to. The LM itself is provisioned by the
+    ``requires_lm`` marker (``ensure_host_ollama``) and verified by the
+    canonical post-setup gate in ``tests/conftest.py``.
     """
-    if not is_test_lm_available():
-        yield None
-        return
-
     import dspy
 
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
@@ -73,6 +70,10 @@ def _configure_dspy_lm():
         max_tokens=800,
     )
     lm = create_dspy_lm(endpoint)
+    # Bypass the litellm/dspy disk cache: a cached completion recorded
+    # against an earlier serving of the same model id would be replayed
+    # forever, so the assertions would never exercise the live model.
+    lm.cache = False
     dspy.configure(lm=lm)
     try:
         yield lm
@@ -117,23 +118,13 @@ def assert_golden(actual: Any, name: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Skip the whole file when the test LM is unreachable                         #
-# (per project convention — no per-test skips for infra deps).                #
+# The requires_lm marker makes the session-scoped ``ensure_host_ollama``      #
+# fixture provision the exact test LM these extractors call; the canonical   #
+# post-setup gate in tests/conftest.py fails (never skips) if the            #
+# provisioned endpoint is unreachable.                                        #
 # --------------------------------------------------------------------------- #
 
-pytestmark = [pytest.mark.integration]
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _require_test_lm():
-    """Runtime LM gate. An import-time skipif latches the PRE-session-fixture
-    endpoint state — ``ensure_host_ollama`` provisions the LM only at session
-    setup, so the gate must probe after fixtures run, not at collection."""
-    if not is_test_lm_available():
-        pytest.skip(
-            "Test LM endpoint not reachable at "
-            f"{resolve_base_url()} — ClaimExtractor needs a live LM"
-        )
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 
 
 # --------------------------------------------------------------------------- #

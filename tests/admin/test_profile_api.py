@@ -1040,13 +1040,11 @@ class TestProfileAPISchemaDeployment:
             # Create test document with embedding
             test_doc = Document(
                 id="test_video_001",
-                embeddings={
-                    "embedding": {"data": np.random.rand(128).astype(np.float32)}
-                },
                 metadata={
                     "video_id": "test_video_001",
                 },
             )
+            test_doc.add_embedding("embedding", np.random.rand(128).astype(np.float32))
 
             # Ingest document using production backend API
             ingest_results = backend.ingest_documents(

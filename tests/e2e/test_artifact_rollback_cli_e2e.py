@@ -24,7 +24,7 @@ import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
-from tests.e2e.conftest import run_async, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import run_async, unique_id
 
 PHOENIX_HTTP = "http://localhost:33006"
 PHOENIX_GRPC = "localhost:33317"
@@ -118,7 +118,6 @@ def _invoke_rollback_cli(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRollbackCLIRestoresPriorActive:
     """``cogniverse-optim --mode rollback`` brings the active prompts back to v1."""
 
@@ -177,7 +176,6 @@ class TestRollbackCLIRestoresPriorActive:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestHotReloadWithoutRestart:
     """A second load_for_request after promote_canary_to_active sees v2 prompts."""
 
@@ -217,7 +215,6 @@ class TestHotReloadWithoutRestart:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRollbackOfRollback:
     """Rollback to v1 → backup_v captures v2 → rollback to backup_v restores v2."""
 

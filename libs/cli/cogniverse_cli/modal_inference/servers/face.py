@@ -1,4 +1,4 @@
-"""FastAPI sidecar serving InsightFace (Buffalo_L) face embeddings.
+"""FastAPI service serving InsightFace (Buffalo_L) face embeddings.
 
 Two endpoints:
 
@@ -7,12 +7,12 @@ Two endpoints:
   where ``vec`` is a 512-dim L2-normalised ArcFace embedding (the same
   space the face-cluster consumer operates in) and ``bbox`` is the
   detected face rectangle as ``[x1, y1, x2, y2]`` in image pixels.
-* ``GET /health`` — liveness probe used by Helm + ``setup_local_tests.sh``.
+* ``GET /health`` — readiness for the pinned model artifact.
 
 One model, one process. InsightFace's ``Buffalo_L`` bundles the
-``RetinaFace`` detector + the ``ArcFace`` ``w600k_r50`` recogniser. Both
-load on CPU at process start (≈300 MiB resident, ≈5 s cold-load). After
-warmup the encode path is ~50 ms per frame for typical 720p inputs.
+``RetinaFace`` detector + the ``ArcFace`` ``w600k_r50`` recogniser. The
+verified model pack is present in the image before the process starts;
+first-request initialization only opens those local ONNX files.
 
 The face-cluster consumer POSTs one image per keyframe and clusters
 the returned vectors per ``source_doc_id`` to discover anonymous
@@ -20,28 +20,39 @@ identity groups. The sidecar does not persist any state — it's a
 pure compute service.
 """
 
+from __future__ import annotations
+
 import base64
 import io
 import logging
 import os
 import threading
 from dataclasses import dataclass
-from typing import List, Optional
+from importlib import import_module
+from pathlib import Path
+from typing import TYPE_CHECKING, List, Optional
 
-import numpy as np
 from fastapi import FastAPI, HTTPException
-from PIL import Image
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    import numpy as np
 
 logger = logging.getLogger("face_embed_server")
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
 )
 
-
-# ---------------------------------------------------------------------------
-# Request / response shapes
-# ---------------------------------------------------------------------------
+FACE_MODEL_NAME = "buffalo_l"
+FACE_MODEL_REVISION = "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f"
+FACE_MODEL_ROOT = "/opt/insightface"
+FACE_MODEL_FILES = (
+    "1k3d68.onnx",
+    "2d106det.onnx",
+    "det_10g.onnx",
+    "genderage.onnx",
+    "w600k_r50.onnx",
+)
 
 
 class EmbedRequest(BaseModel):
@@ -81,41 +92,41 @@ class EmbedResponse(BaseModel):
     faces: List[FaceRecord]
 
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class FaceEmbedConfig:
-    model_name: str = "buffalo_l"
+    model_name: str = FACE_MODEL_NAME
+    model_revision: str = FACE_MODEL_REVISION
+    model_root: str = FACE_MODEL_ROOT
     ctx_id: int = -1  # -1 = CPU; a GPU index for CUDA
     url_timeout_s: float = 5.0
     host: str = "0.0.0.0"
     port: int = 8080
 
 
-# ---------------------------------------------------------------------------
-# Model lifecycle
-# ---------------------------------------------------------------------------
-
-
 _MODEL = None
 _MODEL_LOCK = threading.Lock()
+
+
+def _require_model_artifact(cfg: FaceEmbedConfig) -> None:
+    model_dir = Path(cfg.model_root) / "models" / cfg.model_name
+    missing = [
+        str(model_dir / filename)
+        for filename in FACE_MODEL_FILES
+        if not (model_dir / filename).is_file()
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "face model artifact is incomplete; missing: " + ", ".join(missing)
+        )
 
 
 def _load_model(cfg: FaceEmbedConfig):
     """Load InsightFace lazily on first request.
 
-    Two reasons not to eager-load:
-      * Health probes pass before the model is in memory, so the pod can
-        join its Service early.
-      * Tests can patch ``_MODEL`` with a deterministic stand-in without
-        ever hitting the real ArcFace weights.
-
-    The lock serialises concurrent first requests — without it each one
-    starts its own ~210 MiB model-pack download and the losers crash on
-    the partially-written zip.
+    Readiness and inference share this path, so the pod cannot join its Service
+    until the pinned local ONNX artifacts open successfully. The lock
+    serialises concurrent first requests; initialization never downloads
+    artifacts.
     """
     global _MODEL
     if _MODEL is not None:
@@ -123,25 +134,29 @@ def _load_model(cfg: FaceEmbedConfig):
     with _MODEL_LOCK:
         if _MODEL is not None:
             return _MODEL
-        # Imported inside the function so test patches can avoid the heavy
-        # native dependency entirely.
-        from insightface.app import FaceAnalysis  # noqa: PLC0415
+        _require_model_artifact(cfg)
+        face_analysis = import_module("insightface.app")
 
         logger.info(
             "Loading InsightFace model=%s ctx_id=%s (this takes ~5s on cold start)",
             cfg.model_name,
             cfg.ctx_id,
         )
-        app_ = FaceAnalysis(name=cfg.model_name)
+        if cfg.ctx_id >= 0:
+            app_ = face_analysis.FaceAnalysis(
+                name=cfg.model_name,
+                root=cfg.model_root,
+                providers=["CUDAExecutionProvider"],
+            )
+        else:
+            app_ = face_analysis.FaceAnalysis(
+                name=cfg.model_name,
+                root=cfg.model_root,
+            )
         app_.prepare(ctx_id=cfg.ctx_id, det_size=(640, 640))
         _MODEL = app_
         logger.info("InsightFace ready")
-        return _MODEL
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+        return app_
 
 
 def _bytes_from_request(req: EmbedRequest, url_timeout_s: float) -> bytes:
@@ -159,7 +174,7 @@ def _bytes_from_request(req: EmbedRequest, url_timeout_s: float) -> bytes:
                 status_code=400, detail=f"image_b64 decode failed: {exc}"
             ) from exc
 
-    import httpx  # noqa: PLC0415
+    httpx = import_module("httpx")
 
     try:
         resp = httpx.get(req.image_url, timeout=url_timeout_s)
@@ -173,8 +188,11 @@ def _bytes_from_request(req: EmbedRequest, url_timeout_s: float) -> bytes:
 
 def _decode_to_bgr(image_bytes: bytes) -> np.ndarray:
     """Decode arbitrary image bytes to the BGR ndarray InsightFace expects."""
+    np = import_module("numpy")
+    image_module = import_module("PIL.Image")
+
     try:
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img = image_module.open(io.BytesIO(image_bytes)).convert("RGB")
     except Exception as exc:  # PIL raises a hodge-podge of exception types
         raise HTTPException(
             status_code=400, detail=f"image decode failed: {exc}"
@@ -185,9 +203,19 @@ def _decode_to_bgr(image_bytes: bytes) -> np.ndarray:
     return rgb[:, :, ::-1].copy()
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+def _model_error(
+    cfg: FaceEmbedConfig,
+    operation: str,
+    status_code: int,
+    exc: Exception,
+) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail=(
+            f"face_embed: model {cfg.model_name} {operation} failed "
+            f"({type(exc).__name__}): {exc}"
+        ),
+    )
 
 
 def build_app(cfg: FaceEmbedConfig) -> FastAPI:
@@ -195,27 +223,41 @@ def build_app(cfg: FaceEmbedConfig) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict:
-        return {"status": "ok"}
+        try:
+            _load_model(cfg)
+        except Exception as exc:
+            raise _model_error(cfg, "load", 503, exc) from exc
+        return {
+            "status": "ready",
+            "model": cfg.model_name,
+            "model_revision": cfg.model_revision,
+        }
 
     @app.post("/embed", response_model=EmbedResponse)
     def embed(req: EmbedRequest) -> EmbedResponse:
-        model = _load_model(cfg)
         image_bytes = _bytes_from_request(req, cfg.url_timeout_s)
         image = _decode_to_bgr(image_bytes)
-        raw_faces = model.get(image)
+        try:
+            model = _load_model(cfg)
+        except Exception as exc:
+            raise _model_error(cfg, "load", 503, exc) from exc
 
-        faces: List[FaceRecord] = []
-        for f in raw_faces:
-            # f.normed_embedding is L2-normalised already, which is what we
-            # want for cosine clustering on the consumer side.
-            faces.append(
-                FaceRecord(
-                    bbox=[int(c) for c in f.bbox.astype(int).tolist()],
-                    vec=[float(v) for v in f.normed_embedding.tolist()],
-                    det_score=float(f.det_score),
+        try:
+            raw_faces = model.get(image)
+            faces: List[FaceRecord] = []
+            for f in raw_faces:
+                # f.normed_embedding is L2-normalised already, which is what we
+                # want for cosine clustering on the consumer side.
+                faces.append(
+                    FaceRecord(
+                        bbox=[int(c) for c in f.bbox.astype(int).tolist()],
+                        vec=[float(v) for v in f.normed_embedding.tolist()],
+                        det_score=float(f.det_score),
+                    )
                 )
-            )
-        return EmbedResponse(n=len(faces), faces=faces)
+            return EmbedResponse(n=len(faces), faces=faces)
+        except Exception as exc:
+            raise _model_error(cfg, "inference", 500, exc) from exc
 
     return app
 
@@ -231,11 +273,15 @@ def main() -> None:
     Helm values) configures the sidecar via environment — parsed here,
     once, and nowhere else. Defaults are single-sourced from the
     dataclass."""
-    import uvicorn  # noqa: PLC0415
+    uvicorn = import_module("uvicorn")
 
     defaults = FaceEmbedConfig()
     cfg = FaceEmbedConfig(
         model_name=os.environ.get("FACE_EMBED_MODEL", defaults.model_name),
+        model_revision=os.environ.get(
+            "FACE_EMBED_MODEL_REVISION", defaults.model_revision
+        ),
+        model_root=os.environ.get("FACE_EMBED_MODEL_ROOT", defaults.model_root),
         ctx_id=int(os.environ.get("FACE_EMBED_CTX_ID", str(defaults.ctx_id))),
         url_timeout_s=float(
             os.environ.get("FACE_EMBED_URL_TIMEOUT_S", str(defaults.url_timeout_s))

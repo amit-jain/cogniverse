@@ -814,21 +814,94 @@ class VideoIngestionPipeline:
     ) -> tuple[str, str | None, list[str]]:
         """Derive (status, error, errors) from the embedding stage result.
 
-        A run that BUILT documents but fed NONE to the backend is a silent
-        data-loss failure — the caller must not report it as ``completed``.
-        Partial errors on an otherwise-successful feed are surfaced but stay
-        ``completed``. No embedding stage (embeddings disabled) is a success.
+        A run that loses any segment or feed is a data-loss failure; returning
+        ``completed`` would make the missing search documents indistinguishable
+        from a correct ingest. No embedding stage (embeddings disabled) is a
+        success.
         """
-        embed = processing_results.get("embeddings")
-        if not isinstance(embed, dict):
+        if "embeddings" not in processing_results:
             return "completed", None, []
-        errors = list(embed.get("errors") or [])
-        total = embed.get("total_documents", 0) or 0
-        fed = embed.get("documents_fed", 0) or 0
+
+        def malformed(detail: str) -> tuple[str, str, list[str]]:
+            return (
+                "failed",
+                f"embedding stage returned malformed result: {detail}",
+                [],
+            )
+
+        embed = processing_results["embeddings"]
+        if not isinstance(embed, dict):
+            return malformed(f"expected an object, got {type(embed).__name__}")
+
+        if "error" in embed:
+            stage_error = embed["error"]
+            if type(stage_error) is not str or not stage_error.strip():
+                return malformed("field 'error' must be a non-empty string")
+            return "failed", f"embedding stage failed: {stage_error}", [stage_error]
+
+        required_fields = (
+            "total_documents",
+            "documents_processed",
+            "documents_fed",
+            "errors",
+        )
+        for field in required_fields:
+            if field not in embed:
+                return malformed(f"missing required field '{field}'")
+
+        counts: dict[str, int] = {}
+        for field in required_fields[:3]:
+            value = embed[field]
+            if type(value) is not int or value < 0:
+                return malformed(
+                    f"field '{field}' must be a non-negative integer, "
+                    f"got {type(value).__name__}"
+                )
+            counts[field] = value
+
+        errors_value = embed["errors"]
+        if type(errors_value) is not list:
+            return malformed(
+                "field 'errors' must be a list of strings, "
+                f"got {type(errors_value).__name__}"
+            )
+        for index, value in enumerate(errors_value):
+            if type(value) is not str or not value.strip():
+                return malformed(f"field 'errors[{index}]' must be a non-empty string")
+
+        total = counts["total_documents"]
+        processed = counts["documents_processed"]
+        fed = counts["documents_fed"]
+        if processed > total:
+            return malformed(
+                f"field 'documents_processed' ({processed}) must not exceed "
+                f"'total_documents' ({total})"
+            )
+        if fed > processed:
+            return malformed(
+                f"field 'documents_fed' ({fed}) must not exceed "
+                f"'documents_processed' ({processed})"
+            )
+
+        errors = list(errors_value)
         if total > 0 and fed == 0:
             return (
                 "failed",
                 f"embedding stage fed 0 of {total} documents to the backend",
+                errors,
+            )
+        if errors:
+            noun = "error" if len(errors) == 1 else "errors"
+            return (
+                "failed",
+                f"embedding stage reported {len(errors)} {noun} after feeding "
+                f"{fed} of {total} documents",
+                errors,
+            )
+        if total > 0 and fed != total:
+            return (
+                "failed",
+                f"embedding stage fed {fed} of {total} documents to the backend",
                 errors,
             )
         return "completed", None, errors

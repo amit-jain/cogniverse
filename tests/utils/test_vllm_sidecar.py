@@ -18,7 +18,17 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from cogniverse_cli.inference_endpoints import ResolvedInferenceEndpoint
+from cogniverse_cli.modal_inference_config import get_inference_service_spec
 
+from tests.fixtures.inference import (
+    InferenceSessionResolver,
+    LocalEndpointProvider,
+    publish_inference_endpoints,
+)
+from tests.fixtures.inference import (
+    pytest_configure as configure_inference_plugin,
+)
 from tests.utils.vllm_sidecar import VllmSidecarFactory, _merge_serve_args
 
 TOMORO = "TomoroAI/tomoro-colqwen3-embed-4b"
@@ -27,6 +37,18 @@ DENSEON = "lightonai/DenseOn"
 GEMMA = "google/gemma-4-e4b-it"
 TEACHER_GEMMA = "google/gemma-4-26b-a4b-it"
 QWEN_TEACHER = "cyankiwi/Qwen3.6-27B-AWQ-INT4"
+
+
+def _resolved_endpoint(service: str, base_url: str) -> ResolvedInferenceEndpoint:
+    spec = get_inference_service_spec(service)
+    return ResolvedInferenceEndpoint(
+        service=service,
+        provider="local",
+        base_url=base_url,
+        headers={"Authorization": "Bearer fixture-secret"},
+        model_id=spec.model_id,
+        model_revision=spec.model_revision,
+    )
 
 
 @contextmanager
@@ -582,11 +604,221 @@ def test_whisper_fallback_installs_audio_extras_before_serving(monkeypatch):
     assert command[image_index + 1 :] == [
         "-c",
         (
-            "pip install --no-cache-dir --quiet soundfile librosa || exit 1; "
+            "pip install --no-cache-dir --quiet --target "
+            "/hf-cache/.pip-audio-extras soundfile librosa || exit 1; "
+            'export PYTHONPATH="/hf-cache/.pip-audio-extras'
+            '${PYTHONPATH:+:$PYTHONPATH}"; '
             "exec vllm serve openai/whisper-tiny --runner generate "
             "--max-model-len 448 --gpu-memory-utilization 0.10"
         ),
     ]
+
+
+def test_writable_test_hf_cache_creates_hub_and_returns_root(monkeypatch, tmp_path):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    root = tmp_path / "hf"
+    monkeypatch.setattr(sidecar_module, "TEST_HF_CACHE", str(root))
+
+    assert sidecar_module.writable_test_hf_cache() == str(root)
+    assert (root / "hub").is_dir()
+
+
+def test_writable_test_hf_cache_raises_with_context_when_unwritable(
+    monkeypatch, tmp_path
+):
+    """An unwritable cache must fail loudly before any model startup — not
+    surface later as an opaque permission error mid-download."""
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    blocked.chmod(0o555)
+    monkeypatch.setattr(sidecar_module, "TEST_HF_CACHE", str(blocked / "huggingface"))
+
+    try:
+        with pytest.raises(RuntimeError, match="not writable"):
+            sidecar_module.writable_test_hf_cache()
+    finally:
+        blocked.chmod(0o755)
+
+
+def test_pinned_fallback_validates_cached_files_then_runs_offline(
+    monkeypatch,
+    tmp_path,
+):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "config.json").write_text("{}")
+    downloads: list[tuple[bool, str]] = []
+
+    def cached_snapshot(*, local_files_only, cache_dir, **kwargs):
+        downloads.append((local_files_only, cache_dir))
+        return str(snapshot)
+
+    monkeypatch.setattr(sidecar_module, "snapshot_download", cached_snapshot)
+    docker_runs = _record_local_spawns(monkeypatch)
+
+    VllmSidecarFactory(configured_urls=()).spawn(
+        model="openai/whisper-large-v3-turbo",
+        model_revision="exact-revision",
+        required_snapshot_files=("config.json",),
+        extra_args=["--runner", "generate"],
+    )
+
+    assert downloads == [(True, f"{sidecar_module.TEST_HF_CACHE}/hub")]
+    command = docker_runs[0]
+    offline_index = command.index("HF_HUB_OFFLINE=1")
+    assert command[offline_index - 1] == "-e"
+    image_index = command.index("vllm/vllm-openai-cpu:v0.23.0")
+    assert command[image_index + 1 :] == [
+        "-c",
+        (
+            "pip install --no-cache-dir --quiet --target "
+            "/hf-cache/.pip-audio-extras soundfile librosa || exit 1; "
+            'export PYTHONPATH="/hf-cache/.pip-audio-extras'
+            '${PYTHONPATH:+:$PYTHONPATH}"; '
+            "exec vllm serve openai/whisper-large-v3-turbo --runner generate "
+            "--revision exact-revision --gpu-memory-utilization 0.10"
+        ),
+    ]
+
+
+def test_concurrent_pinned_consumers_provision_and_launch_once(monkeypatch, tmp_path):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "config.json").write_text("{}")
+    download_calls = 0
+
+    def cached_snapshot(**kwargs):
+        nonlocal download_calls
+        download_calls += 1
+        time.sleep(0.05)
+        return str(snapshot)
+
+    monkeypatch.setattr(sidecar_module, "snapshot_download", cached_snapshot)
+    docker_runs = _record_local_spawns(monkeypatch)
+    factory = VllmSidecarFactory(configured_urls=())
+    start = threading.Barrier(12)
+    urls: list[str] = []
+
+    def resolve():
+        start.wait(timeout=5)
+        urls.append(
+            factory.spawn(
+                model="openai/whisper-large-v3-turbo",
+                model_revision="exact-revision",
+                required_snapshot_files=("config.json",),
+            )
+        )
+
+    threads = [threading.Thread(target=resolve) for _ in range(12)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert download_calls == 1
+    assert len(docker_runs) == 1
+    assert urls == ["http://127.0.0.1:30100"] * 12
+
+
+def test_pinned_fallback_downloads_missing_files_before_launch(monkeypatch, tmp_path):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    downloads: list[bool] = []
+
+    def provision_snapshot(*, local_files_only, **kwargs):
+        downloads.append(local_files_only)
+        if not local_files_only:
+            (snapshot / "config.json").write_text("{}")
+        return str(snapshot)
+
+    monkeypatch.setattr(sidecar_module, "snapshot_download", provision_snapshot)
+    docker_runs = _record_local_spawns(monkeypatch)
+
+    VllmSidecarFactory(configured_urls=()).spawn(
+        model="openai/whisper-large-v3-turbo",
+        model_revision="exact-revision",
+        required_snapshot_files=("config.json",),
+    )
+
+    assert downloads == [True, False]
+    assert len(docker_runs) == 1
+
+
+def test_pinned_fallback_rejects_incomplete_download_without_launch(
+    monkeypatch,
+    tmp_path,
+):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    monkeypatch.setattr(
+        sidecar_module,
+        "snapshot_download",
+        lambda **kwargs: str(snapshot),
+    )
+    docker_runs = _record_local_spawns(monkeypatch)
+
+    with pytest.raises(
+        RuntimeError,
+        match="openai/whisper-large-v3-turbo.*preprocessor_config.json",
+    ):
+        VllmSidecarFactory(configured_urls=()).spawn(
+            model="openai/whisper-large-v3-turbo",
+            model_revision="exact-revision",
+            required_snapshot_files=("preprocessor_config.json",),
+        )
+
+    assert docker_runs == []
+
+
+def test_pinned_fallback_reports_artifact_outage_without_launch(
+    monkeypatch,
+    tmp_path,
+):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    downloads: list[bool] = []
+
+    def unavailable_artifact_service(*, local_files_only, **kwargs):
+        downloads.append(local_files_only)
+        if local_files_only:
+            return str(snapshot)
+        raise OSError("artifact service unavailable")
+
+    monkeypatch.setattr(
+        sidecar_module,
+        "snapshot_download",
+        unavailable_artifact_service,
+    )
+    docker_runs = _record_local_spawns(monkeypatch)
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "Failed to provision pinned model 'openai/whisper-large-v3-turbo' "
+            "at exact-revision: artifact service unavailable"
+        ),
+    ):
+        VllmSidecarFactory(configured_urls=()).spawn(
+            model="openai/whisper-large-v3-turbo",
+            model_revision="exact-revision",
+            required_snapshot_files=("preprocessor_config.json",),
+        )
+
+    assert downloads == [True, False]
+    assert docker_runs == []
 
 
 def test_hermetic_gemma_reuses_exact_explicit_test_override(monkeypatch):
@@ -653,6 +885,85 @@ def test_hermetic_teacher_fallback_spawns_the_exact_model(monkeypatch):
     assert spawned == [
         (TEACHER_GEMMA, "cogniverse-test-llm-teacher", 29111),
     ]
+
+
+def test_exact_model_launch_attempts_share_one_deadline(monkeypatch):
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    launches: list[tuple[str, float]] = []
+    clock = iter((0.0, 0.6, 1.2))
+
+    monkeypatch.setattr(hermetic_llm, "_configured_model_urls", lambda model: ())
+    monkeypatch.setattr(hermetic_llm, "_container_state", lambda container: None)
+    monkeypatch.setattr(hermetic_llm, "_container_logs", lambda container: "not ready")
+    monkeypatch.setattr(hermetic_llm, "_remove_container", lambda container: None)
+    monkeypatch.setattr(hermetic_llm, "_detect_device", lambda: "rocm")
+    monkeypatch.setattr(hermetic_llm, "listed_model_ids", lambda base_url: None)
+    monkeypatch.setattr(
+        hermetic_llm,
+        "_spawn",
+        lambda model, container, host_port, device, gpu_utilization=0.25: (
+            launches.append((device, gpu_utilization))
+        ),
+    )
+    monkeypatch.setattr(hermetic_llm.time, "monotonic", lambda: next(clock, 1.2))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        hermetic_llm.ensure_llm(model=TEACHER_GEMMA, deadline_s=1.0)
+
+    assert launches == [("rocm", 0.25)]
+    assert "total 1.0-second provisioning deadline exhausted" in str(exc_info.value)
+
+
+def test_wedged_preexisting_container_is_replaced_within_a_bounded_slice(monkeypatch):
+    """A pre-existing container that never starts serving must not consume
+    the whole provisioning budget: it gets a bounded wait, is removed, and
+    the remaining budget goes to fresh spawn attempts. Previously the poll
+    ate the full deadline, so the spawn loop aborted with 'deadline
+    exhausted' without ever launching a replacement."""
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    now = {"t": 0.0}
+    removed: list[str] = []
+    launches: list[float] = []
+    state = {"value": "running"}
+
+    monkeypatch.setattr(hermetic_llm, "_configured_model_urls", lambda model: ())
+    monkeypatch.setattr(
+        hermetic_llm, "_container_state", lambda container: state["value"]
+    )
+    monkeypatch.setattr(hermetic_llm, "_container_logs", lambda container: "wedged")
+
+    def _remove(container):
+        removed.append(container)
+        state["value"] = None
+
+    monkeypatch.setattr(hermetic_llm, "_remove_container", _remove)
+    monkeypatch.setattr(hermetic_llm, "_detect_device", lambda: "cpu")
+    monkeypatch.setattr(hermetic_llm, "listed_model_ids", lambda base_url: None)
+    monkeypatch.setattr(hermetic_llm, "_healthy", lambda base_url, model: False)
+    monkeypatch.setattr(
+        hermetic_llm,
+        "_spawn",
+        lambda model, container, host_port, device, gpu_utilization=0.25: (
+            launches.append(now["t"])
+        ),
+    )
+    monkeypatch.setattr(hermetic_llm.time, "monotonic", lambda: now["t"])
+    monkeypatch.setattr(
+        hermetic_llm.time,
+        "sleep",
+        lambda seconds: now.__setitem__("t", now["t"] + seconds),
+    )
+
+    with pytest.raises(RuntimeError):
+        hermetic_llm.ensure_llm(model=TEACHER_GEMMA, deadline_s=90.0)
+
+    assert removed, "the wedged pre-existing container must be replaced"
+    assert launches, "a fresh spawn must run within the remaining budget"
+    # deadline_s=90 → bounded pre-existing slice of 30s; the replacement
+    # spawn happens right after it, far inside the total budget.
+    assert launches[0] <= 35.0
 
 
 def test_concurrent_processes_start_one_gemma_sidecar(monkeypatch):
@@ -1031,6 +1342,7 @@ def test_partial_model_cache_does_not_force_offline_mode(monkeypatch, tmp_path):
     )
 
     assert len(commands) == 1
+    assert commands[0][:5] == ["docker", "run", "-d", "--init", "--name"]
     assert "HF_HUB_OFFLINE=1" not in commands[0]
     assert not any(
         value.startswith("cogniverse-test-owner-pid=") for value in commands[0]
@@ -1076,8 +1388,20 @@ def test_session_config_preserves_distinct_exact_models(monkeypatch, tmp_path):
     }
 
 
-def test_primary_session_config_excludes_unprovisioned_teacher(monkeypatch, tmp_path):
+def test_primary_session_config_pins_unprovisioned_teacher_to_dead_port(
+    monkeypatch, tmp_path
+):
+    """A primary-only session still materializes a loadable LLMConfig.
+
+    ``LLMConfig.from_dict`` requires a teacher entry, so dropping the key made
+    every ``get_llm_config()`` call raise ``KeyError('teacher')`` whenever only
+    the primary role was provisioned. The unprovisioned teacher must instead
+    point at the dead sentinel port, so a teacher call outside a
+    ``requires_teacher_model`` test fails at connect rather than reaching a
+    leftover teacher sidecar.
+    """
     import tests.utils.hermetic_llm as hermetic_llm
+    from cogniverse_foundation.config.unified_config import LLMConfig
 
     source_config = tmp_path / "source.json"
     source_config.write_text(
@@ -1088,6 +1412,7 @@ def test_primary_session_config_excludes_unprovisioned_teacher(monkeypatch, tmp_
                     "teacher": {
                         "model": "openai/wrong-teacher",
                         "api_base": "http://wrong-teacher.invalid/v1",
+                        "temperature": 0.7,
                     },
                 }
             }
@@ -1101,13 +1426,23 @@ def test_primary_session_config_excludes_unprovisioned_teacher(monkeypatch, tmp_
         source_config=source_config,
     )
 
-    assert json.loads(written.read_text())["llm_config"] == {
+    materialized = json.loads(written.read_text())["llm_config"]
+    assert materialized == {
         "primary": {
             "temperature": 0.1,
             "model": f"openai/{GEMMA}",
             "api_base": "http://primary.test/v1",
-        }
+        },
+        "teacher": {
+            "temperature": 0.7,
+            "model": f"openai/{TEACHER_GEMMA}",
+            "api_base": "http://127.0.0.1:29071/v1",
+        },
     }
+    loaded = LLMConfig.from_dict(materialized)
+    assert loaded.primary.api_base == "http://primary.test/v1"
+    assert loaded.teacher.api_base == "http://127.0.0.1:29071/v1"
+    assert loaded.teacher.model == f"openai/{TEACHER_GEMMA}"
 
 
 def test_concurrent_processes_materialize_distinct_source_configs(
@@ -1286,10 +1621,14 @@ def test_teacher_marker_requests_distinct_primary_and_teacher_roles(
     assert item._cogniverse_lm_roles == frozenset({"primary", "teacher"})
 
 
-def test_direct_lm_fixture_requests_distinct_primary_and_teacher_roles(
+def test_direct_lm_fixture_requests_only_the_primary_role(
     monkeypatch,
     tmp_path,
 ):
+    """A direct ``ensure_host_ollama`` request means "give me the test LM" —
+    only the requires_teacher_model marker may pull in the 26B teacher.
+    Coupling the teacher to every direct request lets one wedged teacher
+    provision fail the session fixture for every LM-marked test."""
     import tests.conftest as root_conftest
 
     class Item:
@@ -1309,7 +1648,7 @@ def test_direct_lm_fixture_requests_distinct_primary_and_teacher_roles(
     root_conftest.pytest_collection_modifyitems([item])
 
     assert item.fixturenames == ["ensure_host_ollama"]
-    assert item._cogniverse_lm_roles == frozenset({"primary", "teacher"})
+    assert item._cogniverse_lm_roles == frozenset({"primary"})
 
 
 def test_root_lm_fixture_uses_exact_gemma_provisioner(monkeypatch, tmp_path):
@@ -1411,65 +1750,66 @@ def test_lm_runtime_gate_fails_instead_of_skipping(monkeypatch):
         root_conftest.pytest_runtest_setup(RequiresLmItem())
 
 
-def test_ingestion_configure_does_not_start_unrequested_services(monkeypatch):
-    import tests.ingestion.integration.conftest as ingestion_conftest
+def test_ingestion_configure_does_not_start_unrequested_services():
+    configured: list[tuple[str, str]] = []
 
-    monkeypatch.setattr(
-        ingestion_conftest,
-        "_start_inference_sidecar",
-        lambda *args: (_ for _ in ()).throw(
-            AssertionError("unrequested inference service started")
-        ),
-    )
+    class Config:
+        def addinivalue_line(self, group, value):
+            configured.append((group, value))
 
-    ingestion_conftest.pytest_configure(object())
+    configure_inference_plugin(Config())
 
-
-def test_ingestion_resolves_only_requested_exact_service(monkeypatch):
-    import tests.ingestion.integration.conftest as ingestion_conftest
-
-    calls: list[tuple[str, tuple[str, ...]]] = []
-
-    class Factory:
-        def spawn(self, model, *, extra_args=None, **kwargs):
-            calls.append((model, tuple(extra_args or ())))
-            return "http://127.0.0.1:34123"
-
-    resolved = ingestion_conftest._resolve_inference_services(
-        {"vllm_colpali"},
-        Factory(),
-    )
-
-    assert resolved == {"vllm_colpali": "http://127.0.0.1:34123"}
-    assert calls == [
+    assert configured == [
         (
-            TOMORO,
-            (
-                "--runner",
-                "pooling",
-                "--convert",
-                "embed",
-                "--max-model-len",
-                "4096",
-            ),
-        )
+            "markers",
+            "requires_inference(service): require one exact named inference service",
+        ),
+        (
+            "markers",
+            "requires_modal_inference(service): require one exact named Modal service",
+        ),
     ]
 
 
-def test_ingestion_collection_requests_inference_instead_of_skipping(monkeypatch):
+def test_ingestion_resolves_only_requested_exact_service():
+    calls: list[str] = []
+
+    class Provider:
+        name = "local"
+
+        def resolve(self, spec):
+            calls.append(spec.name)
+            return _resolved_endpoint(spec.name, "http://127.0.0.1:34123")
+
+        def close(self):
+            pass
+
+    resolver = InferenceSessionResolver(providers=(Provider(),))
+    try:
+        resolved = resolver.resolve_required(("vllm_colpali",))
+    finally:
+        resolver.close()
+
+    assert tuple(resolved) == ("vllm_colpali",)
+    assert resolved["vllm_colpali"].base_url == "http://127.0.0.1:34123"
+    assert resolved["vllm_colpali"].model_id == TOMORO
+    assert calls == ["vllm_colpali"]
+
+
+def test_ingestion_collection_uses_exact_marker_without_mutating_other_markers(
+    monkeypatch,
+):
     import tests.ingestion.integration.conftest as ingestion_conftest
 
-    inference_marker = pytest.mark.skipif(
-        True,
-        reason="vllm_colpali inference pod not configured",
-    ).mark
+    inference_marker = pytest.mark.requires_inference("vllm_colpali").mark
+    unrelated_skip = pytest.mark.skipif(True, reason="unrelated capability").mark
 
     class Parent:
-        own_markers = [inference_marker]
+        own_markers = [unrelated_skip]
 
     class Item:
-        own_markers = []
-        keywords = {"requires_colpali": True}
+        own_markers = [inference_marker]
+        keywords = {"requires_inference": True}
         parent = Parent()
 
         def add_marker(self, marker):
@@ -1477,8 +1817,9 @@ def test_ingestion_collection_requests_inference_instead_of_skipping(monkeypatch
 
         def iter_markers_with_node(self, name=None):
             return [
-                (self.parent, marker)
-                for marker in self.parent.own_markers
+                (node, marker)
+                for node in (self, self.parent)
+                for marker in node.own_markers
                 if name is None or marker.name == name
             ]
 
@@ -1488,17 +1829,21 @@ def test_ingestion_collection_requests_inference_instead_of_skipping(monkeypatch
     item = Item()
     config = Config()
     monkeypatch.setattr(ingestion_conftest, "is_ffmpeg_available", lambda: True)
-    monkeypatch.setattr(ingestion_conftest, "is_vespa_running", lambda: True)
     monkeypatch.setattr(ingestion_conftest, "is_docker_available", lambda: True)
 
+    # A real session runs the ingestion conftest hook (capability skips)
+    # and the shared inference plugin hook (service collection) — run both.
+    from tests.fixtures import inference as inference_plugin
+
     ingestion_conftest.pytest_collection_modifyitems(config, [item])
+    inference_plugin.pytest_collection_modifyitems(config, [item])
 
     assert config._cogniverse_required_inference_services == {
         "vllm_asr",
         "vllm_colpali",
     }
-    assert item.own_markers == []
-    assert item.parent.own_markers == []
+    assert item.own_markers == [inference_marker]
+    assert item.parent.own_markers == [unrelated_skip]
 
 
 def test_isolated_multi_profile_collection_requests_every_profile_service(
@@ -1531,10 +1876,14 @@ def test_isolated_multi_profile_collection_requests_every_profile_service(
     item = Item()
     config = Config()
     monkeypatch.setattr(ingestion_conftest, "is_ffmpeg_available", lambda: True)
-    monkeypatch.setattr(ingestion_conftest, "is_vespa_running", lambda: True)
     monkeypatch.setattr(ingestion_conftest, "is_docker_available", lambda: True)
 
+    # A real session runs the ingestion conftest hook (capability skips)
+    # and the shared inference plugin hook (service collection) — run both.
+    from tests.fixtures import inference as inference_plugin
+
     ingestion_conftest.pytest_collection_modifyitems(config, [item])
+    inference_plugin.pytest_collection_modifyitems(config, [item])
 
     assert config._cogniverse_required_inference_services == {
         "videoprism_jax",
@@ -1543,112 +1892,64 @@ def test_isolated_multi_profile_collection_requests_every_profile_service(
     }
 
 
-def test_ingestion_partial_resolution_cleans_started_sidecar(monkeypatch):
-    import tests.ingestion.integration.conftest as ingestion_conftest
+def test_ingestion_partial_resolution_closes_provider_once():
+    closed = 0
 
-    commands: list[list[str]] = []
-    started: list[str] = []
-    original_urls = '{"existing":"http://existing.test"}'
+    class Provider:
+        name = "local"
 
-    class Config:
-        _cogniverse_required_inference_services = {
-            "videoprism_jax",
-            "vllm_colpali",
-        }
-
-    class Request:
-        config = Config()
-
-    class Factory:
-        def spawn(self, model, *, extra_args=None, **kwargs):
+        def resolve(self, spec):
+            if spec.name == "videoprism_jax":
+                return _resolved_endpoint(spec.name, "http://127.0.0.1:34125")
             raise RuntimeError("vLLM exact fallback failed")
 
-    def resolve_health(service, spec):
-        started.append("videoprism-test-partial")
-        return "http://127.0.0.1:34125"
+        def close(self):
+            nonlocal closed
+            closed += 1
 
-    def record_run(command, **kwargs):
-        commands.append(list(command))
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+    resolver = InferenceSessionResolver(providers=(Provider(),))
 
-    monkeypatch.setenv("INFERENCE_SERVICE_URLS", original_urls)
-    monkeypatch.setattr(
-        ingestion_conftest,
-        "_STARTED_INFERENCE_CONTAINERS",
-        started,
-    )
-    monkeypatch.setattr(
-        ingestion_conftest,
-        "_resolve_health_service",
-        resolve_health,
-    )
-    monkeypatch.setattr(ingestion_conftest.subprocess, "run", record_run)
-
-    fixture = ingestion_conftest.requested_inference_services.__wrapped__(
-        Request(),
-        Factory(),
-    )
     with pytest.raises(RuntimeError, match="vLLM exact fallback failed"):
-        next(fixture)
+        resolver.resolve_required(("videoprism_jax", "vllm_colpali"))
 
-    assert started == []
-    assert [
-        "docker",
-        "rm",
-        "-f",
-        "videoprism-test-partial",
-    ] in commands
-    assert os.environ["INFERENCE_SERVICE_URLS"] == original_urls
+    assert closed == 1
 
 
 def test_ingestion_teardown_failure_restores_environment(monkeypatch):
-    import tests.ingestion.integration.conftest as ingestion_conftest
-
-    started = ["videoprism-test-teardown"]
     original_urls = '{"existing":"http://existing.test"}'
-
-    class Config:
-        _cogniverse_required_inference_services = set()
-
-    class Request:
-        config = Config()
-
-    def fail_removal(command, **kwargs):
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-
+    original_key = "original-fixture-key"
     monkeypatch.setenv("INFERENCE_SERVICE_URLS", original_urls)
-    monkeypatch.setattr(
-        ingestion_conftest,
-        "_STARTED_INFERENCE_CONTAINERS",
-        started,
-    )
-    monkeypatch.setattr(ingestion_conftest.subprocess, "run", fail_removal)
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", original_key)
+    endpoints = {
+        "videoprism_jax": _resolved_endpoint("videoprism_jax", "http://127.0.0.1:34125")
+    }
 
-    fixture = ingestion_conftest.requested_inference_services.__wrapped__(
-        Request(),
-        object(),
-    )
-    assert next(fixture) == {}
-    with pytest.raises(RuntimeError, match="videoprism-test-teardown"):
-        next(fixture)
+    with pytest.raises(RuntimeError, match="consumer failed"):
+        with publish_inference_endpoints(endpoints):
+            assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {
+                "videoprism_jax": "http://127.0.0.1:34125"
+            }
+            assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == "fixture-secret"
+            raise RuntimeError("consumer failed")
 
-    assert started == []
     assert os.environ["INFERENCE_SERVICE_URLS"] == original_urls
+    assert os.environ["COGNIVERSE_INFERENCE_API_KEY"] == original_key
 
 
 def test_ingestion_sidecar_failure_raises_with_logs_and_cleanup(monkeypatch):
-    import tests.ingestion.integration.conftest as ingestion_conftest
+    import tests.fixtures.inference as inference_fixture
 
     commands: list[list[str]] = []
-    spec = ingestion_conftest._INFERENCE_SIDECARS["videoprism_jax"]
+    spec = get_inference_service_spec("videoprism_jax")
 
     def fail_launch(command, **kwargs):
         commands.append(list(command))
+        if command[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if command[:3] == ["docker", "run", "-d"]:
-            return subprocess.CompletedProcess(
-                command,
+            raise subprocess.CalledProcessError(
                 125,
-                stdout="",
+                command,
                 stderr="container creation failed",
             )
         if command[:3] == ["docker", "logs", "--tail"]:
@@ -1660,43 +1961,46 @@ def test_ingestion_sidecar_failure_raises_with_logs_and_cleanup(monkeypatch):
             )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr(
-        ingestion_conftest,
-        "_free_port_for_sidecar",
-        lambda: 34124,
+    monkeypatch.setattr(inference_fixture, "_free_port", lambda: 34124)
+    monkeypatch.setattr(inference_fixture.subprocess, "run", fail_launch)
+    provider = LocalEndpointProvider(
+        llm_ensurer=lambda model: "",
+        llm_active=lambda model: True,
+        llm_releaser=lambda: None,
     )
-    monkeypatch.setattr(ingestion_conftest.subprocess, "run", fail_launch)
 
     with pytest.raises(RuntimeError) as exc_info:
-        ingestion_conftest._start_inference_sidecar("videoprism_jax", spec)
+        provider.resolve(spec)
 
     message = str(exc_info.value)
     assert "videoprism_jax" in message
-    assert spec["model_name"] in message
+    assert spec.model_id in message
     assert "container creation failed" in message
     assert "model initialization failed" in message
     launch = next(
         command for command in commands if command[:3] == ["docker", "run", "-d"]
     )
     container = launch[launch.index("--name") + 1]
-    assert container.startswith(f"{spec['container_name']}-")
+    assert container.startswith("cogniverse-videoprism_jax-test-")
     assert ["docker", "rm", "-f", container] in commands
 
 
 def test_ingestion_sidecar_inspect_timeout_raises_with_logs_and_cleanup(
     monkeypatch,
 ):
-    import tests.ingestion.integration.conftest as ingestion_conftest
+    import httpx
+
+    import tests.fixtures.inference as inference_fixture
 
     commands: list[list[str]] = []
-    spec = ingestion_conftest._INFERENCE_SIDECARS["videoprism_jax"]
+    spec = get_inference_service_spec("videoprism_jax")
 
     def fail_inspect(command, **kwargs):
         commands.append(list(command))
+        if command[:3] == ["docker", "image", "inspect"]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if command[:3] == ["docker", "run", "-d"]:
             return subprocess.CompletedProcess(command, 0, stdout="id", stderr="")
-        if command[:2] == ["docker", "inspect"]:
-            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
         if command[:3] == ["docker", "logs", "--tail"]:
             return subprocess.CompletedProcess(
                 command,
@@ -1706,30 +2010,38 @@ def test_ingestion_sidecar_inspect_timeout_raises_with_logs_and_cleanup(
             )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
+    monotonic = iter((0.0, 1801.0))
+    monkeypatch.setattr(inference_fixture, "_free_port", lambda: 34126)
+    monkeypatch.setattr(inference_fixture.subprocess, "run", fail_inspect)
+    monkeypatch.setattr(inference_fixture.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(inference_fixture.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(
-        ingestion_conftest,
-        "_free_port_for_sidecar",
-        lambda: 34126,
+        inference_fixture.httpx,
+        "get",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            httpx.ConnectError("health refused")
+        ),
     )
-    monkeypatch.setattr(
-        ingestion_conftest,
-        "_health_serves_exact_model",
-        lambda *args, **kwargs: False,
+    provider = LocalEndpointProvider(
+        llm_ensurer=lambda model: "",
+        llm_active=lambda model: True,
+        llm_releaser=lambda: None,
     )
-    monkeypatch.setattr(ingestion_conftest.subprocess, "run", fail_inspect)
 
     with pytest.raises(RuntimeError) as exc_info:
-        ingestion_conftest._start_inference_sidecar("videoprism_jax", spec)
+        provider.resolve(spec)
 
     message = str(exc_info.value)
-    assert "TimeoutExpired" in message
+    assert "videoprism_jax" in message
+    assert spec.model_id in message
+    assert "did not become ready" in message
     assert "health server never initialized" in message
     container = next(
         command[command.index("--name") + 1]
         for command in commands
         if command[:3] == ["docker", "run", "-d"]
     )
-    assert commands.count(["docker", "rm", "-f", container]) == 2
+    assert commands.count(["docker", "rm", "-f", container]) == 1
 
 
 def test_tomoro_gets_gpu_mem_and_mm_limit_defaults():

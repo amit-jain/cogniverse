@@ -189,7 +189,7 @@ class TestTriggeredOptimization:
     @pytest.mark.asyncio
     async def test_run_triggered_optimization_end_to_end(
         self,
-        ensure_host_ollama,
+        teacher_role_on_test_lm,
         trigger_dataset_in_phoenix,
         config_manager,
         phoenix_container,

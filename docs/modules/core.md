@@ -31,7 +31,7 @@
 19. [Utility Modules](#utility-modules)
 20. [VLM Interface](#vlm-interface)
 21. [Model Loaders](#model-loaders)
-22. [Backend Factory & Profile Validation](#backend-factory--profile-validation)
+22. [Backend Factory & Profile Validation](#backend-factory-profile-validation)
 
 ---
 
@@ -198,7 +198,7 @@ class MySearchAgent(AgentBase[MySearchInput, MySearchOutput, MySearchDeps]):
 
 These are Pydantic BaseModel subclasses that define agent interfaces:
 
-```python
+```text
 from cogniverse_core.agents.base import AgentInput, AgentOutput, AgentDeps
 
 class AgentInput(BaseModel):
@@ -299,13 +299,15 @@ Rails are configured under the `rails` block in `config.json`
 `build_output_chain()` compile the definitions into `RailChain`s.
 
 ```json
-"rails": {
-  "enabled": true,
-  "input_rails": [
-    {"type": "topic_boundary", "params": {"advisory": true, "allowed_topics": ["video", "search"]}},
-    {"type": "content_safety", "params": {"blocked_patterns": ["ignore previous instructions", "<script>"]}}
-  ],
-  "output_rails": []
+{
+  "rails": {
+    "enabled": true,
+    "input_rails": [
+      {"type": "topic_boundary", "params": {"advisory": true, "allowed_topics": ["video", "search"]}},
+      {"type": "content_safety", "params": {"blocked_patterns": ["ignore previous instructions", "<script>"]}}
+    ],
+    "output_rails": []
+  }
 }
 ```
 
@@ -357,7 +359,7 @@ Adds Mem0-based persistent memory to agents:
 
 **Method Signature:**
 
-```python
+```text
 def initialize_memory(
     self,
     agent_name: str,
@@ -379,7 +381,7 @@ def initialize_memory(
 
 **Usage Example:**
 
-```python
+```text
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 class MyAgent(AgentBase[...], MemoryAwareMixin):
@@ -424,7 +426,7 @@ class MyAgent(AgentBase[...], MemoryAwareMixin):
 
 Provides tenant context and isolation:
 
-```python
+```text
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 
 class MyAgent(AgentBase[...], TenantAwareAgentMixin):
@@ -443,7 +445,7 @@ class MyAgent(AgentBase[...], TenantAwareAgentMixin):
 
 Adds health check capabilities:
 
-```python
+```text
 from cogniverse_core.common.health_mixin import HealthCheckMixin
 
 class MyAgent(AgentBase[...], HealthCheckMixin):
@@ -463,7 +465,7 @@ class MyAgent(AgentBase[...], HealthCheckMixin):
 
 Provides dynamic DSPy module creation and configuration at runtime:
 
-```python
+```text
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 import dspy
 
@@ -533,7 +535,7 @@ detaches that client before awaiting connection-pool shutdown.
 
 ### BackendRegistry
 
-```python
+```text
 from cogniverse_core.registries import BackendRegistry
 
 # Register custom backend (implements Backend interface)
@@ -567,7 +569,7 @@ module = DSPyModuleRegistry.create_module(
 
 ### SchemaRegistry
 
-```python
+```text
 from cogniverse_core.registries import SchemaRegistry
 
 # Create registry instance (requires dependencies)
@@ -599,7 +601,7 @@ Thin subclasses of `cogniverse_foundation.registry.EntryPointRegistry` that
 auto-discover implementations registered via Python entry points, so
 `cogniverse_core` never imports a concrete backend package directly.
 
-```python
+```text
 from cogniverse_core.registries import AdapterStoreRegistry, WorkflowStoreRegistry
 
 # Implementations register under these entry-point groups in pyproject.toml:
@@ -625,7 +627,7 @@ workflow_store = WorkflowStoreRegistry.get(
 to turn a text query into the embedding shape a Vespa profile expects, plus a
 caching factory that picks the right encoder from `configs/config.json`.
 
-```python
+```text
 from cogniverse_core.query.encoders import QueryEncoderFactory
 
 # Cached by (model_name, inference_service, embedding_dim) — a repeat
@@ -643,7 +645,7 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 | Class | Model family | Notes |
 |---|---|---|
 | `ColBERTQueryEncoder` | ColBERT / LateOn | Per-token multi-vector; `embedding_dim` is required (read from `schema_config.embedding_dim`); supports joint query+CoT-trace encoding |
-| `ColPaliFamilyQueryEncoder` | ColPali, ColQwen, ColSmol | 128-d patch multi-vector (`get_embedding_dim()` returns the class-level `embedding_dim = 320`); local or remote (`inference_service_url`) |
+| `ColPaliFamilyQueryEncoder` | ColPali, ColQwen, ColSmol | Production ColPali/ColQwen3 uses the remote-only `TomoroAI/tomoro-colqwen3-embed-4b` model and returns 320-dimensional patch multi-vectors (`get_embedding_dim()` returns the class-level `embedding_dim = 320`); supported non-production family checkpoints may load locally |
 | `ColPaliQueryEncoder(...)` / `ColQwenQueryEncoder(...)` | — | Thin factory functions over `ColPaliFamilyQueryEncoder` with `model_loader="colpali"`/`"colqwen"` |
 | `VideoPrismQueryEncoder` | VideoPrism | Single-vector (global, `_lvt_`/`global` in name) or patch-based (768/1024-d) |
 
@@ -704,7 +706,7 @@ expensive `compile()`s.
 This is distinct from `WorkflowStore` (the offline workflow-intelligence
 learning corpus).
 
-```python
+```text
 from cogniverse_core.durable import (
     PipelineCheckpoint,
     PipelineCheckpointStatus,
@@ -806,7 +808,7 @@ lingers at most one extra period).
 
 The memory system uses Mem0 for persistent, tenant-isolated agent memory:
 
-```python
+```text
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
 # Get memory manager (singleton per tenant via __new__)
@@ -863,7 +865,7 @@ memory.delete_memory(
 )
 ```
 
-#### DenseOn embedder adapter
+### DenseOn embedder adapter
 
 The manager configures Mem0's embedder with the `cogniverse_denseon`
 provider (`memory/mem0_embedder.py`), not Mem0's stock `openai` provider.
@@ -881,7 +883,7 @@ existing `agent_memories` rows.
 `FederationService` lets multiple tenants under the same org share a
 trunk of knowledge while overlaying tenant-specific facts.
 
-```python
+```text
 from cogniverse_core.memory.federation import FederationService
 from cogniverse_core.memory.schema import Pinnable, build_default_registry
 
@@ -927,7 +929,7 @@ Two memories about the same subject can disagree. The
 (set by the writing agent) and emits a `ConflictSet` per subject_key
 that has more than one distinct content signature.
 
-```python
+```text
 from cogniverse_core.memory.contradiction import (
     ContradictionDetector,
     reconcile,
@@ -963,7 +965,7 @@ ages slowly (≈0.5 pt/day above the initial baseline), is bumped by
 explicit user/admin endorsements, and is composed with relevance and
 confidence at retrieval time.
 
-```python
+```text
 from cogniverse_core.memory.trust import (
     TrustRecord,
     apply_endorsement,
@@ -1009,7 +1011,7 @@ Every memory write carries a `Provenance` record describing where the
 content came from. The schema's `provenance_required` flag gates
 writes that omit it.
 
-```python
+```text
 from cogniverse_core.memory.provenance import (
     CitationRef,
     DerivationKind,
@@ -1058,7 +1060,7 @@ to score conflicting claims.
 `PinService` lets users, tenant admins, and org admins pin memories so they
 survive lifecycle cleanup, trust decay, and any future curator pass.
 
-```python
+```text
 from cogniverse_core.memory.pinning import PinQuotas, PinService
 from cogniverse_core.memory.schema import Pinnable, build_default_registry
 
@@ -1115,7 +1117,7 @@ sensitivity, pin authority, provenance requirement, contradiction policy,
 and default trust. The registry is the single source of truth the pinning
 service, the lifecycle scheduler, and provenance handling all read from.
 
-```python
+```text
 from cogniverse_core.memory.schema import (
     KnowledgeRegistry,
     KnowledgeSchema,
@@ -1223,7 +1225,7 @@ abort the run; offending tenants are visible via the scheduler's
 
 Configuration management for agents and system settings:
 
-```python
+```text
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.common.tenant_utils import parse_tenant_id, get_tenant_storage_path
 
@@ -1314,7 +1316,7 @@ Inter-agent calls are made via `httpx.AsyncClient` (not via `self.call_agent()`)
 orchestrator dispatches to agents through `AgentDispatcher` and `CogniverseAgentExecutor`
 wired in the runtime:
 
-```python
+```text
 import httpx
 
 class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]):
@@ -1423,7 +1425,7 @@ The cache subsystem provides tiered caching for embeddings and pipeline artifact
 
 Abstract base class for cache backends:
 
-```python
+```text
 class CacheBackend(ABC):
     async def get(self, key: str) -> Optional[Any]: ...
     async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool: ...
@@ -1437,7 +1439,7 @@ class CacheBackend(ABC):
 
 Manages multiple cache backends with tiered caching:
 
-```python
+```text
 from cogniverse_core.common.cache import CacheManager, CacheConfig
 
 config = CacheConfig(
@@ -1458,7 +1460,7 @@ result = await manager.get("key")
 
 Caches video processing pipeline artifacts:
 
-```python
+```text
 from cogniverse_core.common.cache import PipelineArtifactCache
 
 cache = PipelineArtifactCache(
@@ -1497,7 +1499,7 @@ video/params serves from cache).
 
 Plugin registry for cache backends:
 
-```python
+```text
 from cogniverse_core.common.cache import CacheBackendRegistry
 
 # Register custom backend
@@ -1525,7 +1527,7 @@ backends = CacheBackendRegistry.list_backends()  # ["structured_filesystem", ...
 
 ### retry.py - Retry with Exponential Backoff
 
-```python
+```text
 from cogniverse_core.common.utils.retry import retry_with_backoff, RetryConfig
 
 config = RetryConfig(
@@ -1580,7 +1582,7 @@ wait_for_retry_backoff(
 
 Vision Language Model interface using DSPy for visual content analysis.
 
-```python
+```text
 from cogniverse_core.common.vlm_interface import VLMInterface
 
 vlm = VLMInterface(
@@ -1612,7 +1614,7 @@ result = await vlm.analyze_visual_content(
 
 Abstract base class for model loaders:
 
-```python
+```text
 from cogniverse_core.common.models import ModelLoader
 
 class CustomLoader(ModelLoader):
@@ -1629,7 +1631,7 @@ dtype = loader.get_dtype()    # bfloat16 for CUDA, float32 otherwise
 
 Factory for creating model loaders based on the `model_loader` config key:
 
-```python
+```text
 from cogniverse_core.common.models import ModelLoaderFactory
 
 # Config must contain "model_loader" key — raises ValueError if missing.
@@ -1661,8 +1663,15 @@ is_remote_only_model("TomoroAI/tomoro-colqwen3-embed-4b")  # True
 | `colqwen` | `ColQwenModelLoader` | `RemoteColPaliLoader` |
 | `videoprism` | `VideoPrismModelLoader` | `RemoteVideoPrismLoader` |
 | `colbert` | `ColBERTModelLoader` | `RemoteColBERTLoader` |
+| `whisper` | — | `RemoteWhisperLoader` |
 
 Remote loaders are selected when `remote_inference_url` is set in config.
+`RemoteVideoPrismLoader` forwards its exact configured model name on every
+video-segment request, so the remote service can reject requests for any other
+checkpoint instead of silently selecting a default.
+Remote loader cache keys include a one-way fingerprint of the exact credential
+snapshot used to construct the client. A custom endpoint key or rotated Modal
+environment key therefore cannot reuse a client authenticated with another key.
 
 **ColQwen3/Tomoro is remote-only.** `TomoroAI/tomoro-colqwen3-embed-4b`
 (architecture `qwen3_vl`) has no in-process loader: the pinned
@@ -1677,7 +1686,7 @@ encoder) for such a model without `remote_inference_url` raises a clear
 
 Loads ColBERT late-interaction models via PyLate for document and audio semantic embeddings:
 
-```python
+```text
 from cogniverse_core.common.models import ColBERTModelLoader
 
 loader = ColBERTModelLoader(
@@ -1705,7 +1714,7 @@ in-process pylate model. `load_model()` returns a `ColBERTRemoteWrapper` whose
   drops the rows whose token id is in the punctuation skiplist. Queries keep all
   tokens.
 
-```python
+```text
 from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
 
 loader = RemoteColBERTLoader(
@@ -1721,12 +1730,17 @@ doc_tokens = model.encode(["Vespa stores token embeddings."], is_query=False)[0]
 
 Client for remote model inference providers:
 
-```python
+```text
 from cogniverse_core.common.models.model_loaders import RemoteInferenceClient
 
 client = RemoteInferenceClient(
     endpoint_url="http://localhost:8080",
     api_key="..."
+)
+
+# Modal endpoints use COGNIVERSE_INFERENCE_API_KEY and reject api_key.
+modal_client = RemoteInferenceClient(
+    endpoint_url="https://colpali.modal.run",
 )
 
 # Process images with retry logic
@@ -1741,11 +1755,49 @@ result = client.process_images(
 - Modal (custom deployed models)
 - Custom REST APIs
 
+### RemoteGlinerClient (model_loaders.py)
+
+`RemoteGlinerClient` preserves the production GLiNER
+`predict_entities(text, labels, threshold)` contract over the sidecar's
+`/predict_entities` route. Modal endpoints receive bearer authentication from
+`COGNIVERSE_INFERENCE_API_KEY`; caller-supplied Modal credentials are rejected.
+The key is never stored in the shared cache key. A successful remote response
+must be a JSON object with an `entities` list. Every entity must contain exactly
+`text` and `label` strings, a numeric `score`, and integer-or-null `start` and
+`end` offsets. Missing, null, non-list, or malformed values raise `ValueError`;
+only an explicit empty list is a valid no-entity result.
+
+```python
+from cogniverse_core.common.models.model_loaders import get_or_load_gliner
+
+gliner = get_or_load_gliner(
+    "urchade/gliner_large-v2.1",
+    inference_url="https://gliner.modal.run",
+)
+entities = gliner.predict_entities(
+    "Marie Curie discovered radium",
+    ["person", "chemical"],
+    threshold=0.4,
+)
+```
+
+Remote model, GLiNER, and semantic-embedding clients are held in independent
+16-entry least-recently-used caches. Cache keys include the model, endpoint,
+device where applicable, and a one-way credential fingerprint, so a rotated
+credential cannot reuse a client authenticated with the previous key. Eviction
+and explicit semantic-cache reset close the displaced HTTP session. If closing
+a displaced session fails, the old entry is restored and the replacement is
+closed; the caller receives the cleanup error instead of a partially updated
+cache. HTTP failures propagate to the caller. Local model loading also fails
+explicitly: weight-load errors and failed device transfers raise `RuntimeError`
+with the model and requested device, and no wrong-device or missing instance is
+cached.
+
 ### VideoPrismLoader (videoprism_loader.py)
 
 Handles VideoPrism model loading and inference:
 
-```python
+```text
 from cogniverse_core.common.models import get_videoprism_loader
 
 loader = get_videoprism_loader(
@@ -1779,9 +1831,10 @@ Note: Output Embedding Dim is the final embedding vector dimension. Spatial Toke
 
 ### VideoPrismModel (videoprism_models.py)
 
-Minimal VideoPrism model wrapper for JAX:
+Minimal VideoPrism model wrapper for JAX. The following is illustrative usage
+and requires the optional JAX and VideoPrism dependencies:
 
-```python
+```text
 from cogniverse_core.common.models.videoprism_models import get_videoprism_model
 
 model = get_videoprism_model("videoprism_public_v1_base")
@@ -1835,15 +1888,27 @@ from cogniverse_core.common.models.semantic_embedder import get_semantic_embedde
 # COGNIVERSE_SEMANTIC_EMBED_URL / _MODEL env vars -> local SentenceTransformer.
 embedder = get_semantic_embedder()
 vectors = embedder.encode(["find manufacturing defects"], is_query=True)  # (1, D)
+
+# Authenticated remote endpoint; the credential is validated, forwarded on
+# every request, and represented only by a digest in the shared cache key.
+modal_embedder = get_semantic_embedder(
+    remote_url="https://denseon.modal.run",
+)
 ```
 
 | Class | Backend |
 |---|---|
 | `LocalSentenceTransformerEmbedder` | In-process `sentence-transformers` model |
-| `RemoteOpenAIEmbedder` | HTTP client for any OpenAI-compatible `/v1/embeddings` server (vLLM, Infinity, TEI); restores DenseOn's `query: `/`document: ` prompt prefixes and L2-normalization client-side |
+| `RemoteOpenAIEmbedder` | Authenticated HTTP client for an OpenAI-compatible `/v1/embeddings` server; Modal URLs use `COGNIVERSE_INFERENCE_API_KEY`, non-Modal URLs may accept an exact bearer `Authorization` mapping, and DenseOn's `query: `/`document: ` prompt prefixes plus L2 normalization are applied client-side |
 
-Instances are cached module-level by `(backend, model)` so concurrent agents
-share one embedder; `reset_semantic_embedder_cache()` clears it for tests.
+Remote instances are cached module-level by
+`(remote_url, model, credential fingerprint)`; local instances are cached by
+`(backend, model)`. Concurrent agents therefore share only clients for the same
+endpoint, model, and authentication context;
+`reset_semantic_embedder_cache()` clears them for tests.
+Connection and timeout errors preserve their original `requests` exception type
+while adding the exact model and `/v1/embeddings` endpoint; bearer values are
+never included in that context.
 
 ---
 
@@ -1854,7 +1919,7 @@ share one embedder; `reset_semantic_embedder_cache()` clears it for tests.
 Centralizes backend construction so the Backend ↔ SchemaRegistry circular
 dependency is resolved in one place instead of scattered ad hoc wiring:
 
-```python
+```text
 from cogniverse_core.factories.backend_factory import BackendFactory
 
 backend = BackendFactory.create_backend_with_dependencies(
@@ -1876,7 +1941,7 @@ Validates a `BackendProfileConfig` before it is created or updated — schema
 template existence, importable strategy classes, and consistent profile
 settings — so a broken profile fails at admin-API time, not at first search.
 
-```python
+```text
 from cogniverse_core.validation.profile_validator import ProfileValidator
 
 validator = ProfileValidator(config_manager, schema_templates_dir=Path("configs/schemas"))

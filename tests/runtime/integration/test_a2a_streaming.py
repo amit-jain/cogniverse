@@ -14,10 +14,12 @@ Infrastructure:
 import asyncio
 import json
 import logging
+import time
 import uuid
 from typing import Any
 
 import pytest
+import requests
 from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
@@ -29,6 +31,11 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from tests.runtime.integration.conftest import skip_if_no_lm
+from tests.utils.vespa_test_helpers import (
+    deploy_tenant_schema,
+    schema_full_name,
+    schema_tensor_dim,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +52,134 @@ KNOWN_AGENTS = {
 }
 
 
+STREAM_TENANT = "test:unit"
+# Vector widths come from the schema definitions rather than literals, so an
+# encoder swap that changes the embedding width surfaces as a mismatch here
+# instead of a 400 from every feed.
+_IMAGE_VEC = [0.05] * schema_tensor_dim("image_colpali_mv", "embedding")
+_DOC_VEC = [0.05] * schema_tensor_dim("document_visual", "colpali_embedding")
+_DOC_VEC_BIN = [-1] * schema_tensor_dim("document_visual", "colpali_embedding_binary")
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def content_schemas(vespa_instance, config_manager):
+    """Deploy and populate the image, audio and document schemas the content
+    agents query for tenant ``test:unit``.
+
+    Each agent derives its query target from its tenant id —
+    ``image_colpali_mv_test_unit``, ``audio_content_test_unit``,
+    ``document_visual_test_unit``. Without them Vespa answers every search
+    with a 400 ("could not resolve source ref"), the agent raises, and the
+    stream terminates in an error event instead of a final one.
+
+    Deploying goes through the same SchemaRegistry the runtime uses, so the
+    three schemas merge with the baseline pair ``vespa_instance`` deployed
+    rather than replacing them.
+    """
+    http_port = vespa_instance["http_port"]
+
+    def _deploy(base_schema_name: str) -> str:
+        return deploy_tenant_schema(
+            vespa_instance,
+            tenant_id=STREAM_TENANT,
+            base_schema_name=base_schema_name,
+            config_manager=config_manager,
+        )
+
+    image_schema = _deploy("image_colpali_mv")
+    audio_schema = _deploy("audio_content")
+    document_schema = _deploy("document_visual")
+
+    fed: list[tuple[str, str, str]] = []
+
+    def _feed(namespace: str, schema: str, doc_id: str, fields: dict) -> None:
+        response = requests.post(
+            f"http://localhost:{http_port}/document/v1/{namespace}/{schema}"
+            f"/docid/{doc_id}",
+            json={"fields": fields},
+            timeout=15,
+        )
+        assert response.status_code in (200, 201), response.text[:300]
+        fed.append((namespace, schema, doc_id))
+
+    _feed(
+        "image",
+        image_schema,
+        "stream_img_cat",
+        {
+            "image_id": "stream_img_cat",
+            "image_title": "Cat sitting on a table",
+            "source_url": "s3://corpus/stream/cat.jpg",
+            "image_description": "a tabby cat sitting on a wooden table",
+            "embedding": {"blocks": {"0": _IMAGE_VEC}},
+        },
+    )
+    # Two audio docs: the transcript query terms appear only in the first, so
+    # a BM25 search that actually filters returns exactly one of them.
+    _feed(
+        "audio",
+        audio_schema,
+        "stream_audio_tech",
+        {
+            "audio_id": "stream_audio_tech",
+            "audio_title": "Tech keynote excerpt",
+            "source_url": "s3://corpus/stream/keynote.mp3",
+            "audio_transcript": (
+                "a person speaking about technology and machine learning on stage"
+            ),
+            "audio_duration": 61.5,
+            "audio_language": "en",
+        },
+    )
+    _feed(
+        "audio",
+        audio_schema,
+        "stream_audio_kitchen",
+        {
+            "audio_id": "stream_audio_kitchen",
+            "audio_title": "Kitchen sounds",
+            "source_url": "s3://corpus/stream/kitchen.mp3",
+            "audio_transcript": "clattering pans and running water in a kitchen",
+            "audio_duration": 12.0,
+            "audio_language": "en",
+        },
+    )
+    _feed(
+        "doc",
+        document_schema,
+        "stream_doc_earnings_p3",
+        {
+            "document_id": "stream_doc_earnings_p3",
+            "document_title": "Q3 Earnings Report",
+            "document_path": "s3://corpus/stream/earnings.pdf",
+            "document_type": "pdf",
+            "page_number": 3,
+            "page_count": 18,
+            "colpali_embedding": {"blocks": {"0": _DOC_VEC}},
+            "colpali_embedding_binary": {"blocks": {"0": _DOC_VEC_BIN}},
+        },
+    )
+
+    time.sleep(2)
+    yield {
+        "http_port": http_port,
+        "image_schema": image_schema,
+        "audio_schema": audio_schema,
+        "document_schema": document_schema,
+    }
+
+    for namespace, schema, doc_id in fed:
+        try:
+            requests.delete(
+                f"http://localhost:{http_port}/document/v1/{namespace}/{schema}"
+                f"/docid/{doc_id}",
+                timeout=5,
+            )
+        except requests.RequestException as delete_err:
+            logger.warning(f"cleanup of {doc_id} failed: {delete_err}")
 
 
 @pytest.fixture(scope="module")
@@ -481,9 +615,10 @@ class TestEntityExtractionAgentStreaming:
         final_data = _get_final(events, "EntityExtractionAgent")
         assert "entities" in final_data
         # "Tesla" should be among extracted entities
-        entity_texts = [
-            e.get("text", e.get("name", "")).lower() for e in final_data["entities"]
-        ]
+        # ``text`` is a required Entity field and the key every production
+        # consumer subscripts; accepting a ``name`` alias here would green-light
+        # a payload that KeyErrors in the gateway and the relationship tools.
+        entity_texts = [e["text"].lower() for e in final_data["entities"]]
         assert any("tesla" in t for t in entity_texts), (
             f"Expected 'Tesla' in extracted entities, got: {final_data['entities']}"
         )
@@ -692,7 +827,12 @@ class TestImageSearchAgentStreaming:
     """ImageSearchAgent streaming with real Vespa."""
 
     def test_stream_phases_and_output(
-        self, vespa_instance, config_manager, dspy_lm, tomoro_search_url
+        self,
+        vespa_instance,
+        config_manager,
+        dspy_lm,
+        tomoro_search_url,
+        content_schemas,
     ):
         from cogniverse_agents.image_search_agent import (
             ImageSearchAgent,
@@ -701,11 +841,15 @@ class TestImageSearchAgentStreaming:
         )
         from cogniverse_foundation.config.utils import get_config
 
+        assert content_schemas["image_schema"] == schema_full_name(
+            "image_colpali_mv", STREAM_TENANT
+        )
+
         agent = ImageSearchAgent(
             deps=ImageSearchDeps(
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
-                tenant_id="test:unit",
-                encoder_config=get_config("test:unit", config_manager),
+                tenant_id=STREAM_TENANT,
+                encoder_config=get_config(STREAM_TENANT, config_manager),
                 image_profile="test_colpali",
             )
         )
@@ -719,16 +863,15 @@ class TestImageSearchAgentStreaming:
             ),
         )
 
-        phases = _get_phases(events)
-        assert "encoding" in phases, f"Missing encoding phase: {phases}"
-        assert "retrieval" in phases, f"Missing retrieval phase: {phases}"
+        assert _get_phases(events) == ["encoding", "retrieval", "complete"], events
 
         final_data = _get_final(events, "ImageSearchAgent")
-        assert "results" in final_data
-        assert isinstance(final_data["results"], list)
-        assert "count" in final_data
-        assert isinstance(final_data["count"], int)
-        assert final_data["count"] == len(final_data["results"])
+        assert final_data["count"] == 1, final_data
+        (hit,) = final_data["results"]
+        assert hit["image_id"] == "stream_img_cat"
+        assert hit["image_url"] == "s3://corpus/stream/cat.jpg"
+        assert hit["title"] == "Cat sitting on a table"
+        assert hit["description"] == "a tabby cat sitting on a wooden table"
 
 
 @pytest.mark.integration
@@ -736,17 +879,21 @@ class TestImageSearchAgentStreaming:
 class TestAudioAnalysisAgentStreaming:
     """AudioAnalysisAgent streaming with real Vespa."""
 
-    def test_stream_phases_and_output(self, vespa_instance, dspy_lm):
+    def test_stream_phases_and_output(self, vespa_instance, dspy_lm, content_schemas):
         from cogniverse_agents.audio_analysis_agent import (
             AudioAnalysisAgent,
             AudioAnalysisDeps,
             AudioSearchInput,
         )
 
+        assert content_schemas["audio_schema"] == schema_full_name(
+            "audio_content", STREAM_TENANT
+        )
+
         agent = AudioAnalysisAgent(
             deps=AudioAnalysisDeps(
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
-                tenant_id="test:unit",
+                tenant_id=STREAM_TENANT,
             )
         )
 
@@ -759,16 +906,20 @@ class TestAudioAnalysisAgentStreaming:
             ),
         )
 
-        phases = _get_phases(events)
-        assert "encoding" in phases, f"Missing encoding phase: {phases}"
-        assert "retrieval" in phases, f"Missing retrieval phase: {phases}"
+        assert _get_phases(events) == ["encoding", "retrieval", "complete"], events
 
+        # Two clips are indexed; only the keynote carries the query terms.
         final_data = _get_final(events, "AudioAnalysisAgent")
-        assert "results" in final_data
-        assert isinstance(final_data["results"], list)
-        assert "count" in final_data
-        assert isinstance(final_data["count"], int)
-        assert final_data["count"] == len(final_data["results"])
+        assert final_data["count"] == 1, final_data
+        (hit,) = final_data["results"]
+        assert hit["audio_id"] == "stream_audio_tech"
+        assert hit["audio_url"] == "s3://corpus/stream/keynote.mp3"
+        assert hit["title"] == "Tech keynote excerpt"
+        assert hit["duration"] == 61.5
+        assert hit["language"] == "en"
+        assert hit["transcript"] == (
+            "a person speaking about technology and machine learning on stage"
+        )
 
 
 @pytest.mark.integration
@@ -777,7 +928,12 @@ class TestDocumentAgentStreaming:
     """DocumentAgent streaming with real Vespa."""
 
     def test_stream_phases_and_output(
-        self, vespa_instance, config_manager, dspy_lm, tomoro_search_url
+        self,
+        vespa_instance,
+        config_manager,
+        dspy_lm,
+        tomoro_search_url,
+        content_schemas,
     ):
         from cogniverse_agents.document_agent import (
             DocumentAgent,
@@ -786,11 +942,15 @@ class TestDocumentAgentStreaming:
         )
         from cogniverse_foundation.config.utils import get_config
 
+        assert content_schemas["document_schema"] == schema_full_name(
+            "document_visual", STREAM_TENANT
+        )
+
         agent = DocumentAgent(
             deps=DocumentAgentDeps(
                 vespa_endpoint=f"http://localhost:{vespa_instance['http_port']}",
-                tenant_id="test:unit",
-                encoder_config=get_config("test:unit", config_manager),
+                tenant_id=STREAM_TENANT,
+                encoder_config=get_config(STREAM_TENANT, config_manager),
                 visual_profile="test_colpali",
             )
         )
@@ -804,17 +964,18 @@ class TestDocumentAgentStreaming:
             ),
         )
 
-        phases = _get_phases(events)
-        assert "strategy_selection" in phases, (
-            f"Missing strategy_selection phase: {phases}"
-        )
+        assert _get_phases(events) == ["strategy_selection", "complete"], events
 
         final_data = _get_final(events, "DocumentAgent")
-        assert "results" in final_data
-        assert isinstance(final_data["results"], list)
-        assert "count" in final_data
-        assert isinstance(final_data["count"], int)
-        assert final_data["count"] == len(final_data["results"])
+        assert final_data["count"] == 1, final_data
+        (hit,) = final_data["results"]
+        assert hit["document_id"] == "stream_doc_earnings_p3"
+        assert hit["document_url"] == "s3://corpus/stream/earnings.pdf"
+        assert hit["title"] == "Q3 Earnings Report"
+        assert hit["page_number"] == 3
+        assert hit["page_count"] == 18
+        assert hit["document_type"] == "pdf"
+        assert hit["strategy_used"] == "visual"
 
 
 # ── Full A2A round-trip streaming test ───────────────────────────────────────

@@ -7,26 +7,21 @@ HTTP contract — request shapes, audio decode/resample, exact 512-dim
 responses — which the in-process unit tests cannot prove.
 """
 
-import importlib.util
 import socket
 import threading
 import time
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
 import requests
+from cogniverse_cli.modal_inference.servers import clap as clap_embed_server
 
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
 
 pytestmark = pytest.mark.integration
-
-SERVER_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "libs/runtime/cogniverse_runtime/sidecars/clap_embed.py"
-)
 
 
 class _FakeTensor:
@@ -54,10 +49,13 @@ class _FakeClapModel:
 class _FakeClapProcessor:
     def __init__(self):
         self.audio_calls = []
+        self.text_calls = []
 
     def __call__(self, audios=None, text=None, sampling_rate=None, **_kw):
         if audios is not None:
             self.audio_calls.append((np.asarray(audios), sampling_rate))
+        if text is not None:
+            self.text_calls.append(text)
         return {}
 
 
@@ -72,16 +70,20 @@ def clap_sidecar():
     """The real sidecar module served over real HTTP, model stubbed."""
     import uvicorn
 
-    spec = importlib.util.spec_from_file_location(
-        "clap_embed_under_test", str(SERVER_PATH)
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = clap_embed_server
     mod._MODEL = _FakeClapModel()
     mod._PROCESSOR = _FakeClapProcessor()
+    mod._RECEIVED_AUTHORIZATIONS = []
+    app = mod.build_app(mod.ClapEmbedConfig())
+
+    @app.middleware("http")
+    async def capture_authorization(request, call_next):
+        if request.url.path.startswith("/embed/"):
+            mod._RECEIVED_AUTHORIZATIONS.append(request.headers.get("Authorization"))
+        return await call_next(request)
 
     port = _free_port()
-    config = uvicorn.Config(mod.app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -144,3 +146,51 @@ def test_remote_audio_array_round_trip(clap_sidecar):
     audio_arr, sampling_rate = clap_sidecar["module"]._PROCESSOR.audio_calls[-1]
     assert sampling_rate == 48000
     assert audio_arr.shape == (sr // 4,)
+
+
+def test_concurrent_text_calls_share_one_authenticated_client(clap_sidecar):
+    token = "modal-clap-key"
+    module = clap_sidecar["module"]
+    module._RECEIVED_AUTHORIZATIONS.clear()
+    module._PROCESSOR.text_calls.clear()
+    generator = AudioEmbeddingGenerator(
+        clap_endpoint_url=clap_sidecar["url"],
+        clap_headers={"Authorization": f"Bearer {token}"},
+    )
+    callers = threading.Barrier(12)
+    texts = [f"acoustic query {index}" for index in range(12)]
+
+    def encode(text):
+        callers.wait(timeout=5)
+        vector = generator.generate_acoustic_text_embedding(text)
+        return id(generator._get_http_client()), vector.tolist()
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        results = list(executor.map(encode, texts))
+
+    assert not callers.broken
+    assert {client_id for client_id, _ in results} == {id(generator._http_client)}
+    assert [vector for _, vector in results] == [[-0.5] * 512] * 12
+    assert module._RECEIVED_AUTHORIZATIONS == [f"Bearer {token}"] * 12
+    assert sorted(module._PROCESSOR.text_calls) == sorted([[text] for text in texts])
+    generator.close()
+    assert generator._http_client is None
+
+
+def test_connection_refusal_includes_endpoint_without_credential():
+    token = "modal-clap-key"
+    refused_url = f"http://127.0.0.1:{_free_port()}"
+    generator = AudioEmbeddingGenerator(
+        clap_endpoint_url=refused_url,
+        clap_headers={"Authorization": f"Bearer {token}"},
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        generator.generate_acoustic_text_embedding("rain")
+
+    message = str(caught.value)
+    assert message.startswith(
+        f"CLAP request to {refused_url}/embed/text failed: ConnectError:"
+    )
+    assert "Connection refused" in message
+    assert token not in message

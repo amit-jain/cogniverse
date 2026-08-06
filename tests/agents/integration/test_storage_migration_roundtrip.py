@@ -20,7 +20,7 @@ Components tested:
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -264,13 +264,14 @@ class TestWorkflowIntelligenceRoundTrip:
             task_count=2,
             parallel_efficiency=0.85,
             confidence_score=0.92,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )
 
         # record_execution stores to in-memory workflow_history
         await wi.record_execution(execution)
         assert len(wi.workflow_history) == 1
         assert wi.workflow_history[0].workflow_id == execution.workflow_id
+        assert wi.workflow_history[0].timestamp == execution.timestamp
 
     @pytest.mark.asyncio
     async def test_load_historical_data_empty(self, real_provider):

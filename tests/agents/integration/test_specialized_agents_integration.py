@@ -22,11 +22,13 @@ from tests.fixtures.llm import (
 
 
 @pytest.fixture
-def real_dspy_lm():
-    """Real DSPy.LM configured against the configured test LM."""
-    assert is_test_lm_available(), (
-        f"Test LM endpoint not reachable at {resolve_base_url()}"
-    )
+def real_dspy_lm(gemma_inference_endpoint):
+    """Real DSPy.LM against the endpoint provisioned by the session fixture.
+
+    ``gemma_inference_endpoint`` (tests/agents/integration/conftest.py)
+    resolves the Modal Gemma service or the local test LM and exports the
+    ``TEST_LLM_*`` env vars the ``resolve_*`` helpers read.
+    """
     lm = create_dspy_lm(
         LLMEndpointConfig(
             model=resolve_prefixed_model(),

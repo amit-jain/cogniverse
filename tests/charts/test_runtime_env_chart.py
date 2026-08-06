@@ -170,3 +170,42 @@ class TestDeviceOverlaysKeepDevMode:
     def test_k3s_plus_rocm_keeps_dev_mounts(self):
         manifests = _render_with_values("values.k3s.yaml", "values.rocm.yaml")
         assert _dev_mount_count(manifests) > 0
+
+
+class TestWorkflowApiUrlTargetsTheDeployedArgo:
+    """``WORKFLOW_API_URL`` must name an Argo server the release actually has.
+
+    The in-release ``argo-workflows`` subchart is gated on
+    ``argo.subchart.enabled`` and OFF by default — Chart.yaml calls it "a
+    redundant second install" because ``cogniverse up`` manages a standalone
+    Argo at argo-server.argo.svc. Addressing the subchart unconditionally left
+    the runtime pointing at a Service that does not exist in the default
+    configuration, so every scheduled-job submission failed DNS resolution and
+    the route answered 503 ("Argo unreachable while scheduling job ...
+    Name or service not known").
+    """
+
+    def test_default_targets_the_standalone_argo_install(self):
+        env = _runtime_container_env(_render_chart())
+
+        assert (
+            env["WORKFLOW_API_URL"] == "https://argo-server.argo.svc.cluster.local:2746"
+        )
+        assert env["WORKFLOW_NAMESPACE"] == "default"
+
+    def test_enabling_the_subchart_targets_the_in_release_server(self):
+        env = _runtime_container_env(_render_chart("argo.subchart.enabled=true"))
+
+        assert env["WORKFLOW_API_URL"] == (
+            "http://cogniverse-argo-workflows-server.default.svc.cluster.local:2746"
+        )
+
+    def test_the_addressed_host_matches_the_cronworkflow_submission_target(self):
+        """The runtime and the chart's CronWorkflows must submit to one Argo."""
+        manifests = _render_chart()
+        env = _runtime_container_env(manifests)
+        rendered = yaml.safe_dump_all(manifests)
+
+        host = env["WORKFLOW_API_URL"].split("://", 1)[1]
+        assert "argo-server.argo.svc.cluster.local:2746" == host
+        assert f"https://{host}" in rendered

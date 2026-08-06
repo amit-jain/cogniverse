@@ -39,7 +39,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 VESPA_HTTP_PORT = 8080
 VESPA_CONFIG_PORT = 33071
@@ -137,7 +137,6 @@ def _pin(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestUserQuotaEnforced:
     """Setting user pin quota to 2 caps the user role's pins at 2."""
 
@@ -204,7 +203,6 @@ class TestUserQuotaEnforced:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestOrgAdminOverridesQuota:
     """user quota=2 capped users; org_admin pins past it succeed."""
 
@@ -261,7 +259,6 @@ class TestOrgAdminOverridesQuota:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSchemaPinnableFloorRejected:
     """kg_node has pinnable_by=tenant_admin; user role cannot pin."""
 
@@ -311,7 +308,6 @@ class TestSchemaPinnableFloorRejected:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestListPinsRoundTrip:
     """After pinning 2 memories, GET /pins returns exactly those two ids."""
 
@@ -366,7 +362,6 @@ class TestListPinsRoundTrip:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRestoreSoftDeletedMemory:
     """Aged-past-TTL memory → cleanup_with_schema soft-deletes → POST /restore clears archived."""
 

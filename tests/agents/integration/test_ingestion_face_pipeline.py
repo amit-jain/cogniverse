@@ -17,18 +17,17 @@ stages would have produced. Locks the W1–W4 contract:
 """
 
 import base64
-import importlib.util
 import io
 import socket
 import sys
 import threading
 import time
 import types
-from pathlib import Path
 
 import numpy as np
 import pytest
 import requests
+from cogniverse_cli.modal_inference.servers import face as face_embed_server
 from PIL import Image
 
 from cogniverse_agents.graph.graph_schema import (
@@ -37,9 +36,14 @@ from cogniverse_agents.graph.graph_schema import (
     Node,
 )
 
-SERVER_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "libs/runtime/cogniverse_runtime/sidecars/face_embed.py"
+FACE_MODEL_NAME = "buffalo_l"
+FACE_MODEL_REVISION = "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f"
+FACE_MODEL_FILES = (
+    "1k3d68.onnx",
+    "2d106det.onnx",
+    "det_10g.onnx",
+    "genderage.onnx",
+    "w600k_r50.onnx",
 )
 
 pytestmark = pytest.mark.integration
@@ -66,8 +70,18 @@ class _FakeFace:
 
 
 class _ColorAwareFaceAnalysis:
-    def __init__(self, name: str = "buffalo_l") -> None:
+    last_root: str | None = None
+
+    def __init__(
+        self,
+        name: str = FACE_MODEL_NAME,
+        root: str | None = None,
+        providers: list[str] | None = None,
+    ) -> None:
         self.name = name
+        self.root = root
+        self.providers = providers
+        type(self).last_root = root
 
     def prepare(self, ctx_id: int = -1, det_size=(640, 640)) -> None:  # noqa: ARG002
         return None
@@ -98,7 +112,17 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def face_embed_url():
+def face_model_root(tmp_path_factory):
+    root = tmp_path_factory.mktemp("ingestion-face-model")
+    model_dir = root / "models" / FACE_MODEL_NAME
+    model_dir.mkdir(parents=True)
+    for filename in FACE_MODEL_FILES:
+        (model_dir / filename).write_bytes(b"test model artifact")
+    return root
+
+
+@pytest.fixture(scope="module")
+def face_embed_url(face_model_root):
     fake_insightface = types.ModuleType("insightface")
     fake_app = types.ModuleType("insightface.app")
     fake_app.FaceAnalysis = _ColorAwareFaceAnalysis
@@ -110,17 +134,14 @@ def face_embed_url():
     sys.modules["insightface"] = fake_insightface
     sys.modules["insightface.app"] = fake_app
 
-    spec = importlib.util.spec_from_file_location(
-        "face_embed_server_wired", str(SERVER_PATH)
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = face_embed_server
     mod._MODEL = None
+    app = mod.build_app(mod.FaceEmbedConfig(model_root=str(face_model_root)))
 
     import uvicorn  # noqa: PLC0415
 
     port = _free_port()
-    config = uvicorn.Config(mod.app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -222,7 +243,9 @@ def _debate_linked_extraction():
 # --------------------------------------------------------------------- #
 
 
-def test_face_pipeline_emits_temporal_attribution_edges(face_embed_url):
+def test_face_pipeline_emits_temporal_attribution_edges(
+    face_embed_url, face_model_root
+):
     from cogniverse_runtime.routers.ingestion import _run_face_pipeline
 
     edges, nodes = _run_face_pipeline(
@@ -251,6 +274,18 @@ def test_face_pipeline_emits_temporal_attribution_edges(face_embed_url):
     assert bob_edge.target == "Bob Smith"
     assert bob_edge.confidence == 1.0
     assert bob_edge.provenance == "face_cluster_temporal"
+    assert _ColorAwareFaceAnalysis.last_root == str(face_model_root)
+
+
+def test_sidecar_reports_pinned_model_revision(face_embed_url):
+    response = requests.get(f"{face_embed_url}/health", timeout=1)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "model": FACE_MODEL_NAME,
+        "model_revision": FACE_MODEL_REVISION,
+    }
 
 
 # --------------------------------------------------------------------- #

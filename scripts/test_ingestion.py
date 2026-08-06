@@ -60,12 +60,6 @@ def build_pytest_command(args) -> List[str]:
 
     if args.requires_vespa:
         markers.append("requires_vespa")
-    if args.requires_colpali:
-        markers.append("requires_colpali")
-    if args.requires_videoprism:
-        markers.append("requires_videoprism")
-    if args.requires_colqwen:
-        markers.append("requires_colqwen")
 
     # Exclude heavy models in CI by default
     if args.exclude_heavy or (is_ci_environment() and not args.include_heavy):
@@ -115,17 +109,6 @@ def main():
     parser.add_argument("--requires-vespa", action="store_true", help="Run Vespa tests")
     parser.add_argument(
         "--requires-docker", action="store_true", help="Run Docker tests"
-    )
-
-    # Model requirements
-    parser.add_argument(
-        "--requires-colpali", action="store_true", help="Run ColPali tests"
-    )
-    parser.add_argument(
-        "--requires-videoprism", action="store_true", help="Run VideoPrism tests"
-    )
-    parser.add_argument(
-        "--requires-colqwen", action="store_true", help="Run ColQwen tests"
     )
 
     # Heavy model control

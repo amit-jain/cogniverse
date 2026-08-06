@@ -252,3 +252,88 @@ class TestBatchSolverRealPhoenix:
         assert trace["ground_truth_source"] == "no_backend"
         stats = result.metadata["ground_truth_stats"]
         assert stats["total_traces"] == 1
+
+
+_MEMO_PROBE_DATASET = "dataset-frame-memo-probe"
+
+
+class TestDatasetFrameMemoIsScopedToOneTest:
+    """``evaluation_task`` memoises the fetched Phoenix frame per
+    ``(endpoint, dataset_name)`` so one experiment sweep fetches a dataset once
+    across its profile x strategy tasks.
+
+    These two tests run in order against the same module-scoped Phoenix. The
+    first populates the memo; the second appends a row to the same dataset and
+    must see it. If the memo survives the test that created it, the second
+    reads the first's frame and the appended row is invisible.
+    """
+
+    def test_first_task_populates_the_memo(
+        self, search_evaluator_provider, phoenix_container
+    ):
+        from cogniverse_evaluation.core import task as task_mod
+        from cogniverse_evaluation.data.datasets import DatasetManager
+        from cogniverse_evaluation.providers import get_evaluation_provider
+        from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
+
+        assert task_mod._DATASET_FRAMES == {}
+
+        store = PhoenixDatasetStore(http_endpoint=phoenix_container["http_endpoint"])
+        DatasetManager(tenant_id="acme:t", dataset_store=store).create_from_queries(
+            [
+                {
+                    "query": "alpha marker query",
+                    "expected_videos": ["alpha_vid"],
+                    "category": "visual",
+                }
+            ],
+            _MEMO_PROBE_DATASET,
+        )
+
+        task = evaluation_task(
+            mode="experiment",
+            dataset_name=_MEMO_PROBE_DATASET,
+            profiles=["colpali_prof"],
+            strategies=["float_float"],
+        )
+
+        samples = _samples_by_input(task)
+        assert sorted(samples) == ["alpha marker query"]
+        assert samples["alpha marker query"].target == ["alpha_vid"]
+
+        endpoint = get_evaluation_provider().http_endpoint
+        assert list(task_mod._DATASET_FRAMES) == [(endpoint, _MEMO_PROBE_DATASET)]
+
+    def test_second_task_reads_live_phoenix_not_the_previous_frame(
+        self, search_evaluator_provider, phoenix_container
+    ):
+        from cogniverse_evaluation.core import task as task_mod
+        from cogniverse_evaluation.data.datasets import DatasetManager
+        from cogniverse_telemetry_phoenix.provider import PhoenixDatasetStore
+
+        memo_at_entry = dict(task_mod._DATASET_FRAMES)
+
+        store = PhoenixDatasetStore(http_endpoint=phoenix_container["http_endpoint"])
+        DatasetManager(tenant_id="acme:t", dataset_store=store).create_from_queries(
+            [
+                {
+                    "query": "beta marker query",
+                    "expected_videos": ["beta_vid"],
+                    "category": "visual",
+                }
+            ],
+            _MEMO_PROBE_DATASET,
+        )
+
+        task = evaluation_task(
+            mode="experiment",
+            dataset_name=_MEMO_PROBE_DATASET,
+            profiles=["colpali_prof"],
+            strategies=["float_float"],
+        )
+
+        samples = _samples_by_input(task)
+        assert sorted(samples) == ["alpha marker query", "beta marker query"]
+        assert samples["beta marker query"].target == ["beta_vid"]
+        assert samples["alpha marker query"].target == ["alpha_vid"]
+        assert memo_at_entry == {}

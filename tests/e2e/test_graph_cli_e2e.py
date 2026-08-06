@@ -17,7 +17,6 @@ import pytest
 from tests.e2e.conftest import (
     RUNTIME,
     register_tenant_and_wait,
-    skip_if_no_runtime,
 )
 
 GRAPH_STATS_URL = f"{RUNTIME}/graph/stats"
@@ -46,7 +45,6 @@ def _unique_tenant() -> str:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGraphEndpoints:
     """Direct tests of /graph/* against the live runtime."""
 
@@ -276,7 +274,6 @@ class TestGraphEndpoints:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestMultimodalGraphExtraction:
     """Graph extraction from multimodal content via the ingestion pipeline.
 
@@ -288,9 +285,8 @@ class TestMultimodalGraphExtraction:
     """
 
     def test_video_upload_produces_graph_nodes(self):
-        video_path = Path("data/testset/evaluation/sample_videos/v_-nl4G-00PtA.mp4")
-        if not video_path.exists():
-            pytest.skip(f"Sample video missing at {video_path}")
+        video_path = Path("tests/system/resources/videos/v_-D1gdv_gQyw.mp4")
+        assert video_path.exists(), f"Tracked sample video is missing: {video_path}"
 
         tenant = _unique_tenant()
         with httpx.Client(timeout=1800.0) as client:
@@ -323,7 +319,6 @@ class TestMultimodalGraphExtraction:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestCliIndexWithGraph:
     """cogniverse index extracts graph from real files and persists them."""
 

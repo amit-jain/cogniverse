@@ -13,6 +13,9 @@ and asserts the frames actually reached the model (``keyframes_attached > 0``).
 The unit tests only exercise this with a faked MediaLocator / LM; this proves the
 contract end to end across the real ingestion pipeline, MinIO, Vespa, the search
 agent, and the report agent's LLM call.
+
+The autouse E2E fixture provisions the stack. An unavailable runtime or tracked
+video fixture fails with its exact endpoint or path.
 """
 
 import time
@@ -22,8 +25,11 @@ import httpx
 import pytest
 import requests
 
+from cogniverse_runtime.ingestion_worker.status_api import TERMINAL_STATES
+from tests.e2e.test_ingestion_upload_e2e import EXPECTED_KEYFRAMES
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SAMPLE_VIDEO = REPO_ROOT / "data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4"
+SAMPLE_VIDEO = REPO_ROOT / "tests/system/resources/videos/v_-D1gdv_gQyw.mp4"
 RUNTIME_URL = "http://localhost:33000"
 VESPA_URL = "http://localhost:33080"
 TENANT_FULL_ID = "flywheel_org:production"
@@ -31,35 +37,31 @@ PROFILE = "video_colpali_smol500_mv_frame"
 SCHEMA_NAME = "video_colpali_smol500_mv_frame_flywheel_org_production"
 
 
-def _service_up(url: str, timeout: float = 3.0) -> bool:
-    try:
-        return requests.get(url, timeout=timeout).status_code == 200
-    except requests.RequestException:
-        return False
+pytestmark = pytest.mark.e2e
 
 
-def _tenant_registered() -> bool:
-    try:
-        resp = requests.get(
-            f"{RUNTIME_URL}/admin/organizations/flywheel_org/tenants", timeout=5
+@pytest.fixture(scope="module", autouse=True)
+def _require_multimodal_prerequisites() -> None:
+    if not SAMPLE_VIDEO.is_file():
+        pytest.fail(
+            f"multimodal fixture video unavailable at {SAMPLE_VIDEO}",
+            pytrace=False,
         )
-        if resp.status_code != 200:
-            return False
-        return any(
-            t.get("tenant_full_id") == TENANT_FULL_ID
-            for t in resp.json().get("tenants", [])
+    health_url = f"{RUNTIME_URL}/health/live"
+    try:
+        response = requests.get(health_url, timeout=10)
+    except requests.RequestException as exc:
+        pytest.fail(
+            f"cogniverse runtime unavailable at {health_url}: "
+            f"{type(exc).__name__}: {exc}",
+            pytrace=False,
         )
-    except requests.RequestException:
-        return False
-
-
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not SAMPLE_VIDEO.exists(),
-        reason=f"sample video missing: {SAMPLE_VIDEO}",
-    ),
-]
+    if response.status_code != 200:
+        pytest.fail(
+            f"cogniverse runtime unavailable at {health_url}: "
+            f"HTTP {response.status_code} body={response.text[:300]!r}",
+            pytrace=False,
+        )
 
 
 def _wait_terminal(ingest_id: str, deadline_s: int = 2400) -> dict:
@@ -74,7 +76,9 @@ def _wait_terminal(ingest_id: str, deadline_s: int = 2400) -> dict:
         resp.raise_for_status()
         payload = resp.json()
         last = payload.get("latest", {})
-        if payload.get("state") in ("complete", "completed", "failed", "error"):
+        # The worker emits queued / running / complete / failed; the terminal
+        # pair matches status_api.TERMINAL_STATES.
+        if payload["state"] in TERMINAL_STATES:
             return payload
         time.sleep(5)
     pytest.fail(f"ingest {ingest_id} did not reach terminal in {deadline_s}s: {last}")
@@ -100,9 +104,11 @@ def ingested_video() -> dict:
     upload = resp.json()
     assert upload["source_url"].startswith(f"s3://cogniverse-ingest/{TENANT_FULL_ID}/")
     final = _wait_terminal(upload["ingest_id"])
-    assert final["state"] in ("complete", "completed"), final
+    assert final["state"] == "complete", final
     result = final["latest"]["result"]
-    assert result["keyframes"] == 19, f"expected 19 keyframes, got {result}"
+    assert result["keyframes"] == EXPECTED_KEYFRAMES, (
+        f"expected {EXPECTED_KEYFRAMES} keyframes, got {result}"
+    )
     return {
         "video_id": result["video_id"],
         "source_url": upload["source_url"],
