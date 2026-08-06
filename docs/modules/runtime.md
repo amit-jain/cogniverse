@@ -713,6 +713,8 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 
 **GET /admin/messaging/outbound/drain** — Return and clear the pending outbound messages for the gateway to deliver (it polls this). Response `{"messages": [{tenant_id, chat_id, text, platform, created_at}, ...]}`.
 
+The `tenant_id` on every memory, pin, endorse, promote, and restore route below is canonicalized via `canonical_tenant_id` at route entry — mem0 partitions rows by the exact tenant string, so simple form (`acme`) and colon form (`acme:acme`) address the same partition.
+
 **DELETE /admin/memories/{tenant_id}/{memory_id}** — Delete any memory by id regardless of namespace (tries `_user_memories` then `_strategy_store`). 404 if not found in either.
 
 **DELETE /admin/memories/{tenant_id}?type={preference|strategy|all}** — Clear memories by type (`preference` → `_user_memories`, `strategy` → `_strategy_store`); omitted/`all` clears both namespaces.
@@ -753,7 +755,7 @@ Response: `{source_tenant_id, source_memory_id, promoted_memory_id, org_trunk_te
 
 **POST /admin/tenants/{tenant_id}/memories/{memory_id}/restore** — Clear the `metadata.archived=true` flag set by the soft-delete sweep. Returns 404 once 2*TTL hard-delete has run.
 
-**Tenant self-service memory management** (`libs/runtime/cogniverse_runtime/routers/tenant.py`, mounted at `/admin/tenant` — see [Router Architecture](#router-architecture))
+**Tenant self-service memory management** (`libs/runtime/cogniverse_runtime/routers/tenant.py`, mounted at `/admin/tenant` — see [Router Architecture](#router-architecture)). The `tenant_id` path param on the memory routes is canonicalized at route entry, so simple and colon forms address the same mem0 partition.
 
 **POST /admin/tenant/{tenant_id}/memories** — Save a user-defined memory. Body: `{text: str, category?: str, kind?: str, metadata?: dict}` (`metadata` merges on top of the derived `category`/`kind` fields). Response: `{status: "saved", id, type: "preference", category, kind}`.
 

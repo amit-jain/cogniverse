@@ -174,6 +174,27 @@ class TestAdminDeleteMemory:
         assert resp.status_code == 503
         assert resp.json() == {"detail": "Memory backend not initialised"}
 
+    def test_simple_form_tenant_is_canonicalized_to_org_tenant(
+        self, client, monkeypatch
+    ):
+        """A bare-form tenant id must reach the mem0 seam as org:tenant —
+        mem0 partitions rows by the exact user_id string, so a raw "beta"
+        delete would probe a partition the canonical-form writers never
+        touched and 404 on a memory that exists."""
+        stub_cls = _make_stub_manager_class(
+            delete_results={"_user_memories": True, "_strategy_store": True}
+        )
+        monkeypatch.setattr(
+            "cogniverse_core.memory.manager.Mem0MemoryManager", stub_cls
+        )
+
+        resp = client.delete("/admin/memories/beta/mem-9")
+        assert resp.status_code == 200
+
+        (mgr,) = stub_cls.instances
+        assert mgr.tenant_id == "beta:beta"
+        assert mgr.delete_calls[0]["tenant_id"] == "beta:beta"
+
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
