@@ -715,6 +715,31 @@ class MessagingGateway:
             )
         return reachable
 
+    def _log_dropped_outbound_retry(self) -> None:
+        """Best-effort record of in-flight retries lost on shutdown.
+
+        ``self._outbound_retry`` has no persistence across restarts, so a
+        message that already failed once and is waiting on a later tick is
+        gone the moment the process exits. By the time this runs, the
+        drain loop is already cancelled and the bot/runtime client are
+        already torn down, so nothing here can resend — this only turns a
+        silent drop into a logged one. Does not run on an unclean kill
+        (OOM, SIGKILL), same as any other Python shutdown hook.
+        """
+        pending = self._outbound_retry
+        if not pending:
+            return
+        self._outbound_retry = []
+        for msg, attempts in pending:
+            logger.error(
+                "Gateway shutting down with an unsent outbound message to "
+                "chat %s still in the in-memory retry buffer (attempt "
+                "%d/%d); dropped, no persistence across restarts",
+                msg.get("chat_id"),
+                attempts,
+                OUTBOUND_SEND_MAX_ATTEMPTS,
+            )
+
     async def run(self) -> None:
         """Run the gateway in the configured mode.
 
@@ -722,7 +747,9 @@ class MessagingGateway:
         stop containers with SIGTERM, whose default disposition kills the
         process without running any ``finally`` — the webhook stayed
         registered at a dead endpoint and nothing was closed. Cancellation
-        routes shutdown through the same path as Ctrl+C.
+        routes shutdown through the same path as Ctrl+C. The finally block
+        also flushes any outbound message still stuck in the in-memory
+        retry buffer to the log — see ``_log_dropped_outbound_retry``.
         """
         loop = asyncio.get_running_loop()
         task = asyncio.current_task()
@@ -743,6 +770,7 @@ class MessagingGateway:
                     f"expected 'polling' or 'webhook'"
                 )
         finally:
+            self._log_dropped_outbound_retry()
             with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
                 loop.remove_signal_handler(signal.SIGTERM)
 
