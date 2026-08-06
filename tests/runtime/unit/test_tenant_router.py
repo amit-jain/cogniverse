@@ -193,7 +193,7 @@ class TestCreateMemory:
         # is skipped (the user wrote exactly what they want stored).
         mgr.add_memory.assert_called_once_with(
             content="I prefer dark mode",
-            tenant_id="acme",
+            tenant_id="acme:acme",
             agent_name="_user_memories",
             metadata={},
             infer=False,
@@ -218,11 +218,31 @@ class TestCreateMemory:
         assert data["category"] == "search"
         mgr.add_memory.assert_called_once_with(
             content="Always use ColPali",
-            tenant_id="acme",
+            tenant_id="acme:acme",
             agent_name="_user_memories",
             metadata={"category": "search"},
             infer=False,
         )
+
+    def test_simple_form_tenant_is_canonicalized_to_org_tenant(self, tenant_client):
+        """A bare-form tenant id must reach the mem0 seam as org:tenant.
+
+        mem0 partitions rows by the exact user_id string, so a raw "acme"
+        write would land in a partition the canonical-form readers never
+        query."""
+        client, _ = tenant_client
+        mgr = MagicMock()
+        mgr.memory = MagicMock()
+        mgr.add_memory.return_value = "mem-789"
+
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ) as mm_cls:
+            resp = client.post("/acme/memories", json={"text": "note"})
+
+        assert resp.status_code == 200
+        mm_cls.assert_called_once_with("acme:acme")
+        assert mgr.add_memory.call_args.kwargs["tenant_id"] == "acme:acme"
 
 
 @pytest.mark.unit
@@ -395,7 +415,7 @@ class TestDeleteMemory:
         assert resp.json()["status"] == "deleted"
         mgr.delete_memory.assert_called_once_with(
             memory_id="mem-abc123",
-            tenant_id="acme",
+            tenant_id="acme:acme",
             agent_name="_user_memories",
         )
 
@@ -431,7 +451,7 @@ class TestClearMemories:
         assert resp.status_code == 200
         assert resp.json()["status"] == "cleared"
         mgr.clear_agent_memory.assert_called_once_with(
-            tenant_id="acme",
+            tenant_id="acme:acme",
             agent_name="_user_memories",
         )
 
@@ -458,7 +478,7 @@ class TestClearMemories:
         assert data["deleted"] == 1
         mgr.delete_memory.assert_called_once_with(
             memory_id="m1",
-            tenant_id="acme",
+            tenant_id="acme:acme",
             agent_name="_user_memories",
         )
 
