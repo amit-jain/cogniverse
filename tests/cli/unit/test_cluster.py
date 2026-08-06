@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import cogniverse_cli.cluster as cluster
@@ -20,6 +22,45 @@ from cogniverse_cli.cluster import (
     start_port_forwards,
     stop_port_forwards,
 )
+
+
+def _install_fake_cluster_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    list_json: str = "[]",
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    k3d = bin_dir / "k3d"
+    k3d.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+
+args = sys.argv[1:]
+if args[:2] == ["cluster", "list"] and "-o" in args:
+    print(os.environ.get("FAKE_K3D_LIST_JSON", "[]"))
+raise SystemExit(0)
+"""
+    )
+    k3d.chmod(0o755)
+
+    kubectl = bin_dir / "kubectl"
+    kubectl.write_text(
+        """#!/usr/bin/env python3
+import sys
+
+if "configmap" in sys.argv:
+    raise SystemExit(1)
+raise SystemExit(0)
+"""
+    )
+    kubectl.chmod(0o755)
+
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_K3D_LIST_JSON", list_json)
 
 
 class TestCheckPrerequisites:
@@ -591,6 +632,50 @@ class TestPinCorednsUpstreams:
         assert calls[1] == ["k3d", "cluster", "start", "cogniverse"]
         assert calls[2] == calls[0]
         assert any("configmap" in c for c in calls[3:])
+
+    def test_create_cluster_raises_when_coredns_pinning_times_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from cogniverse_cli.cluster import ClusterStartError, create_cluster
+
+        _install_fake_cluster_tools(tmp_path, monkeypatch)
+        real_pin = cluster.pin_coredns_upstreams
+        monkeypatch.setattr(
+            cluster,
+            "pin_coredns_upstreams",
+            lambda name: real_pin(name, timeout_s=0.0),
+        )
+
+        with pytest.raises(ClusterStartError, match="Could not pin CoreDNS upstreams"):
+            create_cluster(
+                "cogniverse",
+                ports=[],
+                share_hf_cache=False,
+                share_host_storage=False,
+            )
+
+    def test_start_cluster_raises_when_coredns_pinning_times_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from cogniverse_cli.cluster import ClusterStartError, start_cluster
+
+        _install_fake_cluster_tools(
+            tmp_path,
+            monkeypatch,
+            list_json=(
+                '[{"name": "cogniverse", "network": {"name": "k3d-cogniverse"},'
+                ' "nodes": []}]'
+            ),
+        )
+        real_pin = cluster.pin_coredns_upstreams
+        monkeypatch.setattr(
+            cluster,
+            "pin_coredns_upstreams",
+            lambda name: real_pin(name, timeout_s=0.0),
+        )
+
+        with pytest.raises(ClusterStartError, match="Could not pin CoreDNS upstreams"):
+            start_cluster("cogniverse")
 
 
 class _FakeProc:

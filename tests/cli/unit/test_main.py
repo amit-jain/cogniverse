@@ -399,6 +399,31 @@ class TestUpCommand:
         assert result.exit_code == 0
         mock_start_pf.assert_called_once()
 
+    def test_up_reports_cluster_creation_failure(self) -> None:
+        from cogniverse_cli.cluster import ClusterStartError
+
+        with (
+            patch("cogniverse_cli.main.check_prerequisites", return_value=[]),
+            patch("cogniverse_cli.main.has_existing_k8s", return_value=False),
+            patch("cogniverse_cli.main.cluster_exists", return_value=False),
+            patch("cogniverse_cli.main.has_workspace_source", return_value=False),
+            patch(
+                "cogniverse_cli.main.resolve_project_root", return_value=Path("/root")
+            ),
+            patch("cogniverse_cli.main._probe_host_llm", return_value=False),
+            patch(
+                "cogniverse_cli.main.create_cluster",
+                side_effect=ClusterStartError(
+                    "Could not pin CoreDNS upstreams for k3d cluster 'cogniverse'"
+                ),
+            ),
+        ):
+            result = CliRunner().invoke(cli, ["up"])
+
+        assert result.exit_code == 1
+        assert "Could not pin CoreDNS upstreams" in result.output
+        assert "Traceback" not in result.output
+
 
 class TestUpImagePrune:
     """After building + importing images, `up` prunes the superseded

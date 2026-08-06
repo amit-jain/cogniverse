@@ -28,7 +28,7 @@ class AdapterMetadata:
         agent_type: Target agent type (routing, profile_selection, entity_extraction)
         training_method: Training method used (sft, dpo, embedding)
         adapter_path: Local filesystem path to adapter weights (for local dev)
-        adapter_uri: Cloud storage URI (s3://, gs://, modal://, file://) for production
+        adapter_uri: Cloud storage URI (hf://, s3://, modal://, file://) for production
         status: Lifecycle status (active, inactive, deprecated)
         is_active: Whether this is the active adapter for tenant+agent_type
         metrics: Training metrics (loss, accuracy, etc.)
@@ -143,11 +143,11 @@ class AdapterMetadata:
         """
         Get the effective URI for loading the adapter.
 
-        Returns adapter_uri if set (for cloud/Modal storage),
+        Returns adapter_uri if set (for cloud storage),
         otherwise returns file:// URI from adapter_path.
 
         Returns:
-            URI string (s3://, modal://, file://, etc.)
+            URI string (hf://, s3://, modal://, file://, etc.)
         """
         if self.adapter_uri:
             return self.adapter_uri

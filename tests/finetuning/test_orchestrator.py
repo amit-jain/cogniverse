@@ -6,6 +6,7 @@ Tests validation functions and orchestration flows for SFT, DPO, and embedding d
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from cogniverse_finetuning.orchestrator import (
@@ -16,6 +17,8 @@ from cogniverse_finetuning.orchestrator import (
     validate_embedding_dataset,
     validate_sft_dataset,
 )
+from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
+from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
 
 class _NoTracerProvider:
@@ -150,6 +153,11 @@ class TestOrchestrationFlows:
         """Test SFT orchestration flow with mocked components"""
         # Create mock telemetry provider
         mock_provider = MagicMock()
+        mock_provider.datasets.get_dataset = AsyncMock(
+            side_effect=DatasetNotFoundError(
+                "Dataset not found: approved_synthetic_data"
+            )
+        )
 
         # Create orchestrator
         orchestrator = FinetuningOrchestrator(
@@ -167,6 +175,7 @@ class TestOrchestrationFlows:
             base_model="HuggingFaceTB/SmolLM-135M",
             backend="local",
             generate_synthetic=False,
+            enable_registry=False,
         )
 
         # Mock the selector to return SFT recommendation
@@ -251,6 +260,11 @@ class TestOrchestrationFlows:
         """Test DPO orchestration flow with mocked components"""
         # Create mock telemetry provider
         mock_provider = MagicMock()
+        mock_provider.datasets.get_dataset = AsyncMock(
+            side_effect=DatasetNotFoundError(
+                "Dataset not found: approved_synthetic_data"
+            )
+        )
 
         # Create orchestrator
         orchestrator = FinetuningOrchestrator(
@@ -268,6 +282,7 @@ class TestOrchestrationFlows:
             base_model="HuggingFaceTB/SmolLM-135M",
             backend="local",
             generate_synthetic=False,
+            enable_registry=False,
         )
 
         # Mock the selector to return DPO recommendation
@@ -367,6 +382,7 @@ class TestOrchestrationFlows:
             modality="video",
             base_model="sentence-transformers/all-MiniLM-L6-v2",
             backend="local",
+            enable_registry=False,
         )
 
         # Mock the extractor to return triplets
@@ -522,6 +538,34 @@ class TestOrchestrationFlows:
             call_args = mock_remote_backend.call_args
             assert call_args[1]["provider"] == "modal"
 
+    @pytest.mark.asyncio
+    async def test_approved_synthetic_load_propagates_transport_errors(
+        self, unused_tcp_port
+    ):
+        """Test approved synthetic loading does not hide Phoenix outages."""
+        provider = PhoenixProvider()
+        provider.initialize(
+            {
+                "tenant_id": "tenant1",
+                "http_endpoint": f"http://127.0.0.1:{unused_tcp_port}",
+                "grpc_endpoint": f"http://127.0.0.1:{unused_tcp_port + 1}",
+            }
+        )
+        orchestrator = FinetuningOrchestrator(
+            telemetry_provider=provider,
+            synthetic_service=None,
+            approval_agent=None,
+        )
+        config = OrchestrationConfig(
+            tenant_id="tenant1",
+            project="cogniverse-tenant1",
+            model_type="llm",
+            agent_type="routing",
+        )
+
+        with pytest.raises(httpx.ConnectError):
+            await orchestrator._load_approved_synthetic(config)
+
 
 @pytest.mark.unit
 class TestMultiTurnOrchestrationFlow:
@@ -555,6 +599,7 @@ class TestMultiTurnOrchestrationFlow:
             multi_turn=True,
             min_turns_per_session=2,
             system_prompt="You are a video search assistant.",
+            enable_registry=False,
         )
 
         # Build mock trajectory dataset
@@ -637,6 +682,7 @@ class TestMultiTurnOrchestrationFlow:
             model_type="llm",
             agent_type="routing",
             multi_turn=True,
+            enable_registry=False,
         )
 
         turns = [
@@ -808,7 +854,8 @@ class TestPhoenixLoggingUsesTelemetryManager:
 class TestAdapterStorageUpload:
     """``config.hf_token`` must reach the storage backend on hf:// uploads."""
 
-    def test_hf_token_forwarded_to_upload_adapter(self):
+    @pytest.mark.asyncio
+    async def test_hf_token_forwarded_to_upload_adapter(self):
         orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
         config = OrchestrationConfig(
             tenant_id="acme",
@@ -830,8 +877,104 @@ class TestAdapterStorageUpload:
             return destination_uri
 
         with patch("cogniverse_finetuning.registry.upload_adapter", _fake_upload):
-            final_uri = orch._upload_adapter_to_storage(config, result)
+            final_uri = await orch._upload_adapter_to_storage(config, result)
 
         assert captured["token"] == "hf_secret_abc"
         assert captured["destination_uri"] == "hf://myorg/adapters/sft_routing_v2.1.0"
         assert final_uri == "hf://myorg/adapters/sft_routing_v2.1.0"
+
+    @pytest.mark.asyncio
+    async def test_register_adapter_raises_when_storage_upload_fails(self, tmp_path):
+        orch = FinetuningOrchestrator(
+            telemetry_provider=_NoTracerProvider(), registry=MagicMock()
+        )
+
+        source_dir = tmp_path / "adapter_src"
+        source_dir.mkdir()
+        (source_dir / "config.json").write_text("{}")
+
+        blocked_destination = tmp_path / "adapter_dest"
+        blocked_destination.write_text("not a directory")
+
+        config = OrchestrationConfig(
+            tenant_id="acme",
+            project="proj",
+            model_type="llm",
+            agent_type="routing",
+            base_model="HuggingFaceTB/SmolLM-135M",
+            adapter_version="2.1.0",
+            adapter_storage_uri=str(blocked_destination),
+        )
+        result = MagicMock(
+            adapter_path=str(source_dir),
+            training_method="sft",
+            metrics={"train_loss": 0.1},
+        )
+
+        with pytest.raises(NotADirectoryError):
+            await orch._register_adapter(config, result, "run_1")
+
+        orch.registry.register_adapter.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_adapter_raises_when_registry_write_fails(
+        self, unused_tcp_port
+    ):
+        orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
+
+        from cogniverse_finetuning.registry import AdapterRegistry
+        from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
+
+        orch.registry = AdapterRegistry(
+            store=VespaAdapterStore(
+                backend_url="http://127.0.0.1",
+                backend_port=unused_tcp_port,
+            )
+        )
+
+        config = OrchestrationConfig(
+            tenant_id="acme",
+            project="proj",
+            model_type="llm",
+            agent_type="routing",
+            base_model="HuggingFaceTB/SmolLM-135M",
+            adapter_version="2.1.0",
+            enable_registry=True,
+        )
+        result = MagicMock(
+            adapter_path="/tmp/adapter",
+            training_method="sft",
+            metrics={"train_loss": 0.1},
+        )
+
+        with pytest.raises(
+            RuntimeError, match="Failed to register adapter in registry"
+        ):
+            await orch._register_adapter(config, result, "run_1")
+
+    @pytest.mark.asyncio
+    async def test_register_adapter_raises_when_registry_init_fails(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("BACKEND_URL", "http://127.0.0.1")
+        monkeypatch.setenv("BACKEND_PORT", "8080")
+
+        orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
+        config = OrchestrationConfig(
+            tenant_id="acme",
+            project="proj",
+            model_type="llm",
+            agent_type="routing",
+            base_model="HuggingFaceTB/SmolLM-135M",
+            adapter_version="2.1.0",
+            enable_registry=True,
+        )
+        result = MagicMock(
+            adapter_path="/tmp/adapter",
+            training_method="sft",
+            metrics={"train_loss": 0.1},
+        )
+
+        with pytest.raises(RuntimeError, match="Failed to initialize registry"):
+            await orch._register_adapter(config, result, "run_1")

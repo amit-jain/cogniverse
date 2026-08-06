@@ -9,6 +9,7 @@ Combines all components into a high-level API:
 - Adapter registration
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -40,7 +41,10 @@ from cogniverse_finetuning.training.backend import (
     TrainingJobConfig,
 )
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.providers.base import (
+    DatasetNotFoundError,
+    TelemetryProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +275,7 @@ class FinetuningOrchestrator:
         self.approval_agent = approval_agent
         self.registry = registry
 
-    def _upload_adapter_to_storage(
+    async def _upload_adapter_to_storage(
         self,
         config: "OrchestrationConfig",
         result: "OrchestrationResult",
@@ -284,40 +288,42 @@ class FinetuningOrchestrator:
             result: Training result with adapter_path
 
         Returns:
-            Final storage URI or None if upload not configured/failed
+            Final storage URI, or None if upload is not configured.
+
+        Raises:
+            Any storage/backend exception raised by the configured adapter
+            upload implementation.
         """
         if not config.adapter_storage_uri:
             return None
 
-        try:
-            from cogniverse_finetuning.registry import upload_adapter
+        from cogniverse_finetuning.registry import upload_adapter
 
-            # Build destination URI with adapter-specific path
-            # e.g., hf://myorg/adapters -> hf://myorg/adapters/sft_routing_v1.0.0
-            name_parts = [result.training_method]
-            if config.agent_type:
-                name_parts.append(config.agent_type)
-            elif config.modality:
-                name_parts.append(config.modality)
-            name_parts.append(f"v{config.adapter_version}")
-            adapter_name = "_".join(name_parts)
+        # Build destination URI with adapter-specific path
+        # e.g., hf://myorg/adapters -> hf://myorg/adapters/sft_routing_v1.0.0
+        name_parts = [result.training_method]
+        if config.agent_type:
+            name_parts.append(config.agent_type)
+        elif config.modality:
+            name_parts.append(config.modality)
+        name_parts.append(f"v{config.adapter_version}")
+        adapter_name = "_".join(name_parts)
 
-            base_uri = config.adapter_storage_uri.rstrip("/")
-            destination_uri = f"{base_uri}/{adapter_name}"
+        base_uri = config.adapter_storage_uri.rstrip("/")
+        destination_uri = f"{base_uri}/{adapter_name}"
 
-            logger.info(f"Uploading adapter to storage: {destination_uri}")
-            final_uri = upload_adapter(
-                result.adapter_path, destination_uri, token=config.hf_token
-            )
-            logger.info(f"Adapter uploaded successfully: {final_uri}")
+        logger.info(f"Uploading adapter to storage: {destination_uri}")
+        final_uri = await asyncio.to_thread(
+            upload_adapter,
+            result.adapter_path,
+            destination_uri,
+            token=config.hf_token,
+        )
+        logger.info(f"Adapter uploaded successfully: {final_uri}")
 
-            return final_uri
+        return final_uri
 
-        except Exception as e:
-            logger.error(f"Failed to upload adapter to storage: {e}")
-            return None
-
-    def _register_adapter(
+    async def _register_adapter(
         self,
         config: "OrchestrationConfig",
         result: "OrchestrationResult",
@@ -345,15 +351,21 @@ class FinetuningOrchestrator:
 
                 self.registry = AdapterRegistry()
             except Exception as e:
-                logger.warning(f"Failed to initialize registry: {e}")
-                return None
+                logger.error(f"Failed to initialize registry: {e}")
+                raise RuntimeError("Failed to initialize registry") from e
 
         try:
-            # Upload to storage if configured
-            adapter_uri = self._upload_adapter_to_storage(config, result)
-            if adapter_uri:
-                result.adapter_uri = adapter_uri
+            # Upload to storage first so a configured storage failure is not
+            # masked by a later registry write.
+            adapter_uri = await self._upload_adapter_to_storage(config, result)
+        except Exception as e:
+            logger.error(f"Failed to upload adapter to storage: {e}")
+            raise
 
+        if adapter_uri:
+            result.adapter_uri = adapter_uri
+
+        try:
             # Generate adapter name from config
             name_parts = [result.training_method]
             if config.agent_type:
@@ -388,7 +400,7 @@ class FinetuningOrchestrator:
 
         except Exception as e:
             logger.error(f"Failed to register adapter: {e}")
-            return None
+            raise RuntimeError("Failed to register adapter in registry") from e
 
     def _log_experiment_to_phoenix(
         self,
@@ -545,13 +557,17 @@ class FinetuningOrchestrator:
         self, config: OrchestrationConfig
     ) -> List[Dict[str, Any]]:
         """Approved synthetic examples for this agent from the
-        ``approved_synthetic_data`` dataset (empty on the first run)."""
+        ``approved_synthetic_data`` dataset.
+
+        Missing datasets are treated as empty on the first run. Other failures
+        propagate so callers can see real telemetry outages.
+        """
         try:
             df = await self.provider.datasets.get_dataset(
                 name="approved_synthetic_data"
             )
-        except Exception as e:
-            logger.info(f"No approved synthetic dataset yet: {e}")
+        except DatasetNotFoundError:
+            logger.info("No approved synthetic dataset yet")
             return []
         return load_approved_synthetic_examples(df, config.agent_type)
 
@@ -723,7 +739,9 @@ class FinetuningOrchestrator:
             )
 
             # Register adapter in registry
-            adapter_id = self._register_adapter(config, orchestration_result, run_id)
+            adapter_id = await self._register_adapter(
+                config, orchestration_result, run_id
+            )
             orchestration_result.adapter_id = adapter_id
 
             return orchestration_result
@@ -838,7 +856,9 @@ class FinetuningOrchestrator:
             )
 
             # Register adapter in registry
-            adapter_id = self._register_adapter(config, orchestration_result, run_id)
+            adapter_id = await self._register_adapter(
+                config, orchestration_result, run_id
+            )
             orchestration_result.adapter_id = adapter_id
 
             return orchestration_result
@@ -982,7 +1002,7 @@ class FinetuningOrchestrator:
         )
 
         # 7. Register adapter in registry
-        adapter_id = self._register_adapter(config, orchestration_result, run_id)
+        adapter_id = await self._register_adapter(config, orchestration_result, run_id)
         orchestration_result.adapter_id = adapter_id
 
         return orchestration_result
@@ -1069,7 +1089,7 @@ class FinetuningOrchestrator:
         )
 
         # Register adapter in registry
-        adapter_id = self._register_adapter(config, orchestration_result, run_id)
+        adapter_id = await self._register_adapter(config, orchestration_result, run_id)
         orchestration_result.adapter_id = adapter_id
 
         return orchestration_result

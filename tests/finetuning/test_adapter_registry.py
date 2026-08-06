@@ -741,6 +741,70 @@ class TestGetStorageBackend:
 
         assert storage.token == "hf_secret_abc"
 
+    def test_get_s3_storage_reads_connection_settings_from_env(self, monkeypatch):
+        from cogniverse_finetuning.registry.storage import (
+            S3Storage,
+            S3StorageConfig,
+            get_storage_backend,
+        )
+
+        monkeypatch.setenv("MINIO_ENDPOINT", "http://minio.example:9000")
+        monkeypatch.setenv("MINIO_ACCESS_KEY", "minio_access")
+        monkeypatch.setenv("MINIO_SECRET_KEY", "minio_secret")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-west-2")
+
+        storage = get_storage_backend("s3://adapter-bucket/adapters/model")
+
+        assert isinstance(storage, S3Storage)
+        assert storage.config == S3StorageConfig(
+            endpoint_url="http://minio.example:9000",
+            access_key="minio_access",
+            secret_key="minio_secret",
+            region="eu-west-2",
+        )
+
+    def test_s3_storage_uses_explicit_config(self, monkeypatch):
+        import boto3
+
+        from cogniverse_finetuning.registry.storage import (
+            S3Storage,
+            S3StorageConfig,
+        )
+
+        monkeypatch.setenv("MINIO_ENDPOINT", "http://env-endpoint")
+        monkeypatch.setenv("MINIO_ACCESS_KEY", "env-access")
+        monkeypatch.setenv("MINIO_SECRET_KEY", "env-secret")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "env-region")
+
+        captured = {}
+
+        def _fake_client(service_name, **kwargs):
+            captured["service_name"] = service_name
+            captured["kwargs"] = kwargs
+
+            class _DummyClient:
+                pass
+
+            return _DummyClient()
+
+        monkeypatch.setattr(boto3, "client", _fake_client)
+
+        storage = S3Storage(
+            S3StorageConfig(
+                endpoint_url="http://explicit-endpoint:9000",
+                access_key="explicit-access",
+                secret_key="explicit-secret",
+                region="eu-central-1",
+            )
+        )
+        storage._client()
+
+        assert captured["service_name"] == "s3"
+        assert captured["kwargs"]["endpoint_url"] == "http://explicit-endpoint:9000"
+        assert captured["kwargs"]["aws_access_key_id"] == "explicit-access"
+        assert captured["kwargs"]["aws_secret_access_key"] == "explicit-secret"
+        assert captured["kwargs"]["region_name"] == "eu-central-1"
+
     def test_upload_adapter_forwards_token_to_backend(self, monkeypatch):
         from cogniverse_finetuning.registry import storage as storage_mod
 
@@ -899,6 +963,198 @@ class TestConvenienceFunctions:
 
         assert result == dest
         assert (tmp_path / "downloaded" / "config.json").exists()
+
+
+class _FakeModalBatchUpload:
+    def __init__(self, root):
+        from pathlib import Path
+
+        self.root = Path(root)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def put_directory(self, local_path, remote_path, recursive=True):
+        from pathlib import Path
+
+        source = Path(local_path)
+        target_root = self.root / remote_path.lstrip("/")
+        for file_path in sorted(source.rglob("*")):
+            if not file_path.is_file():
+                continue
+            relative = file_path.relative_to(source)
+            target = target_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(file_path.read_bytes())
+
+    def put_file(self, local_file, remote_path, mode=None):
+        from pathlib import Path
+
+        source = Path(local_file)
+        target = self.root / remote_path.lstrip("/")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+
+
+class _FakeModalVolume:
+    def __init__(self, root, fail_stage=None):
+        from pathlib import Path
+
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.fail_stage = fail_stage
+
+    def batch_upload(self, force=False):
+        if self.fail_stage == "upload":
+            raise RuntimeError("modal volume down")
+        return _FakeModalBatchUpload(self.root)
+
+    def listdir(self, path, recursive=True):
+        from modal.volume import FileEntry, FileEntryType
+
+        if self.fail_stage == "listdir":
+            raise RuntimeError("modal volume down")
+
+        base = self.root / path.lstrip("/")
+        if not base.exists():
+            raise FileNotFoundError(path)
+
+        if base.is_file():
+            return [
+                FileEntry(
+                    path=path.lstrip("/"),
+                    type=FileEntryType.FILE,
+                    mtime=0,
+                    size=base.stat().st_size,
+                )
+            ]
+
+        entries = []
+        glob = base.rglob("*") if recursive else base.glob("*")
+        for file_path in sorted(glob):
+            if not file_path.is_file():
+                continue
+            entries.append(
+                FileEntry(
+                    path=file_path.relative_to(self.root).as_posix(),
+                    type=FileEntryType.FILE,
+                    mtime=0,
+                    size=file_path.stat().st_size,
+                )
+            )
+        return entries
+
+    def read_file_into_fileobj(self, path, fileobj, progress_cb=None):
+        if self.fail_stage == "read":
+            raise RuntimeError("modal volume down")
+
+        data = (self.root / path.lstrip("/")).read_bytes()
+        fileobj.write(data)
+        return len(data)
+
+
+@pytest.mark.unit
+class TestInferenceResolverStorageContracts:
+    def test_resolve_adapter_path_hf_uri_uses_downloader(self, tmp_path, monkeypatch):
+        from pathlib import Path
+
+        import cogniverse_finetuning.registry as registry_pkg
+        from cogniverse_finetuning.registry.inference import resolve_adapter_path
+
+        captured = {}
+
+        def _fake_download(uri, local_path):
+            captured["uri"] = uri
+            captured["local_path"] = local_path
+            Path(local_path).mkdir(parents=True, exist_ok=True)
+            (Path(local_path) / "config.json").write_text("{}")
+            return local_path
+
+        monkeypatch.setattr(registry_pkg, "download_adapter", _fake_download)
+
+        result = resolve_adapter_path("hf://myorg/my-adapter", cache_dir=str(tmp_path))
+
+        assert result == str(tmp_path / "my-adapter")
+        assert captured == {
+            "uri": "hf://myorg/my-adapter",
+            "local_path": str(tmp_path / "my-adapter"),
+        }
+        assert (tmp_path / "my-adapter" / "config.json").exists()
+
+    def test_resolve_adapter_path_rejects_gs_uri(self, tmp_path):
+        from cogniverse_finetuning.registry.inference import resolve_adapter_path
+
+        with pytest.raises(ValueError, match="gs:// adapter URIs are not supported"):
+            resolve_adapter_path("gs://bucket/adapters/model", cache_dir=str(tmp_path))
+
+
+@pytest.mark.unit
+class TestModalVolumeStorage:
+    def test_factory_builds_modal_storage(self, tmp_path):
+        from cogniverse_finetuning.registry.storage import (
+            ModalVolumeStorage,
+            get_storage_backend,
+        )
+
+        fake_volume = _FakeModalVolume(tmp_path / "volume")
+        storage = get_storage_backend(
+            "modal://adapter-volume/adapters/routing_sft",
+            volume=fake_volume,
+        )
+
+        assert isinstance(storage, ModalVolumeStorage)
+        assert storage.volume_name == "adapter-volume"
+        assert storage.volume_path == "adapters/routing_sft"
+
+    def test_round_trip_preserves_nested_files(self, tmp_path):
+        from cogniverse_finetuning.registry.storage import ModalVolumeStorage
+
+        fake_volume = _FakeModalVolume(tmp_path / "volume")
+        storage = ModalVolumeStorage(
+            volume_name="adapter-volume",
+            volume_path="adapters/routing_sft",
+            volume=fake_volume,
+        )
+
+        source = tmp_path / "source"
+        (source / "nested").mkdir(parents=True)
+        (source / "config.json").write_text('{"name":"routing_sft"}')
+        (source / "nested" / "weights.bin").write_bytes(b"modal-weights")
+
+        destination_uri = "modal://adapter-volume/adapters/routing_sft"
+        uploaded_uri = storage.upload(str(source), destination_uri)
+
+        assert uploaded_uri == destination_uri
+        assert storage.exists(destination_uri) is True
+
+        downloaded = tmp_path / "downloaded"
+        result_path = storage.download(destination_uri, str(downloaded))
+
+        assert result_path == str(downloaded)
+        assert (downloaded / "config.json").read_text() == '{"name":"routing_sft"}'
+        assert (downloaded / "nested" / "weights.bin").read_bytes() == b"modal-weights"
+
+    def test_download_raises_when_volume_call_fails(self, tmp_path):
+        from cogniverse_finetuning.registry.storage import ModalVolumeStorage
+
+        fake_volume = _FakeModalVolume(tmp_path / "volume", fail_stage="listdir")
+        storage = ModalVolumeStorage(
+            volume_name="adapter-volume",
+            volume_path="adapters/routing_sft",
+            volume=fake_volume,
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="failed to download adapter from modal://adapter-volume/adapters/routing_sft",
+        ):
+            storage.download(
+                "modal://adapter-volume/adapters/routing_sft",
+                str(tmp_path / "downloaded"),
+            )
 
 
 @pytest.mark.unit
