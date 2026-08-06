@@ -119,6 +119,10 @@ htmlcov_*/
 !.claude/rules/
 !.claude/hooks/
 
+# Codex session scratch
+.codex/
+.codex-tmp/
+
 # Generated files
 configs/schemas/ranking_strategies.json
 
