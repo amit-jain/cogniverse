@@ -554,3 +554,112 @@ class TestKnowledgeSummarize:
         assert recorded["init"]["registry"] is harness.registry
         assert recorded["init"]["config_manager"] is harness.cm
         assert (recorded["agent"], TENANT) in harness.calls["bind"]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestTenantCanonicalization:
+    """Simple-form tenant ids must reach every seam in canonical org:tenant
+    form. Memory writes partition mem0 rows by the canonical form, so a raw
+    "acme" flowing through would read an empty partition while the data
+    lives under "acme:acme"."""
+
+    def test_kg_traverse_canonicalizes_path_tenant(self, harness, monkeypatch):
+        from cogniverse_agents.kg_traversal_agent import KGTraversalInput
+
+        payload = {"nodes": [], "edges": [], "truncated": False}
+        recorded = _install_recorder(
+            monkeypatch,
+            "cogniverse_agents.kg_traversal_agent.KnowledgeGraphTraversalAgent",
+            payload,
+        )
+
+        resp = harness.client.post(
+            "/admin/tenants/acme/knowledge/kg/traverse",
+            json={"start_subject_key": "policy:refunds"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        inp = recorded["input"]
+        assert isinstance(inp, KGTraversalInput)
+        assert inp.tenant_id == "acme:acme"
+        assert recorded["init"]["deps"].tenant_id == "acme:acme"
+        assert harness.calls["inject"] == [
+            (recorded["agent"], "acme:acme", "kg_traversal_agent")
+        ]
+        assert harness.calls["bind"] == [(recorded["agent"], "acme:acme")]
+
+    def test_audit_explain_canonicalizes_factory_tenant(self, harness, monkeypatch):
+        from cogniverse_agents.audit_explanation_agent import AuditExplanationInput
+
+        payload = {"explanation": "because", "chain": []}
+        recorded = _install_recorder(
+            monkeypatch,
+            "cogniverse_agents.audit_explanation_agent.AuditExplanationAgent",
+            payload,
+        )
+
+        resp = harness.client.post(
+            "/admin/tenants/acme/knowledge/audit/explain",
+            json={"answer_memory_id": "mem-1"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        inp = recorded["input"]
+        assert isinstance(inp, AuditExplanationInput)
+        assert inp.tenant_id == "acme:acme"
+        assert recorded["init"]["deps"].tenant_id == "acme:acme"
+
+    def test_federated_query_canonicalizes_tenant_ids(self, harness, monkeypatch):
+        from cogniverse_agents.federated_query_agent import FederatedQueryInput
+
+        payload = {"results_by_tenant": {}, "total": 0}
+        recorded = _install_recorder(
+            monkeypatch,
+            "cogniverse_agents.federated_query_agent.FederatedQueryAgent",
+            payload,
+        )
+
+        resp = harness.client.post(
+            "/admin/tenants/acme/knowledge/federated/query",
+            json={
+                "query": "refund policy",
+                "tenant_ids": ["beta", "acme:prod"],
+                "actor_role": "org_admin",
+                "actor_id": "auditor-7",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        inp = recorded["input"]
+        assert isinstance(inp, FederatedQueryInput)
+        assert inp.tenant_id == "acme:acme"
+        assert inp.tenant_ids == ["beta:beta", "acme:prod"]
+
+    def test_cross_tenant_compare_canonicalizes_tenant_ids(self, harness, monkeypatch):
+        from cogniverse_agents.cross_tenant_comparison_agent import (
+            CrossTenantComparisonInput,
+        )
+
+        payload = {"comparison": {}, "subject_key": "policy:refunds"}
+        recorded = _install_recorder(
+            monkeypatch,
+            "cogniverse_agents.cross_tenant_comparison_agent.CrossTenantComparisonAgent",
+            payload,
+        )
+
+        resp = harness.client.post(
+            "/admin/tenants/acme/knowledge/cross_tenant/compare",
+            json={
+                "subject_key": "policy:refunds",
+                "tenant_ids": ["beta", "acme:prod"],
+                "actor_role": "org_admin",
+                "actor_id": "auditor-7",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        inp = recorded["input"]
+        assert isinstance(inp, CrossTenantComparisonInput)
+        assert inp.tenant_id == "acme:acme"
+        assert inp.tenant_ids == ["beta:beta", "acme:prod"]

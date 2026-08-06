@@ -775,7 +775,7 @@ Response: `{tenant_id, agent_type, state: {active, canary, retired}}`. Backed by
 
 ### Knowledge Endpoints
 
-Direct HTTP routes to the knowledge-system agents (`libs/runtime/cogniverse_runtime/routers/knowledge.py`). The orchestrator's planner can only fill a generic 5-field input on dispatch; these routes accept each agent's richer native input shape so admin tools, audit/compliance UIs, and operator scripts can call them without going through routing. All routes mount under `/admin/tenants/{tenant_id}/knowledge/`.
+Direct HTTP routes to the knowledge-system agents (`libs/runtime/cogniverse_runtime/routers/knowledge.py`). The orchestrator's planner can only fill a generic 5-field input on dispatch; these routes accept each agent's richer native input shape so admin tools, audit/compliance UIs, and operator scripts can call them without going through routing. All routes mount under `/admin/tenants/{tenant_id}/knowledge/`. The `tenant_id` path param — and the `tenant_ids` lists on the cross-tenant and federated routes — are canonicalized via `canonical_tenant_id` at route entry, so simple form (`acme`) and colon form (`acme:acme`) resolve to the same mem0 partition and graph namespace.
 
 **POST /admin/tenants/{tenant_id}/knowledge/audit/explain** — Explain why a system answer was produced (read-only).
 Body: `AuditExplainRequest { answer_memory_id: str, include_trust: bool = true, include_contradictions: bool = true, max_chain_depth: int = 10 (1-25), max_chain_nodes: int = 100 (1-500) }`. Response: `AuditExplanationOutput` (chain, trust deltas, contradictions, endorsements).
