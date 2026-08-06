@@ -60,6 +60,19 @@ redis.call('DEL', KEYS[1])
 return items
 """
 
+# Lua script for atomic enqueue: the active-marker check and the LPUSH run
+# as one server-side step. A close_queue that lands between a client-side
+# check and a separate LPUSH would let the push recreate the just-deleted
+# list — the message would be silently orphaned after the caller saw 202.
+_ENQUEUE_LUA = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+    return 0
+end
+redis.call('LPUSH', KEYS[2], ARGV[1])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+return 1
+"""
+
 
 def _list_key(tenant_id: str, session_id: str) -> str:
     return f"inbound:{tenant_id}:{session_id}"
@@ -148,18 +161,26 @@ class RedisInboundQueue:
     async def enqueue(self, msg: InboundMessage) -> None:
         """Append ``msg`` to the Redis list for this session.
 
-        Refuses to enqueue when the active-marker is gone (session
-        closed or never registered) — surfaces ``QueueClosedError``
-        with the same shape as the in-pod version.
+        Atomic with the active-marker check (one server-side Lua step):
+        when the marker is gone (session closed or never registered) the
+        push never happens and ``QueueClosedError`` surfaces with the
+        same shape as the in-pod version. The list's TTL is bound to the
+        active-marker TTL so an abandoned session self-expires instead
+        of leaking.
         """
-        await self._check_open()
-        # Bound the list lifetime to the active-marker TTL so an abandoned
-        # session (never explicitly closed) self-expires instead of leaking.
-        list_key = _list_key(self._tenant_id, self._session_id)
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.lpush(list_key, _serialize(msg))
-            pipe.expire(list_key, self._active_ttl)
-            await pipe.execute()
+        accepted = await self._redis.eval(
+            _ENQUEUE_LUA,
+            2,
+            _active_key(self._session_id),
+            _list_key(self._tenant_id, self._session_id),
+            _serialize(msg),
+            self._active_ttl,
+        )
+        if not int(accepted):
+            raise QueueClosedError(
+                f"queue '{self._session_id}' is closed; agent session "
+                "has already finished"
+            )
 
     async def drain(self) -> List[InboundMessage]:
         """Atomically return all currently-buffered messages AND
