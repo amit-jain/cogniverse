@@ -20,7 +20,7 @@ Components tested:
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -264,7 +264,7 @@ class TestWorkflowIntelligenceRoundTrip:
             task_count=2,
             parallel_efficiency=0.85,
             confidence_score=0.92,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )
 
         # record_execution stores to in-memory workflow_history

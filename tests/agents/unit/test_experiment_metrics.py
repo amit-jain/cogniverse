@@ -11,6 +11,7 @@ Real-Phoenix integration coverage lives in
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -29,6 +30,7 @@ class FakeDatasetStore:
 
     def __init__(self):
         self.created: dict[str, pd.DataFrame] = {}
+        self.metadata: dict[str, dict[str, Any]] = {}
         self.append_calls: list[tuple[str, pd.DataFrame]] = []
 
     async def replace_dataset(self, name, data, metadata=None):
@@ -41,7 +43,12 @@ class FakeDatasetStore:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         self.created[name] = data.copy()
+        self.metadata[name] = dict(metadata or {})
         return f"id::{name}"
+
+    async def delete_dataset(self, name: str) -> None:
+        self.created.pop(name, None)
+        self.metadata.pop(name, None)
 
     async def get_dataset(self, name: str) -> pd.DataFrame:
         if name not in self.created:
@@ -185,3 +192,38 @@ class TestArtifactManagerExperiments:
         mgr, _ = manager_and_provider
         latest = await mgr.load_latest_experiment("nope")
         assert latest is None
+
+
+@pytest.mark.asyncio
+async def test_all_artifact_creation_metadata_uses_utc_timestamps():
+    provider = FakeProvider()
+    manager = ArtifactManager(provider, tenant_id="acme")
+
+    await manager.save_prompts("search", {"instruction": "route exactly"})
+    await manager.save_demonstrations(
+        "search",
+        [{"input": {"query": "refund"}, "output": {"route": "search"}}],
+    )
+    await manager.save_blob("model", "ranker", "{}")
+    await manager.save_prompts_versioned(
+        "search",
+        {"instruction": "route version two"},
+    )
+    await manager.save_demonstrations_versioned(
+        "search",
+        [{"input": {"query": "returns"}, "output": {"route": "search"}}],
+    )
+
+    expected_datasets = {
+        "dspy-prompts-acme:acme-search",
+        "dspy-demos-acme:acme-search",
+        "dspy-model-acme:acme-ranker",
+        "dspy-prompts-acme:acme-search-v1",
+        "dspy-demos-acme:acme-search-v1",
+    }
+    assert set(provider.datasets.metadata) == expected_datasets
+    for dataset_name in expected_datasets:
+        timestamp = datetime.fromisoformat(
+            provider.datasets.metadata[dataset_name]["created_at"]
+        )
+        assert timestamp.utcoffset() == timezone.utc.utcoffset(timestamp)

@@ -506,7 +506,11 @@ class DocExtractor:
         # failed — would otherwise return a knowledge graph built entirely from
         # regex-fallback noise while the ingest reports success. Fail loud so the
         # outage surfaces instead of silently degrading KG quality.
-        if gliner is not None and gliner_chunks > 0 and gliner_failures == gliner_chunks:
+        if (
+            gliner is not None
+            and gliner_chunks > 0
+            and gliner_failures == gliner_chunks
+        ):
             raise RuntimeError(
                 f"GLiNER entity extraction failed on all {gliner_chunks} "
                 f"chunk(s) (sidecar outage); refusing to return a regex-only "

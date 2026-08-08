@@ -203,7 +203,10 @@ graph TD
     style WorkflowDir fill:#81d4fa,stroke:#0288d1,color:#000
 ```
 
-**Total Files**: 95 Python files (33 at top level + 62 in subdirectories)
+The wiki implementation is the `libs/agents/cogniverse_agents/wiki/`
+subpackage; `wiki_manager.py` owns page persistence and lint reporting.
+
+**Total Files**: 96 Python files (35 at top level + 61 in subdirectories)
 
 **Key Agent Files** (all at top level):
 
@@ -568,7 +571,11 @@ The orchestrator uses DSPy for planning and AgentRegistry for discovery:
 
 ```python
 from cogniverse_agents.orchestrator_agent import (
-    OrchestratorAgent, OrchestratorDeps, OrchestratorInput, OrchestratorOutput,
+    OrchestratorAgent,
+    OrchestratorDeps,
+    OrchestratorInput,
+    OrchestratorOutput,
+    close_orchestrator_http_client,
 )
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
@@ -589,6 +596,9 @@ result = await orchestrator._process_impl(
 )
 
 # Result contains: plan_steps, parallel_groups, agent_results, final_output, execution_summary
+
+# Release the current event loop's shared HTTP connection pool at shutdown.
+await close_orchestrator_http_client()
 ```
 
 #### Key Features
@@ -596,7 +606,7 @@ result = await orchestrator._process_impl(
 - **DSPy Planning**: `OrchestrationModule` uses `dspy.ChainOfThought` to plan agent sequences
 - **Parallel Execution**: Steps can run in parallel groups (e.g., entity extraction + query enhancement)
 - **Agent Discovery**: Uses `AgentRegistry.find_agents_by_capability()` for dynamic agent lookup
-- **Agent Calls**: Executes agents via `httpx.AsyncClient` calls to agent process endpoints
+- **Agent Calls**: Executes agents through one shared `httpx.AsyncClient` per event loop; `close_orchestrator_http_client()` removes and closes the current loop's client and raises `RuntimeError` if shutdown fails
 - **Graceful Degradation**: Captures agent failures without stopping the pipeline
 
 ---
@@ -3722,6 +3732,8 @@ for c in out.contradictions_touched:
 | `include_trust=False` | Skips per-source `extract_trust` / `apply_decay`. |
 | `include_contradictions=False` | Skips ContradictionDetector pass. |
 | Source memory missing trust metadata | `trust_score` is `None`. |
+| Source memory absent | The source row remains present with no trust metadata. |
+| Memory backend read fails | Raises `RuntimeError` with the memory and tenant identifiers instead of returning an incomplete explanation. |
 
 The `explanation` field is human-readable structured text, intended to
 be rendered as-is in audit UIs without further LLM post-processing.
@@ -3770,8 +3782,9 @@ The agent auto-registers a `knowledge_summary` schema (permanent,
 | No matching memories | Empty summary; `metadata.reason = no_matching_memories`; promotion skipped. |
 | `actor_role` < `tenant_admin` + `promote=True` | Promotion refused (logged warning); summary still returned. |
 | Both `subject_keys` and `kinds` empty | Pulls every memory in the agent_name namespace (cap by `max_memories`). |
-| `since` or `until` set + memory missing `written_at` | Memory excluded. |
+| `since` or `until` set | Bounds must be timezone-aware ISO-8601 values; a matching memory without a valid timezone-aware `written_at` is excluded. |
 | RLM `enabled` AND context > threshold | RLM summariser fires; `used_rlm=True`. |
+| Org-trunk promotion | Storage write runs outside the event-loop thread; a write failure propagates and no successful promotion is reported. |
 
 Capability strings: `knowledge_summarization`, `audit`,
 `federation_promoter`. Default `port=8026`.
@@ -3816,6 +3829,7 @@ exceeds the RLM threshold.
 | Property | Behaviour |
 |---|---|
 | Memories without `written_at` | Counted in `undated_count`, excluded from windows. |
+| Window bounds | `start` and `end` must be timezone-aware ISO-8601 values; naive timestamps are rejected. |
 | `windows[i].end` is `None` | Open-ended (matches everything ≥ `start`). |
 | Same content in two windows | One distinct signature (knowledge unchanged). |
 | Subject filter | Strict `metadata.subject_key == subject_key` match. |
@@ -3867,8 +3881,10 @@ print(out.summary)  # populated when RLM ran
 Default `agent_name_filter="_promoted"` so the agent reads from the
 canonical promoted-knowledge namespace; pass an explicit value to scope
 to a different agent's namespace. `top_k_per_tenant` (default 20) caps
-per-tenant fan-in. The optional RLM summariser only fires when both
-`rlm.enabled` and the merged context exceeds the RLM threshold.
+per-tenant fan-in. Federated reads run outside the event-loop thread,
+and memory-manager construction or read failures propagate instead of
+being returned as an empty hit list. The optional RLM summariser only
+fires when both `rlm.enabled` and the merged context exceeds the RLM threshold.
 Capability strings: `federated_query`, `audit`, `federation_consumer`.
 Default `port=8024`.
 
@@ -3909,7 +3925,9 @@ for view in out.tenant_views:
 | Any `tenant_ids[i]` outside the caller's org | Rejected — never reads cross-org. |
 
 `distinct_signatures_count` collapses tenants by content signature so
-callers can quickly tell agreement from disagreement.
+callers can quickly tell agreement from disagreement. Per-tenant
+federated reads run outside the event-loop thread, and backend failures
+propagate instead of producing an apparently empty tenant view.
 Capability strings: `cross_tenant_comparison`, `audit`,
 `federation_consumer`. Default `port=8023`.
 
@@ -3993,7 +4011,7 @@ print(out.answer, out.persisted_memory_id, out.used_rlm)
 
 | Behaviour | Outcome |
 |---|---|
-| `documents` referenced by `memory_id` | Fetched via `Mem0.memory.get()`; rendered in the prompt with the supplied `label`. |
+| `documents` referenced by `memory_id` | Fetched via `Mem0.memory.get()` outside the event-loop thread; rendered in the prompt with the supplied `label`. A read failure propagates so a partial synthesis is never persisted as complete. |
 | `documents` supplied as inline `content` | Rendered directly; cited as an external ref using the `label`. |
 | `rlm.enabled=True` or auto-detect over threshold | Synthesis runs through `RLMInference`; `used_rlm=True`. |
 | `persist=True` | Output written as a `synthesis_fact` memory with full provenance. |
@@ -4028,6 +4046,10 @@ print(out.policy_used, out.survivors)
 for member in out.resolved:
     print(member.memory_id, "survived" if member.survived else "dropped")
 ```
+
+Requested conflict members are fetched outside the event-loop thread.
+A missing memory is reported in `metadata.missing`, while a backend
+read failure propagates instead of being treated as a deleted member.
 
 V1 is deterministic: it applies `reconcile()` from
 `cogniverse_core.memory.contradiction` directly. An RLM trajectory for

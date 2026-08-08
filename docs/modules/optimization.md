@@ -1577,6 +1577,9 @@ uv run python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds -
 
 After optimization, artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`:
 
+- Every artifact dataset writes `metadata.created_at` as a timezone-aware
+  UTC ISO-8601 timestamp, including stable and versioned prompts,
+  demonstrations, and blobs.
 - `dspy-prompts-{tenant_id}-{agent_type}` — Optimized system prompts for an agent (last-write-wins: `save_prompts` uses `DatasetStore.replace_dataset`, so each save replaces the prior rather than appending a version)
 - `dspy-demos-{tenant_id}-{agent_type}` — Few-shot demonstration examples (last-write-wins via `replace_dataset`, same as prompts). Saving the empty set clears the store: `save_demonstrations([])` is expressed as `clear_demonstrations`, which deletes the dataset (an empty frame cannot be persisted), so a later `load_demonstrations` returns `None`. `TelemetryWorkflowStore` relies on this to roll an empty-prior learning corpus back on a failed multi-step write.
 

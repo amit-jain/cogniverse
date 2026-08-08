@@ -637,7 +637,9 @@ and `AnnotationStorage` — plus two scheduled cycles in
   `AnnotationStorage.fetch_project_spans` and passes the shared frame into every
   per-agent-type `query_annotated_spans(spans_df=...)` call instead of re-pulling the
   whole project per agent type; `run_annotation_feedback_cycle` does the same for its
-  per-agent human-reviewed-annotation counts.
+  per-agent human-reviewed-annotation counts. Enqueue timestamps must include an
+  ISO-8601 timezone offset; the queue normalizes them to UTC and records assignment,
+  deadline, and completion timestamps in UTC.
 - Reviewers work the queue over REST (`assign` / `complete`) or the dashboard;
   completion persists the label durably **before** the in-memory state flips, so a
   telemetry outage leaves the item open for retry instead of losing the label.
@@ -821,12 +823,12 @@ stored in `output.value` at write time.
 | `annotation.confidence` | float | Annotator's confidence (1.0 for human annotations) |
 | `annotation.reasoning` | string | Why this label was chosen |
 | `annotation.annotator` | string | `"llm"`, or the human annotator id |
-| `annotation.timestamp` | string (ISO) | When the annotation was written |
+| `annotation.timestamp` | string (ISO, UTC offset) | When the annotation was written |
 | `annotation.human_reviewed` | bool | Whether a human (not just the LLM) produced this annotation |
 | `annotation.requires_review` | bool | Whether the LLM flagged this for human verification |
 | `annotation.suggested_agent` | string | If `wrong_routing`: which agent should have been used |
 | `annotation.approved_by` | string | Set by `approve_llm_annotation` when a human approves an LLM label |
-| `annotation.approval_timestamp` | string (ISO) | When the LLM label was approved |
+| `annotation.approval_timestamp` | string (ISO, UTC offset) | When the LLM label was approved |
 
 ---
 

@@ -11,7 +11,7 @@ Tests:
 7. Priority sorting
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -33,7 +33,7 @@ def _make_request(
 ) -> AnnotationRequest:
     return AnnotationRequest(
         span_id=span_id,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
         query="test query",
         chosen_agent="search_agent",
         routing_confidence=confidence,
@@ -105,14 +105,26 @@ class TestAnnotationQueueStateTransitions:
         assert result.assigned_to == "alice"
         assert result.assigned_at is not None
         assert result.sla_deadline is not None
+        assert result.assigned_at.tzinfo == timezone.utc
+        assert result.sla_deadline.tzinfo == timezone.utc
 
     def test_assign_with_custom_sla(self):
         queue = AnnotationQueue()
         queue.enqueue(_make_request("span-1"))
 
-        before = datetime.now()
+        before = datetime.now(timezone.utc)
         result = queue.assign("span-1", reviewer="bob", sla_hours=48)
         assert result.sla_deadline > before + timedelta(hours=47)
+
+    def test_assign_with_zero_hour_sla(self):
+        queue = AnnotationQueue()
+        queue.enqueue(_make_request("span-1"))
+
+        before = datetime.now(timezone.utc)
+        result = queue.assign("span-1", reviewer="bob", sla_hours=0)
+        after = datetime.now(timezone.utc)
+
+        assert before <= result.sla_deadline <= after
 
     def test_assign_missing_span_raises(self):
         queue = AnnotationQueue()
@@ -135,6 +147,7 @@ class TestAnnotationQueueStateTransitions:
         result = queue.complete("span-1", label="correct_routing")
         assert result.status == AnnotationStatus.COMPLETED
         assert result.completed_at is not None
+        assert result.completed_at.tzinfo == timezone.utc
         # The reviewer's label is captured, not silently dropped.
         assert result.label == "correct_routing"
         assert result.to_dict()["label"] == "correct_routing"
@@ -168,7 +181,7 @@ class TestAnnotationQueueSLAExpiration:
         queue.assign("span-1", reviewer="alice", sla_hours=0)
 
         # Force deadline to be in the past
-        req.sla_deadline = datetime.now() - timedelta(hours=1)
+        req.sla_deadline = datetime.now(timezone.utc) - timedelta(hours=1)
 
         expired = queue.get_expired()
         assert len(expired) == 1
@@ -238,3 +251,12 @@ class TestAnnotationRequestSerialization:
         assert d["assigned_to"] == "alice"
         assert d["assigned_at"] is not None
         assert d["sla_deadline"] is not None
+        assert d["assigned_at"].endswith("+00:00")
+        assert d["sla_deadline"].endswith("+00:00")
+
+    def test_from_dict_rejects_timestamp_without_timezone(self):
+        data = _make_request("span-1").to_dict()
+        data["timestamp"] = "2026-07-26T12:00:00"
+
+        with pytest.raises(ValueError, match="timestamp must include a timezone"):
+            AnnotationRequest.from_dict(data)

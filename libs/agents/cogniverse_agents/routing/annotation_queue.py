@@ -9,7 +9,7 @@ Manages the lifecycle of annotation requests:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 from cogniverse_agents.routing.annotation_agent import (
@@ -91,8 +91,12 @@ class AnnotationQueue:
                 f"Cannot assign span {span_id}: status is {request.status.value}"
             )
 
-        now = datetime.now()
-        hours = sla_hours or self._sla_hours.get(request.priority, 24)
+        now = datetime.now(timezone.utc)
+        hours = (
+            self._sla_hours.get(request.priority, 24)
+            if sla_hours is None
+            else sla_hours
+        )
 
         request.status = AnnotationStatus.ASSIGNED
         request.assigned_to = reviewer
@@ -126,7 +130,7 @@ class AnnotationQueue:
             )
 
         request.status = AnnotationStatus.COMPLETED
-        request.completed_at = datetime.now()
+        request.completed_at = datetime.now(timezone.utc)
         request.label = label
         return request
 
@@ -154,7 +158,7 @@ class AnnotationQueue:
         Find and mark ASSIGNED requests past their SLA deadline as EXPIRED.
         Returns the list of newly expired requests.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         expired = []
         for request in self._queue.values():
             if (

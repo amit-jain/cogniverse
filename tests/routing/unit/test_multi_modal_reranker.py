@@ -5,7 +5,7 @@ Tests multi-modal reranking functionality including cross-modal scoring,
 temporal alignment, complementarity, diversity, and ranking quality analysis.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -33,7 +33,7 @@ class TestMultiModalReranker:
                 modality="video",
                 score=0.9,
                 metadata={},
-                timestamp=datetime.now() - timedelta(days=10),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=10),
             ),
             RerankerSearchResult(
                 id="image_1",
@@ -42,7 +42,7 @@ class TestMultiModalReranker:
                 modality="image",
                 score=0.85,
                 metadata={},
-                timestamp=datetime.now() - timedelta(days=5),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=5),
             ),
             RerankerSearchResult(
                 id="doc_1",
@@ -51,7 +51,7 @@ class TestMultiModalReranker:
                 modality="document",
                 score=0.8,
                 metadata={},
-                timestamp=datetime.now() - timedelta(days=2),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=2),
             ),
         ]
 
@@ -74,7 +74,7 @@ class TestMultiModalReranker:
     def test_temporal_score_rewards_in_range_and_centered(self, reranker):
         """_calculate_temporal_score: in-range > edge > out-of-range, with a
         perfectly centered result scoring 1.0."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         ctx = {"temporal": {"time_range": (now - timedelta(days=10), now)}}
 
         def _at(ts):
@@ -98,11 +98,7 @@ class TestMultiModalReranker:
         assert edge == pytest.approx(0.7)
         assert centered > edge > outside
 
-    def test_temporal_score_handles_naive_aware_timezone_mix(self, reranker):
-        """A naive/aware datetime mix must not raise TypeError and abort the
-        rerank loop; naive datetimes are read as UTC."""
-        from datetime import timezone
-
+    def test_temporal_score_rejects_naive_timestamps(self, reranker):
         def _res(ts):
             return RerankerSearchResult(
                 id="x",
@@ -118,11 +114,8 @@ class TestMultiModalReranker:
             "temporal": {"time_range": (datetime(2026, 5, 1), datetime(2026, 7, 1))}
         }
         aware_mid = datetime(2026, 6, 1, tzinfo=timezone.utc)
-        # In-range, near-centered → high score; the point is no TypeError.
-        aware_vs_naive = reranker._calculate_temporal_score(
-            _res(aware_mid), naive_range
-        )
-        assert 0.9 < aware_vs_naive <= 1.0
+        with pytest.raises(ValueError, match="timezone-aware"):
+            reranker._calculate_temporal_score(_res(aware_mid), naive_range)
 
         aware_range = {
             "temporal": {
@@ -132,13 +125,14 @@ class TestMultiModalReranker:
                 )
             }
         }
-        naive_vs_aware = reranker._calculate_temporal_score(
-            _res(datetime(2026, 6, 1)), aware_range
-        )
-        assert 0.9 < naive_vs_aware <= 1.0
+        with pytest.raises(ValueError, match="timezone-aware"):
+            reranker._calculate_temporal_score(
+                _res(datetime(2026, 6, 1)),
+                aware_range,
+            )
 
     def test_temporal_score_neutral_without_context(self, reranker):
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         r = RerankerSearchResult(
             id="x",
             title="t",
@@ -206,11 +200,7 @@ class TestMultiModalReranker:
         assert distribution["image"] == 1
         assert distribution["document"] == 1
 
-    def test_ranking_quality_temporal_coverage_mixed_tz(self, reranker):
-        """analyze_ranking_quality must not raise on a naive/aware timestamp
-        mix; naive datetimes read as UTC, so the span is exactly 30 days."""
-        from datetime import timezone
-
+    def test_ranking_quality_temporal_coverage(self, reranker):
         def _res(rid, ts):
             return RerankerSearchResult(
                 id=rid,
@@ -223,7 +213,7 @@ class TestMultiModalReranker:
             )
 
         results = [
-            _res("a", datetime(2026, 1, 1)),
+            _res("a", datetime(2026, 1, 1, tzinfo=timezone.utc)),
             _res("b", datetime(2026, 1, 16, tzinfo=timezone.utc)),
             _res("c", datetime(2026, 1, 31, tzinfo=timezone.utc)),
         ]
@@ -232,6 +222,19 @@ class TestMultiModalReranker:
 
         assert quality["temporal_coverage"] == pytest.approx(30 / 365)
         assert quality["total_results"] == 3
+
+    def test_ranking_quality_rejects_naive_timestamp(self, reranker):
+        result = RerankerSearchResult(
+            id="a",
+            title="t",
+            content="c",
+            modality="video",
+            score=1.0,
+            metadata={"reranking_score": 1.0},
+            timestamp=datetime(2026, 1, 1),
+        )
+        with pytest.raises(ValueError, match="timezone-aware"):
+            reranker.analyze_ranking_quality([result, result])
 
     def test_ranking_quality_analysis(self, reranker, sample_results):
         """Test ranking quality metrics"""

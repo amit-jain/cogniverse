@@ -29,7 +29,6 @@ also promote). User-supplied promotions are rejected.
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -43,8 +42,6 @@ from cogniverse_core.memory.schema import (
 
 if TYPE_CHECKING:
     pass
-
-logger = logging.getLogger(__name__)
 
 ORG_TRUNK_TENANT_SUFFIX = "_org_trunk"
 
@@ -155,20 +152,10 @@ class FederationService:
         return list(chosen.values()) + unsubjected
 
     def _fetch(self, tenant_id: str, agent_name: str) -> List[Dict[str, Any]]:
-        try:
-            mm = self._mm_factory(tenant_id)
-        except Exception as exc:
-            logger.warning("Federation: factory(%s) failed: %r", tenant_id, exc)
-            return []
+        mm = self._mm_factory(tenant_id)
         if mm is None or not getattr(mm, "memory", None):
             return []
-        try:
-            return list(mm.get_all_memories(tenant_id=tenant_id, agent_name=agent_name))
-        except Exception as exc:
-            logger.warning(
-                "Federation: get_all_memories(%s) failed: %r", tenant_id, exc
-            )
-            return []
+        return list(mm.get_all_memories(tenant_id=tenant_id, agent_name=agent_name))
 
     # --- promotion path ----------------------------------------------------
 

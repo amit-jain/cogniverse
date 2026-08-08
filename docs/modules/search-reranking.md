@@ -422,6 +422,8 @@ async def rerank_results(
    - Unrelated modalities: 0.3
 
 2. **Temporal Score** (multi_modal_reranker.py:188-236):
+   - Result timestamps and context range bounds must be timezone-aware;
+     naive datetimes are rejected instead of being silently interpreted as UTC.
    - Inside time range (centered): 0.7-1.0
    - <30 days outside: 0.5
    - 30-90 days: 0.3

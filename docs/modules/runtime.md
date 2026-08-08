@@ -818,7 +818,8 @@ Per-tenant wiki knowledge pages (`libs/runtime/cogniverse_runtime/routers/wiki.p
 
 **GET /wiki/index?tenant_id=...** — Return the rendered wiki index for the tenant.
 
-**GET /wiki/lint?tenant_id=...** — Run lint checks and return a quality report.
+**GET /wiki/lint?tenant_id=...** — Return orphan, stale, empty, and malformed
+page lists plus `total_pages` and `issues_found`.
 
 **DELETE /wiki/topic/{slug}?tenant_id=...** — Delete a topic page by slug.
 

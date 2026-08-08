@@ -19,6 +19,7 @@ time.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -207,13 +208,22 @@ class AuditExplanationAgent(
             max_depth=input.max_chain_depth,
             max_nodes=input.max_chain_nodes,
         )
-        graph = walker.walk(input.answer_memory_id, tenant_id)
+        graph = await asyncio.to_thread(
+            walker.walk,
+            input.answer_memory_id,
+            tenant_id,
+        )
 
         sources: List[SourceExplanationOut] = []
         # Reused by the contradiction pass below so each memory is fetched once.
         fetched_memories: Dict[str, Optional[Dict[str, Any]]] = {}
         for node in graph.nodes:
-            mem = self._fetch_memory(mm, tenant_id, node.memory_id)
+            mem = await asyncio.to_thread(
+                self._fetch_memory,
+                mm,
+                tenant_id,
+                node.memory_id,
+            )
             fetched_memories[node.memory_id] = mem
             trust_score: Optional[float] = None
             trust_endorsements: Optional[int] = None
@@ -307,7 +317,9 @@ class AuditExplanationAgent(
             mem_obj = getter.get(memory_id)
         except Exception as exc:
             logger.debug("audit: get(%s) failed: %s", memory_id, exc)
-            return None
+            raise RuntimeError(
+                f"Failed to fetch memory {memory_id!r} for tenant {tenant_id!r}"
+            ) from exc
         if mem_obj is None:
             return None
         if isinstance(mem_obj, dict):
