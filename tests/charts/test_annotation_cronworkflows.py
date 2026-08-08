@@ -180,8 +180,8 @@ def test_feedback_cron_carries_workflow_pod_env():
     # All four passthrough vars _workflow_pod_spec_from_env forwards must be
     # present, or the spawned pod silently loses that backend endpoint.
     assert env["BACKEND_URL"] == "http://cogniverse-vespa"
-    assert env["BACKEND_PORT"]
-    assert env["TELEMETRY_HTTP_ENDPOINT"]
+    assert env["BACKEND_PORT"] == "8080"
+    assert env["TELEMETRY_HTTP_ENDPOINT"] == "http://cogniverse-phoenix:6006"
     assert env["TELEMETRY_OTLP_ENDPOINT"] == "cogniverse-phoenix:4317"
 
 
@@ -192,6 +192,29 @@ def test_feedback_cron_dev_hostpath_follows_devmode():
     )
     env = _env_map(cron["spec"]["workflowSpec"]["templates"][0]["container"])
     assert env["OPTIMIZATION_DEV_HOSTPATH"] == "/cogniverse-src"
+
+
+def test_scheduled_distillation_carries_workflow_pod_env():
+    manifests = _render_chart(
+        [
+            "runtime.imagesByBackend.cuda.repository=registry.local/cogniverse-runtime",
+            "runtime.imagesByBackend.cuda.tag=e2e-exact",
+            "devMode.enabled=true",
+            "devMode.hostPath=/cogniverse-src",
+        ]
+    )
+    cron = _cronworkflow(manifests, "cogniverse-scheduled-distillation")
+    container = cron["spec"]["workflowSpec"]["templates"][0]["container"]
+    env = _env_map(container)
+
+    assert container["image"] == "registry.local/cogniverse-runtime:e2e-exact"
+    assert env["OPTIMIZATION_WORKFLOW_IMAGE"] == container["image"]
+    assert env["OPTIMIZATION_CONFIG_MAP"] == "cogniverse-config"
+    assert env["OPTIMIZATION_DEV_HOSTPATH"] == "/cogniverse-src"
+    assert env["BACKEND_URL"] == "http://cogniverse-vespa"
+    assert env["BACKEND_PORT"] == "8080"
+    assert env["TELEMETRY_HTTP_ENDPOINT"] == "http://cogniverse-phoenix:6006"
+    assert env["TELEMETRY_OTLP_ENDPOINT"] == "cogniverse-phoenix:4317"
 
 
 def test_annotation_crons_fall_back_to_default_tenant():
@@ -223,6 +246,6 @@ def test_quality_monitor_sidecar_carries_workflow_pod_env():
     assert env["OPTIMIZATION_CONFIG_MAP"] == "cogniverse-config"
     assert env["OPTIMIZATION_DEV_HOSTPATH"] == "/cogniverse-src"
     assert env["BACKEND_URL"] == "http://cogniverse-vespa"
-    assert env["BACKEND_PORT"]
-    assert env["TELEMETRY_HTTP_ENDPOINT"]
+    assert env["BACKEND_PORT"] == "8080"
+    assert env["TELEMETRY_HTTP_ENDPOINT"] == "http://cogniverse-phoenix:6006"
     assert env["TELEMETRY_OTLP_ENDPOINT"] == "cogniverse-phoenix:4317"

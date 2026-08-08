@@ -436,6 +436,14 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        - name: OPTIMIZATION_WORKFLOW_IMAGE
+          value: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+        - name: OPTIMIZATION_CONFIG_MAP
+          value: {{ $fullName }}-config
+        {{- if .Values.devMode.enabled }}
+        - name: OPTIMIZATION_DEV_HOSTPATH
+          value: {{ .Values.devMode.hostPath | quote }}
+        {{- end }}
         resources:
           requests:
             cpu: "1"

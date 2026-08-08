@@ -23,8 +23,19 @@ inference:
       - "embed"
       - "--limit-mm-per-prompt"
       - '{"video":0,"image":1}'
+      # Fractional allocation rejects this multimodal model because its
+      # startup image profile temporarily exceeds the steady-state budget.
+      # Reserve the small decoder cache explicitly and cap the processor at
+      # the 1024 visual patches supported by the Vespa document contract.
+      - "--kv-cache-memory-bytes"
+      - "1G"
+      - "--mm-processor-kwargs"
+      - '{"max_pixels":1048576}'
+      # vLLM still applies its initial free-memory guard when an explicit
+      # cache size is present, although the fraction no longer sizes the
+      # cache. Keep the guard below the steady-state free-memory floor.
       - "--gpu-memory-utilization"
-      - "0.25"
+      - "0.45"
       - "--max-num-seqs"
       - "1"
     kvCacheGiB: null

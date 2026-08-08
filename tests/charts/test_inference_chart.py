@@ -170,7 +170,7 @@ def test_gliner_and_face_nodeports_are_distinct_when_both_are_exposed():
             8080,
             {
                 "failureThreshold": 30,
-                "initialDelaySeconds": 30,
+                "initialDelaySeconds": 0,
                 "periodSeconds": 15,
                 "timeoutSeconds": 5,
             },
@@ -186,7 +186,7 @@ def test_gliner_and_face_nodeports_are_distinct_when_both_are_exposed():
             8000,
             {
                 "failureThreshold": 5,
-                "initialDelaySeconds": 10,
+                "initialDelaySeconds": 0,
                 "periodSeconds": 10,
                 "timeoutSeconds": 5,
             },
@@ -202,7 +202,7 @@ def test_gliner_and_face_nodeports_are_distinct_when_both_are_exposed():
             8000,
             {
                 "failureThreshold": 5,
-                "initialDelaySeconds": 10,
+                "initialDelaySeconds": 0,
                 "periodSeconds": 10,
                 "timeoutSeconds": 5,
             },
@@ -363,6 +363,26 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     assert args[args.index("--limit-mm-per-prompt") + 1] == '{"video":0,"image":1}'
 
 
+def test_inference_readiness_has_no_fixed_cold_start_delay():
+    docs = _render(
+        "inference.vllm_colpali.enabled=true",
+        "inference.code_colbert_pylate.enabled=true",
+        "inference.videoprism_jax.enabled=true",
+        "inference.vllm_llm_student.enabled=true",
+        "inference.vllm_llm_teacher.enabled=true",
+        "inference.clap_embed.enabled=true",
+        "inference.face_embed.enabled=true",
+    )
+    deployments = _inference_deployments(docs)
+
+    assert deployments
+    for name, deployment in deployments.items():
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        probe = container["readinessProbe"]
+        assert probe["initialDelaySeconds"] == 0, name
+        assert probe["httpGet"]["path"] == "/health", name
+
+
 def test_vllm_llm_student_allows_keyframe_images():
     """The answer/student LLM accepts up to 4 still images per prompt — the
     keyframes the multimodal generation agents attach — while keeping video at
@@ -436,6 +456,40 @@ def test_service_keys_in_url_map_match_deployment_names():
         # cogniverse-<key-kebabcased>
         kebab = key.replace("_", "-")
         assert urls[key].startswith(f"http://cogniverse-{kebab}")
+
+
+def test_k3s_exposes_every_stateless_inference_service_on_a_unique_node_port():
+    docs = _render(
+        "inference.vllm_colpali.enabled=true",
+        "inference.code_colbert_pylate.enabled=true",
+        "inference.videoprism_jax.enabled=true",
+        "inference.vllm_llm_student.enabled=true",
+        "inference.clap_embed.enabled=true",
+        "inference.face_embed.enabled=true",
+        values="values.k3s.yaml",
+    )
+    services = _inference_services(docs)
+    expected_ports = {
+        "vllm_colpali": 29001,
+        "colbert_pylate": 29002,
+        "videoprism_jax": 29003,
+        "code_colbert_pylate": 29004,
+        "vllm_asr": 29005,
+        "denseon": 29006,
+        "gliner": 29007,
+        "clap_embed": 29008,
+        "face_embed": 29009,
+        "vllm_llm_student": 29010,
+    }
+
+    actual_ports = {}
+    for key in expected_ports:
+        service = services[key]
+        assert service["spec"]["type"] == "NodePort", key
+        actual_ports[key] = service["spec"]["ports"][0]["nodePort"]
+
+    assert actual_ports == expected_ports
+    assert len(set(actual_ports.values())) == len(actual_ports)
 
 
 def _rendered_chart_config() -> dict:

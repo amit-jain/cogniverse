@@ -48,18 +48,26 @@ inference:
     image:
       tag: "0.1.0-dev"
       pullPolicy: Never
+    service:
+      type: NodePort
   videoprism_jax:
     image:
       tag: "0.1.0-dev"
       pullPolicy: Never
+    service:
+      type: NodePort
   clap_embed:
     image:
       tag: "0.1.0-dev"
       pullPolicy: Never
+    service:
+      type: NodePort
   face_embed:
     image:
       tag: "0.1.0-dev"
       pullPolicy: Never
+    service:
+      type: NodePort
   # vLLM-served ASR ships enabled in base values.yaml (the default
   # video-ingestion profiles hard-require transcription), so the
   # deployment-lifecycle e2e already exercises the full chart wiring.
@@ -83,8 +91,21 @@ inference:
     image:
       tag: "0.1.0-dev"
       pullPolicy: Never
+  # Dev override for the ColPali visual-embedding pod.
+  vllm_colpali:
+    service:
+      type: NodePort
   # Dev override for the DenseOn dense-embedding pod.
   denseon:
+    service:
+      type: NodePort
+  vllm_asr:
+    service:
+      type: NodePort
+  vllm_llm_student:
+    service:
+      type: NodePort
+  vllm_llm_teacher:
     service:
       type: NodePort
 

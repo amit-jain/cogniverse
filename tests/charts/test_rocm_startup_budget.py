@@ -69,8 +69,12 @@ def test_tomoro_rocm_startup_profiles_one_sequence():
         "embed",
         "--limit-mm-per-prompt",
         '{"video":0,"image":1}',
+        "--kv-cache-memory-bytes",
+        "1G",
+        "--mm-processor-kwargs",
+        '{"max_pixels":1048576}',
         "--gpu-memory-utilization",
-        "0.25",
+        "0.45",
         "--max-num-seqs",
         "1",
     ]

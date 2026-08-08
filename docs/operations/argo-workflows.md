@@ -376,6 +376,10 @@ The chart renders one `CronWorkflow` per maintenance/optimization concern, gated
 
 Rendered by `charts/cogniverse/templates/data-backup-cronworkflows.yaml`, gated by `hostStorage.backup.enabled`. One `CronWorkflow` per entry in `hostStorage.backup.services` (default: `vespa` via `kubectl exec` + `tar`, `phoenix` via a volume-mount snapshot), all sharing `hostStorage.backup.schedule` (default `"0 3 * * *"`). Each runs two steps — `dump` (tar the service's data into a workflow-scoped staging PVC) then `upload` (`mc cp` the tarball to `s3://<hostStorage.backup.bucket>/<service>/<timestamp>.tar`, then prune all but the most recent `hostStorage.backup.retainLast` snapshots, default 7).
 
+The `kubectl-exec` dump step uses an image that provides both `/bin/sh` and
+`kubectl`; the script needs the shell for pod discovery, timestamping, and
+streaming the remote tar archive into the staging volume.
+
 ```bash
 # View cron workflows (one per backed-up service)
 kubectl get cronworkflow -n cogniverse -l app.kubernetes.io/component=backup
@@ -432,7 +436,7 @@ argo submit --from cronwf/cogniverse-synthetic-generation -n cogniverse
 
 ### Scheduled Distillation (`{release}-scheduled-distillation`, default 5 AM UTC)
 
-Chart `CronWorkflow` (`argo.optimization.scheduledDistillation`, schedule `0 5 * * *`) running `python -m cogniverse_runtime.quality_monitor_cli --once --tenant-id default` against the in-cluster runtime and Phoenix. Forces a strategy-distillation pass on a fixed schedule so long stable periods (no detected quality drop) still produce new distilled strategies, rather than relying solely on `QualityMonitor`'s degradation trigger. Uses `cogniverse.primaryLLMModelBare` for its `--llm-model` argument since `quality_monitor_cli` posts directly to `/v1/chat/completions`.
+Chart `CronWorkflow` (`argo.optimization.scheduledDistillation`, schedule `0 5 * * *`) running `python -m cogniverse_runtime.quality_monitor_cli --once --tenant-id default` against the in-cluster runtime and Phoenix. Forces a strategy-distillation pass on a fixed schedule so long stable periods (no detected quality drop) still produce new distilled strategies, rather than relying solely on `QualityMonitor`'s degradation trigger. Uses `cogniverse.primaryLLMModelBare` for its `--llm-model` argument since `quality_monitor_cli` posts directly to `/v1/chat/completions`. If that cycle submits a child optimization workflow, the child receives the same backend-selected runtime image, config map, service endpoints, and development source mount as the CronWorkflow pod.
 
 ```bash
 kubectl get cronworkflow cogniverse-scheduled-distillation -n cogniverse

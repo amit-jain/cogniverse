@@ -94,9 +94,6 @@ def _inference_pod_specs(docs: list[dict]) -> dict[str, dict]:
     return out
 
 
-# ---------- Mode 1: legacy default (no persistence, no hostStorage) -----------
-
-
 def test_default_mode_uses_legacy_hostpath_and_no_pvcs():
     docs = _render()
     runtime = _runtime_pod_spec(docs)
@@ -124,9 +121,6 @@ def test_default_mode_inference_pods_have_no_model_warm_init():
         )
 
 
-# ---------- Mode 2: dev hostStorage bind-mount ----------
-
-
 def test_host_storage_mode_uses_hostpath_bind_mount():
     docs = _render(
         "hostStorage.enabled=true",
@@ -149,9 +143,6 @@ def test_host_storage_mode_does_not_create_pvcs():
         == "hf-cache"
     ]
     assert pvcs == []
-
-
-# ---------- Mode 3: prod PVC persistence ----------
 
 
 def test_persistence_mode_creates_pvc_per_pod():
@@ -271,9 +262,6 @@ def test_persistence_mode_without_minio_omits_minio_env_and_no_job():
     assert populate is None
 
 
-# ---------- Mode 3 + MinIO mirror sub-mode ----------
-
-
 def test_minio_mode_injects_minio_env_into_model_warm():
     """A single init container handles both paths: try MinIO tarball
     mirror, fall back to snapshot_download. When MinIO mode is on the
@@ -322,9 +310,6 @@ def test_minio_mode_without_models_skips_populate_job():
     )
     populate = _named(docs, "Job", "cogniverse-hf-cache-minio-populate")
     assert populate is None
-
-
-# ---------- Backup CronWorkflows ----------
 
 
 def test_backup_disabled_by_default_renders_no_workflows():
@@ -465,6 +450,47 @@ def test_backup_workflow_dump_step_targets_configured_data_path_and_label():
     args = _dump_args(vespa)
     assert "/opt/vespa/var" in args
     assert "app.kubernetes.io/component=vespa" in args
+
+
+def test_vespa_backup_image_executes_rendered_shell_and_kubectl():
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+    )
+    vespa = _named(docs, "CronWorkflow", "cogniverse-backup-vespa")
+    assert vespa is not None
+    dump = next(
+        template
+        for template in vespa["spec"]["workflowSpec"]["templates"]
+        if template["name"] == "dump"
+    )["container"]
+
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            dump["command"][0],
+            dump["image"],
+            "-c",
+            (
+                'test -x "$(command -v sh)" && '
+                'test -x "$(command -v kubectl)" && '
+                "printf 'backup-tools-ready\\n'"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, (
+        f"{dump['image']} cannot execute the rendered {dump['command']}: "
+        f"{result.stderr}"
+    )
+    assert result.stdout == "backup-tools-ready\n"
 
 
 def test_backup_inner_subkeys_default_when_only_enabled_is_set():
@@ -658,9 +684,6 @@ def test_backup_upload_uses_bash_and_no_awk():
         )
 
 
-# ---------- MinIO durability (its own data, not the backup target) ----------
-
-
 def _minio_data_volume(docs: list[dict]) -> dict:
     """Return the ``data`` volume from the MinIO Deployment."""
     for d in _by_kind(docs, "Deployment"):
@@ -717,9 +740,6 @@ def test_minio_persistence_block_missing_does_not_crash():
     assert pvc is not None, "stripped persistence block must still default to PVC mode"
     assert pvc["spec"]["accessModes"] == ["ReadWriteOnce"]
     assert pvc["spec"]["resources"]["requests"]["storage"] == "50Gi"
-
-
-# ---------- Backup destination is configurable (single config knob) ----------
 
 
 def _backup_upload_env(docs: list[dict], cw_name: str) -> dict:

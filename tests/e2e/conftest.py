@@ -248,9 +248,20 @@ def _tenant_schema_names_in_vespa(tenant_id: str, deployed: set[str]) -> set[str
     return {name for name in deployed if name.endswith(suffix)}
 
 
+def _clear_thread_event_loop() -> None:
+    """Detach any loop registered as current on this thread.
+
+    The code that created a loop owns closing it. This reset only prevents a
+    stale policy registration from becoming the implicit loop of a later test.
+    """
+    import asyncio
+
+    asyncio.set_event_loop(None)
+
+
 @pytest.fixture(autouse=True)
 def _reset_event_loop_state_before_each_test():
-    """Clear leaked thread-attached event loops before every test.
+    """Clear thread-attached event-loop state before every test.
 
     Some upstream code paths in cogniverse + dspy + dspy/lite-llm call
     ``asyncio.set_event_loop(asyncio.new_event_loop())`` for a quick
@@ -269,24 +280,7 @@ def _reset_event_loop_state_before_each_test():
     state) at the start of every test, so pytest-asyncio always sees a
     clean thread when it constructs its per-test runner.
     """
-    import asyncio
-
-    # Drop any leaked thread-current loop. Wrapping in try/except
-    # because asyncio's API for "give me the leaked loop without
-    # creating one" differs across 3.10/3.11/3.12.
-    try:
-        leaked = asyncio.get_event_loop_policy().get_event_loop()
-    except RuntimeError:
-        leaked = None
-    if leaked is not None and not leaked.is_closed():
-        try:
-            leaked.close()
-        except Exception:  # noqa: BLE001 — defensive
-            pass
-    try:
-        asyncio.set_event_loop(None)
-    except RuntimeError:
-        pass
+    _clear_thread_event_loop()
     yield
 
 
@@ -773,9 +767,13 @@ E2E_HOST_PORTS = {
     33746: 2746,  # argo server
     33901: 29001,  # inference sidecars
     33902: 29002,
+    33903: 29003,
     33904: 29004,
     33905: 29005,
     33906: 29006,
+    33907: 29007,
+    33908: 29008,
+    33909: 29009,
     33910: 29010,
     33911: 29011,
 }
