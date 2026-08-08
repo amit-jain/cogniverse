@@ -20,6 +20,15 @@ import pytest
 logger = logging.getLogger(__name__)
 
 
+# Ingestion embeds through the profile's inference_services.embedding
+# service; the tomoro model these profiles pin cannot load in-process
+# (pylate caps transformers below the 4.57 it needs), so the endpoint
+# must be provisioned or every document fails to embed.
+pytestmark = [
+    pytest.mark.requires_inference("vllm_colpali"),
+    pytest.mark.requires_inference("videoprism_jax"),
+]
+
 # Real profile definitions from the system
 REAL_PROFILES = {
     "video_colpali_smol500_mv_frame": {
@@ -71,7 +80,12 @@ def comprehensive_ensemble_setup():
         # Setup Vespa
         logger.info("📦 Setting up Vespa container...")
         if not manager.full_setup():
-            pytest.fail("Failed to setup Vespa")
+            pytest.fail(
+                "VespaTestManager.full_setup() failed — see the printed "
+                "step that returned False (application directory, deploy, "
+                "or video ingestion, which needs the profile's embedding "
+                "inference service reachable)"
+            )
 
         logger.info(f"✅ Vespa ready at http://localhost:{http_port}")
 
