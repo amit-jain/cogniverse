@@ -246,14 +246,30 @@ class TestComprehensiveEnsembleSearch:
             )
             assert len(result.results) > 0, "Results list should not be empty"
 
-            # VALIDATE: RRF fusion metadata on ALL results
+            # VALIDATE: RRF fusion metadata on ALL results. The fusion fields
+            # sit beside ``score`` in the public shape because the set is
+            # ordered by ``rrf_score``.
             for doc in result.results:
-                assert "rrf_score" in doc, "Should have RRF score"
-                assert "profile_ranks" in doc, "Should have profile ranks"
-                assert "num_profiles" in doc, "Should have profile count"
+                assert "rrf_score" in doc, f"Should have RRF score: {doc}"
+                assert "profile_ranks" in doc, f"Should have profile ranks: {doc}"
+                assert "num_profiles" in doc, f"Should have profile count: {doc}"
                 assert doc["rrf_score"] > 0, f"Invalid RRF score: {doc['rrf_score']}"
+                # Every fused document is ranked by at least one requested
+                # profile, and the count must agree with the rank map.
+                assert set(doc["profile_ranks"]) <= set(profiles), (
+                    f"unknown profile in rank map: {doc['profile_ranks']}"
+                )
+                assert doc["num_profiles"] == len(doc["profile_ranks"]), (
+                    f"num_profiles disagrees with profile_ranks: {doc}"
+                )
+                assert doc["num_profiles"] >= 1, f"no profile ranked {doc}"
+                # The fusion fields are ranking, not payload.
+                assert "rrf_score" not in doc["metadata"], (
+                    f"rrf_score must not be duplicated into metadata: {doc}"
+                )
                 logger.info(
-                    f"   Doc {doc['id']}: RRF={doc['rrf_score']:.4f}, profiles={doc['num_profiles']}"
+                    f"   Doc {doc['id']}: RRF={doc['rrf_score']:.4f}, "
+                    f"profiles={doc['num_profiles']}"
                 )
 
             logger.info(
