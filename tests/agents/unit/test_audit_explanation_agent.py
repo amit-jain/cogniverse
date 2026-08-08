@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
@@ -424,3 +426,85 @@ async def test_contradiction_pass_adds_no_extra_memory_fetches():
     assert with_contra == without
     assert with_contra["src_a"] == without["src_a"]
     assert with_contra["src_b"] == without["src_b"]
+
+
+@pytest.mark.asyncio
+async def test_provenance_walk_does_not_block_the_event_loop():
+    rows = {"answer": _row("answer", "the refund policy is X")}
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingProvenanceStore(_StubProvenanceStore):
+        def walk(self, root: str, *, max_depth: int = 10, max_nodes: int = 100):
+            entered.set()
+            release.wait(timeout=1)
+            return super().walk(root, max_depth=max_depth, max_nodes=max_nodes)
+
+    def factory(tenant_id: str):
+        mm = MagicMock()
+        mm.memory = MagicMock()
+        mm.memory.get = lambda memory_id: rows.get(memory_id)
+        mm.provenance_store = BlockingProvenanceStore(rows)
+        return mm
+
+    agent = AuditExplanationAgent(
+        deps=AuditExplanationDeps(tenant_id="acme"),
+        memory_manager_factory=factory,
+    )
+    unblock_timer = threading.Timer(1, release.set)
+    unblock_timer.start()
+    task = asyncio.create_task(
+        agent._process_impl(
+            AuditExplanationInput(
+                tenant_id="acme",
+                answer_memory_id="answer",
+                include_trust=False,
+                include_contradictions=False,
+            )
+        )
+    )
+
+    try:
+        for _ in range(100):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.001)
+        assert entered.is_set()
+        assert release.is_set() is False
+    finally:
+        unblock_timer.cancel()
+        release.set()
+
+    out = await task
+    assert [source.memory_id for source in out.sources] == ["answer"]
+
+
+@pytest.mark.asyncio
+async def test_memory_backend_failure_is_not_reported_as_missing_memory():
+    rows = {"answer": _row("answer", "the refund policy is X")}
+
+    def factory(tenant_id: str):
+        mm = MagicMock()
+        mm.memory = MagicMock()
+        mm.memory.get.side_effect = ConnectionError("mem0 unavailable")
+        mm.provenance_store = _StubProvenanceStore(rows)
+        return mm
+
+    agent = AuditExplanationAgent(
+        deps=AuditExplanationDeps(tenant_id="acme"),
+        memory_manager_factory=factory,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Failed to fetch memory 'answer' for tenant 'acme'",
+    ) as exc_info:
+        await agent._process_impl(
+            AuditExplanationInput(
+                tenant_id="acme",
+                answer_memory_id="answer",
+                include_trust=True,
+                include_contradictions=False,
+            )
+        )
+    assert isinstance(exc_info.value.__cause__, ConnectionError)

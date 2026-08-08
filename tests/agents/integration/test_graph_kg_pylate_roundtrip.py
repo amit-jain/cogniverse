@@ -20,12 +20,13 @@ layer in isolation.
 
 from __future__ import annotations
 
+import gzip
 import json
 import socket
 import threading
 from binascii import unhexlify
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import MagicMock
+from pathlib import Path
 
 import pytest
 
@@ -46,6 +47,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 
     pooling_requests: list[dict] = []
     feed_payloads: list[tuple[str, dict]] = []  # (path, payload)
+    search_requests: list[dict] = []
     pooling_n_tokens: int = 4
 
     def log_message(self, format, *args):  # silence stderr
@@ -53,7 +55,10 @@ class _StubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         length = int(self.headers.get("content-length", "0"))
-        body = json.loads(self.rfile.read(length))
+        raw_body = self.rfile.read(length)
+        if self.headers.get("content-encoding") == "gzip":
+            raw_body = gzip.decompress(raw_body)
+        body = json.loads(raw_body)
 
         if self.path == "/pooling":
             _StubHandler.pooling_requests.append(body)
@@ -81,6 +86,16 @@ class _StubHandler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
             return
 
+        if self.path == "/search/":
+            _StubHandler.search_requests.append(body)
+            payload = b'{"root":{"children":[]}}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
         if self.path.startswith("/document/v1/"):
             _StubHandler.feed_payloads.append((self.path, body))
             self.send_response(200)
@@ -97,6 +112,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 def stub():
     _StubHandler.pooling_requests = []
     _StubHandler.feed_payloads = []
+    _StubHandler.search_requests = []
     port = _free_port()
     server = ThreadingHTTPServer(("127.0.0.1", port), _StubHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -110,9 +126,20 @@ def stub():
 
 
 def _make_manager(port: int) -> GraphManager:
-    backend = MagicMock()
-    backend._url = "http://127.0.0.1"
-    backend._port = port
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.unified_config import BackendConfig
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_vespa.backend import VespaBackend
+
+    backend = VespaBackend(
+        backend_config=BackendConfig(
+            tenant_id="test_tenant",
+            url="http://127.0.0.1",
+            port=port,
+        ),
+        schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+        config_manager=create_default_config_manager(),
+    )
     return GraphManager(
         backend=backend,
         tenant_id="test_tenant",
@@ -121,9 +148,18 @@ def _make_manager(port: int) -> GraphManager:
     )
 
 
-def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(stub):
+@pytest.fixture
+def graph_manager(stub):
     port, capture = stub
     manager = _make_manager(port)
+    try:
+        yield manager, capture
+    finally:
+        manager._backend.close()
+
+
+def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(graph_manager):
+    manager, capture = graph_manager
 
     from cogniverse_agents.graph.graph_schema import Mention
 
@@ -151,7 +187,11 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(stub):
     )
 
     counts = manager.upsert(result)
-    assert counts == {"nodes_upserted": 1, "edges_upserted": 0}
+    assert counts == {
+        "nodes_upserted": 1,
+        "edges_upserted": 0,
+        "failed_ids": [],
+    }
 
     # 1. Stub saw a /pooling request with the [D] document prefix and no
     #    is_query field (vLLM contract).
@@ -194,30 +234,48 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(stub):
         )
 
 
-def test_query_encoding_prefixes_query_and_builds_block_inputs(stub):
-    port, capture = stub
-    manager = _make_manager(port)
+def test_query_encoding_prefixes_query_and_builds_block_inputs(graph_manager):
+    manager, capture = graph_manager
 
-    # search_nodes encodes the query with the [Q] prefix and POSTs to
-    # /search/. Our stub doesn't implement /search/ — it'll 404, which is
-    # fine for this test: we only care that the encoder prefixed the query
-    # with [Q] (and sent no is_query) and that no exception escaped (search
-    # falls back to YQL visit on transport errors).
-    manager.search_nodes("find me alpha", top_k=5)
+    results = manager.search_nodes("find me alpha", top_k=5)
 
-    # The stub saw at least one /pooling call for the query side.
     query_reqs = [
         req for req in capture.pooling_requests if req["input"] == ["[Q] find me alpha"]
     ]
-    assert query_reqs, "search_nodes must encode the query with the [Q] prefix"
+    assert len(query_reqs) == 1
     assert "is_query" not in query_reqs[0]
+    assert results == []
+    assert len(capture.search_requests) == 1
+    search_request = capture.search_requests[0]
+    assert search_request["yql"] == (
+        "select * from sources knowledge_graph_test_tenant "
+        'where tenant_id contains "test_tenant" and doc_type contains "node" '
+        "and userQuery() limit 5"
+    )
+    assert search_request["query"] == "find me alpha"
+    assert search_request["hits"] == 5
+    assert search_request["ranking.profile"] == "hybrid_binary_bm25"
+    assert search_request["model.restrict"] == "knowledge_graph_test_tenant"
+    assert search_request["input.query(qtb)"] == {
+        "blocks": {
+            "0": [-1] * 16,
+            "1": [0] * 16,
+            "2": [-1] * 16,
+            "3": [0] * 16,
+        }
+    }
+    query_blocks = search_request["input.query(qt)"]["blocks"]
+    assert set(query_blocks) == {"0", "1", "2", "3"}
+    assert query_blocks["0"] == pytest.approx([0.4] * 128)
+    assert query_blocks["1"] == pytest.approx([-0.35] * 128)
+    assert query_blocks["2"] == pytest.approx([0.5] * 128)
+    assert query_blocks["3"] == pytest.approx([-0.25] * 128)
 
 
-def test_edge_upsert_omits_embedding_fields(stub):
+def test_edge_upsert_omits_embedding_fields(graph_manager):
     """Edges aren't semantically searchable — they must not carry the
     mapped embedding fields. Vespa attribute tensors handle absence."""
-    port, capture = stub
-    manager = _make_manager(port)
+    manager, capture = graph_manager
 
     from cogniverse_agents.graph.graph_schema import Edge
 
@@ -240,7 +298,11 @@ def test_edge_upsert_omits_embedding_fields(stub):
         ],
     )
     counts = manager.upsert(result)
-    assert counts == {"nodes_upserted": 0, "edges_upserted": 1}
+    assert counts == {
+        "nodes_upserted": 0,
+        "edges_upserted": 1,
+        "failed_ids": [],
+    }
 
     assert len(capture.feed_payloads) == 1
     _, payload = capture.feed_payloads[0]

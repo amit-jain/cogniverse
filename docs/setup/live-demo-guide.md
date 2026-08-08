@@ -810,7 +810,7 @@ The user sends `/start abc123def456...` to the bot to link their Telegram accoun
 | `/wiki search <query>` | — | Search the wiki knowledge base |
 | `/wiki topic <name>` | — | Look up a topic page by name |
 | `/wiki index` | — | Show the full wiki index |
-| `/wiki lint` | — | Check wiki for orphan/stale/empty pages |
+| `/wiki lint` | — | Check wiki for orphan/stale/empty/malformed pages |
 | `/memories` | — | View stored conversation memories |
 | `/instructions` | — | View system instructions |
 | `/jobs create ...` | — | Create background processing jobs |
@@ -859,7 +859,7 @@ curl "http://localhost:28000/wiki/topic/colpali-embeddings?tenant_id=acme:produc
 # Browse the full index
 curl "http://localhost:28000/wiki/index?tenant_id=acme:production"
 
-# Run lint checks (find orphan, stale, or empty pages)
+# Run lint checks (find orphan, stale, empty, or malformed pages)
 curl "http://localhost:28000/wiki/lint?tenant_id=acme:production"
 
 # Delete a topic

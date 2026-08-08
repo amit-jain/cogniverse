@@ -5,6 +5,7 @@ from where the previous run finished (``_last_evaluation_time``) so spans are
 not re-scanned every call. A failed query must NOT advance the resume point.
 """
 
+import asyncio
 from datetime import timezone
 
 import pandas as pd
@@ -20,6 +21,7 @@ def _evaluator(get_spans):
     ev.project_name = "proj"
     ev._processed_span_ids = set()
     ev._last_evaluation_time = None
+    ev._evaluation_lock = asyncio.Lock()
 
     class _Traces:
         pass
@@ -68,6 +70,38 @@ async def test_failed_query_does_not_advance_resume_point():
     await ev.evaluate_orchestration_spans(lookback_hours=2)
     # Failure must leave the resume point unset so the window is re-scanned.
     assert ev._last_evaluation_time is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_runs_serialize_the_resume_cursor():
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_entered = asyncio.Event()
+    calls = []
+
+    async def get_spans(project, start_time, end_time, filters, limit):
+        calls.append((start_time, end_time))
+        if len(calls) == 1:
+            first_entered.set()
+            await release_first.wait()
+        else:
+            second_entered.set()
+        return pd.DataFrame()
+
+    ev = _evaluator(get_spans)
+    first = asyncio.create_task(ev.evaluate_orchestration_spans(lookback_hours=1))
+    await first_entered.wait()
+    second = asyncio.create_task(ev.evaluate_orchestration_spans(lookback_hours=1))
+
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert second_entered.is_set() is False
+
+    release_first.set()
+    await asyncio.gather(first, second)
+
+    assert len(calls) == 2
+    assert calls[1][0] == calls[0][1]
 
 
 def test_ctor_canonicalizes_tenant_for_provider_and_project_scoping():

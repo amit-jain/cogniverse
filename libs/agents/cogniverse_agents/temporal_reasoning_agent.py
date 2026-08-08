@@ -22,7 +22,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import Field, field_validator
@@ -43,11 +43,11 @@ _UNDATED_BUCKET = "undated"
 
 
 def _parse_iso(value: Any) -> Optional[datetime]:
-    """Best-effort ISO-8601 parse. Returns None for malformed input."""
+    """Parse a timezone-aware ISO-8601 value, or return ``None``."""
     if not value:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else None
     if not isinstance(value, str):
         return None
     raw = value.strip()
@@ -57,9 +57,7 @@ def _parse_iso(value: Any) -> Optional[datetime]:
         out = datetime.fromisoformat(raw)
     except ValueError:
         return None
-    if out.tzinfo is None:
-        out = out.replace(tzinfo=timezone.utc)
-    return out
+    return out if out.tzinfo is not None else None
 
 
 def _content_signature(rows: List[Dict[str, Any]]) -> str:
@@ -110,7 +108,7 @@ class TimeWindow(AgentInput):
     @classmethod
     def _start_is_iso(cls, v: str) -> str:
         if _parse_iso(v) is None:
-            raise ValueError(f"start={v!r} is not a parseable ISO-8601 timestamp")
+            raise ValueError(f"start={v!r} is not a timezone-aware ISO-8601 timestamp")
         return v
 
     @field_validator("end")
@@ -118,7 +116,7 @@ class TimeWindow(AgentInput):
     def _end_is_iso_or_none(cls, v: Optional[str]) -> Optional[str]:
         if v is None or _parse_iso(v) is not None:
             return v
-        raise ValueError(f"end={v!r} is not a parseable ISO-8601 timestamp")
+        raise ValueError(f"end={v!r} is not a timezone-aware ISO-8601 timestamp")
 
 
 class TemporalReasoningInput(AgentInput):
@@ -281,7 +279,12 @@ class TemporalReasoningAgent(
         )
 
         agent_name = input.agent_name_filter or "_promoted"
-        rows = self._fetch_subject_rows(tenant_id, agent_name, input.subject_key)
+        rows = await asyncio.to_thread(
+            self._fetch_subject_rows,
+            tenant_id,
+            agent_name,
+            input.subject_key,
+        )
 
         # Bucket per window; track undated separately.
         bucketed, undated = self._bucket_rows_by_window(rows, input.windows)

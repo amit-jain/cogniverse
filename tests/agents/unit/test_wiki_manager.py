@@ -730,6 +730,33 @@ class TestWikiLint:
         )
         assert stale_entry["days_since_update"] > 30
 
+    @pytest.mark.parametrize(
+        "updated_at",
+        ["2026-04-05T00:00:00", "not-a-timestamp", ""],
+    )
+    def test_counts_invalid_timestamp_contract(self, updated_at):
+        results = [
+            _make_mock_result(
+                "doc_bad_timestamp",
+                "Bad Timestamp",
+                "This content is long enough to isolate the timestamp issue.",
+                updated_at=updated_at,
+            )
+        ]
+        mgr = self._make_manager(results)
+
+        report = mgr.lint()
+
+        assert report["malformed_pages"] == [
+            {
+                "doc_id": "doc_bad_timestamp",
+                "title": "Bad Timestamp",
+                "field": "updated_at",
+                "value": updated_at,
+            }
+        ]
+        assert report["issues_found"] == 2
+
     def test_detects_orphan_pages(self):
         # A topic page with no session referencing it.
         results = [

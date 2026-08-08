@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
@@ -234,6 +236,55 @@ class TestMissingMembers:
                 )
             )
 
+    async def test_member_fetch_does_not_block_the_event_loop(self):
+        older = _seed(
+            "m_old",
+            "Lyon",
+            "france:capital",
+            created_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+        )
+        newer = _seed("m_new", "Paris", "france:capital")
+        agent = _build_agent([older, newer])
+        entered = threading.Event()
+        release = threading.Event()
+        by_id = {"m_old": older, "m_new": newer}
+
+        def _get(memory_id):
+            if memory_id == "m_old":
+                entered.set()
+                release.wait(timeout=1)
+            return by_id[memory_id]
+
+        agent.memory_manager.memory.get.side_effect = _get
+        unblock_timer = threading.Timer(1, release.set)
+        unblock_timer.start()
+        task = asyncio.create_task(
+            agent._process_impl(
+                ContradictionReconciliationInput(
+                    target_kind="entity_fact",
+                    conflict_member_ids=["m_old", "m_new"],
+                )
+            )
+        )
+
+        try:
+            for _ in range(100):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.001)
+            assert entered.is_set()
+            assert release.is_set() is False
+        finally:
+            unblock_timer.cancel()
+            release.set()
+
+        out = await task
+        assert out.survivors == ["m_new"]
+        assert {member.memory_id: member.survived for member in out.resolved} == {
+            "m_old": False,
+            "m_new": True,
+        }
+
     async def test_all_missing_returns_empty(self):
         agent = _build_agent([])
         out = await agent._process_impl(
@@ -333,8 +384,6 @@ def test_kg_outage_degrades_to_empty_complement_when_memory_answers(monkeypatch)
 async def test_kg_conflict_scan_runs_off_the_event_loop(monkeypatch):
     """The KG conflict scan is a blocking Vespa read; _process_impl must run
     it in a worker thread, not on the loop."""
-    import threading
-
     agent = ContradictionReconciliationAgent(
         deps=ContradictionReconciliationDeps(tenant_id="acme")
     )

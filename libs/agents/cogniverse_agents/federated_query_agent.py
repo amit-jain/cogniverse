@@ -279,7 +279,11 @@ class FederatedQueryAgent(
         hits: List[FederatedHitOut] = []
         per_tenant_counts: Dict[str, int] = {}
         for tid in input.tenant_ids:
-            rows = federation.federated_get_all(tid, agent_filter)
+            rows = await asyncio.to_thread(
+                federation.federated_get_all,
+                tid,
+                agent_filter,
+            )
             matched = [r for r in rows if _matches_query(r, input.query)][
                 : input.top_k_per_tenant
             ]

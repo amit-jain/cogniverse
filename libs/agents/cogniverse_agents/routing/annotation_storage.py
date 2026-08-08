@@ -127,7 +127,7 @@ class AnnotationStorage:
             "annotation.confidence": annotation.confidence,
             "annotation.reasoning": annotation.reasoning,
             "annotation.annotator": "llm",
-            "annotation.timestamp": datetime.now().isoformat(),
+            "annotation.timestamp": datetime.now(timezone.utc).isoformat(),
             "annotation.human_reviewed": False,
             "annotation.requires_review": annotation.requires_human_review,
         }
@@ -167,7 +167,7 @@ class AnnotationStorage:
             "annotation.confidence": 1.0,  # Human annotations have full confidence
             "annotation.reasoning": reasoning,
             "annotation.annotator": annotator_id,
-            "annotation.timestamp": datetime.now().isoformat(),
+            "annotation.timestamp": datetime.now(timezone.utc).isoformat(),
             "annotation.human_reviewed": True,
             "annotation.requires_review": False,
         }
@@ -196,7 +196,7 @@ class AnnotationStorage:
             "annotation.human_reviewed": True,
             "annotation.requires_review": False,
             "annotation.approved_by": annotator_id,
-            "annotation.approval_timestamp": datetime.now().isoformat(),
+            "annotation.approval_timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
         return await self._update_span_attributes(span_id, update_data)

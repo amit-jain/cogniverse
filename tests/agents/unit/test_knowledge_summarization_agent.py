@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from cogniverse_agents.knowledge_summarization_agent import (
     SUMMARY_KIND,
@@ -316,6 +319,97 @@ class TestPromotion:
         assert out.promoted_memory_id is None
         assert promoted.get("acme:_org_trunk", []) == []
 
+    async def test_promotion_write_does_not_block_the_event_loop(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def _factory(tenant_id: str):
+            mm = MagicMock()
+            mm.memory = MagicMock()
+            mm.get_all_memories.return_value = (
+                [_row("m1", "Refunds within 30 days")]
+                if tenant_id == "acme:production"
+                else []
+            )
+
+            def _add(**kwargs):
+                entered.set()
+                release.wait(timeout=1)
+                return "promoted::acme:_org_trunk::0"
+
+            mm.add_memory.side_effect = _add
+            return mm
+
+        agent = KnowledgeSummarizationAgent(
+            deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
+            memory_manager_factory=_factory,
+            registry=build_default_registry(),
+        )
+        agent._dspy_module = MagicMock(
+            return_value=MagicMock(summary="Exact refund summary")
+        )
+        unblock_timer = threading.Timer(1, release.set)
+        unblock_timer.start()
+        task = asyncio.create_task(
+            agent._process_impl(
+                KnowledgeSummarizationInput(
+                    tenant_id="acme:production",
+                    title="Refunds",
+                    promote=True,
+                    actor_role="tenant_admin",
+                    actor_id="admin",
+                )
+            )
+        )
+
+        try:
+            for _ in range(100):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.001)
+            assert entered.is_set()
+            assert release.is_set() is False
+        finally:
+            unblock_timer.cancel()
+            release.set()
+
+        out = await task
+        assert out.summary == "Exact refund summary"
+        assert out.promoted_to_org_trunk is True
+        assert out.promoted_memory_id == "promoted::acme:_org_trunk::0"
+
+    async def test_promotion_write_failure_propagates(self):
+        def _factory(tenant_id: str):
+            mm = MagicMock()
+            mm.memory = MagicMock()
+            mm.get_all_memories.return_value = (
+                [_row("m1", "Refunds within 30 days")]
+                if tenant_id == "acme:production"
+                else []
+            )
+            mm.add_memory.side_effect = TimeoutError("org trunk write timed out")
+            return mm
+
+        agent = KnowledgeSummarizationAgent(
+            deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
+            memory_manager_factory=_factory,
+            registry=build_default_registry(),
+        )
+        agent._dspy_module = MagicMock(
+            return_value=MagicMock(summary="Exact refund summary")
+        )
+
+        with pytest.raises(TimeoutError, match="org trunk write timed out"):
+            await agent._process_impl(
+                KnowledgeSummarizationInput(
+                    tenant_id="acme:production",
+                    title="Refunds",
+                    promote=True,
+                    actor_role="tenant_admin",
+                    actor_id="admin",
+                )
+            )
+
 
 def test_summary_kind_auto_registered():
     agent = KnowledgeSummarizationAgent(
@@ -327,7 +421,7 @@ def test_summary_kind_auto_registered():
 
 
 def test_input_requires_title():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         KnowledgeSummarizationInput(
             tenant_id="acme",
             subject_keys=["x"],
@@ -337,7 +431,7 @@ def test_input_requires_title():
 
 
 def test_max_memories_bounds_enforced():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         KnowledgeSummarizationInput(
             tenant_id="acme",
             subject_keys=["x"],
@@ -345,13 +439,30 @@ def test_max_memories_bounds_enforced():
             actor_id="a",
             max_memories=0,
         )
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         KnowledgeSummarizationInput(
             tenant_id="acme",
             subject_keys=["x"],
             title="t",
             actor_id="a",
             max_memories=10_000,
+        )
+
+
+def test_time_filter_requires_timezone_aware_bounds():
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        KnowledgeSummarizationInput(
+            tenant_id="acme",
+            title="naive lower bound",
+            since="2026-01-01T00:00:00",
+            actor_id="a",
+        )
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        KnowledgeSummarizationInput(
+            tenant_id="acme",
+            title="naive upper bound",
+            until="2026-04-01T00:00:00",
+            actor_id="a",
         )
 
 

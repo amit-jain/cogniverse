@@ -14,8 +14,10 @@ from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
 
 
 def _as_utc_aware(dt: datetime) -> datetime:
-    """Attach UTC to a naive datetime so naive and aware timestamps compare."""
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    """Normalize an aware datetime to UTC and reject ambiguous naive values."""
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        raise ValueError("reranking timestamps must be timezone-aware")
+    return dt.astimezone(timezone.utc)
 
 
 class MultiModalReranker:
