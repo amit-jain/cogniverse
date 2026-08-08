@@ -14,7 +14,9 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -915,6 +917,19 @@ def test_exact_model_launch_attempts_share_one_deadline(monkeypatch):
     assert "total 1.0-second provisioning deadline exhausted" in str(exc_info.value)
 
 
+def _marked_container_docker(model: str):
+    """Answer the marker inspect the way docker answers for a marked container."""
+
+    def run(command, **kwargs):
+        if command[:3] == ["docker", "inspect", "-f"]:
+            return subprocess.CompletedProcess(
+                command, 0, stdout=f"{model}\n", stderr=""
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    return run
+
+
 def test_wedged_preexisting_container_is_replaced_within_a_bounded_slice(monkeypatch):
     """A pre-existing container that never starts serving must not consume
     the whole provisioning budget: it gets a bounded wait, is removed, and
@@ -943,6 +958,9 @@ def test_wedged_preexisting_container_is_replaced_within_a_bounded_slice(monkeyp
     monkeypatch.setattr(hermetic_llm, "listed_model_ids", lambda base_url: None)
     monkeypatch.setattr(hermetic_llm, "_healthy", lambda base_url, model: False)
     monkeypatch.setattr(
+        hermetic_llm.subprocess, "run", _marked_container_docker(TEACHER_GEMMA)
+    )
+    monkeypatch.setattr(
         hermetic_llm,
         "_spawn",
         lambda model, container, host_port, device, gpu_utilization=0.25: (
@@ -968,6 +986,7 @@ def test_wedged_preexisting_container_is_replaced_within_a_bounded_slice(monkeyp
 
 def test_concurrent_processes_start_one_gemma_sidecar(monkeypatch):
     import tests.utils.hermetic_llm as hermetic_llm
+    import tests.utils.vllm_sidecar as sidecar_module
 
     context = multiprocessing.get_context("fork")
     spawn_count = context.Value("i", 0)
@@ -992,16 +1011,7 @@ def test_concurrent_processes_start_one_gemma_sidecar(monkeypatch):
         "listed_model_ids",
         lambda base_url: {GEMMA} if local_is_ready.value else None,
     )
-    monkeypatch.setattr(
-        hermetic_llm.subprocess,
-        "run",
-        lambda command, **kwargs: subprocess.CompletedProcess(
-            command,
-            0,
-            stdout="",
-            stderr="",
-        ),
-    )
+    monkeypatch.setattr(hermetic_llm.subprocess, "run", _marked_container_docker(GEMMA))
 
     def spawn(*args, **kwargs):
         with spawn_count.get_lock():
@@ -1030,7 +1040,7 @@ def test_concurrent_processes_start_one_gemma_sidecar(monkeypatch):
         "http://127.0.0.1:29110/v1",
     ]
     assert spawn_count.value == 1
-    assert hermetic_llm.REPO_ROOT not in hermetic_llm._LOCK_PATH.parents
+    assert hermetic_llm.REPO_ROOT not in sidecar_module.EXACT_MODEL_LOCK_PATH.parents
 
 
 def test_failed_exact_container_restart_reports_logs_and_removes_container(
@@ -1045,6 +1055,13 @@ def test_failed_exact_container_restart_reports_logs_and_removes_container(
 
     def fail_restart(command, **kwargs):
         commands.append(list(command))
+        if command[:3] == ["docker", "inspect", "-f"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=f"{TEACHER_GEMMA}\n",
+                stderr="",
+            )
         if command[:2] == ["docker", "start"]:
             raise subprocess.CalledProcessError(
                 1,
@@ -1349,6 +1366,560 @@ def test_partial_model_cache_does_not_force_offline_mode(monkeypatch, tmp_path):
     )
     model_flag = commands[0].index("--model")
     assert commands[0][model_flag + 1] == TEACHER_GEMMA
+
+
+def _spawn_command(monkeypatch, device: str) -> list[str]:
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    commands: list[list[str]] = []
+
+    def record_run(command, **kwargs):
+        commands.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(hermetic_llm, "_HF_CACHE", "/host/hf-cache")
+    monkeypatch.setattr(hermetic_llm.subprocess, "run", record_run)
+
+    hermetic_llm._spawn(GEMMA, "cogniverse-test-llm", 29110, device)
+
+    assert len(commands) == 1
+    return commands[0]
+
+
+def test_exact_model_rocm_spawn_marks_the_container_and_keeps_every_flag(monkeypatch):
+    """The reuse-by-design sidecar carries its own marker label — the one the
+    age reclaim filters on, never the owner-pid label — alongside every
+    published port, cache mount, resolver, OOM preference and ROCm device
+    flag the container needs."""
+    assert _spawn_command(monkeypatch, "rocm") == [
+        "docker",
+        "run",
+        "-d",
+        "--init",
+        "--name",
+        "cogniverse-test-llm",
+        "--label",
+        f"cogniverse-test-exact-model={GEMMA}",
+        "-p",
+        "29110:8000",
+        "-v",
+        "/host/hf-cache:/root/.cache/huggingface",
+        "--dns",
+        "1.1.1.1",
+        "--dns",
+        "8.8.8.8",
+        "--oom-score-adj=400",
+        "--device",
+        "/dev/kfd",
+        "--device",
+        "/dev/dri",
+        "--group-add",
+        "video",
+        "--group-add",
+        "render",
+        "--security-opt",
+        "seccomp=unconfined",
+        "vllm/vllm-openai-rocm:v0.23.0",
+        "--model",
+        GEMMA,
+        "--max-model-len",
+        "16384",
+        "--gpu-memory-utilization",
+        "0.25",
+    ]
+
+
+def test_exact_model_cpu_spawn_marks_the_container_and_keeps_every_flag(monkeypatch):
+    assert _spawn_command(monkeypatch, "cpu") == [
+        "docker",
+        "run",
+        "-d",
+        "--init",
+        "--name",
+        "cogniverse-test-llm",
+        "--label",
+        f"cogniverse-test-exact-model={GEMMA}",
+        "-p",
+        "29110:8000",
+        "-v",
+        "/host/hf-cache:/root/.cache/huggingface",
+        "--dns",
+        "1.1.1.1",
+        "--dns",
+        "8.8.8.8",
+        "--oom-score-adj=400",
+        "-e",
+        "VLLM_CPU_KVCACHE_SPACE=4",
+        "vllm/vllm-openai-cpu:v0.23.0",
+        "--model",
+        GEMMA,
+        "--max-model-len",
+        "16384",
+    ]
+
+
+class _FakeDocker:
+    """A docker holding labelled containers, answering the label-filtered
+    listings, creation-time inspects and forced removals the real CLI answers.
+
+    ``exact_model`` rows are ``(id, name, age in seconds)``; ``owner_labelled``
+    rows are ``(id, name, state, owner pid)``; ``listing_only`` rows appear in
+    a listing but are already gone by the time they are inspected.
+    """
+
+    def __init__(self, *, exact_model=(), owner_labelled=(), listing_only=()):
+        self.exact_model = list(exact_model)
+        self.owner_labelled = list(owner_labelled)
+        self.listing_only = list(listing_only)
+        self.commands: list[list[str]] = []
+        self.listing_error: str | None = None
+        self.inspect_error: str | None = None
+        self.removal_error: str | None = None
+
+    def install(self, monkeypatch) -> _FakeDocker:
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        monkeypatch.setattr(sidecar_module.subprocess, "run", self.run)
+        return self
+
+    @property
+    def removed(self) -> list[str]:
+        return [
+            command[3]
+            for command in self.commands
+            if command[:3] == ["docker", "rm", "-f"]
+        ]
+
+    @property
+    def label_filters(self) -> list[str]:
+        return [
+            command[command.index("--filter") + 1]
+            for command in self.commands
+            if command[:3] == ["docker", "ps", "-a"]
+        ]
+
+    def run(self, command, **kwargs):
+        self.commands.append(list(command))
+        if command[:3] == ["docker", "ps", "-a"]:
+            return self._listing(command)
+        if command[:2] == ["docker", "inspect"]:
+            return self._inspect(command)
+        if command[:3] == ["docker", "rm", "-f"]:
+            return self._remove(command)
+        raise AssertionError(f"unexpected command: {command}")
+
+    def _listing(self, command):
+        if self.listing_error is not None:
+            return subprocess.CompletedProcess(
+                command, 1, stdout="", stderr=self.listing_error
+            )
+        label = command[command.index("--filter") + 1].removeprefix("label=")
+        if label == "cogniverse-test-exact-model":
+            rows = [
+                f"{container_id}\t{name}"
+                for container_id, name, _age in self.exact_model
+            ] + [f"{container_id}\t{name}" for container_id, name in self.listing_only]
+        elif label == "cogniverse-test-owner-pid":
+            rows = [
+                f"{container_id}\t{state}\t{owner_pid}"
+                for container_id, _name, state, owner_pid in self.owner_labelled
+            ]
+        else:
+            raise AssertionError(f"unexpected label filter: {label}")
+        return subprocess.CompletedProcess(
+            command, 0, stdout="".join(f"{row}\n" for row in rows), stderr=""
+        )
+
+    def _inspect(self, command):
+        container_id = command[-1]
+        if self.inspect_error is not None:
+            return subprocess.CompletedProcess(
+                command, 1, stdout="", stderr=self.inspect_error
+            )
+        for known_id, _name, age in self.exact_model:
+            if known_id == container_id:
+                created = datetime.now(timezone.utc) - timedelta(seconds=age)
+                stamp = created.isoformat().replace("+00:00", "Z")
+                return subprocess.CompletedProcess(
+                    command, 0, stdout=f"{stamp}\n", stderr=""
+                )
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr=f"Error: No such object: {container_id}",
+        )
+
+    def _remove(self, command):
+        if self.removal_error is not None:
+            return subprocess.CompletedProcess(
+                command, 1, stdout="", stderr=self.removal_error
+            )
+        container_id = command[3]
+        self.exact_model = [row for row in self.exact_model if row[0] != container_id]
+        return subprocess.CompletedProcess(
+            command, 0, stdout=f"{container_id}\n", stderr=""
+        )
+
+
+def _isolated_exact_model_state(monkeypatch, tmp_path):
+    import tests.utils.vllm_sidecar as sidecar_module
+
+    monkeypatch.setattr(
+        sidecar_module, "_EXACT_MODEL_LEASE_DIR", tmp_path / "exact-model-leases"
+    )
+    monkeypatch.setattr(
+        sidecar_module,
+        "EXACT_MODEL_LOCK_PATH",
+        tmp_path / "exact-model-provisioning.lock",
+    )
+    return sidecar_module
+
+
+def _dead_pid() -> int:
+    context = multiprocessing.get_context("fork")
+    process = context.Process(target=int)
+    process.start()
+    process.join(timeout=5)
+    pid = process.pid
+    process.close()
+    assert not os.path.exists(f"/proc/{pid}")
+    return pid
+
+
+def test_exact_model_sidecar_older_than_the_reuse_window_is_reclaimed(
+    monkeypatch, tmp_path
+):
+    """Same-day reuse survives, a sidecar past the window does not.
+
+    These containers are deliberately reused across pytest sessions, so no
+    owner pid ever marks them dead and nothing else removes them; each one
+    keeps its weights resident in host memory until it is reclaimed by age.
+    """
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    docker = _FakeDocker(
+        exact_model=(
+            ("aaaaaaaaaaaa", "cogniverse-test-llm", 3 * 24 * 3600),
+            ("bbbbbbbbbbbb", "cogniverse-test-llm-teacher", 6 * 3600 + 1),
+            ("cccccccccccc", "cogniverse-test-llm-primary", 6 * 3600 - 5),
+            ("dddddddddddd", "cogniverse-test-llm-fresh", 90.0),
+        ),
+    ).install(monkeypatch)
+
+    sidecar_module.reclaim_stale_exact_model_containers()
+
+    assert sidecar_module.EXACT_MODEL_MAX_AGE_SECONDS == 6 * 3600
+    assert docker.removed == ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]
+    assert docker.commands[0] == [
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        "label=cogniverse-test-exact-model",
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+    ]
+
+
+def test_exact_model_reclaim_and_owner_reaper_do_not_cross_wire(monkeypatch, tmp_path):
+    """The age reclaim only sees exact-model containers and the owner-pid
+    reaper only sees owner-labelled ones, so a live session's sidecar and a
+    reusable exact-model sidecar are each judged by their own rule."""
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    docker = _FakeDocker(
+        exact_model=(("aaaaaaaaaaaa", "cogniverse-test-llm", 9 * 3600),),
+        owner_labelled=(
+            ("eeeeeeeeeeee", "cogniverse-vllm-test-live", "running", str(os.getpid())),
+        ),
+    ).install(monkeypatch)
+
+    sidecar_module.reclaim_stale_exact_model_containers()
+    sidecar_module.reap_dead_owner_containers()
+
+    assert docker.removed == ["aaaaaaaaaaaa"]
+    assert docker.label_filters == [
+        "label=cogniverse-test-exact-model",
+        "label=cogniverse-test-owner-pid",
+    ]
+
+
+def test_exact_model_sidecar_leased_by_a_live_session_is_never_reclaimed(
+    monkeypatch, tmp_path
+):
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    sidecar_module.lease_exact_model_container("cogniverse-test-llm")
+    docker = _FakeDocker(
+        exact_model=(("aaaaaaaaaaaa", "cogniverse-test-llm", 4 * 24 * 3600),),
+    ).install(monkeypatch)
+
+    sidecar_module.reclaim_stale_exact_model_containers()
+
+    assert docker.removed == []
+    assert [
+        entry.name for entry in sidecar_module._EXACT_MODEL_LEASE_DIR.iterdir()
+    ] == [f"cogniverse-test-llm.{os.getpid()}"]
+
+
+def test_exact_model_reclaim_drops_a_dead_sessions_lease(monkeypatch, tmp_path):
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    lease_dir = sidecar_module._EXACT_MODEL_LEASE_DIR
+    lease_dir.mkdir(parents=True)
+    (lease_dir / f"cogniverse-test-llm.{_dead_pid()}").touch()
+    docker = _FakeDocker(
+        exact_model=(("aaaaaaaaaaaa", "cogniverse-test-llm", 7 * 3600),),
+    ).install(monkeypatch)
+
+    sidecar_module.reclaim_stale_exact_model_containers()
+
+    assert docker.removed == ["aaaaaaaaaaaa"]
+    assert list(lease_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("reuse_path", ["healthy", "restarted", "spawned"])
+def test_sidecar_this_session_resolved_survives_a_later_reclaim(
+    monkeypatch, tmp_path, reuse_path
+):
+    """``ensure_llm`` leases whatever container it hands back, so a reclaim
+    running afterwards cannot delete the sidecar this session resolved into
+    its config — even when that container is older than the reuse window."""
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    states = {"healthy": "running", "restarted": "exited", "spawned": None}
+
+    monkeypatch.setattr(hermetic_llm, "_configured_model_urls", lambda model: ())
+    monkeypatch.setattr(
+        hermetic_llm, "_container_state", lambda container: states[reuse_path]
+    )
+    monkeypatch.setattr(hermetic_llm, "_healthy", lambda base_url, model: True)
+    monkeypatch.setattr(hermetic_llm, "listed_model_ids", lambda base_url: {GEMMA})
+    monkeypatch.setattr(hermetic_llm, "_detect_device", lambda: "cpu")
+    monkeypatch.setattr(hermetic_llm, "_spawn", lambda *args, **kwargs: None)
+    monkeypatch.setattr(hermetic_llm.subprocess, "run", _marked_container_docker(GEMMA))
+
+    assert hermetic_llm.ensure_llm(model=GEMMA, deadline_s=5.0) == (
+        "http://127.0.0.1:29110/v1"
+    )
+
+    docker = _FakeDocker(
+        exact_model=(("aaaaaaaaaaaa", "cogniverse-test-llm", 3 * 24 * 3600),),
+    ).install(monkeypatch)
+    sidecar_module.reclaim_stale_exact_model_containers()
+
+    assert docker.removed == []
+    assert [
+        entry.name for entry in sidecar_module._EXACT_MODEL_LEASE_DIR.iterdir()
+    ] == [f"cogniverse-test-llm.{os.getpid()}"]
+
+
+def test_unmarked_preexisting_sidecar_is_replaced_instead_of_reused(
+    monkeypatch, tmp_path
+):
+    """A sidecar left by a run that predates the marker carries no label, so the
+    age reclaim can never find it. Reusing it would put its weights back in host
+    RAM with nothing able to reclaim them, so it is removed and re-provisioned.
+    """
+    import tests.utils.hermetic_llm as hermetic_llm
+
+    _isolated_exact_model_state(monkeypatch, tmp_path)
+    commands: list[list[str]] = []
+    spawned: list[tuple[str, str, int, str]] = []
+    serving = {"value": False}
+
+    def unmarked_docker(command, **kwargs):
+        commands.append(list(command))
+        if command[:3] == ["docker", "inspect", "-f"]:
+            # docker renders a label the container does not carry as <no value>
+            return subprocess.CompletedProcess(
+                command, 0, stdout="<no value>\n", stderr=""
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def spawn(model, container, host_port, device, gpu_utilization=0.25):
+        spawned.append((model, container, host_port, device))
+        serving["value"] = True
+
+    monkeypatch.setattr(hermetic_llm, "_configured_model_urls", lambda model: ())
+    monkeypatch.setattr(hermetic_llm, "_container_state", lambda container: "running")
+    monkeypatch.setattr(hermetic_llm, "_container_logs", lambda container: "unmarked")
+    monkeypatch.setattr(hermetic_llm, "_detect_device", lambda: "cpu")
+    monkeypatch.setattr(
+        hermetic_llm,
+        "listed_model_ids",
+        lambda base_url: {GEMMA} if serving["value"] else None,
+    )
+    monkeypatch.setattr(
+        hermetic_llm, "_healthy", lambda base_url, model: serving["value"]
+    )
+    monkeypatch.setattr(hermetic_llm, "_spawn", spawn)
+    monkeypatch.setattr(hermetic_llm.subprocess, "run", unmarked_docker)
+
+    assert hermetic_llm.ensure_llm(model=GEMMA, deadline_s=5.0) == (
+        "http://127.0.0.1:29110/v1"
+    )
+
+    assert spawned == [(GEMMA, "cogniverse-test-llm", 29110, "cpu")]
+    assert [
+        "docker",
+        "inspect",
+        "-f",
+        '{{index .Config.Labels "cogniverse-test-exact-model"}}',
+        "cogniverse-test-llm",
+    ] in commands
+    assert ["docker", "rm", "-f", "cogniverse-test-llm"] in commands
+
+
+def test_exact_model_reclaim_skips_the_pass_while_a_session_provisions(
+    monkeypatch, tmp_path
+):
+    """A session inside ``ensure_llm`` holds the provisioning lock while it
+    decides which container to serve, before it can lease one. The reclaim
+    takes the same lock, so it cannot run in that window and delete the
+    container the session is resolving; it runs on the next pass instead."""
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    docker = _FakeDocker(
+        exact_model=(("aaaaaaaaaaaa", "cogniverse-test-llm", 3 * 24 * 3600),),
+    ).install(monkeypatch)
+
+    with sidecar_module.exact_model_provisioning_lock() as acquired:
+        assert acquired is True
+        sidecar_module.reclaim_stale_exact_model_containers()
+        assert docker.commands == []
+
+    sidecar_module.reclaim_stale_exact_model_containers()
+
+    assert docker.removed == ["aaaaaaaaaaaa"]
+
+
+def test_exact_model_reclaim_skips_a_container_that_vanished(monkeypatch, tmp_path):
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    docker = _FakeDocker(
+        exact_model=(("aaaaaaaaaaaa", "cogniverse-test-llm", 9 * 3600),),
+        listing_only=(("ffffffffffff", "cogniverse-test-llm-teacher"),),
+    ).install(monkeypatch)
+
+    sidecar_module.reclaim_stale_exact_model_containers()
+
+    assert docker.removed == ["aaaaaaaaaaaa"]
+
+
+def test_exact_model_reclaim_raises_when_docker_cannot_list(monkeypatch, tmp_path):
+    """A docker outage must not read as "no stale sidecars" — the squatter
+    that starves the host would survive silently."""
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    docker = _FakeDocker(
+        exact_model=(("aaaaaaaaaaaa", "cogniverse-test-llm", 9 * 3600),),
+    )
+    docker.listing_error = "Cannot connect to the Docker daemon at unix:///docker.sock"
+    docker.install(monkeypatch)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Cannot connect to the Docker daemon at unix:///docker.sock",
+    ):
+        sidecar_module.reclaim_stale_exact_model_containers()
+
+    assert docker.removed == []
+
+
+def test_exact_model_reclaim_raises_when_docker_cannot_read_the_age(
+    monkeypatch, tmp_path
+):
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    docker = _FakeDocker(
+        exact_model=(("aaaaaaaaaaaa", "cogniverse-test-llm", 9 * 3600),),
+    )
+    docker.inspect_error = "Error response from daemon: connection refused"
+    docker.install(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        sidecar_module.reclaim_stale_exact_model_containers()
+
+    assert docker.removed == []
+
+
+def test_exact_model_reclaim_reports_a_removal_that_failed(monkeypatch, tmp_path):
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    docker = _FakeDocker(
+        exact_model=(("aaaaaaaaaaaa", "cogniverse-test-llm", 9 * 3600),),
+    )
+    docker.removal_error = "permission denied while removing container"
+    docker.install(monkeypatch)
+
+    with pytest.raises(
+        RuntimeError, match="permission denied while removing container"
+    ):
+        sidecar_module.reclaim_stale_exact_model_containers()
+
+    assert docker.removed == ["aaaaaaaaaaaa"]
+
+
+def _labelled_container_names(label: str) -> list[str]:
+    listing = subprocess.run(
+        ["docker", "ps", "-a", "--filter", f"label={label}", "--format", "{{.Names}}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert listing.returncode == 0, listing.stderr
+    return sorted(listing.stdout.split())
+
+
+@pytest.mark.integration
+@pytest.mark.requires_docker
+def test_real_docker_reclaim_removes_the_unleased_sidecar_only(monkeypatch, tmp_path):
+    """The reclaim against real docker: real label filter, real creation
+    timestamp, real removal.
+
+    A real container's age cannot be moved, so the reuse window is first left
+    at its default (both containers are minutes old and must survive) and then
+    set to zero (both are past it, and only the unleased one may go). The label
+    key is scoped to this run so the pass cannot touch a developer's own warm
+    sidecars; the production key is pinned by the spawn command tests.
+    """
+    sidecar_module = _isolated_exact_model_state(monkeypatch, tmp_path)
+    run_id = uuid.uuid4().hex[:10]
+    probe_label = f"cogniverse-test-exact-model-probe-{run_id}"
+    monkeypatch.setattr(sidecar_module, "EXACT_MODEL_LABEL", probe_label)
+    leased = f"cogniverse-exact-leased-{run_id}"
+    stale = f"cogniverse-exact-stale-{run_id}"
+
+    try:
+        for name in (leased, stale):
+            created = subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--name",
+                    name,
+                    "--label",
+                    f"{probe_label}={GEMMA}",
+                    "--label",
+                    f"{sidecar_module.OWNER_LABEL}={os.getpid()}",
+                    "busybox:1.36",
+                    "sleep",
+                    "120",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert created.returncode == 0, created.stderr
+        sidecar_module.lease_exact_model_container(leased)
+
+        sidecar_module.reclaim_stale_exact_model_containers()
+        assert _labelled_container_names(probe_label) == [leased, stale]
+
+        sidecar_module.reclaim_stale_exact_model_containers(max_age_seconds=0)
+        assert _labelled_container_names(probe_label) == [leased]
+    finally:
+        subprocess.run(
+            ["docker", "rm", "-f", leased, stale],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
 
 
 def test_session_config_preserves_distinct_exact_models(monkeypatch, tmp_path):

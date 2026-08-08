@@ -1,6 +1,6 @@
 """Integration test configuration for backend tests.
 
-The fixture is now a thin re-export of the project-wide ``shared_vespa``
+``vespa_instance`` is a thin shim over the project-wide ``shared_vespa``
 container (``tests/conftest.py``). Schema-lifecycle tests in this package
 already deploy schemas under unique tenant_ids (``acme``, ``startup``,
 etc.) so they coexist with other packages' tenant-scoped schemas in the
@@ -19,14 +19,11 @@ import pytest
 # Import vespa backend to trigger self-registration
 import cogniverse_vespa  # noqa: F401
 
-# Re-export the canonical session-scoped Vespa from the project root.
-from tests.conftest import shared_vespa  # noqa: F401
-
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="module")
-def vespa_instance(shared_vespa):  # noqa: F811
+def vespa_instance(shared_vespa):
     """Compatibility shim: yields the dict shape backends/integration tests
     expect (``http_port``, ``config_port``, ``base_url``, ``container_name``)
     backed by the project-wide ``shared_vespa`` container.

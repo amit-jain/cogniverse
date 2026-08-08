@@ -29,7 +29,8 @@ from tests.utils.llm_config import get_llm_base_url, get_llm_model
 logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.integration
 
-TENANT = "test_tenant"  # matches provenance_test_tenant schema deployed by shared_memory_vespa
+# The tenant shared_memory_vespa deploys agent_memories + provenance for.
+TENANT = "test_tenant"
 AGENT_NAME = "citation_int_agent"
 
 
