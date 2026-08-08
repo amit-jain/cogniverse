@@ -50,13 +50,17 @@
           "num_patches": 1024,
           "embedding_dim": 320,
           "binary_dim": 40
+        },
+        "inference_services": {
+          "embedding": "vllm_colpali",
+          "transcription": "vllm_asr"
         }
       },
       "video_videoprism_base_mv_chunk_30s": {
         "type": "video",
         "description": "Test alias backed by the deployed colpali schema. Real VideoPrism inference would require the videoprism sidecar; ensemble RRF tests just need three distinct profile names against the same backing schema.",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "embedding_model": "videoprism_public_v1_base_hf",
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
         "schema_config": {
@@ -65,6 +69,10 @@
           "num_patches": 1024,
           "embedding_dim": 320,
           "binary_dim": 40
+        },
+        "inference_services": {
+          "embedding": "videoprism_jax",
+          "transcription": "vllm_asr"
         }
       },
       "video_colqwen_omni_mv_chunk_30s": {
@@ -80,6 +88,10 @@
           "num_patches": 1024,
           "embedding_dim": 320,
           "binary_dim": 40
+        },
+        "inference_services": {
+          "embedding": "vllm_colpali",
+          "transcription": "vllm_asr"
         }
       }
     },
@@ -91,13 +103,34 @@
     }
   },
   "agents": {
-    "orchestrator": {"url": "http://localhost:8013", "enabled": true},
-    "entity_extraction": {"url": "http://localhost:8010", "enabled": true},
-    "profile_selection": {"url": "http://localhost:8011", "enabled": true},
-    "query_enhancement": {"url": "http://localhost:8012", "enabled": true},
-    "search": {"url": "http://localhost:8002", "enabled": true},
-    "summarizer": {"url": "http://localhost:8003", "enabled": true},
-    "detailed_report": {"url": "http://localhost:8004", "enabled": true}
+    "orchestrator": {
+      "url": "http://localhost:8013",
+      "enabled": true
+    },
+    "entity_extraction": {
+      "url": "http://localhost:8010",
+      "enabled": true
+    },
+    "profile_selection": {
+      "url": "http://localhost:8011",
+      "enabled": true
+    },
+    "query_enhancement": {
+      "url": "http://localhost:8012",
+      "enabled": true
+    },
+    "search": {
+      "url": "http://localhost:8002",
+      "enabled": true
+    },
+    "summarizer": {
+      "url": "http://localhost:8003",
+      "enabled": true
+    },
+    "detailed_report": {
+      "url": "http://localhost:8004",
+      "enabled": true
+    }
   },
   "llm_config": {
     "primary": {
