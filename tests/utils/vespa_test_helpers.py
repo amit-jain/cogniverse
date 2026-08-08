@@ -59,6 +59,7 @@ def deploy_tenant_schema(
     tenant_id: str,
     base_schema_name: str,
     config_manager: ConfigManager | None = None,
+    force: bool = False,
 ) -> str:
     """Deploy ``base_schema_name`` for ``tenant_id`` against shared_vespa.
 
@@ -66,6 +67,10 @@ def deploy_tenant_schema(
     schemas already present (per the design of ``deploy_schema`` —
     collects existing + adds new + redeploys atomically). Returns the
     full tenant-scoped schema name (e.g. ``agent_memories_<tenant>``).
+
+    ``force=True`` re-runs the merge-and-redeploy even when the schema is
+    already registered; tests that assert the merge itself preserves peer
+    tenants need the deploy to actually execute.
     """
     if config_manager is None:
         config_manager = make_config_manager(shared_vespa)
@@ -88,6 +93,7 @@ def deploy_tenant_schema(
     return backend.schema_registry.deploy_schema(
         tenant_id=tenant_id,
         base_schema_name=base_schema_name,
+        force=force,
     )
 
 

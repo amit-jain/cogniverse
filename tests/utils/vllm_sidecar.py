@@ -23,15 +23,19 @@ fallbacks.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shlex
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -120,6 +124,197 @@ def reap_dead_owner_containers(label: str = OWNER_LABEL) -> None:
             timeout=30,
             check=False,
         )
+
+
+# Exact-model sidecars (see tests/utils/hermetic_llm.py) are reused across
+# pytest sessions on purpose, because re-provisioning one reloads multi-GB
+# weights. They therefore carry a marker of their own instead of OWNER_LABEL:
+# the owner-pid reaper removes every container whose spawning session is gone,
+# which is exactly the state a reusable sidecar sits in between sessions.
+# Their lifetime is bounded by age instead.
+EXACT_MODEL_LABEL = "cogniverse-test-exact-model"
+
+# A resident sidecar keeps its model weights in host memory — on a ROCm host
+# the GPU's GTT aperture backs them with system RAM (~26GB for gemma-4-e4b) —
+# and the shared Vespa refuses to boot with less than 4GB available. Six hours
+# covers one working stretch of repeated pytest runs against a warm container,
+# so reuse still pays for itself, while a forgotten sidecar costs part of a day
+# of RAM rather than holding it until the host reboots. Re-provisioning after
+# the window is one load from the local Hugging Face cache.
+EXACT_MODEL_MAX_AGE_SECONDS = 6 * 3600
+
+EXACT_MODEL_LOCK_PATH = (
+    Path(tempfile.gettempdir()) / f"cogniverse-exact-llm-sidecars-{os.getuid()}.lock"
+)
+_EXACT_MODEL_LEASE_DIR = (
+    Path(tempfile.gettempdir()) / f"cogniverse-exact-llm-leases-{os.getuid()}"
+)
+
+
+@contextmanager
+def exact_model_provisioning_lock(*, blocking: bool = True):
+    """Serialize exact-model selection and age reclaim across pytest processes.
+
+    Yields whether the lock was taken. With ``blocking=False`` a lock already
+    held by another session yields ``False`` instead of waiting: that session is
+    provisioning right now, so it is actively using its sidecars and a reclaim
+    has nothing to do while it runs.
+    """
+    EXACT_MODEL_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with EXACT_MODEL_LOCK_PATH.open("a+") as lock_file:
+        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+        try:
+            fcntl.flock(lock_file.fileno(), flags)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def lease_exact_model_container(container: str) -> None:
+    """Record that this pytest process serves tests from ``container``.
+
+    A lease held by a live process keeps the age reclaim away from a sidecar a
+    session has already resolved into its config; a lease whose process is gone
+    is dropped by the reclaim itself.
+    """
+    _EXACT_MODEL_LEASE_DIR.mkdir(parents=True, exist_ok=True)
+    (_EXACT_MODEL_LEASE_DIR / f"{container}.{os.getpid()}").touch()
+
+
+def _live_leased_containers() -> set[str]:
+    """Containers leased by a live process, dropping the leases of dead ones."""
+    try:
+        entries = sorted(_EXACT_MODEL_LEASE_DIR.iterdir())
+    except FileNotFoundError:
+        return set()
+    leased: set[str] = set()
+    for entry in entries:
+        container, _, holder_pid = entry.name.rpartition(".")
+        if not container or not holder_pid.isdigit():
+            continue
+        if os.path.exists(f"/proc/{holder_pid}"):
+            leased.add(container)
+        else:
+            entry.unlink(missing_ok=True)
+    return leased
+
+
+def _container_age_seconds(container_id: str) -> float | None:
+    """Age from docker's own creation time; ``None`` when it is already gone."""
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.Created}}", container_id],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    if result.returncode != 0:
+        if "No such" in detail:
+            return None
+        raise RuntimeError(
+            f"docker could not read the creation time of exact-model container "
+            f"{container_id}: {detail or f'exit {result.returncode}'}"
+        )
+    created = result.stdout.strip()
+    try:
+        created_at = datetime.fromisoformat(created)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"docker reported an unreadable creation time for exact-model "
+            f"container {container_id}: {created!r}"
+        ) from exc
+    if created_at.tzinfo is None:
+        raise RuntimeError(
+            f"docker reported a creation time without a timezone for exact-model "
+            f"container {container_id}: {created!r}"
+        )
+    return (datetime.now(timezone.utc) - created_at).total_seconds()
+
+
+def reclaim_stale_exact_model_containers(
+    max_age_seconds: float = EXACT_MODEL_MAX_AGE_SECONDS,
+) -> None:
+    """Remove exact-model sidecars older than ``max_age_seconds``.
+
+    ``hermetic_llm`` reuses these sidecars across sessions, so they carry no
+    owner pid and ``reap_dead_owner_containers`` never sees them: without an age
+    bound nothing removes one, and a forgotten sidecar holds its weights in host
+    RAM until the host reboots. Age comes from docker's creation timestamp, so
+    neither a restart nor an in-process bookkeeping gap can make a container
+    look fresher than it is.
+
+    A sidecar leased by a live pytest process is kept whatever its age, and the
+    whole pass is skipped while another session holds the provisioning lock, so
+    a reclaim can never take a container a session has selected or is in the
+    middle of selecting. ``ensure_llm`` re-provisions on demand afterwards.
+    """
+    with exact_model_provisioning_lock(blocking=False) as acquired:
+        if not acquired:
+            return
+        listing = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "-a",
+                "--filter",
+                f"label={EXACT_MODEL_LABEL}",
+                "--format",
+                "{{.ID}}\t{{.Names}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if listing.returncode != 0:
+            detail = "\n".join(
+                part for part in (listing.stdout, listing.stderr) if part
+            ).strip()
+            raise RuntimeError(
+                f"docker could not list exact-model containers: "
+                f"{detail or f'exit {listing.returncode}'}"
+            )
+        candidates: list[tuple[str, str]] = []
+        for line in listing.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 2:
+                continue
+            candidates.append((parts[0], parts[1]))
+        if not candidates:
+            return
+
+        leased = _live_leased_containers()
+        removal_errors: list[str] = []
+        for container_id, name in candidates:
+            if name in leased:
+                continue
+            age_seconds = _container_age_seconds(container_id)
+            if age_seconds is None or age_seconds <= max_age_seconds:
+                continue
+            removed = subprocess.run(
+                ["docker", "rm", "-f", container_id],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            detail = "\n".join(
+                part for part in (removed.stdout, removed.stderr) if part
+            ).strip()
+            if removed.returncode != 0 and "No such container" not in detail:
+                removal_errors.append(
+                    f"{name} ({container_id}): {detail or f'exit {removed.returncode}'}"
+                )
+        if removal_errors:
+            raise RuntimeError(
+                "docker could not remove stale exact-model containers: "
+                + "; ".join(removal_errors)
+            )
 
 
 def _merge_serve_args(model: str, extra_args: Optional[list[str]]) -> list[str]:

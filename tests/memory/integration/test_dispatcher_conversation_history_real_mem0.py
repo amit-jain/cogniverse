@@ -30,6 +30,7 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
+from tests.utils.tenant_helpers import MEM0_ROUNDTRIP_TENANT_ID
 
 pytestmark = [pytest.mark.integration]
 
@@ -480,9 +481,9 @@ async def test_history_round_trips_through_real_construction(
     monkeypatch.setenv("LLM_ENDPOINT", get_llm_base_url())
     d = _dispatcher_with_real_construction(cm)
     # The non-seam manager resolves its own per-tenant schema
-    # (agent_memories_{canonical.replace(':','_')}); the fixture provisions
-    # agent_memories_test_tenant, so dispatch under the tenant that maps there.
-    provisioned_tenant = "test:tenant"
+    # (agent_memories_{canonical.replace(':','_')}), so dispatch under the
+    # tenant the shared memory fixture provisioned that schema for.
+    provisioned_tenant = MEM0_ROUNDTRIP_TENANT_ID
     ctx = f"chat{uuid.uuid4().hex[:10]}"
     seen: list = []
     _reply_with(

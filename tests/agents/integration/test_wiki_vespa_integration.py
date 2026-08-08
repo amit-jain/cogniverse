@@ -25,9 +25,9 @@ from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_nam
 # Constants
 # ---------------------------------------------------------------------------
 
-# This module's own tenant. Memory tests own ``test:tenant``
-# (wiki_pages_test_tenant) on the same shared container, so a distinct
-# tenant here keeps the two suites' wiki documents in separate schemas.
+# This module's own tenant. Memory tests own ``test_tenant`` on the same
+# shared container, so a distinct tenant here keeps the two suites' wiki
+# documents in separate schemas.
 TENANT_ID = "test:wiki"
 WIKI_SCHEMA = schema_full_name("wiki_pages", TENANT_ID)
 

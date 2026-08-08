@@ -21,9 +21,6 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 
-# Re-export the canonical session-scoped Vespa from the project root.
-from tests.conftest import shared_vespa  # noqa: F401, E402
-
 # Direct import (not pytest_plugins — rejected in non-rootdir conftests);
 # same pattern as tests/ingestion/conftest.py.
 from tests.fixtures.sidecars import vllm_sidecar  # noqa: F401, E402
@@ -61,7 +58,7 @@ def dspy_lm(ensure_host_ollama):
 
 
 @pytest.fixture(scope="module")
-def vespa_instance(shared_vespa):  # noqa: F811
+def vespa_instance(shared_vespa):
     """Compatibility shim: yields the dict shape routing/integration tests
     expect, backed by the project-wide ``shared_vespa``.
 

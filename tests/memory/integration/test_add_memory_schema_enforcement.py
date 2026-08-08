@@ -48,10 +48,10 @@ logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.integration
 
 # Reuse the conftest's pre-deployed per-tenant schema. The shared
-# memory-vespa fixture deploys ``agent_memories_test_tenant`` once at
-# session scope, so any test that uses that exact tenant_id can write
-# without needing dynamic schema deployment (which the local Vespa
-# config rejects on some dev machines).
+# memory-vespa fixture deploys the ``agent_memories`` schema for this
+# tenant once at session scope, so any test that uses that exact
+# tenant_id can write without needing dynamic schema deployment (which
+# the local Vespa config rejects on some dev machines).
 TENANT_ENFORCED = "test_tenant"
 TENANT_LEGACY = "test_tenant"
 AGENT_ENFORCED = "p21_enforced_agent"

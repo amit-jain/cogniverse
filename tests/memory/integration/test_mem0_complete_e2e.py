@@ -21,6 +21,7 @@ from tests.utils.llm_config import (
     get_llm_base_url,
     get_llm_model,
 )
+from tests.utils.tenant_helpers import MEM0_ROUNDTRIP_TENANT_ID
 
 
 @pytest.fixture(scope="module")
@@ -28,12 +29,7 @@ def memory_manager(shared_memory_vespa, shared_denseon):
     """Initialize and return memory manager for all tests."""
     Mem0MemoryManager._instances.clear()
 
-    # Canonical org:tenant form so the derived schema matches the single
-    # suffix the shared fixture deploys (agent_memories_test_tenant). The bare
-    # "test_tenant" canonicalizes to "test_tenant:test_tenant" and derives the
-    # double-suffix agent_memories_test_tenant_test_tenant, which is never
-    # deployed, so every read/search resolved an unknown schema.
-    manager = Mem0MemoryManager(tenant_id="test:tenant")
+    manager = Mem0MemoryManager(tenant_id=MEM0_ROUNDTRIP_TENANT_ID)
 
     manager.initialize(
         backend_host=get_backend_host(),
@@ -120,7 +116,7 @@ class TestMemorySystemCompleteE2E:
             }
         }
 
-        schema_name = shared_memory_vespa["tenant_schema_name"]
+        schema_name = shared_memory_vespa["mem0_roundtrip_schema_name"]
         # Use memory_content namespace — matches VespaIngestionClient namespace
         # logic for agent_memories schemas (ingestion_client.py).
         namespace = "memory_content"

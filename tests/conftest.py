@@ -1019,9 +1019,16 @@ def shared_vespa():
 
     # Reap labelled containers whose owning pytest died without teardown
     # (SIGKILL skips the finally) — a dead session's Vespa JVM holds GBs.
-    from tests.utils.vllm_sidecar import reap_dead_owner_containers
+    # Exact-model LLM sidecars are reused across sessions and carry no owner
+    # pid, so they are reclaimed by age instead: one left running for days
+    # holds its weights in host RAM and starves Vespa's memory pre-flight.
+    from tests.utils.vllm_sidecar import (
+        reap_dead_owner_containers,
+        reclaim_stale_exact_model_containers,
+    )
 
     reap_dead_owner_containers()
+    reclaim_stale_exact_model_containers()
 
     machine = platform.machine().lower()
     docker_platform = (
