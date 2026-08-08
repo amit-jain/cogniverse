@@ -1,21 +1,17 @@
 """
 Integration tests for WikiManager against a real Vespa Docker container.
 
-Starts its own Vespa container, deploys the wiki_pages_test_tenant schema,
-exercises the full save→feed→retrieve round-trip, then tears down.
+Deploys this module's own tenant-scoped wiki_pages schema onto the
+session-wide Vespa container, exercises the full save→feed→retrieve
+round-trip, and leaves the container to the session fixture.
 
 These tests verify that WikiManager correctly writes documents to Vespa
 and that the stored content is retrievable via the Document v1 HTTP API.
 """
 
-import json
-import os
-import platform
-import subprocess
 import threading
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,17 +19,17 @@ import requests
 
 from cogniverse_agents.wiki.wiki_manager import WikiManager
 from cogniverse_agents.wiki.wiki_schema import WikiPage, generate_slug
-from tests.utils.docker_utils import generate_unique_ports
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-TENANT_ID = "test_tenant"
-WIKI_SCHEMA = "wiki_pages_test_tenant"
-CONTAINER_NAME = "vespa-wiki-integration-tests"
-
-_HTTP_PORT, _CONFIG_PORT = generate_unique_ports(__name__)
+# This module's own tenant. Memory tests own ``test:tenant``
+# (wiki_pages_test_tenant) on the same shared container, so a distinct
+# tenant here keeps the two suites' wiki documents in separate schemas.
+TENANT_ID = "test:wiki"
+WIKI_SCHEMA = schema_full_name("wiki_pages", TENANT_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -58,34 +54,6 @@ def _get_vespa_doc(port: int, doc_id: str, retries: int = 15) -> dict | None:
             pass
         time.sleep(1)
     return None
-
-
-def _wait_for_config_port(config_port: int, timeout: int = 120) -> bool:
-    for _ in range(timeout):
-        try:
-            resp = requests.get(
-                f"http://localhost:{config_port}/ApplicationStatus", timeout=2
-            )
-            if resp.status_code == 200:
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    return False
-
-
-def _wait_for_data_port(http_port: int, timeout: int = 120) -> bool:
-    for _ in range(timeout):
-        try:
-            resp = requests.get(
-                f"http://localhost:{http_port}/ApplicationStatus", timeout=5
-            )
-            if resp.status_code == 200:
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    return False
 
 
 def _wait_for_schema_ready(
@@ -133,117 +101,36 @@ def _wait_for_schema_ready(
     return False
 
 
-def _deploy_wiki_schema(config_port: int, http_port: int) -> None:
-    """Deploy the wiki_pages_test_tenant schema via ApplicationPackage."""
-    from vespa.package import ApplicationPackage
-
-    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-    from cogniverse_vespa.metadata_schemas import (
-        create_adapter_registry_schema,
-        create_config_metadata_schema,
-        create_organization_metadata_schema,
-        create_tenant_metadata_schema,
-    )
-    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-    metadata_schemas = [
-        create_organization_metadata_schema(),
-        create_tenant_metadata_schema(),
-        create_config_metadata_schema(),
-        create_adapter_registry_schema(),
-    ]
-
-    parser = JsonSchemaParser()
-    schema_file = Path("configs/schemas/wiki_pages_schema.json")
-    with open(schema_file) as f:
-        schema_json = json.load(f)
-    schema_json["name"] = WIKI_SCHEMA
-    schema_json["document"]["name"] = WIKI_SCHEMA
-    wiki_schema = parser.parse_schema(schema_json)
-
-    app_package = ApplicationPackage(
-        name="cogniverse", schema=metadata_schemas + [wiki_schema]
-    )
-    mgr = VespaSchemaManager(
-        backend_endpoint="http://localhost",
-        backend_port=config_port,
-    )
-    mgr._deploy_package(app_package)
-
-
 # ---------------------------------------------------------------------------
-# Session-scoped fixture: start Vespa, deploy wiki schema, yield port info
+# Module fixture: deploy this module's wiki schema onto the shared Vespa
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def wiki_vespa():
-    """Module-scoped real Vespa instance with the wiki_pages schema deployed."""
-    http_port = _HTTP_PORT
-    config_port = _CONFIG_PORT
+def wiki_vespa(shared_vespa):
+    """The session-wide Vespa with this module's wiki_pages schema deployed.
 
-    machine = platform.machine().lower()
-    docker_platform = (
-        "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+    ``deploy_tenant_schema`` goes through SchemaRegistry, which redeploys the
+    complete cluster schema list. A hand-built application package carrying
+    only this schema would drop every other suite's schema from the shared
+    container, because Vespa treats an absent schema as a removal.
+    """
+    deployed = deploy_tenant_schema(
+        shared_vespa,
+        tenant_id=TENANT_ID,
+        base_schema_name="wiki_pages",
+    )
+    assert deployed == WIKI_SCHEMA, (
+        f"deploy_schema returned {deployed!r}; the module addresses "
+        f"{WIKI_SCHEMA!r} in every document URL"
     )
 
-    subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-    subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
-
-    result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            CONTAINER_NAME,
-            "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{http_port}:8080",
-            "-p",
-            f"{config_port}:19071",
-            "--platform",
-            docker_platform,
-            "vespaengine/vespa:8.668.5",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        pytest.fail(f"Failed to start Vespa container: {result.stderr}")
-
-    print(f"\nVespa container started on http={http_port}, config={config_port}")
-
-    if not _wait_for_config_port(config_port, timeout=120):
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
-        pytest.fail("Vespa config port did not come up within 120 s")
-
-    time.sleep(10)  # Additional settle time before schema deployment
-
-    try:
-        _deploy_wiki_schema(config_port, http_port)
-        print("Wiki schema deployed successfully")
-    except Exception as exc:
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
-        pytest.fail(f"Schema deployment failed: {exc}")
-
-    if not _wait_for_data_port(http_port, timeout=120):
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
-        pytest.fail("Vespa data port did not come up within 120 s after deployment")
-
+    http_port = shared_vespa["http_port"]
     if not _wait_for_schema_ready(http_port, WIKI_SCHEMA, timeout=120):
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
         pytest.fail(f"Schema {WIKI_SCHEMA} not ready within 120 s")
 
-    yield {"http_port": http_port, "config_port": config_port}
-
-    subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-    subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
+    yield {"http_port": http_port, "config_port": shared_vespa["config_port"]}
+    # No teardown — shared_vespa owns the container lifecycle.
 
 
 @pytest.fixture(scope="module")
