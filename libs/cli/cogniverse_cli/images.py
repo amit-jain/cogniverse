@@ -277,11 +277,21 @@ def dev_image_set_values(
 
 def import_images(cluster_name: str, tags: list[str]) -> None:
     """Import Docker images into a k3d cluster."""
-    subprocess.run(
-        ["k3d", "image", "import", *tags, "-c", cluster_name],
-        check=True,
-        timeout=1800,
-    )
+    for tag in tags:
+        subprocess.run(
+            [
+                "k3d",
+                "image",
+                "import",
+                "--mode",
+                "direct",
+                tag,
+                "-c",
+                cluster_name,
+            ],
+            check=True,
+            timeout=1800,
+        )
 
 
 _DEV_NUM_RE = re.compile(r"dev(\d+)")
@@ -458,12 +468,22 @@ def pull_and_import_third_party(
     for image in images:
         subprocess.run(
             ["docker", "pull", image],
-            check=False,  # Don't fail if pull is slow/offline
+            check=True,
             timeout=600,
         )
 
-    subprocess.run(
-        ["k3d", "image", "import", *images, "-c", cluster_name],
-        check=False,  # Non-fatal if import fails
-        timeout=600,
-    )
+    for image in images:
+        subprocess.run(
+            [
+                "k3d",
+                "image",
+                "import",
+                "--mode",
+                "direct",
+                image,
+                "-c",
+                cluster_name,
+            ],
+            check=True,
+            timeout=600,
+        )

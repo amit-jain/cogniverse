@@ -30,7 +30,7 @@ Key responsibilities:
 
 - **Stack lifecycle** — `up`, `down`, `start`, `stop`, `status`, and `logs` for the Helm release and its k3d cluster
 - **Cluster bootstrap** — creates, starts, stops, and deletes a local k3d cluster; checks and installs prerequisites (`docker`, `kubectl`, `helm`)
-- **Image handling** — detects the host's torch backend (cpu/cuda/rocm), builds workspace images, imports them into k3d, pre-pulls third-party images
+- **Image handling** — detects the host's torch backend (cpu/cuda/rocm), builds workspace images, pre-pulls third-party images one at a time, and imports every image into k3d independently with `k3d image import --mode direct` to bound peak memory; any failed pull or import stops the remaining image operations and aborts deployment
 - **Secrets sync** — pushes HuggingFace and Telegram credentials into their declared cluster Secrets
 - **External inference** — deploys, warms, releases, inspects, qualifies, and explicitly undeploys pinned Modal services
 - **Operator and client commands** — `code`, `index`, `graph`, `admin`, `sandbox`, and `secrets`
@@ -413,7 +413,10 @@ Types use the imported names from their defining modules.
 
 ```bash
 # Deploy the full stack (creates a k3d cluster if none exists). Builds the
-# images at the git-derived dev version, imports them into k3d, and
+# images at the git-derived dev version, pulls third-party images one at a
+# time, then imports each image with `k3d image import --mode direct` in a
+# separate operation to bound peak memory use. A failed pull or import stops
+# the remaining image operations and aborts deployment. After all imports, `up`
 # helm-upgrades with the chart stamped to the same version. In dev mode the
 # pods mount the working tree over the images, so day-to-day code changes
 # only need a `kubectl rollout restart` of the affected deployment — rerun

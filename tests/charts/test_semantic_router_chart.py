@@ -168,3 +168,23 @@ def test_router_image_falls_back_to_tag_when_digest_cleared():
         _render("llm.engine=vllm", "semanticRouter.router.image.digest=")
     )
     assert image.endswith(":latest"), f"expected tag fallback, got {image}"
+
+
+def test_router_cold_download_has_thirty_minute_startup_budget():
+    docs = _render("llm.engine=vllm")
+    deployment = next(
+        doc
+        for doc in docs
+        if doc.get("kind") == "Deployment"
+        and doc["metadata"]["name"] == "cogniverse-semantic-router"
+    )
+    container = next(
+        item
+        for item in deployment["spec"]["template"]["spec"]["containers"]
+        if item["name"] == "semantic-router"
+    )
+    probe = container["startupProbe"]
+
+    assert probe["httpGet"] == {"path": "/metrics", "port": "metrics"}
+    assert probe["periodSeconds"] == 10
+    assert probe["failureThreshold"] == 180

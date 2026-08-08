@@ -6,8 +6,10 @@ import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from unittest.mock import call as mock_call
 
 import cogniverse_cli.images as images_mod
+import pytest
 import yaml
 from cogniverse_cli.images import (
     _read_third_party_images,
@@ -385,18 +387,78 @@ class TestImportImages:
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_import_images_calls_k3d_import(self, mock_run: object) -> None:
-        """The k3d image import command includes all tags and cluster name."""
+        """Images are imported independently without a memory-heavy tools pod."""
         _completed(mock_run)
 
         import_images("cogniverse", ["img:a", "img:b"])
 
-        call_args = mock_run.call_args  # type: ignore[attr-defined]
-        cmd = call_args[0][0]
-        assert cmd[:3] == ["k3d", "image", "import"]
-        assert "img:a" in cmd
-        assert "img:b" in cmd
-        assert "-c" in cmd
-        assert "cogniverse" in cmd
+        assert mock_run.call_args_list == [  # type: ignore[attr-defined]
+            mock_call(
+                [
+                    "k3d",
+                    "image",
+                    "import",
+                    "--mode",
+                    "direct",
+                    "img:a",
+                    "-c",
+                    "cogniverse",
+                ],
+                check=True,
+                timeout=1800,
+            ),
+            mock_call(
+                [
+                    "k3d",
+                    "image",
+                    "import",
+                    "--mode",
+                    "direct",
+                    "img:b",
+                    "-c",
+                    "cogniverse",
+                ],
+                check=True,
+                timeout=1800,
+            ),
+        ]
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_import_failure_names_image_and_stops_later_imports(
+        self, mock_run: object
+    ) -> None:
+        failed_command = [
+            "k3d",
+            "image",
+            "import",
+            "--mode",
+            "direct",
+            "img:b",
+            "-c",
+            "cogniverse",
+        ]
+        mock_run.side_effect = [  # type: ignore[attr-defined]
+            subprocess.CompletedProcess(args=[], returncode=0),
+            subprocess.CalledProcessError(returncode=1, cmd=failed_command),
+        ]
+
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            import_images("cogniverse", ["img:a", "img:b", "img:c"])
+
+        assert exc_info.value.cmd == failed_command
+        assert [call.args[0] for call in mock_run.call_args_list] == [  # type: ignore[attr-defined]
+            [
+                "k3d",
+                "image",
+                "import",
+                "--mode",
+                "direct",
+                "img:a",
+                "-c",
+                "cogniverse",
+            ],
+            failed_command,
+        ]
 
 
 class TestPruneSupersededImages:
@@ -714,10 +776,10 @@ class TestReadThirdPartyImages:
 
 class TestPullAndImportThirdParty:
     """`pull_and_import_third_party` docker-pulls each resolved image then
-    imports them all into k3d in one call."""
+    imports them independently into k3d."""
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_pulls_each_image_then_imports_all(
+    def test_pulls_and_imports_each_image_independently(
         self, mock_run: object, tmp_path: Path
     ) -> None:
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
@@ -748,16 +810,108 @@ class TestPullAndImportThirdParty:
                 "k3d",
                 "image",
                 "import",
+                "--mode",
+                "direct",
                 "vespaengine/vespa:8.1",
+                "-c",
+                "cogniverse",
+            ],
+            [
+                "k3d",
+                "image",
+                "import",
+                "--mode",
+                "direct",
                 "arizephoenix/phoenix:5.0",
                 "-c",
                 "cogniverse",
             ],
         ]
-        # Pull + import are best-effort (a slow/offline registry must not
-        # abort the deploy), so every call sets check=False.
         for call in mock_run.call_args_list:  # type: ignore[attr-defined]
-            assert call.kwargs["check"] is False
+            assert call.kwargs["check"] is True
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_pull_failure_names_image_and_stops_before_later_work(
+        self, mock_run: object, tmp_path: Path
+    ) -> None:
+        vf = tmp_path / "values.yaml"
+        vf.write_text(
+            yaml.safe_dump(
+                {
+                    "vespa": {"image": {"repository": "example/failing", "tag": "1"}},
+                    "phoenix": {"image": {"repository": "example/later", "tag": "2"}},
+                    "semanticRouter": {"enabled": False},
+                }
+            )
+        )
+        failed_command = ["docker", "pull", "example/failing:1"]
+        mock_run.side_effect = subprocess.CalledProcessError(
+            returncode=1, cmd=failed_command
+        )  # type: ignore[attr-defined]
+
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            pull_and_import_third_party("cogniverse", vf, skip_llm=True)
+
+        assert exc_info.value.cmd == failed_command
+        assert [call.args[0] for call in mock_run.call_args_list] == [failed_command]  # type: ignore[attr-defined]
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_import_failure_names_image_and_stops_later_imports(
+        self, mock_run: object, tmp_path: Path
+    ) -> None:
+        vf = tmp_path / "values.yaml"
+        vf.write_text(
+            yaml.safe_dump(
+                {
+                    "vespa": {"image": {"repository": "example/first", "tag": "1"}},
+                    "phoenix": {"image": {"repository": "example/failing", "tag": "2"}},
+                    "semanticRouter": {
+                        "envoy": {"image": {"repository": "example/later", "tag": "3"}},
+                        "router": {"image": {}},
+                    },
+                }
+            )
+        )
+        failed_command = [
+            "k3d",
+            "image",
+            "import",
+            "--mode",
+            "direct",
+            "example/failing:2",
+            "-c",
+            "cogniverse",
+        ]
+        mock_run.side_effect = [  # type: ignore[attr-defined]
+            subprocess.CompletedProcess(args=[], returncode=0),
+            subprocess.CompletedProcess(args=[], returncode=0),
+            subprocess.CompletedProcess(args=[], returncode=0),
+            subprocess.CompletedProcess(args=[], returncode=0),
+            subprocess.CalledProcessError(returncode=1, cmd=failed_command),
+        ]
+
+        with pytest.raises(subprocess.CalledProcessError) as exc_info:
+            pull_and_import_third_party("cogniverse", vf, skip_llm=True)
+
+        assert exc_info.value.cmd == failed_command
+        import_commands = [
+            call.args[0]
+            for call in mock_run.call_args_list  # type: ignore[attr-defined]
+            if call.args[0][:3] == ["k3d", "image", "import"]
+        ]
+        assert import_commands == [
+            [
+                "k3d",
+                "image",
+                "import",
+                "--mode",
+                "direct",
+                "example/first:1",
+                "-c",
+                "cogniverse",
+            ],
+            failed_command,
+        ]
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_no_images_pulls_nothing(self, mock_run: object, tmp_path: Path) -> None:

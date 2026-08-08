@@ -60,14 +60,15 @@ spec:
           containerPort: {{ int .Values.semanticRouter.router.grpcPort }}
         - name: metrics
           containerPort: {{ int .Values.semanticRouter.router.metricsPort }}
-        # First boot downloads the classifier bundle (~GB) into the cache PVC;
-        # the startup probe gives it up to ~15m before liveness/readiness apply.
+        # First boot downloads the classifier bundle into the cache PVC. On a
+        # shared development host, concurrent model pulls have exceeded 15m,
+        # so cold start gets a 30m budget before liveness/readiness apply.
         startupProbe:
           httpGet:
             path: /metrics
             port: metrics
           periodSeconds: 10
-          failureThreshold: 90
+          failureThreshold: 180
         readinessProbe:
           httpGet:
             path: /metrics

@@ -13,7 +13,9 @@ Tests that use these helpers depend on the behavior asserted here.
 
 from __future__ import annotations
 
+import asyncio
 import time
+import warnings
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +23,7 @@ import pytest
 import tests.e2e.conftest as e2e_conftest
 from tests.e2e.conftest import (
     _TEST_TENANT_PREFIXES,
+    _clear_thread_event_loop,
     unique_id,
     wait_for_span,
 )
@@ -67,6 +70,18 @@ class TestSharedClusterOwnership:
     def e2e_stack(self):
         """Do not start a real cluster while testing the stack fixture itself."""
         yield
+
+    def test_clear_thread_event_loop_does_not_use_deprecated_lookup(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", DeprecationWarning)
+                _clear_thread_event_loop()
+            with pytest.raises(RuntimeError, match="There is no current event loop"):
+                asyncio.get_event_loop_policy().get_event_loop()
+        finally:
+            loop.close()
 
     def _start_stack(self, monkeypatch, *, cluster_states, force_fresh):
         import cogniverse_cli.cluster as cluster_cli
@@ -173,9 +188,13 @@ class TestSharedClusterOwnership:
                         "33746:2746",
                         "33901:29001",
                         "33902:29002",
+                        "33903:29003",
                         "33904:29004",
                         "33905:29005",
                         "33906:29006",
+                        "33907:29007",
+                        "33908:29008",
+                        "33909:29009",
                         "33910:29010",
                         "33911:29011",
                     ],

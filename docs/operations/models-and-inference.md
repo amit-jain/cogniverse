@@ -174,8 +174,9 @@ The `SemanticRouterConfig` dataclass defaults to disabled, so unconfigured
 library use is a no-op — but `cogniverse up` turns routing on by default
 (`semanticRouter.enabled: true`). Opt out with
 `cogniverse up ... --set semanticRouter.enabled=false`. The router downloads
-its classifier bundle on first boot into a model-cache PVC, so allow the
-startup probe time. Coverage:
+its classifier bundle on first boot into a model-cache PVC. Its startup probe
+allows 30 minutes for that cold download because model pulls can be serialized
+on a shared development host; warm starts reuse the PVC. Coverage:
 `tests/foundation/integration/test_semantic_router_e2e.py` self-launches the
 real router+Envoy+stub via `docker run` and asserts the tier/content decisions;
 `tests/e2e/deployment/test_semantic_router_deploy_e2e.py` rides the
@@ -223,6 +224,7 @@ contract.
 | Model | `videoprism_public_v1_base_hf` |
 | Image | **`cogniverse/videoprism:0.1.0-dev` (CUSTOM, `deploy/videoprism/Dockerfile`)** |
 | Engine | `videoprism_jax` |
+| NodePort | 29003 |
 | Default state | disabled |
 
 Custom JAX sidecar — no upstream vLLM equivalent. Used by the
@@ -276,6 +278,7 @@ text plus `is_query`; no prefixes or token IDs are built client-side.
 | Image | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` (official) |
 | Engine | `vllm_embed` |
 | Endpoint | `POST /v1/embeddings` (OpenAI-compatible, single dense vector) |
+| NodePort | 29006 |
 | Default state | enabled |
 
 DenseOn uses the same vLLM pooling runner as the ColBERT path, but
@@ -446,9 +449,20 @@ the host has the corresponding device — see
 [scripts-operations.md](../development/scripts-operations.md).
 
 For Strix Halo (`gfx1151`) iGPU specifically, the GPU "VRAM" IS host
-RAM (unified memory). The chart's ROCm overlay tunes
-`--gpu-memory-utilization` per-service so three concurrent vLLM pods
-can coexist (see `values.rocm.yaml` comments).
+RAM (unified memory). The chart's ROCm overlay gives generation services
+bounded `--gpu-memory-utilization` fractions. The Tomoro pooling service uses
+an explicit 1 GiB KV cache because its transient image-profile allocation is
+larger than its steady-state cache budget; it also caps preprocessing at
+1,048,576 pixels, matching the 1,024-patch Vespa document contract. See
+`values.rocm.yaml` for the complete per-service allocation. Its accompanying
+0.45 utilization value is retained only for vLLM's initial free-memory guard;
+the explicit byte value controls the actual cache reservation.
+
+Inference readiness probes begin immediately. A failed readiness probe only
+keeps the Service endpoint out of rotation; it does not restart the container.
+Cold-start protection remains on the separately budgeted liveness probe, so a
+model becomes routable on the first successful `/health` response instead of
+waiting through an additional fixed delay.
 
 ### GEMM auto-tuning on ROCm (`runtime.tunableOp`)
 
