@@ -1741,6 +1741,31 @@ flowchart TB
     style Final fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
+#### Ensemble Result Shape
+
+`SearchOutput.results` carries public-shaped dicts. Identity and ranking sit at
+the top level; everything else is payload under `metadata`:
+
+```python
+{
+    "id": "v_-6dz6tBH77I_seg_0",
+    "document_id": "id:content:video_colpali_smol500_mv_frame_acme_acme::v_-6dz6tBH77I_seg_0",
+    "score": 3.04,               # backend relevance for the profile that matched
+    "metadata": {...},           # remaining backend fields
+    "temporal_info": {"start_time": 0.0, "end_time": 5.0},  # when both are present
+    # ensemble mode only:
+    "rrf_score": 0.0333,         # the value the result set is ORDERED by
+    "profile_ranks": {"video_colpali_smol500_mv_frame": 0, "video_colqwen_omni_mv_chunk_30s": 1},
+    "profile_scores": {"video_colpali_smol500_mv_frame": 3.04, "video_colqwen_omni_mv_chunk_30s": 1.1},
+    "num_profiles": 2,
+}
+```
+
+`score` and `rrf_score` are different quantities on different scales: `score` is
+one profile's backend relevance, `rrf_score` is the fused rank. Sort order
+follows `rrf_score`, so clients that re-sort should use it. A single-profile
+search carries none of the ensemble keys.
+
 #### Key Methods (New/Enhanced)
 
 **`_search_ensemble(query, profiles, modality, limit) -> List[SearchResult]`** (Internal)
