@@ -345,6 +345,11 @@ class TestTrainingDataShapes:
         routing = data["agent_routing"][0]
         assert routing.primary_agent == "video_search"
         assert routing.routing_confidence == "0.9"
+        assert [example.recommended_workflow for example in data["agent_routing"]] == [
+            "raw_results",
+            "detailed_report",
+            "summary",
+        ]
 
 
 class TestModuleMetrics:
@@ -448,11 +453,11 @@ class TestModuleMetrics:
 
 
 class TestMainCLIOrchestration:
-    """main() guards on LM init and swallows optimization failures."""
+    """main() reports setup and optimization failures to its process boundary."""
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_main_returns_before_optimizing_when_lm_init_fails(self):
+    async def test_main_raises_when_lm_init_fails(self):
         from cogniverse_agents.optimizer import dspy_agent_optimizer as mod
 
         optimizer = MagicMock()
@@ -464,21 +469,24 @@ class TestMainCLIOrchestration:
             patch("cogniverse_foundation.config.utils.create_default_config_manager"),
             patch("cogniverse_foundation.config.utils.get_config"),
         ):
-            await mod.main()
+            with pytest.raises(
+                RuntimeError, match="Failed to initialize language model"
+            ):
+                await mod.main()
 
         optimizer.initialize_language_model.assert_called_once()
-        # Early return — the pipeline is never even constructed.
         pipeline_cls.assert_not_called()
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_main_swallows_optimization_failure_without_saving(self):
+    async def test_main_propagates_optimization_failure_without_saving(self):
         from cogniverse_agents.optimizer import dspy_agent_optimizer as mod
 
         optimizer = MagicMock()
         optimizer.initialize_language_model.return_value = True
         pipeline = MagicMock()
-        pipeline.optimize_all_modules = AsyncMock(side_effect=RuntimeError("boom"))
+        failure = RuntimeError("optimization boundary failed")
+        pipeline.optimize_all_modules = AsyncMock(side_effect=failure)
         pipeline.save_optimized_prompts = AsyncMock()
 
         with (
@@ -488,11 +496,44 @@ class TestMainCLIOrchestration:
             patch("cogniverse_foundation.config.utils.get_config"),
             patch("cogniverse_foundation.telemetry.get_telemetry_manager"),
         ):
-            # Must not propagate — the CLI catches optimization errors.
-            await mod.main()
+            with pytest.raises(
+                RuntimeError, match="optimization boundary failed"
+            ) as exc:
+                await mod.main()
 
+        assert exc.value is failure
         pipeline.optimize_all_modules.assert_awaited_once()
         pipeline.save_optimized_prompts.assert_not_called()
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_main_propagates_prompt_save_failure(self):
+        from cogniverse_agents.optimizer import dspy_agent_optimizer as mod
+
+        optimizer = MagicMock()
+        optimizer.initialize_language_model.return_value = True
+        pipeline = MagicMock()
+        pipeline.optimize_all_modules = AsyncMock(
+            return_value={"agent_routing": Mock()}
+        )
+        failure = RuntimeError("prompt storage boundary failed")
+        pipeline.save_optimized_prompts = AsyncMock(side_effect=failure)
+
+        with (
+            patch.object(mod, "DSPyAgentPromptOptimizer", return_value=optimizer),
+            patch.object(mod, "DSPyAgentOptimizerPipeline", return_value=pipeline),
+            patch("cogniverse_foundation.config.utils.create_default_config_manager"),
+            patch("cogniverse_foundation.config.utils.get_config"),
+            patch("cogniverse_foundation.telemetry.get_telemetry_manager"),
+        ):
+            with pytest.raises(
+                RuntimeError, match="prompt storage boundary failed"
+            ) as exc:
+                await mod.main()
+
+        assert exc.value is failure
+        pipeline.optimize_all_modules.assert_awaited_once()
+        pipeline.save_optimized_prompts.assert_awaited_once()
 
 
 class TestTeacherLMWiring:
