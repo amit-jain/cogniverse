@@ -1,9 +1,7 @@
 """Dispatcher propagates session_id onto memory-aware agents per request.
 
-Wire coverage for the EPHEMERAL_SESSION lifecycle's middle hop. The
-audit's call-out: it's not enough to ship the schema gate + drop_session
-+ admin endpoint — the runtime has to actually *put* session_id onto
-agent writes for any of it to fire. This test exercises
+The runtime has to put ``session_id`` onto agent writes for the
+EPHEMERAL_SESSION lifecycle to work. This test exercises
 ``AgentDispatcher._scoped_session`` directly with a stub mixin-shaped
 agent and asserts:
 
@@ -68,6 +66,21 @@ class _NonMemoryAgent:
     def process(self, payload: Any) -> Any:
         self.processed.append(payload)
         return payload
+
+
+class _FailingSessionSetterAgent:
+    def __init__(self, *, fail_values: list[Optional[str]]) -> None:
+        self._memory_agent_name = "failing_session_agent"
+        self.current_session_id: Optional[str] = "stale_session"
+        self.fail_values = list(fail_values)
+        self.calls: list[Optional[str]] = []
+
+    def set_session_id(self, session_id: Optional[str]) -> None:
+        self.calls.append(session_id)
+        if self.fail_values and session_id == self.fail_values[0]:
+            self.fail_values.pop(0)
+            raise ValueError(f"cannot set session to {session_id!r}")
+        self.current_session_id = session_id
 
 
 class TestScopedSessionStampsThenClears:
@@ -153,3 +166,58 @@ class TestScopedSessionStampsThenClears:
             "session_id must be cleared even when the agent raises — "
             "otherwise long-lived instances bleed sessions across requests"
         )
+
+    def test_present_setter_failure_stops_request_with_context(self):
+        agent = _FailingSessionSetterAgent(fail_values=["s_broken"])
+        body_executed = False
+
+        with pytest.raises(
+            RuntimeError,
+            match=("failing_session_agent.*s_broken.*cannot set session to 's_broken'"),
+        ):
+            with AgentDispatcher._scoped_session(agent, "s_broken"):
+                body_executed = True
+
+        assert body_executed is False
+        assert agent.calls == ["s_broken"]
+
+    def test_no_session_request_clears_stale_scope_before_body(self):
+        agent = _FailingSessionSetterAgent(fail_values=[])
+        observed_session_ids: list[Optional[str]] = []
+
+        with AgentDispatcher._scoped_session(agent, None):
+            observed_session_ids.append(agent.current_session_id)
+
+        assert observed_session_ids == [None]
+        assert agent.calls == [None, None]
+
+    def test_cleanup_failure_blocks_following_request_until_scope_clears(self):
+        agent = _FailingSessionSetterAgent(fail_values=[None])
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "failing_session_agent.*s_alpha.*cleanup.*cannot set session to None"
+            ),
+        ):
+            with AgentDispatcher._scoped_session(agent, "s_alpha"):
+                assert agent.current_session_id == "s_alpha"
+
+        assert agent.current_session_id == "s_alpha"
+
+        observed_session_ids: list[Optional[str]] = []
+        with AgentDispatcher._scoped_session(agent, None):
+            observed_session_ids.append(agent.current_session_id)
+
+        assert observed_session_ids == [None]
+        assert agent.calls == ["s_alpha", None, None, None]
+
+    def test_body_error_propagates_when_cleanup_also_fails(self):
+        agent = _FailingSessionSetterAgent(fail_values=[None])
+
+        with pytest.raises(KeyError, match="body_error"):
+            with AgentDispatcher._scoped_session(agent, "s_gamma"):
+                raise KeyError("body_error")
+
+        assert agent.calls == ["s_gamma", None]
+        assert agent.current_session_id == "s_gamma"
