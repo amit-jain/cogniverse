@@ -9,8 +9,7 @@ Measures improvement on held-out test set:
 - Latency overhead
 """
 
-import hashlib
-import json
+import asyncio
 import logging
 import math
 import random
@@ -23,23 +22,16 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from cogniverse_foundation.confidence import parse_confidence
+from cogniverse_finetuning.dataset.output_projection import (
+    parse_canonical_output,
+    training_example_identity,
+)
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
-
-def example_identity(instruction: str, input: str, output: str) -> str:
-    """Stable content hash identifying a training / eval example.
-
-    The evaluator excludes the examples the adapter was trained on by
-    matching this identity, so a test example is never one the model has
-    already seen. Both the trainer (via the orchestrator) and the
-    evaluator derive it from the same instruction/input/output triple, so
-    the exclusion is exact regardless of ordering or sampling.
-    """
-    payload = f"{instruction}\x00{input}\x00{output}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+_MODEL_OPERATION_TIMEOUT_S = 900.0
+_TOP_K = 3
 
 
 def _two_proportion_p_value(p1: float, n1: int, p2: float, n2: int) -> float:
@@ -57,6 +49,46 @@ def _two_proportion_p_value(p1: float, n1: int, p2: float, n2: int) -> float:
         return 1.0
     z = (p1 - p2) / se
     return 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(z) / math.sqrt(2.0))))
+
+
+def _mcnemar_exact_p_value(
+    base_outcomes: tuple[bool, ...], adapter_outcomes: tuple[bool, ...]
+) -> float:
+    """Exact two-sided McNemar p-value for paired correctness outcomes."""
+    if not base_outcomes or len(base_outcomes) != len(adapter_outcomes):
+        raise ValueError(
+            "base and adapter metrics must cover the same non-empty held-out examples"
+        )
+
+    base_only = sum(
+        base and not adapter
+        for base, adapter in zip(base_outcomes, adapter_outcomes, strict=True)
+    )
+    adapter_only = sum(
+        adapter and not base
+        for base, adapter in zip(base_outcomes, adapter_outcomes, strict=True)
+    )
+    discordant = base_only + adapter_only
+    if discordant == 0:
+        return 1.0
+
+    smaller = min(base_only, adapter_only)
+    tail = sum(
+        math.comb(discordant, successes) * 0.5**discordant
+        for successes in range(smaller + 1)
+    )
+    return min(1.0, 2.0 * tail)
+
+
+async def _run_blocking(operation, *, context: str):
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(operation), timeout=_MODEL_OPERATION_TIMEOUT_S
+        )
+    except TimeoutError as exc:
+        raise TimeoutError(
+            f"{context} timed out after {_MODEL_OPERATION_TIMEOUT_S:g} seconds"
+        ) from exc
 
 
 @dataclass
@@ -81,6 +113,7 @@ class EvaluationMetrics:
     # Number of test examples the metrics were computed over — required to
     # run a real significance test when comparing two metric sets.
     sample_count: int = 0
+    correctness: tuple[bool, ...] = ()
 
 
 @dataclass
@@ -142,10 +175,10 @@ class AdapterEvaluator:
             adapter_path: Path to trained adapter
             project: Project name for test set
             test_size: Number of test examples
-            exclude_identities: ``example_identity`` hashes of the examples the
-                adapter was trained on. Any test example matching one is
-                dropped, so metrics are measured on genuinely held-out data
-                instead of the training set. Omitting this reports numbers
+            exclude_identities: ``training_example_identity`` hashes of the
+                examples the adapter was trained on. Any test example matching
+                one is dropped, so metrics are measured on genuinely held-out
+                data instead of the training set. Omitting this reports numbers
                 inflated by memorisation.
 
         Returns:
@@ -165,7 +198,10 @@ class AdapterEvaluator:
 
         # 2. Load base model
         logger.info(f"Loading base model: {base_model}")
-        base_model_obj, tokenizer = self._load_model(base_model)
+        base_model_obj, tokenizer = await _run_blocking(
+            lambda: self._load_model(base_model),
+            context=f"loading base model {base_model}",
+        )
 
         # 3. Evaluate base model
         logger.info("Evaluating base model...")
@@ -173,7 +209,10 @@ class AdapterEvaluator:
 
         # 4. Load adapter model
         logger.info(f"Loading adapter: {adapter_path}")
-        adapter_model = PeftModel.from_pretrained(base_model_obj, adapter_path)
+        adapter_model = await _run_blocking(
+            lambda: PeftModel.from_pretrained(base_model_obj, adapter_path),
+            context=f"loading adapter {adapter_path}",
+        )
 
         # 5. Evaluate adapter model
         logger.info("Evaluating adapter model...")
@@ -198,9 +237,9 @@ class AdapterEvaluator:
         Create a held-out test set from telemetry data.
 
         Candidates are pulled from the recent window, then any example whose
-        ``example_identity`` is in ``exclude_identities`` (the set the adapter
-        was trained on) is dropped. The exclusion — not the time window — is
-        what guarantees the test set is disjoint from training; the window
+        ``training_example_identity`` is in ``exclude_identities`` (the set the
+        adapter was trained on) is dropped. The exclusion — not the time window
+        — is what guarantees the test set is disjoint from training; the window
         only bounds how far back to look. Returns ``[]`` when nothing survives
         the exclusion, so the caller reports "no held-out data" rather than
         metrics inflated by evaluating on the training set.
@@ -227,7 +266,8 @@ class AdapterEvaluator:
         held_out = [
             ex
             for ex in dataset.examples
-            if example_identity(ex.instruction, ex.input, ex.output) not in exclude
+            if training_example_identity(self.agent_type, ex.input, ex.output)
+            not in exclude
         ]
         if not held_out:
             return []
@@ -240,7 +280,11 @@ class AdapterEvaluator:
         for ex in examples:
             test_set.append(
                 {
-                    "input": f"{ex.instruction}\n\n{ex.input}",
+                    "input": (
+                        f"### Instruction:\n{ex.instruction}\n\n"
+                        f"### Input:\n{ex.input}\n\n"
+                        "### Response:"
+                    ),
                     "expected_output": ex.output,
                     "metadata": ex.metadata,
                 }
@@ -274,82 +318,69 @@ class AdapterEvaluator:
         Returns accuracy, confidence, error rate, etc.
         """
         correct = 0
+        top_k_correct = 0
         total_confidence = 0.0
+        total_calibration_error = 0.0
         total_latency_ms = 0.0
         hallucinations = 0
+        correctness = []
 
-        for example in test_set:
-            start_time = time.time()
+        for example_number, example in enumerate(test_set, start=1):
+            start_time = time.perf_counter()
+            predictions, confidence = await _run_blocking(
+                lambda: self._generate_candidates(model, tokenizer, example["input"]),
+                context=f"generating evaluation example {example_number}",
+            )
 
-            inputs = tokenizer(
-                example["input"],
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=512,
-            ).to(model.device)
-
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=256,
-                    do_sample=False,  # Deterministic for evaluation
-                    pad_token_id=tokenizer.pad_token_id,
-                )
-
-            prediction = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-            if "### Response:" in prediction:
-                prediction = prediction.split("### Response:")[-1].strip()
-
-            latency_ms = (time.time() - start_time) * 1000
+            latency_ms = (time.perf_counter() - start_time) * 1000
             total_latency_ms += latency_ms
 
-            try:
-                pred_json = json.loads(prediction)
-                expected_json = json.loads(example["expected_output"])
+            expected_json = parse_canonical_output(
+                self.agent_type,
+                example["expected_output"],
+                context="evaluation expected output",
+            )
+            candidate_scores: list[tuple[bool, float] | None] = []
+            for candidate_number, prediction in enumerate(predictions, start=1):
+                try:
+                    pred_json = parse_canonical_output(
+                        self.agent_type,
+                        prediction,
+                        context=f"model prediction candidate {candidate_number}",
+                    )
+                except ValueError:
+                    candidate_scores.append(None)
+                    continue
+                candidate_scores.append(
+                    self._score_prediction(pred_json, expected_json)
+                )
 
-                if self.agent_type == "routing":
-                    correct_prediction = pred_json.get(
-                        "recommended_agent"
-                    ) == expected_json.get("recommended_agent")
-                    confidence = parse_confidence(
-                        pred_json.get("confidence"), default=0.5
-                    )
-                elif self.agent_type == "profile_selection":
-                    correct_prediction = pred_json.get(
-                        "selected_profiles"
-                    ) == expected_json.get("selected_profiles")
-                    confidence = parse_confidence(
-                        pred_json.get("confidence"), default=0.5
-                    )
-                elif self.agent_type == "entity_extraction":
-                    correct_prediction, confidence = self._check_entity_prediction(
-                        pred_json, expected_json
-                    )
-                else:
-                    raise ValueError(f"Unsupported agent_type: {self.agent_type}")
-
+            top_prediction = candidate_scores[0]
+            if top_prediction is None:
+                hallucinations += 1
+            else:
+                correct_prediction = top_prediction[0]
                 if correct_prediction:
                     correct += 1
 
-                total_confidence += confidence
+            correct_prediction = bool(top_prediction and top_prediction[0])
+            any_correct = any(
+                score is not None and score[0] for score in candidate_scores
+            )
+            if any_correct:
+                top_k_correct += 1
 
-            except (json.JSONDecodeError, KeyError):
-                # Invalid JSON or missing fields = hallucination
-                hallucinations += 1
+            correctness.append(correct_prediction)
+            total_confidence += confidence
+            total_calibration_error += abs(confidence - float(correct_prediction))
 
         accuracy = correct / len(test_set)
+        top_k_accuracy = top_k_correct / len(test_set)
         avg_confidence = total_confidence / len(test_set)
         error_rate = 1.0 - accuracy
         hallucination_rate = hallucinations / len(test_set)
         avg_latency_ms = total_latency_ms / len(test_set)
-
-        # Confidence calibration: how well confidence matches accuracy
-        confidence_calibration = 1.0 - abs(avg_confidence - accuracy)
-
-        # Top-k accuracy (simplified)
-        top_k_accuracy = accuracy
+        confidence_calibration = 1.0 - total_calibration_error / len(test_set)
 
         return EvaluationMetrics(
             accuracy=accuracy,
@@ -360,15 +391,74 @@ class AdapterEvaluator:
             hallucination_rate=hallucination_rate,
             avg_latency_ms=avg_latency_ms,
             sample_count=len(test_set),
+            correctness=tuple(correctness),
         )
+
+    @staticmethod
+    def _generate_candidates(model, tokenizer, prompt: str) -> tuple[list[str], float]:
+        inputs = tokenizer(
+            prompt,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=512,
+        ).to(model.device)
+
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=False,
+                num_beams=_TOP_K,
+                num_return_sequences=_TOP_K,
+                return_dict_in_generate=True,
+                output_scores=True,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+
+        prompt_length = inputs["input_ids"].shape[-1]
+        predictions = [
+            tokenizer.decode(sequence[prompt_length:], skip_special_tokens=True).strip()
+            for sequence in outputs.sequences
+        ]
+        transition_scores = model.compute_transition_scores(
+            outputs.sequences,
+            outputs.scores,
+            normalize_logits=True,
+            beam_indices=getattr(outputs, "beam_indices", None),
+        )
+        top_scores = transition_scores[0]
+        finite_scores = top_scores[torch.isfinite(top_scores) & top_scores.lt(0)]
+        if finite_scores.numel() == 0:
+            confidence = 0.0
+        else:
+            confidence = float(torch.exp(finite_scores.mean()).item())
+        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            raise ValueError("generated sequence confidence must be finite in 0..1")
+        return predictions, confidence
+
+    def _score_prediction(
+        self, pred_json: Dict, expected_json: Dict
+    ) -> tuple[bool, float]:
+        if self.agent_type == "routing":
+            correct = (
+                pred_json["recommended_agent"] == expected_json["recommended_agent"]
+            )
+            return correct, float(correct)
+        if self.agent_type == "profile_selection":
+            correct = pred_json["selected_profile"] == expected_json["selected_profile"]
+            return correct, float(correct)
+        if self.agent_type == "entity_extraction":
+            return self._check_entity_prediction(pred_json, expected_json)
+        raise ValueError(f"Unsupported agent_type: {self.agent_type}")
 
     @staticmethod
     def _check_entity_prediction(pred_json: Dict, expected_json: Dict) -> tuple:
         """
         Check entity extraction prediction using set-based F1.
 
-        Extracts (text.lower(), type.upper()) tuples from both predicted and expected
-        entity lists, then computes precision, recall, and F1.
+        Extracts normalized entity and relationship facts from both outputs,
+        then computes precision, recall, and F1 over the complete structure.
 
         Args:
             pred_json: Predicted JSON with "entities" key
@@ -376,15 +466,35 @@ class AdapterEvaluator:
 
         Returns:
             Tuple of (correct: bool, f1: float)
-            correct is True when F1 >= 0.5
+            correct is True only when every entity and relationship is exact
         """
         pred_entities = pred_json.get("entities", [])
         expected_entities = expected_json.get("entities", [])
 
-        pred_set = {(e["text"].lower(), e["type"].upper()) for e in pred_entities}
-        expected_set = {
-            (e["text"].lower(), e["type"].upper()) for e in expected_entities
+        pred_set = {
+            ("entity", e["text"].lower(), e["type"].upper()) for e in pred_entities
         }
+        expected_set = {
+            ("entity", e["text"].lower(), e["type"].upper()) for e in expected_entities
+        }
+        pred_set.update(
+            (
+                "relationship",
+                relationship["source"].lower(),
+                relationship["target"].lower(),
+                relationship["type"].lower(),
+            )
+            for relationship in pred_json.get("relationships", [])
+        )
+        expected_set.update(
+            (
+                "relationship",
+                relationship["source"].lower(),
+                relationship["target"].lower(),
+                relationship["type"].lower(),
+            )
+            for relationship in expected_json.get("relationships", [])
+        )
 
         # Both empty = correct prediction (no entities to extract)
         if not pred_set and not expected_set:
@@ -404,7 +514,7 @@ class AdapterEvaluator:
         else:
             f1 = 0.0
 
-        correct = f1 >= 0.5
+        correct = pred_set == expected_set
         return correct, f1
 
     def _compare_metrics(
@@ -420,16 +530,9 @@ class AdapterEvaluator:
         error_reduction = base_metrics.error_rate - adapter_metrics.error_rate
         latency_overhead = adapter_metrics.avg_latency_ms - base_metrics.avg_latency_ms
 
-        # Two-tailed two-proportion z-test on the base vs adapter accuracy.
-        # Unpaired approximation (base/adapter share the test set, so a paired
-        # McNemar test would be tighter, but that needs per-example outcomes
-        # this aggregate path does not retain). p_value here is a real test
-        # statistic, not the former hardcoded 0.01/0.5 placeholder.
-        p_value = _two_proportion_p_value(
-            base_metrics.accuracy,
-            base_metrics.sample_count,
-            adapter_metrics.accuracy,
-            adapter_metrics.sample_count,
+        p_value = _mcnemar_exact_p_value(
+            base_metrics.correctness,
+            adapter_metrics.correctness,
         )
         improvement_significant = p_value < 0.05
 
