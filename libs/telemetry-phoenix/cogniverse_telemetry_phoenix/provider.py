@@ -12,6 +12,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional
 
 import pandas as pd
+from opentelemetry.context import (
+    _SUPPRESS_INSTRUMENTATION_KEY,
+    attach,
+    detach,
+    set_value,
+)
+from opentelemetry.sdk.trace.export import SpanExportResult, SpanProcessor
 from phoenix.client import AsyncClient
 
 from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
@@ -24,6 +31,52 @@ from cogniverse_foundation.telemetry.providers.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _CheckedSynchronousSpanProcessor(SpanProcessor):
+    """Synchronous exporter that surfaces a rejected span to its caller."""
+
+    def __init__(
+        self,
+        exporter: Any,
+        *,
+        endpoint: str,
+        project_name: str,
+    ) -> None:
+        self._exporter = exporter
+        self._endpoint = endpoint
+        self._project_name = project_name
+
+    def on_end(self, span: Any) -> None:
+        if not (span.context and span.context.trace_flags.sampled):
+            raise RuntimeError(
+                "Required Phoenix span was not sampled: "
+                f"project={self._project_name} endpoint={self._endpoint}"
+            )
+
+        token = attach(set_value(_SUPPRESS_INSTRUMENTATION_KEY, True))
+        try:
+            result = self._exporter.export((span,))
+        except Exception as exc:
+            raise RuntimeError(
+                "Phoenix required span export failed: "
+                f"project={self._project_name} endpoint={self._endpoint}"
+            ) from exc
+        finally:
+            detach(token)
+
+        if result is not SpanExportResult.SUCCESS:
+            raise RuntimeError(
+                "Phoenix rejected required span export: "
+                f"project={self._project_name} endpoint={self._endpoint}"
+            )
+
+    def shutdown(self) -> None:
+        self._exporter.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return bool(self._exporter.force_flush(timeout_millis=timeout_millis))
+
 
 # AsyncClient connection pools bind to the event loop that uses them, so a
 # process-wide singleton breaks callers that run on fresh loops (Streamlit's
@@ -77,6 +130,19 @@ def _is_dataset_not_found(exc: BaseException) -> bool:
     as no-data.
     """
     return isinstance(exc, ValueError) and "not found" in str(exc).lower()
+
+
+def _is_phoenix_project_not_found(exc: BaseException) -> bool:
+    """Identify only Phoenix's explicit missing-project response."""
+    response = getattr(exc, "response", None)
+    if response is None or getattr(response, "status_code", None) != 404:
+        return False
+    try:
+        detail = response.json().get("detail")
+    except (AttributeError, TypeError, ValueError):
+        detail = getattr(response, "text", "")
+    normalized = str(detail).strip().lower()
+    return "project" in normalized and "not found" in normalized
 
 
 def _client_for_current_loop(http_endpoint: str) -> AsyncClient:
@@ -259,6 +325,90 @@ class PhoenixTraceStore(TraceStore):
         except Exception as e:
             logger.error(f"Failed to get span {span_id}: {e}")
             raise
+
+    async def get_all_spans(
+        self,
+        project: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> pd.DataFrame:
+        """Query every matching span through Phoenix cursor pagination."""
+        unsupported_filters = set(filters or {}).difference({"name"})
+        if unsupported_filters:
+            raise ValueError(
+                "Phoenix all-span queries do not support filters "
+                f"{sorted(unsupported_filters)}"
+            )
+
+        if start_time is not None and start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
+        if end_time is not None and end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=timezone.utc)
+
+        name_filter = (filters or {}).get("name")
+        if isinstance(name_filter, set):
+            name_filter = sorted(name_filter)
+        elif isinstance(name_filter, tuple):
+            name_filter = list(name_filter)
+
+        async def query_all_spans():
+            try:
+                return await self._get_client().spans.get_spans(
+                    project_identifier=project,
+                    start_time=start_time,
+                    end_time=end_time,
+                    name=name_filter,
+                    limit=2_147_483_647,
+                    timeout=120,
+                )
+            except Exception as exc:
+                if _is_phoenix_project_not_found(exc):
+                    return []
+                raise
+
+        try:
+            spans = await self._breaker.acall(
+                query_all_spans,
+            )
+        except CircuitOpenError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to query every span from Phoenix project {project}"
+            ) from exc
+
+        frame = pd.json_normalize(spans, sep=".")
+        if not frame.empty:
+            for timestamp_column in ("start_time", "end_time"):
+                if timestamp_column not in frame.columns:
+                    continue
+                try:
+                    frame[timestamp_column] = pd.to_datetime(
+                        frame[timestamp_column], utc=True, errors="raise"
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        f"Phoenix project {project} returned an invalid "
+                        f"{timestamp_column} column"
+                    ) from exc
+
+            from phoenix.trace.attributes import unflatten
+
+            nested_columns: Dict[str, List[Any]] = {}
+            for row_index, span in enumerate(spans):
+                attributes = span.get("attributes") or {}
+                nested_attributes = unflatten(attributes.items())
+                for attribute_name, value in nested_attributes.items():
+                    if not isinstance(value, (dict, list)):
+                        continue
+                    column = f"attributes.{attribute_name}"
+                    values = nested_columns.setdefault(column, [None] * len(spans))
+                    values[row_index] = value
+            for column, values in nested_columns.items():
+                frame[column] = pd.Series(values, dtype=object)
+        logger.debug("Retrieved all %d spans from project %s", len(frame), project)
+        return frame
 
 
 class PhoenixAnnotationStore(AnnotationStore):
@@ -721,6 +871,8 @@ class PhoenixProvider(TelemetryProvider):
         use_batch_export: bool = True,
         batch_config: Optional[Any] = None,
         resource_attributes: Optional[Dict[str, str]] = None,
+        *,
+        raise_on_export_failure: bool,
     ):
         """
         Configure OTLP span export using Phoenix.
@@ -742,6 +894,8 @@ class PhoenixProvider(TelemetryProvider):
             resource_attributes: Optional extra OTel resource attributes
                 (e.g. service.version); register() merges the Phoenix
                 project-name attribute into them.
+            raise_on_export_failure: Replace the normal simple processor with
+                one that raises when Phoenix rejects a synchronous export.
 
         Returns:
             TracerProvider configured for Phoenix OTLP export
@@ -749,6 +903,18 @@ class PhoenixProvider(TelemetryProvider):
         Raises:
             RuntimeError: If Phoenix OTLP registration fails
         """
+        if use_batch_export and raise_on_export_failure:
+            raise ValueError("raise_on_export_failure requires synchronous span export")
+        if raise_on_export_failure and batch_config is None:
+            raise ValueError(
+                "raise_on_export_failure requires an explicit batch_config deadline"
+            )
+        if raise_on_export_failure and batch_config.export_timeout_millis <= 0:
+            raise ValueError("export_timeout_millis must be positive")
+
+        tracer_provider = None
+        replacement_processor = None
+        replacement_attached = False
         try:
             from phoenix.otel import register
 
@@ -761,6 +927,10 @@ class PhoenixProvider(TelemetryProvider):
                 from opentelemetry.sdk.resources import Resource
 
                 register_kwargs["resource"] = Resource.create(dict(resource_attributes))
+            if raise_on_export_failure:
+                from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+
+                register_kwargs["sampler"] = ALWAYS_ON
 
             tracer_provider = register(
                 endpoint=endpoint,
@@ -779,15 +949,32 @@ class PhoenixProvider(TelemetryProvider):
                 # Replaces register()'s default processor (phoenix.otel's
                 # TracerProvider.add_span_processor shuts down + drops the
                 # default before adding).
-                tracer_provider.add_span_processor(
-                    BatchSpanProcessor(
-                        GRPCSpanExporter(endpoint=endpoint),
-                        max_queue_size=batch_config.max_queue_size,
-                        schedule_delay_millis=batch_config.schedule_delay_millis,
-                        max_export_batch_size=batch_config.max_export_batch_size,
-                        export_timeout_millis=batch_config.export_timeout_millis,
-                    )
+                replacement_processor = BatchSpanProcessor(
+                    GRPCSpanExporter(endpoint=endpoint),
+                    max_queue_size=batch_config.max_queue_size,
+                    schedule_delay_millis=batch_config.schedule_delay_millis,
+                    max_export_batch_size=batch_config.max_export_batch_size,
+                    export_timeout_millis=batch_config.export_timeout_millis,
                 )
+                tracer_provider.add_span_processor(replacement_processor)
+                replacement_attached = True
+            elif raise_on_export_failure:
+                from phoenix.otel import GRPCSpanExporter
+
+                transport_timeout_seconds = max(
+                    0.001,
+                    batch_config.export_timeout_millis / 1000 * 0.8,
+                )
+                replacement_processor = _CheckedSynchronousSpanProcessor(
+                    GRPCSpanExporter(
+                        endpoint=endpoint,
+                        timeout=transport_timeout_seconds,
+                    ),
+                    endpoint=endpoint.removeprefix("http://").removeprefix("https://"),
+                    project_name=project_name,
+                )
+                tracer_provider.add_span_processor(replacement_processor)
+                replacement_attached = True
 
             mode = "BATCH" if use_batch_export else "SYNC"
             logger.info(
@@ -797,6 +984,20 @@ class PhoenixProvider(TelemetryProvider):
             return tracer_provider
 
         except Exception as e:
+            if replacement_processor is not None and not replacement_attached:
+                try:
+                    replacement_processor.shutdown()
+                except Exception:
+                    logger.exception(
+                        "Failed to close replacement Phoenix span processor"
+                    )
+            if tracer_provider is not None:
+                try:
+                    tracer_provider.shutdown()
+                except Exception:
+                    logger.exception(
+                        "Failed to close partially configured Phoenix tracer provider"
+                    )
             logger.error(
                 f"Failed to configure Phoenix span export for {project_name}: {e}"
             )

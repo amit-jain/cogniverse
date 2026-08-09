@@ -326,7 +326,7 @@ The telemetry system uses a **provider abstraction** that defines interfaces for
 flowchart TB
     subgraph Abstraction["<span style='color:#000'>Foundation Layer - Provider Interfaces</span>"]
         TelemetryProvider["<span style='color:#000'>TelemetryProvider<br/><br/>• initialize(config)<br/>• configure_span_export()<br/>• session_context()</span>"]
-        TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• get_span_by_id()</span>"]
+        TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• get_all_spans()<br/>• get_span_by_id()</span>"]
         AnnotationStore["<span style='color:#000'>AnnotationStore<br/><br/>• add_annotation()<br/>• get_annotations()<br/>• log_evaluations()</span>"]
         DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()<br/>• delete_dataset()</span>"]
     end
@@ -384,12 +384,30 @@ class TraceStore(ABC):
         pass
 
     @abstractmethod
+    async def get_all_spans(
+        self,
+        project: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> pd.DataFrame:
+        """Return every matching span through provider-native pagination."""
+        pass
+
+    @abstractmethod
     async def get_span_by_id(
         self, span_id: str, project: str
     ) -> Optional[Dict[str, Any]]:
         """Get single span by ID."""
         pass
 ```
+
+Use `get_spans` for deliberately bounded windows. Consumers whose correctness
+depends on complete history use `get_all_spans`; the Phoenix implementation
+follows its cursor until exhaustion and raises if any page fails, so callers
+never interpret a partial history as the complete project. Its `start_time` and
+`end_time` columns are normalized to timezone-aware UTC datetimes; an invalid
+timestamp raises with project and column context before the frame is returned.
 
 ### AnnotationStore Interface
 
@@ -518,12 +536,17 @@ class TelemetryProvider(ABC):
         use_batch_export: bool = True,
         batch_config: Optional[Any] = None,
         resource_attributes: Optional[Dict[str, str]] = None,
+        *,
+        raise_on_export_failure: bool,
     ) -> Any:
         """Configure OTLP span export, returns TracerProvider.
 
         ``batch_config`` carries the BatchExportConfig queue/batch/timeout
         knobs; ``resource_attributes`` (service.version + extras) land on
-        the provider's OTel Resource.
+        the provider's OTel Resource. ``raise_on_export_failure`` selects the
+        checked synchronous processor used only by spans whose records cannot
+        be lost; normal synchronous spans keep OpenTelemetry's non-raising
+        processor.
         """
         pass
 
@@ -630,7 +653,13 @@ class LangSmithTraceStore(TraceStore):
     async def get_spans(self, project, start_time=None, end_time=None,
                         filters=None, limit=1000) -> pd.DataFrame:
         # LangSmith-specific implementation
-        runs = await self.client.list_runs(project_name=project, ...)
+        runs = await self.client.list_runs(project_name=project)
+        return self._convert_to_dataframe(runs)
+
+    async def get_all_spans(self, project, start_time=None, end_time=None,
+                            filters=None) -> pd.DataFrame:
+        # Follow the provider's cursor until there is no next page.
+        runs = await self.client.list_all_runs(project_name=project)
         return self._convert_to_dataframe(runs)
 
     async def get_span_by_id(self, span_id, project) -> Optional[Dict]:
@@ -652,8 +681,14 @@ class LangSmithProvider(TelemetryProvider):
         use_batch_export=True,
         batch_config=None,
         resource_attributes=None,
+        *,
+        raise_on_export_failure: bool,
     ):
         # LangSmith uses different export mechanism
+        if raise_on_export_failure:
+            raise RuntimeError(
+                "LangSmithProvider cannot guarantee synchronous export"
+            )
         return LangSmithTracerProvider(project=project_name)
 ```
 
@@ -2150,6 +2185,39 @@ def test_sync_export():
     success = manager.force_flush(timeout_millis=1000)
     assert success
 ```
+
+Normal spans remain non-raising when the exporter is unavailable. Synchronous
+worker code emits durable records with
+`manager.span(..., require_export=True)`. Checked exporters use always-on
+sampling, reject batch mode, suppress recursive exporter instrumentation, and
+raise with project and endpoint context if the backend rejects the record. Each
+required span owns an isolated exporter lease, so a timeout or cancellation
+cannot shut down another concurrent durable write or poison a shared cache.
+
+Async code must use the bounded async context manager so exporter I/O runs off
+the event loop. Lease construction is a local OpenTelemetry object setup and
+does not contact the collector; the first collector operation is the bounded
+span export:
+
+```python
+async with manager.required_span(
+    "adapter.publication",
+    tenant_id=tenant_id,
+    project_name="experiments",
+    attributes={"run.id": run_id},
+) as span:
+    span.set_attribute("publication.state", "committed")
+```
+
+The bound is `batch_config.export_timeout_millis`. The exporter transport uses
+a shorter deadline so a rejected or unreachable collector raises with tenant,
+project, endpoint, and the original exporter failure while the caller's budget
+is still active. If the transport itself remains hung, the manager shuts the
+provider down, waits for the exporter thread to finish, and then raises
+`TimeoutError` with the same context. Calling the synchronous required form
+while an event loop is active raises immediately instead of blocking that loop.
+Task cancellation also shuts down and joins that span's exporter before the
+original cancellation propagates.
 
 4. **Graceful Degradation:**
 ```python

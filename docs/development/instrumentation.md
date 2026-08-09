@@ -332,7 +332,7 @@ Backend-agnostic contract for querying telemetry data. Core has zero knowledge o
 
 #### Key Classes
 - **`TelemetryProvider`** (ABC) — exposes exactly three store properties, `.traces`, `.annotations`, `.datasets`, plus `initialize(config)`, `configure_span_export(...)`, and `session_context(session_id)`
-- **`TraceStore`** (ABC) — `get_spans(project, start_time=None, end_time=None, filters=None, limit=1000)`, `get_span_by_id(span_id, project)`
+- **`TraceStore`** (ABC) — bounded `get_spans(project, start_time=None, end_time=None, filters=None, limit=1000)`, lossless provider-paginated `get_all_spans(project, start_time=None, end_time=None, filters=None)`, and `get_span_by_id(span_id, project)`
 - **`AnnotationStore`** (ABC) — `add_annotation(...)`, `get_annotations(...)`, `log_evaluations(eval_name, evaluations_df, project)`
 - **`DatasetStore`** (ABC) — `create_dataset(...)`, `get_dataset(name)` (raises `DatasetNotFoundError` if missing), `append_to_dataset(...)` (raises `DatasetNotFoundError` if missing), `delete_dataset(name)` (not abstract; default raises `NotImplementedError`), `replace_dataset(...)` (delete-then-create, default concrete method)
 - **`TelemetryRegistry`** — `EntryPointRegistry` subclass; providers register via the `cogniverse.telemetry.providers` entry-point group and are cached per `(tenant_id, project)` so distinct projects for one tenant don't share endpoints
