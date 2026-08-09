@@ -6,6 +6,8 @@ Tests:
 3. Each function produces expected artifact types when given mock span data
 """
 
+import asyncio
+import hashlib
 import json
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
@@ -20,6 +22,44 @@ from cogniverse_runtime.optimization_cli import build_parser
 # so we patch at the source module.
 _PATCH_CONFIG = "cogniverse_foundation.config.utils.create_default_config_manager"
 _PATCH_TELEMETRY = "cogniverse_foundation.telemetry.manager.get_telemetry_manager"
+
+
+def _signed_approved_record(record: dict[str, Any]) -> dict[str, Any]:
+    signed = {
+        "confidence": 0.9,
+        "created_at": "2026-08-05T01:00:00+00:00",
+        "reviewed_at": "2026-08-05T01:01:00+00:00",
+        **record,
+    }
+    decision = signed.get("metadata.decision")
+    decision_intent = dict(decision) if isinstance(decision, dict) else decision
+    if isinstance(decision_intent, dict):
+        decision_intent.pop("timestamp", None)
+    identity = {
+        "item_id": signed.get("item_id"),
+        "status": signed.get("status"),
+        "decision": decision_intent,
+    }
+    signed["metadata.approval_decision_sha256"] = hashlib.sha256(
+        json.dumps(
+            identity,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    signed["metadata.approval_decision_timestamp"] = signed["reviewed_at"]
+    canonical_json = json.dumps(
+        signed,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    signed["metadata.approval_record_json"] = canonical_json
+    signed["metadata.approval_record_sha256"] = hashlib.sha256(
+        canonical_json.encode("utf-8")
+    ).hexdigest()
+    return signed
 
 
 # ---------------------------------------------------------------------------
@@ -52,21 +92,29 @@ class FakeDatasetStore:
     def __init__(self):
         self.created: List[Dict[str, Any]] = []
         self.deleted: List[str] = []
+        self.datasets: Dict[str, pd.DataFrame] = {}
 
     async def replace_dataset(self, name, data, metadata=None):
         return await self.create_dataset(name=name, data=data, metadata=metadata)
 
     async def create_dataset(self, name, data, metadata=None):
         self.created.append({"name": name, "data": data, "metadata": metadata})
+        self.datasets[name] = data.copy(deep=True)
         return f"dataset-{len(self.created)}"
 
     async def delete_dataset(self, name) -> bool:
         # Blobs are last-write-wins: the artifact store deletes before create.
         self.deleted.append(name)
-        return True
+        return self.datasets.pop(name, None) is not None
 
     async def get_dataset(self, name):
-        raise KeyError(f"No dataset {name}")
+        from cogniverse_foundation.telemetry.providers.base import (
+            DatasetNotFoundError,
+        )
+
+        if name not in self.datasets:
+            raise DatasetNotFoundError(f"No dataset {name}")
+        return self.datasets[name].copy(deep=True)
 
 
 class FakeTelemetryProvider:
@@ -1100,53 +1148,317 @@ class TestCompileModesBindLmTaskLocally:
 
 
 class TestSyntheticDataMerge:
+    def test_approved_dataset_name_canonicalizes_tenant(self):
+        from cogniverse_core.approval.interfaces import (
+            approved_synthetic_dataset_name,
+        )
+
+        assert (
+            approved_synthetic_dataset_name("acme")
+            == "approved_synthetic_data-acme:acme"
+        )
+        assert (
+            approved_synthetic_dataset_name("acme:production")
+            == "approved_synthetic_data-acme:production"
+        )
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            approved_synthetic_dataset_name("")
+
     @pytest.mark.asyncio
     async def test_load_approved_synthetic_no_data(self):
         """Returns empty list when no synthetic data exists."""
         from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data
 
         provider = FakeTelemetryProvider()
-        result = await _load_approved_synthetic_data(provider, "default", "simba")
+        result = await _load_approved_synthetic_data(
+            provider, "default", "query_enhancement"
+        )
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_load_approved_synthetic_filters_by_status(self):
-        """Only returns demos with approved/auto_approved status."""
-        from unittest.mock import AsyncMock, patch
-
+    async def test_load_approved_synthetic_isolates_tenant_rows_and_order(self):
+        """Concurrent optimizers consume only their tenant's ordered records."""
         from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data
 
-        approved_demo = {
-            "input": '{"query": "test"}',
-            "output": "enhanced",
-            "metadata": {"approval_status": "approved"},
-        }
-        pending_demo = {
-            "input": '{"query": "other"}',
-            "output": "out",
-            "metadata": {"approval_status": "pending"},
-        }
-        auto_approved = {
-            "input": '{"query": "auto"}',
-            "output": "out2",
-            "metadata": {"approval_status": "auto_approved"},
-        }
+        class ApprovedDatasetStore:
+            def __init__(self):
+                self.names = []
 
-        with patch(
-            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
-        ) as MockAM:
-            mock_am = MockAM.return_value
-            mock_am.load_demonstrations = AsyncMock(
-                return_value=[approved_demo, pending_demo, auto_approved]
+            async def get_dataset(self, name):
+                self.names.append(name)
+                frames = {
+                    "approved_synthetic_data-acme:alpha": pd.DataFrame(
+                        [
+                            {
+                                "input": {
+                                    "item_id": "alpha-approved-1",
+                                    "confidence": 0.91,
+                                    "status": "approved",
+                                    "created_at": "2026-08-05T01:00:00+00:00",
+                                    "reviewed_at": "2026-08-05T01:01:00+00:00",
+                                    "query": "Find exact PyTorch tutorials",
+                                    "enhanced_query": "Find exact PyTorch framework tutorials",
+                                    "expansion_terms": ["framework"],
+                                    "synonyms": ["torch"],
+                                    "context": "document_text",
+                                    "reasoning": "Framework disambiguates the library.",
+                                    "metadata.batch_id": "batch-a",
+                                    "metadata.agent_type": "query_enhancement",
+                                    "context.optimizer": "query_enhancement",
+                                    "context.purpose": "optimizer training",
+                                }
+                            },
+                            {
+                                "input": {
+                                    "item_id": "pending",
+                                    "status": "pending_review",
+                                    "query": "Do not consume",
+                                    "context.optimizer": "query_enhancement",
+                                }
+                            },
+                            {
+                                "input": {
+                                    "item_id": "alpha-approved-2",
+                                    "confidence": 0.88,
+                                    "status": "approved",
+                                    "created_at": "2026-08-05T01:02:00+00:00",
+                                    "reviewed_at": "2026-08-05T01:03:00+00:00",
+                                    "query": "Find exact JAX tutorials",
+                                    "enhanced_query": "Find exact JAX framework tutorials",
+                                    "expansion_terms": ["framework"],
+                                    "synonyms": [],
+                                    "context": "document_text",
+                                    "reasoning": "Framework distinguishes JAX documentation.",
+                                    "metadata.batch_id": "batch-b",
+                                    "metadata.agent_type": "query_enhancement",
+                                    "context.optimizer": "query_enhancement",
+                                    "context.purpose": "optimizer training",
+                                }
+                            },
+                        ]
+                    ),
+                    "approved_synthetic_data-acme:beta": pd.DataFrame(
+                        [
+                            {
+                                "input": {
+                                    "item_id": "beta-approved-1",
+                                    "confidence": 0.95,
+                                    "status": "approved",
+                                    "query": "Find exact Vespa tutorials",
+                                    "enhanced_query": "Find exact Vespa search tutorials",
+                                    "expansion_terms": ["search"],
+                                    "synonyms": [],
+                                    "context": "document_text",
+                                    "reasoning": "Search identifies the Vespa platform.",
+                                    "metadata.agent_type": "query_enhancement",
+                                    "context.optimizer": "query_enhancement",
+                                }
+                            }
+                        ]
+                    ),
+                }
+                frame = frames[name]
+                frame["input"] = frame["input"].map(_signed_approved_record)
+                return frame
+
+        provider = FakeTelemetryProvider()
+        dataset_store = ApprovedDatasetStore()
+        provider._dataset_store = dataset_store
+
+        alpha, beta = await asyncio.gather(
+            _load_approved_synthetic_data(provider, "acme:alpha", "query_enhancement"),
+            _load_approved_synthetic_data(provider, "acme:beta", "query_enhancement"),
+        )
+
+        assert alpha == [
+            {
+                "query": "Find exact PyTorch tutorials",
+                "enhanced_query": "Find exact PyTorch framework tutorials",
+                "expansion_terms": ["framework"],
+                "synonyms": ["torch"],
+                "context": "document_text",
+                "reasoning": "Framework disambiguates the library.",
+            },
+            {
+                "query": "Find exact JAX tutorials",
+                "enhanced_query": "Find exact JAX framework tutorials",
+                "expansion_terms": ["framework"],
+                "synonyms": [],
+                "context": "document_text",
+                "reasoning": "Framework distinguishes JAX documentation.",
+            },
+        ]
+        assert beta == [
+            {
+                "query": "Find exact Vespa tutorials",
+                "enhanced_query": "Find exact Vespa search tutorials",
+                "expansion_terms": ["search"],
+                "synonyms": [],
+                "context": "document_text",
+                "reasoning": "Search identifies the Vespa platform.",
+            }
+        ]
+        assert dataset_store.names == [
+            "approved_synthetic_data-acme:alpha",
+            "approved_synthetic_data-acme:beta",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_load_approved_synthetic_filters_nonapproved_and_other_optimizer(
+        self,
+    ):
+        from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data
+
+        class ApprovedDatasetStore:
+            async def get_dataset(self, name):
+                assert name == "approved_synthetic_data-acme:alpha"
+                records = [
+                    {
+                        "item_id": "pending",
+                        "status": "pending_review",
+                        "query": "Do not consume",
+                        "context.optimizer": "query_enhancement",
+                    },
+                    {
+                        "item_id": "other-optimizer",
+                        "status": "approved",
+                        "query": "Wrong optimizer",
+                        "context.optimizer": "profile",
+                    },
+                ]
+                return pd.DataFrame(
+                    [{"input": _signed_approved_record(record)} for record in records]
+                )
+
+        provider = FakeTelemetryProvider()
+        provider._dataset_store = ApprovedDatasetStore()
+
+        result = await _load_approved_synthetic_data(
+            provider, "acme:alpha", "query_enhancement"
+        )
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_load_approved_synthetic_requires_canonical_agent_owner(self):
+        from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data
+
+        class ApprovedDatasetStore:
+            async def get_dataset(self, name):
+                record = {
+                    "item_id": "wrong-owner",
+                    "status": "approved",
+                    "query": "Find exact PyTorch tutorials",
+                    "enhanced_query": "Find exact PyTorch framework tutorials",
+                    "expansion_terms": ["framework"],
+                    "synonyms": [],
+                    "context": "document_text",
+                    "reasoning": "Framework disambiguates the library.",
+                    "metadata.agent_type": "profile_selection",
+                    "context.optimizer": "query_enhancement",
+                }
+                return pd.DataFrame([{"input": _signed_approved_record(record)}])
+
+        provider = FakeTelemetryProvider()
+        provider._dataset_store = ApprovedDatasetStore()
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                "Approved synthetic dataset row 0 for optimizer=query_enhancement "
+                "requires metadata.agent_type='query_enhancement', got "
+                "'profile_selection'"
+            ),
+        ):
+            await _load_approved_synthetic_data(
+                provider, "acme:alpha", "query_enhancement"
             )
 
-            provider = FakeTelemetryProvider()
-            result = await _load_approved_synthetic_data(provider, "default", "simba")
+    @pytest.mark.asyncio
+    async def test_load_approved_synthetic_validates_values_before_returning_them(self):
+        from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data
 
-        assert len(result) == 2
-        assert approved_demo in result
-        assert auto_approved in result
-        assert pending_demo not in result
+        class ApprovedDatasetStore:
+            async def get_dataset(self, name):
+                record = {
+                    "item_id": "invalid-profile",
+                    "status": "approved",
+                    "query": "find transformer lectures",
+                    "available_profiles": "video_colpali,document_colpali",
+                    "selected_profile": "missing_profile",
+                    "reasoning": "A selector response with an invalid target.",
+                    "query_intent": "document_search",
+                    "modality": "document",
+                    "complexity": "complex",
+                    "metadata.agent_type": "profile_selection",
+                    "context.optimizer": "profile",
+                }
+                return pd.DataFrame([{"input": _signed_approved_record(record)}])
+
+        provider = FakeTelemetryProvider()
+        provider._dataset_store = ApprovedDatasetStore()
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                "Approved synthetic dataset row 0 for optimizer=profile "
+                "selected_profile 'missing_profile' is absent from "
+                "available_profiles"
+            ),
+        ):
+            await _load_approved_synthetic_data(provider, "acme:alpha", "profile")
+
+    @pytest.mark.asyncio
+    async def test_load_approved_synthetic_surfaces_dataset_outage(self):
+        """A Phoenix outage cannot masquerade as an empty approved dataset."""
+        from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data
+
+        class UnavailableDatasetStore:
+            async def get_dataset(self, name):
+                raise ConnectionError("Phoenix refused the dataset request")
+
+        provider = FakeTelemetryProvider()
+        provider._dataset_store = UnavailableDatasetStore()
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "Failed to load approved synthetic data for "
+                "tenant=acme:production optimizer=query_enhancement "
+                "dataset=approved_synthetic_data-acme:production"
+            ),
+        ) as error:
+            await _load_approved_synthetic_data(
+                provider, "acme:production", "query_enhancement"
+            )
+
+        assert isinstance(error.value.__cause__, ConnectionError)
+        assert str(error.value.__cause__) == "Phoenix refused the dataset request"
+
+    @pytest.mark.asyncio
+    async def test_load_approved_synthetic_rejects_missing_provider_frame(self):
+        """Only the provider's typed not-found result represents absence."""
+        from cogniverse_runtime.optimization_cli import _load_approved_synthetic_data
+
+        class MissingFrameDatasetStore:
+            async def get_dataset(self, name):
+                assert name == "approved_synthetic_data-acme:production"
+                return None
+
+        provider = FakeTelemetryProvider()
+        provider._dataset_store = MissingFrameDatasetStore()
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "Approved synthetic dataset provider returned no frame for "
+                "tenant=acme:production optimizer=query_enhancement "
+                "dataset=approved_synthetic_data-acme:production"
+            ),
+        ):
+            await _load_approved_synthetic_data(
+                provider, "acme:production", "query_enhancement"
+            )
 
 
 # ---------------------------------------------------------------------------

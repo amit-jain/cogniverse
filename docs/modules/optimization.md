@@ -307,7 +307,7 @@ not the SIMBA algorithm.
 
 **Key function:** `run_simba_optimization(tenant_id, lookback_hours=24.0)` — reads
 `cogniverse.query_enhancement` spans, builds `(original_query -> enhanced_query)` examples (skipping
-identity pairs where `enhanced == original`), merges approved synthetic demos for `"simba"`, compiles via
+identity pairs where `enhanced == original`), merges approved synthetic demos for `"query_enhancement"`, compiles via
 `_create_teleprompter(len(trainset))`, and saves the artifact as `("model", "simba_query_enhancement")`.
 `QueryEnhancementAgent` reloads it via `am.load_blob("model", "simba_query_enhancement")`.
 

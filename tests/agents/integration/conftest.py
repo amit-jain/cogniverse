@@ -417,7 +417,7 @@ def clear_singleton_state_between_tests():
 
 
 @pytest.fixture(autouse=True, scope="module")
-def _set_test_backend_env(shared_memory_vespa, request):
+def _set_test_backend_env(request):
     """Point ``BACKEND_URL``/``BACKEND_PORT`` at the test-owned Vespa so
     ``create_default_config_manager()`` resolves to it, never the running
     cluster's persisted config store.
@@ -426,12 +426,19 @@ def _set_test_backend_env(shared_memory_vespa, request):
     whose deployed config enables the semantic router at an in-cluster envoy
     the host cannot reach — turning every agent LM call into a connection
     error. Resets the config-manager singleton so the new env is picked up per
-    module. Mirrors ``tests/runtime/integration/conftest.py``.
+    module. Mirrors ``tests/runtime/integration/conftest.py``. Modules marked
+    ``no_shared_memory_vespa`` own a different real boundary and must not pay
+    for a Vespa container they never touch.
     """
     import os
 
     from cogniverse_foundation.config import utils as config_utils
 
+    if request.node.get_closest_marker("no_shared_memory_vespa"):
+        yield
+        return
+
+    shared_memory_vespa = request.getfixturevalue("shared_memory_vespa")
     original_url = os.environ.get("BACKEND_URL")
     original_port = os.environ.get("BACKEND_PORT")
     parsed_base_url = urlsplit(shared_memory_vespa["base_url"])

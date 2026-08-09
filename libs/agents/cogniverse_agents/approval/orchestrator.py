@@ -5,6 +5,7 @@ Orchestrates workflows with approval checkpoints using state machine.
 Integrates HumanApprovalAgent with workflow execution.
 """
 
+import inspect
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
@@ -15,10 +16,18 @@ from cogniverse_agents.workflow.state_machine import (
 )
 from cogniverse_core.approval.interfaces import (
     ApprovalBatch,
+    ApprovalStatus,
     ReviewDecision,
 )
+from cogniverse_core.common.tenant_utils import require_tenant_id, validate_tenant_id
 
 logger = logging.getLogger(__name__)
+
+
+def _validated_tenant_id(value: Any, *, source: str) -> str:
+    tenant_id = require_tenant_id(value, source=source)
+    validate_tenant_id(tenant_id)
+    return tenant_id
 
 
 class DecisionOrchestrator:
@@ -33,7 +42,11 @@ class DecisionOrchestrator:
     Example usage:
         orchestrator = DecisionOrchestrator(
             approval_agent=approval_agent,
-            workflow_id="synthetic_generation_001"
+            workflow_id="synthetic_generation_001",
+            initial_context={
+                "agent_type": "routing",
+                "tenant_id": "acme",
+            },
         )
 
         # Register workflow steps
@@ -50,7 +63,7 @@ class DecisionOrchestrator:
         )
 
         # Execute workflow
-        result = await orchestrator.execute(context={"tenant_id": "acme"})
+        result = await orchestrator.execute()
     """
 
     def __init__(
@@ -65,13 +78,35 @@ class DecisionOrchestrator:
         Args:
             approval_agent: HumanApprovalAgent for approval logic
             workflow_id: Unique workflow identifier
-            initial_context: Initial workflow context
+            initial_context: Initial workflow context. Must include a non-empty
+                ``agent_type`` identifying the training-data consumer and an
+                explicit ``tenant_id``.
         """
         self.approval_agent = approval_agent
         self.workflow_id = workflow_id
+        context = dict(initial_context or {})
+        self.tenant_id = _validated_tenant_id(
+            context.get("tenant_id"),
+            source="DecisionOrchestrator initial_context",
+        )
+        context["tenant_id"] = self.tenant_id
+
+        storage = approval_agent.storage
+        storage_tenant_raw = getattr(storage, "tenant_id", None)
+        if storage_tenant_raw is not None:
+            storage_tenant = _validated_tenant_id(
+                storage_tenant_raw,
+                source="DecisionOrchestrator approval storage",
+            )
+            if storage_tenant != self.tenant_id:
+                raise ValueError(
+                    "DecisionOrchestrator tenant_id does not match approval "
+                    f"storage: context={self.tenant_id} storage={storage_tenant}"
+                )
+
         self.state_machine = WorkflowStateMachine(
             initial_state=WorkflowState.INITIALIZING,
-            context=initial_context or {},
+            context=context,
         )
 
         self.steps: List[Dict[str, Any]] = []
@@ -108,7 +143,10 @@ class DecisionOrchestrator:
         self.state_machine.register_transition(
             from_state=WorkflowState.AWAITING_APPROVAL,
             to_state=WorkflowState.APPROVED,
-            condition=lambda ctx: ctx.get("pending_review_count", 0) == 0,
+            condition=lambda ctx: (
+                ctx.get("pending_review_count", 0) == 0
+                and ctx.get("rejection_count", 0) == 0
+            ),
             description="All items approved",
         )
 
@@ -160,7 +198,10 @@ class DecisionOrchestrator:
         self.state_machine.register_transition(
             from_state=WorkflowState.AWAITING_APPROVAL,
             to_state=WorkflowState.REJECTED,
-            condition=lambda ctx: ctx.get("rejection_count", 0) > 0,
+            condition=lambda ctx: (
+                ctx.get("pending_review_count", 0) == 0
+                and ctx.get("rejection_count", 0) > 0
+            ),
             description="Items rejected by human",
         )
 
@@ -219,9 +260,41 @@ class DecisionOrchestrator:
 
         Returns:
             Final workflow context with results
+
+        Raises:
+            ValueError: If ``context.agent_type`` is missing or empty, or a
+                context update attempts to change the workflow tenant.
         """
         if context_updates:
-            self.state_machine.context.update(context_updates)
+            updates = dict(context_updates)
+            if "tenant_id" in updates:
+                updated_tenant = _validated_tenant_id(
+                    updates["tenant_id"],
+                    source="DecisionOrchestrator context update",
+                )
+                if updated_tenant != self.tenant_id:
+                    raise ValueError(
+                        "DecisionOrchestrator tenant_id cannot change: "
+                        f"initial={self.tenant_id} update={updated_tenant}"
+                    )
+                updates["tenant_id"] = updated_tenant
+            self.state_machine.context.update(updates)
+
+        context_tenant = _validated_tenant_id(
+            self.state_machine.context.get("tenant_id"),
+            source="DecisionOrchestrator workflow context",
+        )
+        if context_tenant != self.tenant_id:
+            raise ValueError(
+                "DecisionOrchestrator workflow context tenant_id does not match "
+                f"its initial tenant: initial={self.tenant_id} "
+                f"context={context_tenant}"
+            )
+        self.state_machine.context["tenant_id"] = context_tenant
+
+        agent_type = self.state_machine.context.get("agent_type")
+        if not isinstance(agent_type, str) or not agent_type.strip():
+            raise ValueError("context.agent_type must be a non-empty string")
 
         # Transition to running
         self.state_machine.transition()
@@ -264,6 +337,19 @@ class DecisionOrchestrator:
         try:
             # Execute step
             result = step["executor"](self.state_machine.context)
+            if inspect.isawaitable(result):
+                result = await result
+
+            context_tenant = _validated_tenant_id(
+                self.state_machine.context.get("tenant_id"),
+                source=f"DecisionOrchestrator step {step['name']} context",
+            )
+            if context_tenant != self.tenant_id:
+                raise ValueError(
+                    "DecisionOrchestrator step changed tenant_id: "
+                    f"initial={self.tenant_id} step={context_tenant}"
+                )
+            self.state_machine.context["tenant_id"] = context_tenant
 
             # Update context
             self.state_machine.context[f"step_{step['name']}_result"] = result
@@ -281,6 +367,8 @@ class DecisionOrchestrator:
                     items=result,
                     batch_id=f"{self.workflow_id}_step_{self.current_step_index}",
                     context={
+                        "agent_type": self.state_machine.context.get("agent_type"),
+                        "tenant_id": self.tenant_id,
                         "workflow_id": self.workflow_id,
                         "step_name": step["name"],
                         "step_index": self.current_step_index,
@@ -330,18 +418,93 @@ class DecisionOrchestrator:
             f"Applying {len(decisions)} approval decisions to workflow {self.workflow_id}"
         )
 
-        # Apply decisions
+        applied_items = []
         for decision in decisions:
-            await self.approval_agent.apply_decision(batch.batch_id, decision)
+            applied_item = await self.approval_agent.apply_decision(
+                batch.batch_id, decision
+            )
+            if applied_item is None:
+                raise RuntimeError(
+                    "Approval decision produced no persisted item: "
+                    f"batch={batch.batch_id} item={decision.item_id}"
+                )
+            applied_items.append(applied_item)
 
-        # Update batch
+        # Phoenix span queries are eventually consistent even after a checked
+        # export. Reload the latest visible batch, then overlay the exact items
+        # returned by the persistence boundary so this workflow never reverts a
+        # just-applied decision to an older pending snapshot.
         updated_batch = await self.approval_agent.storage.get_batch(batch.batch_id)
         if updated_batch:
             batch = updated_batch
+        batch_tenant = _validated_tenant_id(
+            batch.context.get("tenant_id"),
+            source=f"DecisionOrchestrator approval batch {batch.batch_id}",
+        )
+        if batch_tenant != self.tenant_id:
+            raise ValueError(
+                "DecisionOrchestrator approval batch tenant_id does not match "
+                f"its initial tenant: initial={self.tenant_id} batch={batch_tenant}"
+            )
+        batch.context["tenant_id"] = batch_tenant
+        for applied_item in applied_items:
+            original_item_id = applied_item.metadata.get("original_item_id")
+            if original_item_id is not None:
+                if (
+                    not isinstance(original_item_id, str)
+                    or not original_item_id
+                    or original_item_id == applied_item.item_id
+                ):
+                    raise RuntimeError(
+                        "Invalid approval item lineage: "
+                        f"item={applied_item.item_id} "
+                        f"original_item_id={original_item_id!r} "
+                        f"status={applied_item.status.value}"
+                    )
+
+                original = next(
+                    (
+                        candidate
+                        for candidate in batch.items
+                        if candidate.item_id == original_item_id
+                    ),
+                    None,
+                )
+                if original is None:
+                    raise RuntimeError(
+                        "Approval item lineage references an unknown original: "
+                        f"batch={batch.batch_id} item={applied_item.item_id} "
+                        f"original_item_id={original_item_id}"
+                    )
+                original.status = ApprovalStatus.REJECTED
+            elif applied_item.status is ApprovalStatus.REGENERATED:
+                raise RuntimeError(
+                    "Regenerated approval item is missing its original item: "
+                    f"batch={batch.batch_id} item={applied_item.item_id}"
+                )
+
+            for index, candidate in enumerate(batch.items):
+                if candidate.item_id == applied_item.item_id:
+                    batch.items[index] = applied_item
+                    break
+            else:
+                batch.items.append(applied_item)
 
         # Update context
         pending_count = len(batch.pending_review)
-        rejection_count = len(batch.rejected)
+        superseded_item_ids = {
+            original_item_id
+            for item in batch.items
+            if isinstance(
+                original_item_id := item.metadata.get("original_item_id"), str
+            )
+            and original_item_id
+        }
+        rejection_count = sum(
+            item.status is ApprovalStatus.REJECTED
+            and item.item_id not in superseded_item_ids
+            for item in batch.items
+        )
 
         self.state_machine.context.update(
             {
@@ -361,7 +524,7 @@ class DecisionOrchestrator:
             # All approved, move to next step
             self.current_step_index += 1
             self.state_machine.transition({"pending_review_count": 0})
-        elif rejection_count > 0:
+        elif pending_count == 0 and rejection_count > 0:
             # Handle rejections
             self.state_machine.transition()
 
