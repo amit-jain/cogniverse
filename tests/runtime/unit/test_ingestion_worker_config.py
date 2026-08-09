@@ -68,7 +68,9 @@ def test_worker_installs_exact_inference_urls_before_building_graph_context(
         {"stale": "http://stale:8000"},
     )
 
-    actual_manager, actual_loader = worker._prepare_job_context(config)
+    actual_manager, actual_loader = worker._prepare_job_context(
+        config.inference_service_urls
+    )
 
     assert actual_manager is manager
     assert actual_loader is schema_loader
@@ -92,7 +94,9 @@ def test_worker_installs_exact_inference_urls_before_building_graph_context(
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
-def test_worker_clears_stale_inference_urls_when_environment_is_absent(monkeypatch):
+def test_worker_preserves_persisted_inference_urls_when_environment_is_absent(
+    monkeypatch,
+):
     monkeypatch.setenv("REDIS_URL", "redis://worker:6379/0")
     monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
     config = worker.WorkerConfig()
@@ -102,34 +106,61 @@ def test_worker_clears_stale_inference_urls_when_environment_is_absent(monkeypat
     )
     manager, schema_loader, graph_factory_calls = _install_context_dependencies(
         monkeypatch,
-        {"stale": "http://stale:8000"},
+        {"persisted": "http://persisted:8000"},
     )
 
-    actual_manager, actual_loader = worker._prepare_job_context(config)
+    actual_manager, actual_loader = worker._prepare_job_context(
+        config.inference_service_urls
+    )
 
     assert actual_manager is manager
     assert actual_loader is schema_loader
-    assert config.inference_service_urls == {}
-    assert manager.system_config.inference_service_urls == {}
+    assert config.inference_service_urls is None
+    assert manager.system_config.inference_service_urls == {
+        "persisted": "http://persisted:8000"
+    }
     assert graph_factory_calls == [(manager, schema_loader)]
 
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
-@pytest.mark.parametrize(
-    "raw",
-    [
-        "not-json",
-        "[]",
-        '{"denseon":7}',
-        '{"denseon":" http://denseon:8000"}',
+def test_worker_accepts_pathed_endpoint_urls_exactly(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://worker:6379/0")
+    monkeypatch.setenv(
+        "INFERENCE_SERVICE_URLS",
         '{"denseon":"http://denseon:8000/v1"}',
-        '{"denseon":"http://first:8000","denseon":"http://second:8000"}',
+    )
+
+    config = worker.WorkerConfig()
+
+    assert config.inference_service_urls == {"denseon": "http://denseon:8000/v1"}
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ("not-json", r"^INFERENCE_SERVICE_URLS must be a valid JSON object$"),
+        ("[]", r"^INFERENCE_SERVICE_URLS must be a JSON object$"),
+        (
+            '{"denseon":7}',
+            r"^INFERENCE_SERVICE_URLS\['denseon'\] URL must be a string$",
+        ),
+        (
+            '{"denseon":" http://denseon:8000"}',
+            r"^INFERENCE_SERVICE_URLS\['denseon'\] URL must not contain whitespace$",
+        ),
+        (
+            '{"denseon":"http://first:8000","denseon":"http://second:8000"}',
+            r"^duplicate service name 'denseon'$",
+        ),
     ],
 )
 def test_worker_rejects_malformed_inference_urls_before_graph_setup(
     monkeypatch,
     raw,
+    message,
 ):
     context_calls = []
     monkeypatch.setenv("REDIS_URL", "redis://worker:6379/0")
@@ -140,10 +171,7 @@ def test_worker_rejects_malformed_inference_urls_before_graph_setup(
         lambda config: context_calls.append(config),
     )
 
-    with pytest.raises(
-        ValueError,
-        match="^INFERENCE_SERVICE_URLS must be a JSON object of root HTTP\\(S\\) URLs$",
-    ):
+    with pytest.raises(ValueError, match=message):
         worker.WorkerConfig()
 
     assert context_calls == []

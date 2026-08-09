@@ -238,6 +238,20 @@ also leaves it untouched and fails with a diagnostic. Inspect it first, then set
 
 `SearchResult` and `SearchBackend` are imported from `cogniverse_sdk.document` / `cogniverse_sdk.interfaces.backend` — the runtime has no local search ABC any more (the dead duplicates were removed).
 
+### Queued ingestion transaction
+
+The ingestion worker treats content feed and knowledge-graph extraction as one
+durable transaction. Immediately after content is fed, and before entering the
+graph boundary, it writes `ingest:graph-pending:<message_id>` in Redis. A graph
+exception, partial write, cancellation, or
+`INGEST_GRAPH_DEADLINE_SECONDS` timeout publishes a nonterminal `retrying`
+event while retaining the in-flight marker, tenant concurrency slot, and Redis
+Streams pending entry. The reaper always re-drives a marked entry, even when
+its delivery count exceeds the ordinary poison-message limit. Stable content
+and graph document ids make the replay idempotent. Only a run that completes
+the graph stage clears the graph marker, marks the ingest done, releases the
+tenant slot, and acknowledges the queue entry.
+
 ---
 
 ## FastAPI Server

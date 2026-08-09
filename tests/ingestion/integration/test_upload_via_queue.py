@@ -630,6 +630,7 @@ async def worker_task(real_stack):
         WorkerConfig,
         _claim_loop,
         _default_processor,
+        _mark_graph_pending,
     )
 
     stop = asyncio.Event()
@@ -641,7 +642,12 @@ async def worker_task(real_stack):
             redis,
             config,
             stop,
-            processor=partial(_default_processor, config=config),
+            processor=partial(
+                _default_processor,
+                service_urls=config.inference_service_urls,
+                mark_graph_pending=partial(_mark_graph_pending, redis),
+                graph_deadline_s=config.graph_deadline_s,
+            ),
         )
     )
     yield task
@@ -825,6 +831,8 @@ class TestUploadRealStack:
 
     @pytest.mark.requires_inference("videoprism_jax")
     @pytest.mark.requires_inference("vllm_asr")
+    @pytest.mark.requires_inference("gliner")
+    @pytest.mark.requires_inference("colbert_pylate")
     @pytest.mark.asyncio
     async def test_upload_writes_to_minio_queues_runs_pipeline_and_lands_in_vespa(
         self, real_stack, worker_task, http_client, upload_video_path
@@ -987,6 +995,8 @@ class TestUploadRealStack:
         )
 
     @pytest.mark.requires_inference("videoprism_jax")
+    @pytest.mark.requires_inference("gliner")
+    @pytest.mark.requires_inference("colbert_pylate")
     @pytest.mark.asyncio
     async def test_resubmit_same_source_url_hits_idempotency(
         self, real_stack, worker_task, http_client, upload_video_path

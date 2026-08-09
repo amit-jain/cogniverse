@@ -73,7 +73,7 @@ def build_pytest_command(args) -> List[str]:
     cmd.extend(
         [
             "-v",
-            "--tb=short",
+            "--tb=long",
             "--cov=src/app/ingestion/processors",
             "--cov-report=term-missing",
         ]

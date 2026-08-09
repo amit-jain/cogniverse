@@ -638,11 +638,11 @@ class DocumentTextEmbeddingStrategy(BaseStrategy):
 
 
 class DocumentVisualEmbeddingStrategy(BaseStrategy):
-    """Generate ColPali multi-vector embeddings (320-dim per patch) for PDF pages.
+    """Generate Tomoro ColQwen3 embeddings (320 dimensions per PDF-page patch).
 
-    Each rendered page image is embedded with ColPali by EmbeddingGeneratorImpl
-    (loaded lazily via the colpali model loader). This strategy wraps the page
-    list and delegates embedding generation to the pipeline's embedding generator.
+    Each rendered page image is embedded by EmbeddingGeneratorImpl through the
+    ColPali-family loader. This strategy wraps the page list and delegates
+    embedding generation to the pipeline's embedding generator.
     """
 
     def __init__(

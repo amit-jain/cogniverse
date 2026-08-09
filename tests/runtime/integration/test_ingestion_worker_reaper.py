@@ -24,7 +24,11 @@ import pytest
 from cogniverse_runtime.ingestion_worker import idempotency, queue, reaper, worker
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 
-pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.ci_fast,
+    pytest.mark.no_shared_vespa,
+]
 
 CONTAINER_NAME = "redis-ingestion-reaper-tests"
 
@@ -94,6 +98,14 @@ async def redis(redis_container, monkeypatch):
     await client.flushdb()
     yield client
     await close_redis()
+
+
+@pytest.fixture(autouse=True)
+def worker_telemetry(telemetry_manager_without_phoenix):
+    from cogniverse_foundation.telemetry.config import TelemetryLevel
+
+    telemetry_manager_without_phoenix.config.level = TelemetryLevel.BASIC
+    return telemetry_manager_without_phoenix
 
 
 async def _orphan_job(redis, config, *, ingest_id: str, sha: str, tenant: str):
@@ -387,6 +399,71 @@ class TestReaperRecovery:
         assert events[-1]["state"] == "failed"
         assert events[-1]["error_type"] == "MaxDeliveriesExceeded"
         assert "abandoned after 4 deliveries" in events[-1]["error"]
+
+    @pytest.mark.asyncio
+    async def test_reaper_redrives_marked_graph_stage_past_delivery_cap(
+        self,
+        redis,
+        telemetry_manager_without_phoenix,
+    ):
+        from cogniverse_foundation.telemetry.config import TelemetryLevel
+
+        telemetry_manager_without_phoenix.config.level = TelemetryLevel.BASIC
+        config = worker.WorkerConfig()
+        config.consumer_id = "live-graph"
+        config.reaper_max_deliveries = 0
+        tenant, sha, ingest_id = (
+            "acme:graph",
+            "sha_graph_resume",
+            "ing_graph_resume",
+        )
+        job = await _orphan_job(
+            redis,
+            config,
+            ingest_id=ingest_id,
+            sha=sha,
+            tenant=tenant,
+        )
+        await worker._mark_graph_pending(redis, job)
+        processed: list[str] = []
+
+        async def _complete(j):
+            processed.append(j.ingest_id)
+            return {
+                "status": "success",
+                "video_id": "video-graph-resumed",
+                "graph_nodes": 2,
+                "graph_edges": 1,
+            }
+
+        recovered = await reaper.run_reaper_once(
+            redis,
+            config,
+            min_idle_ms=0,
+            processor=_complete,
+        )
+
+        assert recovered == 1
+        assert processed == [ingest_id]
+        assert await redis.xrange(reaper.DEAD_STREAM) == []
+        assert await idempotency.get_done_ingest_id(redis, sha) == ingest_id
+        assert await queue.get_active(redis, tenant) == 0
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 0
+        events = [event for _, event in await queue.read_status_since(redis, ingest_id)]
+        assert events[-1]["state"] == "complete"
+        assert events[-1]["result"] == {
+            "video_id": "video-graph-resumed",
+            "keyframes": 0,
+            "documents_fed": 0,
+            "chunks": 0,
+            "graph_nodes": 2,
+            "graph_edges": 1,
+        }
+        assert (
+            await redis.get(f"{worker.GRAPH_PENDING_KEY_PREFIX}{job.message_id}")
+            is None
+        )
 
     @pytest.mark.asyncio
     async def test_dead_letter_crash_before_ack_never_double_settles(

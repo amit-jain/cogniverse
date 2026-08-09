@@ -13,6 +13,9 @@ idempotently:
     re-running the pipeline or touching the active counter (the finished
     run already decremented it; a second decrement would free a slot a
     DIFFERENT still-running job of the same tenant holds).
+  - graph stage marked pending — always re-drive, regardless of delivery
+    count, because dead-lettering would acknowledge content whose graph
+    transaction has not completed.
   - anything else — re-drive through ``_process_job`` exactly like a
     fresh claim: the run publishes status, marks done, decrements the
     active counter the dead run never released, and acks.
@@ -38,7 +41,10 @@ import redis.asyncio as aioredis
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.worker import (
     WorkerConfig,
+    _clear_graph_pending,
     _default_processor,
+    _is_graph_pending,
+    _mark_graph_pending,
     _process_job,
 )
 
@@ -148,7 +154,12 @@ async def run_reaper_once(
     duplicate ingestion and a double-decremented tenant counter.
     """
     if processor is None:
-        processor = partial(_default_processor, config=config)
+        processor = partial(
+            _default_processor,
+            service_urls=config.inference_service_urls,
+            mark_graph_pending=partial(_mark_graph_pending, redis),
+            graph_deadline_s=config.graph_deadline_s,
+        )
     recovered = 0
     cursor = "0-0"
     while True:
@@ -169,22 +180,25 @@ async def run_reaper_once(
                     done_id,
                 )
                 await idempotency.clear_inflight(redis, job.sha)
+                await _clear_graph_pending(redis, job.message_id)
                 await queue.ack(redis, config.consumer_group, job.message_id)
             else:
                 delivered = await queue.times_delivered(
                     redis, config.consumer_group, job.message_id
                 )
-                if delivered > config.reaper_max_deliveries:
+                graph_pending = await _is_graph_pending(redis, job.message_id)
+                if delivered > config.reaper_max_deliveries and not graph_pending:
                     await _dead_letter(redis, config, job, delivered)
                 else:
                     logger.warning(
                         "Reaper re-driving orphaned ingest %s (tenant=%s, "
-                        "source=%s, delivery %d/%d)",
+                        "source=%s, delivery %d/%d, graph_pending=%s)",
                         job.ingest_id,
                         job.tenant_id,
                         job.source_url,
                         delivered,
                         config.reaper_max_deliveries,
+                        graph_pending,
                     )
                     await _process_job(redis, job, config, processor=processor)
             recovered += 1

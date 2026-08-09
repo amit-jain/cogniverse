@@ -99,6 +99,43 @@ def test_reaps_exited_containers_even_with_live_owner():
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
 
 
+def test_keeps_created_container_while_live_owner_is_starting_it():
+    import os
+
+    name = "cogniverse-reaper-test-created"
+    try:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+        created = subprocess.run(
+            [
+                "docker",
+                "create",
+                "--name",
+                name,
+                "--label",
+                f"{OWNER_LABEL}={os.getpid()}",
+                "busybox",
+                "sleep",
+                "300",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert created.returncode == 0, created.stderr
+
+        reap_dead_owner_containers()
+
+        assert _exists(name), (
+            "a live session's created container must survive until docker start"
+        )
+        started = subprocess.run(
+            ["docker", "start", name], capture_output=True, text=True, timeout=60
+        )
+        assert started.returncode == 0, started.stderr
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+
+
 def test_phoenix_container_carries_owner_label(phoenix_container):
     """The phoenix_container docker-run must carry the owner-pid label so a
     SIGKILLed session's Phoenix container is reaped instead of orphaned."""
