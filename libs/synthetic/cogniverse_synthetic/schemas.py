@@ -8,18 +8,29 @@ Each schema corresponds to the training data format expected by an optimizer.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from cogniverse_foundation.common.tenant_utils import (
+    require_tenant_id,
+    validate_tenant_id,
+)
+
+SAMPLING_STRATEGIES = frozenset(
+    {
+        "diverse",
+        "temporal_recent",
+        "entity_rich",
+        "multi_modal_sequences",
+    }
+)
 
 
 class ProfileSelectionExampleSchema(BaseModel):
     """Training example for ProfileSelectionAgent optimization.
 
-    Output fields mirror ``ProfileSelectionSignature``
-    (``libs/agents/cogniverse_agents/profile_selection_agent.py``) and feed
-    ``run_profile_optimization`` in
-    ``libs/runtime/cogniverse_runtime/optimization_cli.py``, which builds
-    a ``dspy.Example`` from these fields and trains the
-    ``ProfileSelectionModule`` via teleprompter.
+    Generation executes the production selector and copies its categorical
+    decision fields exactly. The optimizer schema intentionally excludes the
+    selector's runtime confidence because confidence is not a training target.
     """
 
     query: str = Field(..., description="User query text (DSPy input)")
@@ -30,21 +41,22 @@ class ProfileSelectionExampleSchema(BaseModel):
     selected_profile: str = Field(
         ..., description="Profile that should be selected for the query"
     )
-    confidence: float = Field(
-        ..., ge=0.0, le=1.0, description="Confidence in the selection (0-1)"
-    )
     reasoning: str = Field(..., description="Reason for the selection")
     query_intent: str = Field(
         ..., description="text_search, video_search, image_search, etc."
     )
     modality: str = Field(
-        ..., description="Target modality: video, image, text, audio, document"
+        ...,
+        description=(
+            "Target modality: audio, code, document, image, text, video, or wiki"
+        ),
     )
     complexity: str = Field(
         ..., description="Query complexity: simple, medium, complex"
     )
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
                 "query": "find a clip about transformer architecture",
@@ -55,23 +67,21 @@ class ProfileSelectionExampleSchema(BaseModel):
                     "video_videoprism_large_mv_chunk_30s"
                 ),
                 "selected_profile": "video_colqwen_omni_mv_chunk_30s",
-                "confidence": 0.85,
                 "reasoning": "Selected chunk-based profile for medium-complexity video search",
                 "query_intent": "video_search",
                 "modality": "video",
                 "complexity": "medium",
             }
-        }
+        },
     )
 
 
 class QueryEnhancementExampleSchema(BaseModel):
     """Training example for QueryEnhancementAgent optimization.
 
-    Feeds ``run_simba_optimization`` in
-    ``libs/runtime/cogniverse_runtime/optimization_cli.py``, which builds a
-    ``dspy.Example`` from these fields (query is the DSPy input, the rest are
-    the enhancement the SIMBA/BootstrapFewShot trainer learns to produce).
+    Generation executes the production enhancement agent and copies its query,
+    expansion, synonym, and reasoning outputs. Runtime confidence is not part
+    of the query-enhancement optimizer's training contract.
     """
 
     query: str = Field(..., description="Original user query (DSPy input)")
@@ -85,12 +95,10 @@ class QueryEnhancementExampleSchema(BaseModel):
         default_factory=list, description="Synonyms for salient query terms"
     )
     context: str = Field("", description="Domain/context the query sits in")
-    confidence: float = Field(
-        ..., ge=0.0, le=1.0, description="Confidence in the enhancement (0-1)"
-    )
     reasoning: str = Field(..., description="Why the query was enhanced this way")
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
                 "query": "transformer architecture",
@@ -98,10 +106,9 @@ class QueryEnhancementExampleSchema(BaseModel):
                 "expansion_terms": ["attention mechanism", "self-attention"],
                 "synonyms": ["neural network model"],
                 "context": "machine learning",
-                "confidence": 0.85,
                 "reasoning": "Added attention-related terms for a transformer query",
             }
-        }
+        },
     )
 
 
@@ -126,6 +133,7 @@ class EntityExtractionExampleSchema(BaseModel):
     )
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
                 "query": "PyTorch was created by Meta AI in Menlo Park",
@@ -139,13 +147,18 @@ class EntityExtractionExampleSchema(BaseModel):
                     {"source": "Meta AI", "target": "PyTorch", "type": "created"}
                 ],
             }
-        }
+        },
     )
 
 
 class RoutingExperienceSchema(BaseModel):
-    """Training example representing a routing decision with entity
-    extraction and quality metrics."""
+    """Training example containing an observed production gateway decision.
+
+    Fresh generation preserves the gateway's exact routing confidence while
+    downstream search quality, agent outcome, and processing time remain
+    explicit unobserved sentinels. Query-changing regeneration resets gateway
+    confidence to an unobserved sentinel until the gateway is executed again.
+    """
 
     query: str = Field(..., description="User query text")
     entities: List[Dict[str, Any]] = Field(
@@ -181,6 +194,7 @@ class RoutingExperienceSchema(BaseModel):
     )
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
                 "query": "find TensorFlow tutorials on neural networks",
@@ -196,13 +210,13 @@ class RoutingExperienceSchema(BaseModel):
                     }
                 ],
                 "enhanced_query": "find TensorFlow(TECHNOLOGY) tutorials on neural networks(TOPIC)",
-                "chosen_agent": "video_search_agent",
+                "chosen_agent": "search_agent",
                 "routing_confidence": 0.85,
                 "search_quality": 0.78,
                 "agent_success": True,
                 "user_satisfaction": 0.9,
             }
-        }
+        },
     )
 
 
@@ -243,6 +257,7 @@ class WorkflowExecutionSchema(BaseModel):
     )
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
                 "workflow_id": "synthetic_workflow_001",
@@ -251,55 +266,94 @@ class WorkflowExecutionSchema(BaseModel):
                 "execution_time": 3.5,
                 "success": True,
                 "agent_sequence": [
-                    "video_search_agent",
-                    "summarizer",
-                    "detailed_report",
+                    "search_agent",
+                    "summarizer_agent",
+                    "detailed_report_agent",
                 ],
                 "task_count": 3,
                 "parallel_efficiency": 0.85,
                 "confidence_score": 0.88,
                 "user_satisfaction": 0.9,
             }
-        }
+        },
     )
 
 
 class SyntheticDataRequest(BaseModel):
-    """Request schema for synthetic data generation endpoint"""
+    """Strict request for one registered synthetic-data optimizer."""
 
     optimizer: str = Field(
         ...,
-        description="Optimizer name (profile, routing, workflow, unified)",
+        description=(
+            "Optimizer name: query_enhancement, entity_extraction, profile, "
+            "routing, workflow, unified, or cross_modal"
+        ),
     )
     count: int = Field(
-        ..., ge=1, le=10000, description="Number of examples to generate"
+        ...,
+        strict=True,
+        ge=1,
+        le=10000,
+        description="Number of examples to generate",
     )
     vespa_sample_size: int = Field(
         default=200,
+        strict=True,
         ge=1,
         le=10000,
         description="Number of documents to sample from Vespa",
     )
-    strategies: List[str] = Field(
-        default=["diverse"],
-        description="Sampling strategies (diverse, temporal_recent, entity_rich, etc.)",
+    strategy: str | None = Field(
+        default=None,
+        description=(
+            "Optional sampling strategy override; when omitted, the optimizer's "
+            "registered backend query strategy is used"
+        ),
     )
     max_profiles: int = Field(
-        default=3, ge=1, le=10, description="Maximum number of backend profiles to use"
+        default=3,
+        strict=True,
+        ge=1,
+        le=10,
+        description="Maximum number of backend profiles to use",
     )
     tenant_id: str = Field(..., description="Tenant identifier (required)")
 
+    @field_validator("tenant_id")
+    @classmethod
+    def validate_and_canonicalize_tenant_id(cls, tenant_id: str) -> str:
+        canonical = require_tenant_id(tenant_id, source=cls.__name__)
+        validate_tenant_id(canonical)
+        return canonical
+
+    @field_validator("strategy", mode="before")
+    @classmethod
+    def validate_strategy(cls, strategy: object) -> str:
+        if strategy is None:
+            raise ValueError(
+                "strategy must be omitted to use the optimizer default, not null"
+            )
+        if not isinstance(strategy, str):
+            raise ValueError("strategy must be a string")
+        if strategy not in SAMPLING_STRATEGIES:
+            allowed = ", ".join(sorted(SAMPLING_STRATEGIES))
+            raise ValueError(
+                f"Unsupported sampling strategy: {strategy}. Allowed: {allowed}"
+            )
+        return strategy
+
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
                 "optimizer": "profile",
                 "count": 100,
                 "vespa_sample_size": 200,
-                "strategies": ["diverse"],
+                "strategy": "diverse",
                 "max_profiles": 3,
                 "tenant_id": "acme:production",
             }
-        }
+        },
     )
 
 
@@ -317,6 +371,7 @@ class SyntheticDataResponse(BaseModel):
     metadata: Dict[str, Any] = Field(..., description="Generation metadata")
 
     model_config = ConfigDict(
+        extra="forbid",
         json_schema_extra={
             "example": {
                 "optimizer": "profile",
@@ -330,9 +385,9 @@ class SyntheticDataResponse(BaseModel):
                 "data": [],
                 "metadata": {
                     "backend_type": "vespa",
-                    "query_strategy": "diverse",
+                    "backend_query_strategy": "diverse",
                     "generation_time_ms": 1250,
                 },
             }
-        }
+        },
     )

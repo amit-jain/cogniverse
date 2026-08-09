@@ -4,6 +4,8 @@ Pytest configuration for synthetic data tests
 Sets up DSPy with dummy LM for testing
 """
 
+import json
+
 import dspy
 import pytest
 
@@ -39,27 +41,30 @@ class DummyLM(dspy.LM):
         ):
             response_text = '{"query": "find machine learning tutorial video"}'
         elif "entities" in prompt_text.lower() or "entity_types" in prompt_text.lower():
-            # Extract the first entity from the prompt to ensure it appears in the query.
-            # Parse the "Entities:" field from the DSPy-formatted prompt.
             import re as _re
 
-            entity_name = "TensorFlow"  # default fallback
-            # DSPy formats the field as "[[ ## entities ## ]]\nEntityA, EntityB, ..."
             entities_match = _re.search(
-                r"## entities ##\s*\]\]\s*\n([^\n\[]+)", prompt_text
+                r"## entities ##\s*\]\]\s*\n([^\n]+)", prompt_text
             )
-            if entities_match:
-                raw_entities = entities_match.group(1).strip()
-                # Pick the first entity with len > 3 (mirrors ValidatedEntityQueryGenerator's
-                # filter) so the generated query satisfies entity-presence validation.
-                for candidate in raw_entities.split(","):
-                    candidate = candidate.strip()
-                    if candidate and len(candidate) > 3:
-                        entity_name = candidate
-                        break
+            if entities_match is None:
+                raise AssertionError("DSPy prompt is missing the entities field")
+            candidates = json.loads(entities_match.group(1))
+            if (
+                not isinstance(candidates, list)
+                or not candidates
+                or not all(
+                    isinstance(candidate, str) and candidate for candidate in candidates
+                )
+            ):
+                raise AssertionError("DSPy entities field is not a non-empty JSON list")
+            entity_names = " and ".join(candidates)
 
-            # Generate query that explicitly contains the entity, with reasoning for ChainOfThought
-            response_text = f'{{"reasoning": "Including {entity_name} as the primary entity since it is a key technology", "query": "find {entity_name} machine learning tutorial"}}'
+            response_text = json.dumps(
+                {
+                    "reasoning": f"Including {entity_names} from the request",
+                    "query": f"find {entity_names} machine learning tutorial",
+                }
+            )
         elif "agent" in prompt_text.lower():
             response_text = (
                 '{"agent_name": "video_search_agent", "reasoning": "Video content"}'

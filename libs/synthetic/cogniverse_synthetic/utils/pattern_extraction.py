@@ -8,7 +8,7 @@ Uses field mappings for schema-agnostic pattern extraction.
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
 from cogniverse_foundation.config.unified_config import FieldMappingConfig
@@ -52,6 +52,27 @@ class PatternExtractor:
         "advanced",
         "intermediate",
     ]
+    NON_ENTITY_CAPITALIZED_WORDS = frozenset(
+        {
+            "a",
+            "an",
+            "and",
+            "as",
+            "at",
+            "by",
+            "for",
+            "from",
+            "in",
+            "into",
+            "of",
+            "on",
+            "or",
+            "the",
+            "to",
+            "with",
+            "without",
+        }
+    )
 
     def __init__(self, field_mappings: Optional[FieldMappingConfig] = None):
         """
@@ -80,12 +101,11 @@ class PatternExtractor:
             }
         """
         if not content_samples:
-            logger.warning("No content samples provided for pattern extraction")
             return {
                 "topics": [],
                 "entities": [],
-                "temporal": ["2024", "2023"],
-                "content_types": ["tutorial", "guide"],
+                "temporal": [],
+                "content_types": [],
             }
 
         patterns = {
@@ -117,26 +137,24 @@ class PatternExtractor:
             Combined text from specified field types
         """
         texts = []
+        semantic_fields = {
+            "topic": ["topic", *self.field_mappings.topic_fields],
+            "description": [
+                "description",
+                *self.field_mappings.description_fields,
+            ],
+            "transcript": ["transcript", *self.field_mappings.transcript_fields],
+        }
 
         for field_type in field_types:
-            if field_type == "topic":
-                # Try all configured topic fields
-                for field_name in self.field_mappings.topic_fields:
-                    if field_name in sample and sample[field_name]:
-                        texts.append(str(sample[field_name]))
-                        break
-            elif field_type == "description":
-                # Try all configured description fields
-                for field_name in self.field_mappings.description_fields:
-                    if field_name in sample and sample[field_name]:
-                        texts.append(str(sample[field_name]))
-                        break
-            elif field_type == "transcript":
-                # Try all configured transcript fields
-                for field_name in self.field_mappings.transcript_fields:
-                    if field_name in sample and sample[field_name]:
-                        texts.append(str(sample[field_name]))
-                        break
+            seen_fields: Set[str] = set()
+            for field_name in semantic_fields.get(field_type, []):
+                if field_name in seen_fields:
+                    continue
+                seen_fields.add(field_name)
+                if field_name in sample and sample[field_name]:
+                    texts.append(str(sample[field_name]))
+                    break
 
         return " ".join(texts)
 
@@ -176,7 +194,7 @@ class PatternExtractor:
                     topics.add(trigram)
 
         # Return top 50 most relevant topics
-        return list(topics)[:50] if topics else []
+        return sorted(topics)[:50] if topics else []
 
     def extract_entities(self, content_samples: List[Dict[str, Any]]) -> List[str]:
         """
@@ -206,7 +224,32 @@ class PatternExtractor:
             entities.update(technical)
 
         # Return top 30 entities
-        return list(entities)[:30] if entities else []
+        named_entities = {
+            entity
+            for entity in entities
+            if entity.casefold() not in self.NON_ENTITY_CAPITALIZED_WORDS
+        }
+        return sorted(named_entities)[:30] if named_entities else []
+
+    @staticmethod
+    def _parse_timestamp(timestamp: Any) -> datetime:
+        if isinstance(timestamp, bool):
+            raise ValueError("boolean content timestamp is invalid")
+        if isinstance(timestamp, (int, float)):
+            seconds = float(timestamp)
+            magnitude = abs(seconds)
+            if magnitude >= 1e17:
+                seconds /= 1e9
+            elif magnitude >= 1e14:
+                seconds /= 1e6
+            elif magnitude >= 1e11:
+                seconds /= 1e3
+            return datetime.fromtimestamp(seconds, tz=timezone.utc)
+
+        content_date = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        if content_date.utcoffset() is None:
+            raise ValueError("content timestamp must include a timezone offset")
+        return content_date.astimezone(timezone.utc)
 
     def extract_temporal_patterns(
         self, content_samples: List[Dict[str, Any]]
@@ -233,39 +276,33 @@ class PatternExtractor:
             temporal.update(years)
 
             # Check timestamp for recency
-            timestamp = sample.get("creation_timestamp", sample.get("timestamp"))
-            if timestamp:
+            timestamp = sample.get("creation_timestamp")
+            if timestamp is None:
+                timestamp = sample.get("timestamp")
+            if timestamp is not None:
                 try:
-                    # Handle different timestamp formats
-                    if isinstance(timestamp, (int, float)):
-                        content_date = datetime.fromtimestamp(timestamp)
-                    else:
-                        content_date = datetime.fromisoformat(
-                            str(timestamp).replace("Z", "+00:00")
-                        )
+                    content_date = self._parse_timestamp(timestamp)
+                except (OSError, OverflowError, TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"invalid content timestamp {timestamp!r}"
+                    ) from exc
 
-                    days_old = (datetime.now() - content_date.replace(tzinfo=None)).days
+                days_old = (
+                    datetime.now(timezone.utc) - content_date
+                ).total_seconds() / 86400
 
-                    # Add recency modifiers
-                    if days_old < 30:
-                        temporal.add("recent")
-                        temporal.add("latest")
-                    elif days_old < 90:
-                        temporal.add("from this quarter")
-                    elif days_old < 365:
-                        temporal.add("from this year")
-                    else:
-                        year = content_date.year
-                        temporal.add(f"from {year}")
+                if 0 <= days_old < 30:
+                    temporal.add("recent")
+                    temporal.add("latest")
+                elif 30 <= days_old < 90:
+                    temporal.add("from this quarter")
+                elif 90 <= days_old < 365:
+                    temporal.add("from this year")
+                else:
+                    year = content_date.year
+                    temporal.add(f"from {year}")
 
-                except Exception as e:
-                    logger.debug(f"Error parsing timestamp: {e}")
-
-        # Add default temporal markers if none found
-        if not temporal:
-            temporal = {"2024", "2023", "recent", "latest"}
-
-        return list(temporal)
+        return sorted(temporal)
 
     def extract_content_types(self, content_samples: List[Dict[str, Any]]) -> List[str]:
         """
@@ -288,10 +325,7 @@ class PatternExtractor:
                 if keyword in text:
                     content_types.add(keyword)
 
-        # Return content types or defaults
-        return (
-            list(content_types) if content_types else ["tutorial", "guide", "overview"]
-        )
+        return sorted(content_types)
 
     def extract_relationships(
         self, entities: List[Dict[str, Any]]
@@ -299,8 +333,8 @@ class PatternExtractor:
         """
         Extract relationships between entities
 
-        Simple heuristic-based relationship extraction.
-        For production, use NLP models like spaCy dependency parsing.
+        Entity names alone do not establish a relationship, so this method
+        returns no relationships until source evidence is supplied.
 
         Args:
             entities: List of extracted entities with metadata
@@ -308,23 +342,4 @@ class PatternExtractor:
         Returns:
             List of relationships between entities
         """
-        relationships = []
-
-        # Simple co-occurrence based relationships
-        # This is a placeholder - real implementation would use NLP
-        for i, entity1 in enumerate(entities):
-            for entity2 in entities[i + 1 :]:
-                # Create relationship based on proximity or common context
-                relationship = {
-                    "source": entity1.get("text", ""),
-                    "target": entity2.get("text", ""),
-                    "type": "RELATED_TO",  # Simple default relationship
-                    "confidence": 0.5,  # Placeholder confidence
-                }
-                relationships.append(relationship)
-
-                # Limit to avoid explosion
-                if len(relationships) >= 10:
-                    return relationships
-
-        return relationships
+        return []

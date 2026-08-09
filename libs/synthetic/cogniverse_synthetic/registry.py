@@ -22,6 +22,21 @@ from cogniverse_synthetic.schemas import (
 logger = logging.getLogger(__name__)
 
 
+APPROVED_TRAINING_AGENT_BY_OPTIMIZER = {
+    "query_enhancement": "query_enhancement",
+    "profile": "profile_selection",
+    "routing": "routing",
+    "entity_extraction": "entity_extraction",
+}
+
+APPROVED_TRAINING_AGENT_BY_SCHEMA = {
+    QueryEnhancementExampleSchema: "query_enhancement",
+    ProfileSelectionExampleSchema: "profile_selection",
+    RoutingExperienceSchema: "routing",
+    EntityExtractionExampleSchema: "entity_extraction",
+}
+
+
 @dataclass
 class OptimizerConfig:
     """
