@@ -185,7 +185,6 @@ nav:
     - SDK Architecture: architecture/sdk-architecture.md
     - Multi-Agent System: architecture/multi-agent-interactions.md
     - Multi-Tenant: architecture/multi-tenant.md
-    - Rejected Approaches: architecture/rejected-approaches.md
     - System Flows: architecture/system-flows.md
     - Schema-Driven Flow: architecture/schema_driven_flow.md
     - Integration: architecture/integration.md
