@@ -43,5 +43,10 @@ def test_runtime_declares_all_module_level_workspace_deps():
     # The routers imported by main.py at module load reach into these
     # workspace packages; each must be a base dependency, not an extra.
     base = _base_dep_names()
-    for required in ("cogniverse-sdk", "cogniverse-core", "cogniverse-agents"):
+    for required in (
+        "cogniverse-sdk",
+        "cogniverse-core",
+        "cogniverse-agents",
+        "cogniverse-telemetry-phoenix",
+    ):
         assert required in base, f"{required} missing from base dependencies"
