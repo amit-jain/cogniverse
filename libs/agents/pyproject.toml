@@ -16,6 +16,9 @@ dependencies = [
     "cogniverse-synthetic",
     "cogniverse-vespa",
 
+    # Cross-replica canonical records for regenerated approval items.
+    "redis==5.2.1",
+
     # Google Agent Development Kit for composing agent
     "google-adk==1.14.1",
 
