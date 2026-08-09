@@ -2,9 +2,15 @@
 Unit tests for synthetic data schemas
 """
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from cogniverse_synthetic import api as synthetic_api
 from cogniverse_synthetic.schemas import (
     EntityExtractionExampleSchema,
     ProfileSelectionExampleSchema,
@@ -13,6 +19,7 @@ from cogniverse_synthetic.schemas import (
     SyntheticDataResponse,
     WorkflowExecutionSchema,
 )
+from cogniverse_synthetic.service import SyntheticDataService
 
 pytestmark = [pytest.mark.unit]
 
@@ -95,6 +102,68 @@ def test_public_synthetic_schemas_reject_unknown_fields(schema, payload) -> None
             "input": "discard me",
         }
     ]
+
+
+class _ProfileConfig:
+    def to_dict(self) -> dict:
+        return {
+            "profile_name": "source_profile",
+            "schema_name": "source_schema",
+            "type": "video",
+        }
+
+
+class _StrategyRecorder:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[str, str]] = []
+
+    async def query_profiles(
+        self,
+        profile_configs,
+        sample_size,
+        strategy,
+        *,
+        tenant_id,
+    ):
+        await asyncio.sleep(0)
+        self.calls.append((tenant_id, strategy))
+        if self.fail:
+            raise ConnectionError("backend unavailable")
+        return [{"topic": f"source for {tenant_id}"}]
+
+
+class _StrategyProbeService(SyntheticDataService):
+    def __init__(self, recorder: _StrategyRecorder) -> None:
+        self.backend_config = SimpleNamespace(
+            profiles={"source_profile": _ProfileConfig()}
+        )
+        self.backend_querier = recorder
+
+    async def _get_available_profiles(self, tenant_id):
+        return {"source_profile": _ProfileConfig().to_dict()}
+
+    async def _select_profiles(self, request, config, available_profiles):
+        return ["source_profile"], "selected the only deployed profile"
+
+    async def _generate_examples(
+        self,
+        request,
+        config,
+        sampled_content,
+        selected_profile_configs,
+        *,
+        available_profile_configs,
+    ):
+        assert selected_profile_configs == {
+            "source_profile": _ProfileConfig().to_dict()
+        }
+        assert available_profile_configs == selected_profile_configs
+        return [
+            config.schema_class.model_construct(
+                query=f"source query for {request.tenant_id}"
+            )
+        ]
 
 
 class TestProfileSelectionExampleSchema:
@@ -483,6 +552,166 @@ class TestSyntheticDataRequest:
                     "strategies": ["diverse", "temporal_recent"],
                 }
             )
+
+
+class TestSyntheticDataSamplingStrategy:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("optimizer", "expected_strategy"),
+        [
+            ("entity_extraction", "entity_rich"),
+            ("query_enhancement", "diverse"),
+            ("profile", "diverse"),
+            ("routing", "entity_rich"),
+            ("workflow", "multi_modal_sequences"),
+            ("unified", "multi_modal_sequences"),
+            ("cross_modal", "multi_modal_sequences"),
+        ],
+    )
+    async def test_omitted_strategy_uses_optimizer_registry_value(
+        self,
+        optimizer,
+        expected_strategy,
+    ):
+        recorder = _StrategyRecorder()
+        service = _StrategyProbeService(recorder)
+
+        response = await service.generate(
+            SyntheticDataRequest(
+                tenant_id=f"{optimizer}:{optimizer}",
+                optimizer=optimizer,
+                count=1,
+            )
+        )
+
+        assert recorder.calls == [(f"{optimizer}:{optimizer}", expected_strategy)]
+        assert response.metadata["backend_query_strategy"] == expected_strategy
+
+    @pytest.mark.asyncio
+    async def test_explicit_strategy_overrides_optimizer_registry_value(self):
+        recorder = _StrategyRecorder()
+        service = _StrategyProbeService(recorder)
+
+        response = await service.generate(
+            SyntheticDataRequest(
+                tenant_id="routing:routing",
+                optimizer="routing",
+                count=1,
+                strategy="temporal_recent",
+            )
+        )
+
+        assert recorder.calls == [("routing:routing", "temporal_recent")]
+        assert response.metadata["backend_query_strategy"] == "temporal_recent"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_requests_keep_resolved_strategies_isolated(self):
+        recorder = _StrategyRecorder()
+        service = _StrategyProbeService(recorder)
+        requests = [
+            SyntheticDataRequest(
+                tenant_id="routing:routing",
+                optimizer="routing",
+                count=1,
+            ),
+            SyntheticDataRequest(
+                tenant_id="workflow:workflow",
+                optimizer="workflow",
+                count=1,
+                strategy="temporal_recent",
+            ),
+            SyntheticDataRequest(
+                tenant_id="unified:unified",
+                optimizer="unified",
+                count=1,
+            ),
+            SyntheticDataRequest(
+                tenant_id="cross:cross",
+                optimizer="cross_modal",
+                count=1,
+                strategy="entity_rich",
+            ),
+        ]
+
+        responses = await asyncio.gather(
+            *(service.generate(request) for request in requests)
+        )
+
+        assert [
+            response.metadata["backend_query_strategy"] for response in responses
+        ] == [
+            "entity_rich",
+            "temporal_recent",
+            "multi_modal_sequences",
+            "entity_rich",
+        ]
+        assert set(recorder.calls) == {
+            ("routing:routing", "entity_rich"),
+            ("workflow:workflow", "temporal_recent"),
+            ("unified:unified", "multi_modal_sequences"),
+            ("cross:cross", "entity_rich"),
+        }
+
+    @pytest.mark.asyncio
+    async def test_backend_failure_preserves_resolved_strategy_context(self):
+        recorder = _StrategyRecorder(fail=True)
+        service = _StrategyProbeService(recorder)
+        request = SyntheticDataRequest(
+            tenant_id="routing:routing",
+            optimizer="routing",
+            count=1,
+        )
+
+        with pytest.raises(RuntimeError) as captured:
+            await service.generate(request)
+
+        assert str(captured.value) == (
+            "Backend sampling failed for tenant 'routing:routing', optimizer "
+            "'routing', strategy 'entity_rich': backend unavailable"
+        )
+        assert type(captured.value.__cause__) is ConnectionError
+        assert str(captured.value.__cause__) == "backend unavailable"
+        assert recorder.calls == [("routing:routing", "entity_rich")]
+
+    def test_batch_api_forwards_explicit_strategy_to_every_request(self, monkeypatch):
+        class CaptureService:
+            def __init__(self):
+                self.requests = []
+
+            async def generate(self, request):
+                self.requests.append(request)
+                return SyntheticDataResponse(
+                    optimizer=request.optimizer,
+                    schema_name="RoutingExperienceSchema",
+                    count=request.count,
+                    selected_profiles=["source_profile"],
+                    profile_selection_reasoning="selected the only deployed profile",
+                    data=[
+                        {"query": f"unique batch query {index}"}
+                        for index in range(request.count)
+                    ],
+                    metadata={"backend_query_strategy": request.strategy},
+                )
+
+        service = CaptureService()
+        monkeypatch.setattr(synthetic_api, "_service", service)
+        app = FastAPI()
+        app.include_router(synthetic_api.router)
+
+        response = TestClient(app).post(
+            "/synthetic/batch/generate",
+            params={
+                "optimizer": "routing",
+                "count_per_batch": 1,
+                "num_batches": 2,
+                "tenant_id": "routing:routing",
+                "strategy": "temporal_recent",
+            },
+        )
+
+        assert response.status_code == 200
+        assert [request.strategy for request in service.requests] == ["temporal_recent"]
+        assert service.requests[0].count == 2
 
 
 class TestSyntheticDataResponse:

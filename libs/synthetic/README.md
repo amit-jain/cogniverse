@@ -2,19 +2,24 @@
 
 **Package**: `cogniverse-synthetic`
 **Layer**: Implementation Layer (Yellow/Green)
-**Version**: 0.1.0
+**Version**: Derived from VCS metadata
 
-Generates high-quality training data for DSPy optimizers by sampling real content from backend storage and generating realistic queries using DSPy-driven LLM modules with validation.
+Generates schema-validated optimizer training data from tenant-scoped backend
+content. Production labeling callbacks supervise entity extraction, query
+enhancement, profile selection, and routing; routing query generation also uses
+a validated DSPy module. Workflow plans are source-grounded local generation.
 
 ---
 
 ## Purpose
 
 The `cogniverse-synthetic` package provides:
-- **DSPy-Driven Generation**: Uses DSPy signatures and modules for LLM-driven query generation
+
+- **Validated Generation**: Preserves production labeling outputs and validates
+  source-grounded workflow plans and DSPy-generated routing queries
 - **Backend-Agnostic Sampling**: Works with any backend implementing the `Backend` interface (VespaBackend ships today)
-- **Optimizer Support**: Generates data for the `profile`, `routing`, `workflow`, `unified`, and `cross_modal` optimizers
-- **Validated Output**: Built-in validation with retry logic to ensure quality
+- **Optimizer Support**: Generates data for `query_enhancement`, `entity_extraction`, `profile`, `routing`, `workflow`, `unified`, and `cross_modal`
+- **Validated Output**: Pydantic schemas for every optimizer plus routing retry metadata
 - **REST API**: FastAPI router for HTTP endpoints
 
 ---
@@ -23,27 +28,42 @@ The `cogniverse-synthetic` package provides:
 
 ### Position in the 13-Package Workspace
 
-```
-Foundation Layer (Blue)
-├── cogniverse-sdk
-└── cogniverse-foundation ← cogniverse-synthetic depends on this
+```mermaid
+flowchart TB
+    subgraph FoundationLayer["<span style='color:#000'>Foundation Layer</span>"]
+        SDK["<span style='color:#000'>cogniverse-sdk</span>"]
+        Foundation["<span style='color:#000'>cogniverse-foundation</span>"]
+    end
+    subgraph CoreLayer["<span style='color:#000'>Core Layer</span>"]
+        Core["<span style='color:#000'>cogniverse-core</span>"]
+        Evaluation["<span style='color:#000'>cogniverse-evaluation</span>"]
+        Telemetry["<span style='color:#000'>cogniverse-telemetry-phoenix</span>"]
+    end
+    subgraph ImplementationLayer["<span style='color:#000'>Implementation Layer</span>"]
+        Agents["<span style='color:#000'>cogniverse-agents</span>"]
+        Vespa["<span style='color:#000'>cogniverse-vespa</span>"]
+        Synthetic["<span style='color:#000'><b>cogniverse-synthetic</b></span>"]
+    end
+    subgraph ApplicationLayer["<span style='color:#000'>Application Layer</span>"]
+        Runtime["<span style='color:#000'>cogniverse-runtime</span>"]
+        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
+        CLI["<span style='color:#000'>cogniverse-cli</span>"]
+        Finetuning["<span style='color:#000'>cogniverse-finetuning</span>"]
+        Messaging["<span style='color:#000'>cogniverse-messaging</span>"]
+    end
 
-Core Layer (Pink)
-├── cogniverse-core ← cogniverse-synthetic depends on this
-├── cogniverse-evaluation
-└── cogniverse-telemetry-phoenix
+    Synthetic --> SDK
+    Synthetic --> Foundation
+    Synthetic --> Core
+    Agents --> Synthetic
+    Runtime --> Synthetic
+    Finetuning --> Synthetic
 
-Implementation Layer (Yellow/Green)
-├── cogniverse-agents
-├── cogniverse-vespa
-└── cogniverse-synthetic ← YOU ARE HERE
-
-Application Layer (Light Blue/Purple)
-├── cogniverse-runtime ← Uses synthetic data
-├── cogniverse-dashboard
-├── cogniverse-cli
-├── cogniverse-finetuning ← Reuses cogniverse-synthetic
-└── cogniverse-messaging
+    style FoundationLayer fill:#a5d6a7,stroke:#388e3c,color:#000
+    style CoreLayer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ImplementationLayer fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ApplicationLayer fill:#90caf9,stroke:#1565c0,color:#000
+    style Synthetic fill:#ffb74d,stroke:#ef6c00,color:#000
 ```
 
 ### Dependencies
@@ -51,7 +71,7 @@ Application Layer (Light Blue/Purple)
 **Workspace Dependencies:**
 - `cogniverse-sdk` (required) - Backend interface
 - `cogniverse-foundation` (required) - Configuration classes (`BackendConfig`, `SyntheticGeneratorConfig`, etc.)
-- `cogniverse-core` (imported at runtime for `SYSTEM_TENANT_ID`, though not declared in `pyproject.toml`)
+- `cogniverse-core` (required) - Approval interfaces and tenant constants
 
 **External Dependencies:**
 - `dspy-ai==3.1.3` - DSPy framework for LLM programs
@@ -63,19 +83,29 @@ Application Layer (Light Blue/Purple)
 
 ## Key Features
 
-### 1. DSPy-Driven Query Generation
+### 1. Production-Supervised Generation
 
-Uses DSPy signatures and modules instead of static templates:
+Routing uses a validated DSPy query module and a production gateway decision.
+Entity extraction, query enhancement, and profile selection use their
+production agent callbacks; workflow planning remains local and source-grounded.
+
+Every example below passes `agents_config` from the active configuration's
+top-level `agents` object. The package never searches the filesystem for it.
 
 ```python
 from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 
-service = SyntheticDataService(backend=vespa_backend)
+service = SyntheticDataService(
+    backend=vespa_backend,
+    backend_config=backend_config,
+    generator_config=generator_config,
+    agents_config=agents_config,
+)
 
 # Generate data with DSPy-driven query generation
 request = SyntheticDataRequest(
-    optimizer="profile",
+    optimizer="routing",
     count=100,
     tenant_id="acme:production",
 )
@@ -87,7 +117,8 @@ print(f"Backend query strategy: {response.metadata['backend_query_strategy']}")
 
 ### 2. Backend-Agnostic Sampling
 
-Works with any vector database through Backend interface:
+Works through the `Backend` interface; `VespaBackend` is the implementation
+available in this workspace:
 
 ```python
 from cogniverse_vespa import VespaBackend
@@ -99,7 +130,12 @@ vespa_backend = VespaBackend(
     schema_loader=schema_loader,
     config_manager=config_manager,
 )
-service = SyntheticDataService(backend=vespa_backend)
+service = SyntheticDataService(
+    backend=vespa_backend,
+    backend_config=backend_config,
+    generator_config=generator_config,
+    agents_config=agents_config,
+)
 
 # Any other backend implementing cogniverse_sdk.interfaces.backend.Backend
 # can be substituted the same way — VespaBackend is the implementation
@@ -108,8 +144,9 @@ service = SyntheticDataService(backend=vespa_backend)
 
 ### 3. Optimizer Support
 
-Supports the optimizers registered in `OPTIMIZER_REGISTRY` (`profile`,
-`routing`, `workflow`, `unified`, `cross_modal`):
+Supports all seven optimizers registered in `OPTIMIZER_REGISTRY`
+(`query_enhancement`, `entity_extraction`, `profile`, `routing`, `workflow`,
+`unified`, `cross_modal`):
 
 ```python
 # Profile Optimizer
@@ -123,6 +160,20 @@ request = SyntheticDataRequest(
 request = SyntheticDataRequest(
     optimizer="routing",
     count=75,
+    tenant_id="acme:production",
+)
+
+# Query-Enhancement Optimizer
+request = SyntheticDataRequest(
+    optimizer="query_enhancement",
+    count=100,
+    tenant_id="acme:production",
+)
+
+# Entity-Extraction Optimizer
+request = SyntheticDataRequest(
+    optimizer="entity_extraction",
+    count=100,
     tenant_id="acme:production",
 )
 
@@ -141,21 +192,37 @@ request = SyntheticDataRequest(
 )
 ```
 
-### 4. Validation and Retry Logic
+Query-enhancement labels come from the production enhancement agent invoked for
+the source-grounded query and context. Profile labels likewise come from the
+production profile-selection agent. Their optimizer schemas omit runtime
+confidence because it is not a training target. Generated routing examples
+preserve the exact confidence returned by the production gateway. Search
+quality, target-agent success, and processing time remain explicit unobserved
+sentinels.
 
-Built-in validation ensures quality:
+Every generator returns exactly the requested count or raises with its unique
+grounded-query capacity. The service then validates the exact optimizer schema,
+a canonical non-empty query, and query uniqueness before constructing the
+response. It never pads a shortfall by duplicating training rows.
+
+### 4. Schema Validation and Routing Retry Logic
+
+Every optimizer response is validated by its Pydantic schema. Routing adds
+entity-token validation and records the number of failed DSPy attempts before
+the valid result:
 
 ```python
-# Automatic validation with 3 retries
+request = SyntheticDataRequest(
+    optimizer="routing",
+    count=5,
+    tenant_id="acme:production",
+)
 response = await service.generate(request)
-
-# response.data is a list of dicts conforming to the optimizer's schema
-# (ProfileSelectionExampleSchema for "profile", RoutingExperienceSchema for
-# "routing", WorkflowExecutionSchema for "workflow"/"unified"/"cross_modal")
+assert response.count == 5
+assert response.schema_name == "RoutingExperienceSchema"
 for example in response.data:
-    assert example["query"]              # Non-empty query
-    assert example["modality"]           # Valid modality
-    assert example["selected_profile"]   # Chosen backend profile
+    assert 1 <= len(example["entities"]) <= 3
+    assert example["metadata"]["_generation_metadata"]["retry_count"] in {0, 1, 2}
 ```
 
 ---
@@ -180,6 +247,7 @@ pip install cogniverse-synthetic
 # Automatically installs:
 # - cogniverse-sdk
 # - cogniverse-foundation
+# - cogniverse-core
 # - dspy-ai
 # - pydantic
 # - fastapi
@@ -205,7 +273,12 @@ backend = VespaBackend(
 )
 
 # Initialize service
-service = SyntheticDataService(backend=backend)
+service = SyntheticDataService(
+    backend=backend,
+    backend_config=backend_config,
+    generator_config=generator_config,
+    agents_config=agents_config,
+)
 ```
 
 ### Generate Training Data
@@ -271,7 +344,8 @@ curl http://localhost:8000/synthetic/optimizers/profile
 curl http://localhost:8000/synthetic/health
 
 # Batch generation - optimizer/count_per_batch/num_batches/tenant_id are
-# query parameters, not a JSON body
+# query parameters, not a JSON body. One service call generates the complete
+# globally unique pool and reports contiguous batch partitions.
 curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=profile&count_per_batch=100&num_batches=5&tenant_id=acme:production"
 ```
 
@@ -279,7 +353,7 @@ curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=profile&c
 
 ## Package Structure
 
-```
+```text
 libs/synthetic/cogniverse_synthetic/
 ├── __init__.py              # Package exports
 ├── schemas.py               # Pydantic schemas for all optimizer types
@@ -293,7 +367,9 @@ libs/synthetic/cogniverse_synthetic/
 ├── generators/              # Concrete generator implementations
 │   ├── __init__.py
 │   ├── base.py              # Base generator interface
+│   ├── entity_extraction.py # Entity-extraction generator
 │   ├── profile.py           # Profile selection generator
+│   ├── query_enhancement.py # Query-enhancement generator
 │   ├── routing.py           # Routing strategy generator
 │   └── workflow.py          # Workflow generator
 ├── approval/                # Human-in-the-loop approval workflow
@@ -314,14 +390,20 @@ libs/synthetic/cogniverse_synthetic/
 
 ```bash
 # Run all synthetic tests
-uv run pytest tests/routing/unit/synthetic/ -v
+JAX_PLATFORM_NAME=cpu uv run pytest \
+  tests/routing/unit/synthetic/ tests/synthetic/ \
+  tests/agents/integration/test_replacement_record_store_real_redis.py \
+  tests/runtime/integration/test_backend_querier_real_vespa.py \
+  -v --tb=long
 
-# 101 tests covering:
+# Tests cover:
 # - Schemas and validation
-# - Generators (profile, routing, workflow, cross_modal)
+# - All registered generator paths
 # - Backend querying and optimizer registry lookups
 # - Service orchestration
 # - Approval workflow
+# - Canonical replacement selection in Redis
+# - Exact temporal cutoff and newest-first retrieval in Vespa
 ```
 
 ### Code Style
@@ -345,29 +427,53 @@ Configuration is provided via `BackendConfig` and `SyntheticGeneratorConfig`
 from `cogniverse-foundation` (both require `tenant_id`):
 
 ```python
-from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
+import json
+from pathlib import Path
+
+from cogniverse_foundation.config.unified_config import (
+    BackendConfig,
+    BackendProfileConfig,
+    SyntheticGeneratorConfig,
+)
+
+PROFILE_NAME = "video_colpali_smol500_mv_frame"
 
 backend_config = BackendConfig(
-    tenant_id="acme_corp",
+    tenant_id="acme:production",
     backend_type="vespa",
     url="http://localhost",
     port=8080,
+    profiles={
+        PROFILE_NAME: BackendProfileConfig(
+            profile_name=PROFILE_NAME,
+            type="video",
+            schema_name=PROFILE_NAME,
+            embedding_type="multi_vector",
+            pipeline_config={"extract_keyframes": True},
+        )
+    },
 )
-generator_config = SyntheticGeneratorConfig(tenant_id="acme_corp")
+raw_synthetic = json.loads(Path("configs/config.json").read_text())["synthetic"]
+generator_config = SyntheticGeneratorConfig.from_dict(
+    {"tenant_id": "acme:production", **raw_synthetic}
+)
 
 service = SyntheticDataService(
     backend=backend,
     backend_config=backend_config,
     generator_config=generator_config,
+    agents_config=agents_config,
 )
 ```
 
 ### Environment Variables
 
-```bash
-export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"  # Works with any LiteLLM-supported provider
-export LLM_MODEL="claude-3-5-sonnet-20241022"
-```
+The package does not read LM environment variables directly. Configure DSPy's
+LM in the caller before routing generation, or use the runtime optimization CLI,
+which resolves the tenant's LM configuration. An `llm_client` passed to
+`SyntheticDataService` controls only the preliminary choice of backend profiles
+to sample. Profile training labels come from the configured production
+`profile_labeler` callback.
 
 ---
 
@@ -378,7 +484,7 @@ export LLM_MODEL="claude-3-5-sonnet-20241022"
 Three signatures are defined in `dspy_signatures.py`:
 
 - `GenerateModalityQuery` — generates a natural search query for a given content modality
-- `GenerateEntityQuery` — generates a query that must mention at least one provided entity
+- `GenerateEntityQuery` — generates a query that must contain every provided entity as a complete span
 - `InferAgentFromModality` — infers the correct agent for a modality/query pair
 
 ```python
@@ -405,11 +511,11 @@ from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
 
 generator = ValidatedEntityQueryGenerator(max_retries=3)
 
-# Automatically retries up to 3 times if no entity appears in the query
+# Automatically retries up to 3 times until every entity appears in the query
 result = generator.forward(
     topics="machine learning, neural networks",
-    entities="PyTorch, TensorFlow",
-    entity_types="TECHNOLOGY, TECHNOLOGY"
+    entities=["PyTorch", "TensorFlow"],
+    entity_types=["TECHNOLOGY", "TECHNOLOGY"],
 )
 print(result.query)
 ```
@@ -442,7 +548,8 @@ for name, description in list_optimizers().items():
 
 # Direct registry access
 print(list(OPTIMIZER_REGISTRY.keys()))
-# ['routing', 'workflow', 'profile', 'unified', 'cross_modal']
+# ['query_enhancement', 'entity_extraction', 'routing', 'workflow',
+#  'profile', 'unified', 'cross_modal']
 ```
 
 ---
@@ -453,19 +560,44 @@ The package works with any backend that implements the Backend interface:
 
 ```python
 from cogniverse_synthetic.backend_querier import BackendQuerier
-from cogniverse_foundation.config.unified_config import BackendConfig, FieldMappingConfig
+from cogniverse_foundation.config.unified_config import (
+    BackendConfig,
+    BackendProfileConfig,
+    FieldMappingConfig,
+)
+
+TENANT_ID = "acme:production"
+PROFILE_NAME = "video_colpali_smol500_mv_frame"
+backend_config = BackendConfig(
+    tenant_id=TENANT_ID,
+    profiles={
+        PROFILE_NAME: BackendProfileConfig(
+            profile_name=PROFILE_NAME,
+            type="video",
+            schema_name=PROFILE_NAME,
+            embedding_type="multi_vector",
+            pipeline_config={"extract_keyframes": True},
+        )
+    },
+)
 
 querier = BackendQuerier(
     backend=your_backend,
-    backend_config=BackendConfig(tenant_id="acme_corp"),
+    backend_config=backend_config,
     field_mappings=FieldMappingConfig(),
 )
 
 # Sample documents from any backend
 documents = await querier.query_profiles(
-    profile_configs=[{"schema_name": "video_colpali_mv_frame"}],
+    profile_configs=[
+        {
+            "profile_name": PROFILE_NAME,
+            **backend_config.profiles[PROFILE_NAME].to_dict(),
+        }
+    ],
     sample_size=10,
     strategy="diverse",
+    tenant_id=TENANT_ID,
 )
 
 # Works with any backend implementing cogniverse_sdk.interfaces.backend.Backend.
@@ -488,17 +620,12 @@ documents = await querier.query_profiles(
 
 ### Common Issues
 
-**1. LLM API Key Not Found**
-```bash
-export ROUTER_OPTIMIZER_TEACHER_KEY="your-api-key"
-```
+**1. Routing Raises After 3 Invalid Results**
+- Verify the caller configured DSPy's LM before routing generation
+- Review the sampled entities and DSPy signature inputs
+- Invalid LM output is never converted into fabricated training data
 
-**2. Validation Fails After 3 Retries**
-- Check LLM model quality (try GPT-4 instead of GPT-3.5)
-- Verify document quality in backend
-- Review DSPy signatures for clarity
-
-**3. Backend Connection Issues**
+**2. Backend Connection Issues**
 ```python
 # Test backend connection
 backend = VespaBackend(
@@ -509,25 +636,26 @@ backend = VespaBackend(
 backend.health_check()
 ```
 
-**4. No Documents Sampled**
-- Verify schema exists: `backend.schema_exists(schema_name, tenant_id=...)`
-- Check tenant isolation: schema should include tenant suffix
+**3. No Documents Sampled**
+- Verify the configured base schema exists:
+  `backend.schema_exists(base_schema_name, tenant_id=...)`
+- Check tenant isolation: `backend.get_tenant_schema_name(tenant_id, base_schema_name)`
+  should resolve the concrete tenant schema
 - Ensure documents exist in schema
 
 ---
 
 ## Performance
 
-**Generation Speed:**
-- Profile: ~10-15 examples/minute (with GPT-4)
-- Cross-Modal: ~8-12 examples/minute
-- Routing: ~12-18 examples/minute
-- Workflow: ~10-14 examples/minute
+Generation speed depends on backend latency, requested sample size, optimizer,
+and the configured agents and LMs. Entity extraction, query enhancement,
+profile selection, and routing execute their production labeling boundaries;
+routing also invokes its configured DSPy query-generation LM. Workflow plans
+are source-grounded local generation.
 
 **Optimization Tips:**
 - Use batch generation for large datasets
-- Cache LLM responses when possible
-- Use faster models (GPT-3.5) for prototyping
+- Choose a lower-latency configured LM for exploratory runs
 - Parallel generation across multiple workers
 
 ---

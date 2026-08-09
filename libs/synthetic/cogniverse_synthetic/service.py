@@ -6,7 +6,10 @@ Coordinates ProfileSelector, BackendQuerier, and Generators.
 Configuration-driven architecture for backend-agnostic operation.
 """
 
+import asyncio
 import logging
+import math
+import threading
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -24,6 +27,10 @@ from cogniverse_synthetic.generators import (
     RoutingGenerator,
     WorkflowGenerator,
 )
+from cogniverse_synthetic.generators.entity_extraction import EntityExtractor
+from cogniverse_synthetic.generators.profile import ProfileLabeler
+from cogniverse_synthetic.generators.query_enhancement import QueryEnhancer
+from cogniverse_synthetic.generators.routing import RoutingDecider
 from cogniverse_synthetic.profile_selector import ProfileSelector
 from cogniverse_synthetic.registry import (
     OPTIMIZER_REGISTRY,
@@ -56,7 +63,8 @@ class SyntheticDataService:
         >>> service = SyntheticDataService(
         ...     backend=backend,
         ...     backend_config=backend_config,
-        ...     generator_config=generator_config
+        ...     generator_config=generator_config,
+        ...     agents_config=agents_config,
         ... )
         >>> request = SyntheticDataRequest(
         ...     optimizer="profile",
@@ -69,37 +77,73 @@ class SyntheticDataService:
 
     def __init__(
         self,
-        backend: Optional[Backend] = None,
-        backend_config: Optional[BackendConfig] = None,
-        generator_config: Optional[SyntheticGeneratorConfig] = None,
+        backend: Backend,
+        backend_config: BackendConfig,
+        generator_config: SyntheticGeneratorConfig,
+        agents_config: Dict[str, Any],
         llm_client: Optional[Any] = None,
+        entity_extractor: Optional[EntityExtractor] = None,
+        routing_decider: Optional[RoutingDecider] = None,
+        query_enhancer: Optional[QueryEnhancer] = None,
+        profile_labeler: Optional[ProfileLabeler] = None,
     ):
         """
         Initialize SyntheticDataService with configuration
 
         Args:
-            backend: Backend interface instance (None for mock mode)
+            backend: Backend interface instance
             backend_config: Backend configuration with profiles
             generator_config: Synthetic generator configuration
+            agents_config: Explicit agents section from the active configuration
             llm_client: Optional LLM client for profile selection (if None, uses rule-based)
+            entity_extractor: Production entity-agent call used to label
+                entity-extraction examples
+            routing_decider: Production gateway/routing call used to label routes
+            query_enhancer: Production query-enhancement call used for labels
+            profile_labeler: Production profile-selection call used for labels
         """
-        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-
+        if backend is None:
+            raise ValueError("backend is required")
+        if backend_config is None or not backend_config.profiles:
+            raise ValueError("backend_config with at least one profile is required")
+        if generator_config is None:
+            raise ValueError("generator_config is required")
+        if agents_config is None:
+            raise ValueError("agents_config is required")
         self.backend = backend
-        # Fall back to cluster-wide empty configs when the caller doesn't
-        # supply one; per-tenant synthetic overrides flow through
-        # set_backend_config / set_synthetic_generator_config at runtime.
-        self.backend_config = backend_config or BackendConfig(
-            tenant_id=SYSTEM_TENANT_ID
-        )
-        self.generator_config = generator_config or SyntheticGeneratorConfig(
-            tenant_id=SYSTEM_TENANT_ID
-        )
+        self.backend_config = backend_config
+        self.generator_config = generator_config
+        self.agents_config = agents_config
+        self.entity_extractor = entity_extractor
+        self.routing_decider = routing_decider
+        self.query_enhancer = query_enhancer
+        self.profile_labeler = profile_labeler
 
-        # Get field mappings from generator config
+        modality_config = self.generator_config.get_optimizer_config("modality")
+        if modality_config is None:
+            raise ValueError(
+                "SyntheticGeneratorConfig requires "
+                "optimizer_configs['modality'].agent_mappings"
+            )
+        self.agent_inferrer = AgentInferrer(
+            agents_config=agents_config,
+            agent_mappings=modality_config.agent_mappings,
+        )
+        required_modalities = set()
+        for profile_name, profile in self.backend_config.profiles.items():
+            profile_config = profile.to_dict()
+            modality = profile_config.get("type")
+            if modality is None or modality == "":
+                continue
+            if not isinstance(modality, str) or not modality.strip():
+                raise ValueError(
+                    f"Backend profile '{profile_name}' requires a non-empty string type"
+                )
+            required_modalities.add(modality.upper())
+        self.agent_inferrer.require_mappings(required_modalities)
+
         field_mappings = self.generator_config.field_mappings
 
-        # Initialize components with configuration
         self.profile_selector = ProfileSelector(
             llm_client=llm_client, generator_config=self.generator_config
         )
@@ -111,16 +155,40 @@ class SyntheticDataService:
         )
 
         self.pattern_extractor = PatternExtractor(field_mappings=field_mappings)
-        self.agent_inferrer = AgentInferrer()
 
-        # Lazy initialization - generators created on first use
         self.generators = {}
+        self._generator_lock = threading.Lock()
 
         logger.info(
             f"Initialized SyntheticDataService "
             f"(backend: {self.backend_config.backend_type}, "
-            f"config: {'configured' if generator_config else 'default'})"
+            "config: configured)"
         )
+
+    def _require_agent_timeout(
+        self,
+        optimizer_name: str,
+        agent_name: str,
+    ) -> float:
+        agent_config = self.agents_config.get(agent_name)
+        timeout = (
+            agent_config.get("timeout") if isinstance(agent_config, dict) else None
+        )
+        if timeout is None:
+            raise ValueError(
+                f"{optimizer_name} generation requires "
+                f"agents_config['{agent_name}'].timeout"
+            )
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError(
+                f"agents_config['{agent_name}'].timeout must be finite and positive"
+            )
+        return float(timeout)
 
     def _get_generator(self, optimizer_name: str):
         """
@@ -135,48 +203,97 @@ class SyntheticDataService:
         Raises:
             ValueError: If optimizer requires config but none provided
         """
-        # Return cached generator if exists
-        generator_class_name = f"{optimizer_name.title().replace('_', '')}Generator"
+        generator_class_name = get_optimizer_config(optimizer_name).generator_class_name
         if generator_class_name in self.generators:
             return self.generators[generator_class_name]
 
-        # Create generator based on type
-        if optimizer_name == "routing":
-            routing_config = self.generator_config.get_optimizer_config("routing")
-            if not routing_config:
-                raise ValueError(
-                    "RoutingGenerator requires optimizer configuration. "
-                    "SyntheticGeneratorConfig must include optimizer_configs['routing'] with query_templates."
-                )
-            generator = RoutingGenerator(
-                pattern_extractor=self.pattern_extractor,
-                agent_inferrer=self.agent_inferrer,
-                optimizer_config=routing_config,
-            )
-        elif optimizer_name == "query_enhancement":
-            generator = QueryEnhancementGenerator()
-        elif optimizer_name == "entity_extraction":
-            generator = EntityExtractionGenerator()
-        elif optimizer_name == "workflow":
-            generator = WorkflowGenerator()
-        elif optimizer_name == "profile":
-            generator = ProfileGenerator()
-        elif optimizer_name == "cross_modal":
-            # cross_modal generation produces profile-selection examples
-            # over multi-modal content; reuse ProfileGenerator with the
-            # multi_modal_sequences sampling strategy from the registry.
-            generator = ProfileGenerator()
-        elif optimizer_name == "unified":
-            # unified shares the workflow generator path (registry maps
-            # both to WorkflowGenerator).
-            generator = WorkflowGenerator()
-        else:
-            raise ValueError(f"Unknown optimizer: {optimizer_name}")
+        with self._generator_lock:
+            cached = self.generators.get(generator_class_name)
+            if cached is not None:
+                return cached
 
-        # Cache and return
-        self.generators[generator_class_name] = generator
-        logger.info(f"Initialized {generator_class_name} (lazy)")
-        return generator
+            if optimizer_name == "routing":
+                routing_timeout = self._require_agent_timeout(
+                    optimizer_name,
+                    "gateway_agent",
+                )
+                entity_timeout = self._require_agent_timeout(
+                    optimizer_name,
+                    "entity_extraction_agent",
+                )
+                if self.entity_extractor is None:
+                    raise ValueError(
+                        "entity_extractor is required for routing generation"
+                    )
+                routing_config = self.generator_config.get_optimizer_config("routing")
+                if not routing_config:
+                    raise ValueError(
+                        "RoutingGenerator requires optimizer configuration. "
+                        "SyntheticGeneratorConfig must include optimizer_configs['routing'] with query_templates."
+                    )
+                generator = RoutingGenerator(
+                    entity_extractor=self.entity_extractor,
+                    routing_decider=self.routing_decider,
+                    pattern_extractor=self.pattern_extractor,
+                    optimizer_config=routing_config,
+                    production_label_timeout_seconds=routing_timeout,
+                    entity_extraction_timeout_seconds=entity_timeout,
+                )
+            elif optimizer_name == "query_enhancement":
+                query_enhancement_timeout = self._require_agent_timeout(
+                    optimizer_name,
+                    "query_enhancement_agent",
+                )
+                generator = QueryEnhancementGenerator(
+                    query_enhancer=self.query_enhancer,
+                    production_label_timeout_seconds=query_enhancement_timeout,
+                )
+            elif optimizer_name == "entity_extraction":
+                entity_timeout = self._require_agent_timeout(
+                    optimizer_name,
+                    "entity_extraction_agent",
+                )
+                if self.entity_extractor is None:
+                    raise ValueError(
+                        "entity_extractor is required for entity_extraction generation"
+                    )
+                generator = EntityExtractionGenerator(
+                    entity_extractor=self.entity_extractor,
+                    extraction_timeout_seconds=entity_timeout,
+                )
+            elif optimizer_name == "workflow":
+                generator = WorkflowGenerator(agent_inferrer=self.agent_inferrer)
+            elif optimizer_name == "profile":
+                profile_timeout = self._require_agent_timeout(
+                    optimizer_name,
+                    "profile_selection_agent",
+                )
+                generator = ProfileGenerator(
+                    profile_labeler=self.profile_labeler,
+                    production_label_timeout_seconds=profile_timeout,
+                )
+            elif optimizer_name == "cross_modal":
+                # cross_modal generation produces profile-selection examples
+                # over multi-modal content; reuse ProfileGenerator with the
+                # multi_modal_sequences sampling strategy from the registry.
+                profile_timeout = self._require_agent_timeout(
+                    optimizer_name,
+                    "profile_selection_agent",
+                )
+                generator = ProfileGenerator(
+                    profile_labeler=self.profile_labeler,
+                    production_label_timeout_seconds=profile_timeout,
+                )
+            elif optimizer_name == "unified":
+                # unified shares the workflow generator path (registry maps
+                # both to WorkflowGenerator).
+                generator = WorkflowGenerator(agent_inferrer=self.agent_inferrer)
+            else:
+                raise ValueError(f"Unknown optimizer: {optimizer_name}")
+
+            self.generators[generator_class_name] = generator
+            logger.info(f"Initialized {generator_class_name} (lazy)")
+            return generator
 
     async def generate(self, request: SyntheticDataRequest) -> SyntheticDataResponse:
         """
@@ -191,7 +308,6 @@ class SyntheticDataService:
         Raises:
             ValueError: If optimizer is unknown or configuration is invalid
         """
-        # Validate optimizer
         if not validate_optimizer_exists(request.optimizer):
             available = ", ".join(OPTIMIZER_REGISTRY.keys())
             raise ValueError(
@@ -199,21 +315,43 @@ class SyntheticDataService:
             )
 
         config = get_optimizer_config(request.optimizer)
+        resolved_strategy = (
+            request.strategy
+            if request.strategy is not None
+            else config.backend_query_strategy
+        )
         logger.info(f"Generating {request.count} examples for {request.optimizer}")
 
-        # Step 1: Profile Selection
-        profiles, reasoning = await self._select_profiles(request, config)
+        available_profiles = await self._get_available_profiles(request.tenant_id)
+
+        profiles, reasoning = await self._select_profiles(
+            request,
+            config,
+            available_profiles,
+        )
         logger.info(f"Selected {len(profiles)} profiles: {profiles}")
 
-        # Step 2: Backend Querying
-        sampled_content = await self._sample_content(request, config, profiles)
+        sampled_content = await self._sample_content(
+            request,
+            config,
+            profiles,
+            strategy=resolved_strategy,
+        )
         logger.info(f"Sampled {len(sampled_content)} content items")
 
-        # Step 3: Data Generation
-        examples = await self._generate_examples(request, config, sampled_content)
+        examples = await self._generate_examples(
+            request,
+            config,
+            sampled_content,
+            {
+                profile_name: available_profiles[profile_name]
+                for profile_name in profiles
+            },
+            available_profile_configs=available_profiles,
+        )
+        self._validate_generated_examples(examples, request, config)
         logger.info(f"Generated {len(examples)} examples")
 
-        # Step 4: Build Response
         response = SyntheticDataResponse(
             optimizer=request.optimizer,
             schema_name=config.schema_class.__name__,
@@ -222,7 +360,7 @@ class SyntheticDataService:
             profile_selection_reasoning=reasoning,
             data=[ex.model_dump() for ex in examples],
             metadata={
-                "backend_query_strategy": config.backend_query_strategy,
+                "backend_query_strategy": resolved_strategy,
                 "sampled_content_count": len(sampled_content),
                 "target_count": request.count,
                 "vespa_sample_size": request.vespa_sample_size,
@@ -232,61 +370,117 @@ class SyntheticDataService:
         logger.info(f"Successfully generated {len(examples)} examples")
         return response
 
+    async def _get_available_profiles(
+        self,
+        tenant_id: str,
+    ) -> Dict[str, Dict[str, Any]]:
+        if not self.backend_config.profiles:
+            raise ValueError(
+                "Synthetic generation requires configured backend profiles"
+            )
+        configured_profiles = {
+            name: profile.to_dict()
+            for name, profile in self.backend_config.profiles.items()
+        }
+
+        for profile_name, profile_config in configured_profiles.items():
+            schema_name = profile_config.get("schema_name")
+            if not isinstance(schema_name, str) or not schema_name.strip():
+                raise ValueError(
+                    f"Backend profile '{profile_name}' requires a non-empty "
+                    "string schema_name"
+                )
+
+        def find_deployed_profiles() -> Dict[str, Dict[str, Any]]:
+            deployed_profiles = {}
+            for profile_name, profile_config in configured_profiles.items():
+                schema_name = profile_config["schema_name"]
+                if self.backend.schema_exists(schema_name, tenant_id=tenant_id):
+                    deployed_profiles[profile_name] = profile_config
+            return deployed_profiles
+
+        deployed_profiles = await asyncio.to_thread(find_deployed_profiles)
+        if not deployed_profiles:
+            raise ValueError(f"No deployed backend profiles for tenant {tenant_id}")
+        return deployed_profiles
+
     async def _select_profiles(
-        self, request: SyntheticDataRequest, config: Any
+        self,
+        request: SyntheticDataRequest,
+        config: Any,
+        available_profiles: Dict[str, Dict[str, Any]],
     ) -> tuple[List[str], str]:
         """Select appropriate backend profiles for the optimizer"""
-        # Use ProfileSelector with backend config profiles
-        if self.backend_config.profiles:
-            # Convert BackendProfileConfig to dict format expected by ProfileSelector
-            available_profiles = {
-                name: profile.to_dict() if hasattr(profile, "to_dict") else {}
-                for name, profile in self.backend_config.profiles.items()
-            }
-        else:
-            # Use default profiles with empty config
-            available_profiles = {
-                "video_colpali_smol500_mv_frame": {},
-                "video_videoprism_base_mv_chunk_30s": {},
-                "video_videoprism_lvt_base_sv_chunk_6s": {},
-            }
+        selection_limit = request.max_profiles
+        if request.optimizer == "cross_modal":
+            if request.max_profiles < 2:
+                raise ValueError("cross_modal requires max_profiles of at least 2")
+            selection_limit = len(available_profiles)
 
-        selected_profiles, reasoning = await self.profile_selector.select_profiles(
+        candidate_profiles, reasoning = await self.profile_selector.select_profiles(
             optimizer_name=request.optimizer,
             optimizer_task=config.description,
             available_profiles=available_profiles,
-            max_profiles=request.max_profiles,
+            max_profiles=selection_limit,
         )
 
-        return selected_profiles, reasoning
+        if request.optimizer != "cross_modal":
+            return candidate_profiles, reasoning
+
+        selected_profiles = []
+        selected_modalities = []
+        for profile_name in candidate_profiles:
+            modality = available_profiles[profile_name].get("type")
+            if modality in selected_modalities:
+                continue
+            selected_profiles.append(profile_name)
+            selected_modalities.append(modality)
+            if len(selected_profiles) >= request.max_profiles:
+                break
+
+        if len(selected_modalities) < 2:
+            raise ValueError("cross_modal requires at least two configured modalities")
+
+        return (
+            selected_profiles,
+            f"Selected distinct cross-modal profiles for "
+            f"{'+'.join(selected_modalities)}. {reasoning}",
+        )
 
     async def _sample_content(
-        self, request: SyntheticDataRequest, config: Any, profiles: List[str]
+        self,
+        request: SyntheticDataRequest,
+        config: Any,
+        profiles: List[str],
+        *,
+        strategy: str,
     ) -> List[Dict[str, Any]]:
         """Sample content from backend using selected profiles"""
         sample_size = request.vespa_sample_size
 
-        # Convert profile names to profile configs
-        # If we have backend config with full profile specs, use them
-        # Otherwise, use simple profile configs with just the name
         profile_configs = []
         for profile_name in profiles:
-            if profile_name in self.backend_config.profiles:
-                profile = self.backend_config.profiles[profile_name]
-                profile_config = (
-                    profile.to_dict() if hasattr(profile, "to_dict") else {}
+            profile = self.backend_config.profiles.get(profile_name)
+            if profile is None:
+                raise ValueError(
+                    f"Selected backend profile '{profile_name}' is not configured"
                 )
-                profile_config["profile_name"] = profile_name
-            else:
-                profile_config = {"profile_name": profile_name}
+            profile_config = profile.to_dict()
+            profile_config["profile_name"] = profile_name
             profile_configs.append(profile_config)
 
-        # Use first strategy from request
-        strategy = request.strategies[0] if request.strategies else "diverse"
-
-        sampled_content = await self.backend_querier.query_profiles(
-            profile_configs=profile_configs, sample_size=sample_size, strategy=strategy
-        )
+        try:
+            sampled_content = await self.backend_querier.query_profiles(
+                profile_configs=profile_configs,
+                sample_size=sample_size,
+                strategy=strategy,
+                tenant_id=request.tenant_id,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Backend sampling failed for tenant '{request.tenant_id}', "
+                f"optimizer '{request.optimizer}', strategy '{strategy}': {exc}"
+            ) from exc
 
         return sampled_content
 
@@ -295,17 +489,64 @@ class SyntheticDataService:
         request: SyntheticDataRequest,
         config: Any,
         sampled_content: List[Dict[str, Any]],
+        selected_profile_configs: Dict[str, Dict[str, Any]],
+        *,
+        available_profile_configs: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[BaseModel]:
         """Generate synthetic examples using appropriate generator"""
-        # Get generator lazily (creates on first use)
         generator = self._get_generator(request.optimizer)
+
+        generation_kwargs: Dict[str, Any] = {}
+        if request.optimizer in {
+            "entity_extraction",
+            "profile",
+            "query_enhancement",
+            "routing",
+            "cross_modal",
+        }:
+            generation_kwargs["tenant_id"] = request.tenant_id
+        if request.optimizer in {"profile", "cross_modal"}:
+            generation_kwargs["profile_configs"] = (
+                available_profile_configs or selected_profile_configs
+            )
+            generation_kwargs["cross_modal"] = request.optimizer == "cross_modal"
 
         examples = await generator.generate(
             sampled_content=sampled_content,
             target_count=request.count,
+            **generation_kwargs,
         )
 
         return examples
+
+    @staticmethod
+    def _validate_generated_examples(
+        examples: List[BaseModel],
+        request: SyntheticDataRequest,
+        config: Any,
+    ) -> None:
+        if len(examples) != request.count:
+            raise ValueError(
+                f"SyntheticDataService generated {len(examples)} examples but "
+                f"request count is {request.count}"
+            )
+
+        seen_queries: set[str] = set()
+        for index, example in enumerate(examples):
+            if not isinstance(example, config.schema_class):
+                raise ValueError(
+                    f"generated example {index} must be {config.schema_class.__name__}"
+                )
+            query = getattr(example, "query", None)
+            if not isinstance(query, str) or not query or query != query.strip():
+                raise ValueError(
+                    f"generated example {index} requires a canonical non-empty query"
+                )
+            if query in seen_queries:
+                raise ValueError(
+                    f"SyntheticDataService generated duplicate query {query!r}"
+                )
+            seen_queries.add(query)
 
     def get_optimizer_info(self, optimizer_name: str) -> Dict[str, Any]:
         """
