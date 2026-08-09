@@ -15,18 +15,28 @@ silently broke:
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import requests
 
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
     OrchestrationAnnotationStorage,
 )
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
-from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
+from cogniverse_foundation.telemetry.config import (
+    SPAN_NAME_ORCHESTRATION,
+    BatchExportConfig,
+    TelemetryConfig,
+)
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
 pytestmark = pytest.mark.integration
 
@@ -134,3 +144,78 @@ async def test_human_annotation_round_trips_and_auto_is_filtered(real_telemetry)
             break
         await asyncio.sleep(2)
     assert {r["span_id"] for r in everything} == {human_span, auto_span}
+
+
+def test_orchestration_span_failure_propagates_when_real_phoenix_is_down(
+    phoenix_container,
+):
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+    manager = TelemetryManager(
+        config=TelemetryConfig(
+            otlp_endpoint=phoenix_container["otlp_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            batch_config=BatchExportConfig(use_sync_export=False),
+        )
+    )
+    assert manager.config.batch_config.use_sync_export is False
+    tenant_id = canonical_tenant_id(f"orchdown{uuid4().hex[:8]}")
+    emitter = SimpleNamespace(
+        telemetry_manager=manager,
+        _current_tenant_id=tenant_id,
+    )
+    container_name = phoenix_container["container_name"]
+    subprocess.run(
+        ["docker", "stop", container_name],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "Failed to persist orchestration telemetry: "
+                f"tenant={tenant_id} workflow=wf-phoenix-down"
+            ),
+        ):
+            OrchestratorAgent._emit_orchestration_span(
+                emitter,
+                tenant_id=tenant_id,
+                workflow_id="wf-phoenix-down",
+                query="find the incident recording",
+                agent_sequence=["search_agent"],
+                execution_time=1.25,
+                success=True,
+                tasks_completed=1,
+                pattern="sequential",
+                execution_order=["search_agent"],
+            )
+    finally:
+        TelemetryManager.reset()
+        get_telemetry_registry().clear_cache()
+        subprocess.run(
+            ["docker", "start", container_name],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                if (
+                    requests.get(
+                        f"{phoenix_container['http_endpoint']}/healthz",
+                        timeout=2,
+                    ).status_code
+                    == 200
+                ):
+                    break
+            except requests.RequestException:
+                pass
+            time.sleep(0.5)
+        else:
+            pytest.fail("Phoenix did not recover after the telemetry fault test")

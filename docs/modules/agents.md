@@ -1592,6 +1592,21 @@ def _generate_summary(
     )
 ```
 
+Each plan-then-act request exports one checked `cogniverse.orchestration` span.
+`agent_sequence` is the planned sequence, while `execution_order` records the
+order in which concurrent agent calls actually completed. `tasks_completed`
+counts only results that did not return `status="error"`; `success` is true only
+when every planned agent completed without an error. Empty queries return their
+validation response without emitting a malformed training span. Plans with a
+duplicate agent name are rejected before execution because agent results are
+keyed by agent name. Planning, dispatch, aggregation, and deep-synthesis
+failures export the partial observed order with `success=false`, OpenTelemetry
+`ERROR` status, and a non-empty `error_summary` capped at 512 characters. A
+deep-synthesis result counts as successful only when it submitted a non-empty
+answer. Unexpected failures are re-raised after the checked export. The runtime
+must inject a telemetry manager; an unavailable exporter is a request failure
+because these outcomes are the training source for orchestration evaluation.
+
 #### Workflow Types
 
 The orchestrator supports different workflow patterns:
@@ -2767,6 +2782,23 @@ class MemoryAwareMixin:
         ...
 ```
 
+### Document graph extraction
+
+**Location**: `libs/agents/cogniverse_agents/graph/doc_extractor.py`
+
+`DocExtractor` receives its remote GLiNER endpoint explicitly from
+`GraphManager`; it does not reopen global configuration while a job is running.
+The API and ingestion-worker graph factories take the already validated
+`SystemConfig.inference_service_urls["gliner"]` value and inject it alongside
+the ColBERT endpoint. Both production factories reject a missing endpoint
+before building a manager. Direct construction may explicitly pass `None` to
+select the in-process model in an environment that installs it. No extractor
+parses environment JSON or recognizes a separate `GLINER_INFERENCE_URL` value.
+Entity extraction is all-or-error for each source: if GLiNER fails on any
+chunk, the call raises with the one-based chunk number and source document ID,
+chained from the inference error. It never reports a partial knowledge graph as
+a successful extraction.
+
 ### GraphBindableMixin
 
 **Location**: `libs/agents/cogniverse_agents/graph_bindable.py`
@@ -3109,7 +3141,11 @@ When `GatewayAgent` classifies the query as `complex`:
 1. **GatewayAgent** classifies the query using GLiNER entity detection (no LLM, <100ms)
 2. If no entities, low confidence, or multi-modal → `complexity="complex"`, forward to OrchestratorAgent
 3. **OrchestratorAgent** plans a workflow using DSPy, executes agents via A2A HTTP, and aggregates results
-4. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
+4. A `cogniverse.orchestration` telemetry span is persisted through a checked
+   synchronous exporter while ordinary observability spans retain the configured
+   batch exporter. The blocking export runs off the request event loop. A
+   rejected export raises with tenant and workflow context, so a completed
+   response cannot hide the loss of the execution record used for learning.
 
 ### Key orchestration-related components
 
@@ -3117,7 +3153,53 @@ When `GatewayAgent` classifies the query as `complex`:
 |---|---|---|
 | **GatewayAgent** | Entry point, classifies queries as simple/complex via GLiNER | `cogniverse_agents/gateway_agent.py` |
 | **OrchestratorAgent** | Autonomous A2A orchestrator: planning, execution, fusion | `cogniverse_agents/orchestrator_agent.py` |
+| **OrchestrationEvaluator** | Reads persisted executions in deterministic, lossless batches for workflow learning | `cogniverse_agents/routing/orchestration_evaluator.py` |
 | **AgentTask** | HTTP wire schema carrying enrichment fields to execution agents | `cogniverse_runtime/routers/agents.py` |
+
+`OrchestrationEvaluator` orders Phoenix rows by aware UTC `start_time` and
+`context.span_id`, then advances its `(start_time, span_id)` cursor only after
+`WorkflowIntelligence.record_execution()` succeeds. Repeated calls therefore
+continue through every row when the query returns more than `batch_size`; equal
+timestamps use the span ID as a stable tie-breaker. Each Phoenix read has a
+30-second timeout and at most three attempts. It uses the public lossless
+`TraceStore.get_all_spans()` cursor walk rather than placing a fixed ceiling on
+the history window. The workflow optimization command
+reuses one fixed UTC end time while draining every batch, so new spans cannot
+move the upper bound during a run. A Phoenix read failure or a workflow-store
+failure raises and leaves the failed row eligible for the next call. Every
+selected row is validated before the first workflow is recorded, so a malformed
+row cannot produce a partially learned batch. Failed rows must carry both an
+`ERROR` status and the bounded `error_summary`. `task_count` is the planned
+`agent_sequence` length; the observed successful `tasks_completed` value remains
+ordinary execution metadata rather than part of the required-field semantic
+map.
+
+After the drain, `WorkflowIntelligence.derive_learning_artifacts(executions)`
+derives exact per-agent counts, success rates, observed workflow timing,
+confidence averages, and preferred query types.
+Those profile values come only from the `agent_observations` recorded around
+each real A2A dispatch. An observation identifies the dispatched agent and its
+own duration and success; confidence is included only when that response
+reported a valid confidence value. Workflow-level duration, success, and
+confidence are never copied onto every participating agent. Deep-synthesis
+observations likewise record only their measured duration and success.
+Successful execution shapes become deterministic templates whose dependency
+lists can be replayed by `_apply_template`. Executions, profiles, query patterns,
+and templates are persisted through the configured workflow store; a fresh
+`WorkflowIntelligence` instance loads those artifacts before serving and can
+match the learned query patterns without relying on the batch process's memory.
+
+Content-generated workflow plans are persisted as reusable templates with the
+generated query and exact ordered agent sequence. Their
+`expected_execution_time` and `success_rate` are `None`: generation proposes a
+plan but does not claim an observed outcome. Serving can match these templates
+without a fabricated success-rate boost. A generated response must provide the
+requested number of unique, non-empty plans. Generated-template batches for one
+tenant share a renewable Redis lease across application replicas before they
+write Phoenix. Redis must be configured; there is no process-local persistence
+fallback. If a batch fails, the store restores or removes only IDs whose current
+content exactly matches a template successfully written by that batch. Existing
+unrelated templates and a later replica's successful batch remain untouched.
 
 ---
 
@@ -4682,25 +4764,41 @@ flowchart TB
 |-----------|-------------|
 | `HumanApprovalAgent` | Orchestrates HITL approval with confidence-based auto-approval |
 | `DecisionOrchestrator` | Combines WorkflowStateMachine with approval checkpoints |
-| `ApprovalStorageImpl` | Phoenix telemetry-based storage with annotations |
+| `ApprovalStorageImpl` | Phoenix approval spans and Redis-backed canonical replacement selection |
 | `ConfidenceExtractor` | Domain-specific confidence scoring (abstract) |
 | `FeedbackHandler` | Domain-specific rejection handling (abstract) |
 
 ### Quick Example
 
 ```text
-from cogniverse_agents.approval import ApprovalStorageImpl, HumanApprovalAgent, ReviewDecision
+from cogniverse_agents.approval import (
+    ApprovalStorageImpl,
+    HumanApprovalAgent,
+    ReviewDecision,
+)
+from cogniverse_synthetic.approval import (
+    SyntheticDataConfidenceExtractor,
+    SyntheticDataFeedbackHandler,
+)
+from cogniverse_synthetic.dspy_modules import ValidatedSyntheticExampleRegenerator
 
 # Initialize
 storage = ApprovalStorageImpl(
     grpc_endpoint="http://localhost:4317",
     http_endpoint="http://localhost:6006",
-    tenant_id="acme"
+    tenant_id="acme:production",
+    redis_url="redis://redis:6379/0",
 )
+regenerator = ValidatedSyntheticExampleRegenerator(max_retries=3)
+regenerator.lm = configured_dspy_lm
 
 agent = HumanApprovalAgent(
     storage=storage,
-    confidence_extractor=MyConfidenceExtractor(),
+    confidence_extractor=SyntheticDataConfidenceExtractor(),
+    feedback_handler=SyntheticDataFeedbackHandler(
+        generator=regenerator,
+        generation_timeout_seconds=primary_lm_config.request_timeout,
+    ),
     confidence_threshold=0.8  # Auto-approve >= 0.8
 )
 
@@ -4709,7 +4807,7 @@ agent = HumanApprovalAgent(
 batch = await agent.process_batch(
     items=synthetic_data,
     batch_id="batch_001",
-    context={"tenant_id": "acme"},
+    context={"tenant_id": "acme:production", "agent_type": "routing"},
 )
 
 # Apply a human decision to one of the pending items. When approved and
@@ -4736,7 +4834,8 @@ stateDiagram-v2
     PendingReview --> Rejected: Human rejects
     AutoApproved --> TrainingDataset: Export
     Approved --> TrainingDataset: Export
-    Rejected --> [*]: Discarded
+    Rejected --> Regenerated: Feedback handler creates replacement
+    Regenerated --> [*]: Persist canonical replacement
 
     classDef orange fill:#ffcc80,stroke:#ef6c00,color:#000
     classDef green fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -4746,7 +4845,7 @@ stateDiagram-v2
     class Generated orange
     class AutoApproved,Approved green
     class PendingReview blue
-    class Rejected purple
+    class Rejected,Regenerated purple
     class TrainingDataset green
 ```
 
@@ -4886,7 +4985,7 @@ class RLMResult:
             "rlm_total_calls": self.total_calls,
             "rlm_was_fallback": self.was_fallback,
             "rlm_trajectory_length": len(self.trajectory),
-            ...
+            # Additional telemetry fields are derived from metadata.
         }
 ```
 

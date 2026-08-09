@@ -32,6 +32,49 @@ def _make_mock_config_manager() -> Mock:
     return cm
 
 
+class _RecordingSpan:
+    def __init__(self):
+        self.attributes = {}
+        self.status = None
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
+
+    def set_status(self, status):
+        self.status = status
+
+
+class _SpanContext:
+    def __init__(self, span):
+        self._span = span
+
+    def __enter__(self):
+        return self._span
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _RecordingTelemetryManager:
+    """Exact telemetry-manager seam used by pipeline-focused unit tests."""
+
+    def __init__(self):
+        self.calls = []
+        self.spans = []
+
+    def span(self, *, name, tenant_id, require_export):
+        self.calls.append(
+            {
+                "name": name,
+                "tenant_id": tenant_id,
+                "require_export": require_export,
+            }
+        )
+        span = _RecordingSpan()
+        self.spans.append(span)
+        return _SpanContext(span)
+
+
 @pytest.fixture
 def mock_registry():
     """Mock AgentRegistry with 4 agents."""
@@ -67,12 +110,14 @@ def orchestrator(mock_registry):
     with patch("dspy.ChainOfThought"):
         deps = OrchestratorDeps()
         mock_config_manager = _make_mock_config_manager()
-        return OrchestratorAgent(
+        agent = OrchestratorAgent(
             deps=deps,
             registry=mock_registry,
             config_manager=mock_config_manager,
             port=8013,
         )
+        agent.telemetry_manager = _RecordingTelemetryManager()
+        return agent
 
 
 def _make_httpx_mock(response_factory):
@@ -137,6 +182,18 @@ class TestA2APipelineFlow:
         assert "query_enhancement" in result.agent_results
         assert "search" in result.agent_results
         assert result.final_output["status"] == "success"
+        assert orchestrator.telemetry_manager.calls == [
+            {
+                "name": "cogniverse.orchestration",
+                "tenant_id": "test:unit",
+                "require_export": True,
+            }
+        ]
+        assert len(orchestrator.telemetry_manager.spans) == 1
+        assert (
+            orchestrator.telemetry_manager.spans[0].attributes["operation"]
+            == "orchestration"
+        )
 
     @pytest.mark.asyncio
     async def test_tenant_id_flows_through(self, orchestrator):

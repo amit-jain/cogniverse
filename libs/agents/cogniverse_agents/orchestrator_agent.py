@@ -15,9 +15,11 @@ Features:
 import asyncio
 import json
 import logging
+import math
 import threading
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -91,6 +93,11 @@ if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
+
+_request_tenant_id: ContextVar[Optional[str]] = ContextVar(
+    "orchestrator_request_tenant_id",
+    default=None,
+)
 
 
 # Module-level shared HTTP client. httpx.AsyncClient holds a connection
@@ -474,6 +481,20 @@ class AccumulatedEvidence:
     duration_ms: float = 0.0
     # Per-iteration wall-clock durations in ms. Indexed by iteration.
     per_iter_duration_ms: List[float] = field(default_factory=list)
+
+
+@dataclass
+class _OrchestrationTelemetryState:
+    tenant_id: str
+    workflow_id: str
+    query: str
+    started_at: float
+    agent_sequence: List[str] = field(default_factory=list)
+    execution_order: List[str] = field(default_factory=list)
+    agent_results: Dict[str, Any] = field(default_factory=dict)
+    agent_observations: List[Dict[str, Any]] = field(default_factory=list)
+    pattern: str = "sequential"
+    emission_attempted: bool = False
 
 
 class OrchestrationSignature(dspy.Signature):
@@ -910,46 +931,6 @@ class OrchestratorAgent(
         if isinstance(input, dict):
             input = OrchestratorInput(**input)
 
-        # Workflow owns its own per-tenant rate limit + hard call cap; on
-        # any failure fall back to plan-then-act so the request still completes.
-        if (input.synthesis_depth or "").lower() == "deep":
-            workflow = self._build_deep_synthesis_workflow(input.tenant_id)
-            if workflow is not None:
-                try:
-                    seed_subagents = list(self.registry.list_agents())[:6]
-                    result = await workflow.run(
-                        query=input.query,
-                        tenant_id=input.tenant_id,
-                        seed_subagents=seed_subagents,
-                    )
-                    return OrchestratorOutput(
-                        query=input.query,
-                        workflow_id="deep_synthesis",
-                        plan_steps=[],
-                        plan_reasoning="Deep synthesis workflow selected",
-                        agent_results={},
-                        final_output={
-                            "answer": result.answer,
-                            "iterations_used": result.iterations_used,
-                            "subagent_calls_made": result.subagent_calls_made,
-                            "llm_calls_used": result.llm_calls_used,
-                            "was_capped": result.was_capped,
-                            "was_submitted": result.was_submitted,
-                            "was_rate_limited": result.was_rate_limited,
-                        },
-                        execution_summary=(
-                            f"deep_synthesis: iter={result.iterations_used}, "
-                            f"submitted={result.was_submitted}, "
-                            f"rate_limited={result.was_rate_limited}"
-                        ),
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "Deep synthesis workflow failed (%s); falling back "
-                        "to plan-then-act",
-                        exc,
-                    )
-
         query = input.query
         # Canonicalize so every downstream span / artifact lookup in
         # this request uses the same form. Without this the orchestrator
@@ -959,7 +940,6 @@ class OrchestratorAgent(
 
         tenant_id = canonical_tenant_id(input.tenant_id)
         session_id = input.session_id
-        self._current_tenant_id = tenant_id
         workflow_id = f"workflow_{uuid.uuid4().hex[:8]}"
 
         if not query:
@@ -974,12 +954,126 @@ class OrchestratorAgent(
                 execution_summary="No execution performed",
             )
 
-        sem = _get_orchestration_semaphore()
-        async with sem:
-            with self._semantic_router_lm_context(tenant_id):
-                return await self._process_impl_locked(
-                    input, workflow_id, query, tenant_id, session_id
+        telemetry_state = _OrchestrationTelemetryState(
+            tenant_id=tenant_id,
+            workflow_id=workflow_id,
+            query=query,
+            started_at=time.monotonic(),
+        )
+
+        if (input.synthesis_depth or "").lower() == "deep":
+            workflow = self._build_deep_synthesis_workflow(tenant_id)
+            if workflow is not None:
+                workflow_id = f"deep_synthesis_{uuid.uuid4().hex[:8]}"
+                telemetry_state.workflow_id = workflow_id
+                telemetry_state.agent_sequence = ["deep_synthesis"]
+                telemetry_state.execution_order = ["deep_synthesis"]
+                telemetry_state.pattern = "deep_synthesis"
+                try:
+                    seed_subagents = list(self.registry.list_agents())[:6]
+                    result = await workflow.run(
+                        query=query,
+                        tenant_id=tenant_id,
+                        seed_subagents=seed_subagents,
+                    )
+                except Exception as exc:
+                    telemetry_state.agent_results = {
+                        "deep_synthesis": {
+                            "status": "error",
+                            "message": self._bounded_error_summary(error=exc),
+                        }
+                    }
+                    telemetry_state.agent_observations.append(
+                        {
+                            "agent_name": "deep_synthesis",
+                            "execution_time": time.monotonic()
+                            - telemetry_state.started_at,
+                            "success": False,
+                        }
+                    )
+                    await self._emit_orchestration_outcome(
+                        telemetry_state,
+                        error=exc,
+                    )
+                    raise
+
+                submitted = bool(result.was_submitted and result.answer.strip())
+                telemetry_state.agent_observations.append(
+                    {
+                        "agent_name": "deep_synthesis",
+                        "execution_time": time.monotonic() - telemetry_state.started_at,
+                        "success": submitted,
+                    }
                 )
+                if submitted:
+                    telemetry_state.agent_results = {
+                        "deep_synthesis": {"status": "success"}
+                    }
+                    await self._emit_orchestration_outcome(
+                        telemetry_state,
+                        success_override=True,
+                    )
+                else:
+                    failure_summary = "Deep synthesis ended without a submitted answer"
+                    telemetry_state.agent_results = {
+                        "deep_synthesis": {
+                            "status": "error",
+                            "message": failure_summary,
+                        }
+                    }
+                    await self._emit_orchestration_outcome(
+                        telemetry_state,
+                        success_override=False,
+                        error_summary=failure_summary,
+                    )
+                return OrchestratorOutput(
+                    query=query,
+                    workflow_id=workflow_id,
+                    plan_steps=[],
+                    plan_reasoning="Deep synthesis workflow selected",
+                    agent_results={},
+                    final_output={
+                        "answer": result.answer,
+                        "iterations_used": result.iterations_used,
+                        "subagent_calls_made": result.subagent_calls_made,
+                        "llm_calls_used": result.llm_calls_used,
+                        "was_capped": result.was_capped,
+                        "was_submitted": result.was_submitted,
+                        "was_rate_limited": result.was_rate_limited,
+                    },
+                    execution_summary=(
+                        f"deep_synthesis: iter={result.iterations_used}, "
+                        f"submitted={result.was_submitted}, "
+                        f"rate_limited={result.was_rate_limited}"
+                    ),
+                )
+
+        sem = _get_orchestration_semaphore()
+        tenant_token = _request_tenant_id.set(tenant_id)
+        try:
+            async with sem:
+                with self._semantic_router_lm_context(tenant_id):
+                    return await self._process_impl_locked(
+                        input,
+                        workflow_id,
+                        query,
+                        tenant_id,
+                        session_id,
+                        telemetry_state,
+                    )
+        except Exception as process_error:
+            if not telemetry_state.emission_attempted:
+                try:
+                    await self._emit_orchestration_outcome(
+                        telemetry_state,
+                        success_override=False,
+                        error=process_error,
+                    )
+                except Exception as telemetry_error:
+                    raise telemetry_error from process_error
+            raise
+        finally:
+            _request_tenant_id.reset(tenant_token)
 
     def _semantic_router_lm_context(self, tenant_id: str):
         """Per-request LM routing for the orchestrator's DSPy calls.
@@ -1011,6 +1105,7 @@ class OrchestratorAgent(
         query: str,
         tenant_id: str,
         session_id: Optional[str],
+        telemetry_state: _OrchestrationTelemetryState,
     ) -> "OrchestratorOutput":
         """Orchestration body — runs under ``_orch_semaphores`` cap."""
         start_time = time.monotonic()
@@ -1078,6 +1173,21 @@ class OrchestratorAgent(
         gateway_context = "; ".join(gateway_hints)
 
         plan = await self._create_plan(query, conversation_context, gateway_context)
+        agent_sequence = [step.agent_name for step in plan.steps]
+        duplicate_agents = sorted(
+            {
+                agent_name
+                for agent_name in agent_sequence
+                if agent_sequence.count(agent_name) > 1
+            }
+        )
+        if duplicate_agents:
+            raise ValueError(
+                "orchestration plan contains duplicate agent names: "
+                + ", ".join(duplicate_agents)
+            )
+        telemetry_state.agent_sequence = agent_sequence
+        telemetry_state.pattern = "parallel" if plan.parallel_groups else "sequential"
 
         # Track active workflow for cancellation
         self.active_workflows[workflow_id] = plan
@@ -1090,6 +1200,7 @@ class OrchestratorAgent(
             # flag and no single-shot fallback.
             self.emit_progress("execution", "Executing iterative retrieval loop...")
             agent_results: Dict[str, Any] = {}
+            telemetry_state.agent_results = agent_results
             loop_result = await self._iterative_retrieval_loop(
                 query=query,
                 plan=plan,
@@ -1098,6 +1209,8 @@ class OrchestratorAgent(
                 session_id=session_id,
                 agent_results_sink=agent_results,
                 inbound_queue=inbound_queue,
+                execution_order_sink=telemetry_state.execution_order,
+                agent_observations_sink=telemetry_state.agent_observations,
             )
 
             # Record error entries for agents the LLM proposed but aren't registered
@@ -1152,15 +1265,7 @@ class OrchestratorAgent(
 
             execution_time = time.monotonic() - start_time
 
-            # Emit orchestration telemetry span
-            self._emit_orchestration_span(
-                workflow_id=workflow_id,
-                query=query,
-                agent_sequence=[step.agent_name for step in plan.steps],
-                execution_time=execution_time,
-                success=True,
-                tasks_completed=len(agent_results),
-            )
+            await self._emit_orchestration_outcome(telemetry_state)
 
             # Record execution for workflow intelligence
             if self.workflow_intelligence:
@@ -1433,6 +1538,8 @@ class OrchestratorAgent(
         tenant_id: str,
         workflow_id: str = "",
         session_id: Optional[str] = None,
+        execution_order_sink: Optional[List[str]] = None,
+        agent_observations_sink: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Action Phase: Execute orchestration plan via A2A HTTP calls.
@@ -1485,6 +1592,7 @@ class OrchestratorAgent(
 
             async def execute_step(step_index: int, step: AgentStep):
                 """Execute a single step via A2A HTTP."""
+                execution_started = time.monotonic()
                 agent_name = step.agent_name
 
                 # Emit progress before execution
@@ -1503,10 +1611,21 @@ class OrchestratorAgent(
 
                 if not agent_endpoint:
                     logger.warning(f"Agent '{agent_name}' not found in registry")
-                    return agent_name, {
+                    if execution_order_sink is not None:
+                        execution_order_sink.append(agent_name)
+                    result = {
                         "status": "error",
                         "message": f"Agent '{agent_name}' not available in registry",
                     }
+                    return (
+                        agent_name,
+                        result,
+                        self._agent_observation(
+                            agent_name,
+                            result,
+                            time.monotonic() - execution_started,
+                        ),
+                    )
 
                 # Prepare input (merge query with previous results if needed)
                 agent_input = step.input_data.copy()
@@ -1576,7 +1695,17 @@ class OrchestratorAgent(
                             "result_preview": str(result)[:200],
                         },
                     )
-                    return agent_name, result
+                    if execution_order_sink is not None:
+                        execution_order_sink.append(agent_name)
+                    return (
+                        agent_name,
+                        result,
+                        self._agent_observation(
+                            agent_name,
+                            result,
+                            time.monotonic() - execution_started,
+                        ),
+                    )
                 except Exception as e:
                     # Include the exception type — httpx.ReadTimeout and
                     # friends have empty str() and render as bare "failed: "
@@ -1586,10 +1715,21 @@ class OrchestratorAgent(
                         f"Agent {agent_name} at {agent_endpoint.url} failed: "
                         f"{err_detail}"
                     )
-                    return agent_name, {
+                    if execution_order_sink is not None:
+                        execution_order_sink.append(agent_name)
+                    result = {
                         "status": "error",
                         "message": err_detail,
                     }
+                    return (
+                        agent_name,
+                        result,
+                        self._agent_observation(
+                            agent_name,
+                            result,
+                            time.monotonic() - execution_started,
+                        ),
+                    )
 
             # Execute all ready steps concurrently
             results = await asyncio.gather(
@@ -1597,8 +1737,12 @@ class OrchestratorAgent(
             )
 
             # Store results and mark as executed
-            for (step_idx, _), (agent_name, result) in zip(ready_steps, results):
+            for (step_idx, _), (agent_name, result, observation) in zip(
+                ready_steps, results
+            ):
                 agent_results[agent_name] = result
+                if agent_observations_sink is not None:
+                    agent_observations_sink.append(observation)
                 executed[step_idx] = True
                 step_count += 1
 
@@ -1843,7 +1987,7 @@ class OrchestratorAgent(
             from cogniverse_agents.inference.instrumented_rlm import InstrumentedRLM
 
             tenant_id = (
-                getattr(self, "_current_tenant_id", None)
+                _request_tenant_id.get()
                 or getattr(self.deps, "tenant_id", None)
                 or SYSTEM_TENANT_ID
             )
@@ -1888,7 +2032,7 @@ class OrchestratorAgent(
         gate_error: Optional[Exception] = None
         if is_rlm and getattr(self, "telemetry_manager", None) is not None:
             tenant_id = (
-                getattr(self, "_current_tenant_id", None)
+                _request_tenant_id.get()
                 or getattr(self.deps, "tenant_id", None)
                 or SYSTEM_TENANT_ID
             )
@@ -2155,6 +2299,8 @@ class OrchestratorAgent(
         session_id: Optional[str],
         agent_results_sink: Dict[str, Any],
         inbound_queue: Optional["_InboundQueue"] = None,
+        execution_order_sink: Optional[List[str]] = None,
+        agent_observations_sink: Optional[List[Dict[str, Any]]] = None,
     ) -> AccumulatedEvidence:
         """Run the retrieve → gate → reformulate loop bounded by hard caps.
 
@@ -2306,6 +2452,8 @@ class OrchestratorAgent(
                 workflow_id=workflow_id,
                 tenant_id=tenant_id,
                 session_id=session_id,
+                execution_order_sink=execution_order_sink,
+                agent_observations_sink=agent_observations_sink,
             )
             agent_results_sink.update(iter_results)
 
@@ -2654,43 +2802,233 @@ class OrchestratorAgent(
 
     def _emit_orchestration_span(
         self,
+        tenant_id: str,
         workflow_id: str,
         query: str,
         agent_sequence: List[str],
         execution_time: float,
         success: bool,
         tasks_completed: int,
+        pattern: str,
+        execution_order: List[str],
+        error_summary: Optional[str] = None,
+        agent_observations: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Emit cogniverse.orchestration telemetry span."""
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
-            return
-        tenant_id = getattr(self, "_current_tenant_id", None)
-        if not tenant_id:
             raise RuntimeError(
-                f"{type(self).__name__}._emit_orchestration_span called before "
-                f"_process_impl set self._current_tenant_id"
+                f"{type(self).__name__} requires telemetry_manager to record "
+                "orchestration outcomes"
             )
+        if success:
+            if error_summary is not None:
+                raise ValueError(
+                    "successful orchestration cannot include error_summary"
+                )
+        elif not isinstance(error_summary, str) or not error_summary:
+            raise ValueError("failed orchestration requires error_summary")
+        elif len(error_summary) > 512:
+            raise ValueError("orchestration error_summary cannot exceed 512 characters")
         try:
+            from opentelemetry.trace import Status, StatusCode
+
             with self.telemetry_manager.span(
                 name="cogniverse.orchestration",
                 tenant_id=tenant_id,
+                require_export=True,
             ) as span:
+                output = {
+                    "workflow_id": str(workflow_id),
+                    "agent_sequence": list(agent_sequence) if agent_sequence else [],
+                    "execution_order": list(execution_order),
+                    "pattern": pattern,
+                    "execution_time": float(execution_time),
+                    "success": bool(success),
+                    "tasks_completed": int(tasks_completed),
+                }
+                if agent_observations:
+                    output["agent_observations"] = self._validated_agent_observations(
+                        agent_sequence,
+                        agent_observations,
+                    )
+                if error_summary is not None:
+                    output["error_summary"] = error_summary
                 record_span_io(
                     span,
                     input_value=query,
-                    output={
-                        "workflow_id": str(workflow_id),
-                        "agent_sequence": list(agent_sequence)
-                        if agent_sequence
-                        else [],
-                        "execution_time": float(execution_time),
-                        "success": bool(success),
-                        "tasks_completed": int(tasks_completed),
-                    },
+                    output=output,
                     operation=OP_ORCHESTRATION,
                 )
-        except Exception as e:
-            logger.debug("Failed to emit orchestration span: %s", e)
+                span.set_status(
+                    Status(
+                        StatusCode.OK if success else StatusCode.ERROR,
+                        None if success else error_summary,
+                    )
+                )
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to persist orchestration telemetry: "
+                f"tenant={tenant_id} workflow={workflow_id}"
+            ) from exc
+
+    @staticmethod
+    def _agent_observation(
+        agent_name: str,
+        result: Any,
+        execution_time: float,
+    ) -> Dict[str, Any]:
+        observation: Dict[str, Any] = {
+            "agent_name": agent_name,
+            "execution_time": float(execution_time),
+            "success": not (
+                isinstance(result, dict) and result.get("status") == "error"
+            ),
+        }
+        if isinstance(result, dict) and result.get("confidence") is not None:
+            confidence = result["confidence"]
+            if (
+                type(confidence) is not float
+                or not math.isfinite(confidence)
+                or not 0.0 <= confidence <= 1.0
+            ):
+                raise ValueError(
+                    f"agent {agent_name} result confidence must be a finite float "
+                    "between 0 and 1"
+                )
+            observation["confidence"] = confidence
+        return observation
+
+    @staticmethod
+    def _validated_agent_observations(
+        agent_sequence: List[str],
+        observations: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        validated = []
+        allowed_agents = set(agent_sequence)
+        for observation in observations:
+            if not isinstance(observation, dict):
+                raise ValueError("agent observation must be a dict")
+            required = {"agent_name", "execution_time", "success"}
+            allowed = required | {"confidence"}
+            if set(observation) - allowed or not required <= set(observation):
+                raise ValueError(
+                    "agent observation must contain agent_name, execution_time, "
+                    "success, and optional confidence"
+                )
+            agent_name = observation["agent_name"]
+            if not isinstance(agent_name, str) or agent_name not in allowed_agents:
+                raise ValueError(
+                    "agent observation references an agent outside agent_sequence"
+                )
+            execution_time = observation["execution_time"]
+            if (
+                type(execution_time) is not float
+                or not math.isfinite(execution_time)
+                or execution_time < 0.0
+            ):
+                raise ValueError(
+                    "agent observation execution_time must be a non-negative "
+                    "finite float"
+                )
+            if type(observation["success"]) is not bool:
+                raise ValueError("agent observation success must be a bool")
+            if "confidence" in observation:
+                confidence = observation["confidence"]
+                if (
+                    type(confidence) is not float
+                    or not math.isfinite(confidence)
+                    or not 0.0 <= confidence <= 1.0
+                ):
+                    raise ValueError(
+                        "agent observation confidence must be a finite float "
+                        "between 0 and 1"
+                    )
+            validated.append(dict(observation))
+        return validated
+
+    @staticmethod
+    def _execution_outcome(
+        *,
+        agent_sequence: List[str],
+        agent_results: Dict[str, Any],
+    ) -> tuple[bool, int]:
+        successful_agents = {
+            agent_name
+            for agent_name, result in agent_results.items()
+            if not (isinstance(result, dict) and result.get("status") == "error")
+        }
+        tasks_completed = len(successful_agents)
+        success = (
+            bool(agent_sequence)
+            and set(agent_sequence).issubset(successful_agents)
+            and len(successful_agents) == len(agent_results)
+        )
+        return success, tasks_completed
+
+    async def _emit_orchestration_outcome(
+        self,
+        state: _OrchestrationTelemetryState,
+        *,
+        success_override: Optional[bool] = None,
+        error: BaseException | None = None,
+        error_summary: str | None = None,
+    ) -> None:
+        if state.emission_attempted:
+            raise RuntimeError(
+                f"Orchestration telemetry was already attempted for {state.workflow_id}"
+            )
+        state.emission_attempted = True
+        success, tasks_completed = self._execution_outcome(
+            agent_sequence=state.agent_sequence,
+            agent_results=state.agent_results,
+        )
+        if success_override is not None:
+            success = success_override
+        if error is not None and error_summary is not None:
+            raise ValueError("provide error or error_summary, not both")
+        if not success:
+            error_summary = self._bounded_error_summary(
+                error=error,
+                error_summary=error_summary,
+                agent_results=state.agent_results,
+            )
+        await asyncio.to_thread(
+            self._emit_orchestration_span,
+            tenant_id=state.tenant_id,
+            workflow_id=state.workflow_id,
+            query=state.query,
+            agent_sequence=state.agent_sequence,
+            execution_time=time.monotonic() - state.started_at,
+            success=success,
+            tasks_completed=tasks_completed,
+            pattern=state.pattern,
+            execution_order=state.execution_order,
+            error_summary=error_summary,
+            agent_observations=state.agent_observations,
+        )
+
+    @staticmethod
+    def _bounded_error_summary(
+        *,
+        error: BaseException | None = None,
+        error_summary: str | None = None,
+        agent_results: Dict[str, Any] | None = None,
+    ) -> str:
+        if error is not None:
+            detail = str(error).strip()
+            summary = f"{type(error).__name__}: {detail}" if detail else repr(error)
+        elif error_summary:
+            summary = error_summary.strip()
+        else:
+            summary = ""
+            for agent_name, result in (agent_results or {}).items():
+                if isinstance(result, dict) and result.get("status") == "error":
+                    detail = str(result.get("message") or "failed").strip()
+                    summary = f"{agent_name}: {detail}"
+                    break
+            if not summary:
+                summary = "Orchestration did not complete every planned agent"
+        return summary[:512]
 
     def _generate_summary(
         self, plan: OrchestrationPlan, agent_results: Dict[str, Any]

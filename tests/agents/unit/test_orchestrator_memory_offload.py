@@ -16,7 +16,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorInput
+from cogniverse_agents.orchestrator_agent import (
+    OrchestratorAgent,
+    OrchestratorInput,
+    _OrchestrationTelemetryState,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -42,7 +46,19 @@ async def test_get_relevant_context_runs_off_the_event_loop():
     loop_thread = threading.get_ident()
 
     with pytest.raises(_StopHere):
-        await d._process_impl_locked(inp, "wf", "q", "acme:acme", None)
+        await d._process_impl_locked(
+            inp,
+            "wf",
+            "q",
+            "acme:acme",
+            None,
+            _OrchestrationTelemetryState(
+                tenant_id="acme:acme",
+                workflow_id="wf",
+                query="q",
+                started_at=time.monotonic(),
+            ),
+        )
 
     assert recorded.get("thread") is not None
     # to_thread offload => get_relevant_context ran on a worker thread.
@@ -71,7 +87,19 @@ async def test_ensure_memory_for_tenant_runs_off_the_event_loop():
     loop_thread = threading.get_ident()
 
     with pytest.raises(_StopHere):
-        await d._process_impl_locked(inp, "wf", "q", "acme:acme", None)
+        await d._process_impl_locked(
+            inp,
+            "wf",
+            "q",
+            "acme:acme",
+            None,
+            _OrchestrationTelemetryState(
+                tenant_id="acme:acme",
+                workflow_id="wf",
+                query="q",
+                started_at=time.monotonic(),
+            ),
+        )
 
     assert recorded.get("thread") is not None
     assert recorded["thread"] != loop_thread, (

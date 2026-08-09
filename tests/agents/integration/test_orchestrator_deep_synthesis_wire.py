@@ -10,8 +10,7 @@ verifies, against a real OrchestratorAgent + real AgentRegistry, that:
     a ``DeepSynthesisWorkflow`` and runs it instead of the default
     plan-then-act path;
   * absent the flag, the orchestrator behaves exactly as before;
-  * a workflow exception falls back to the default path (no broken
-    requests).
+  * checked deep-synthesis failures are emitted once and surfaced.
 
 The DSPy LM is stubbed because the workflow's RLM step is what we're
 asserting *gets called*, not the LLM's actual answer quality.
@@ -93,6 +92,7 @@ class TestOptInRouting:
             return _FakeWorkflow()
 
         orchestrator._build_deep_synthesis_workflow = _build
+        orchestrator._emit_orchestration_outcome = AsyncMock()
 
         out = await orchestrator._process_impl(
             OrchestratorInput(
@@ -107,12 +107,20 @@ class TestOptInRouting:
         )
         # The request tenant is threaded into the build helper (it resolves
         # the per-tenant LLM endpoint and the sub-agent dispatch context).
-        assert built_with == ["b7_int_tenant"]
+        assert built_with == ["b7_int_tenant:b7_int_tenant"]
+        assert observed_runs[0]["tenant"] == "b7_int_tenant:b7_int_tenant"
         assert observed_runs[0]["query"].startswith("Compare refund")
-        assert out.workflow_id == "deep_synthesis"
+        assert out.workflow_id.startswith("deep_synthesis_")
         assert out.final_output["answer"] == "DEEP-SYNTH-OK"
         assert out.final_output["was_submitted"] is True
         assert "deep_synthesis" in out.execution_summary
+        emitted_state = orchestrator._emit_orchestration_outcome.await_args.args[0]
+        assert emitted_state.agent_sequence == ["deep_synthesis"]
+        assert emitted_state.execution_order == ["deep_synthesis"]
+        assert emitted_state.agent_results == {"deep_synthesis": {"status": "success"}}
+        assert orchestrator._emit_orchestration_outcome.await_args.kwargs == {
+            "success_override": True
+        }
 
     async def test_default_path_when_synthesis_depth_unset(
         self, orchestrator: OrchestratorAgent
@@ -159,33 +167,72 @@ class TestOptInRouting:
             "DeepSynthesisWorkflow"
         )
 
-    async def test_workflow_exception_falls_back_to_default_path(
+    async def test_workflow_exception_emits_failure_and_does_not_fallback(
         self, orchestrator: OrchestratorAgent
     ):
-        # If the workflow raises (e.g. RLM init blew up), the orchestrator
-        # must continue with the default path so the request still completes.
         class _BoomWorkflow:
             async def run(self, **kw):
                 raise RuntimeError("simulated workflow failure")
 
         orchestrator._build_deep_synthesis_workflow = lambda tenant_id: _BoomWorkflow()
-        orchestrator._process_impl_locked = AsyncMock(
-            return_value=MagicMock(
-                workflow_id="default_after_fallback",
-                final_output={"answer": "fallback-ok"},
-                execution_summary="fell back",
-            )
-        )
+        orchestrator._process_impl_locked = AsyncMock()
+        orchestrator._emit_orchestration_outcome = AsyncMock()
 
-        out = await orchestrator._process_impl(
+        with pytest.raises(RuntimeError, match="simulated workflow failure"):
+            await orchestrator._process_impl(
+                OrchestratorInput(
+                    query="x",
+                    tenant_id="b7_int_tenant",
+                    synthesis_depth="deep",
+                )
+            )
+
+        orchestrator._process_impl_locked.assert_not_awaited()
+        emitted = orchestrator._emit_orchestration_outcome.await_args
+        assert emitted.args[0].agent_sequence == ["deep_synthesis"]
+        assert isinstance(emitted.kwargs["error"], RuntimeError)
+
+    async def test_unsubmitted_result_exports_checked_failure(
+        self, orchestrator: OrchestratorAgent
+    ):
+        class _CappedWorkflow:
+            async def run(self, **kw):
+                return DeepSynthesisResult(
+                    answer="partial evidence",
+                    iterations_used=8,
+                    subagent_calls_made=12,
+                    llm_calls_used=8,
+                    was_capped=True,
+                    was_submitted=False,
+                    was_rate_limited=False,
+                    trajectory=[],
+                )
+
+        orchestrator._build_deep_synthesis_workflow = lambda tenant_id: (
+            _CappedWorkflow()
+        )
+        orchestrator._emit_orchestration_outcome = AsyncMock()
+
+        output = await orchestrator._process_impl(
             OrchestratorInput(
-                query="x",
+                query="synthesize every exact source",
                 tenant_id="b7_int_tenant",
                 synthesis_depth="deep",
             )
         )
-        # Fallback path executed.
-        assert out.workflow_id == "default_after_fallback"
+
+        assert output.final_output["was_submitted"] is False
+        emitted = orchestrator._emit_orchestration_outcome.await_args
+        assert emitted.args[0].agent_results == {
+            "deep_synthesis": {
+                "status": "error",
+                "message": "Deep synthesis ended without a submitted answer",
+            }
+        }
+        assert emitted.kwargs == {
+            "success_override": False,
+            "error_summary": "Deep synthesis ended without a submitted answer",
+        }
 
 
 @pytest.mark.asyncio
