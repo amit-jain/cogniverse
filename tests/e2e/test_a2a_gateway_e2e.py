@@ -14,6 +14,7 @@ Requires live k3d-deployed runtime at http://localhost:33000.
 """
 
 import hashlib
+import warnings
 
 import httpx
 import pytest
@@ -23,15 +24,35 @@ from tests.e2e.conftest import (
     PHOENIX_URL,
     RUNTIME,
     TENANT_ID,
-    skip_if_no_runtime,
 )
 
 PROFILE = "video_colpali_smol500_mv_frame"
-SAMPLE_VIDEO_ID = hashlib.sha256(
-    (
-        DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
-    ).read_bytes()
-).hexdigest()
+SAMPLE_VIDEO = (
+    DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
+)
+
+
+def sample_video_id() -> str:
+    """Document id the seeded corpus assigns the sample video.
+
+    The corpus lives under the gitignored ``data/testset`` tree, so a checkout
+    that never downloaded it cannot compute this. Read the file here rather
+    than at import: hashing at module scope made COLLECTING this file — and
+    therefore ``pytest tests/`` as a whole — fail with FileNotFoundError on
+    any such checkout. Callers skip when the video is absent.
+    """
+    return hashlib.sha256(SAMPLE_VIDEO.read_bytes()).hexdigest()
+
+
+def skip_without_sample_video() -> None:
+    if not SAMPLE_VIDEO.is_file():
+        warnings.warn(
+            f"sample video {SAMPLE_VIDEO} is not present; the seeded-search "
+            "identity assertions cannot run. Download the testset corpus to "
+            "exercise them.",
+            stacklevel=2,
+        )
+        pytest.skip(f"sample video not available: {SAMPLE_VIDEO}")
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +61,6 @@ SAMPLE_VIDEO_ID = hashlib.sha256(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGatewaySimpleRouting:
     """Gateway classifies simple video queries and dispatches to search_agent."""
 
@@ -235,9 +255,9 @@ class TestGatewaySimpleRouting:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGatewaySeededSearchContract:
     def test_seeded_video_identity_order_and_competing_route(self):
+        skip_without_sample_video()
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             video_response = client.post(
                 "/agents/gateway_agent/process",
@@ -270,7 +290,7 @@ class TestGatewaySeededSearchContract:
         assert downstream["profile"] == PROFILE
         assert downstream["results_count"] == len(downstream["results"])
         video_ids = [result["metadata"]["video_id"] for result in downstream["results"]]
-        assert set(video_ids) == {SAMPLE_VIDEO_ID}
+        assert set(video_ids) == {sample_video_id()}
         scores = [result["score"] for result in downstream["results"]]
         assert scores == sorted(scores, reverse=True)
 
@@ -281,7 +301,7 @@ class TestGatewaySeededSearchContract:
         assert document_data["gateway"]["modality"] == "document"
         assert document_data["gateway"]["routed_to"] == "document_agent"
         document_results = document_data["downstream_result"]["results"]
-        assert SAMPLE_VIDEO_ID not in {
+        assert sample_video_id() not in {
             result["metadata"]["video_id"] for result in document_results
         }
 
@@ -292,7 +312,6 @@ class TestGatewaySeededSearchContract:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGatewayComplexRouting:
     """Gateway classifies complex/multi-modal queries and dispatches
     to orchestrator for multi-agent coordination."""
@@ -448,7 +467,6 @@ class TestGatewayComplexRouting:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGatewaySearchPipeline:
     """End-to-end: gateway classifies simple query, routes to search_agent,
     and returns actual Vespa hits."""
@@ -556,7 +574,6 @@ class TestGatewaySearchPipeline:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestGatewayAgentThin:
     """The gateway agent is a thin decision-maker: GLiNER classification +
     fast-path vs orchestrator routing. POST to gateway_agent/process goes
@@ -719,7 +736,6 @@ class TestGatewayAgentThin:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestEntityExtractionAgent:
     """Entity extraction agent is an internal orchestration agent.
     It is callable via REST through generic A2A dispatch, and also
@@ -855,7 +871,6 @@ class TestEntityExtractionAgent:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestQueryEnhancementAgent:
     """Query enhancement agent — callable via REST and internally by orchestrator."""
 
@@ -995,7 +1010,6 @@ class TestQueryEnhancementAgent:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestProfileSelectionAgent:
     """Profile selection agent — callable via REST and internally by orchestrator."""
 
@@ -1067,7 +1081,6 @@ class TestProfileSelectionAgent:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTelemetrySpans:
     """After running a query through the gateway, verify telemetry spans
     were emitted to Phoenix."""

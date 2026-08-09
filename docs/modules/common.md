@@ -18,7 +18,8 @@
 7. [Dynamic DSPy Integration](#dynamic-dspy-integration)
 8. [Usage Examples](#usage-examples)
 9. [Production Considerations](#production-considerations)
-10. [Testing](#testing)
+10. [Shared Inference Test Services](#shared-inference-test-services)
+11. [Testing](#testing)
 
 ---
 
@@ -39,9 +40,9 @@ The Common module provides foundational infrastructure shared across all system 
 ```text
 libs/core/cogniverse_core/
 ├── common/                           # Shared utilities
-│   ├── tenant_utils.py              # Tenant ID parsing and storage paths
+│   ├── tenant_utils.py              # Foundation tenant-helper re-exports and registry checks
 │   ├── dynamic_dspy_mixin.py        # DSPy runtime configuration
-│   ├── dspy_module_registry.py      # DSPy module/optimizer registry
+│   ├── dspy_module_registry.py      # Foundation DSPy registry re-exports
 │   ├── health_mixin.py              # Health check mixin
 │   ├── vlm_interface.py             # Vision-language model interface
 │   ├── agent_models.py              # Agent data models
@@ -80,6 +81,54 @@ libs/vespa/cogniverse_vespa/config/
     └── config_store.py              # VespaConfigStore implementation
 ```
 
+### Public API Reference
+
+The tables below cover every public class, function, and runtime constant in
+`cogniverse_core.common`. Detailed examples for tenant, media, and DSPy APIs
+follow later in this guide; the cache and model tables provide the complete
+surface without repeating their implementation guides.
+
+| Module | Public API | Purpose |
+| --- | --- | --- |
+| `agent_models` | `DEFAULT_AGENT_CALL_TIMEOUT_SECONDS`, `AgentEndpoint` | Agent endpoint timeout and health-aware endpoint configuration. |
+| `dynamic_dspy_mixin` | `DynamicDSPyMixin` | Runtime DSPy LM, signature, module, and optimizer configuration. |
+| `dspy_module_registry` | `DSPyModuleRegistry`, `DSPyOptimizerRegistry` | Re-exports of the Foundation registries used by the mixin. |
+| `health_mixin` | `HealthCheckMixin` | Standard component health-check behavior. |
+| `tenant_utils` | `SYSTEM_TENANT_ID`, `TEST_TENANT_ID`, `parse_tenant_id`, `canonical_tenant_id`, `get_tenant_storage_path`, `validate_tenant_id`, `require_tenant_id`, `sanitize_k8s_label_value`, `invalidate_tenant_exists`, `assert_tenant_exists` | Pure tenant helpers re-exported from Foundation plus Core's tenant-registry existence cache. |
+| `vlm_interface` | `VisualAnalysisSignature`, `VLMInterface` | DSPy signature and interface for vision-language analysis. |
+
+| Cache module | Public API | Purpose |
+| --- | --- | --- |
+| `cache.base` | `CacheBackend`, `BackendConfig`, `CacheConfig`, `CacheManager` | Backend contract, shared configuration, and tiered cache coordination. |
+| `cache.pipeline_cache` | `PipelineArtifactCache` | Cache facade for video-processing artifacts. |
+| `cache.registry` | `CacheBackendRegistry` | Cache-backend plugin registration and lookup. |
+| `cache.backends.s3` | `S3CacheBackendConfig`, `S3CacheBackend` | S3-compatible object-store cache. |
+| `cache.backends.structured_filesystem` | `StructuredFilesystemConfig`, `StructuredFilesystemBackend` | Readable filesystem namespaces with reversible key leaves. |
+
+| Media module | Public API | Purpose |
+| --- | --- | --- |
+| `media.cache` | `MediaCache` | Tenant-scoped content-addressed local cache. |
+| `media.config` | `S3BackendConfig`, `HttpBackendConfig`, `MediaCacheConfig`, `MediaConfig` | S3, HTTP, cache, and aggregate media configuration. |
+| `media.keyframes` | `keyframe_object_key`, `keyframe_uri` | Canonical keyframe object keys and S3 URIs. |
+| `media.locator` | `LOCAL_SCHEMES`, `PVC_SCHEME`, `NETWORK_SCHEMES`, `S3_CONNECT_TIMEOUT_S`, `S3_READ_TIMEOUT_S`, `S3_MAX_ATTEMPTS`, `NETWORK_FETCH_DEADLINE_S`, `DEFAULT_VIDEO_EXTENSIONS`, `MediaStat`, `MediaLocator` | Supported schemes, bounded network settings, media metadata, and URI localization. |
+
+| Model module | Public API | Purpose |
+| --- | --- | --- |
+| `models.model_loaders` | `ModelLoader`, `ColPaliModelLoader`, `ColQwenModelLoader`, `VideoPrismModelLoader`, `ColBERTModelLoader`, `ModelLoaderFactory`, `get_or_load_model`, `is_remote_only_model` | Local loader contracts, concrete loaders, loader selection, and cache lookup. |
+| `models.model_loaders` | `RemoteInferenceClient`, `RemoteColPaliLoader`, `RemoteVideoPrismLoader`, `RemoteColBERTLoader`, `RemoteWhisperLoader`, `RemoteGlinerClient`, `get_or_load_gliner` | Authenticated remote inference clients and cached GLiNER resolution. |
+| `models.semantic_embedder` | `SemanticEmbedder`, `LocalSentenceTransformerEmbedder`, `RemoteOpenAIEmbedder`, `get_semantic_embedder`, `reset_semantic_embedder_cache` | Local or OpenAI-compatible semantic embedding and cache control. |
+| `models.videoprism_loader` | `VIDEOPRISM_AVAILABLE`, `VideoPrismLoader`, `VideoPrismGlobalLoader`, `get_videoprism_loader` | VideoPrism availability, loading, global embedding, and cached lookup. |
+| `models.videoprism_models` | `VideoPrismModel`, `get_videoprism_model` | VideoPrism embedding wrapper and factory. |
+| `models.videoprism_text_encoder` | `CircuitState`, `PerformanceMetrics`, `CircuitBreaker`, `ModelPool`, `VideoPrismTextEncoder`, `create_text_encoder` | Text-encoder lifecycle, pooling, failure control, metrics, and factory. |
+
+| Utility module | Public API | Purpose |
+| --- | --- | --- |
+| `utils.async_bridge` | `run_coro_blocking` | Run a coroutine from synchronous code, including callers already on an event-loop thread. |
+| `utils.async_polling` | `wait_for_retry_backoff` | Async exponential or linear retry delay. |
+| `utils.circuit_breaker` | `CircuitState`, `CircuitOpenError`, `BreakerConfig`, `CircuitBreaker`, `circuit_breaker` | Per-dependency circuit-breaker state and decorator. |
+| `utils.output_manager` | `OutputManager`, `get_output_manager` | Output-directory management and singleton lookup. |
+| `utils.retry` | `RetryConfig`, `retry_with_backoff`, `RetryableOperation`, `create_retry_decorator` | Retry configuration, decorator, context manager, and configured decorator factory. |
+
 ---
 
 ## Package Architecture
@@ -89,7 +138,7 @@ libs/vespa/cogniverse_vespa/config/
 ```mermaid
 flowchart TB
     subgraph "cogniverse_agents Package"
-        AgentLayer["<span style='color:#000'>Agent Layer<br/>OrchestratorAgent, VideoSearchAgent, etc.</span>"]
+        AgentLayer["<span style='color:#000'>Agent Layer<br/>OrchestratorAgent, SearchAgent, etc.</span>"]
     end
 
     subgraph "cogniverse_foundation Package"
@@ -126,26 +175,26 @@ flowchart TB
 
     subgraph "cogniverse_core Package"
         MemoryManager["<span style='color:#000'>Mem0MemoryManager<br/>Per-tenant singleton<br/>• add_memory<br/>• search_memory<br/>• get_all_memories<br/>• clear_agent_memory</span>"]
-    end
-
-    subgraph "cogniverse_vespa Package"
-        SchemaManager["<span style='color:#000'>VespaSchemaManager<br/>Schema: agent_memories_tenant_id</span>"]
+        SchemaRegistry["<span style='color:#000'>SchemaRegistry<br/>Canonical tenant schema deployment</span>"]
+        BackendStore["<span style='color:#000'>BackendVectorStore<br/>Mem0-to-backend adapter</span>"]
     end
 
     subgraph External
         Mem0Lib["<span style='color:#000'>Mem0 Library<br/>• LLM: configurable via llm_model (e.g. google/gemma-4-e4b-it)<br/>• Embedder: lightonai/DenseOn (768-dim)<br/>• Vector Store: Vespa</span>"]
-        VespaDB[("<span style='color:#000'>Vespa<br/>Schema per tenant<br/>agent_memories_acme</span>")]
+        VespaDB[("<span style='color:#000'>Vespa<br/>Schema per tenant<br/>agent_memories_acme_acme</span>")]
     end
 
     AgentLayer --> MemoryManager
-    MemoryManager --> SchemaManager
+    MemoryManager --> SchemaRegistry
     MemoryManager --> Mem0Lib
-    SchemaManager --> VespaDB
-    Mem0Lib --> VespaDB
+    SchemaRegistry --> VespaDB
+    Mem0Lib --> BackendStore
+    BackendStore --> VespaDB
 
     style AgentLayer fill:#90caf9,stroke:#1565c0,color:#000
     style MemoryManager fill:#ffcc80,stroke:#ef6c00,color:#000
-    style SchemaManager fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SchemaRegistry fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style BackendStore fill:#ba68c8,stroke:#7b1fa2,color:#000
     style Mem0Lib fill:#a5d6a7,stroke:#388e3c,color:#000
     style VespaDB fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
@@ -180,7 +229,7 @@ flowchart LR
 
 ### SystemConfig
 
-**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:230-`
+**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py`
 
 **Purpose:** System-level configuration for global settings
 
@@ -190,7 +239,7 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 ```
 
 **Key Attributes:**
-```python
+```text
 @dataclass
 class SystemConfig:
     # Agent service URLs
@@ -282,7 +331,7 @@ loaded_config = SystemConfig.from_dict(config_dict)
 
 ### RoutingConfigUnified
 
-**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:403-`
+**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py`
 
 **Purpose:** Per-tenant routing configuration
 
@@ -292,50 +341,28 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 ```
 
 **Key Attributes:**
-```python
+```text
 @dataclass
 class RoutingConfigUnified:
     tenant_id: Optional[str] = None  # required — __post_init__ raises ValueError if None
 
-    # Routing strategy. Only "tiered" is implemented end-to-end (fast +
-    # slow + fallback path via the enable_* flags below); other values are
-    # accepted by the schema for forward-compat but produce no dispatch
-    # behavior change.
+    # Only "tiered" changes dispatch behavior. Other values are accepted by
+    # the schema but do not select another implemented routing strategy.
     routing_mode: str = "tiered"
 
-    # Tier thresholds
+    # Fast-path routing
     enable_fast_path: bool = True
-    enable_slow_path: bool = True
-    enable_fallback: bool = True
-    fast_path_confidence_threshold: float = 0.7
-    slow_path_confidence_threshold: float = 0.6
-    max_routing_time_ms: int = 1000
+    fast_path_confidence_threshold: float = 0.4
 
     # GLiNER configuration (Fast Path)
     gliner_model: str = "urchade/gliner_large-v2.1"
     gliner_threshold: float = 0.3
     gliner_device: str = "cpu"
-    gliner_labels: List[str] = field(default_factory=list)
-
-    # LLM configuration (Slow Path)
-    llm_provider: str = "local"
-    llm_endpoint: str = "http://localhost:11434"
-    llm_temperature: float = 0.1
-    llm_max_tokens: int = 150
-    use_chain_of_thought: bool = True
 
     # Optimization
     enable_auto_optimization: bool = True
     optimization_interval_seconds: int = 3600
     min_samples_for_optimization: int = 100
-    dspy_enabled: bool = True
-    dspy_max_bootstrapped_demos: int = 10
-    dspy_max_labeled_demos: int = 50
-
-    # Caching
-    enable_caching: bool = True
-    cache_ttl_seconds: int = 300
-    max_cache_size: int = 1000
 
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -351,7 +378,6 @@ config = RoutingConfigUnified(
     routing_mode="tiered",
     fast_path_confidence_threshold=0.8,
     enable_auto_optimization=True,
-    cache_ttl_seconds=7200
 )
 ```
 
@@ -369,7 +395,7 @@ from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLev
 ```
 
 **Key Attributes:**
-```python
+```text
 @dataclass
 class TelemetryConfig:
     # Core settings
@@ -403,11 +429,10 @@ class TelemetryConfig:
     extra_resource_attributes: Dict[str, str] = field(default_factory=dict)
 ```
 
-**Usage:**
-```python
+**Persistence pattern:**
+```text
 from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLevel
 
-# Create telemetry config with OTLP export
 config = TelemetryConfig(
     level=TelemetryLevel.DETAILED,
     otlp_enabled=True,
@@ -415,7 +440,8 @@ config = TelemetryConfig(
     tenant_project_template="cogniverse-{tenant_id}"
 )
 
-# Persistence via ConfigManager
+# config_manager is the application's configured ConfigManager, backed by its
+# production ConfigStore.
 config_manager.set_telemetry_config(config, tenant_id="acme")
 loaded = config_manager.get_telemetry_config("acme")
 ```
@@ -436,7 +462,9 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 ```
 
 - **Per-Tenant Singleton**: One instance per tenant_id
-- **Schema Isolation**: Each tenant gets dedicated Vespa schema: `agent_memories_{tenant_id}`
+- **Schema Isolation**: Each tenant gets a schema derived from its canonical ID;
+  simple `acme` becomes `agent_memories_acme_acme`, while `acme:production`
+  becomes `agent_memories_acme_production`.
 - **Agent Namespacing**: Within tenant, memories are namespaced by agent_name
 - **Mem0 Integration**: Uses Mem0 for LLM-processed memories with semantic search
 
@@ -452,7 +480,7 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 **Key Methods:**
 
 #### initialize()
-```python
+```text
 def initialize(
     self,
     backend_host: str,
@@ -478,25 +506,13 @@ def initialize(
     - Embedder: Configured via embedding_model + embedder_base_url (DenseOn served via sidecar)
     - Vector Store: Vespa with schema-per-tenant
 
-    All positional params are required.
-
-    Example:
-        manager = Mem0MemoryManager(tenant_id="acme")
-        manager.initialize(
-            backend_host="http://localhost",
-            backend_port=8080,
-            llm_model=config["memory"]["llm_model"],
-            embedding_model=config["memory"]["embedding_model"],
-            llm_base_url=config["memory"]["llm_base_url"],
-            embedder_base_url=config["memory"]["embedder_base_url"],
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-        )
+    The first eight parameters after self are required. The runtime supplies
+    its configured ConfigManager and SchemaLoader dependencies.
     """
 ```
 
 #### add_memory()
-```python
+```text
 def add_memory(
     self,
     content: str,
@@ -529,18 +545,11 @@ def add_memory(
     Raises:
         RuntimeError: If the backend is not initialized.
 
-    Example:
-        memory_id = manager.add_memory(
-            content="User prefers detailed technical explanations",
-            tenant_id="acme",
-            agent_name="orchestrator_agent",
-            metadata={"source": "user_feedback"}
-        )
     """
 ```
 
 #### search_memory()
-```python
+```text
 def search_memory(
     self,
     query: str,
@@ -585,21 +594,11 @@ def search_memory(
             ...
         ]
 
-    Example:
-        memories = manager.search_memory(
-            query="What are user's preferences?",
-            tenant_id="acme",
-            agent_name="orchestrator_agent",
-            top_k=5
-        )
-
-        for mem in memories:
-            print(f"{mem['memory']} (score: {mem['score']:.2f})")
     """
 ```
 
 #### get_all_memories()
-```python
+```text
 def get_all_memories(
     self,
     tenant_id: str,
@@ -633,7 +632,7 @@ rather than returning `[]`, so callers can't mistake an outage for an
 empty store.
 
 #### delete_memory()
-```python
+```text
 def delete_memory(
     self,
     memory_id: str,
@@ -655,7 +654,7 @@ def delete_memory(
 ```
 
 #### clear_agent_memory()
-```python
+```text
 def clear_agent_memory(
     self,
     tenant_id: str,
@@ -668,19 +667,18 @@ def clear_agent_memory(
     """
 ```
 
-**Memory Storage Format** (in Vespa):
+**Memory Storage Format** (representative Vespa document; the production
+embedding contains 768 floats and `metadata_` contains serialized caller
+metadata):
 ```json
 {
   "id": "mem_abc123",
   "user_id": "acme",
   "agent_id": "orchestrator_agent",
-  "memory": "User prefers detailed technical explanations with code examples",
-  "embedding": [0.23, -0.15, 0.87, ...],  // 768-dim vector
-  "metadata": {
-    "source": "user_feedback",
-    "timestamp": "2025-10-15T10:30:00Z"
-  },
-  "hash": "abc123def456"
+  "text": "User prefers detailed technical explanations with code examples",
+  "embedding": [0.23, -0.15, 0.87],
+  "metadata_": "{\"source\":\"user_feedback\"}",
+  "created_at": 1760524200
 }
 ```
 
@@ -688,19 +686,19 @@ def clear_agent_memory(
 
 ```mermaid
 sequenceDiagram
-    participant Agent as OrchestratorAgent<br/>cogniverse_agents
-    participant MemMgr as Mem0MemoryManager<br/>cogniverse_core
-    participant Backend as VespaBackend<br/>cogniverse_vespa
-    participant Vespa as Vespa<br/>agent_memories_acme
+    participant Agent as <span style='color:#000'>OrchestratorAgent<br/>cogniverse_agents</span>
+    participant MemMgr as <span style='color:#000'>Mem0MemoryManager<br/>cogniverse_core</span>
+    participant Backend as <span style='color:#000'>VespaBackend<br/>cogniverse_vespa</span>
+    participant Vespa as <span style='color:#000'>Vespa<br/>agent_memories_acme_acme</span>
 
     Agent->>MemMgr: Mem0MemoryManager(tenant_id="acme")
     Note over MemMgr: Per-tenant singleton created
 
-    Agent->>MemMgr: initialize(backend_host, backend_port)
+    Agent->>MemMgr: initialize(backend_host, backend_port, llm_model, embedding_model, llm_base_url, embedder_base_url, config_manager, schema_loader)
     MemMgr->>Backend: get_tenant_schema_name("acme", "agent_memories")
-    Backend-->>MemMgr: "agent_memories_acme"
+    Backend-->>MemMgr: "agent_memories_acme_acme"
     MemMgr->>Backend: schema_registry.deploy_schema(tenant_id, base_schema_name)
-    Backend->>Vespa: Deploy schema agent_memories_acme
+    Backend->>Vespa: Deploy schema agent_memories_acme_acme
     Vespa-->>Backend: Schema deployed
     Backend-->>MemMgr: Schema ready
     MemMgr->>MemMgr: Memory.from_config(config)
@@ -708,12 +706,12 @@ sequenceDiagram
     MemMgr-->>Agent: Initialized
 
     Agent->>MemMgr: add_memory("User prefers videos", "acme", "orchestrator_agent")
-    MemMgr->>Vespa: Store in agent_memories_acme
+    MemMgr->>Vespa: Store in agent_memories_acme_acme
     Vespa-->>MemMgr: memory_id
     MemMgr-->>Agent: memory_id
 
     Agent->>MemMgr: search_memory("preferences?", "acme", "orchestrator_agent")
-    MemMgr->>Vespa: Search agent_memories_acme
+    MemMgr->>Vespa: Search agent_memories_acme_acme
     Vespa-->>MemMgr: [{"memory": "...", "score": 0.92}]
     MemMgr-->>Agent: memories
 ```
@@ -724,7 +722,7 @@ sequenceDiagram
 
 ### parse_tenant_id()
 
-**Location:** `libs/core/cogniverse_core/common/tenant_utils.py:12-53`
+**Location:** `libs/core/cogniverse_core/common/tenant_utils.py`
 
 **Purpose:** Parse tenant_id into org_id and tenant_name
 
@@ -734,7 +732,7 @@ from cogniverse_core.common.tenant_utils import parse_tenant_id
 ```
 
 **Function:**
-```python
+```text
 def parse_tenant_id(tenant_id: str) -> tuple[str, str]:
     """
     Parse tenant_id into org_id and tenant_name.
@@ -786,7 +784,7 @@ print(f"Org: {org_id}, Tenant: {tenant_name}")
 POST `/admin/tenants` accepts both simple form (`acme`) and colon form (`acme:production`) and stores the tenant_metadata document under the colon form (`acme:acme` for simple input). Read paths (`GET /admin/tenants/{tid}`, `assert_tenant_exists`, `DELETE /admin/tenants/{tid}`) MUST canonicalize incoming tenant_ids through this helper before hitting the document store, otherwise a simple-form input maps to a doc_id that was never written.
 
 **Function:**
-```python
+```text
 def canonical_tenant_id(tenant_id: str) -> str:
     """Return the canonical ``org:tenant`` storage form."""
 ```
@@ -808,7 +806,7 @@ either form to those APIs get the same result.
 
 ### get_tenant_storage_path()
 
-**Location:** `libs/core/cogniverse_core/common/tenant_utils.py:55-85`
+**Location:** `libs/core/cogniverse_core/common/tenant_utils.py`
 
 **Purpose:** Get tenant-specific storage path with org/tenant structure
 
@@ -818,7 +816,7 @@ from cogniverse_core.common.tenant_utils import get_tenant_storage_path
 ```
 
 **Function:**
-```python
+```text
 def get_tenant_storage_path(base_dir: Path | str, tenant_id: str) -> Path:
     """
     Get tenant-specific storage path with proper org/tenant structure.
@@ -865,7 +863,7 @@ path.mkdir(parents=True, exist_ok=True)
 
 ### validate_tenant_id()
 
-**Location:** `libs/core/cogniverse_core/common/tenant_utils.py:87-118`
+**Location:** `libs/core/cogniverse_core/common/tenant_utils.py`
 
 **Purpose:** Validate tenant ID format
 
@@ -875,7 +873,7 @@ from cogniverse_core.common.tenant_utils import validate_tenant_id
 ```
 
 **Function:**
-```python
+```text
 def validate_tenant_id(tenant_id: str) -> None:
     """
     Validate tenant ID format.
@@ -938,6 +936,8 @@ Beyond the four functions above, `tenant_utils` exports:
 | `assert_tenant_exists(tenant_id)` | async function | Raises `HTTPException(404)` if `tenant_id` was never registered (looked up via `TenantManager.get_tenant_internal`). `SYSTEM_TENANT_ID` bypasses the check. Positive results are cached for 30 seconds since this runs on every search/ingestion/graph request. |
 
 ```python
+from dataclasses import dataclass
+
 from cogniverse_core.common.tenant_utils import (
     SYSTEM_TENANT_ID,
     require_tenant_id,
@@ -945,14 +945,17 @@ from cogniverse_core.common.tenant_utils import (
     invalidate_tenant_exists,
 )
 
-# Enforce a tenant_id is present before proceeding
-tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
+@dataclass
+class SearchRequest:
+    tenant_id: str
 
-# Confirm the tenant is registered (raises HTTPException(404) otherwise)
-await assert_tenant_exists(tenant_id)
+async def check_request(request: SearchRequest) -> str:
+    tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
+    await assert_tenant_exists(tenant_id)
+    return tenant_id
 
-# After deleting a tenant, evict it from the existence cache
-invalidate_tenant_exists(tenant_id)
+# Call this after a successful tenant deletion.
+invalidate_tenant_exists("acme:production")
 ```
 
 ---
@@ -993,22 +996,24 @@ The locator reads its config from the `media` section of the application
 config (or accepts a `MediaConfig` directly):
 
 ```jsonc
-"media": {
-  "default_uri_scheme": "file",        // file | s3 | pvc
-  "uri_prefix": "",                    // e.g., "s3://corpus/" or "pvc://media/"
-  "pvc_mount_root": "/mnt",
-  "cache": {
-    "base_dir": null,                  // null → tenant-scoped tempdir
-    "max_bytes_gb": 50,
-    "ttl_days": 7
-  },
-  "backends": {
-    "s3": {
-      "endpoint_url": null,            // set to a MinIO endpoint for self-hosted
-      "region": "us-east-1",
-      "anon": false
+{
+  "media": {
+    "default_uri_scheme": "file",        // file | s3 | pvc
+    "uri_prefix": "",                    // e.g., "s3://corpus/" or "pvc://media/"
+    "pvc_mount_root": "/mnt",
+    "cache": {
+      "base_dir": null,                  // null → tenant-scoped tempdir
+      "max_bytes_gb": 50,
+      "ttl_days": 7
     },
-    "http": { "timeout_s": 60 }
+    "backends": {
+      "s3": {
+        "endpoint_url": null,            // set to a MinIO endpoint for self-hosted
+        "region": "us-east-1",
+        "anon": false
+      },
+      "http": { "timeout_s": 60 }
+    }
   }
 }
 ```
@@ -1068,7 +1073,9 @@ network access, identical to the pre-locator workflow. Existing
 
 ### MinIO / S3-compatible setup
 
-To point the locator at a self-hosted MinIO instance:
+To point the locator at a self-hosted MinIO instance, configure the client as
+shown below; `localize()` performs network I/O only when the application asks
+for an object:
 
 ```python
 from cogniverse_core.common.media import (
@@ -1085,7 +1092,7 @@ config = MediaConfig(
     cache=MediaCacheConfig(max_bytes_gb=20),
 )
 locator = MediaLocator(tenant_id="acme:prod", config=config)
-local_path = locator.localize("s3://corpus/v_abc.mp4")  # cached locally
+# local_path = locator.localize("s3://corpus/v_abc.mp4")
 ```
 
 S3 credentials are picked up from the standard AWS environment variables
@@ -1100,6 +1107,8 @@ empty. The in-cluster runtime resolves the endpoint from
 the `MINIO_*` secret at the process entrypoint):
 
 ```python
+from cogniverse_core.common.media import MediaConfig
+
 config = MediaConfig.for_object_store("http://cogniverse-minio:9000")
 ```
 
@@ -1118,7 +1127,7 @@ populates it from `MediaLocator.to_canonical_uri` (or falls back to `""` if no
 video path is available), so every document emitted by the live ingestion
 path carries the canonical URI of its source video. Visual evaluators rely on
 this field to localize bytes regardless of where the consumer runs (pod, CI,
-local dev). Pre-existing corpora ingested before this field existed can be
+local dev). Corpora ingested before this field existed can be
 backfilled with `scripts/backfill_source_url.py`.
 
 ### Tests
@@ -1139,7 +1148,7 @@ backfilled with `scripts/backfill_source_url.py`.
 
 ### DynamicDSPyMixin
 
-**Location:** `libs/core/cogniverse_core/common/dynamic_dspy_mixin.py:23-255`
+**Location:** `libs/core/cogniverse_core/common/dynamic_dspy_mixin.py`
 
 **Purpose:** Mixin for runtime DSPy module and optimizer configuration
 
@@ -1152,7 +1161,7 @@ from cogniverse_foundation.config.agent_config import AgentConfig, ModuleConfig,
 **Key Methods:**
 
 #### initialize_dynamic_dspy()
-```python
+```text
 def initialize_dynamic_dspy(self, config: AgentConfig):
     """
     Initialize DSPy with dynamic configuration.
@@ -1187,7 +1196,7 @@ def initialize_dynamic_dspy(self, config: AgentConfig):
 ```
 
 #### register_signature()
-```python
+```text
 def register_signature(self, name: str, signature: Type[dspy.Signature]):
     """
     Register a DSPy signature for module creation.
@@ -1202,7 +1211,7 @@ def register_signature(self, name: str, signature: Type[dspy.Signature]):
 ```
 
 #### create_module()
-```python
+```text
 def create_module(
     self,
     signature_name: str,
@@ -1230,7 +1239,7 @@ def create_module(
 ```
 
 #### get_or_create_module()
-```python
+```text
 def get_or_create_module(self, signature_name: str) -> dspy.Module:
     """
     Get cached module or create new one via create_module().
@@ -1244,7 +1253,7 @@ def get_or_create_module(self, signature_name: str) -> dspy.Module:
 ```
 
 #### create_optimizer()
-```python
+```text
 def create_optimizer(
     self,
     optimizer_config: Optional[OptimizerConfig] = None
@@ -1274,8 +1283,9 @@ def create_optimizer(
     """
 ```
 
-**Complete Usage Example:**
-```python
+**Complete usage pattern:** The configured Ollama endpoint must be reachable
+when `analyze_query()` performs inference.
+```text
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from cogniverse_foundation.config.agent_config import AgentConfig, ModuleConfig, OptimizerConfig
 from cogniverse_foundation.config.agent_config import DSPyModuleType, OptimizerType
@@ -1336,11 +1346,11 @@ print(f"Intent: {result.intent}, Confidence: {result.confidence}")
 
 ### Example 1: Multi-Tenant Configuration
 
-```python
+```text
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
-# Initialize config manager
+# Requires the deployment's configured, reachable ConfigStore.
 config_manager = create_default_config_manager()
 
 # Create per-tenant routing configs
@@ -1367,19 +1377,26 @@ print(f"  Routing mode: {tenant_cfg.get('routing_mode', 'tiered')}")
 
 ### Example 2: Memory-Aware Agent
 
-```python
+```text
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
-# Initialize memory manager (per-tenant singleton)
+# config_manager and schema_loader are runtime dependencies supplied by the
+# application. The endpoint values come from its validated deployment config.
+memory_settings = {
+    "llm_model": "google/gemma-4-e4b-it",
+    "embedding_model": "lightonai/DenseOn",
+    "llm_base_url": "http://llm.internal:8000",
+    "embedder_base_url": "http://denseon.internal:8000",
+}
 tenant_id = "acme"
 memory = Mem0MemoryManager(tenant_id=tenant_id)
 memory.initialize(
     backend_host="http://localhost",
     backend_port=8080,
-    llm_model=config["memory"]["llm_model"],
-    embedding_model=config["memory"]["embedding_model"],
-    llm_base_url=config["memory"]["llm_base_url"],
-    embedder_base_url=config["memory"]["embedder_base_url"],
+    llm_model=memory_settings["llm_model"],
+    embedding_model=memory_settings["embedding_model"],
+    llm_base_url=memory_settings["llm_base_url"],
+    embedder_base_url=memory_settings["embedder_base_url"],
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -1467,9 +1484,8 @@ path2 = get_tenant_storage_path(base_dir, org_tenant)
 print(f"Org:tenant path: {path2}")
 # Output: Org:tenant path: data/optimization/acme/production
 
-# Create directories
-path1.mkdir(parents=True, exist_ok=True)
-path2.mkdir(parents=True, exist_ok=True)
+assert path1 == Path("data/optimization/acme")
+assert path2 == Path("data/optimization/acme/production")
 
 # Validate tenant IDs
 try:
@@ -1514,7 +1530,7 @@ config = environments[env]
 ```
 
 **2. Validate Configs Before Use:**
-```python
+```text
 from cogniverse_foundation.config.unified_config import SystemConfig
 
 def validate_config(config: SystemConfig):
@@ -1524,40 +1540,48 @@ def validate_config(config: SystemConfig):
 
     # Test connectivity
     import requests
-    try:
-        response = requests.get(f"{config.backend_url}:{config.backend_port}/ApplicationStatus")
-        assert response.status_code == 200
-    except:
-        raise RuntimeError("Cannot connect to Vespa")
+    response = requests.get(
+        f"{config.backend_url}:{config.backend_port}/ApplicationStatus",
+        timeout=10,
+    )
+    response.raise_for_status()
 
-config = SystemConfig.from_dict(config_dict)
+# Supply the validated deployment dictionary loaded by the application.
+config = SystemConfig.from_dict(deployment_config)
 validate_config(config)
 ```
 
 ### Memory Management Best Practices
 
-**1. Initialize Once at Startup:**
+**1. Reuse the per-tenant manager:**
 ```python
-from functools import lru_cache
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
-@lru_cache(maxsize=100)  # Cache per tenant
-def get_memory_manager(tenant_id: str) -> Mem0MemoryManager:
+def get_memory_manager(
+    tenant_id: str,
+    *,
+    backend_url: str,
+    backend_port: int,
+    llm_model: str,
+    embedding_model: str,
+    llm_base_url: str,
+    embedder_base_url: str,
+    config_manager,
+    schema_loader,
+) -> Mem0MemoryManager:
+    """Return the per-tenant singleton after idempotent initialization."""
     manager = Mem0MemoryManager(tenant_id=tenant_id)
     manager.initialize(
-        backend_host=config.backend_url,
-        backend_port=config.backend_port,
-        llm_model=config.llm_model,
-        embedding_model=config.embedding_model,
-        llm_base_url=config.llm_base_url,
-        embedder_base_url=config.embedder_base_url,
+        backend_host=backend_url,
+        backend_port=backend_port,
+        llm_model=llm_model,
+        embedding_model=embedding_model,
+        llm_base_url=llm_base_url,
+        embedder_base_url=embedder_base_url,
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
     return manager
-
-# Use in agents
-memory = get_memory_manager("acme")
 ```
 
 **2. Memory Storage Policy:**
@@ -1577,64 +1601,48 @@ class MemoryPolicy:
 
         return True
 
-memory = Mem0MemoryManager(tenant_id="acme")
-memory.initialize(
-    backend_host=config.backend_url,
-    backend_port=config.backend_port,
-    llm_model=config.llm_model,
-    embedding_model=config.embedding_model,
-    llm_base_url=config.llm_base_url,
-    embedder_base_url=config.embedder_base_url,
-    config_manager=config_manager,
-    schema_loader=schema_loader,
-)
-
-policy = MemoryPolicy()
-content = "User prefers technical content"
-
-if policy.should_store(content):
-    memory.add_memory(
+def store_if_allowed(
+    memory: Mem0MemoryManager,
+    policy: MemoryPolicy,
+    *,
+    content: str,
+    tenant_id: str,
+    agent_name: str,
+) -> str | None:
+    if not policy.should_store(content):
+        return None
+    return memory.add_memory(
         content=content,
-        tenant_id="acme",
-        agent_name="orchestrator_agent"
+        tenant_id=tenant_id,
+        agent_name=agent_name,
     )
 ```
 
 **3. Periodic Memory Cleanup:**
 ```python
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
-async def cleanup_old_memories(tenant_id: str, agent_name: str, days: int = 90):
-    """Remove memories older than specified days"""
-    memory = Mem0MemoryManager(tenant_id=tenant_id)
-    memory.initialize(
-        backend_host=config.backend_url,
-        backend_port=config.backend_port,
-        llm_model=config.llm_model,
-        embedding_model=config.embedding_model,
-        llm_base_url=config.llm_base_url,
-        embedder_base_url=config.embedder_base_url,
-        config_manager=config_manager,
-        schema_loader=schema_loader,
-    )
-
-    cutoff_date = datetime.now() - timedelta(days=days)
-
+def cleanup_old_memories(
+    memory: Mem0MemoryManager,
+    tenant_id: str,
+    agent_name: str,
+    days: int = 90,
+) -> list[str]:
+    """Delete old memories and return their IDs."""
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
     memories = memory.get_all_memories(tenant_id, agent_name)
-
+    deleted = []
     for mem in memories:
-        if isinstance(mem, dict):
-            timestamp = mem.get("metadata", {}).get("timestamp")
-            if timestamp:
-                mem_date = datetime.fromisoformat(timestamp)
-                if mem_date < cutoff_date:
-                    memory.delete_memory(mem["id"], tenant_id, agent_name)
-                    print(f"Deleted old memory: {mem['id']}")
-
-# Run cleanup for all tenants
-for tenant_id in get_active_tenants():
-    await cleanup_old_memories(tenant_id, "orchestrator_agent", days=90)
+        timestamp = mem.get("metadata", {}).get("timestamp")
+        if not timestamp:
+            continue
+        mem_date = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        if mem_date < cutoff_date and memory.delete_memory(
+            mem["id"], tenant_id, agent_name
+        ):
+            deleted.append(mem["id"])
+    return deleted
 ```
 
 ### Tenant Isolation Verification
@@ -1642,7 +1650,6 @@ for tenant_id in get_active_tenants():
 **1. Verify Schema Isolation:**
 ```python
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from cogniverse_core.memory.manager import Mem0MemoryManager
 
 schema_manager = VespaSchemaManager(
     backend_endpoint="http://localhost",
@@ -1657,48 +1664,84 @@ schema1 = schema_manager.get_tenant_schema_name(tenant1, "agent_memories")
 schema2 = schema_manager.get_tenant_schema_name(tenant2, "agent_memories")
 
 assert schema1 != schema2, "Schemas must be different for different tenants"
-assert schema1 == "agent_memories_acme"
-assert schema2 == "agent_memories_globex"
+assert schema1 == "agent_memories_acme_acme"
+assert schema2 == "agent_memories_globex_globex"
 
 print(f"✓ Schema isolation verified: {schema1} vs {schema2}")
 ```
 
 **2. Verify Memory Isolation:**
+Exercise isolation through
+`tests/memory/integration/test_mem0_vespa_integration.py`, which initializes two
+tenant managers against the same real Vespa service, writes a tenant-specific
+memory, and verifies that the other tenant cannot retrieve that exact record.
+
+---
+
+## Shared Inference Test Services
+
+Integration tests name each production inference dependency with
+`@pytest.mark.requires_inference("<service>")`. Collection resolves the named
+services plus their declared dependencies: `vllm_colpali` and
+`videoprism_jax` each expand to include `vllm_asr`. The registered automatic
+provider order is:
+
+1. the `cogniverse-e2e` k3d workload;
+2. the `cogniverse` development k3d workload;
+3. Modal, only for a service explicitly marked with
+   `@pytest.mark.requires_modal_inference("<service>")`;
+4. a test-owned exact local service.
+
+Generic `requires_inference` tests use e2e, then dev, then local. They never
+enter the Modal lifecycle merely because `COGNIVERSE_INFERENCE_API_KEY` is
+present. A `requires_modal_inference` service uses Modal as a hard requirement
+and does not fall through to either k3d cluster or a local process. E2E tests
+carrying that marker are selected only by `RUN_MODAL_INFERENCE_E2E=1` or an
+explicit `-m requires_modal_inference` test run.
+
+`INFERENCE_SERVICE_URLS` is an explicit override. It must be a JSON object of
+canonical service names to root HTTP(S) URLs. A malformed object, unknown
+service, unreachable explicit URL, authentication error, or model mismatch
+fails setup at that endpoint; explicit configuration never falls through to a
+different provider. An explicitly configured `*.modal.run` URL requires HTTPS
+and `COGNIVERSE_INFERENCE_API_KEY`.
+
+The session fixture `resolved_inference_endpoints` returns an immutable mapping
+of service names to `ResolvedInferenceEndpoint`. Each record contains the exact
+URL, provider, pinned model and revision, plus immutable bearer headers that
+must be passed to the production Cogniverse client:
+
 ```python
-from cogniverse_core.memory.manager import Mem0MemoryManager
+import pytest
+from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
 
-# Add memory for tenant 1
-memory1 = Mem0MemoryManager(tenant_id="acme")
-memory1.initialize(
-    backend_host="http://localhost", backend_port=8080,
-    llm_model=config.llm_model, embedding_model=config.embedding_model,
-    llm_base_url=config.llm_base_url, embedder_base_url=config.embedder_base_url,
-    config_manager=config_manager, schema_loader=schema_loader,
-)
-memory1.add_memory(
-    content="Secret information for ACME",
-    tenant_id="acme",
-    agent_name="orchestrator_agent"
-)
-
-# Try to search from tenant 2
-memory2 = Mem0MemoryManager(tenant_id="globex")
-memory2.initialize(
-    backend_host="http://localhost", backend_port=8080,
-    llm_model=config.llm_model, embedding_model=config.embedding_model,
-    llm_base_url=config.llm_base_url, embedder_base_url=config.embedder_base_url,
-    config_manager=config_manager, schema_loader=schema_loader,
-)
-results = memory2.search_memory(
-    query="secret information",
-    tenant_id="globex",
-    agent_name="orchestrator_agent"
-)
-
-# Should NOT find tenant 1's memory
-assert len(results) == 0, "Cross-tenant memory leak detected!"
-print("✓ Memory isolation verified")
+@pytest.mark.requires_inference("denseon")
+def test_remote_embedding(resolved_inference_endpoints):
+    endpoint = resolved_inference_endpoints["denseon"]
+    embedder = get_semantic_embedder(
+        model_name=endpoint.model_id,
+        remote_url=endpoint.base_url,
+        headers=None if endpoint.provider == "modal" else endpoint.headers,
+    )
+    vector = embedder.encode("Marie Curie discovered radium", is_query=True)
+    assert vector.shape == (768,)
 ```
+
+Modal production clients read `COGNIVERSE_INFERENCE_API_KEY` directly and
+reject caller-supplied headers. Fixture headers are passed only to non-Modal
+custom endpoints that explicitly require them.
+
+Selection and model validation happen once per service even under concurrent
+fixture requests. Teardown releases replicas warmed by the explicitly selected
+Modal lifecycle and removes only session-owned local services. Discovered e2e
+and development k3d endpoints are borrowed: teardown never scales, restarts,
+or otherwise mutates their workloads. Setup failures run the same cleanup path;
+missing exact services fail instead of skipping.
+
+The shared Vespa fixture mounts
+`/opt/vespa/var/db/vespa/search` as an 8 GiB tmpfs. This keeps Vespa's internal
+disk-usage admission check independent of a nearly full Docker host while all
+metadata and document operations still pass through the real Vespa process.
 
 ---
 
@@ -1709,6 +1752,7 @@ print("✓ Memory isolation verified")
 **Key Test Files:**
 
 - `tests/backends/unit/test_config_store_yql_escape.py` - Configuration storage YQL escaping tests
+- `tests/fixtures/test_inference.py` - Shared inference selection, lifecycle, authentication, and real Vespa tmpfs tests
 - `tests/memory/unit/test_mem0_memory_manager.py` - Memory manager tests
 - `tests/common/unit/test_tenant_utils.py` - Tenant utilities tests
 - `tests/common/unit/test_dynamic_dspy_mixin.py` - DSPy mixin tests
@@ -1729,48 +1773,7 @@ print("✓ Memory isolation verified")
 
 ```python
 import pytest
-from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.common.tenant_utils import parse_tenant_id, get_tenant_storage_path
-
-@pytest.mark.integration
-async def test_mem0_memory_integration():
-    """Test Mem0 memory manager integration"""
-    tenant_id = "test-tenant"
-    agent_name = "test-agent"
-
-    manager = Mem0MemoryManager(tenant_id=tenant_id)
-    manager.initialize(
-        backend_host="http://localhost",
-        backend_port=8080,
-        llm_model=config["memory"]["llm_model"],
-        embedding_model=config["memory"]["embedding_model"],
-        llm_base_url=config["memory"]["llm_base_url"],
-        embedder_base_url=config["memory"]["embedder_base_url"],
-        config_manager=config_manager,
-        schema_loader=schema_loader,
-    )
-
-    # Add memory
-    memory_id = manager.add_memory(
-        content="User prefers technical explanations",
-        tenant_id=tenant_id,
-        agent_name=agent_name
-    )
-
-    assert memory_id
-
-    # Search memory
-    results = manager.search_memory(
-        query="What does user prefer?",
-        tenant_id=tenant_id,
-        agent_name=agent_name
-    )
-
-    assert len(results) > 0
-    assert "technical" in results[0]["memory"].lower()
-
-    # Cleanup
-    manager.clear_agent_memory(tenant_id, agent_name)
 
 @pytest.mark.unit
 def test_tenant_id_parsing():
@@ -1844,7 +1847,7 @@ For related modules:
 
 3. **Memory Management**
    - Per-tenant singleton pattern: `Mem0MemoryManager(tenant_id="acme")`
-   - Schema-per-tenant isolation: `agent_memories_{tenant_id}`
+   - Schema-per-tenant isolation from canonical IDs (`acme` → `agent_memories_acme_acme`)
    - Mem0 integration with Vespa backend
 
 4. **Tenant Utilities**

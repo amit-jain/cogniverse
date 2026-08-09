@@ -36,7 +36,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 VESPA_HTTP_PORT = 8080
 VESPA_CONFIG_PORT = 33071
@@ -117,7 +117,6 @@ def _mem(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestDetectorOpensConflictSet:
     """Detector returns exactly one ConflictSet covering the conflicting pair."""
 
@@ -173,7 +172,6 @@ def _two_conflicting(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestReconcileLatestWins:
     """LATEST_WINS keeps the highest created_at member, drops the older one."""
 
@@ -196,7 +194,6 @@ class TestReconcileLatestWins:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestReconcileTrustRanked:
     """TRUST_RANKED keeps the member with the highest trust × confidence."""
 
@@ -216,7 +213,6 @@ class TestReconcileTrustRanked:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestReconcilePreserveBoth:
     """PRESERVE_BOTH returns every member, each tagged with disputed=True."""
 
@@ -276,7 +272,6 @@ def _write_with_trust(
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestReconcileViaHTTPRoute:
     """The runtime's /contradictions/reconcile route returns the canonical shape."""
 

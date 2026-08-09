@@ -48,16 +48,13 @@ inference:
         cpu: "2"
         memory: "8Gi"
 
+  # The locally built cogniverse/pylate image bakes the host's torch
+  # backend (cuda here) — no per-device image override.
   colbert_pylate:
     enabled: true
     device: cuda
     gpuCount: 1
     replicaCount: 3
-    imagesByDevice:
-      cuda:
-        repository: vllm/vllm-openai
-        tag: v0.23.0
-        pullPolicy: IfNotPresent
     resources:
       limits:
         cpu: "4"

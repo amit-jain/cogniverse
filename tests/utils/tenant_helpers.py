@@ -20,6 +20,14 @@ import pytest
 _VESPA_SAFE = re.compile(r"[^A-Za-z0-9_]")
 _MAX_TENANT_LEN = 60
 
+# The two fixed tenants the memory suite's session fixture pre-deploys
+# schemas for (``tests/memory/conftest.py::shared_memory_vespa``). Modules
+# that assert on an exact search result set use MEM0_ROUNDTRIP_TENANT_ID so
+# their partition holds only their own documents; everything else shares
+# MEMORY_TENANT_ID.
+MEMORY_TENANT_ID = "test_tenant"
+MEM0_ROUNDTRIP_TENANT_ID = "mem0:roundtrip"
+
 
 def _normalize(part: str) -> str:
     """Replace any char Vespa schema names disallow with ``_`` and collapse runs."""

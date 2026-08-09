@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import MagicMock, patch
 
@@ -96,6 +97,187 @@ def test_remote_encode_hits_v1_embeddings():
 
     assert result.shape == (2, 3)
     assert result.dtype == np.float32
+
+
+def test_authenticated_remote_encode_sends_exact_bearer_header(echo_embed_server):
+    base_url, handler = echo_embed_server
+    token = "denseon-modal-secret"
+    embedder = RemoteOpenAIEmbedder(
+        base_url,
+        "lightonai/DenseOn",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    vector = embedder.encode("exact authenticated content")
+
+    assert handler.received_authorizations == [f"Bearer {token}"]
+    np.testing.assert_allclose(vector, [0.6, 0.8], rtol=1e-6)
+    assert token not in repr(embedder)
+
+
+def test_authenticated_remote_outage_propagates_without_leaking_key():
+    import requests
+
+    token = "denseon-modal-secret"
+    embedder = RemoteOpenAIEmbedder(
+        "http://denseon.invalid",
+        "lightonai/DenseOn",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with patch.object(
+        embedder._session,
+        "post",
+        side_effect=requests.ConnectionError("DenseOn connection refused"),
+    ):
+        with pytest.raises(
+            requests.ConnectionError, match="DenseOn connection refused"
+        ) as caught:
+            embedder.encode("content")
+
+    assert "lightonai/DenseOn" in str(caught.value)
+    assert "http://denseon.invalid/v1/embeddings" in str(caught.value)
+    assert token not in str(caught.value)
+
+
+def test_modal_cache_uses_one_environment_credential_concurrently(monkeypatch):
+    import cogniverse_core.common.models.semantic_embedder as semantic_embedder
+
+    token = "shared-production-key"
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", token)
+    barrier = threading.Barrier(8)
+
+    def resolve(_: int):
+        barrier.wait(timeout=5)
+        return get_semantic_embedder(
+            remote_url="https://denseon.modal.run",
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        resolved = list(executor.map(resolve, range(8)))
+
+    assert len({id(item) for item in resolved}) == 1
+    assert resolved[0]._headers == {"Authorization": f"Bearer {token}"}
+    with pytest.raises(TypeError):
+        resolved[0]._headers["Authorization"] = "Bearer replacement"
+    cache_keys = " ".join(semantic_embedder._cache)
+    assert token not in cache_keys
+
+
+def test_modal_remote_rejects_caller_supplied_credentials(monkeypatch):
+    monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
+    with pytest.raises(ValueError, match="headers.*Modal"):
+        RemoteOpenAIEmbedder(
+            "https://denseon.modal.run",
+            "lightonai/DenseOn",
+            headers={"Authorization": "Bearer caller-specific-key"},
+        )
+
+
+def test_explicit_headers_require_remote_url():
+    with patch(
+        "cogniverse_core.common.models.semantic_embedder.LocalSentenceTransformerEmbedder"
+    ):
+        with pytest.raises(ValueError, match="headers require a remote_url"):
+            get_semantic_embedder(
+                headers={"Authorization": "Bearer custom-endpoint-key"}
+            )
+
+
+def test_modal_remote_requires_environment_credential(monkeypatch):
+    monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY", raising=False)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Modal inference endpoint requires COGNIVERSE_INFERENCE_API_KEY",
+    ):
+        RemoteOpenAIEmbedder(
+            "https://denseon.modal.run",
+            "lightonai/DenseOn",
+        )
+
+
+def test_modal_cache_and_client_share_one_credential_snapshot(monkeypatch):
+    import cogniverse_core.common.models.semantic_embedder as semantic_embedder
+
+    resolved = iter(
+        [
+            {"Authorization": "Bearer first-key"},
+            {"Authorization": "Bearer second-key"},
+        ]
+    )
+    monkeypatch.setattr(
+        semantic_embedder,
+        "_resolved_inference_headers",
+        lambda base_url, headers: next(resolved),
+    )
+
+    embedder = get_semantic_embedder(
+        remote_url="https://denseon.modal.run",
+    )
+
+    assert embedder._headers == {"Authorization": "Bearer first-key"}
+    assert next(resolved) == {"Authorization": "Bearer second-key"}
+
+
+def test_remote_cache_is_bounded_lru_and_closes_evicted_sessions(monkeypatch):
+    import cogniverse_core.common.models.semantic_embedder as semantic_embedder
+
+    monkeypatch.setattr(semantic_embedder, "_CACHE_CAPACITY", 2)
+    first = get_semantic_embedder(remote_url="http://denseon-first:8000")
+    second = get_semantic_embedder(remote_url="http://denseon-second:8000")
+    first_close = MagicMock(wraps=first._close)
+    second_close = MagicMock(wraps=second._close)
+    monkeypatch.setattr(first, "_close", first_close)
+    monkeypatch.setattr(second, "_close", second_close)
+
+    assert get_semantic_embedder(remote_url="http://denseon-first:8000") is first
+    third = get_semantic_embedder(remote_url="http://denseon-third:8000")
+
+    assert len(semantic_embedder._cache) == 2
+    assert list(semantic_embedder._cache.values()) == [first, third]
+    first_close.assert_not_called()
+    second_close.assert_called_once_with()
+
+    third_close = MagicMock(wraps=third._close)
+    monkeypatch.setattr(third, "_close", third_close)
+    reset_semantic_embedder_cache()
+    first_close.assert_called_once_with()
+    third_close.assert_called_once_with()
+    assert semantic_embedder._cache == {}
+
+
+def test_remote_cache_restores_old_entry_when_eviction_close_fails(monkeypatch):
+    import cogniverse_core.common.models.semantic_embedder as semantic_embedder
+
+    monkeypatch.setattr(semantic_embedder, "_CACHE_CAPACITY", 1)
+    first = get_semantic_embedder(remote_url="http://denseon-first:8000")
+    first_close = MagicMock(side_effect=OSError("controlled close failure"))
+    monkeypatch.setattr(first, "_close", first_close)
+
+    with pytest.raises(
+        RuntimeError,
+        match="semantic embedder cache eviction failed.*controlled close failure",
+    ):
+        get_semantic_embedder(remote_url="http://denseon-second:8000")
+
+    assert list(semantic_embedder._cache.values()) == [first]
+    first_close.assert_called_once_with()
+    first_close.side_effect = None
+
+
+def test_local_embedder_participates_in_cache_shutdown(monkeypatch):
+    import cogniverse_core.common.models.semantic_embedder as semantic_embedder
+
+    monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_URL", raising=False)
+    with patch.object(LocalSentenceTransformerEmbedder, "__init__", return_value=None):
+        local = get_semantic_embedder(model_name="local-test-model")
+    close = MagicMock(wraps=local._close)
+    monkeypatch.setattr(local, "_close", close)
+
+    reset_semantic_embedder_cache()
+
+    close.assert_called_once_with()
+    assert semantic_embedder._cache == {}
 
 
 def test_remote_encode_preserves_order_when_backend_reorders():
@@ -207,16 +389,74 @@ def test_remote_encode_raises_when_backend_returns_no_embeddings():
             embedder.encode(["hi"])
 
 
+@pytest.mark.parametrize(
+    ("payload", "error"),
+    [
+        ({"data": [{"index": 0, "embedding": [1.0, 0.0]}]}, "expected 2 rows"),
+        (
+            {
+                "data": [
+                    {"index": 0, "embedding": [1.0, 0.0]},
+                    {"index": 0, "embedding": [0.0, 1.0]},
+                ]
+            },
+            r"indices must be exactly \[0, 1\]",
+        ),
+        (
+            {
+                "data": [
+                    {"index": 0, "embedding": [1.0, 0.0]},
+                    {"index": 1, "embedding": [1.0]},
+                ]
+            },
+            "same non-zero dimension",
+        ),
+        (
+            {
+                "data": [
+                    {"index": 0, "embedding": [1.0, float("nan")]},
+                    {"index": 1, "embedding": [0.0, 1.0]},
+                ]
+            },
+            "finite",
+        ),
+        (
+            {
+                "data": [
+                    {"index": 0, "embedding": [0.0, 0.0]},
+                    {"index": 1, "embedding": [0.0, 1.0]},
+                ]
+            },
+            "non-zero norm",
+        ),
+    ],
+)
+def test_remote_encode_rejects_malformed_embedding_contract(payload, error):
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
+    response = MagicMock()
+    response.json.return_value = payload
+    response.raise_for_status.return_value = None
+
+    with patch.object(embedder._session, "post", return_value=response):
+        with pytest.raises(RuntimeError, match=error) as caught:
+            embedder.encode(["first", "second"])
+
+    assert "lightonai/DenseOn" in str(caught.value)
+    assert "http://fake.invalid:8000/v1/embeddings" in str(caught.value)
+
+
 class _EchoEmbeddingHandler(BaseHTTPRequestHandler):
     """vLLM /v1/embeddings stub: records each received input string and
     returns a deterministic non-unit vector ([3, 4], norm 5) per input."""
 
     received_inputs: list[list[str]] = []
+    received_authorizations: list[str | None] = []
 
     def log_message(self, *args):  # silence stderr noise
         pass
 
     def do_POST(self):
+        type(self).received_authorizations.append(self.headers.get("Authorization"))
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length) or b"{}")
         inputs = body.get("input", [])
@@ -236,6 +476,7 @@ class _EchoEmbeddingHandler(BaseHTTPRequestHandler):
 @pytest.fixture
 def echo_embed_server():
     _EchoEmbeddingHandler.received_inputs = []
+    _EchoEmbeddingHandler.received_authorizations = []
     server = HTTPServer(("127.0.0.1", 0), _EchoEmbeddingHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

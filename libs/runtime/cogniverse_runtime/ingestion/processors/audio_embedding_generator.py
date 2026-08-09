@@ -10,13 +10,26 @@ Generates acoustic and semantic embeddings for audio content:
 import logging
 import threading
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Mapping, Optional, Tuple
 
 import numpy as np
 
 from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
+from cogniverse_foundation.config.inference_auth import inference_headers
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_bearer_headers(headers: Optional[Dict[str, str]]) -> Dict[str, str]:
+    if not headers:
+        return {}
+    if set(headers) != {"Authorization"}:
+        raise ValueError("clap_headers must contain only Authorization")
+    authorization = headers["Authorization"]
+    scheme, separator, token = authorization.partition(" ")
+    if scheme != "Bearer" or not separator or not token or token != token.strip():
+        raise ValueError("clap_headers Authorization must be a canonical bearer value")
+    return {"Authorization": authorization}
 
 
 class AudioEmbeddingGenerator:
@@ -27,6 +40,9 @@ class AudioEmbeddingGenerator:
         clap_model: str = "laion/clap-htsat-unfused",
         semantic_model: Optional[str] = None,
         clap_endpoint_url: Optional[str] = None,
+        clap_headers: Optional[Dict[str, str]] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
     ):
         """
         Initialize audio embedding generator
@@ -42,18 +58,47 @@ class AudioEmbeddingGenerator:
                 acoustic embeddings route over HTTP instead of loading
                 CLAP in-process — the deployed runtime image ships no
                 torch, so in-cluster this is the only working path.
+            clap_headers: Canonical bearer headers for a non-Modal endpoint.
+                Modal endpoints use ``COGNIVERSE_INFERENCE_API_KEY`` and reject
+                caller-supplied headers.
+            _resolved_headers: Immutable credentials already resolved by an
+                owning dependency object. Internal callers only.
         """
         self._clap_model_name = clap_model
         self._semantic_model_name = semantic_model
         self._clap_endpoint_url = (
             clap_endpoint_url.rstrip("/") if clap_endpoint_url else None
         )
+        if _resolved_headers is not None:
+            if clap_headers is not None:
+                raise ValueError(
+                    "clap_headers and _resolved_headers are mutually exclusive"
+                )
+            if self._clap_endpoint_url is None:
+                raise ValueError("_resolved_headers requires clap_endpoint_url")
+            self._clap_headers = _resolved_headers
+        else:
+            explicit_headers = _canonical_bearer_headers(clap_headers)
+            if explicit_headers and self._clap_endpoint_url is None:
+                raise ValueError("clap_headers requires clap_endpoint_url")
+            configured_headers = (
+                inference_headers(self._clap_endpoint_url)
+                if self._clap_endpoint_url
+                else {}
+            )
+            if configured_headers and clap_headers is not None:
+                raise ValueError(
+                    "clap_headers must not be supplied for a Modal endpoint"
+                )
+            self._clap_headers = configured_headers or explicit_headers
 
         # Lazy loading
         self._clap_model = None
         self._clap_processor = None
         self._semantic_model = None
         self._http_client = None
+        self._clap_model_lock = threading.Lock()
+        self._semantic_model_lock = threading.Lock()
         self._http_client_lock = threading.Lock()
 
         logger.info("AudioEmbeddingGenerator initialized")
@@ -71,7 +116,10 @@ class AudioEmbeddingGenerator:
             if self._http_client is None:
                 import httpx
 
-                self._http_client = httpx.Client(timeout=600.0)
+                self._http_client = httpx.Client(
+                    timeout=600.0,
+                    headers=self._clap_headers,
+                )
             return self._http_client
 
     def close(self) -> None:
@@ -85,19 +133,21 @@ class AudioEmbeddingGenerator:
     def clap_model(self):
         """Lazy load CLAP model"""
         if self._clap_model is None:
-            logger.info(f"Loading CLAP model: {self._clap_model_name}")
-            try:
-                from transformers import ClapModel, ClapProcessor
+            with self._clap_model_lock:
+                if self._clap_model is None:
+                    logger.info(f"Loading CLAP model: {self._clap_model_name}")
+                    try:
+                        from transformers import ClapModel, ClapProcessor
 
-                self._clap_model = ClapModel.from_pretrained(self._clap_model_name)
-                self._clap_processor = ClapProcessor.from_pretrained(
-                    self._clap_model_name
-                )
-                self._clap_model.eval()
-                logger.info("✅ CLAP model loaded")
-            except Exception as e:
-                logger.error(f"Failed to load CLAP model: {e}")
-                raise
+                        model = ClapModel.from_pretrained(self._clap_model_name)
+                        processor = ClapProcessor.from_pretrained(self._clap_model_name)
+                        model.eval()
+                    except Exception as e:
+                        logger.error(f"Failed to load CLAP model: {e}")
+                        raise
+                    self._clap_model = model
+                    self._clap_processor = processor
+                    logger.info("✅ CLAP model loaded")
         return self._clap_model
 
     @property
@@ -116,14 +166,17 @@ class AudioEmbeddingGenerator:
         loading an independent ~400MB model per call site.
         """
         if self._semantic_model is None:
-            try:
-                self._semantic_model = get_semantic_embedder(
-                    model_name=self._semantic_model_name
-                )
-                logger.info("✅ Semantic embedder ready")
-            except Exception as e:
-                logger.error(f"Failed to initialize semantic embedder: {e}")
-                raise
+            with self._semantic_model_lock:
+                if self._semantic_model is None:
+                    try:
+                        semantic_model = get_semantic_embedder(
+                            model_name=self._semantic_model_name
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to initialize semantic embedder: {e}")
+                        raise
+                    self._semantic_model = semantic_model
+                    logger.info("✅ Semantic embedder ready")
         return self._semantic_model
 
     def generate_acoustic_embedding(
@@ -220,20 +273,32 @@ class AudioEmbeddingGenerator:
             sf.write(buf, audio_array, sample_rate, format="WAV")
             raw = buf.getvalue()
 
-        resp = self._get_http_client().post(
-            f"{self._clap_endpoint_url}/embed/audio",
-            json={"audio_b64": base64.b64encode(raw).decode()},
+        return self._post_remote(
+            "/embed/audio",
+            {"audio_b64": base64.b64encode(raw).decode()},
         )
-        resp.raise_for_status()
-        return np.asarray(resp.json()["vec"], dtype=np.float32)
 
     def _remote_acoustic_text_embedding(self, text: str) -> np.ndarray:
-        resp = self._get_http_client().post(
-            f"{self._clap_endpoint_url}/embed/text",
-            json={"text": text},
-        )
-        resp.raise_for_status()
-        return np.asarray(resp.json()["vec"], dtype=np.float32)
+        return self._post_remote("/embed/text", {"text": text})
+
+    def _post_remote(self, path: str, payload: Dict[str, str]) -> np.ndarray:
+        import httpx
+
+        url = f"{self._clap_endpoint_url}{path}"
+        try:
+            response = self._get_http_client().post(url, json=payload)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(
+                f"CLAP request to {url} failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        try:
+            vector = response.json()["vec"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"CLAP request to {url} returned an invalid embedding response"
+            ) from exc
+        return np.asarray(vector, dtype=np.float32)
 
     def generate_acoustic_text_embedding(self, text: str) -> np.ndarray:
         """Generate a 512-dim text embedding in CLAP's joint audio-text space.

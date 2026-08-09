@@ -28,7 +28,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 VESPA_HTTP_PORT = 8080
 VESPA_CONFIG_PORT = 33071
@@ -94,7 +94,6 @@ def _write_fact(mm: Mem0MemoryManager, *, content: str, subject: str) -> str:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestFederatedFanOutCollectsHits:
     """Each of three same-org tenants holds one lithium fact → exactly 3 hits."""
 
@@ -147,7 +146,6 @@ class TestFederatedFanOutCollectsHits:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestFederatedQueryACLDeniesNonOrgTenant:
     """Including a cross-org tenant in tenant_ids returns 403."""
 

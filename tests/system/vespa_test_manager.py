@@ -249,12 +249,26 @@ class VespaTestManager:
             # i.e. the developer's production Vespa. Before backend.py's
             # schema-preservation guard caught this, `allow_schema_removal=True`
             # was silently dropping real tenant schemas from that Vespa.
+            # Ingestion resolves each processor's inference_service from this
+            # SystemConfig: the embedding processor needs the profile's
+            # embedding service and the audio processor needs its
+            # transcription service. Seeding without the endpoint map leaves
+            # both lookups empty, and the pipeline refuses to build. The
+            # requires_inference marker publishes the resolved endpoints in the
+            # environment; carry them through.
+            from cogniverse_foundation.config.bootstrap import (
+                parse_inference_service_urls,
+            )
             from cogniverse_foundation.config.unified_config import SystemConfig
 
+            inference_service_urls = parse_inference_service_urls(
+                os.environ.get("INFERENCE_SERVICE_URLS", "")
+            )
             config_manager.set_system_config(
                 SystemConfig(
                     backend_url="http://localhost",
                     backend_port=self.http_port,
+                    inference_service_urls=inference_service_urls,
                 )
             )
             print(

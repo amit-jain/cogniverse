@@ -197,6 +197,18 @@ class ClaimExtractor:
             llm_config = dataclasses.replace(
                 llm_config, max_tokens=CLAIM_EXTRACTION_MIN_OUTPUT_TOKENS
             )
+        # Claim extraction is a structured task: sampling temperatures let the
+        # model mis-attribute claim subjects (a 4B model at 0.1 swaps the SPO
+        # subject on real transcript segments), so this path decodes greedily
+        # regardless of the tenant's conversational temperature.
+        current_temperature = getattr(llm_config, "temperature", None)
+        if (
+            llm_config is not None
+            and dataclasses.is_dataclass(llm_config)
+            and isinstance(current_temperature, (int, float))
+            and current_temperature != 0.0
+        ):
+            llm_config = dataclasses.replace(llm_config, temperature=0.0)
         self._llm_config = llm_config
         # Needed to resolve semantic routing per request; None keeps the direct
         # (direct) path.

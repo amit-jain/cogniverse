@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import subprocess
 import sys
 import types
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -116,6 +118,30 @@ def test_script_help_names_options(script):
         assert option in proc.stdout, f"{script} --help missing {option}"
 
 
+@contextmanager
+def _root_logging_to_stderr(keep: logging.Handler):
+    """Route root logging away from stdout for the duration.
+
+    An earlier-imported library can leave a stdout-writing handler on the
+    root logger; discover_tenants' own basicConfig is then a no-op and its
+    log records would corrupt the stdout Argo parses as JSON. Detach every
+    root handler except ``keep`` (caplog's capture handler), stand in the
+    stderr StreamHandler basicConfig would have installed, restore after.
+    """
+    root = logging.getLogger()
+    saved = [h for h in root.handlers if h is not keep]
+    for handler in saved:
+        root.removeHandler(handler)
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    root.addHandler(stderr_handler)
+    try:
+        yield
+    finally:
+        root.removeHandler(stderr_handler)
+        for handler in saved:
+            root.addHandler(handler)
+
+
 class TestDiscoverTenants:
     """In-process tests for discover_tenants (no argparse; Argo JSON emitter)."""
 
@@ -138,17 +164,30 @@ class TestDiscoverTenants:
             scope=mod.ConfigScope.ROUTING
         )
 
-    def test_main_prints_json_array(self, mod, monkeypatch, capsys):
+    def test_main_prints_json_array(self, mod, monkeypatch, capsys, caplog):
         manager = self._manager(["t2", "t1"])
         monkeypatch.setattr(mod, "create_default_config_manager", lambda: manager)
-        assert mod.main() == 0
+        with _root_logging_to_stderr(keep=caplog.handler):
+            assert mod.main() == 0
         assert capsys.readouterr().out.strip() == '["t1", "t2"]'
 
-    def test_main_no_tenants_returns_error(self, mod, monkeypatch, capsys):
+    def test_main_no_tenants_returns_error(self, mod, monkeypatch, capsys, caplog):
         manager = self._manager([])
         monkeypatch.setattr(mod, "create_default_config_manager", lambda: manager)
-        assert mod.main() == 1
+        with (
+            _root_logging_to_stderr(keep=caplog.handler),
+            caplog.at_level(logging.ERROR, logger="discover_tenants"),
+        ):
+            assert mod.main() == 1
         assert capsys.readouterr().out.strip() == ""
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "discover_tenants" and record.levelno == logging.ERROR
+        ] == [
+            "No tenants found with routing configs. Auto-optimization requires "
+            "at least one tenant to be registered and configured."
+        ]
 
 
 class TestGenerateLangextractTrainingData:

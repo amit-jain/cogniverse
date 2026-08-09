@@ -20,76 +20,108 @@ import subprocess
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
+from tests.e2e.conftest import RUNTIME, TENANT_ID
 
 PHOENIX = "http://localhost:33006"
 VESPA = "http://localhost:33080"
+KUBECTL_CONTEXT = "k3d-cogniverse"
+NAMESPACE = "cogniverse"
 
 
-def _get_kubeconfig() -> str:
-    """Get kubeconfig path for k3d cluster."""
+def _run_kubectl(command: list[str], *, timeout: int) -> subprocess.CompletedProcess:
+    command_text = " ".join(command)
     try:
         result = subprocess.run(
-            ["k3d", "kubeconfig", "write", "cogniverse"],
+            command,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=timeout,
         )
-        return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return ""
-
-
-_KUBECONFIG = _get_kubeconfig()
+    except FileNotFoundError as exc:
+        pytest.fail(
+            f"kubectl executable unavailable after E2E stack setup; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; error={exc}",
+            pytrace=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"kubectl command timed out after E2E stack setup; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; "
+            f"timeout={exc.timeout}s; stdout={exc.stdout!r}; stderr={exc.stderr!r}",
+            pytrace=False,
+        )
+    if result.returncode != 0:
+        pytest.fail(
+            f"kubectl command failed after E2E stack setup; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; "
+            f"returncode={result.returncode}; stdout={result.stdout!r}; "
+            f"stderr={result.stderr!r}",
+            pytrace=False,
+        )
+    return result
 
 
 def _kubectl(*args, timeout=10) -> str:
     """Run kubectl command against k3d cluster, return stdout."""
-    env = None
-    if _KUBECONFIG:
-        import os
-
-        env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
-    result = subprocess.run(
-        ["kubectl", "-n", "cogniverse", *args],
-        capture_output=True,
-        text=True,
+    result = _run_kubectl(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "-n",
+            NAMESPACE,
+            *args,
+        ],
         timeout=timeout,
-        env=env,
     )
     return result.stdout.strip()
 
 
-def _kubectl_available() -> bool:
-    try:
-        env = None
-        if _KUBECONFIG:
-            import os
-
-            env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
-        result = subprocess.run(
-            ["kubectl", "version", "--client"],
-            capture_output=True,
-            timeout=5,
-            env=env,
+@pytest.fixture(scope="module", autouse=True)
+def require_kubectl_cluster() -> None:
+    """Require cluster and Argo access after E2E stack initialization."""
+    _run_kubectl(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "get",
+            "namespace",
+            NAMESPACE,
+            "-o",
+            "name",
+        ],
+        timeout=15,
+    )
+    controller_command = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "-n",
+        NAMESPACE,
+        "get",
+        "pods",
+        "-l",
+        "app.kubernetes.io/component=workflow-controller",
+        "--field-selector=status.phase=Running",
+        "-o",
+        "name",
+    ]
+    controller = _run_kubectl(controller_command, timeout=15)
+    if not controller.stdout.strip():
+        pytest.fail(
+            f"Argo workflow controller unavailable after E2E stack setup; "
+            f"command={' '.join(controller_command)!r}; "
+            f"context={KUBECTL_CONTEXT!r}; namespace={NAMESPACE!r}; "
+            f"stdout={controller.stdout!r}; stderr={controller.stderr!r}",
+            pytrace=False,
         )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
-skip_if_no_kubectl = pytest.mark.skipif(
-    not _kubectl_available(),
-    reason="kubectl not available",
-)
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestQualityMonitorSidecar:
     """Verify the quality monitor sidecar is deployed and running."""
 
-    @skip_if_no_kubectl
     def test_sidecar_container_running(self):
         """Runtime pod has a quality-monitor sidecar container."""
         pods = _kubectl(
@@ -106,7 +138,6 @@ class TestQualityMonitorSidecar:
             f"got containers: {containers}"
         )
 
-    @skip_if_no_kubectl
     def test_sidecar_container_not_crashlooping(self):
         """Quality monitor sidecar should be running, not CrashLoopBackOff."""
         statuses = _kubectl(
@@ -122,7 +153,6 @@ class TestQualityMonitorSidecar:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestPhoenixDatasets:
     """Verify Phoenix dataset operations for eval baselines."""
 
@@ -169,7 +199,6 @@ class TestPhoenixDatasets:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSearchWithStrategies:
     """Verify search works and strategies can be injected."""
 
@@ -199,8 +228,6 @@ class TestSearchWithStrategies:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 class TestArgoWorkflows:
     """Verify Argo CronWorkflows are deployed on k3d."""
 

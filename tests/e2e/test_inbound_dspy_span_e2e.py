@@ -36,34 +36,29 @@ _TENANT = "flywheel_org:production"
 _CONSTRAINT_TEXT = "focus on safety equipment and protective gear"
 
 
-def _runtime_reachable() -> bool:
+def _require_http_prerequisite(name: str, endpoint: str) -> None:
     try:
         with httpx.Client(timeout=2.0) as c:
-            r = c.get(f"{RUNTIME_BASE}/health")
-        return r.status_code == 200
-    except Exception:
-        return False
+            response = c.get(endpoint)
+    except httpx.HTTPError as exc:
+        pytest.fail(
+            f"{name} prerequisite request failed after E2E stack setup; "
+            f"method='GET'; url={endpoint!r}; timeout=2.0s; error={exc!r}",
+            pytrace=False,
+        )
+    assert response.status_code == 200, (
+        f"{name} prerequisite returned HTTP {response.status_code}; "
+        f"method='GET'; url={endpoint!r}; body={response.text[:500]!r}"
+    )
 
 
-def _phoenix_reachable() -> bool:
-    try:
-        with httpx.Client(timeout=2.0) as c:
-            r = c.get(f"{PHOENIX_BASE}/v1/traces")
-        return r.status_code == 200
-    except Exception:
-        return False
+@pytest.fixture(scope="module", autouse=True)
+def _require_runtime_and_phoenix() -> None:
+    _require_http_prerequisite("cogniverse runtime", f"{RUNTIME_BASE}/health")
+    _require_http_prerequisite("Phoenix", f"{PHOENIX_BASE}/v1/traces")
 
 
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not (_runtime_reachable() and _phoenix_reachable()),
-        reason=(
-            f"requires cogniverse-runtime at {RUNTIME_BASE} AND Phoenix at "
-            f"{PHOENIX_BASE}"
-        ),
-    ),
-]
+pytestmark = pytest.mark.e2e
 
 
 def _run_process(session_id: str, query: str, constraint: str | None) -> dict:

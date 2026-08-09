@@ -40,8 +40,8 @@ class GLiNERRelationshipExtractor:
         Args:
             model_name: GLiNER model to use; falls back to DEFAULT_GLINER_MODEL
                 when None (config-aware callers pass the configured model)
-            inference_url: When set, route through the deploy/gliner
-                sidecar instead of loading the model in-process. The
+            inference_url: When set, route through the GLiNER inference
+                service instead of loading the model in-process. The
                 slim runtime image excludes torch+gliner by design;
                 production must always pass this URL.
         """

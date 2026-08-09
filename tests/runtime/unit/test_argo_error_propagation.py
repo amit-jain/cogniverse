@@ -173,3 +173,96 @@ def test_shared_argo_client_never_crosses_loops(monkeypatch) -> None:
 
     assert first is not second
     assert len(created) == 2
+
+
+class TestArgoClientAcceptsTheInClusterCertificate:
+    """The shared client must reach argo-server's self-signed endpoint.
+
+    argo-server runs in secure mode behind a self-signed in-cluster
+    certificate. A default-verifying client raises
+    ``CERTIFICATE_VERIFY_FAILED`` on connect, ``_submit_cron_workflow`` maps
+    that to 503, and no scheduled job can ever be created. This drives a real
+    local HTTPS server holding a self-signed cert — no mock — so the client's
+    TLS posture is exercised rather than asserted from a flag.
+    """
+
+    @staticmethod
+    def _self_signed_server():
+        import http.server
+        import ssl
+        import tempfile
+        import threading
+        from pathlib import Path
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, "argo-server.argo.svc")]
+        )
+        import datetime as _dt
+
+        now = _dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc)
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - _dt.timedelta(days=1))
+            .not_valid_after(now + _dt.timedelta(days=3650))
+            .add_extension(
+                x509.SubjectAlternativeName([x509.DNSName("localhost")]), False
+            )
+            .sign(key, hashes.SHA256())
+        )
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "c.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        (tmp / "k.pem").write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+        )
+
+        class _H(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"metadata":{"name":"ok"}}')
+
+            def log_message(self, *a):  # keep pytest output clean
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), _H)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(tmp / "c.pem", tmp / "k.pem")
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        return srv
+
+    def test_post_to_a_self_signed_https_endpoint_succeeds(self):
+        import asyncio
+
+        srv = self._self_signed_server()
+        port = srv.server_address[1]
+        try:
+
+            async def _post():
+                client = await tenant_router._shared_argo_client()
+                return await client.post(
+                    f"https://127.0.0.1:{port}/api/v1/cron-workflows/cogniverse",
+                    json={"namespace": "cogniverse"},
+                )
+
+            response = asyncio.run(_post())
+        finally:
+            srv.shutdown()
+
+        assert response.status_code == 200
+        assert response.json() == {"metadata": {"name": "ok"}}

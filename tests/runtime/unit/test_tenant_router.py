@@ -563,7 +563,10 @@ class TestMemoryAwareMixinInstructions:
                 self.memory_manager = MagicMock()
                 self.memory_manager.memory = MagicMock()
                 self._memory_agent_name = "test_agent"
-                self._memory_tenant_id = tenant_id
+                # Same call production dispatch uses: sets the request-scoped
+                # tenant ContextVar (which _current_memory_tenant_id prefers)
+                # plus the instance attribute.
+                self.set_tenant_for_context(tenant_id)
                 self._memory_initialized = True
 
         return FakeAgent()
@@ -608,7 +611,10 @@ class TestMemoryAwareMixinInstructions:
             def __init__(self):
                 self.memory_manager = None
                 self._memory_agent_name = "a"
-                self._memory_tenant_id = "acme"
+                # Same call production dispatch uses: sets the request-scoped
+                # tenant ContextVar (which _current_memory_tenant_id prefers)
+                # plus the instance attribute.
+                self.set_tenant_for_context("acme")
                 self._memory_initialized = False
 
         agent = FakeAgent()

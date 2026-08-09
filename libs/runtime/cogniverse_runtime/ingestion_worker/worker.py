@@ -24,16 +24,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import os
 import signal
 import socket
+import threading
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
 import redis.asyncio as aioredis
 
+from cogniverse_foundation.config.bootstrap import parse_inference_service_urls
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.queue import IngestJob
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
@@ -75,6 +77,9 @@ class WorkerConfig:
         self.redis_url = os.environ.get("REDIS_URL")
         if not self.redis_url:
             raise RuntimeError("REDIS_URL must be set for the ingestion worker")
+        self.inference_service_urls = parse_inference_service_urls(
+            os.environ.get("INFERENCE_SERVICE_URLS", "")
+        )
         self.consumer_group = os.environ.get("INGEST_CONSUMER_GROUP", "ingestors")
         self.consumer_id = os.environ.get(
             "INGEST_CONSUMER_ID", f"{socket.gethostname()}-{os.getpid()}"
@@ -241,7 +246,6 @@ def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
     graph_router.set_graph_manager_factory(
         _build_worker_graph_factory(graph_backend, config_manager)
     )
-    _configure_dspy_lm(config_manager)
     _GRAPH_FACTORY_INSTALLED = True
 
 
@@ -273,27 +277,20 @@ def _resolve_worker_llm_config(config_manager):
     return LLMEndpointConfig(**endpoint)
 
 
-def _configure_dspy_lm(config_manager) -> None:
-    """Configure the DSPy default LM so ClaimExtractor + the
-    sufficient-context gate run without an explicit dspy.configure.
+def _build_worker_lm(llm_config):
+    """Build the worker-wide default LM (env fallback when None).
 
-    The runtime's main.py does this on startup but the worker has its
-    own process. Resolves ``llm_config.primary`` from the config store
-    first (so retries/timeout/seed/extra_headers reach the LM); falls
-    back to ``LLM_ENDPOINT`` + ``LLM_MODEL`` env (the same env vars the
-    runtime pod uses) when the store has no primary endpoint. Either
-    way the LM is built via ``create_dspy_lm`` — the mandatory
-    chokepoint for every dspy.LM construction. Idempotent —
-    dspy.settings.lm is replaced each call but the side effect is the
-    same.
+    Falls back to ``LLM_ENDPOINT`` + ``LLM_MODEL`` env (the same env vars
+    the runtime pod uses) when the store has no primary endpoint. Either
+    way the LM is built via ``create_dspy_lm`` — the mandatory chokepoint
+    for every dspy.LM construction. Returns ``None`` when neither source
+    names an endpoint, so the caller binds nothing at all rather than
+    binding a null LM over whatever DSPy already has.
     """
-    import dspy
-
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
 
-    llm_config = _resolve_worker_llm_config(config_manager)
     if llm_config is None:
         endpoint = os.environ.get("LLM_ENDPOINT")
         model = os.environ.get("LLM_MODEL")
@@ -304,22 +301,49 @@ def _configure_dspy_lm(config_manager) -> None:
                 "unconfigured and ClaimExtractor calls will raise "
                 "'No LM is loaded'."
             )
-            return
+            return None
         llm_config = LLMEndpointConfig(
             model=ensure_provider_prefix(model),
             api_base=endpoint.rstrip("/"),
             temperature=0.0,
         )
     lm = create_dspy_lm(llm_config)
-    dspy.configure(lm=lm)
     logger.info(
-        "DSPy LM configured for worker: model=%s api_base=%s",
+        "DSPy LM built for worker: model=%s api_base=%s",
         llm_config.model,
         llm_config.api_base,
     )
+    return lm
 
 
-def _prepare_job_context():
+_WORKER_LM = None
+_WORKER_LM_RESOLVED = False
+_WORKER_LM_LOCK = threading.Lock()
+
+
+def _worker_dspy_lm(config_manager):
+    """The worker-wide default LM, resolved from the config store once per
+    process.
+
+    Blocking (config-store read), so callers offload it; the lock keeps
+    concurrent first-touch jobs to a single resolve + build instead of one
+    per job.
+    """
+    global _WORKER_LM, _WORKER_LM_RESOLVED
+
+    with _WORKER_LM_LOCK:
+        if not _WORKER_LM_RESOLVED:
+            _WORKER_LM = _build_worker_lm(_resolve_worker_llm_config(config_manager))
+            _WORKER_LM_RESOLVED = True
+        return _WORKER_LM
+
+
+async def _ensure_worker_dspy_lm(config_manager):
+    """The worker default LM for the caller to bind around its job."""
+    return await asyncio.to_thread(_worker_dspy_lm, config_manager)
+
+
+def _prepare_job_context(config: WorkerConfig):
     """Build the config manager + schema loader and install the per-tenant
     GraphManager factory (mirroring the one main.py installs for the API
     runtime, so the worker behaves identically).
@@ -343,19 +367,10 @@ def _prepare_job_context():
     # ``service_urls`` lookup sees the same dict an API-side dispatch
     # would. Local-only; no Vespa persist (main.py remains
     # authoritative).
-    _service_urls_env = os.environ.get("INFERENCE_SERVICE_URLS", "")
-    if _service_urls_env:
-        try:
-            _parsed = json.loads(_service_urls_env)
-            if isinstance(_parsed, dict):
-                _sys_cfg = config_manager.get_system_config()
-                if _sys_cfg.inference_service_urls != _parsed:
-                    _sys_cfg.inference_service_urls = _parsed
-        except (json.JSONDecodeError, ValueError):
-            logger.warning(
-                "INFERENCE_SERVICE_URLS env is not valid JSON: %s",
-                _service_urls_env[:200],
-            )
+    service_urls = dict(config.inference_service_urls)
+    system_config = config_manager.get_system_config()
+    if system_config.inference_service_urls != service_urls:
+        system_config.inference_service_urls = service_urls
     schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
     schema_loader = FilesystemSchemaLoader(schemas_dir)
 
@@ -363,23 +378,64 @@ def _prepare_job_context():
     return config_manager, schema_loader
 
 
-async def _default_processor(job: IngestJob) -> dict:
-    """Production processor: localise the source via MediaLocator, run
-    the VideoIngestionPipeline, then run the per-segment KG extraction
-    + back-ref PATCH so the graph state lands alongside the content
-    documents. Returns the pipeline's result dict augmented with the
-    graph counts; the worker passes it to ``_summarise`` for the
-    status event payload.
+async def _default_processor(job: IngestJob, *, config: WorkerConfig) -> dict:
+    """Production processor: localise the source, bind the worker's default
+    LM for the job, and run the pipeline + per-segment KG extraction under
+    that binding.
+
+    The LM is bound with ``dspy.context``, not ``dspy.configure``: the
+    ambient binding belongs to whichever async task configured it first and
+    raises for every other task, so a per-job binding is the only shape that
+    works in a process where anything else has configured DSPy. The binding
+    lives in a ContextVar, so it reaches the ``to_thread`` offloads and
+    gathered subtasks the KG pass runs its ClaimExtractor calls in. With no
+    endpoint resolvable, nothing is bound and DSPy keeps whatever it had.
     """
+    import dspy
+
     from cogniverse_core.common.media import MediaLocator
-    from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
-    from cogniverse_runtime.routers.ingestion import _extract_graph_per_segment
 
     media_config = _media_config_from_env()
     locator = MediaLocator(tenant_id=job.tenant_id, config=media_config)
     local_path = await asyncio.to_thread(locator.localize, job.source_url)
 
-    config_manager, schema_loader = await asyncio.to_thread(_prepare_job_context)
+    config_manager, schema_loader = await asyncio.to_thread(
+        _prepare_job_context, config
+    )
+    worker_lm = await _ensure_worker_dspy_lm(config_manager)
+    binding = (
+        dspy.context(lm=worker_lm)
+        if worker_lm is not None
+        else contextlib.nullcontext()
+    )
+
+    with binding:
+        return await _ingest_and_extract_graph(
+            job,
+            local_path=local_path,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+
+
+async def _ingest_and_extract_graph(
+    job: IngestJob,
+    *,
+    local_path,
+    config_manager,
+    schema_loader,
+) -> dict:
+    """Run the VideoIngestionPipeline over the localised file, then the
+    per-segment KG extraction + back-ref PATCH so the graph state lands
+    alongside the content documents. Returns the pipeline's result dict
+    augmented with the graph counts; the worker passes it to ``_summarise``
+    for the status event payload.
+
+    Runs under the caller's DSPy LM binding — every LM-backed step below
+    reads it, directly or from a thread the binding's ContextVar reaches.
+    """
+    from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+    from cogniverse_runtime.routers.ingestion import _extract_graph_per_segment
 
     pipeline = VideoIngestionPipeline(
         tenant_id=job.tenant_id,
@@ -390,8 +446,8 @@ async def _default_processor(job: IngestJob) -> dict:
     # Process the already-localized file, but record job.source_url (s3://…) as
     # the canonical source_url on every indexed document — answer-time keyframe
     # resolution derives the object-store bucket from it. Passing source_uri
-    # keeps the worker's own object-store-configured localize (line above) as
-    # the single download, without depending on the pipeline's locator config.
+    # keeps the caller's object-store-configured localize as the single
+    # download, without depending on the pipeline's locator config.
     pipeline_envelope = await pipeline.process_video_async(
         Path(local_path), source_uri=job.source_url
     )
@@ -491,7 +547,8 @@ async def _process_job(
     redis: aioredis.Redis,
     job: IngestJob,
     config: WorkerConfig,
-    processor=_default_processor,
+    *,
+    processor,
 ) -> None:
     """Run one job end-to-end and publish events for every state
     change. ACKs the queue message on terminal state — success or
@@ -678,7 +735,8 @@ async def _claim_loop(
     redis: aioredis.Redis,
     config: WorkerConfig,
     stop: asyncio.Event,
-    processor=_default_processor,
+    *,
+    processor,
 ) -> None:
     await queue.ensure_consumer_group(redis, config.consumer_group)
     while not stop.is_set():
@@ -714,7 +772,7 @@ async def _claim_loop(
 
 async def run(
     stop: Optional[asyncio.Event] = None,
-    processor=_default_processor,
+    processor=None,
 ) -> None:
     """Worker entry. Pass an ``asyncio.Event`` to drive shutdown from
     a test; production uses signal handlers below."""
@@ -723,6 +781,8 @@ async def run(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     config = WorkerConfig()
+    if processor is None:
+        processor = partial(_default_processor, config=config)
     if stop is None:
         stop = asyncio.Event()
         _install_signal_handlers(stop)

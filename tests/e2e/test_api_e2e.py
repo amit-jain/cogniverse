@@ -32,7 +32,6 @@ import pytest
 from tests.e2e.conftest import (
     RUNTIME,
     TENANT_ID,
-    skip_if_no_runtime,
     unique_id,
 )
 
@@ -40,7 +39,6 @@ PROFILE = "video_colpali_smol500_mv_frame"
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRoutingPipeline:
     """Scenario 1: Routing agent routes query via the gateway pipeline.
 
@@ -184,7 +182,6 @@ class TestRoutingPipeline:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestQueryEnhancementViaGateway:
     """Scenarios 2-3: Query enhancement and entity extraction are now handled
     by dedicated A2A agents via the orchestrator pipeline.
@@ -273,7 +270,6 @@ class TestQueryEnhancementViaGateway:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestOrchestration:
     """Scenarios 4-5: Gateway triggers orchestration for complex queries."""
 
@@ -337,7 +333,6 @@ class TestOrchestration:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSearchAPI:
     """Scenario 7: Search with profile/strategy selection and result validation."""
 
@@ -476,7 +471,6 @@ class TestSearchAPI:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestProfileCRUD:
     """Profile management: create, list, get, update, delete."""
 
@@ -599,7 +593,6 @@ class TestProfileCRUD:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSystemStats:
     """GET /admin/system/stats returns system statistics."""
 
@@ -615,7 +608,6 @@ class TestSystemStats:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestAgentOperations:
     """Agent registration, capability search, unregistration, and process."""
 
@@ -690,7 +682,6 @@ class TestAgentOperations:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSyntheticDataAPI:
     """Synthetic data generation endpoints."""
 
@@ -799,7 +790,6 @@ class TestSyntheticDataAPI:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestEventOperations:
     """Event queue cancel and offset endpoints."""
 
@@ -829,7 +819,6 @@ class TestEventOperations:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTenantCRUD:
     """Scenario 15: Full tenant lifecycle create -> list -> delete via API."""
 
@@ -947,7 +936,6 @@ class TestTenantCRUD:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestAgentRegistryAndHealth:
     """Scenario 18: Health endpoints and agent registry queries."""
 
@@ -1060,7 +1048,6 @@ class TestAgentRegistryAndHealth:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestA2AProtocol:
     """Scenario 19: A2A protocol agent card, tasks/send, and streaming."""
 
@@ -1195,7 +1182,6 @@ class TestA2AProtocol:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestStreamingAllAgents:
     """Verify A2A streaming works for multiple agent types."""
 
@@ -1265,7 +1251,6 @@ class TestStreamingAllAgents:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestIngestionAPI:
     """Ingestion endpoints: start, status, upload validation."""
 
@@ -1310,23 +1295,61 @@ class TestIngestionAPI:
 # waits for Vespa indexing, then searches and verifies results.
 #
 # Artifacts:
-# - Video: ActivityNet clip (874KB, man throwing discus)
-# - Image: Big Buck Bunny keyframe (1280x720 real animation frame)
-# - Audio: Art of War narration from LibriVox (public domain speech)
-#          + extracted audio from sample video (real video sound)
-# - PDF: Video-ChatGPT paper from arxiv (related to the test dataset)
+# - Video: tracked 18-second 1280x720 clip v_-D1gdv_gQyw.mp4
+# - Image: generated JPEG of that tracked video's first frame
+# - Audio: generated 10-second, 16 kHz mono WAV from that video's audio stream
+# - PDF: deterministic one-page PDF generated from repository evaluation text
 # - Document: dataset_summary.md (real markdown about the evaluation set)
 
 
+def _expected_artifact_source_url(path: Path) -> str:
+    """Return the exact content-addressed MinIO URL used by upload."""
+    import hashlib
+
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return f"s3://cogniverse-ingest/{TENANT_ID}/{digest}{path.suffix}"
+
+
+def _assert_artifact_search_hit(
+    response: httpx.Response,
+    *,
+    query: str,
+    profile: str,
+    video_id: str,
+    expected_metadata: dict,
+) -> None:
+    """Pin a top-1 search response to the artifact that was just uploaded."""
+    assert response.status_code == 200, (
+        f"Search failed for profile={profile!r}: HTTP {response.status_code} "
+        f"body={response.text[:500]}"
+    )
+    payload = response.json()
+    assert payload["query"] == query
+    assert payload["profile"] == profile
+    assert payload["results_count"] == 1, payload
+    assert len(payload["results"]) == 1, payload
+    hit = payload["results"][0]
+    assert hit["document_id"].startswith(f"{video_id}_"), hit
+    assert isinstance(hit["score"], (int, float)) and not isinstance(
+        hit["score"], bool
+    ), hit
+    metadata = hit["metadata"]
+    for key, expected in expected_metadata.items():
+        assert metadata.get(key) == expected, (
+            f"top hit metadata[{key!r}] did not identify the uploaded artifact: "
+            f"expected={expected!r} actual={metadata.get(key)!r} hit={hit!r}"
+        )
+
+
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestVideoIngestionAndSearch:
-    """Upload real ActivityNet video, verify ingestion, then search."""
+    """Upload the tracked real video, verify ingestion, then retrieve it."""
 
     def test_upload_video_and_search(self, real_video_path):
-        """Upload a sample video, ingest it through the ColPali pipeline,
-        then verify it surfaces in search.
-        """
+        """The tracked fire-lighting clip produces and retrieves 19 frames."""
+        assert real_video_path.name == "v_-D1gdv_gQyw.mp4"
+        assert real_video_path.stat().st_size == 5_524_837
+        expected_source_url = _expected_artifact_source_url(real_video_path)
         with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
             with open(real_video_path, "rb") as f:
                 # wait=true keeps the synchronous response shape
@@ -1344,34 +1367,41 @@ class TestVideoIngestionAndSearch:
             assert resp.status_code == 200, f"Video upload failed: {resp.text}"
             upload_data = resp.json()
             assert upload_data["status"] == "success"
+            assert upload_data["state"] == "complete"
             assert upload_data["filename"] == real_video_path.name
-            assert upload_data["chunks_created"] >= 1, (
-                f"Expected >=1 chunks from video frames, got {upload_data['chunks_created']}"
-            )
+            assert upload_data["source_url"] == expected_source_url
+            assert upload_data["chunks_created"] == 19, upload_data
+            assert upload_data["documents_fed"] == 19, upload_data
+            assert isinstance(upload_data["video_id"], str) and upload_data["video_id"]
 
             time.sleep(5)
 
+            query = "man lighting a fire outdoors"
             search_resp = client.post(
                 "/search/",
                 json={
-                    "query": "person doing activity",
+                    "query": query,
                     "profile": "video_colpali_smol500_mv_frame",
-                    "top_k": 10,
+                    "top_k": 1,
                     "tenant_id": TENANT_ID,
+                    "filters": {"source_url": expected_source_url},
                 },
             )
-            assert search_resp.status_code == 200
-            search_data = search_resp.json()
-            assert search_data["results_count"] >= 1, (
-                "Search after video ingestion should return results"
+            _assert_artifact_search_hit(
+                search_resp,
+                query=query,
+                profile="video_colpali_smol500_mv_frame",
+                video_id=upload_data["video_id"],
+                expected_metadata={
+                    "source_url": expected_source_url,
+                    "video_id": upload_data["video_id"],
+                },
             )
-            assert len(search_data["results"]) >= 1
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestImageIngestionAndSearch:
-    """Upload real Big Buck Bunny keyframe (1280x720), ingest, search."""
+    """Upload the tracked video's generated first-frame JPEG and retrieve it."""
 
     def _deploy_schema_if_needed(self, client, profile_name):
         """Deploy schema for profile if not already deployed."""
@@ -1379,11 +1409,23 @@ class TestImageIngestionAndSearch:
             f"/admin/profiles/{profile_name}/deploy",
             json={"tenant_id": TENANT_ID, "force": False},
         )
-        # Accept 200 (deployed) or 409/400 (already deployed)
-        return resp.status_code in (200, 400, 409)
+        assert resp.status_code == 200, (
+            f"Schema deployment request failed: HTTP {resp.status_code} {resp.text}"
+        )
+        body = resp.json()
+        assert body["profile_name"] == profile_name, body
+        assert body["tenant_id"] == TENANT_ID, body
+        assert body["deployment_status"] in {"success", "already_deployed"}, body
 
     def test_upload_image_and_search(self, real_image_path):
-        """Upload real 1280x720 keyframe → ColPali embedding → search."""
+        """The 1280x720 first frame is embedded once and returned as top hit."""
+        from PIL import Image
+
+        assert real_image_path.name == "tracked_video_frame.jpg"
+        with Image.open(real_image_path) as image:
+            assert image.format == "JPEG"
+            assert image.size == (1280, 720)
+        expected_source_url = _expected_artifact_source_url(real_image_path)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             self._deploy_schema_if_needed(client, "image_colpali_mv")
 
@@ -1400,43 +1442,56 @@ class TestImageIngestionAndSearch:
             assert resp.status_code == 200, f"Image upload failed: {resp.text}"
             upload_data = resp.json()
             assert upload_data["status"] == "success"
+            assert upload_data["state"] == "complete"
             assert upload_data["filename"] == real_image_path.name
-            assert upload_data["chunks_created"] >= 1, (
-                f"Image should create >=1 chunk, got {upload_data['chunks_created']}"
-            )
+            assert upload_data["source_url"] == expected_source_url
+            assert upload_data["chunks_created"] == 1, upload_data
+            assert upload_data["documents_fed"] == 1, upload_data
+            assert isinstance(upload_data["video_id"], str) and upload_data["video_id"]
 
             time.sleep(5)
 
+            query = "man in a yellow shirt outdoors beside a red chair"
             search_resp = client.post(
                 "/search/",
                 json={
-                    "query": "animated character cartoon scene",
+                    "query": query,
                     "profile": "image_colpali_mv",
-                    "top_k": 5,
+                    "top_k": 1,
                     "tenant_id": TENANT_ID,
+                    "filters": {"source_url": expected_source_url},
                 },
             )
-            assert search_resp.status_code == 200
-            search_data = search_resp.json()
-            # documents_fed may be 0 if Vespa schema deployment is still converging
-            if upload_data.get("documents_fed", 0) > 0:
-                assert search_data["results_count"] >= 1, (
-                    "Search after image ingestion should return results"
-                )
+            _assert_artifact_search_hit(
+                search_resp,
+                query=query,
+                profile="image_colpali_mv",
+                video_id=upload_data["video_id"],
+                expected_metadata={"source_url": expected_source_url},
+            )
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestAudioIngestionAndSearch:
-    """Extract real audio from sample video, verify pipeline processes it."""
+    """Upload the tracked video's generated audio and retrieve it."""
 
     def test_upload_extracted_audio_processing(self, extracted_audio_path):
-        """Extract audio from ActivityNet video → pipeline processing.
+        """The exact 10-second mono fixture is embedded once and retrieved.
 
-        Uses real audio from sample video (speech/ambient sound), not a
-        synthetic sine tone. Tests the audio pipeline: file discovery →
-        embedding generation.
+        It contains the tracked video's real speech and ambient sound, not a
+        synthetic tone.
         """
+        import wave
+
+        assert extracted_audio_path.name == "tracked_video_audio.wav"
+        with wave.open(str(extracted_audio_path), "rb") as audio:
+            assert (
+                audio.getnchannels(),
+                audio.getsampwidth(),
+                audio.getframerate(),
+                audio.getnframes(),
+            ) == (1, 2, 16_000, 160_000)
+        expected_source_url = _expected_artifact_source_url(extracted_audio_path)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(extracted_audio_path, "rb") as f:
                 resp = client.post(
@@ -1451,35 +1506,44 @@ class TestAudioIngestionAndSearch:
             assert resp.status_code == 200, f"Audio upload failed: {resp.text}"
             upload_data = resp.json()
             assert upload_data["status"] == "success"
-            assert upload_data["chunks_created"] >= 1, (
-                f"Audio should create >=1 chunk, got {upload_data['chunks_created']}"
-            )
+            assert upload_data["state"] == "complete"
+            assert upload_data["filename"] == extracted_audio_path.name
+            assert upload_data["source_url"] == expected_source_url
+            assert upload_data["chunks_created"] == 1, upload_data
+            assert upload_data["documents_fed"] == 1, upload_data
+            assert isinstance(upload_data["video_id"], str) and upload_data["video_id"]
 
-            # Search may fail if CLAP encoder not configured for search
             time.sleep(3)
 
+            query = "man speaking outdoors"
             search_resp = client.post(
                 "/search/",
                 json={
-                    "query": "speech people talking activity",
+                    "query": query,
                     "profile": "audio_clap_semantic",
-                    "top_k": 5,
+                    "top_k": 1,
                     "tenant_id": TENANT_ID,
+                    "filters": {"source_url": expected_source_url},
                 },
             )
-            if search_resp.status_code == 200:
-                search_data = search_resp.json()
-                if upload_data.get("documents_fed", 0) > 0:
-                    assert search_data["results_count"] >= 1
+            _assert_artifact_search_hit(
+                search_resp,
+                query=query,
+                profile="audio_clap_semantic",
+                video_id=upload_data["video_id"],
+                expected_metadata={
+                    "source_url": expected_source_url,
+                    "audio_id": upload_data["video_id"],
+                },
+            )
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestPDFIngestionAndSearch:
-    """Upload real arxiv PDF (Video-ChatGPT paper), verify pipeline processes it."""
+    """Upload the generated evaluation-text PDF and retrieve its exact text."""
 
     def test_upload_pdf_processing(self, real_pdf_path):
-        """Upload Video-ChatGPT paper → PDF text extraction → embedding.
+        """Upload deterministic one-page PDF → text extraction → embedding.
 
         Uploads async and polls ``/ingestion/{id}/status`` rather than
         holding ``wait=true`` open: a full PDF ingest can stay silent
@@ -1488,6 +1552,18 @@ class TestPDFIngestionAndSearch:
         response"). Polling exercises the same worker path without a
         long-silent connection.
         """
+        from PyPDF2 import PdfReader
+
+        assert real_pdf_path.name == "evaluation_dataset.pdf"
+        reader = PdfReader(str(real_pdf_path))
+        assert len(reader.pages) == 1
+        pdf_text = (reader.pages[0].extract_text() or "").strip()
+        assert pdf_text.splitlines() == [
+            "Evaluation Dataset",
+            "Video-ChatGPT Benchmark",
+            "Provides 500 test videos from ActivityNet-200.",
+        ]
+        expected_source_url = _expected_artifact_source_url(real_pdf_path)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_pdf_path, "rb") as f:
                 resp = client.post(
@@ -1502,6 +1578,7 @@ class TestPDFIngestionAndSearch:
             assert resp.status_code in (200, 202), f"PDF upload failed: {resp.text}"
             upload_data = resp.json()
             assert upload_data["filename"] == real_pdf_path.name
+            assert upload_data["source_url"] == expected_source_url
             ingest_id = upload_data["ingest_id"]
 
             deadline = time.time() + 1200
@@ -1509,12 +1586,15 @@ class TestPDFIngestionAndSearch:
             latest: dict = {}
             while time.time() < deadline:
                 status_resp = client.get(f"/ingestion/{ingest_id}/status")
-                if status_resp.status_code == 200:
-                    status_data = status_resp.json()
-                    state = status_data["state"]
-                    latest = status_data["latest"]
-                    if state in ("complete", "failed", "error"):
-                        break
+                assert status_resp.status_code == 200, (
+                    f"PDF ingest status failed: HTTP {status_resp.status_code} "
+                    f"body={status_resp.text[:500]}"
+                )
+                status_data = status_resp.json()
+                state = status_data["state"]
+                latest = status_data["latest"]
+                if state in ("complete", "failed", "error"):
+                    break
                 time.sleep(5)
 
             assert state == "complete", (
@@ -1522,40 +1602,51 @@ class TestPDFIngestionAndSearch:
                 f"state={state!r} latest={latest!r}"
             )
             pipeline_result = latest.get("result", {}) or {}
-            chunks_created = pipeline_result.get(
-                "chunks", pipeline_result.get("keyframes", 0)
+            assert pipeline_result["source_url"] == expected_source_url
+            assert pipeline_result["chunks"] == 1, pipeline_result
+            assert pipeline_result["documents_fed"] == 1, pipeline_result
+            assert pipeline_result["keyframes"] == 0, pipeline_result
+            assert (
+                isinstance(pipeline_result["video_id"], str)
+                and pipeline_result["video_id"]
             )
-            assert chunks_created >= 1, (
-                f"PDF should create >=1 chunk, got {chunks_created} "
-                f"(result={pipeline_result!r})"
-            )
-            upload_data["documents_fed"] = pipeline_result.get("documents_fed", 0)
 
-            # Search uses same encoder limitation as document test
             time.sleep(3)
 
+            query = "Provides 500 test videos from ActivityNet-200"
             search_resp = client.post(
                 "/search/",
                 json={
-                    "query": "video understanding large language model",
+                    "query": query,
                     "profile": "document_text_semantic",
-                    "top_k": 5,
+                    "top_k": 1,
                     "tenant_id": TENANT_ID,
+                    "filters": {"document_id": pipeline_result["video_id"]},
                 },
             )
-            if search_resp.status_code == 200:
-                search_data = search_resp.json()
-                if upload_data.get("documents_fed", 0) > 0:
-                    assert search_data["results_count"] >= 1
+            _assert_artifact_search_hit(
+                search_resp,
+                query=query,
+                profile="document_text_semantic",
+                video_id=pipeline_result["video_id"],
+                expected_metadata={
+                    "document_id": pipeline_result["video_id"],
+                    "full_text": pdf_text,
+                },
+            )
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestDocumentIngestionAndSearch:
-    """Upload real dataset_summary.md, verify pipeline processes it."""
+    """Upload tracked dataset_summary.md and retrieve its exact content."""
 
     def test_upload_markdown_processing(self, real_document_path):
-        """Upload real markdown doc → text extraction → GTE-ColBERT embedding."""
+        """Upload tracked markdown → LateOn embedding → filtered retrieval."""
+        assert real_document_path.name == "dataset_summary.md"
+        document_text = real_document_path.read_text(encoding="utf-8").strip()
+        assert "# Evaluation Dataset" in document_text
+        assert "Provides:\n- **500 test videos** from ActivityNet-200" in document_text
+        expected_source_url = _expected_artifact_source_url(real_document_path)
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_document_path, "rb") as f:
                 resp = client.post(
@@ -1570,31 +1661,36 @@ class TestDocumentIngestionAndSearch:
             assert resp.status_code == 200, f"Document upload failed: {resp.text}"
             upload_data = resp.json()
             assert upload_data["status"] == "success"
+            assert upload_data["state"] == "complete"
             assert upload_data["filename"] == real_document_path.name
-            assert upload_data["chunks_created"] >= 1, (
-                f"Document should create >=1 chunk, got {upload_data['chunks_created']}"
-            )
+            assert upload_data["source_url"] == expected_source_url
+            assert upload_data["chunks_created"] == 1, upload_data
+            assert upload_data["documents_fed"] == 1, upload_data
+            assert isinstance(upload_data["video_id"], str) and upload_data["video_id"]
 
-            # Search verification: document_text_semantic uses Reason-ModernColBERT
-            # which requires a separate encoder config. Verify search is attempted
-            # but accept that the encoder may not be configured for this profile.
             time.sleep(3)
 
+            query = "125 extracted sample video retrieval queries"
             search_resp = client.post(
                 "/search/",
                 json={
-                    "query": "ActivityNet video benchmark evaluation",
+                    "query": query,
                     "profile": "document_text_semantic",
-                    "top_k": 5,
+                    "top_k": 1,
                     "tenant_id": TENANT_ID,
+                    "filters": {"document_id": upload_data["video_id"]},
                 },
             )
-            # Search may fail (500) if encoder not configured for this model;
-            # the critical assertion is that upload + processing succeeded above.
-            if search_resp.status_code == 200:
-                search_data = search_resp.json()
-                if upload_data.get("documents_fed", 0) > 0:
-                    assert search_data["results_count"] >= 1
+            _assert_artifact_search_hit(
+                search_resp,
+                query=query,
+                profile="document_text_semantic",
+                video_id=upload_data["video_id"],
+                expected_metadata={
+                    "document_id": upload_data["video_id"],
+                    "full_text": document_text,
+                },
+            )
 
 
 # Scenario 20 (API portion): Event queue listing
@@ -1603,7 +1699,6 @@ class TestDocumentIngestionAndSearch:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestEventEndpoints:
     """Scenario 20 API: Event queue listing."""
 
@@ -1628,7 +1723,6 @@ class TestEventEndpoints:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestBatchVideoIngestion:
     """Start batch ingestion and verify the event loop stays responsive.
 
@@ -1639,19 +1733,17 @@ class TestBatchVideoIngestion:
 
     def test_batch_ingestion_start(self):
         """Start batch ingestion → poll status → verify event loop responsive."""
-        # Use pod-internal path (devMode mounts data/ at /app/data)
-        video_dir = "/app/data/testset/evaluation/sample_videos"
+        video_dir = "/app/tests/system/resources/videos"
 
-        # Verify the host copy exists (pod mount mirrors host)
-        host_dir = (
-            Path(__file__).parent.parent.parent
-            / "data"
-            / "testset"
-            / "evaluation"
-            / "sample_videos"
+        host_dir = Path(__file__).parent.parent / "system" / "resources" / "videos"
+        tracked_videos = sorted(host_dir.glob("*.mp4"))
+        assert [path.name for path in tracked_videos] == [
+            "v_-6dz6tBH77I.mp4",
+            "v_-D1gdv_gQyw.mp4",
+        ], (
+            f"tracked E2E video set is incomplete: "
+            f"{[path.name for path in tracked_videos]!r}"
         )
-        if not host_dir.exists():
-            pytest.skip(f"Sample video dir not found on host: {host_dir}")
 
         with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
             resp = client.post(

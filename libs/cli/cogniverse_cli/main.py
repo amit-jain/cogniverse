@@ -57,6 +57,19 @@ from cogniverse_cli.images import (
 console = Console()
 
 
+def _build_modal_inference_lifecycle():
+    """Build the Modal lifecycle with the process-scoped inference key."""
+
+    from cogniverse_cli.inference_endpoints import EndpointCredentials
+    from cogniverse_cli.modal_inference_lifecycle import ModalInferenceLifecycle
+
+    return ModalInferenceLifecycle(
+        credentials=EndpointCredentials(
+            bearer_token=os.environ.get("COGNIVERSE_INFERENCE_API_KEY")
+        )
+    )
+
+
 def _resolve_cli_tenant(tenant: str | None) -> str:
     """Pick the tenant_id to use for a CLI command.
 
@@ -665,6 +678,125 @@ def start(name: str) -> None:
                 "re-run `cogniverse start` once pods are ready.[/yellow]"
             )
     console.print(f"[green]Cluster {name} started.[/green]")
+
+
+@cli.group()
+def inference() -> None:
+    """Manage external inference services."""
+
+
+@inference.group(name="modal")
+def inference_modal() -> None:
+    """Manage canonical Modal inference deployments."""
+
+
+def _modal_status_operation(operation: str, services: tuple[str, ...]) -> None:
+    from cogniverse_cli.modal_inference_lifecycle import ModalLifecycleError
+
+    try:
+        with _build_modal_inference_lifecycle() as lifecycle:
+            statuses = getattr(lifecycle, operation)(services)
+    except (ModalLifecycleError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from None
+    for status in statuses:
+        click.echo(
+            f"{status.service}: {status.web_url} "
+            f"(active_containers={status.active_containers})"
+        )
+
+
+@inference_modal.command(name="deploy")
+@click.argument("services", nargs=-1, required=True)
+def inference_modal_deploy(services: tuple[str, ...]) -> None:
+    """Deploy one or more canonical Modal services."""
+
+    _modal_status_operation("deploy", services)
+
+
+@inference_modal.command(name="warm")
+@click.argument("services", nargs=-1, required=True)
+def inference_modal_warm(services: tuple[str, ...]) -> None:
+    """Warm services and verify their authenticated model contracts."""
+
+    from cogniverse_cli.modal_inference_lifecycle import ModalLifecycleError
+
+    try:
+        with _build_modal_inference_lifecycle() as lifecycle:
+            endpoints = lifecycle.warm(services)
+            statuses = {status.service: status for status in lifecycle.status(services)}
+    except (ModalLifecycleError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from None
+    for endpoint in endpoints:
+        status = statuses[endpoint.service]
+        click.echo(
+            f"{endpoint.service}: {endpoint.base_url} "
+            f"(model={endpoint.model_id}, "
+            f"active_containers={status.active_containers})"
+        )
+
+
+@inference_modal.command(name="release")
+@click.argument("services", nargs=-1, required=True)
+def inference_modal_release(services: tuple[str, ...]) -> None:
+    """Return services to scale-to-zero without stopping their apps."""
+
+    _modal_status_operation("release", services)
+
+
+@inference_modal.command(name="status")
+@click.argument("services", nargs=-1, required=True)
+def inference_modal_status(services: tuple[str, ...]) -> None:
+    """Show Modal endpoint and live runner count."""
+
+    _modal_status_operation("status", services)
+
+
+@inference_modal.command(name="qualify")
+@click.argument("service")
+@click.option(
+    "--gpu",
+    "gpu_candidates",
+    multiple=True,
+    required=True,
+    help="Candidate Modal GPU type; repeat in any order.",
+)
+def inference_modal_qualify(
+    service: str,
+    gpu_candidates: tuple[str, ...],
+) -> None:
+    """Choose the earliest configured GPU from supplied candidates."""
+
+    from cogniverse_cli.modal_inference_lifecycle import ModalLifecycleError
+
+    try:
+        with _build_modal_inference_lifecycle() as lifecycle:
+            result = lifecycle.qualify(service, gpu_candidates)
+    except (ModalLifecycleError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from None
+    click.echo(
+        f"{result.service}: selected {result.selected_gpu} from "
+        f"{', '.join(result.considered_gpus)}"
+    )
+
+
+@inference_modal.command(name="undeploy")
+@click.argument("service")
+@click.option(
+    "--confirm-service",
+    required=True,
+    help="Exact service name required before destructive undeploy.",
+)
+def inference_modal_undeploy(service: str, confirm_service: str) -> None:
+    """Permanently stop a Modal app after exact confirmation."""
+
+    from cogniverse_cli.modal_inference_lifecycle import ModalLifecycleError
+
+    try:
+        with _build_modal_inference_lifecycle() as lifecycle:
+            lifecycle.undeploy(service, confirm_service)
+    except (ModalLifecycleError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from None
+    click.echo(f"{service}: undeployed")
 
 
 @cli.group()

@@ -122,18 +122,14 @@ inference:
         cpu: "4"
         memory: "32Gi"
 
+  # PyLate pods reuse the locally built cogniverse/pylate image — the
+  # build bakes the host's torch backend (rocm here), so no per-device
+  # image override is needed. device: rocm still drives the kfd/dri
+  # mounts and maps DEVICE to torch's cuda namespace.
   colbert_pylate:
     enabled: true
     device: rocm
     gpuCount: 1
-    imagesByDevice: *vllmRocmImage
-    extraArgs:
-      - "--max-model-len"
-      - "8192"
-      - "--hf-overrides"
-      - '{"architectures": ["ColBERTModernBertModel"]}'
-      - "--gpu-memory-utilization"
-      - "0.05"
     resources:
       limits:
         cpu: "4"
@@ -146,14 +142,6 @@ inference:
     enabled: true
     device: rocm
     gpuCount: 1
-    imagesByDevice: *vllmRocmImage
-    extraArgs:
-      - "--max-model-len"
-      - "8192"
-      - "--hf-overrides"
-      - '{"architectures": ["ColBERTModernBertModel"]}'
-      - "--gpu-memory-utilization"
-      - "0.05"
     resources:
       limits:
         cpu: "4"

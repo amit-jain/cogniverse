@@ -138,8 +138,7 @@ cogniverse/
 │   │       ├── admin/          # Admin endpoints
 │   │       ├── ingestion/      # Data ingestion
 │   │       ├── ingestion_worker/ # Redis-Streams ingestion worker
-│   │       ├── routers/        # API routers
-│   │       └── sidecars/       # In-process CLAP/face-embedding sidecars
+│   │       └── routers/        # API routers
 │   ├── dashboard/         # cogniverse_dashboard
 │   │   ├── pyproject.toml
 │   │   ├── README.md
@@ -153,7 +152,9 @@ cogniverse/
 │   │       ├── main.py         # `cogniverse` Click entry point
 │   │       ├── admin.py        # Tenant/orphan-reconciliation commands
 │   │       ├── deploy.py       # Schema/chart deployment commands
-│   │       └── cluster.py      # Cluster management commands
+│   │       ├── cluster.py      # Cluster management commands
+│   │       └── modal_inference/ # Installed Modal app definitions
+│   │           └── servers/    # CLAP, face, GLiNER, VideoPrism HTTP servers
 │   └── messaging/         # cogniverse_messaging (standalone, no cogniverse deps)
 │       ├── pyproject.toml
 │       └── cogniverse_messaging/

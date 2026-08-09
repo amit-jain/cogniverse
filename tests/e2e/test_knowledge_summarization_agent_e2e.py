@@ -35,7 +35,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 VESPA_HTTP_PORT = 8080
 VESPA_CONFIG_PORT = 33071
@@ -105,7 +105,6 @@ def _seed_facts(mm: Mem0MemoryManager, *, subject: str, count: int) -> List[str]
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSummarizationOverSubjectSlice:
     """5 facts under one subject_key → summary spans them, promote=False."""
 
@@ -161,7 +160,6 @@ class TestSummarizationOverSubjectSlice:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSummarizationPromotesToOrgTrunk:
     """promote=True + tenant_admin → promoted_memory_id set, lands in trunk schema."""
 

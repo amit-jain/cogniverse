@@ -7,6 +7,7 @@ same module-scoped Vespa instance the memory tests use, without spinning
 up a duplicate.
 """
 
+import json
 import logging
 import os
 import platform
@@ -19,9 +20,19 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import dspy
+import httpx
 import pytest
+from cogniverse_cli.inference_endpoints import (
+    CandidateEndpoint,
+    EndpointCredentials,
+    EndpointIdentityEvidence,
+    ResolvedInferenceEndpoint,
+    resolve_endpoint,
+)
+from cogniverse_cli.modal_inference_config import get_inference_service_spec
 
 from cogniverse_agents.inference.deno_check import is_deno_available
+from cogniverse_foundation.config.inference_auth import inference_headers
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -33,6 +44,118 @@ from tests.memory.conftest import shared_memory_vespa as _shared_memory_vespa_fi
 shared_memory_vespa = _shared_memory_vespa_fixture
 
 logger = logging.getLogger(__name__)
+
+
+def _configured_inference_service_urls() -> dict[str, str]:
+    raw = os.environ.get("INFERENCE_SERVICE_URLS")
+    if raw is None:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "INFERENCE_SERVICE_URLS must be a JSON object of service URLs"
+        ) from exc
+    if not isinstance(parsed, dict) or any(
+        not isinstance(service, str)
+        or not service
+        or not isinstance(url, str)
+        or not url
+        or url != url.strip()
+        for service, url in parsed.items()
+    ):
+        raise RuntimeError(
+            "INFERENCE_SERVICE_URLS must be a JSON object of service URLs"
+        )
+    return parsed
+
+
+def _resolve_modal_generation_endpoint(
+    service: str,
+    *,
+    client: httpx.Client | None = None,
+) -> ResolvedInferenceEndpoint | None:
+    spec = get_inference_service_spec(service)
+    base_url = _configured_inference_service_urls().get(service)
+    if base_url is None:
+        return None
+    host = httpx.URL(base_url).host
+    if host is None or not host.endswith(".modal.run"):
+        return None
+    authorization = inference_headers(base_url)["Authorization"]
+    candidate = CandidateEndpoint(
+        provider="modal",
+        base_url=base_url,
+        credentials=EndpointCredentials(
+            bearer_token=authorization.removeprefix("Bearer ")
+        ),
+        identity_evidence=EndpointIdentityEvidence.ENDPOINT,
+    )
+    if client is not None:
+        return resolve_endpoint(spec, explicit=candidate, client=client)
+    with httpx.Client(timeout=10) as boundary:
+        return resolve_endpoint(spec, explicit=candidate, client=boundary)
+
+
+def _gemma_llm_config(
+    endpoint: ResolvedInferenceEndpoint,
+) -> LLMEndpointConfig:
+    headers = dict(endpoint.headers)
+    authorization = headers.pop("Authorization", None)
+    if not authorization:
+        raise RuntimeError("Gemma endpoint requires bearer authorization")
+    scheme, separator, api_key = authorization.partition(" ")
+    if scheme != "Bearer" or not separator or not api_key or api_key != api_key.strip():
+        raise RuntimeError("Gemma endpoint has an invalid bearer authorization value")
+    return LLMEndpointConfig(
+        model=f"openai/{endpoint.model_id}",
+        api_base=f"{endpoint.base_url}/v1",
+        api_key=api_key,
+        temperature=0.1,
+        max_tokens=800,
+        extra_headers=headers,
+    )
+
+
+def _resolve_verified_local_endpoint(
+    service: str,
+    *,
+    base_url: str,
+    api_key: str,
+) -> ResolvedInferenceEndpoint:
+    spec = get_inference_service_spec(service)
+    root_url = base_url.rstrip("/")
+    if root_url.endswith("/v1"):
+        root_url = root_url[: -len("/v1")]
+    return resolve_endpoint(
+        spec,
+        explicit=CandidateEndpoint(
+            provider="local",
+            base_url=root_url,
+            credentials=EndpointCredentials(bearer_token=api_key),
+            identity_evidence=EndpointIdentityEvidence.DEPLOYMENT,
+            model_revision=spec.model_revision,
+        ),
+    )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items):
+    """Avoid local Gemma provisioning when its Modal endpoint is configured."""
+
+    gemma_url = _configured_inference_service_urls().get("vllm_llm_student")
+    gemma_host = httpx.URL(gemma_url).host if gemma_url is not None else None
+    if gemma_host is None or not gemma_host.endswith(".modal.run"):
+        return
+    for item in items:
+        roles = getattr(item, "_cogniverse_lm_roles", ())
+        if (
+            roles == frozenset({"primary"})
+            and "ensure_host_ollama" in item.fixturenames
+        ):
+            item.fixturenames.remove("ensure_host_ollama")
+            if "gemma_inference_endpoint" not in item.fixturenames:
+                item.fixturenames.append("gemma_inference_endpoint")
 
 
 def is_llm_available() -> bool:
@@ -141,51 +264,88 @@ def ensure_deno() -> Path:
     return deno_path
 
 
+@pytest.fixture(scope="session")
+def gemma_inference_endpoint(request):
+    """Prefer the authenticated Modal Gemma service, then the exact local LM."""
+
+    endpoint = _resolve_modal_generation_endpoint("vllm_llm_student")
+    if endpoint is None:
+        request.getfixturevalue("ensure_host_ollama")
+        from tests.fixtures.llm import (
+            resolve_api_key,
+            resolve_base_url,
+        )
+
+        endpoint = _resolve_verified_local_endpoint(
+            "vllm_llm_student",
+            base_url=resolve_base_url(),
+            api_key=resolve_api_key(),
+        )
+    config = _gemma_llm_config(endpoint)
+    injected = {
+        "TEST_LLM_API_BASE": config.api_base,
+        "TEST_LLM_MODEL": endpoint.model_id,
+        "TEST_LLM_PROVIDER": "openai",
+        "TEST_LLM_API_KEY": config.api_key,
+        "OPENAI_API_KEY": config.api_key,
+    }
+    original = {name: os.environ.get(name) for name in injected}
+    os.environ.update(injected)
+    try:
+        yield endpoint
+    finally:
+        for name, value in original.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _resolve_whisper_inference_endpoint(vllm_sidecar):
+    endpoint = _resolve_modal_generation_endpoint("vllm_asr")
+    if endpoint is not None:
+        return endpoint
+    spec = get_inference_service_spec("vllm_asr")
+    base_url = vllm_sidecar.spawn(
+        model=spec.model_id,
+        model_revision=spec.model_revision,
+        required_snapshot_files=(
+            "added_tokens.json",
+            "config.json",
+            "generation_config.json",
+            "merges.txt",
+            "model.safetensors",
+            "normalizer.json",
+            "preprocessor_config.json",
+            "special_tokens_map.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+        ),
+        extra_args=["--runner", "generate", "--max-model-len", "448"],
+    )
+    return ResolvedInferenceEndpoint(
+        service=spec.name,
+        provider="local",
+        base_url=base_url.rstrip("/"),
+        headers={},
+        model_id=spec.model_id,
+        model_revision=spec.model_revision,
+    )
+
+
+@pytest.fixture(scope="session")
+def whisper_inference_endpoint(vllm_sidecar):
+    """Prefer authenticated Modal Whisper, then an exact test-owned sidecar."""
+
+    return _resolve_whisper_inference_endpoint(vllm_sidecar)
+
+
 @pytest.fixture(scope="module")
-def _dspy_lm_instance(ensure_host_ollama):
-    """Module-scoped: create the LM once per module (expensive).
+def _dspy_lm_instance(gemma_inference_endpoint):
+    """Create one exact production Gemma LM per integration-test module."""
 
-    Depends on ``ensure_host_ollama`` so every consumer — including the
-    re-exports under ``tests/memory/integration`` — gets a provisioned
-    endpoint plus the materialized test config, and resolves the target
-    via the canonical env-first helpers. A store-backed config read here
-    coupled LM setup to config-store reachability: with the dead-port
-    test default the fixture errored before any test body ran.
-    """
-    from tests.fixtures.llm import (
-        resolve_api_key,
-        resolve_base_url,
-        resolve_prefixed_model,
-    )
-
-    # Disable qwen3 thinking mode — it puts output in a 'thinking' field
-    # that DSPy can't read, leaving content empty.
-    model = resolve_prefixed_model()
-    extra_body = None
-    if "qwen3" in model or "qwen-3" in model:
-        extra_body = {"think": False}
-
-    endpoint = LLMEndpointConfig(
-        model=model,
-        api_base=resolve_base_url(),
-        # Local OAI-compat LM servers accept any bearer token but litellm
-        # refuses to construct an OpenAI client without an api_key set, so
-        # it falls back to OPENAI_API_KEY and raises AuthenticationError
-        # when neither is present. Test endpoints don't validate the key —
-        # resolve_api_key defaults to the cogniverse convention sentinel.
-        api_key=resolve_api_key(),
-        temperature=0.1,
-        # 200 tokens was too small: synthesis / summarisation tests
-        # truncate mid-sentence, masking real failures behind a
-        # plausible-looking partial answer (the 3-doc synthesis test
-        # would only ever surface 1 of 3 distinguishing facts before
-        # hitting the cap). 800 is enough headroom for the largest
-        # synthesis prompts in the test suite without slowing simple
-        # Q&A tests appreciably (local LMs stop early on short answers).
-        max_tokens=800,
-        extra_body=extra_body,
-    )
-    return create_dspy_lm(endpoint)
+    return create_dspy_lm(_gemma_llm_config(gemma_inference_endpoint))
 
 
 @pytest.fixture
@@ -543,3 +703,36 @@ def real_telemetry(phoenix_container):
 
     TelemetryManager.reset()
     get_telemetry_registry().clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def _test_owned_telemetry():
+    """Keep extraction/graph span export off the default localhost:4317.
+
+    The KG extraction paths call ``get_telemetry_manager()``; without a
+    collector the batch exporter sprays connection failures after every
+    successful run. When no test-owned collector is configured
+    (``TELEMETRY_OTLP_ENDPOINT``, set by ``phoenix_container``), pre-build
+    the singleton disabled so spans no-op instead of exporting into the
+    void. Tests that assert real span export depend on
+    ``phoenix_container``, which sets the env var and resets the manager.
+    """
+    import os
+
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    if os.environ.get("TELEMETRY_OTLP_ENDPOINT"):
+        yield
+        return
+    installed = None
+    if telemetry_manager_module._telemetry_manager is None:
+        installed = TelemetryManager(TelemetryConfig(enabled=False))
+        telemetry_manager_module._telemetry_manager = installed
+    yield
+    if (
+        installed is not None
+        and telemetry_manager_module._telemetry_manager is installed
+    ):
+        telemetry_manager_module._telemetry_manager = None

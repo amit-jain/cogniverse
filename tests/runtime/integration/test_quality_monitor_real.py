@@ -462,12 +462,16 @@ class TestForceOptimizationCycle:
         )
         await monitor.close()
 
+    @pytest.mark.requires_lm
     @pytest.mark.asyncio
     async def test_force_cycle_with_live_spans_returns_ok(
         self, real_telemetry, vespa_instance
     ):
         """When Phoenix has at least one live span, force_optimization_cycle
-        must return status='ok' and list triggered agents."""
+        must return status='ok' and list triggered agents.
+
+        The live eval scores the emitted span with the LLM judge, so this
+        test owns the test LM via the requires_lm marker."""
         import asyncio
 
         from cogniverse_core.agents.base import (
@@ -944,11 +948,13 @@ class TestLiveTrafficRealPhoenix:
             "summary span should be dropped when search-result shape is required"
         )
 
+    @pytest.mark.requires_lm
     @pytest.mark.asyncio
     async def test_evaluate_live_traffic_scores_summary_agent(self, real_telemetry):
         """Full path: a summary span is fetched, scored by the real LLM judge,
         and surfaced in evaluate_live_traffic().agent_results[SUMMARY] — not
-        dropped as a non-search shape."""
+        dropped as a non-search shape. The requires_lm marker provisions the
+        exact judge LM this test consumes."""
         import asyncio
 
         tenant_id = "qmrt:live-score"

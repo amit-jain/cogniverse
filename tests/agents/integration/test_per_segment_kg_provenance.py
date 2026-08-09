@@ -53,7 +53,9 @@ def _configure_dspy_lm(ensure_host_ollama):
     test in the module sees ``No LM is loaded``. Function-scope autouse
     re-configures DSPy before each test in this file so the production
     ``ClaimExtractor`` invocations inside ``_extract_graph_per_segment``
-    have a real LM to talk to.
+    have a real LM to talk to. The LM itself is provisioned by the
+    ``requires_lm`` marker (``ensure_host_ollama``) and verified by the
+    canonical post-setup gate in ``tests/conftest.py``.
     """
     import dspy
 
@@ -69,6 +71,9 @@ def _configure_dspy_lm(ensure_host_ollama):
         seed=0,
     )
     lm = create_dspy_lm(endpoint)
+    # Bypass the litellm/dspy disk cache: a cached completion recorded
+    # against an earlier serving of the same model id would be replayed
+    # forever, so the assertions would never exercise the live model.
     lm.cache = False
     dspy.configure(lm=lm)
     try:
@@ -112,6 +117,13 @@ def assert_golden(actual: Any, name: str) -> None:
         f"--- expected ---\n{expected}\n--- actual ---\n{actual_json}"
     )
 
+
+# --------------------------------------------------------------------------- #
+# The requires_lm marker makes the session-scoped ``ensure_host_ollama``      #
+# fixture provision the exact test LM these extractors call; the canonical   #
+# post-setup gate in tests/conftest.py fails (never skips) if the            #
+# provisioned endpoint is unreachable.                                        #
+# --------------------------------------------------------------------------- #
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 

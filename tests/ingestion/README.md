@@ -69,10 +69,10 @@ We provide a smart test runner that automatically detects your environment and r
 ### **Quick Start**
 ```bash
 # Check what's available in your environment
-python scripts/test_ingestion.py --env-info
+uv run python scripts/test_ingestion.py --env-info
 
 # Run all available tests
-python scripts/test_ingestion.py --integration
+uv run python scripts/test_ingestion.py --integration 2>&1 > /tmp/ingestion-integration.log
 ```
 
 ### **Unit Tests (80%+ Coverage)**
@@ -81,10 +81,10 @@ python scripts/test_ingestion.py --integration
 
 ```bash
 # CI-safe unit tests (always work)
-uv run python scripts/test_ingestion.py --unit --ci-safe
+uv run python scripts/test_ingestion.py --unit --ci-safe 2>&1 > /tmp/ingestion-unit-ci-safe.log
 
 # Direct pytest for unit tests with UV workspace
-uv run pytest tests/ingestion/unit/test_*_real.py -v --cov=libs/runtime/cogniverse_runtime/ingestion
+uv run pytest tests/ingestion/unit/test_*_real.py -v --tb=long --cov=libs/runtime/cogniverse_runtime/ingestion 2>&1 > /tmp/ingestion-unit-real.log
 ```
 
 ### **Integration Tests (Environment-Aware)**
@@ -92,7 +92,7 @@ uv run pytest tests/ingestion/unit/test_*_real.py -v --cov=libs/runtime/cogniver
 #### **1. Mock Backend Tests (Always Available)**
 ```bash
 # Lightweight integration tests with mocked dependencies
-python scripts/test_ingestion.py --integration --ci-safe
+uv run python scripts/test_ingestion.py --integration --ci-safe 2>&1 > /tmp/ingestion-integration-ci-safe.log
 ```
 
 #### **2. Vespa Backend Tests (Requires Vespa Running)**
@@ -101,46 +101,57 @@ python scripts/test_ingestion.py --integration --ci-safe
 ./scripts/start_vespa.sh
 
 # Run Vespa integration tests
-python scripts/test_ingestion.py --requires-vespa
+uv run python scripts/test_ingestion.py --requires-vespa 2>&1 > /tmp/ingestion-vespa.log
 ```
 
-#### **3. Model-Specific Tests (Requires Models)**
+#### **3. Exact Inference-Service Tests**
+
+Inference-backed tests name the exact service they require. ColPali and ColQwen
+share the `vllm_colpali` embedding service, while VideoPrism and ASR use their
+own services:
+
+```python
+@pytest.mark.requires_inference("vllm_colpali")
+def test_colpali_or_colqwen_ingestion(): ...
+
+
+@pytest.mark.requires_inference("videoprism_jax")
+def test_videoprism_ingestion(): ...
+
+
+@pytest.mark.requires_inference("vllm_asr")
+def test_remote_asr(): ...
+```
+
+Run an annotated test by node instead of selecting a removed model-specific
+runner flag:
+
 ```bash
-# ColPali tests (requires colpali_engine)
-python scripts/test_ingestion.py --requires-colpali
-
-# VideoPrism tests (requires ../videoprism/ directory)
-python scripts/test_ingestion.py --requires-videoprism
-
-# ColQwen tests (requires transformers)
-python scripts/test_ingestion.py --requires-colqwen
-
-# Whisper tests (requires whisper)
-python scripts/test_ingestion.py --requires-whisper
+uv run pytest tests/ingestion/integration/test_backend_ingestion.py::TestVespaBackendIngestion::test_colpali_vespa_ingestion -v --tb=long
 ```
 
 #### **4. Heavy Model Tests (Local Development Only)**
 ```bash
 # All available models with real document ingestion
-python scripts/test_ingestion.py --integration --local-only
+uv run python scripts/test_ingestion.py --integration --local-only 2>&1 > /tmp/ingestion-local-models.log
 
 # Combined: Vespa + all available models
-python scripts/test_ingestion.py --local-only --requires-vespa
+uv run python scripts/test_ingestion.py --local-only --requires-vespa 2>&1 > /tmp/ingestion-local-vespa.log
 ```
 
 ### **Direct pytest Commands**
 ```bash
 # All integration tests (may skip based on dependencies)
-pytest tests/ingestion/integration/ -v
+uv run pytest tests/ingestion/integration/ -v --tb=long 2>&1 > /tmp/ingestion-integration-pytest.log
 
 # Specific test classes
-pytest tests/ingestion/integration/test_backend_ingestion.py::TestVespaBackendIngestion -v
+uv run pytest tests/ingestion/integration/test_backend_ingestion.py::TestVespaBackendIngestion -v --tb=long
 
 # With markers
-pytest tests/ingestion/integration/ -m "integration and requires_vespa" -v
+uv run pytest tests/ingestion/integration/ -m "integration and requires_vespa" -v --tb=long 2>&1 > /tmp/ingestion-integration-vespa.log
 
 # Local-only tests
-pytest tests/ingestion/integration/ -m "integration and local_only" -v
+uv run pytest tests/ingestion/integration/ -m "integration and local_only" -v --tb=long 2>&1 > /tmp/ingestion-integration-local.log
 ```
 
 ### **Environment Detection Examples**
@@ -184,7 +195,7 @@ available_models:
 **Tests being skipped?**
 ```bash
 # Check what's missing
-python scripts/test_ingestion.py --env-info
+uv run python scripts/test_ingestion.py --env-info
 
 # Common fixes:
 ./scripts/start_vespa.sh  # Start Vespa
@@ -195,10 +206,10 @@ pip install colpali-engine  # Install ColPali
 **Want to run specific tests regardless of dependencies?**
 ```bash
 # Run specific test file (may fail if deps missing)
-pytest tests/ingestion/integration/test_backend_ingestion.py::TestMockBackendIngestion -v
+uv run pytest tests/ingestion/integration/test_backend_ingestion.py::TestMockBackendIngestion -v --tb=long
 
 # Force run all tests (will show skips/failures)
-pytest tests/ingestion/integration/ -v --tb=short
+uv run pytest tests/ingestion/integration/ -v --tb=long 2>&1 > /tmp/ingestion-integration-all.log
 ```
 
 ## 🏷️ Smart Test Markers
@@ -221,11 +232,11 @@ Our test system uses intelligent markers for conditional execution:
 - `requires_cv2`: Tests requiring OpenCV
 - `requires_ffmpeg`: Tests requiring FFmpeg
 
-### **Model Requirements**
-- `requires_colpali`: Tests requiring ColPali models
-- `requires_videoprism`: Tests requiring VideoPrism (from ../videoprism/)
-- `requires_colqwen`: Tests requiring ColQwen models  
-- `requires_whisper`: Tests requiring Whisper models
+### **Inference Service Requirements**
+- `requires_inference("vllm_colpali")`: ColPali and ColQwen embedding tests
+- `requires_inference("videoprism_jax")`: VideoPrism embedding tests
+- `requires_inference("vllm_asr")`: Remote ASR tests
+- `requires_whisper`: Local Whisper model tests
 
 ### **Resource Requirements**
 - `requires_gpu`: Tests requiring GPU availability
@@ -260,12 +271,12 @@ class TestMockBackendIngestion:  # Mocked backends, no heavy models
 **❌ CI Skips (Heavy, Local-Only)**  
 ```python
 @pytest.mark.local_only  # ← Automatically skipped in CI
-@pytest.mark.requires_colpali
+@pytest.mark.requires_inference("vllm_colpali")
 class TestColPaliVespaIngestion:  # Real model + backend integration
 
 @pytest.mark.local_only  # ← Automatically skipped in CI
-@pytest.mark.requires_videoprism  
-class TestVideoPrismIngestion:  # ../videoprism/ not available in CI
+@pytest.mark.requires_inference("videoprism_jax")
+class TestVideoPrismIngestion:  # Exact VideoPrism service required
 ```
 
 ### **CI Workflow Stages**
@@ -282,7 +293,7 @@ class TestVideoPrismIngestion:  # ../videoprism/ not available in CI
 2. **Use Real APIs**: Test against actual implementation, not assumptions
 3. **Add Proper Markers**: Use `@pytest.mark.unit`, `@pytest.mark.ci_safe`, etc.
 4. **Check Coverage**: Aim for 80%+ coverage with meaningful tests
-5. **Test Locally**: Use `python scripts/test_ingestion.py --env-info` to check environment
+5. **Test Locally**: Use `uv run python scripts/test_ingestion.py --env-info` to check environment
 
 ### **For Integration Tests**  
 1. **Mock for CI**: Use `@pytest.mark.ci_safe` for lightweight CI tests
@@ -293,13 +304,13 @@ class TestVideoPrismIngestion:  # ../videoprism/ not available in CI
 ### **Before Committing**
 ```bash
 # Run the working unit tests
-python scripts/test_ingestion.py --unit --ci-safe
+uv run python scripts/test_ingestion.py --unit --ci-safe 2>&1 > /tmp/ingestion-unit-ci-safe.log
 
 # Test integration if Vespa available  
-python scripts/test_ingestion.py --integration --ci-safe
+uv run python scripts/test_ingestion.py --integration --ci-safe 2>&1 > /tmp/ingestion-integration-ci-safe.log
 
 # Check what CI will run
-CI=1 python scripts/test_ingestion.py --unit --dry-run
+CI=1 uv run python scripts/test_ingestion.py --unit --dry-run
 ```
 
 ## 🎭 Mock Strategy

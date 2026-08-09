@@ -120,8 +120,8 @@ uv run pytest -m ci_fast
 # Skip slow tests
 uv run pytest -m "not slow"
 
-# Run tests requiring specific models
-uv run pytest -m requires_colpali
+# Run tests declaring an exact inference service
+uv run pytest -m requires_inference
 uv run pytest -m requires_ollama
 
 # Skip tests requiring Ollama (for CI)
@@ -139,6 +139,7 @@ markers =
     integration: Integration tests with multiple components
     slow: Slow tests that take significant time
     requires_ollama: Tests that require Ollama to be running
+    requires_lm: Tests that require the configured test LM endpoint
     requires_gliner: Tests that require GLiNER models
     phoenix: Tests requiring Phoenix
     inspect: Tests requiring Inspect AI
@@ -151,9 +152,6 @@ markers =
     requires_vespa: Tests that require Vespa backend to be running
     requires_docker: Tests that require Docker
     requires_gpu: Tests that require GPU availability
-    requires_colpali: Tests that require ColPali models
-    requires_videoprism: Tests that require VideoPrism models
-    requires_colqwen: Tests that require ColQwen models
     requires_whisper: Tests that require Whisper models
     requires_teacher_model: Tests that scale up the vllm-llm-teacher pod (long-running, off by default)
     requires_optimizer_data: Tests that exercise non-router optimizers (workflow / modality / xgboost) end-to-end against the live cluster (slow, off by default)
@@ -168,6 +166,25 @@ markers =
     system: System-level end-to-end tests with full infrastructure
     telemetry: Tests for telemetry and observability system
 ```
+
+Exact inference markers are registered by `tests/fixtures/inference.py`, not
+`pytest.ini`. Name the canonical service in the decorator:
+
+```python
+@pytest.mark.requires_inference("vllm_colpali")
+def test_colpali_or_colqwen_boundary():
+    ...
+
+
+@pytest.mark.requires_inference("videoprism_jax")
+def test_videoprism_boundary():
+    ...
+```
+
+ColPali and ColQwen use the same `vllm_colpali` HTTP service. The collector
+also requests `vllm_asr` for either `vllm_colpali` or `videoprism_jax`. Use
+`@pytest.mark.requires_modal_inference("vllm_llm_student")` only when the test
+explicitly requires that exact service through paid Modal provisioning.
 
 ### The `ci_fast` Marker
 
@@ -275,10 +292,10 @@ in-process loading is unsupported (requires transformers>=4.57, blocked
 by the pylate cap).
 ```
 
-Tests marked `requires_colpali` / `requires_colqwen` therefore exercise
-the model through the `vllm_colpali` inference service over HTTP rather
-than downloading weights into the test process — avoid adding a local
-`from_pretrained(...)` call for these models in new tests.
+Tests marked `requires_inference("vllm_colpali")` therefore exercise ColPali
+and ColQwen through that exact service over HTTP rather than downloading
+weights into the test process — avoid adding a local `from_pretrained(...)`
+call for these models in new tests.
 
 ### Import Timing Issues
 

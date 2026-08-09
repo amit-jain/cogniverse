@@ -211,6 +211,17 @@ class SearchInput(AgentInput):
 
 _PUBLIC_RESULT_IDENTITY_KEYS = {"id", "documentid", "score", "start_time", "end_time"}
 
+# Ranking fields the ensemble path adds. They belong beside ``score`` rather
+# than in the payload: fused results are ORDERED by ``rrf_score``, so a client
+# that only sees ``score`` (one profile's raw backend relevance) cannot explain
+# the order it was given.
+_PUBLIC_RESULT_RANKING_KEYS = (
+    "rrf_score",
+    "profile_ranks",
+    "profile_scores",
+    "num_profiles",
+)
+
 
 def _format_public_result(result: Dict[str, Any]) -> Dict[str, Any]:
     """Reshape a backend result into the public gateway API shape.
@@ -219,6 +230,11 @@ def _format_public_result(result: Dict[str, Any]) -> Dict[str, Any]:
     ``segment_id``, ``documentid``, ``start_time``, ``end_time``, …).
     The gateway-visible contract separates identity, ranking, payload,
     and temporal info so clients don't depend on Vespa field names.
+
+    ``score`` carries the backend relevance for the profile a document came
+    from. An ensemble result additionally carries the fusion fields listed in
+    ``_PUBLIC_RESULT_RANKING_KEYS``; ``rrf_score`` is the value the result set
+    is sorted by.
 
     If the result is already public-shaped (carries the public
     ``document_id`` field alongside ``metadata``), it's passed through
@@ -237,9 +253,8 @@ def _format_public_result(result: Dict[str, Any]) -> Dict[str, Any]:
         else None
     )
 
-    metadata = {
-        k: v for k, v in result.items() if k not in _PUBLIC_RESULT_IDENTITY_KEYS
-    }
+    payload_excluded = _PUBLIC_RESULT_IDENTITY_KEYS.union(_PUBLIC_RESULT_RANKING_KEYS)
+    metadata = {k: v for k, v in result.items() if k not in payload_excluded}
 
     shaped: Dict[str, Any] = {
         "id": result.get("id"),
@@ -247,6 +262,9 @@ def _format_public_result(result: Dict[str, Any]) -> Dict[str, Any]:
         "score": result.get("score"),
         "metadata": metadata,
     }
+    for key in _PUBLIC_RESULT_RANKING_KEYS:
+        if key in result:
+            shaped[key] = result[key]
     if temporal is not None:
         shaped["temporal_info"] = temporal
     return shaped

@@ -11,6 +11,7 @@ authors = [
 
 dependencies = [
     "cogniverse-sdk",
+    "cogniverse-foundation",
     "cogniverse-core",
     "cogniverse-synthetic",
     "cogniverse-vespa",
@@ -45,6 +46,7 @@ torch-local = [
 
 [tool.uv.sources]
 cogniverse-sdk = { workspace = true }
+cogniverse-foundation = { workspace = true }
 cogniverse-core = { workspace = true }
 cogniverse-synthetic = { workspace = true }
 cogniverse-vespa = { workspace = true }

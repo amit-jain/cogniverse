@@ -46,14 +46,14 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, run_async, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, run_async, unique_id
 
-# k3d-cogniverse-serverlb forwards these to the in-cluster cogniverse-vespa
-# and cogniverse-denseon services. Verified via:
-#   docker ps --filter name=k3d-cogniverse-serverlb --format '{{.Ports}}'
-# which shows 8080->8080 (Vespa /query/), 19071->19071 (Vespa /config),
-# and the 29004-29006 NodePort range (denseon at 29006).
-VESPA_HTTP_PORT = 8080
+# k3d-cogniverse-e2e-serverlb forwards the offset 33xxx HOST ports onto the
+# chart's canonical NodePorts (see E2E_HOST_PORTS in conftest.py), so the e2e
+# stack never collides with a dev cluster on 8080/28xxx. Every localhost URL
+# here uses the 33xxx side: 33080 -> Vespa /query/, 33071 -> Vespa /config,
+# 33906 -> denseon.
+VESPA_HTTP_PORT = 33080
 VESPA_CONFIG_PORT = 33071
 DENSEON_URL = "http://localhost:33906"
 
@@ -172,7 +172,6 @@ def _memory_by_id(mm: Mem0MemoryManager, memory_id: str) -> dict | None:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRegistryDefaultsAreConservative:
     """KnowledgeRegistry's safe defaults + the seed set must be exact."""
 
@@ -226,7 +225,6 @@ _PERMANENT_KINDS = [
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestPermanentByDefault:
     """Every permanent-by-default kind must survive an unrestricted cleanup."""
 
@@ -257,7 +255,6 @@ class TestPermanentByDefault:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRetentionEphemeralDays:
     """3-day TTL: 4d-old gets soft-deleted, 7d-old gets hard-deleted."""
 
@@ -325,7 +322,6 @@ class TestRetentionEphemeralDays:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRetentionSchemaDriven:
     """``_retire_unconfirmed_strategy`` retires only old + low-confirmation rows."""
 
@@ -410,7 +406,6 @@ class TestRetentionSchemaDriven:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRetentionEphemeralSession:
     """session_scratch survives lifecycle, drops on session-end; write must carry session_id."""
 
@@ -465,7 +460,6 @@ class TestRetentionEphemeralSession:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestPinningSurvivesLifecycle:
     """Pin via admin route + schedule tick → pinned memory survives past TTL."""
 
@@ -528,11 +522,14 @@ class TestPinningSurvivesLifecycle:
             )
             summary = run_async(scheduler.tick_once())
 
-            per_tenant = summary.get("tenants", {}).get(tenant_id, {})
-            # Pinned memory was the only candidate that would have been
-            # touched; the kind key must report 0 deletions for this tenant.
-            assert per_tenant.get("know_pin_ephemeral", 0) == 0, per_tenant
-            assert per_tenant.get("know_pin_ephemeral:archived", 0) == 0, per_tenant
+            # Prove the tick actually processed this tenant before reading its
+            # per-kind counts — a missing tenant key would make both counts
+            # default to 0 and pass whether or not the scheduler ran.
+            assert tenant_id in summary["tenants"], summary
+            per_tenant = summary["tenants"][tenant_id]
+            # cleanup_with_schema only records a kind once it deletes or
+            # archives something, so "nothing touched" is the empty mapping.
+            assert per_tenant == {}, per_tenant
             assert _memory_by_id(mm, mid) is not None, (
                 "pinned memory was deleted despite pin_lookup returning its id"
             )

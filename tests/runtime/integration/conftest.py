@@ -311,13 +311,25 @@ def _set_test_backend_env(vespa_instance):
 
 
 @pytest.fixture(scope="module")
-def memory_manager(vespa_instance, config_manager, schema_loader, shared_denseon):
+def memory_manager(
+    vespa_instance,
+    config_manager,
+    schema_loader,
+    shared_denseon,
+    ensure_host_ollama,
+):
     """Real Mem0MemoryManager backed by test Vespa Docker + denseon.
 
     Follows the same pattern as tests/memory/conftest.py shared_memory_vespa.
     Uses the same Vespa instance as search tests. Requires the configured LM endpoint
     for Mem0's LLM-based memory extraction; embeddings go through the
     denseon sidecar (DenseOn / 768-dim) at shared_denseon.
+
+    ``ensure_host_ollama`` is requested here, not left to the ``requires_lm``
+    marker: the marker's provisioner is appended to the item's fixture closure
+    after it has been scope-sorted, so it would run *after* this fixture reads
+    ``get_llm_base_url()`` and Mem0 would be built against whatever endpoint
+    the unactivated config names.
     """
     from cogniverse_core.memory.manager import Mem0MemoryManager
 
@@ -499,6 +511,36 @@ def _is_llm_available() -> bool:
 skip_if_no_lm = pytest.mark.requires_lm
 
 
+@pytest.fixture
+def teacher_role_on_test_lm(ensure_host_ollama, tmp_path, monkeypatch):
+    """Serve the teacher role from the provisioned test LM.
+
+    ``BootstrapFewShot`` generates its demos on ``llm_config.teacher``, so a
+    test that drives a real compile needs that role answered. The session
+    provisions the primary role only and parks an unprovisioned teacher on a
+    dead port, which fails every bootstrap trace with a connection error — so
+    a compile-driving test names the endpoint its teacher runs on. Here that
+    is the single test LM, which serves both roles.
+
+    Yields the published config path; ``COGNIVERSE_CONFIG`` points at it for
+    the duration of the test.
+    """
+    from tests.utils.llm_config import _load_config
+
+    config = _load_config()
+    llm_config = config["llm_config"]
+    llm_config["teacher"] = {
+        **llm_config["teacher"],
+        "model": llm_config["primary"]["model"],
+        "api_base": llm_config["primary"]["api_base"],
+    }
+
+    path = tmp_path / "config-teacher-on-test-lm.json"
+    path.write_text(json.dumps(config))
+    monkeypatch.setenv("COGNIVERSE_CONFIG", str(path))
+    return path
+
+
 def _build_dspy_lm(max_tokens: int):
     """Build a DSPy LM from configs/config.json's primary endpoint.
 
@@ -634,3 +676,36 @@ def a2a_client(dispatcher):
 
     with StarletteTestClient(server.build()) as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def _test_owned_telemetry():
+    """Keep worker span export off the default localhost:4317.
+
+    The ingestion-worker paths call ``get_telemetry_manager()``; without a
+    collector the batch exporter sprays connection failures after every
+    successful run. When no test-owned collector is configured
+    (``TELEMETRY_OTLP_ENDPOINT``, set by ``phoenix_container``), pre-build
+    the singleton disabled so spans no-op instead of exporting into the
+    void. Tests that assert real span export depend on
+    ``phoenix_container``, which sets the env var and resets the manager.
+    """
+    import os
+
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    if os.environ.get("TELEMETRY_OTLP_ENDPOINT"):
+        yield
+        return
+    installed = None
+    if telemetry_manager_module._telemetry_manager is None:
+        installed = TelemetryManager(TelemetryConfig(enabled=False))
+        telemetry_manager_module._telemetry_manager = installed
+    yield
+    if (
+        installed is not None
+        and telemetry_manager_module._telemetry_manager is installed
+    ):
+        telemetry_manager_module._telemetry_manager = None

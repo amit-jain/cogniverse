@@ -73,9 +73,9 @@ def assert_golden(actual: Any, name: str) -> None:
 
 def assert_golden_edges(sorted_edges: Any, name: str) -> None:
     """Golden assertion for extracted edges: every structural field is
-    byte-equal; ``confidence`` is an LM-sampled float that drifts by a
-    hundredth across runs at temperature 0.1, so it is compared as a
-    tight band against the golden's recorded value."""
+    byte-equal; ``confidence`` is an LM-emitted float that can drift by a
+    hundredth across servings even at temperature 0, so it is compared as
+    a tight band against the golden's recorded value."""
     path = _golden(name)
     actual_json = json.dumps(sorted_edges, indent=2, sort_keys=True, default=str)
     if RECORD_GOLDEN:
@@ -300,9 +300,9 @@ class TestClaimExtractorMarieCurie:
         """The CoT rationale must ground each extracted claim: it quotes
         the evidence sentence and names the subject and each predicate in
         the model's stable `"X" (subject)` / `"y" (predicate)` citation
-        format. The prose around those citations is sampled at temperature
-        0.1 and re-words across runs, so the citations — not the exact
-        byte stream — are the contract.
+        format. The prose around those citations can re-word across
+        servings, so the citations — not the exact byte stream — are the
+        contract.
 
         The current ClaimExtractor._invoke() returns Edges (not the raw
         Prediction); the rationale is accessible via the same dspy module

@@ -137,13 +137,11 @@ def wipe_non_protected_schemas(get_backend):
     before yield, not other packages' schemas living on the same
     shared_vespa container.
 
-    Earlier this fixture wiped any non-protected schema matching the
-    base-name list, regardless of which tenant owned it. With the
-    consolidated single-Vespa setup, that would erase memory tests'
-    ``agent_memories_test_tenant``, agent tests'
-    ``video_colpali_smol500_mv_frame_test_tenant``, etc. The
-    ``_THIS_MODULES_TENANTS`` allow-list bounds the wipe to schemas
-    this file itself deployed in prior tests.
+    A wipe of every non-protected schema matching the base-name list would
+    erase the memory suite's ``agent_memories_*`` and the agent suite's
+    ``video_colpali_smol500_mv_frame_*`` schemas, which live on the same
+    container. The ``_THIS_MODULES_TENANTS`` allow-list bounds the wipe to
+    schemas this file itself deployed in prior tests.
     """
     backend = get_backend("__bootstrap_cleanup__")
     sm = backend.schema_manager

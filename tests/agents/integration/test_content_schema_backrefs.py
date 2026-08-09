@@ -312,8 +312,8 @@ class _DeterministicClaimExtractor:
 
 @pytest.fixture(scope="module")
 def colbert_endpoint(pylate_server):
-    """LateOn ``/pooling`` endpoint, served by the session-scoped vLLM
-    ``pylate_server`` fixture. An explicit ``INFERENCE_SERVICE_URLS``
+    """LateOn ``/pooling`` endpoint, served by the session-scoped PyLate
+    sidecar ``pylate_server`` fixture. An explicit ``INFERENCE_SERVICE_URLS``
     colbert_pylate URL takes precedence when set so CI can point at a
     pre-deployed pod."""
     env_url = _colbert_endpoint_from_env()

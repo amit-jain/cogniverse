@@ -19,22 +19,12 @@ import pytest
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from tests.fixtures.llm import (
-    is_test_lm_available,
     resolve_api_key,
     resolve_base_url,
     resolve_prefixed_model,
 )
 
-pytestmark = [pytest.mark.integration]
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _require_test_lm():
-    """Runtime LM gate. An import-time skipif latches the PRE-session-fixture
-    endpoint state — ``ensure_host_ollama`` provisions the LM only at session
-    setup, so the gate must probe after fixtures run, not at collection."""
-    if not is_test_lm_available():
-        pytest.skip(f"Test LM endpoint not reachable at {resolve_base_url()}")
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 
 
 def _llm_config() -> LLMEndpointConfig:

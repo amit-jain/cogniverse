@@ -148,7 +148,7 @@ When `argo.enabled=true` the chart writes these env vars into every runtime pod:
 
 | Variable | Value |
 |---|---|
-| `WORKFLOW_API_URL` | `http://{release}-argo-workflows-server.{namespace}.svc.cluster.local:2746` |
+| `WORKFLOW_API_URL` | `https://argo-server.argo.svc.cluster.local:2746` — the standalone install `cogniverse up` manages. Only when `argo.subchart.enabled=true` does it become `http://{release}-argo-workflows-server.{namespace}.svc.cluster.local:2746`; addressing the subchart while it is disabled (the default) points the runtime at a Service that does not exist, and job submission fails DNS resolution. |
 | `WORKFLOW_NAMESPACE` | release namespace |
 | `RUNTIME_SERVICE_ACCOUNT` | chart service account name |
 | `JOB_WORKFLOW_TEMPLATE` | `{release}-job-runner` |

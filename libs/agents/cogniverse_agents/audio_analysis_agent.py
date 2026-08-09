@@ -7,12 +7,17 @@ for real audio search. Supports both transcript-based and acoustic similarity se
 
 import asyncio
 import logging
+import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from threading import Lock
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Optional
 
 import dspy
 from pydantic import Field as PydanticField
+from pydantic import PrivateAttr, field_validator, model_validator
 
 from cogniverse_agents.search.vespa_query import (
     VespaSearchError,
@@ -20,6 +25,7 @@ from cogniverse_agents.search.vespa_query import (
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_foundation.config.inference_auth import inference_headers
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
@@ -76,6 +82,15 @@ class AudioSearchOutput(AgentOutput):
 class AudioAnalysisDeps(AgentDeps):
     """Dependencies for audio analysis agent"""
 
+    _resolved_whisper_headers: Mapping[str, str] = PrivateAttr(
+        default_factory=lambda: MappingProxyType({})
+    )
+    _whisper_auth_resolved: bool = PrivateAttr(default=False)
+    _resolved_clap_headers: Mapping[str, str] = PrivateAttr(
+        default_factory=lambda: MappingProxyType({})
+    )
+    _clap_auth_resolved: bool = PrivateAttr(default=False)
+
     vespa_endpoint: str = PydanticField(
         "http://localhost:8080", description="Vespa endpoint"
     )
@@ -97,6 +112,14 @@ class AudioAnalysisDeps(AgentDeps):
             "from system_config.inference_service_urls['vllm_asr']."
         ),
     )
+    whisper_headers: Dict[str, str] = PydanticField(
+        default_factory=dict,
+        repr=False,
+        description=(
+            "Validated request headers from the resolved Whisper endpoint. "
+            "Authenticated endpoints accept only an Authorization bearer value."
+        ),
+    )
     whisper_model: str = PydanticField(
         "openai/whisper-large-v3-turbo",
         description=(
@@ -113,6 +136,78 @@ class AudioAnalysisDeps(AgentDeps):
             "— unavailable in the deployed runtime image)."
         ),
     )
+    clap_headers: Dict[str, str] = PydanticField(
+        default_factory=dict,
+        repr=False,
+        description=(
+            "Validated request headers from the resolved CLAP endpoint. "
+            "Authenticated endpoints accept only an Authorization bearer value."
+        ),
+    )
+
+    @field_validator("whisper_headers")
+    @classmethod
+    def validate_whisper_headers(cls, value: Dict[str, str]) -> Dict[str, str]:
+        if not value:
+            return {}
+        if set(value) != {"Authorization"}:
+            raise ValueError("whisper_headers must contain only Authorization")
+        authorization = value["Authorization"]
+        scheme, separator, token = authorization.partition(" ")
+        if scheme != "Bearer" or not separator or not token or token != token.strip():
+            raise ValueError(
+                "whisper_headers Authorization must be a canonical bearer value"
+            )
+        return dict(value)
+
+    @field_validator("clap_headers")
+    @classmethod
+    def validate_clap_headers(cls, value: Dict[str, str]) -> Dict[str, str]:
+        if not value:
+            return {}
+        if set(value) != {"Authorization"}:
+            raise ValueError("clap_headers must contain only Authorization")
+        authorization = value["Authorization"]
+        scheme, separator, token = authorization.partition(" ")
+        if scheme != "Bearer" or not separator or not token or token != token.strip():
+            raise ValueError(
+                "clap_headers Authorization must be a canonical bearer value"
+            )
+        return dict(value)
+
+    @model_validator(mode="after")
+    def validate_endpoint_auth(self) -> "AudioAnalysisDeps":
+        if not self._whisper_auth_resolved:
+            if self.whisper_headers and not self.whisper_endpoint:
+                raise ValueError("whisper_headers requires whisper_endpoint")
+            configured_headers = (
+                inference_headers(self.whisper_endpoint)
+                if self.whisper_endpoint
+                else {}
+            )
+            if configured_headers and "whisper_headers" in self.model_fields_set:
+                raise ValueError(
+                    "whisper_headers must not be supplied for a Modal endpoint"
+                )
+            self._resolved_whisper_headers = MappingProxyType(
+                dict(configured_headers or self.whisper_headers)
+            )
+            self._whisper_auth_resolved = True
+        if not self._clap_auth_resolved:
+            if self.clap_headers and not self.clap_endpoint:
+                raise ValueError("clap_headers requires clap_endpoint")
+            configured_headers = (
+                inference_headers(self.clap_endpoint) if self.clap_endpoint else {}
+            )
+            if configured_headers and "clap_headers" in self.model_fields_set:
+                raise ValueError(
+                    "clap_headers must not be supplied for a Modal endpoint"
+                )
+            self._resolved_clap_headers = MappingProxyType(
+                dict(configured_headers or self.clap_headers)
+            )
+            self._clap_auth_resolved = True
+        return self
 
 
 @dataclass
@@ -123,6 +218,116 @@ class TranscriptionResult:
     segments: List[Dict[str, Any]]
     language: str
     confidence: float
+
+
+class RemoteTranscriptionContractError(ValueError):
+    """The remote ASR endpoint returned a malformed success response."""
+
+
+def _remote_contract_error(
+    url: str, path: str, detail: str
+) -> RemoteTranscriptionContractError:
+    return RemoteTranscriptionContractError(
+        f"Remote transcription response from {url} has invalid {path}: {detail}"
+    )
+
+
+def _required_remote_field(
+    value: Mapping[str, Any], key: str, url: str, path: str
+) -> Any:
+    if key not in value:
+        raise _remote_contract_error(url, f"{path}.{key}", "field is required")
+    return value[key]
+
+
+def _remote_non_negative_number(value: Any, url: str, path: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise _remote_contract_error(url, path, "expected a finite non-negative number")
+    return float(value)
+
+
+def _remote_duration_seconds(value: Any, url: str) -> float:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"(?:0|[1-9]\d*)(?:\.\d+)?", value) is None
+    ):
+        raise _remote_contract_error(
+            url,
+            "$.duration",
+            "expected a finite non-negative decimal string",
+        )
+    duration = float(value)
+    if not math.isfinite(duration):
+        raise _remote_contract_error(
+            url,
+            "$.duration",
+            "expected a finite non-negative decimal string",
+        )
+    return duration
+
+
+def _parse_remote_transcription(body: Any, url: str) -> Dict[str, Any]:
+    if not isinstance(body, Mapping):
+        raise _remote_contract_error(url, "$", "expected an object")
+
+    text = _required_remote_field(body, "text", url, "$")
+    if not isinstance(text, str):
+        raise _remote_contract_error(url, "$.text", "expected a string")
+
+    language = _required_remote_field(body, "language", url, "$")
+    if not isinstance(language, str) or not language.strip():
+        raise _remote_contract_error(url, "$.language", "expected a non-empty string")
+
+    duration = _remote_duration_seconds(
+        _required_remote_field(body, "duration", url, "$"), url
+    )
+    raw_segments = _required_remote_field(body, "segments", url, "$")
+    if not isinstance(raw_segments, list):
+        raise _remote_contract_error(url, "$.segments", "expected a list")
+
+    segments: List[Dict[str, Any]] = []
+    for index, raw_segment in enumerate(raw_segments):
+        segment_path = f"$.segments[{index}]"
+        if not isinstance(raw_segment, Mapping):
+            raise _remote_contract_error(url, segment_path, "expected an object")
+        start = _remote_non_negative_number(
+            _required_remote_field(raw_segment, "start", url, segment_path),
+            url,
+            f"{segment_path}.start",
+        )
+        end = _remote_non_negative_number(
+            _required_remote_field(raw_segment, "end", url, segment_path),
+            url,
+            f"{segment_path}.end",
+        )
+        if end < start:
+            raise _remote_contract_error(
+                url,
+                f"{segment_path}.end",
+                "must be greater than or equal to start",
+            )
+        if end > duration:
+            raise _remote_contract_error(
+                url, f"{segment_path}.end", "must not exceed $.duration"
+            )
+        segment_text = _required_remote_field(raw_segment, "text", url, segment_path)
+        if not isinstance(segment_text, str):
+            raise _remote_contract_error(
+                url, f"{segment_path}.text", "expected a string"
+            )
+        segments.append({"start": start, "end": end, "text": segment_text.strip()})
+
+    return {
+        "full_text": text.strip(),
+        "language": language.strip(),
+        "segments": segments,
+        "duration": duration,
+    }
 
 
 class AudioAnalysisAgent(
@@ -185,11 +390,15 @@ class AudioAnalysisAgent(
         self._vespa_endpoint = deps.vespa_endpoint
         self._whisper_model_size = deps.whisper_model_size
         self._whisper_endpoint = deps.whisper_endpoint
+        self._whisper_headers = deps._resolved_whisper_headers
         self._whisper_model = deps.whisper_model
+        self._clap_headers = deps._resolved_clap_headers
 
         # Initialize components (lazy loading)
         self._audio_transcriber = None
         self._embedding_generator = None
+        self._audio_transcriber_lock = Lock()
+        self._embedding_generator_lock = Lock()
 
         from cogniverse_core.common.media import MediaConfig, MediaLocator
 
@@ -212,22 +421,30 @@ class AudioAnalysisAgent(
     def audio_transcriber(self):
         """Lazy load AudioTranscriber"""
         if self._audio_transcriber is None:
-            logger.info(f"Loading Whisper model: {self._whisper_model_size}")
-            self._audio_transcriber = AudioTranscriber(
-                model_size=self._whisper_model_size
-            )
-            logger.info("✅ AudioTranscriber loaded")
+            with self._audio_transcriber_lock:
+                if self._audio_transcriber is None:
+                    logger.info(f"Loading Whisper model: {self._whisper_model_size}")
+                    self._audio_transcriber = AudioTranscriber(
+                        model_size=self._whisper_model_size
+                    )
+                    logger.info("✅ AudioTranscriber loaded")
         return self._audio_transcriber
 
     @property
     def embedding_generator(self):
         """Lazy load AudioEmbeddingGenerator"""
         if self._embedding_generator is None:
-            logger.info("Loading audio embedding models...")
-            self._embedding_generator = AudioEmbeddingGenerator(
-                clap_endpoint_url=self.deps.clap_endpoint
-            )
-            logger.info("✅ AudioEmbeddingGenerator loaded")
+            with self._embedding_generator_lock:
+                if self._embedding_generator is None:
+                    logger.info("Loading audio embedding models...")
+                    if self.deps.clap_endpoint is None:
+                        self._embedding_generator = AudioEmbeddingGenerator()
+                    else:
+                        self._embedding_generator = AudioEmbeddingGenerator(
+                            clap_endpoint_url=self.deps.clap_endpoint,
+                            _resolved_headers=self._clap_headers,
+                        )
+                    logger.info("✅ AudioEmbeddingGenerator loaded")
         return self._embedding_generator
 
     async def search_audio(
@@ -293,6 +510,12 @@ class AudioAnalysisAgent(
             result = await asyncio.to_thread(
                 self._transcribe_via_sidecar, Path(audio_path), language
             )
+            transcription = TranscriptionResult(
+                text=result["full_text"],
+                segments=result["segments"],
+                language=result["language"],
+                confidence=1.0,
+            )
         else:
             # Local Whisper is a heavy blocking model forward — same
             # offload contract as the sidecar branch above.
@@ -301,13 +524,12 @@ class AudioAnalysisAgent(
                 video_path=Path(audio_path),
                 output_dir=None,
             )
-
-        transcription = TranscriptionResult(
-            text=result.get("full_text", ""),
-            segments=result.get("segments", []),
-            language=result.get("language", "unknown"),
-            confidence=1.0,
-        )
+            transcription = TranscriptionResult(
+                text=result.get("full_text", ""),
+                segments=result.get("segments", []),
+                language=result.get("language", "unknown"),
+                confidence=1.0,
+            )
 
         logger.info(f"✅ Transcription complete: language={transcription.language}")
         return transcription
@@ -317,12 +539,9 @@ class AudioAnalysisAgent(
     ) -> Dict[str, Any]:
         """POST audio multipart to vLLM ``/v1/audio/transcriptions``.
 
-        Returns a dict in the same shape the in-process AudioTranscriber
-        produces (``full_text``, ``segments``, ``language``) so the
-        downstream TranscriptionResult mapping doesn't branch. Empty
-        ``segments`` are passed through as-is — no synthesis — so callers
-        can distinguish "no segments returned" from "single full-clip
-        segment" if it matters.
+        A successful response must include typed text, language, duration,
+        and timestamped segments. Empty ``segments`` remain valid so callers
+        can distinguish silence from a single full-clip segment.
         """
         import requests
 
@@ -338,23 +557,22 @@ class AudioAnalysisAgent(
             logger.info(
                 f"🛰️  POST {url}  ({audio_path.stat().st_size / 1024:.1f} KiB audio)"
             )
-            resp = requests.post(url, files=files, data=data, timeout=600.0)
+            resp = requests.post(
+                url,
+                files=files,
+                data=data,
+                headers=self._whisper_headers,
+                timeout=600.0,
+            )
         resp.raise_for_status()
-        body = resp.json()
+        try:
+            body = resp.json()
+        except ValueError as exc:
+            raise _remote_contract_error(
+                url, "$", "response body is not valid JSON"
+            ) from exc
 
-        return {
-            "full_text": (body.get("text") or "").strip(),
-            "language": body.get("language", "unknown"),
-            "segments": [
-                {
-                    "start": float(seg.get("start", 0.0)),
-                    "end": float(seg.get("end", 0.0)),
-                    "text": (seg.get("text") or "").strip(),
-                }
-                for seg in body.get("segments") or []
-            ],
-            "duration": float(body.get("duration") or 0.0),
-        }
+        return _parse_remote_transcription(body, url)
 
     async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:
         """Search by transcript text using BM25"""

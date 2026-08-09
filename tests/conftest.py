@@ -1,6 +1,10 @@
 """Global pytest configuration for test isolation"""
 
-pytest_plugins = ["tests.fixtures.llm", "tests.fixtures.sidecars"]
+pytest_plugins = [
+    "tests.fixtures.inference",
+    "tests.fixtures.llm",
+    "tests.fixtures.sidecars",
+]
 
 import gc
 import importlib.util
@@ -100,36 +104,27 @@ def face_embed_container():
 
 
 @pytest.fixture(scope="session")
-def pylate_server(vllm_sidecar):
-    """LateOn served by a real vLLM container exposing the production
-    ``/pooling`` per-token contract — session-scoped so LateOn loads once
-    per run.
+def pylate_server():
+    """LateOn served by the real PyLate sidecar container (deploy/pylate,
+    the same engine the chart deploys) exposing the production ``/pooling``
+    contract — session-scoped so LateOn loads once per run.
 
-    Mirrors the chart's ``vllm_token_embed`` engine: ``--runner pooling
-    --convert embed`` selects vLLM's pooling runner and the
-    ``ColBERTModernBertModel`` hf-override forces the multi-vector
-    architecture (without it vLLM serves a plain dense ModernBert and the
-    per-token outputs LateOn retrieval needs vanish). Integration tests
+    The service owns PyLate's exact encode for both directions: query
+    expansion over masked padding positions and the document punctuation
+    skiplist. Generic vLLM ``/pooling`` cannot reproduce the query side
+    because its request schema carries no attention mask. Integration tests
     provision their own inference; the cluster belongs to the e2e tier.
     """
-    return vllm_sidecar.spawn(
-        "lightonai/LateOn",
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "8192",
-            "--hf-overrides",
-            '{"architectures": ["ColBERTModernBertModel"]}',
-        ],
-        # LateOn's sentence_bert_config.json declares max_seq_length=299 (an
-        # ST truncation default); vLLM's CPU build clamps derived
-        # max_model_len to it and rejects 8192 even though the model's
-        # position table is 8192. The env var is vLLM's documented override.
-        env={"VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1"},
-    )
+    from cogniverse_cli.modal_inference_config import get_inference_service_spec
+
+    from tests.fixtures.inference import LocalEndpointProvider
+
+    provider = LocalEndpointProvider()
+    try:
+        endpoint = provider.resolve(get_inference_service_spec("colbert_pylate"))
+        yield endpoint.base_url
+    finally:
+        provider.close()
 
 
 @pytest.fixture(scope="session")
@@ -306,14 +301,9 @@ def pytest_runtest_setup(item):
     ``trylast=True`` lets pytest provision the selected exact endpoints before
     this hook verifies that the primary endpoint remains reachable.
     """
-    if item.get_closest_marker("requires_lm") is not None:
-        from tests.fixtures.llm import is_test_lm_available, resolve_base_url
+    from tests.fixtures.markers import enforce_lm_gate
 
-        if not is_test_lm_available():
-            pytest.fail(
-                f"Exact configured LLM endpoint not reachable ({resolve_base_url()})",
-                pytrace=False,
-            )
+    enforce_lm_gate(item)
 
 
 def cleanup_background_threads():
@@ -1144,9 +1134,16 @@ def shared_vespa():
 
     # Reap labelled containers whose owning pytest died without teardown
     # (SIGKILL skips the finally) — a dead session's Vespa JVM holds GBs.
-    from tests.utils.vllm_sidecar import reap_dead_owner_containers
+    # Exact-model LLM sidecars are reused across sessions and carry no owner
+    # pid, so they are reclaimed by age instead: one left running for days
+    # holds its weights in host RAM and starves Vespa's memory pre-flight.
+    from tests.utils.vllm_sidecar import (
+        reap_dead_owner_containers,
+        reclaim_stale_exact_model_containers,
+    )
 
     reap_dead_owner_containers()
+    reclaim_stale_exact_model_containers()
 
     machine = platform.machine().lower()
     docker_platform = (
@@ -1168,6 +1165,8 @@ def shared_vespa():
             # Losing the shared Vespa mid-session breaks every downstream
             # test; transient inference sidecars are cheaper to restart.
             "--oom-score-adj=-1000",
+            "--tmpfs",
+            "/opt/vespa/var/db/vespa/search:rw,size=8g,uid=1000,gid=1000,mode=0755",
         ],
         max_attempts=5,
     )
@@ -1283,19 +1282,103 @@ def seeded_config_vespa(shared_vespa):
             os.environ.pop(key, None)
 
 
+@pytest.fixture(scope="session")
+def ephemeral_k8s_cluster(tmp_path_factory):
+    """Test-owned Kubernetes API server (agentless k3s in Docker).
+
+    Yields ``{"container", "kubeconfig", "port"}`` with the ``cogniverse``
+    namespace and the minimal Argo CronWorkflow CRD already installed.
+    Consuming modules point ``kubectl`` at it by monkeypatching the
+    ``KUBECONFIG`` env var per test, so production code that shells out to
+    kubectl hits a cluster this session owns — never a developer's k3d
+    cluster or its live Secrets/CronWorkflows.
+    """
+    from tests.utils.k8s_api_server import start_k8s_api_server, stop_k8s_api_server
+
+    info = start_k8s_api_server(tmp_path_factory.mktemp("k8s-api-server"))
+    yield info
+    stop_k8s_api_server(info["container"])
+
+
 @pytest.fixture(autouse=True)
 def _reset_request_contextvars():
     """Reset MemoryAwareMixin's per-request ContextVars around every test.
 
-    The artefact overlay + session id moved to module-level ContextVars (so a
-    dispatcher-shared agent doesn't bleed state across concurrent requests). In
-    sync tests that share the main-thread context, one test's set() would
-    otherwise leak into the next; this guarantees a clean baseline per test.
+    The artefact overlay, session id, and memory tenant id live in
+    module-level ContextVars (so a dispatcher-shared agent doesn't bleed
+    state across concurrent requests). In sync tests that share the
+    main-thread context, one test's set() would otherwise leak into the
+    next — a leaked tenant id makes every ``_current_memory_tenant_id``
+    read resolve a foreign tenant instead of the instance attribute; this
+    guarantees a clean baseline per test.
     """
     from cogniverse_agents import memory_aware_mixin as _m
 
     _m._DISPATCHED_ARTEFACT.set(None)
     _m._MEMORY_SESSION_ID.set(None)
+    _m._MEMORY_TENANT_ID.set(None)
     yield
     _m._DISPATCHED_ARTEFACT.set(None)
     _m._MEMORY_SESSION_ID.set(None)
+    _m._MEMORY_TENANT_ID.set(None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_dataset_frame_cache():
+    """Give every test its own ``evaluation_task`` dataset-frame memo.
+
+    ``evaluation_task`` memoises the fetched Phoenix DataFrame in a
+    module-level dict keyed by ``(provider.http_endpoint, dataset_name)`` so
+    one experiment sweep fetches a dataset once across its profile x strategy
+    tasks. The test Phoenix endpoint is derived from the pid, so it is
+    byte-identical for the whole session while ``phoenix_container`` is
+    module-scoped — a later module's task for the same dataset name hits the
+    memo and returns the previous module's rows without ever contacting the
+    live container. Scoping the memo to a test keeps the within-sweep reuse
+    and drops the cross-test reuse.
+
+    Goes through ``sys.modules`` rather than importing: a memo can only exist
+    once something loaded the module, and importing it eagerly would put
+    inspect_ai's ~0.7s import on the front of every session, including ones
+    that never evaluate anything.
+    """
+    import sys
+
+    def _clear():
+        task_mod = sys.modules.get("cogniverse_evaluation.core.task")
+        if task_mod is not None:
+            task_mod._DATASET_FRAMES.clear()
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
+def _release_dspy_config_ownership():
+    """Give every test a free dspy ambient-config ownership slot.
+
+    ``dspy.configure`` records the thread and async task that first called
+    it in module globals, and rejects later calls from anywhere else. Those
+    globals are never cleared when the owning task finishes, so one async
+    test that configures dspy makes every subsequent ``dspy.configure`` in
+    the session raise — for code paths that legitimately configure once per
+    process (the runtime lifespan, the ingestion worker) that turns into a
+    failure with no relation to the test that caused it. Releasing the slot
+    per test keeps the ownership rule meaningful within a test while
+    preventing it from leaking across the session. The bound LM itself is
+    left alone; only the ownership markers are cleared.
+    """
+    import importlib
+
+    # Import the MODULE: ``from dspy.dsp.utils import settings`` binds the
+    # Settings singleton, and assigning the ownership names onto it would
+    # silently create dead instance attributes instead of clearing the
+    # module globals dspy.configure actually reads.
+    dspy_settings = importlib.import_module("dspy.dsp.utils.settings")
+
+    dspy_settings.config_owner_thread_id = None
+    dspy_settings.config_owner_async_task = None
+    yield
+    dspy_settings.config_owner_thread_id = None
+    dspy_settings.config_owner_async_task = None

@@ -106,20 +106,25 @@ class ChunkProcessor(BaseProcessor):
             chunk_filename = f"{video_id}_chunk_{chunk_idx:04d}.mp4"
             chunk_path = chunks_dir / chunk_filename
 
-            if self._extract_chunk(
+            extracted = self._extract_chunk(
                 video_path, chunk_path, start_time, end_time - start_time
-            ):
-                chunks.append(
-                    {
-                        "chunk_number": chunk_idx,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "duration": end_time - start_time,
-                        "filename": chunk_filename,
-                        "path": str(chunk_path),
-                    }
+            )
+            if not extracted:
+                raise RuntimeError(
+                    f"ffmpeg reported no output for {video_path} at "
+                    f"{start_time:.3f}s for {end_time - start_time:.3f}s"
                 )
-                chunk_idx += 1
+            chunks.append(
+                {
+                    "chunk_number": chunk_idx,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "duration": end_time - start_time,
+                    "filename": chunk_filename,
+                    "path": str(chunk_path),
+                }
+            )
+            chunk_idx += 1
 
             # Move to next chunk (with overlap consideration)
             start_time += self.chunk_duration - self.chunk_overlap
@@ -201,30 +206,63 @@ class ChunkProcessor(BaseProcessor):
     def _extract_chunk(
         self, video_path: Path, chunk_path: Path, start_time: float, duration: float
     ) -> bool:
-        """Extract a single chunk using ffmpeg."""
+        """Extract one independently decodable video chunk using ffmpeg."""
         try:
             cmd = [
                 "ffmpeg",
                 "-y",  # Overwrite output file
-                "-i",
-                str(video_path),
                 "-ss",
                 str(start_time),
+                "-i",
+                str(video_path),
                 "-t",
                 str(duration),
-                "-c",
-                "copy",  # Copy without re-encoding for speed
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
                 "-avoid_negative_ts",
                 "make_zero",
                 str(chunk_path),
             ]
 
-            subprocess.run(cmd, capture_output=True, check=True)
-            return chunk_path.exists() and chunk_path.stat().st_size > 0
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                check=True,
+                text=True,
+                timeout=max(120.0, duration * 10),
+            )
+            if not chunk_path.exists() or chunk_path.stat().st_size == 0:
+                raise RuntimeError(
+                    f"ffmpeg produced no bytes at {chunk_path} for {video_path} "
+                    f"at {start_time:.3f}s for {duration:.3f}s"
+                )
+            return True
 
-        except Exception as e:
-            self.logger.error(f"Error extracting chunk at {start_time}s: {e}")
-            return False
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            raise RuntimeError(
+                f"ffmpeg failed for {video_path} at {start_time:.3f}s for "
+                f"{duration:.3f}s with exit {exc.returncode}: {stderr}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"ffmpeg timed out for {video_path} at {start_time:.3f}s for "
+                f"{duration:.3f}s after {exc.timeout}s"
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"ffmpeg could not start for {video_path} at {start_time:.3f}s: {exc}"
+            ) from exc
 
     def process(
         self, video_path: Path, output_dir: Path = None, **kwargs

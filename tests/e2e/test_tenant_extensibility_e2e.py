@@ -7,13 +7,14 @@ assertions verify actual behavior, not just HTTP status codes.
 
 import math
 import time
+from datetime import datetime, timezone
 
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
+from tests.e2e.conftest import RUNTIME, TENANT_ID
 
-# DenseOn (768-dim, ModernBERT) served by the colbert_pylate sidecar in mode=dense.
+# DenseOn (768-dim, ModernBERT) served by vLLM (inference.denseon, vllm_embed).
 # k3s NodePort wired in chart values: inference.denseon.service.nodePort.
 DENSEON_URL = "http://localhost:33906"
 
@@ -39,19 +40,37 @@ def _semantic_similarity(text_a: str, text_b: str) -> float:
     return _cosine_sim(_embed(text_a), _embed(text_b))
 
 
-def _memory_available() -> bool:
-    try:
-        r = httpx.get(
-            f"{RUNTIME}/admin/tenant/{TENANT_ID}/memories?type=preference",
-            timeout=10.0,
-        )
-        return r.status_code != 503
-    except httpx.HTTPError:
-        return False
+def _assert_memory_backend_ready() -> None:
+    response = httpx.get(
+        f"{RUNTIME}/admin/tenant/{TENANT_ID}/memories?type=preference",
+        timeout=10.0,
+    )
+    assert response.status_code == 200, (
+        f"Memory backend route must be initialized and return HTTP 200; got "
+        f"{response.status_code}: {response.text}"
+    )
+
+    body = response.json()
+    assert set(body) == {"memories", "count"}, (
+        f"Memory list response must contain only memories and count: {body}"
+    )
+    assert isinstance(body["memories"], list), body
+    assert body["count"] == len(body["memories"]), body
+
+    expected_item_fields = {
+        "id",
+        "memory",
+        "type",
+        "owned",
+        "category",
+        "metadata",
+        "created_at",
+    }
+    for item in body["memories"]:
+        assert set(item) == expected_item_fields, item
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTenantInstructions:
     def test_set_get_delete_round_trip(self):
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
@@ -71,13 +90,23 @@ class TestTenantInstructions:
                 resp.json()["text"] == "Always prefer bullet-point summaries over prose"
             )
 
+            before_delete = datetime.now(timezone.utc)
             resp = client.delete(f"/admin/tenant/{TENANT_ID}/instructions")
             assert resp.status_code == 200
             assert resp.json()["status"] == "cleared"
 
+            # DELETE stores {"text": "", "updated_at": now}, which is a truthy
+            # config value, so the follow-up GET is a 200 with an empty text —
+            # never a 404. Reading `text` with a "" default made an error body
+            # (or any body at all) satisfy this check.
             resp = client.get(f"/admin/tenant/{TENANT_ID}/instructions")
+            assert resp.status_code == 200, resp.text
             stored = resp.json()
-            assert stored.get("text", "") == "" or resp.status_code == 404
+            assert set(stored) == {"text", "updated_at"}, stored
+            assert stored["text"] == ""
+            cleared_at = datetime.fromisoformat(stored["updated_at"])
+            assert cleared_at.tzinfo is not None, stored["updated_at"]
+            assert cleared_at > before_delete, (cleared_at, before_delete)
 
     def test_instructions_influence_agent_context(self):
         """Instructions are injected into agent context and influence the response.
@@ -119,12 +148,38 @@ class TestTenantInstructions:
                     "context": {"tenant_id": TENANT_ID},
                 },
             )
-            instructed_result = instructed_resp.json().get("result", {})
-            instructed_text = (
-                instructed_result.get("result", "")
-                if isinstance(instructed_result, dict)
-                else str(instructed_result)
-            )
+
+            def _analysis_text(resp) -> str:
+                payload = resp.json().get("result", {})
+                return (
+                    payload.get("result", "")
+                    if isinstance(payload, dict)
+                    else str(payload)
+                )
+
+            # The agent reads instructions through a ConfigManager whose
+            # scoped-config cache is TTL-bounded, and the admin write lands on
+            # a different manager instance, so the update becomes visible
+            # within the TTL rather than on the very next request. Poll for
+            # convergence instead of asserting an immediate-visibility
+            # contract the config layer does not offer; the assertion below is
+            # unchanged, so instructions that never take effect still fail.
+            instructed_text = _analysis_text(instructed_resp)
+            deadline = time.monotonic() + 60
+            while (
+                "colpali" not in instructed_text.lower() and time.monotonic() < deadline
+            ):
+                time.sleep(5)
+                instructed_text = _analysis_text(
+                    client.post(
+                        "/agents/text_analysis_agent/process",
+                        json={
+                            "agent_name": "text_analysis_agent",
+                            "query": "Describe the search capabilities available",
+                            "context": {"tenant_id": TENANT_ID},
+                        },
+                    )
+                )
 
             instruction_topic = "ColPali visual retrieval frame-level video search"
             baseline_sim = _semantic_similarity(instruction_topic, baseline_text)
@@ -142,7 +197,6 @@ class TestTenantInstructions:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTenantJobs:
     def test_full_lifecycle_with_post_actions_preserved(self):
         """Create → list → verify all fields → delete → verify gone."""
@@ -199,12 +253,10 @@ class TestTenantJobs:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTenantMemories:
     def test_create_search_delete_with_semantic_verification(self):
         """Full memory lifecycle: create → semantic search → verify content → delete → verify gone."""
-        if not _memory_available():
-            pytest.skip("Memory backend not initialized on runtime")
+        _assert_memory_backend_ready()
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
@@ -265,8 +317,7 @@ class TestTenantMemories:
 
         Seeds a strategy via the admin endpoint to guarantee at least one exists.
         """
-        if not _memory_available():
-            pytest.skip("Memory backend not initialized on runtime")
+        _assert_memory_backend_ready()
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
@@ -291,8 +342,7 @@ class TestTenantMemories:
 
     def test_bulk_clear_preserves_strategies(self):
         """Clearing user memories must not touch system strategies."""
-        if not _memory_available():
-            pytest.skip("Memory backend not initialized on runtime")
+        _assert_memory_backend_ready()
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
@@ -331,13 +381,11 @@ class TestTenantMemories:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestAdminMemoryManagement:
     """Admin can delete any memory including system memories."""
 
     def test_admin_delete_any_memory(self):
-        if not _memory_available():
-            pytest.skip("Memory backend not initialized on runtime")
+        _assert_memory_backend_ready()
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
@@ -357,8 +405,7 @@ class TestAdminMemoryManagement:
             assert resp.json()["status"] == "deleted"
 
     def test_admin_clear_by_type(self):
-        if not _memory_available():
-            pytest.skip("Memory backend not initialized on runtime")
+        _assert_memory_backend_ready()
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
         # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
@@ -387,7 +434,6 @@ class TestAdminMemoryManagement:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestJobExecution:
     """Job execution: query → gateway_agent → post_actions routed."""
 
@@ -644,7 +690,10 @@ def _get_runtime_config_manager():
 
     store = VespaConfigStore(
         backend_url="http://localhost",
-        backend_port=8080,
+        # k3d-cogniverse-e2e-serverlb publishes Vespa's 8080 on the offset
+        # 33080 host port (E2E_HOST_PORTS); 8080 is the dev cluster's mapping
+        # and refuses the connection here.
+        backend_port=33080,
     )
     cm = ConfigManager(store=store)
 
@@ -669,7 +718,6 @@ def _get_runtime_config_manager():
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestSearchBehavior:
     """Search endpoint returns real results with correct structure and ordering."""
 

@@ -62,7 +62,9 @@ jobs:
 
     # No -m marker filter: a file lacking the marker would silently stop
     # running in CI while still passing locally. The integration suite is
-    # real-process/real-subprocess (no cluster/Docker) so it runs here too.
+    # real-process/real-subprocess; the secrets-sync tests boot their own
+    # Kubernetes API server (agentless k3s in Docker) and the runner ships
+    # docker + kubectl, so it runs here too.
     - name: Run unit and integration tests
       run: |
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \

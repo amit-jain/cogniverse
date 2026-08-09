@@ -2,16 +2,16 @@
 
 30 hand-curated reasoning-intensive queries against ActivityNet-shaped
 video clips. The CSV's existence and shape are checked at collection
-time; recall@1 and trajectory assertions require the full orchestrator
-+ Vespa + LM stack and are skipped if any of those are unavailable.
+time; recall@1 and trajectory assertions provision the full orchestrator,
+Vespa, and LM stack through session-owned fixtures.
 Every per-query / per-type / trajectory result is locked against a
 hand-reviewed golden via byte-equal comparison.
 
 Corpus seeding strategy
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-The orchestrator corpus is hand-engineered for BM25 retrieval against a
-``video_colpali_smol500_mv_frame_bright_probe_test`` schema. Each
+The orchestrator corpus is hand-engineered for BM25 retrieval against the
+tenant-scoped ``video_colpali_smol500_mv_frame`` schema. Each
 ``segment_id_range`` (per row) gets per-segment text where the
 ground-truth segments carry the query keywords and the out-of-range
 segments are either neutral (for the 24 "hit" rows) or carry STRONGER
@@ -34,6 +34,8 @@ from typing import Any, Dict, List, Tuple
 import pandas as pd
 import pytest
 
+from tests.utils.vespa_test_helpers import schema_full_name
+
 logger = logging.getLogger(__name__)
 
 pytestmark = pytest.mark.integration
@@ -53,14 +55,12 @@ CSV_PATH = (
 GOLDEN_DIR = Path(__file__).parent / "goldens"
 RECORD_GOLDEN = os.environ.get("RECORD_GOLDEN") == "1"
 
-# Tenant for the bright-probe-only deployment. Schema name follows the
-# canonical SchemaRegistry convention
-# ``{base_schema_name}_{tenant_id.replace(":", "_")}`` — see
-# tests/utils/vespa_test_helpers.py::schema_full_name. The base schema
-# already ships a ``bm25_only`` rank profile, so no schema fork is needed.
+# The schema name comes from ``schema_full_name``, including canonicalization
+# of the bare tenant id before delimiter replacement. The base schema already
+# ships a ``bm25_only`` rank profile, so no schema fork is needed.
 BRIGHT_TENANT_ID = "bright_probe_test"
 BRIGHT_BASE_SCHEMA = "video_colpali_smol500_mv_frame"
-BRIGHT_FULL_SCHEMA = f"{BRIGHT_BASE_SCHEMA}_{BRIGHT_TENANT_ID}"
+BRIGHT_FULL_SCHEMA = schema_full_name(BRIGHT_BASE_SCHEMA, BRIGHT_TENANT_ID)
 
 # ASGI host for the in-process search agent. Production routes through
 # AgentRegistry → AgentEndpoint.url; here we point the orchestrator at a
@@ -92,102 +92,54 @@ def assert_golden_json(actual: Any, name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Infrastructure availability check (file-level skip)
+# Session-owned service endpoints
 # ---------------------------------------------------------------------------
 
 
 def _live_vespa_endpoint() -> Tuple[str, int, int]:
-    """Return ``(base_url, http_port, config_port)`` from ``configs/config.json``."""
-    config_path = Path(__file__).resolve().parents[3] / "configs" / "config.json"
-    blob = json.loads(config_path.read_text())
-    backend = blob.get("backend", {})
-    url = backend.get("url") or "http://localhost"
-    http_port = int(backend.get("port") or 8080)
-    config_port = int(backend.get("config_port") or 19071)
+    """Return the exact session-owned Vespa endpoint configured by the fixture."""
+    url = os.environ["BACKEND_URL"]
+    http_port = int(os.environ["BACKEND_PORT"])
+    config_port = int(os.environ["VESPA_CONFIG_PORT"])
     return url, http_port, config_port
 
 
-def _orchestrator_stack_available() -> Tuple[bool, str]:
-    """Return ``(ok, reason)``: are the orchestrator + LM + Vespa reachable?
-
-    Hard requirements for live orchestrator runs:
-      * orchestrator class importable
-      * configured LM endpoint reachable
-      * live Vespa data port reachable (BRIGHT corpus needs ingestion +
-        BM25 search)
-      * BRIGHT csv readable
-    Anything missing → file-level skip with a clear reason.
-    """
-    if not CSV_PATH.exists():
-        return False, f"bright_video_probes.csv missing at {CSV_PATH}"
-    try:
-        from tests.agents.integration.conftest import is_llm_available
-    except Exception as exc:
-        return False, f"cannot import is_llm_available helper: {exc}"
-    if not is_llm_available():
-        return False, "Configured LM endpoint not reachable"
-    try:
-        from cogniverse_agents.orchestrator_agent import OrchestratorAgent  # noqa: F401
-    except Exception as exc:
-        return False, f"OrchestratorAgent import failed: {exc}"
-
-    import httpx
-
-    base_url, http_port, _ = _live_vespa_endpoint()
-    try:
-        resp = httpx.get(f"{base_url}:{http_port}/state/v1/health", timeout=3.0)
-        if resp.status_code >= 500:
-            return False, f"Live Vespa at {base_url}:{http_port} unhealthy"
-    except Exception as exc:
-        return False, f"Live Vespa at {base_url}:{http_port} unreachable: {exc}"
-    return True, ""
-
-
-_STACK_OK, _STACK_REASON = _orchestrator_stack_available()
-
-
-@pytest.fixture(scope="function", autouse=True)
-def _configure_dspy_lm_for_bright():
-    """Per-test DSPy LM configuration.
-
-    The session-wide ``cleanup_dspy_state`` autouse fixture (see
-    ``tests/conftest.py:150``) nulls ``dspy.settings.lm`` after every
-    test. The orchestrator's ``process()`` invokes DSPy modules deep
-    inside the iterative retrieval loop; without a per-test LM
-    configuration the orchestrator tests raise ``No LM is loaded``.
-    Mirrors the per-segment KG fixture.
-    """
-    from tests.agents.integration.conftest import is_llm_available
-
-    if not is_llm_available():
-        yield None
-        return
-
-    import dspy
-
-    from cogniverse_foundation.config.llm_factory import create_dspy_lm
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    from cogniverse_foundation.config.utils import (
-        create_default_config_manager,
-        get_config,
+@pytest.fixture(scope="class")
+def bright_services(shared_vespa, tmp_path_factory):
+    """Point the production config path at session-owned Vespa and LM services."""
+    saved = {
+        name: os.environ.get(name)
+        for name in (
+            "COGNIVERSE_CONFIG",
+            "BACKEND_URL",
+            "BACKEND_PORT",
+            "VESPA_CONFIG_PORT",
+        )
+    }
+    source_config = Path(os.environ["COGNIVERSE_CONFIG"])
+    config = json.loads(source_config.read_text())
+    config["backend"]["url"] = "http://localhost"
+    config["backend"]["port"] = shared_vespa["http_port"]
+    config["backend"]["config_port"] = shared_vespa["config_port"]
+    config_dir = tmp_path_factory.mktemp("bright-services")
+    (config_dir / "schemas").symlink_to(
+        (Path(__file__).resolve().parents[3] / "configs" / "schemas").resolve(),
+        target_is_directory=True,
     )
-
-    cm = create_default_config_manager()
-    cfg = get_config(tenant_id="test:unit", config_manager=cm)
-    primary = cfg.get("llm_config", {}).get("primary", {})
-    endpoint = LLMEndpointConfig(
-        model=primary.get("model"),
-        api_base=primary.get("api_base"),
-        api_key=primary.get("api_key") or "not-required",
-        temperature=0.0,
-        max_tokens=800,
-    )
-    lm = create_dspy_lm(endpoint)
-    dspy.configure(lm=lm)
+    config_path = config_dir / "config.json"
+    config_path.write_text(json.dumps(config))
+    os.environ["COGNIVERSE_CONFIG"] = str(config_path)
+    os.environ["BACKEND_URL"] = "http://localhost"
+    os.environ["BACKEND_PORT"] = str(shared_vespa["http_port"])
+    os.environ["VESPA_CONFIG_PORT"] = str(shared_vespa["config_port"])
     try:
-        yield lm
+        yield shared_vespa
     finally:
-        dspy.configure(lm=None)
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 # ---------------------------------------------------------------------------
@@ -630,7 +582,7 @@ class TestBrightVideoProbesShape:
 
 
 def _deploy_bright_schema() -> None:
-    """Deploy ``video_colpali_smol500_mv_frame_bright_probe_test`` schema.
+    """Deploy the canonical tenant-scoped BRIGHT video schema.
 
     Uses ``deploy_tenant_schema`` so the schema lands alongside any
     others already registered (e.g. ``knowledge_graph_g4test`` from
@@ -646,7 +598,7 @@ def _deploy_bright_schema() -> None:
     cm = ConfigManager(store=store)
     cm.set_system_config(SystemConfig(backend_url=base_url, backend_port=http_port))
 
-    deploy_tenant_schema(
+    deployed = deploy_tenant_schema(
         {
             "http_port": http_port,
             "config_port": _live_vespa_endpoint()[2],
@@ -656,6 +608,7 @@ def _deploy_bright_schema() -> None:
         base_schema_name=BRIGHT_BASE_SCHEMA,
         config_manager=cm,
     )
+    assert deployed == BRIGHT_FULL_SCHEMA
 
 
 def _ingest_bright_corpus(rows: List[Dict[str, str]]) -> int:
@@ -887,7 +840,7 @@ def _build_bright_search_app():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _STACK_OK, reason=_STACK_REASON)
+@pytest.mark.requires_lm
 class TestBrightVideoProbesOrchestrator:
     """Orchestrator iterative loop recall + trajectory on BRIGHT probes."""
 
@@ -909,7 +862,7 @@ class TestBrightVideoProbesOrchestrator:
         ]
 
     @pytest.fixture(scope="class")
-    def bright_corpus(self, probe_rows) -> int:
+    def bright_corpus(self, probe_rows, bright_services) -> int:
         """Deploy schema + ingest the engineered BRIGHT corpus.
 
         Returns the document count fed. Class-scoped so the corpus is
@@ -932,9 +885,8 @@ class TestBrightVideoProbesOrchestrator:
         only ever produces a single-search plan (no preprocessing,
         no detour).
 
-        Class-scope fixtures run BEFORE the per-function
-        ``_configure_dspy_lm_for_bright`` autouse fixture, so we
-        configure DSPy inside this fixture directly.
+        The session fixture guarantees the exact LM endpoint before this
+        class-scoped run, and this fixture configures DSPy for all probe calls.
         """
         import asyncio
 

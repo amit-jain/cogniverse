@@ -18,7 +18,7 @@ marker.
 from __future__ import annotations
 
 import json
-import shutil
+import shlex
 import subprocess
 import time
 import uuid
@@ -40,20 +40,28 @@ POLL_INTERVAL_S = 5.0
 # ---------------------------------------------------------------------------
 
 
-def _kubectl_available() -> bool:
-    return shutil.which("kubectl") is not None
-
-
-def _cronworkflow_exists(name: str) -> bool:
-    if not _kubectl_available():
-        return False
-    result = subprocess.run(
-        ["kubectl", "get", "cronworkflow", name, "-n", NAMESPACE],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    return result.returncode == 0
+def _require_cronworkflow(name: str) -> None:
+    command = ["kubectl", "get", "cronworkflow", name, "-n", NAMESPACE]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        pytest.fail(
+            f"CronWorkflow prerequisite command failed: {shlex.join(command)}\n"
+            f"error={type(exc).__name__}: {exc}",
+            pytrace=False,
+        )
+    if result.returncode != 0:
+        pytest.fail(
+            f"CronWorkflow prerequisite command failed: {shlex.join(command)}\n"
+            f"exit_code={result.returncode}\nstdout={result.stdout!r}\n"
+            f"stderr={result.stderr!r}",
+            pytrace=False,
+        )
 
 
 def _submit_workflow_from_cron(cron_name: str) -> str:
@@ -299,77 +307,89 @@ def _mc_ls_names(prefix: str) -> list:
 
     Spins a one-off mc pod that talks to the cluster's MinIO service —
     same access pattern the backup workflow uses. Snapshot names embed
-    ISO timestamps, so lexical order == chronological order. Returns
-    None on any failure (caller treats as "skip detection of pre-state").
+    ISO timestamps, so lexical order == chronological order. A failed
+    probe reports the complete kubectl command and process output.
     """
-    result = subprocess.run(
-        [
-            "kubectl",
-            "run",
-            f"mc-probe-{uuid.uuid4().hex[:8]}",
-            "-n",
-            NAMESPACE,
-            "--rm",
-            "-i",
-            "--restart=Never",
-            "--image=minio/mc:latest",
-            "--overrides",
-            json.dumps(
-                {
-                    "spec": {
-                        "containers": [
-                            {
-                                "name": "mc",
-                                "image": "minio/mc:latest",
-                                "env": [
-                                    {
-                                        "name": "ACCESS",
-                                        "valueFrom": {
-                                            "secretKeyRef": {
-                                                "name": "cogniverse-minio",
-                                                "key": "rootUser",
-                                            }
-                                        },
+    command = [
+        "kubectl",
+        "run",
+        f"mc-probe-{uuid.uuid4().hex[:8]}",
+        "-n",
+        NAMESPACE,
+        "--rm",
+        "-i",
+        "--restart=Never",
+        "--image=minio/mc:latest",
+        "--overrides",
+        json.dumps(
+            {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "mc",
+                            "image": "minio/mc:latest",
+                            "env": [
+                                {
+                                    "name": "ACCESS",
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": "cogniverse-minio",
+                                            "key": "rootUser",
+                                        }
                                     },
-                                    {
-                                        "name": "SECRET",
-                                        "valueFrom": {
-                                            "secretKeyRef": {
-                                                "name": "cogniverse-minio",
-                                                "key": "rootPassword",
-                                            }
-                                        },
+                                },
+                                {
+                                    "name": "SECRET",
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": "cogniverse-minio",
+                                            "key": "rootPassword",
+                                        }
                                     },
-                                ],
-                                "command": ["sh", "-c"],
-                                "args": [
-                                    'mc alias set dest http://cogniverse-minio:9000 "$ACCESS" "$SECRET" >/dev/null 2>&1 && '
-                                    f"mc find dest/cogniverse-backups/{prefix} 2>/dev/null"
-                                    " || true"
-                                ],
-                            }
-                        ]
-                    }
+                                },
+                            ],
+                            "command": ["sh", "-c"],
+                            "args": [
+                                'mc alias set dest http://cogniverse-minio:9000 "$ACCESS" "$SECRET" >/dev/null 2>&1 && '
+                                f"mc find dest/cogniverse-backups/{prefix} 2>/dev/null"
+                                " || true"
+                            ],
+                        }
+                    ]
                 }
-            ),
-            "--",
-            "true",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+            }
+        ),
+        "--",
+        "true",
+    ]
     try:
-        # mc find prints full object paths (dest/bucket/prefix/name), one
-        # per line — the minimal mc image has no awk/sed, so parse here.
-        names = [
-            line.strip().rsplit("/", 1)[-1]
-            for line in result.stdout.splitlines()
-            if line.strip().startswith("dest/cogniverse-backups/")
-        ]
-        return sorted(names) if result.returncode == 0 else None
-    except Exception:
-        return None
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        pytest.fail(
+            f"MinIO prerequisite command failed: {shlex.join(command)}\n"
+            f"error={type(exc).__name__}: {exc}",
+            pytrace=False,
+        )
+    if result.returncode != 0:
+        pytest.fail(
+            f"MinIO prerequisite command failed: {shlex.join(command)}\n"
+            f"exit_code={result.returncode}\nstdout={result.stdout!r}\n"
+            f"stderr={result.stderr!r}",
+            pytrace=False,
+        )
+    # mc find prints full object paths (dest/bucket/prefix/name), one
+    # per line — the minimal mc image has no awk/sed, so parse here.
+    names = [
+        line.strip().rsplit("/", 1)[-1]
+        for line in result.stdout.splitlines()
+        if line.strip().startswith("dest/cogniverse-backups/")
+    ]
+    return sorted(names)
 
 
 # ---------------------------------------------------------------------------
@@ -378,16 +398,12 @@ def _mc_ls_names(prefix: str) -> list:
 
 
 @pytest.mark.e2e
-@pytest.mark.skipif(
-    not _kubectl_available(), reason="kubectl not available in test environment"
-)
 class TestDailyCleanupWorkflow:
     """Daily-cleanup must hard-delete EPHEMERAL memories past 2×TTL across
     every tenant — that is its functional purpose, not just "Succeeded"."""
 
     def test_workflow_hard_deletes_stale_memory_for_seeded_tenant(self):
-        if not _cronworkflow_exists("cogniverse-daily-cleanup"):
-            pytest.skip("cogniverse-daily-cleanup CronWorkflow not deployed")
+        _require_cronworkflow("cogniverse-daily-cleanup")
 
         suffix = uuid.uuid4().hex[:8]
         tenant_id = _seed_org_and_tenant(suffix)
@@ -428,9 +444,6 @@ class TestDailyCleanupWorkflow:
 
 
 @pytest.mark.e2e
-@pytest.mark.skipif(
-    not _kubectl_available(), reason="kubectl not available in test environment"
-)
 class TestDailyGatewayWorkflow:
     """Daily-gateway must (1) call run_gateway_thresholds_optimization
     against Phoenix spans and (2) trigger a runtime rollout. The
@@ -438,8 +451,7 @@ class TestDailyGatewayWorkflow:
     chart path that previously broke with "volume 'config' not found"."""
 
     def test_workflow_runs_to_succeeded_and_triggers_runtime_rollout(self):
-        if not _cronworkflow_exists("cogniverse-daily-gateway"):
-            pytest.skip("cogniverse-daily-gateway CronWorkflow not deployed")
+        _require_cronworkflow("cogniverse-daily-gateway")
 
         # Pre: capture rollout generation. Post: it must have bumped if
         # the restart-deployment step ran — and that step is
@@ -476,20 +488,13 @@ class TestDailyGatewayWorkflow:
 
 
 @pytest.mark.e2e
-@pytest.mark.skipif(
-    not _kubectl_available(), reason="kubectl not available in test environment"
-)
 class TestBackupVespaWorkflow:
     """The vespa backup workflow tars vespa data via kubectl-exec and
     uploads to MinIO under cogniverse-backups/vespa/. A new object
     matching ``vespa-<TIMESTAMP>.tar`` must appear post-Succeeded."""
 
     def test_workflow_uploads_new_vespa_snapshot_to_minio(self):
-        if not _cronworkflow_exists("cogniverse-backup-vespa"):
-            pytest.skip(
-                "cogniverse-backup-vespa CronWorkflow not deployed "
-                "(hostStorage.backup.enabled defaults to false)"
-            )
+        _require_cronworkflow("cogniverse-backup-vespa")
         names_before = _mc_ls_names("vespa")
         _submit_and_wait_succeeded("cogniverse-backup-vespa", timeout_s=600)
         names_after = _mc_ls_names("vespa")
@@ -510,18 +515,11 @@ class TestBackupVespaWorkflow:
 
 
 @pytest.mark.e2e
-@pytest.mark.skipif(
-    not _kubectl_available(), reason="kubectl not available in test environment"
-)
 class TestBackupPhoenixWorkflow:
     """Same contract as backup-vespa for the phoenix snapshot."""
 
     def test_workflow_uploads_new_phoenix_snapshot_to_minio(self):
-        if not _cronworkflow_exists("cogniverse-backup-phoenix"):
-            pytest.skip(
-                "cogniverse-backup-phoenix CronWorkflow not deployed "
-                "(hostStorage.backup.enabled defaults to false)"
-            )
+        _require_cronworkflow("cogniverse-backup-phoenix")
         names_before = _mc_ls_names("phoenix")
         _submit_and_wait_succeeded("cogniverse-backup-phoenix", timeout_s=600)
         names_after = _mc_ls_names("phoenix")
@@ -542,17 +540,13 @@ class TestBackupPhoenixWorkflow:
 
 
 @pytest.mark.e2e
-@pytest.mark.skipif(
-    not _kubectl_available(), reason="kubectl not available in test environment"
-)
 class TestMonthlyReportsWorkflow:
     """monthly-reports must (1) generate JSON reports in the workspace and
     (2) upload them to MinIO. Functional intent: a new ``usage-YYYYMM.json``
     object exists under ``cogniverse-backups/reports/`` after the workflow."""
 
     def test_workflow_uploads_usage_and_perf_reports_to_minio(self):
-        if not _cronworkflow_exists("cogniverse-monthly-reports"):
-            pytest.skip("cogniverse-monthly-reports CronWorkflow not deployed")
+        _require_cronworkflow("cogniverse-monthly-reports")
         names_before = _mc_ls_names("reports")
         count_before = len(names_before) if names_before is not None else -1
         _submit_and_wait_succeeded("cogniverse-monthly-reports", timeout_s=600)

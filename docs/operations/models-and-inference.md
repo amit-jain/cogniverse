@@ -17,7 +17,7 @@ Cogniverse runs five classes of inference services:
 |---|---|
 | **LLMs** (chat / generation) | Agent reasoning, query enhancement, distillation. Two tiers: a small **student** model used at runtime, and a larger **teacher** model used only during DSPy optimization (`BootstrapFewShot`'s `teacher_settings`). |
 | **Visual / multimodal embeddings** | ColPali/ColQwen (one pod, one model, shared by both retrieval families) for video/image patch embeddings, VideoPrism for chunk embeddings. |
-| **Text embeddings** | ColBERT-style late-interaction (LateOn, served by vLLM) for documents/code, DenseOn (ModernBERT) for query/single-vector text. |
+| **Text embeddings** | ColBERT-style late-interaction (LateOn, served by the PyLate sidecar) for documents/code, DenseOn (ModernBERT, served by vLLM) for query/single-vector text. |
 | **Audio (ASR + acoustic embeddings)** | Whisper transcription of audio files; CLAP for a joint audio/text acoustic embedding space. |
 | **Vision/NLP sidecars** | GLiNER zero-shot entity extraction (gateway routing + entity extraction agents), InsightFace face embeddings (knowledge-graph face clustering). |
 
@@ -203,22 +203,17 @@ chart key.
 | Chart key | `inference.vllm_colpali` |
 | Model | `TomoroAI/tomoro-colqwen3-embed-4b` |
 | Image (base `values.yaml`, no device overlay) | `vllm/vllm-openai-cpu:v0.23.0` (official), `engine: vllm_token_embed`, `enabled: false` |
-| Image (k3d local dev, `values.k3s.yaml`) | **`cogniverse/colpali:dev` (CUSTOM, built from `deploy/colpali/`), `engine: colpali_native`, `enabled: true`** |
+| Image (k3d local dev, `values.k3s.yaml`) | No override: inherits the disabled official CPU vLLM definition from `values.yaml` |
 | Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:v0.23.0` (official), `engine: vllm_token_embed` |
 | Image (CUDA) | `vllm/vllm-openai:v0.23.0` (official), `engine: vllm_token_embed`, `replicaCount: 3` |
 | NodePort | 29001 |
-| Default state | `cogniverse up` (k3d dev, no GPU) enables it via the `values.k3s.yaml` overlay above |
+| Default state | Disabled in base and k3d-only composition; the ROCm and CUDA overlays enable it |
 
-**Why custom on CPU**: vLLM's `ColPaliForRetrieval` registers
-`/v1/score` (cross-encoder scoring) instead of `/v1/embeddings`.
-The runtime needs per-token multi-vector embeddings so the k3d dev overlay
-ships a custom FastAPI sidecar (`deploy/colpali/server.py`) that wraps
-colpali-engine directly.
-
-**On ROCm 7.12+ with gfx1151 (and on CUDA)**: the `vllm_token_embed` path
-serves the multi-vector contract correctly, so the device overlay overrides
-`engine: vllm_token_embed` and uses the official vLLM image instead of the
-custom sidecar.
+The k3s overlay changes neither this service's image nor its enabled state, so
+a CPU-only `cogniverse up` does not allocate a ColPali/ColQwen pod. On ROCm
+7.12+ with gfx1151 and on CUDA, the device overlay enables the service and the
+official vLLM pooling runner serves the `vllm_token_embed` multi-vector
+contract.
 
 ### VideoPrism (chunk-level video embeddings)
 
@@ -226,13 +221,13 @@ custom sidecar.
 |---|---|
 | Chart key | `inference.videoprism_jax` |
 | Model | `videoprism_public_v1_base_hf` |
-| Image | **`cogniverse/videoprism:0.1.0-dev` (CUSTOM, built from `deploy/videoprism/`)** |
+| Image | **`cogniverse/videoprism:0.1.0-dev` (CUSTOM, `deploy/videoprism/Dockerfile`)** |
 | Engine | `videoprism_jax` |
 | Default state | disabled |
 
 Custom JAX sidecar — no upstream vLLM equivalent. Used by the
 `video_videoprism_*` family of profiles. Build with
-`docker build -t cogniverse/videoprism:0.1.0-dev deploy/videoprism/`; see
+`docker build -f deploy/videoprism/Dockerfile -t cogniverse/videoprism:0.1.0-dev .`; see
 [`deploy/videoprism/README.md`](../../deploy/videoprism/README.md) for the
 endpoint, supported models, and the video-only scope.
 
@@ -245,29 +240,31 @@ endpoint, supported models, and the video-only scope.
 | Field | Value |
 |---|---|
 | Chart key | `inference.colbert_pylate` |
-| Model | `lightonai/LateOn` (ColBERT-style, late-interaction) |
-| Image | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` (official) |
-| Engine | `vllm_token_embed` |
-| Endpoint | `POST /pooling` (per-token multi-vector) |
+| Model | `lightonai/LateOn` (ColBERT-style, late-interaction), pinned revision `c01907b7…` |
+| Image | **`cogniverse/pylate` (CUSTOM, `deploy/pylate/Dockerfile`)** |
+| Engine | `pylate` |
+| Endpoint | `POST /pooling` (per-token multi-vector, `{"input", "model", "is_query"}`) |
 | NodePort | 29002 |
 | Default state | enabled |
 
-**Serving**: vLLM's pooling runner (`--runner pooling --convert embed`)
-serves the per-token `/pooling` contract. The
-`--hf-overrides '{"architectures": ["ColBERTModernBertModel"]}'` flag
-forces the multi-vector architecture; without it vLLM serves a plain
-dense ModernBert and the per-token outputs LateOn retrieval needs vanish.
-Query vs document is distinguished client-side by a `[Q] `/`[D] ` prefix,
-never an `is_query` field.
+**Serving**: the PyLate sidecar
+(`libs/cli/cogniverse_cli/modal_inference/servers/pylate.py`) runs
+`pylate.models.ColBERT` itself and owns both encode directions: queries
+get PyLate's exact expansion — mask-token padding excluded from attention
+— and documents get the marker plus punctuation skiplist. Stock vLLM
+cannot serve LateOn exactly: its `/pooling` request accepts text or token
+IDs but no attention mask, so it attends to all query positions and every
+per-token vector drifts from the trained model's output. Clients send raw
+text plus `is_query`; no prefixes or token IDs are built client-side.
 
 ### Code search (ColBERT variant)
 
 | Field | Value |
 |---|---|
 | Chart key | `inference.code_colbert_pylate` |
-| Model | `lightonai/LateOn-Code-edge` |
-| Image | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` (official) |
-| Engine | `vllm_token_embed` |
+| Model | `lightonai/LateOn-Code-edge` (48-dim), pinned revision `07ef20f4…` |
+| Image | **`cogniverse/pylate` (CUSTOM, `deploy/pylate/Dockerfile`)** |
+| Engine | `pylate` |
 | Default state | disabled |
 
 ### DenseOn (single-vector dense text)
@@ -311,8 +308,11 @@ startup before exec-ing `vllm serve`. The endpoint is
 |---|---|
 | Chart key | `inference.clap_embed` |
 | Model | `laion/clap-htsat-unfused` (~1.7 GiB) |
-| Image | `cogniverse/clap-embed` (CUSTOM, `deploy/clap_embed/Dockerfile`, module `cogniverse_runtime/sidecars/clap_embed.py`) |
+| Revision | `8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a` |
+| Image | `cogniverse/clap-embed` (CUSTOM, `deploy/clap_embed/Dockerfile`, module `cogniverse_cli.modal_inference.servers.clap`) |
 | Endpoints | `POST /embed/audio`, `POST /embed/text` (one joint space) |
+| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "model": "laion/clap-htsat-unfused", "model_revision": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a"}` |
+| Kubernetes probes | HTTP `GET /health` readiness on port 8000; TCP liveness on port 8000 |
 | NodePort | 29008 |
 | Default state | disabled |
 
@@ -327,6 +327,12 @@ transcript + semantic embeddings.
 
 The runtime pods also need `NUMBA_CACHE_DIR` writable (set by the
 chart) or librosa's numba JIT crashes with "no locator available".
+If the pinned CLAP model cannot load, `/health` returns HTTP 503 and its
+`detail` matches
+`clap_embed: model laion/clap-htsat-unfused load failed (<ExceptionType>): <cause>`.
+Readiness therefore keeps the pod out of the
+Service while the TCP liveness probe leaves the running process available for
+diagnosis and recovery.
 
 ---
 
@@ -334,26 +340,32 @@ chart) or librosa's numba JIT crashes with "no locator available".
 
 These two sidecars keep heavy ML dependencies (torch + gliner,
 torch + insightface) out of the slim runtime image. Both are FastAPI
-services with a single `/health` liveness endpoint plus one predict route.
+services with a model-backed `/health` readiness and model-identity endpoint
+plus one predict route. Their liveness probes check only the TCP serving
+socket, so a model load fault cannot create a Kubernetes restart loop.
 
 ### GLiNER (zero-shot entity extraction)
 
 | Field | Value |
 |---|---|
 | Chart key | `inference.gliner` |
-| Model | `urchade/gliner_mediumv2.1` (sidecar default; callers can override per request) |
-| Image | `cogniverse/gliner` (CUSTOM, `deploy/gliner/Dockerfile` + `deploy/gliner/server.py`) |
+| Model | `urchade/gliner_large-v2.1` at revision `abd49a1f1ebc12af1be84d06f6848221cf96dcad` (pinned; other request model IDs are rejected) |
+| Image | `cogniverse/gliner` (CUSTOM, `deploy/gliner/Dockerfile` + `cogniverse_cli.modal_inference.servers.gliner`) |
 | Endpoint | `POST /predict_entities` (mirrors the in-process `model.predict_entities(text, labels, threshold)` shape) |
+| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "default_model": "urchade/gliner_large-v2.1", "model_revision": "abd49a1f1ebc12af1be84d06f6848221cf96dcad", "loaded_models": ["urchade/gliner_large-v2.1"]}` |
+| Kubernetes probes | HTTP `GET /health` readiness on port 8080; TCP liveness on port 8080 |
 | NodePort | 29007 |
 | Default state | enabled |
 
 `GatewayAgent` classifies queries by modality/generation-type using GLiNER
 zero-shot NER (`urchade/gliner_large-v2.1`), and `EntityExtractionAgent` /
-the knowledge-graph doc extractor use the same sidecar for entity extraction
-(`urchade/gliner_large-v2.1` by default there too). The sidecar loads
-multiple models on demand keyed by the request's `model` field, so one pod
-serves both callers' model choices. `RemoteGlinerLoader` is the client-side
-loader that replaces the in-process GLiNER loader transparently.
+the knowledge-graph doc extractor use the same sidecar for entity extraction.
+The sidecar accepts only the canonical large model and its immutable revision;
+the optional request `model` field must match that identifier exactly.
+`RemoteGlinerClient` is the client-side loader that replaces the in-process
+GLiNER loader transparently. A pinned-model load failure returns HTTP 503; its
+`detail` matches
+`gliner: model urchade/gliner_large-v2.1 load failed (<ExceptionType>): <cause>`.
 
 ### InsightFace (face embeddings, `face_embed` sidecar)
 
@@ -361,12 +373,23 @@ loader that replaces the in-process GLiNER loader transparently.
 |---|---|
 | Chart key | `inference.face_embed` |
 | Model | `buffalo_l` (InsightFace bundle: RetinaFace detector + ArcFace `w600k_r50` recognizer, 512-dim) |
-| Image | `cogniverse/face-embed` (CUSTOM, `deploy/face_embed/Dockerfile`, module `cogniverse_runtime/sidecars/face_embed.py`) |
-| Endpoint | `POST /embed` (`{"image_url": ...}` or `{"image_b64": ...}` → `{"faces": [{bbox, vec}], "n": int}`) |
-| NodePort | 29007 (**shares the same `nodePort` as `gliner` in `values.yaml`** — enabling both simultaneously without overriding one will fail Kubernetes Service admission) |
+| Artifact | [InsightFace v0.7 `buffalo_l.zip`](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip), SHA-256 `80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f` |
+| Image | `cogniverse/face-embed` (CUSTOM, `deploy/face_embed/Dockerfile`, module `cogniverse_cli.modal_inference.servers.face`) |
+| Endpoint | `POST /embed` (`{"image_url": ...}` or `{"image_b64": ...}` → `{"faces": [{bbox, vec, det_score}], "n": int}`); `det_score` is the RetinaFace confidence in `[0, 1]` |
+| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "model": "buffalo_l", "model_revision": "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f"}` |
+| Kubernetes probes | HTTP `GET /health` readiness on port 8000; TCP liveness on port 8000 |
+| NodePort | 29009 |
 | Default state | disabled |
 
-CPU-only, stateless — no persistence. The knowledge-graph face pipeline
+The Modal image downloads that official archive during its image build,
+verifies the digest before unpacking, and installs the required ONNX files at
+`/opt/insightface/models/buffalo_l`. Runtime initialization passes that root
+to InsightFace and fails if any required file is missing; it never downloads
+model data on the first inference request. A load failure returns HTTP 503; its
+`detail` matches
+`face_embed: model buffalo_l load failed (<ExceptionType>): <cause>`.
+
+The service is stateless — no persistence. The knowledge-graph face pipeline
 (`libs/agents/cogniverse_agents/graph/face_extractor.py`) POSTs one keyframe
 per request and clusters the returned 512-dim L2-normalized ArcFace vectors
 per `source_doc_id` to discover anonymous identity groups, attributing each
@@ -384,16 +407,15 @@ the whole ingest.
 |---|---|---|
 | `vllm_llm_student` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai` / `vllm/vllm-openai-rocm` | No (official) |
 | `vllm_llm_teacher` | same as student | No |
-| `vllm_colpali` (base `values.yaml`, no overlay) | `vllm/vllm-openai-cpu` | No |
-| `vllm_colpali` (CPU/k3d dev overlay) | `cogniverse/colpali:dev` | **Yes** (`deploy/colpali/`) |
+| `vllm_colpali` (base and CPU/k3d dev composition; disabled) | `vllm/vllm-openai-cpu` | No |
 | `vllm_colpali` (ROCm 7.12+ / CUDA) | `vllm/vllm-openai-rocm` / `vllm/vllm-openai` | No |
 | `vllm_asr` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No |
-| `colbert_pylate` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
-| `code_colbert_pylate` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
+| `colbert_pylate` | `cogniverse/pylate` | **Yes** (`deploy/pylate/Dockerfile`) |
+| `code_colbert_pylate` | `cogniverse/pylate` (shared image, built once) | **Yes** (`deploy/pylate/Dockerfile`) |
 | `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
-| `videoprism_jax` | `cogniverse/videoprism:0.1.0-dev` | **Yes** (`deploy/videoprism/`) |
+| `videoprism_jax` | `cogniverse/videoprism:0.1.0-dev` | **Yes** (`deploy/videoprism/Dockerfile`) |
 | `clap_embed` | `cogniverse/clap-embed` | **Yes** (`deploy/clap_embed/`) |
-| `gliner` | `cogniverse/gliner` | **Yes** (`deploy/gliner/`) |
+| `gliner` | `cogniverse/gliner` | **Yes** (`deploy/gliner/Dockerfile`) |
 | `face_embed` | `cogniverse/face-embed` | **Yes** (`deploy/face_embed/`) |
 | `llm.builtin` (Ollama) | `ollama/ollama` | No (official) |
 
@@ -415,7 +437,7 @@ reads it for GPU scheduling). Values:
 | Value | Meaning |
 |---|---|
 | `cpu` | (default in `values.yaml`) — CPU-only execution. |
-| `rocm` | AMD GPU via ROCm. Chart adds `amd.com/gpu: 1` resource limit, the `amd.com/gpu.present=true` nodeSelector, the `/dev/kfd` + `/dev/dri` hostPath mounts, and `supplementalGroups: [992, 44]` for the host's render and video group ids. See [ROCm GPU passthrough](./kubernetes-deployment.md#gpu-passthrough-rocm--cuda) for the device-mount specifics. |
+| `rocm` | AMD GPU via ROCm. Chart adds `amd.com/gpu: 1` resource limit, the `amd.com/gpu.present=true` nodeSelector, the `/dev/kfd` + `/dev/dri` hostPath mounts, and `supplementalGroups: [992, 44]` for the host's render and video group ids. See [ROCm GPU passthrough](./kubernetes-deployment.md#gpu-passthrough-rocm-cuda) for the device-mount specifics. |
 | `cuda` | NVIDIA GPU. Chart adds `nvidia.com/gpu: 1` resource limit and the `nvidia.com/gpu.present=true` nodeSelector. |
 
 `cogniverse up` auto-applies the right values overlay

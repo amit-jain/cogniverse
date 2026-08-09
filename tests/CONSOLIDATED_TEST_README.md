@@ -19,19 +19,19 @@ This is a comprehensive test suite for the Cogniverse multi-modal content intell
 ### Core Test Commands
 ```bash
 # Run all tests with UV workspace (recommended)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v --tb=long 2>&1 > /tmp/cogniverse-tests.log
 
 # Run layer-by-layer tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/foundation/ -v  # Foundation layer
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ -v  # Core layer
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ -v  # Implementation layer
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/ -v  # Application layer
+JAX_PLATFORM_NAME=cpu uv run pytest tests/foundation/ -v --tb=long 2>&1 > /tmp/foundation-tests.log  # Foundation layer
+JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ -v --tb=long 2>&1 > /tmp/core-tests.log  # Core layer
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ -v --tb=long 2>&1 > /tmp/implementation-tests.log  # Implementation layer
+JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/ -v --tb=long 2>&1 > /tmp/application-tests.log  # Application layer
 
 # Run comprehensive routing tests
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py 2>&1 > /tmp/routing-tests.log
 
 # Run ingestion tests with environment detection
-uv run python scripts/test_ingestion.py --integration
+uv run python scripts/test_ingestion.py --integration 2>&1 > /tmp/ingestion-integration.log
 ```
 
 **Note:** Use `JAX_PLATFORM_NAME=cpu` for DSPy tests to avoid GPU initialization overhead.
@@ -146,13 +146,13 @@ The test suite validates processing across **all content modalities**:
 #### Comprehensive Testing
 ```bash
 # Test all routing models and strategies (DSPy requires CPU-only JAX)
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py 2>&1 > /tmp/routing-tests.log
 
 # Test specific components
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py llm-only      # LLM models only
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py gliner-only  # GLiNER models only
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py hybrid-only  # Combined approaches
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py quick        # Fast subset
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py llm-only 2>&1 > /tmp/routing-llm-tests.log      # LLM models only
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py gliner-only 2>&1 > /tmp/routing-gliner-tests.log  # GLiNER models only
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py hybrid-only 2>&1 > /tmp/routing-hybrid-tests.log  # Combined approaches
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py quick 2>&1 > /tmp/routing-quick-tests.log        # Fast subset
 ```
 
 **Models Tested:**
@@ -176,17 +176,19 @@ JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py quick   
 #### Environment-Aware Execution
 ```bash
 # Check what's available in your environment
-python scripts/test_ingestion.py --env-info
+uv run python scripts/test_ingestion.py --env-info
 
 # Run CI-safe tests (mocked dependencies)
-python scripts/test_ingestion.py --unit --ci-safe
+uv run python scripts/test_ingestion.py --unit --ci-safe 2>&1 > /tmp/ingestion-unit-ci-safe.log
 
 # Run local-only tests (requires heavy models)
-python scripts/test_ingestion.py --integration --local-only
+uv run python scripts/test_ingestion.py --integration --local-only 2>&1 > /tmp/ingestion-local-models.log
 
 # Run specific backend tests
-python scripts/test_ingestion.py --requires-vespa
-python scripts/test_ingestion.py --requires-colpali
+uv run python scripts/test_ingestion.py --requires-vespa 2>&1 > /tmp/ingestion-vespa.log
+
+# Run a test that declares its exact inference service requirement
+uv run pytest tests/ingestion/integration/test_backend_ingestion.py::TestVespaBackendIngestion::test_colpali_vespa_ingestion -v --tb=long
 ```
 
 ## Pytest Markers System
@@ -207,11 +209,11 @@ python scripts/test_ingestion.py --requires-colpali
 - `requires_cv2`: Tests requiring OpenCV
 - `requires_ffmpeg`: Tests requiring FFmpeg
 
-### Model Requirements
-- `requires_colpali`: Tests requiring ColPali models
-- `requires_videoprism`: Tests requiring VideoPrism models
-- `requires_colqwen`: Tests requiring ColQwen models
-- `requires_whisper`: Tests requiring Whisper models
+### Inference Service Requirements
+- `requires_inference("vllm_colpali")`: ColPali and ColQwen embedding tests
+- `requires_inference("videoprism_jax")`: VideoPrism embedding tests
+- `requires_inference("vllm_asr")`: Remote ASR tests
+- `requires_whisper`: Local Whisper model tests
 
 ### Resource Requirements
 - `requires_gpu`: Tests requiring GPU availability
@@ -225,22 +227,22 @@ All tests run via `uv run pytest` to use the 10-package workspace:
 
 ```bash
 # Full test suite (30 min timeout for integration tests)
-JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest -v
+JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest -v --tb=long 2>&1 > /tmp/cogniverse-tests.log
 
 # Foundation layer tests
-uv run pytest tests/sdk/ tests/foundation/ -v
+uv run pytest tests/sdk/ tests/foundation/ -v --tb=long 2>&1 > /tmp/foundation-tests.log
 
 # Core layer tests (requires JAX_PLATFORM_NAME=cpu for DSPy)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ tests/telemetry/ -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ tests/telemetry/ -v --tb=long 2>&1 > /tmp/core-tests.log
 
 # Implementation layer tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ tests/backends/ -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ tests/backends/ -v --tb=long 2>&1 > /tmp/implementation-tests.log
 
 # Application layer tests
-uv run pytest tests/ingestion/ tests/system/ -v
+uv run pytest tests/ingestion/ tests/system/ -v --tb=long 2>&1 > /tmp/application-tests.log
 
 # With coverage reporting across workspace
-JAX_PLATFORM_NAME=cpu uv run pytest --cov=libs/ --cov-report=html --cov-report=term-missing
+JAX_PLATFORM_NAME=cpu uv run pytest -v --tb=long --cov=libs/ --cov-report=html --cov-report=term-missing 2>&1 > /tmp/cogniverse-coverage.log
 ```
 
 ### Layer-Specific Testing
@@ -248,78 +250,78 @@ JAX_PLATFORM_NAME=cpu uv run pytest --cov=libs/ --cov-report=html --cov-report=t
 **Foundation Layer:**
 ```bash
 # SDK interface tests
-uv run pytest tests/sdk/test_backend_interface.py -v
-uv run pytest tests/sdk/test_document_model.py -v
+uv run pytest tests/sdk/test_backend_interface.py -v --tb=long
+uv run pytest tests/sdk/test_document_model.py -v --tb=long
 
 # Foundation tests
-uv run pytest tests/foundation/test_config_base.py -v
+uv run pytest tests/foundation/test_config_base.py -v --tb=long
 ```
 
 **Core Layer:**
 ```bash
 # Core functionality (DSPy integration requires CPU)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ -v --cov=libs/core/cogniverse_core
+JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ -v --tb=long --cov=libs/core/cogniverse_core 2>&1 > /tmp/common-tests.log
 
 # Evaluation framework
-uv run pytest tests/evaluation/ -v --cov=libs/evaluation/cogniverse_evaluation
+uv run pytest tests/evaluation/ -v --tb=long --cov=libs/evaluation/cogniverse_evaluation 2>&1 > /tmp/evaluation-tests.log
 
 # Phoenix telemetry provider
-uv run pytest tests/telemetry/test_phoenix_provider.py -v
+uv run pytest tests/telemetry/test_phoenix_provider.py -v --tb=long
 ```
 
 **Implementation Layer:**
 ```bash
 # Agents with DSPy optimization
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v --tb=long 2>&1 > /tmp/agent-unit-tests.log
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v --tb=long 2>&1 > /tmp/agent-integration-tests.log
 
 # Routing system
-JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/unit/ tests/routing/integration/ -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/unit/ tests/routing/integration/ -v --tb=long 2>&1 > /tmp/routing-pytest.log
 
 # Vespa backend
-uv run pytest tests/backends/ -v --cov=libs/vespa/cogniverse_vespa
+uv run pytest tests/backends/ -v --tb=long --cov=libs/vespa/cogniverse_vespa 2>&1 > /tmp/backend-tests.log
 ```
 
 **Application Layer:**
 ```bash
 # Multi-modal ingestion pipeline
-uv run pytest tests/ingestion/unit/ -v --cov=libs/runtime/cogniverse_runtime/ingestion
+uv run pytest tests/ingestion/unit/ -v --tb=long --cov=libs/runtime/cogniverse_runtime/ingestion 2>&1 > /tmp/ingestion-unit-tests.log
 
 # Integration tests with environment detection
-uv run python scripts/test_ingestion.py --integration --ci-safe
+uv run python scripts/test_ingestion.py --integration --ci-safe 2>&1 > /tmp/ingestion-integration-ci-safe.log
 
 # System integration tests
-uv run pytest tests/system/ -v
+uv run pytest tests/system/ -v --tb=long 2>&1 > /tmp/system-tests.log
 ```
 
 ### Integration Tests with Services
 ```bash
 # Mock backend tests (always available)
-uv run python scripts/test_ingestion.py --integration --ci-safe
+uv run python scripts/test_ingestion.py --integration --ci-safe 2>&1 > /tmp/ingestion-integration-ci-safe.log
 
 # Vespa backend tests (requires Vespa running)
 ./scripts/start_vespa.sh
-uv run python scripts/test_ingestion.py --requires-vespa
+uv run python scripts/test_ingestion.py --requires-vespa 2>&1 > /tmp/ingestion-vespa.log
 
 # Heavy model tests (local development only)
-uv run python scripts/test_ingestion.py --integration --local-only
+uv run python scripts/test_ingestion.py --integration --local-only 2>&1 > /tmp/ingestion-local-models.log
 
 # E2E tests with real Ollama
-JAX_PLATFORM_NAME=cpu timeout 600 uv run pytest tests/agents/e2e/ -v
+JAX_PLATFORM_NAME=cpu timeout 600 uv run pytest tests/agents/e2e/ -v --tb=long 2>&1 > /tmp/agent-e2e-tests.log
 ```
 
 ### Specific Test Scenarios
 ```bash
 # Test specific marker combinations
-pytest tests/ingestion/ -m "integration and requires_vespa" -v
-pytest tests/ingestion/ -m "unit and ci_safe" -v
-pytest tests/ingestion/ -m "integration and local_only" -v
+uv run pytest tests/ingestion/ -m "integration and requires_vespa" -v --tb=long 2>&1 > /tmp/ingestion-vespa-tests.log
+uv run pytest tests/ingestion/ -m "unit and ci_safe" -v --tb=long 2>&1 > /tmp/ingestion-ci-safe-tests.log
+uv run pytest tests/ingestion/ -m "integration and local_only" -v --tb=long 2>&1 > /tmp/ingestion-local-tests.log
 
 # Test with coverage threshold
-python scripts/test_ingestion.py --unit --coverage-fail-under=80
+uv run python scripts/test_ingestion.py --unit --coverage-fail-under=80 2>&1 > /tmp/ingestion-coverage.log
 
 # Exclude heavy models (CI default)
-python scripts/test_ingestion.py --exclude-heavy
+uv run python scripts/test_ingestion.py --exclude-heavy 2>&1 > /tmp/ingestion-light-tests.log
 ```
 
 ## Test Fixtures and Utilities
@@ -361,13 +363,13 @@ The test system automatically detects:
    - 80%+ coverage requirement
 
 3. **Implementation Layer CI** (`test-implementation.yml`)
-   - Agent tests: `JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m "unit and ci_fast"`
+   - Agent tests: `JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v --tb=long 2>&1 > /tmp/agent-unit-tests.log`
    - Routing tests with mocked LLMs
    - Vespa backend tests with lightweight Docker container
    - Synthetic data generation tests
 
 4. **Application Layer CI** (`test-application.yml`)
-   - Ingestion pipeline tests: `uv run pytest tests/ingestion/unit/ -m "unit and ci_safe"`
+   - Ingestion pipeline tests: `uv run pytest tests/ingestion/unit/ -m "unit and ci_safe" -v --tb=long 2>&1 > /tmp/ingestion-unit-ci-safe.log`
    - Integration tests with mocked dependencies
    - System integration tests
 
@@ -438,7 +440,7 @@ class TestKeyframeProcessor:
 @pytest.mark.integration
 @pytest.mark.local_only
 @pytest.mark.requires_vespa
-@pytest.mark.requires_colpali
+@pytest.mark.requires_inference("vllm_colpali")
 class TestColPaliVespaIngestion:
     def test_full_ingestion_pipeline(self):
         # Heavy integration test
@@ -473,7 +475,7 @@ def test_local_development_only():
 #### Tests Getting Skipped
 ```bash
 # Check what's missing in your environment
-python scripts/test_ingestion.py --env-info
+uv run python scripts/test_ingestion.py --env-info
 
 # Common fixes
 ./scripts/start_vespa.sh  # Start Vespa
@@ -499,16 +501,16 @@ pip install colpali-engine  # Install ColPali
 ### Debug Commands
 ```bash
 # Dry run to see what would execute
-python scripts/test_ingestion.py --integration --dry-run
+uv run python scripts/test_ingestion.py --integration --dry-run
 
 # Simulate CI environment locally
-CI=1 python scripts/test_ingestion.py --unit
+CI=1 uv run python scripts/test_ingestion.py --unit 2>&1 > /tmp/ingestion-ci-unit.log
 
 # Force run all tests (will show skips/failures)
-pytest tests/ingestion/integration/ -v --tb=short
+uv run pytest tests/ingestion/integration/ -v --tb=long 2>&1 > /tmp/ingestion-integration-all.log
 
 # Test specific file regardless of dependencies
-pytest tests/ingestion/integration/test_backend_ingestion.py::TestMockBackendIngestion -v
+uv run pytest tests/ingestion/integration/test_backend_ingestion.py::TestMockBackendIngestion -v --tb=long
 ```
 
 ## Configuration

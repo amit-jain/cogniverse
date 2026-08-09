@@ -4,9 +4,10 @@ The chart supports N parallel inference services under ``inference`` — each
 entry deploys one pod. Keys are logical tags (e.g. ``colbert_pylate`` for
 the LateOn text multi-vector pod, ``denseon`` for the DenseOn dense pod).
 Each service has an ``engine`` that selects the container template
-(``vllm_token_embed`` for per-token multi-vector, ``vllm_embed`` for dense
-single-vector, ``vllm_chat``, ``vllm_transcription``, ``gliner``,
-``fastapi``, …) and a ``type`` (``multi_vector`` or ``single_vector``).
+(``pylate`` for exact PyLate per-token multi-vector, ``vllm_token_embed``
+for vLLM per-token multi-vector, ``vllm_embed`` for dense single-vector,
+``vllm_chat``, ``vllm_transcription``, ``gliner``, ``fastapi``, …) and a
+``type`` (``multi_vector`` or ``single_vector``).
 
 The runtime receives one ``INFERENCE_SERVICE_URLS`` JSON env var containing
 {service_key: url} for every enabled service. Profiles pick a service by key.
@@ -62,6 +63,21 @@ def _inference_deployments(docs: list[dict]) -> dict[str, dict]:
     return out
 
 
+def _inference_services(docs: list[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for document in docs:
+        if document.get("kind") != "Service":
+            continue
+        component = (
+            document.get("metadata", {})
+            .get("labels", {})
+            .get("app.kubernetes.io/component", "")
+        )
+        if component.startswith("inference-"):
+            out[component.removeprefix("inference-")] = document
+    return out
+
+
 def _inference_env(deps: dict[str, dict], key: str) -> dict[str, str]:
     container = deps[key]["spec"]["template"]["spec"]["containers"][0]
     return {e["name"]: e.get("value") for e in container.get("env", [])}
@@ -111,22 +127,147 @@ def test_default_runs_colbert_pylate_and_denseon_services():
     assert deps["vllm_asr"]["metadata"]["name"] == "cogniverse-vllm-asr"
 
 
-def test_default_colbert_pylate_serves_lateon_via_vllm():
-    """Default colbert_pylate service serves LateOn via vLLM's
-    token-embed runner with the ColBERTModernBertModel arch override."""
+def test_default_gliner_deployment_uses_the_pinned_production_model():
+    docs = _render()
+    deps = _inference_deployments(docs)
+
+    assert _inference_env(deps, "gliner")["MODEL_NAME"] == ("urchade/gliner_large-v2.1")
+
+
+def test_gliner_and_face_nodeports_are_distinct_when_both_are_exposed():
+    services = _inference_services(
+        _render(
+            "inference.gliner.service.type=NodePort",
+            "inference.face_embed.enabled=true",
+        )
+    )
+
+    assert services["gliner"]["spec"]["ports"] == [
+        {
+            "name": "http",
+            "nodePort": 29007,
+            "port": 8080,
+            "protocol": "TCP",
+            "targetPort": "http",
+        }
+    ]
+    assert services["face_embed"]["spec"]["ports"] == [
+        {
+            "name": "http",
+            "nodePort": 29009,
+            "port": 8000,
+            "protocol": "TCP",
+            "targetPort": "http",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("service", "port", "readiness_timing", "liveness_timing"),
+    [
+        (
+            "gliner",
+            8080,
+            {
+                "failureThreshold": 30,
+                "initialDelaySeconds": 30,
+                "periodSeconds": 15,
+                "timeoutSeconds": 5,
+            },
+            {
+                "failureThreshold": 10,
+                "initialDelaySeconds": 60,
+                "periodSeconds": 30,
+                "timeoutSeconds": 5,
+            },
+        ),
+        (
+            "clap_embed",
+            8000,
+            {
+                "failureThreshold": 5,
+                "initialDelaySeconds": 10,
+                "periodSeconds": 10,
+                "timeoutSeconds": 5,
+            },
+            {
+                "failureThreshold": 5,
+                "initialDelaySeconds": 30,
+                "periodSeconds": 30,
+                "timeoutSeconds": 5,
+            },
+        ),
+        (
+            "face_embed",
+            8000,
+            {
+                "failureThreshold": 5,
+                "initialDelaySeconds": 10,
+                "periodSeconds": 10,
+                "timeoutSeconds": 5,
+            },
+            {
+                "failureThreshold": 5,
+                "initialDelaySeconds": 30,
+                "periodSeconds": 30,
+                "timeoutSeconds": 5,
+            },
+        ),
+    ],
+)
+def test_model_sidecars_separate_model_readiness_from_process_liveness(
+    service: str,
+    port: int,
+    readiness_timing: dict[str, int],
+    liveness_timing: dict[str, int],
+):
+    deps = _inference_deployments(
+        _render(
+            "inference.clap_embed.enabled=true",
+            "inference.face_embed.enabled=true",
+        )
+    )
+    container = deps[service]["spec"]["template"]["spec"]["containers"][0]
+
+    assert container["readinessProbe"] == {
+        "httpGet": {"path": "/health", "port": port},
+        **readiness_timing,
+    }
+    assert container["livenessProbe"] == {
+        "tcpSocket": {"port": port},
+        **liveness_timing,
+    }
+
+
+def test_default_colbert_pylate_serves_lateon_via_pylate():
+    """Default colbert_pylate service runs the PyLate sidecar image with the
+    pinned LateOn revision. LateOn needs PyLate's exact encode (query
+    expansion over masked padding), which stock vLLM cannot reproduce, so
+    the pod must not carry a vLLM launch command."""
     deps = _inference_deployments(_render())
     container = deps["colbert_pylate"]["spec"]["template"]["spec"]["containers"][0]
-    assert container["image"].startswith("vllm/vllm-openai")
-    args = container["args"]
-    assert "lightonai/LateOn" in args
-    assert "--hf-overrides" in args
-    joined = " ".join(args)
-    assert "ColBERTModernBertModel" in joined
-    # The hf-overrides value is one valid-JSON arg, not split across list items.
-    override = args[args.index("--hf-overrides") + 1]
-    assert json.loads(override) == {"architectures": ["ColBERTModernBertModel"]}
+    assert container["image"] == "cogniverse/pylate:0.1.0"
+    assert "command" not in container
+    assert "args" not in container
     env = {e["name"]: e.get("value") for e in container.get("env", [])}
-    assert "MODEL_NAME" not in env
+    assert env == {
+        "MODEL_NAME": "lightonai/LateOn",
+        "MODEL_REVISION": "c01907b70557ee5c7753680d4819a5cce1674b83",
+        "DEVICE": "cpu",
+        "HOST": "0.0.0.0",
+        "PORT": "8000",
+        "HF_HOME": "/root/.cache/huggingface",
+    }
+    assert container["ports"] == [{"name": "http", "containerPort": 8000}]
+
+
+def test_enabled_code_colbert_pylate_pins_lateon_code_edge():
+    deps = _inference_deployments(_render("inference.code_colbert_pylate.enabled=true"))
+    container = deps["code_colbert_pylate"]["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "cogniverse/pylate:0.1.0"
+    env = {e["name"]: e.get("value") for e in container.get("env", [])}
+    assert env["MODEL_NAME"] == "lightonai/LateOn-Code-edge"
+    assert env["MODEL_REVISION"] == "07ef20f406c86badca122464808f4cac2f6e4b25"
 
 
 def test_default_inference_service_urls_contains_colbert_pylate_and_denseon():
@@ -175,16 +316,13 @@ def test_overriding_one_service_model_does_not_affect_another():
         "inference.colbert_pylate.model=lightonai/Reason-ModernColBERT",
     )
     deps = _inference_deployments(docs)
-    colbert_args = deps["colbert_pylate"]["spec"]["template"]["spec"]["containers"][0][
-        "args"
-    ]
-    code_args = deps["code_colbert_pylate"]["spec"]["template"]["spec"]["containers"][
-        0
-    ]["args"]
-    assert "lightonai/Reason-ModernColBERT" in colbert_args
-    assert "lightonai/LateOn" not in colbert_args
-    assert "lightonai/LateOn-Code-edge" in code_args
-    assert "lightonai/Reason-ModernColBERT" not in code_args
+
+    def _env(service: str) -> dict:
+        container = deps[service]["spec"]["template"]["spec"]["containers"][0]
+        return {e["name"]: e.get("value") for e in container.get("env", [])}
+
+    assert _env("colbert_pylate")["MODEL_NAME"] == "lightonai/Reason-ModernColBERT"
+    assert _env("code_colbert_pylate")["MODEL_NAME"] == "lightonai/LateOn-Code-edge"
 
 
 def test_default_denseon_serves_via_vllm_embed():
@@ -358,6 +496,39 @@ def test_chart_visual_profiles_serve_tomoro():
         p = profiles[name]
         assert p["embedding_model"] == "TomoroAI/tomoro-colqwen3-embed-4b", name
         assert p["inference_services"]["embedding"] == "vllm_colpali", name
+
+
+def test_shipped_video_chunk_profile_has_one_exact_colqwen3_contract():
+    profile_name = "video_colqwen_omni_mv_chunk_30s"
+    local = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
+    example = json.loads(
+        (REPO_ROOT / "configs" / "examples" / "config.example.json").read_text()
+    )
+    chart = _rendered_chart_config()
+
+    profiles = tuple(
+        config["backend"]["profiles"][profile_name]
+        for config in (local, chart, example)
+    )
+    for profile in profiles:
+        assert profile["description"] == (
+            "ColQwen3 visual document retrieval served by the Cogniverse ColPali "
+            "service. 320-dim per-patch multi-vector embeddings."
+        )
+        assert profile["embedding_model"] == "TomoroAI/tomoro-colqwen3-embed-4b"
+        assert profile["model_config"] == {"token_pool_factor": 3}
+        assert profile["model_loader"] == "colqwen"
+        assert profile["inference_services"] == {
+            "embedding": "vllm_colpali",
+            "transcription": "vllm_asr",
+        }
+        assert profile["schema_config"] == {
+            "schema_name": profile_name,
+            "model_name": "ColQwen3",
+            "num_patches": 1024,
+            "embedding_dim": 320,
+            "binary_dim": 40,
+        }
 
 
 def _is_rocm(dep: dict) -> bool:

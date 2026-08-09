@@ -103,19 +103,22 @@ The test suite validates all content modalities:
 #### Backend Requirements
 - `@pytest.mark.requires_vespa` - Needs Vespa running (localhost:8080)
 - `@pytest.mark.requires_docker` - Needs Docker daemon
-- `@pytest.mark.requires_modal` - Needs Modal account/token
+- `@pytest.mark.requires_modal_inference("vllm_llm_student")` - Explicitly
+  provisions that exact service on Modal and requires the configured API token
 - `@pytest.mark.requires_ollama` - Needs Ollama service (localhost:11434)
 
 #### Model Requirements
-- `@pytest.mark.requires_colpali` - ColPali model (colpali-engine)
-- `@pytest.mark.requires_videoprism` - VideoPrism model (../videoprism/)
+- `@pytest.mark.requires_inference("vllm_colpali")` - Exact ColPali/ColQwen
+  HTTP embedding service; collection also requests `vllm_asr`
+- `@pytest.mark.requires_inference("videoprism_jax")` - Exact VideoPrism
+  service; collection also requests `vllm_asr`
 - `@pytest.mark.requires_gliner` - GLiNER models (gliner package)
-- `@pytest.mark.requires_llm` - LLM models via Ollama
+- `@pytest.mark.requires_lm` - Configured test LM endpoint
 - `@pytest.mark.requires_whisper` - Whisper model (openai-whisper)
 
 #### Resource Requirements
 - `@pytest.mark.requires_gpu` - GPU required (CUDA)
-- `@pytest.mark.high_memory` - > 8GB RAM needed
+- `@pytest.mark.requires_models` - Actual model artifacts must be available
 
 ## Running Tests by Layer
 

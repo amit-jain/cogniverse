@@ -27,7 +27,6 @@ from tests.e2e.conftest import (
     TENANT_ID,
     click_top_tab,
     set_tenant,
-    skip_if_no_runtime,
     unique_id,
     wait_for_streamlit,
 )
@@ -178,7 +177,6 @@ def _restart_runtime_if_unhealthy():
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestMultiProfileIngestion:
     """Ingest same content with multiple profiles, verify independent results."""
 
@@ -280,7 +278,6 @@ class TestMultiProfileIngestion:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestMultiProfileDashboardUI:
     """Verify multi-profile search results render in the dashboard UI."""
 
@@ -356,7 +353,6 @@ class TestMultiProfileDashboardUI:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestCrossTenantIsolation:
     """Verify data isolation between tenants sharing the same profiles."""
 
@@ -383,8 +379,10 @@ class TestCrossTenantIsolation:
                 assert data["status"] == "success"
                 assert data["chunks_created"] >= 1
 
-                if data.get("documents_fed", 0) == 0:
-                    pytest.skip("documents_fed=0, cannot test isolation")
+                assert data["documents_fed"] > 0, (
+                    f"Tenant A ingestion must feed documents before isolation is "
+                    f"verified: {data}"
+                )
 
                 time.sleep(5)
 
@@ -471,8 +469,10 @@ class TestCrossTenantIsolation:
                 )
                 assert data["status"] == "success"
 
-                if data.get("documents_fed", 0) == 0:
-                    pytest.skip("documents_fed=0, cannot test isolation")
+                assert data["documents_fed"] > 0, (
+                    f"Tenant B ingestion must feed documents before reverse "
+                    f"isolation is verified: {data}"
+                )
 
                 time.sleep(5)
 
@@ -529,11 +529,14 @@ class TestCrossTenantIsolation:
                 assert data_a["status"] == "success"
                 assert data_b["status"] == "success"
 
-                fed_a = data_a.get("documents_fed", 0) > 0
-                fed_b = data_b.get("documents_fed", 0) > 0
-
-                if not fed_a or not fed_b:
-                    pytest.skip("Both tenants need documents_fed > 0")
+                assert data_a["documents_fed"] > 0, (
+                    f"Tenant A ingestion must feed documents before isolation is "
+                    f"verified: {data_a}"
+                )
+                assert data_b["documents_fed"] > 0, (
+                    f"Tenant B ingestion must feed documents before isolation is "
+                    f"verified: {data_b}"
+                )
 
                 time.sleep(5)
 
@@ -588,8 +591,10 @@ class TestCrossTenantIsolation:
                 )
                 assert data["status"] == "success"
 
-                if data.get("documents_fed", 0) == 0:
-                    pytest.skip("documents_fed=0, cannot test deletion")
+                assert data["documents_fed"] > 0, (
+                    f"Tenant ingestion must feed documents before deletion is "
+                    f"verified: {data}"
+                )
 
                 time.sleep(5)
 
@@ -649,7 +654,6 @@ def _search_sync(query: str, profile: str, tenant_id: str, top_k: int = 5) -> di
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestConcurrentMultiTenantSearch:
     """Verify isolation holds under concurrent requests from multiple tenants."""
 
@@ -746,8 +750,10 @@ class TestConcurrentMultiTenantSearch:
                     "video_colpali_smol500_mv_frame",
                     tenant_data,
                 )
-                if data.get("documents_fed", 0) == 0:
-                    pytest.skip("documents_fed=0")
+                assert data["documents_fed"] > 0, (
+                    f"Data tenant ingestion must feed documents before concurrent "
+                    f"isolation is verified: {data}"
+                )
 
                 time.sleep(5)
 
@@ -785,7 +791,6 @@ class TestConcurrentMultiTenantSearch:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestLoadTesting:
     """Verify system stability under burst load."""
 
@@ -915,11 +920,14 @@ class TestLoadTesting:
                     f"Tenant B ingestion failed: {data_b}"
                 )
 
-                fed_a = data_a.get("documents_fed", 0) > 0
-                fed_b = data_b.get("documents_fed", 0) > 0
-
-                if not fed_a or not fed_b:
-                    pytest.skip("Both tenants need documents_fed > 0")
+                assert data_a["documents_fed"] > 0, (
+                    f"Tenant A ingestion must feed documents before concurrent "
+                    f"isolation is verified: {data_a}"
+                )
+                assert data_b["documents_fed"] > 0, (
+                    f"Tenant B ingestion must feed documents before concurrent "
+                    f"isolation is verified: {data_b}"
+                )
 
                 time.sleep(5)
 

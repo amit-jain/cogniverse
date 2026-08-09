@@ -1,21 +1,18 @@
 """
 Integration tests for WikiManager against a real Vespa Docker container.
 
-Starts its own Vespa container, deploys the wiki_pages_test_tenant schema,
-exercises the full save→feed→retrieve round-trip, then tears down.
+Deploys this module's own tenant-scoped wiki_pages schema onto the
+session-wide Vespa container, exercises the full save→feed→retrieve
+round-trip, and leaves the container to the session fixture.
 
 These tests verify that WikiManager correctly writes documents to Vespa
 and that the stored content is retrievable via the Document v1 HTTP API.
 """
 
-import json
 import os
-import platform
-import subprocess
 import threading
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,15 +20,17 @@ import requests
 
 from cogniverse_agents.wiki.wiki_manager import WikiManager
 from cogniverse_agents.wiki.wiki_schema import WikiPage, generate_slug
-from tests.utils.docker_utils import start_docker_container_with_port_retry
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-TENANT_ID = "test_tenant"
-WIKI_SCHEMA = "wiki_pages_test_tenant"
-CONTAINER_NAME_PREFIX = "vespa-wiki-integration-tests"
+# This module's own tenant. Memory tests own ``test_tenant`` on the same
+# shared container, so a distinct tenant here keeps the two suites' wiki
+# documents in separate schemas.
+TENANT_ID = "test:wiki"
+WIKI_SCHEMA = schema_full_name("wiki_pages", TENANT_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -56,34 +55,6 @@ def _get_vespa_doc(port: int, doc_id: str, retries: int = 15) -> dict | None:
             pass
         time.sleep(1)
     return None
-
-
-def _wait_for_config_port(config_port: int, timeout: int = 120) -> bool:
-    for _ in range(timeout):
-        try:
-            resp = requests.get(
-                f"http://localhost:{config_port}/ApplicationStatus", timeout=2
-            )
-            if resp.status_code == 200:
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    return False
-
-
-def _wait_for_data_port(http_port: int, timeout: int = 120) -> bool:
-    for _ in range(timeout):
-        try:
-            resp = requests.get(
-                f"http://localhost:{http_port}/ApplicationStatus", timeout=5
-            )
-            if resp.status_code == 200:
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    return False
 
 
 def _wait_for_schema_ready(
@@ -131,106 +102,40 @@ def _wait_for_schema_ready(
     return False
 
 
-def _deploy_wiki_schema(config_port: int, http_port: int) -> None:
-    """Deploy the wiki_pages_test_tenant schema via ApplicationPackage."""
-    from vespa.package import ApplicationPackage
-
-    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-    from cogniverse_vespa.metadata_schemas import (
-        create_adapter_registry_schema,
-        create_config_metadata_schema,
-        create_organization_metadata_schema,
-        create_tenant_metadata_schema,
-    )
-    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-    metadata_schemas = [
-        create_organization_metadata_schema(),
-        create_tenant_metadata_schema(),
-        create_config_metadata_schema(),
-        create_adapter_registry_schema(),
-    ]
-
-    parser = JsonSchemaParser()
-    schema_file = Path("configs/schemas/wiki_pages_schema.json")
-    with open(schema_file) as f:
-        schema_json = json.load(f)
-    schema_json["name"] = WIKI_SCHEMA
-    schema_json["document"]["name"] = WIKI_SCHEMA
-    wiki_schema = parser.parse_schema(schema_json)
-
-    app_package = ApplicationPackage(
-        name="cogniverse", schema=metadata_schemas + [wiki_schema]
-    )
-    mgr = VespaSchemaManager(
-        backend_endpoint="http://localhost",
-        backend_port=config_port,
-    )
-    mgr._deploy_package(app_package)
-
-
 # ---------------------------------------------------------------------------
-# Session-scoped fixture: start Vespa, deploy wiki schema, yield port info
+# Module fixture: deploy this module's wiki schema onto the shared Vespa
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def wiki_vespa():
-    """Module-scoped real Vespa instance with the wiki_pages schema deployed."""
-    machine = platform.machine().lower()
-    docker_platform = (
-        "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+def wiki_vespa(shared_vespa):
+    """The session-wide Vespa with this module's wiki_pages schema deployed.
+
+    ``deploy_tenant_schema`` goes through SchemaRegistry, which redeploys the
+    complete cluster schema list. A hand-built application package carrying
+    only this schema would drop every other suite's schema from the shared
+    container, because Vespa treats an absent schema as a removal.
+    """
+    deployed = deploy_tenant_schema(
+        shared_vespa,
+        tenant_id=TENANT_ID,
+        base_schema_name="wiki_pages",
+    )
+    assert deployed == WIKI_SCHEMA, (
+        f"deploy_schema returned {deployed!r}; the module addresses "
+        f"{WIKI_SCHEMA!r} in every document URL"
     )
 
-    container_name, http_port, config_port = start_docker_container_with_port_retry(
-        __name__,
-        name_prefix=CONTAINER_NAME_PREFIX,
-        image="vespaengine/vespa:8.668.5",
-        container_ports=(8080, 19071),
-        extra_run_args=[
-            "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            "--platform",
-            docker_platform,
-        ],
-        max_attempts=5,
-    )
-
-    print(f"\nVespa container started on http={http_port}, config={config_port}")
-
-    if not _wait_for_config_port(config_port, timeout=120):
-        subprocess.run(["docker", "stop", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", container_name], capture_output=True)
-        pytest.fail("Vespa config port did not come up within 120 s")
-
-    time.sleep(10)  # Additional settle time before schema deployment
-
-    try:
-        _deploy_wiki_schema(config_port, http_port)
-        print("Wiki schema deployed successfully")
-    except Exception as exc:
-        subprocess.run(["docker", "stop", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", container_name], capture_output=True)
-        pytest.fail(f"Schema deployment failed: {exc}")
-
-    if not _wait_for_data_port(http_port, timeout=120):
-        subprocess.run(["docker", "stop", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", container_name], capture_output=True)
-        pytest.fail("Vespa data port did not come up within 120 s after deployment")
-
+    http_port = shared_vespa["http_port"]
     if not _wait_for_schema_ready(http_port, WIKI_SCHEMA, timeout=120):
-        subprocess.run(["docker", "stop", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", container_name], capture_output=True)
         pytest.fail(f"Schema {WIKI_SCHEMA} not ready within 120 s")
 
     yield {
         "http_port": http_port,
-        "config_port": config_port,
-        "container_name": container_name,
+        "config_port": shared_vespa["config_port"],
+        "container_name": shared_vespa["container_name"],
     }
-
-    subprocess.run(["docker", "stop", container_name], capture_output=True)
-    subprocess.run(["docker", "rm", container_name], capture_output=True)
+    # No teardown — shared_vespa owns the container lifecycle.
 
 
 @pytest.fixture(scope="module")
@@ -285,9 +190,9 @@ def wiki_manager(wiki_vespa):
 @pytest.mark.integration
 class TestWikiVespaIntegration:
     def test_container_is_owned_by_this_pytest_process(self, wiki_vespa):
-        assert wiki_vespa["container_name"].startswith(
-            f"vespa-wiki-integration-tests-{os.getpid()}-"
-        )
+        """The Vespa these tests write to carries this session's pid, so a
+        SIGKILLed run leaves a container the next session reaps."""
+        assert wiki_vespa["container_name"].startswith(f"backend-tests-{os.getpid()}-")
 
     def test_save_session_feeds_to_vespa(self, wiki_manager):
         """save_session feeds a session document retrievable via Vespa Document API."""
@@ -610,15 +515,17 @@ class TestWikiVespaIntegration:
             f"Document {topic_doc_id} still retrievable from Vespa after delete_page()."
         )
 
-    def test_concurrent_same_entity_filing_preserves_both_contents(
+    def test_concurrent_same_entity_upsert_preserves_both_contents(
         self, wiki_manager, monkeypatch
     ):
-        """Two overlapping filings of the SAME entity must not lose either
-        writer's content. Both threads read the topic before either writes, so
-        without a test-and-set the second full-put clobbers the first. The
-        conditional put runs against real Vespa — its create+condition
-        semantics are exactly what the retry loop relies on — and the final
-        document read back from Vespa must contain BOTH contents.
+        """Two replicas filing the SAME entity must not lose either writer's
+        content. ``_upsert_topic`` is the read-merge-write body a second
+        runtime process races — the per-topic lock in ``_get_or_create_topic``
+        does not span processes, so only the test-and-set protects the merge.
+        Both threads read the topic before either writes, so without the
+        conditional put the second full-put clobbers the first. The condition
+        runs against real Vespa, and the document read back must carry BOTH
+        contents.
         """
         manager, port = wiki_manager
         entity = "cas_race_topic"
@@ -629,15 +536,15 @@ class TestWikiVespaIntegration:
 
         barrier = threading.Barrier(2, timeout=30)
         original_get = manager._get_document_http
-        synced: set = set()
-        synced_lock = threading.Lock()
+        reads: list = []
+        reads_lock = threading.Lock()
 
         def barriered_get(read_doc_id):
             result = original_get(read_doc_id)
             tid = threading.get_ident()
-            with synced_lock:
-                first_read = tid not in synced
-                synced.add(tid)
+            with reads_lock:
+                first_read = tid not in reads
+                reads.append(tid)
             if first_read:
                 # Hold until BOTH threads have read the pre-write state, forcing
                 # the interleaving that loses a write without a test-and-set.
@@ -650,8 +557,6 @@ class TestWikiVespaIntegration:
 
         def worker(key, content):
             try:
-                # Each call models a separate runtime process. The public
-                # wrapper's in-process topic lock cannot coordinate replicas.
                 manager._upsert_topic(
                     entity=entity,
                     new_content=content,
@@ -672,8 +577,86 @@ class TestWikiVespaIntegration:
         assert not any(t.is_alive() for t in threads), "concurrent filing hung"
         assert errors == {}, f"concurrent filing raised: {errors}"
 
+        # Two base reads plus exactly one re-read: the writer whose condition
+        # Vespa rejected re-merged against the winner's page.
+        assert len(reads) == 3, f"expected one CAS retry, got reads: {reads}"
+
         doc = _get_vespa_doc(port, doc_id)
         assert doc is not None, f"topic {doc_id} missing after concurrent filing"
+        fields = doc["fields"]
+        content = fields.get("content", "")
+        assert content_a in content, f"lost content_a; final content: {content!r}"
+        assert content_b in content, f"lost content_b; final content: {content!r}"
+        assert int(fields["update_count"]) == 2
+
+    def test_same_process_filing_serializes_on_the_topic_lock(
+        self, wiki_manager, monkeypatch
+    ):
+        """Two same-process filings of one entity run their read-merge-write
+        one after the other, so neither burns a rejected conditional put: the
+        per-topic lock in ``_get_or_create_topic`` holds the second filing
+        until the first has fed."""
+        manager, port = wiki_manager
+        entity = "serialized_topic"
+        safe = TENANT_ID.replace(":", "_")
+        doc_id = f"wiki_topic_{safe}_{generate_slug(entity)}"
+        content_a = "LOCK_ALPHA_distinct_marker_one"
+        content_b = "LOCK_BETA_distinct_marker_two"
+
+        original_get = manager._get_document_http
+        original_feed = manager._conditional_feed_topic
+        events: list = []
+        events_lock = threading.Lock()
+        inside_lock = threading.Event()
+        keys = {}
+
+        def record(phase):
+            with events_lock:
+                events.append(f"{keys[threading.get_ident()]}:{phase}")
+
+        def tracked_get(read_doc_id):
+            result = original_get(read_doc_id)
+            record("read")
+            inside_lock.set()
+            # Hold the topic lock long enough for the other filing to reach it.
+            time.sleep(1.0)
+            return result
+
+        def tracked_feed(page, embedding, expected_update_count):
+            applied = original_feed(page, embedding, expected_update_count)
+            record("feed" if applied else "rejected")
+            return applied
+
+        monkeypatch.setattr(manager, "_get_document_http", tracked_get)
+        monkeypatch.setattr(manager, "_conditional_feed_topic", tracked_feed)
+
+        errors: dict = {}
+
+        def worker(key, content):
+            keys[threading.get_ident()] = key
+            try:
+                manager._get_or_create_topic(
+                    entity=entity, new_content=content, sources=[f"src_{key}"]
+                )
+            except Exception as exc:  # surfaced by the assert below
+                errors[key] = exc
+
+        first = threading.Thread(target=worker, args=("a", content_a))
+        second = threading.Thread(target=worker, args=("b", content_b))
+        first.start()
+        assert inside_lock.wait(30), "first filing never reached the topic read"
+        second.start()
+        for thread in (first, second):
+            thread.join(90)
+        assert not any(t.is_alive() for t in (first, second)), "filing hung"
+        assert errors == {}, f"serialized filing raised: {errors}"
+
+        # Full serialization: the second filing's read happens after the
+        # first's feed, so no conditional put is ever rejected.
+        assert events == ["a:read", "a:feed", "b:read", "b:feed"], events
+
+        doc = _get_vespa_doc(port, doc_id)
+        assert doc is not None, f"topic {doc_id} missing after serialized filing"
         fields = doc["fields"]
         content = fields.get("content", "")
         assert content_a in content, f"lost content_a; final content: {content!r}"

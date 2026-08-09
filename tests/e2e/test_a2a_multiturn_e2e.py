@@ -22,27 +22,27 @@ RUNTIME = "http://localhost:33000"
 TENANT_ID = "flywheel_org:production"
 
 
-def runtime_available() -> bool:
+def _assert_runtime_ready() -> None:
     try:
-        r = httpx.get(f"{RUNTIME}/health/live", timeout=10.0)
-        return r.status_code == 200
-    except httpx.HTTPError:
-        return False
-
-
-skip_if_no_runtime = pytest.mark.skipif(
-    not runtime_available(),
-    reason="Runtime not available at localhost:33000",
-)
+        response = httpx.get(f"{RUNTIME}/health/live", timeout=10.0)
+    except httpx.HTTPError as exc:
+        raise AssertionError(
+            f"Runtime liveness endpoint must be reachable at {RUNTIME}"
+        ) from exc
+    assert response.status_code == 200, (
+        f"Runtime liveness must return HTTP 200; got {response.status_code}: "
+        f"{response.text}"
+    )
+    assert response.json() == {"status": "alive"}, response.json()
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestRESTMultiTurn:
     """REST endpoint multi-turn conversation tests."""
 
     def test_first_turn_no_rewrite(self):
         """First turn without conversation_history should NOT produce rewritten_query."""
+        _assert_runtime_ready()
         with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
             resp = client.post(
                 "/agents/search_agent/process",
@@ -62,6 +62,7 @@ class TestRESTMultiTurn:
 
     def test_multi_turn_with_history_triggers_rewrite(self):
         """Turn 2+ with conversation_history should produce rewritten_query."""
+        _assert_runtime_ready()
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/search_agent/process",
@@ -91,6 +92,7 @@ class TestRESTMultiTurn:
 
     def test_gateway_agent_executes_downstream_with_rewrite(self):
         """Routing agent should execute downstream search with query rewrite."""
+        _assert_runtime_ready()
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
@@ -127,12 +129,12 @@ class TestRESTMultiTurn:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestA2AProtocol:
     """A2A protocol endpoint tests."""
 
     def test_agent_card_discovery(self):
         """GET /a2a/.well-known/agent.json returns valid agent card."""
+        _assert_runtime_ready()
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
             resp = client.get("/a2a/.well-known/agent.json")
 
@@ -145,6 +147,7 @@ class TestA2AProtocol:
 
     def test_single_turn_message_send(self):
         """A2A message/send returns taskId, contextId, and agent response."""
+        _assert_runtime_ready()
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/a2a/",
@@ -179,6 +182,7 @@ class TestA2AProtocol:
 
     def test_multi_turn_context_threading(self):
         """A2A multi-turn: turn 2 with same contextId preserves conversation."""
+        _assert_runtime_ready()
         msg_id_1 = str(uuid.uuid4())
         msg_id_2 = str(uuid.uuid4())
 
@@ -236,6 +240,7 @@ class TestA2AProtocol:
 
     def test_context_isolation(self):
         """Two conversations with different contextIds should be independent."""
+        _assert_runtime_ready()
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             # Conversation A
             resp_a = client.post(

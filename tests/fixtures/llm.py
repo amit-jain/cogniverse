@@ -155,14 +155,18 @@ def make_dspy_lm() -> dspy.LM:
 
 
 @pytest.fixture
-def dspy_test_lm():
-    """Configure dspy with a real LM, skipping when the endpoint is down.
+def dspy_test_lm(ensure_host_ollama):
+    """Configure dspy with the provisioned test LM.
+
+    Depends on ``ensure_host_ollama`` so the endpoint is provisioned and
+    exported via ``TEST_LLM_*`` before ``make_dspy_lm`` resolves them —
+    a collection-time injected provisioner is set up after function
+    fixtures, too late for the env read here. The post-setup gate in
+    tests/conftest.py fails the test when the endpoint is unreachable.
 
     Yields the configured ``dspy.LM`` instance and cleans up the global
     DSPy LM context on teardown.
     """
-    if not is_test_lm_available():
-        pytest.skip(f"Test LM not available at {resolve_base_url()}")
     lm = make_dspy_lm()
     dspy.configure(lm=lm)
     yield lm

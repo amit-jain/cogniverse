@@ -14,7 +14,21 @@ import subprocess
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
+from tests.e2e.conftest import RUNTIME, TENANT_ID
+
+
+def _assert_runtime_ready() -> None:
+    try:
+        response = httpx.get(f"{RUNTIME}/health/live", timeout=10.0)
+    except httpx.HTTPError as exc:
+        raise AssertionError(
+            f"Runtime liveness endpoint must be reachable at {RUNTIME}"
+        ) from exc
+    assert response.status_code == 200, (
+        f"Runtime liveness must return HTTP 200; got {response.status_code}: "
+        f"{response.text}"
+    )
+    assert response.json() == {"status": "alive"}, response.json()
 
 
 def _get_kubeconfig() -> str:
@@ -39,47 +53,35 @@ def _kubectl(*args, timeout=10) -> str:
         import os
 
         env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
-    result = subprocess.run(
-        ["kubectl", "-n", "cogniverse", *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=env,
+    try:
+        result = subprocess.run(
+            ["kubectl", "-n", "cogniverse", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+    except FileNotFoundError as exc:
+        raise AssertionError(
+            "kubectl must be installed for messaging E2E tests"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"kubectl {' '.join(args)} must complete within {timeout}s"
+        ) from exc
+    assert result.returncode == 0, (
+        f"kubectl {' '.join(args)} must succeed; stderr: {result.stderr.strip()}"
     )
     return result.stdout.strip()
 
 
-def _kubectl_available() -> bool:
-    try:
-        env = None
-        if _KUBECONFIG:
-            import os
-
-            env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
-        result = subprocess.run(
-            ["kubectl", "version", "--client"],
-            capture_output=True,
-            timeout=5,
-            env=env,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
-skip_if_no_kubectl = pytest.mark.skipif(
-    not _kubectl_available(),
-    reason="kubectl not available",
-)
-
-
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestMessagingInviteAPI:
     """Test the admin invite token endpoint on live runtime."""
 
     def test_create_invite_token(self):
         """POST /admin/messaging/invite returns a valid token."""
+        _assert_runtime_ready()
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
             resp = client.post(
                 "/admin/messaging/invite",
@@ -104,33 +106,47 @@ BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TEST_CHAT_ID = int(os.environ.get("TELEGRAM_TEST_CHAT_ID", "0"))
 
 
-def _bot_token_valid() -> bool:
-    if not BOT_TOKEN:
-        return False
+def _assert_bot_ready() -> None:
+    assert BOT_TOKEN, "TELEGRAM_BOT_TOKEN must be set for Telegram E2E tests"
+    assert TEST_CHAT_ID != 0, (
+        "TELEGRAM_TEST_CHAT_ID must identify the real Telegram E2E chat"
+    )
     try:
         # trust_env=False bypasses any implicit HTTP proxy picked up from the
         # dev machine (k3d / Docker Desktop / VPN). Telegram's public API is
         # reachable direct; going through a local proxy drops the connection
         # mid-handshake and makes the bot look invalid.
-        resp = httpx.get(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/getMe",
-            timeout=10.0,
-            trust_env=False,
-        )
-        return resp.status_code == 200 and resp.json().get("ok")
-    except Exception:
-        return False
+        with httpx.Client(timeout=10.0, trust_env=False) as client:
+            resp = client.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe")
+            chat_resp = client.get(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/getChat",
+                params={"chat_id": TEST_CHAT_ID},
+            )
+    except httpx.HTTPError as exc:
+        raise AssertionError("Telegram getMe must be reachable") from exc
+    assert resp.status_code == 200, (
+        f"Telegram getMe must return HTTP 200; got {resp.status_code}: {resp.text}"
+    )
+    data = resp.json()
+    assert data["ok"] is True, data
+    assert data["result"]["is_bot"] is True, data
+    assert chat_resp.status_code == 200, (
+        f"Telegram getChat must return HTTP 200 for {TEST_CHAT_ID}; got "
+        f"{chat_resp.status_code}: {chat_resp.text}"
+    )
+    chat_data = chat_resp.json()
+    assert chat_data["ok"] is True, chat_data
+    assert chat_data["result"]["id"] == TEST_CHAT_ID, chat_data
 
 
-skip_if_no_bot = pytest.mark.skipif(
-    not _bot_token_valid(),
-    reason="Telegram bot token not valid",
-)
+@pytest.fixture(scope="module")
+def telegram_real_flow_prerequisites() -> None:
+    _assert_runtime_ready()
+    _assert_bot_ready()
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_bot
+@pytest.mark.usefixtures("telegram_real_flow_prerequisites")
 class TestTelegramRealFlow:
     """Real Telegram integration — sends messages via bot API."""
 
@@ -226,8 +242,6 @@ class TestTelegramRealFlow:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 class TestMessagingDeployment:
     """Test messaging gateway deployment status on k3d."""
 

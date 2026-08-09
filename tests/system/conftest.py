@@ -1,7 +1,7 @@
 """System test configuration and fixtures.
 
-The fixture is now a thin shim over the project-wide ``shared_vespa``
-container. Each test module gets its own tenant-scoped video schema
+``shared_system_vespa`` is a thin shim over the project-wide
+``shared_vespa`` container. Each test module gets its own tenant-scoped video schema
 (``video_colpali_smol500_mv_frame_<module>``) deployed via SchemaRegistry,
 preserving per-module isolation without spinning up a separate container
 per module.
@@ -12,12 +12,9 @@ from pathlib import Path
 
 import pytest
 
-# Re-export the canonical session-scoped Vespa from the project root.
-from tests.conftest import shared_vespa  # noqa: F401
-
 
 @pytest.fixture(scope="module")
-def shared_system_vespa(shared_vespa, request):  # noqa: F811
+def shared_system_vespa(shared_vespa, request):
     """Compatibility shim: yields the dict shape system tests expect,
     backed by the project-wide ``shared_vespa``.
 

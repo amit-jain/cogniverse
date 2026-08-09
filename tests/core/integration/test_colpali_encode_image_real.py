@@ -26,7 +26,7 @@ from cogniverse_core.query.encoders import ColPaliFamilyQueryEncoder
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.local_only,
-    pytest.mark.requires_colpali,
+    pytest.mark.requires_inference("vllm_colpali"),
     pytest.mark.slow,
 ]
 

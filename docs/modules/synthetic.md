@@ -220,7 +220,7 @@ curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=profile&c
 
 `cogniverse_synthetic` itself never reads these directly — `RoutingGenerator`
 calls `dspy.ChainOfThought`/`dspy.Predict` against whatever LM the caller
-configured via `dspy.configure(lm=...)` (e.g. `optimization_cli.py` building an
+bound with `dspy.context(lm=...)` (e.g. `optimization_cli.py` building an
 LM from `create_dspy_lm()`). These are the env vars that flow into that LM:
 
 ```bash

@@ -6,12 +6,11 @@ Real services, real data, tight output assertions:
   - Real Vespa container with the video profile schema deployed via the
     same ``ApplicationPackage`` path the production runtime uses.
   - Real worker running ``_default_processor`` so the actual
-    ``VideoIngestionPipeline`` runs against the actual ``v_-6dz6tBH77I.mp4``
-    test video — same video and same profile the existing
-    ``test_videoprism_vespa_ingestion`` test uses.
+    ``VideoIngestionPipeline`` runs against a 61-second video constructed by
+    repeating a tracked real-world MP4.
 
 Asserts on the OUTPUT, not just structural shape:
-  - HTTP response: state=complete, video_id matches, chunks_created > 0.
+  - HTTP response: exact source, identifiers, and three 30-second chunks.
   - MinIO: head_object confirms the bytes landed at the expected key.
   - Vespa: documents present at the expected schema, count matches
     chunks_created.
@@ -19,22 +18,26 @@ Asserts on the OUTPUT, not just structural shape:
     matching ingest_id.
   - Idempotency: re-submit hits the done set, no new Vespa documents.
 
-Profile choice: ``video_videoprism_base_mv_chunk_30s`` runs VideoPrism
-in-process (no remote ColPali pod required) so the test doesn't need
-the vllm_colpali service deployed.
+Profile choice: ``video_videoprism_base_mv_chunk_30s`` routes through the
+production ``RemoteVideoPrismLoader`` to the exact session-owned VideoPrism
+service and sends the real audio track to the exact ASR service; neither model
+loads inside the ingestion worker.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import os
 import platform
+import re
 import socket
 import subprocess
 import tempfile
 import time
+from functools import partial
 from pathlib import Path
 
 import httpx
@@ -45,14 +48,146 @@ from fastapi import FastAPI
 
 TENANT_ID = "test_upload_queue"
 PROFILE = "video_videoprism_base_mv_chunk_30s"
-# 77-second video — produces multiple 30s chunks for the chunk-based
-# VideoPrism profile. Shorter videos in sample_videos/ (6-18s) produce
-# zero chunks at chunk_duration=30s.
-VIDEO_PATH = Path("data/testset/evaluation/sample_videos/v_-MbZ-W0AbN0.mp4")
+SOURCE_VIDEO_PATH = Path("tests/system/resources/videos/v_-D1gdv_gQyw.mp4")
+UPLOAD_FILENAME = "repeated-real-video.mp4"
+EXPECTED_CHUNKS = 3
 
 REDIS_CONTAINER = "redis-upload-real-stack"
 MINIO_CONTAINER = "minio-upload-real-stack"
 VESPA_CONTAINER = "vespa-upload-real-stack"
+
+
+def _set_test_vespa_disk_limit(app_package) -> None:
+    """Let the isolated Vespa container write on a nearly full CI host."""
+    from vespa.configuration.services import disk, resource_limits, services, tuning
+    from vespa.package import ServicesConfiguration
+
+    services_config = ServicesConfiguration(
+        application_name=app_package.name,
+        schemas=app_package.schemas,
+        configurations=app_package.configurations or [],
+        stateless_model_evaluation=app_package.stateless_model_evaluation,
+        components=app_package.components or [],
+        auth_clients=app_package.auth_clients or [],
+        clusters=app_package.clusters or [],
+    )
+    root = services_config.services_config
+    children = [
+        child + tuning(resource_limits(disk("0.95")))
+        if child.tag == "content"
+        else child
+        for child in root.children
+    ]
+    services_config.services_config = services(*children, **root.attrs)
+    app_package.services_config = services_config
+
+
+def _install_test_vespa_disk_limit(monkeypatch) -> None:
+    from cogniverse_vespa.backend import VespaBackend
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+    for deployer_type in (VespaBackend, VespaSchemaManager):
+        original_deploy = deployer_type._deploy_package
+
+        def deploy_with_test_disk_limit(
+            self, app_package, *args, _deploy=original_deploy, **kwargs
+        ):
+            _set_test_vespa_disk_limit(app_package)
+            return _deploy(self, app_package, *args, **kwargs)
+
+        monkeypatch.setattr(
+            deployer_type, "_deploy_package", deploy_with_test_disk_limit
+        )
+
+
+def test_test_owned_vespa_package_raises_disk_write_limit():
+    from vespa.package import ApplicationPackage
+
+    from cogniverse_vespa.metadata_schemas import create_tenant_metadata_schema
+
+    app_package = ApplicationPackage(
+        name="cogniverse", schema=[create_tenant_metadata_schema()]
+    )
+
+    _set_test_vespa_disk_limit(app_package)
+
+    services_xml = app_package.services_to_text
+    assert (
+        "<tuning>\n      <resource-limits>\n        <disk>0.95</disk>\n"
+        "      </resource-limits>\n    </tuning>"
+    ) in services_xml
+    assert '<document type="tenant_metadata" mode="index">' in services_xml
+
+
+@pytest.fixture(scope="module")
+def upload_video_path(tmp_path_factory) -> Path:
+    if not SOURCE_VIDEO_PATH.exists():
+        pytest.fail(f"Tracked source video missing at {SOURCE_VIDEO_PATH}")
+    output_path = tmp_path_factory.mktemp("upload-real-video") / UPLOAD_FILENAME
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(SOURCE_VIDEO_PATH),
+                "-t",
+                "61",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-y",
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration:stream=codec_type,duration,nb_frames",
+                "-of",
+                "json",
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        pytest.fail(f"Could not construct 61-second real video fixture: {exc}")
+    media = json.loads(probe.stdout)
+    duration = float(media["format"]["duration"])
+    assert 60.5 <= duration <= 61.5
+    video_streams = [
+        stream for stream in media["streams"] if stream["codec_type"] == "video"
+    ]
+    audio_streams = [
+        stream for stream in media["streams"] if stream["codec_type"] == "audio"
+    ]
+    assert len(video_streams) == 1
+    assert 60.5 <= float(video_streams[0]["duration"]) <= 61.5
+    assert int(video_streams[0]["nb_frames"]) >= 1800
+    assert len(audio_streams) == 1
+    assert 60.5 <= float(audio_streams[0]["duration"]) <= 61.5
+    assert output_path.stat().st_size > SOURCE_VIDEO_PATH.stat().st_size
+    return output_path
 
 
 def _free_port() -> int:
@@ -292,6 +427,7 @@ def _deploy_metadata_schemas(config_port: int) -> None:
         create_adapter_registry_schema(),
     ]
     app_package = ApplicationPackage(name="cogniverse", schema=metadata_schemas)
+    _set_test_vespa_disk_limit(app_package)
     mgr = VespaSchemaManager(
         backend_endpoint="http://localhost", backend_port=config_port
     )
@@ -368,13 +504,18 @@ async def real_stack(
     redis_container,
     minio_container,
     vespa_backend,
-    videoprism_sidecar,
+    resolved_inference_endpoints,
+    phoenix_container,
     monkeypatch,
 ):
     """All env vars the runtime + worker need, plus a Redis client + S3
-    client the test can use directly for output assertions."""
-    if not VIDEO_PATH.exists():
-        pytest.skip(f"Test video missing at {VIDEO_PATH}")
+    client the test can use directly for output assertions.
+
+    ``phoenix_container`` provides the collector this stack's telemetry
+    targets (it sets ``TELEMETRY_OTLP_ENDPOINT`` and resets the manager
+    singleton) — without it the worker's spans export to the default
+    localhost:4317 and every run ends in connection failures."""
+    _install_test_vespa_disk_limit(monkeypatch)
 
     # Earlier modules in the same session leave BackendRegistry singletons
     # bound to their (now-dead) containers; a stale shared SchemaRegistry
@@ -443,7 +584,12 @@ async def real_stack(
             # this dict at embedding-generator build time, so the worker's
             # RemoteVideoPrismLoader hits the sidecar instead of trying to
             # load the JAX/flax stack in-process.
-            inference_service_urls={"videoprism_jax": videoprism_sidecar["url"]},
+            inference_service_urls={
+                "videoprism_jax": resolved_inference_endpoints[
+                    "videoprism_jax"
+                ].base_url,
+                "vllm_asr": resolved_inference_endpoints["vllm_asr"].base_url,
+            },
         )
     )
 
@@ -470,6 +616,7 @@ async def real_stack(
         "s3": s3,
         "bucket": minio_container["bucket"],
         "vespa_http_port": vespa_backend["http_port"],
+        "phoenix_http_endpoint": phoenix_container["http_endpoint"],
     }
     await close_redis()
 
@@ -490,7 +637,12 @@ async def worker_task(real_stack):
     config.claim_block_ms = 200
     redis = await get_redis(os.environ["REDIS_URL"])
     task = asyncio.create_task(
-        _claim_loop(redis, config, stop, processor=_default_processor)
+        _claim_loop(
+            redis,
+            config,
+            stop,
+            processor=partial(_default_processor, config=config),
+        )
     )
     yield task
     stop.set()
@@ -500,8 +652,41 @@ async def worker_task(real_stack):
         task.cancel()
 
 
+@pytest.fixture(scope="module")
+def _tenant_registration_cleanup(vespa_backend):
+    """Delete the org/tenant registration docs ``create_tenant`` wrote.
+
+    ``http_client`` registers the ``test_upload_queue`` tenant (which
+    auto-creates its org) in the tenant-manager's metadata store. When that
+    store outlives this module — the tenant-manager backend is a cached
+    module-global that can resolve to a longer-lived shared Vespa — the
+    registration lingers and shows up in any later suite that enumerates all
+    registered tenants. Deleting the two metadata docs after the module's
+    tests keeps the registration module-local. Depends on ``vespa_backend``
+    so this teardown runs while that container is still up, and drops the
+    tenant-manager module globals so later suites build their own backend.
+    """
+    yield
+    from cogniverse_runtime.admin import tenant_manager
+
+    backend = tenant_manager.backend
+    tenant_manager.backend = None
+    tenant_manager.set_config_manager(None)
+    if backend is None:
+        return
+    canonical_tenant = f"{TENANT_ID}:{TENANT_ID}"
+    for schema, doc_id in (
+        ("tenant_metadata", canonical_tenant),
+        ("organization_metadata", TENANT_ID),
+    ):
+        try:
+            backend.delete_metadata_document(schema=schema, doc_id=doc_id)
+        except Exception:
+            pass
+
+
 @pytest_asyncio.fixture
-async def http_client(real_stack):
+async def http_client(real_stack, _tenant_registration_cleanup):
     """FastAPI ASGI client mounting the real ingestion router + status_api."""
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
@@ -534,6 +719,11 @@ async def http_client(real_stack):
 
     tenant_manager.set_config_manager(config_manager)
     tenant_manager.set_schema_loader(schema_loader)
+    # get_backend() caches a module-global backend; an instance cached by an
+    # earlier suite would ignore the config manager set above and register
+    # the tenant in that suite's (shared) Vespa. Drop it so create_tenant
+    # rebuilds against this module's Vespa.
+    tenant_manager.backend = None
     try:
         await tenant_manager.create_tenant(
             CreateTenantRequest(tenant_id=TENANT_ID, created_by="test")
@@ -624,102 +814,8 @@ def _vespa_source_urls(http_port: int, base_schema_name: str, tenant_id: str) ->
     }
 
 
-def _videoprism_image_built() -> bool:
-    """The chunk-30s VideoPrism profile is now served by the
-    ``deploy/videoprism`` sidecar (a remote inference pod). The runtime
-    no longer carries the JAX / flax / tensorflow stack in-process. The
-    test spins up the sidecar Docker container, so it needs the image
-    to be built locally first:
-
-        docker build -t cogniverse/videoprism:dev deploy/videoprism/
-
-    Skip with a clear reason when that image isn't present."""
-    try:
-        result = subprocess.run(
-            ["docker", "image", "inspect", "cogniverse/videoprism:dev"],
-            capture_output=True,
-        )
-    except Exception:
-        return False
-    return result.returncode == 0
-
-
-_skip_no_videoprism = pytest.mark.skipif(
-    not _videoprism_image_built(),
-    reason=(
-        "cogniverse/videoprism:dev image not built — run "
-        "`docker build -t cogniverse/videoprism:dev deploy/videoprism/`"
-    ),
-)
-
-
-VIDEOPRISM_CONTAINER = "videoprism-upload-real-stack"
-
-
-@pytest.fixture(scope="module")
-def videoprism_sidecar():
-    """Spin up the VideoPrism inference sidecar that the worker's
-    ``RemoteVideoPrismLoader`` calls into. Mirrors how the chart
-    deploys the ``inference.videoprism_jax`` pod in production."""
-    if not _videoprism_image_built():
-        pytest.skip("cogniverse/videoprism:dev not built locally")
-
-    port = _free_port()
-    subprocess.run(["docker", "rm", "-f", VIDEOPRISM_CONTAINER], capture_output=True)
-    result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            VIDEOPRISM_CONTAINER,
-            "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            "-p",
-            f"{port}:7999",
-            "-e",
-            "JAX_PLATFORM_NAME=cpu",
-            "-e",
-            "JAX_PLATFORMS=cpu",
-            "--platform",
-            _docker_platform(),
-            "cogniverse/videoprism:dev",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        pytest.fail(f"Failed to start VideoPrism sidecar: {result.stderr}")
-
-    # Cold-start: the JAX JIT trace can take 60-120s. /health returns 503
-    # until the model is loaded.
-    deadline = time.time() + 300
-    while time.time() < deadline:
-        try:
-            r = requests.get(f"http://127.0.0.1:{port}/health", timeout=2)
-            if r.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(2)
-    else:
-        subprocess.run(
-            ["docker", "rm", "-f", VIDEOPRISM_CONTAINER], capture_output=True
-        )
-        pytest.fail("VideoPrism sidecar did not become ready within 300s")
-
-    try:
-        yield {"url": f"http://127.0.0.1:{port}", "port": port}
-    finally:
-        subprocess.run(
-            ["docker", "rm", "-f", VIDEOPRISM_CONTAINER], capture_output=True
-        )
-
-
-# requires_docker, NOT requires_vespa: this class stands up its OWN Vespa (+
-# Redis + MinIO) container via the module fixtures. The requires_vespa gate
-# probes an EXTERNAL Vespa on :8080 and would skip whenever that isn't up —
-# i.e. exactly when the dev cluster is stopped to free RAM for this test.
+# This class stands up its own Vespa, Redis, and MinIO containers. VideoPrism
+# comes from the collection-owned exact inference resolver.
 @pytest.mark.integration
 @pytest.mark.requires_docker
 @pytest.mark.slow
@@ -727,17 +823,16 @@ class TestUploadRealStack:
     """``POST /ingestion/upload`` end-to-end with real Redis + MinIO +
     Vespa + worker + pipeline + actual video bytes."""
 
-    @_skip_no_videoprism
+    @pytest.mark.requires_inference("videoprism_jax")
+    @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.asyncio
     async def test_upload_writes_to_minio_queues_runs_pipeline_and_lands_in_vespa(
-        self, real_stack, worker_task, http_client
+        self, real_stack, worker_task, http_client, upload_video_path
     ):
-        # Sanity: video exists on disk before the upload.
-        assert VIDEO_PATH.exists()
-        video_bytes = VIDEO_PATH.read_bytes()
-        assert len(video_bytes) > 0
+        video_bytes = upload_video_path.read_bytes()
+        content_digest = hashlib.sha256(video_bytes).hexdigest()
 
-        files = {"file": (VIDEO_PATH.name, io.BytesIO(video_bytes), "video/mp4")}
+        files = {"file": (upload_video_path.name, io.BytesIO(video_bytes), "video/mp4")}
         data = {
             "profile": PROFILE,
             "backend": "vespa",
@@ -755,26 +850,44 @@ class TestUploadRealStack:
 
         body = resp.json()
 
-        # 1. HTTP response shape — tight assertions on actual values.
-        assert body["state"] == "complete", (
-            f"Expected complete, got state={body['state']!r} body={body!r}"
-        )
+        canonical_tenant = f"{TENANT_ID}:{TENANT_ID}"
+        bucket = real_stack["bucket"]
+        expected_source_url = f"s3://{bucket}/{canonical_tenant}/{content_digest}.mp4"
+        expected_sha = hashlib.sha256(
+            f"{expected_source_url}|{PROFILE}|{canonical_tenant}".encode()
+        ).hexdigest()[:16]
+        assert set(body) == {
+            "ingest_id",
+            "sha",
+            "state",
+            "existing",
+            "filename",
+            "source_url",
+            "video_id",
+            "chunks_created",
+            "documents_fed",
+            "status",
+            "graph_nodes",
+            "graph_edges",
+        }
+        assert body["state"] == "complete"
         assert body["existing"] is False
         assert body["status"] == "success"
-        assert body["filename"] == VIDEO_PATH.name
-        assert body["source_url"].startswith("s3://")
-        assert body["source_url"].endswith(VIDEO_PATH.suffix)
-        assert TENANT_ID in body["source_url"], (
-            f"source_url should be tenant-scoped: {body['source_url']}"
-        )
+        assert body["filename"] == UPLOAD_FILENAME
+        assert body["source_url"] == expected_source_url
+        assert body["video_id"] == content_digest
+        assert body["chunks_created"] == EXPECTED_CHUNKS
+        assert body["documents_fed"] == EXPECTED_CHUNKS
+        assert body["graph_nodes"] == 0
+        assert body["graph_edges"] == 0
         ingest_id = body["ingest_id"]
-        assert ingest_id.startswith("ingest_")
+        assert re.fullmatch(r"ingest_[0-9a-f]{32}", ingest_id)
         sha = body["sha"]
-        assert len(sha) == 16
+        assert sha == expected_sha
 
         # 2. MinIO has the uploaded blob at the s3:// URL.
-        bucket = real_stack["bucket"]
         key = body["source_url"].split(f"{bucket}/", 1)[1]
+        assert key == f"{canonical_tenant}/{content_digest}.mp4"
         head = real_stack["s3"].head_object(Bucket=bucket, Key=key)
         assert head["ContentLength"] == len(video_bytes)
 
@@ -782,14 +895,7 @@ class TestUploadRealStack:
         vespa_doc_count = _vespa_visit_count(
             real_stack["vespa_http_port"], PROFILE, TENANT_ID
         )
-        assert vespa_doc_count > 0, (
-            f"Vespa has zero documents for tenant {TENANT_ID} in {PROFILE} "
-            "after upload completed — pipeline didn't actually feed the backend"
-        )
-        # chunks_created should match the documents that landed in Vespa
-        # (the worker counts them as it feeds, response carries the count
-        # from the pipeline result summary).
-        assert body.get("chunks_created", 0) > 0
+        assert vespa_doc_count == EXPECTED_CHUNKS
 
         # Every indexed document records the canonical s3:// source_url the
         # upload wrote to MinIO — NOT the file:// temp path the worker localized
@@ -811,9 +917,7 @@ class TestUploadRealStack:
         status = status_resp.json()
         assert status["state"] == "complete"
         states = [e["state"] for e in status["history"]]
-        assert states[0] == "queued"
-        assert "running" in states
-        assert states[-1] == "complete"
+        assert states == ["queued", "running", "complete"]
         # The terminal complete event carries the same ingest_id back.
         assert status["latest"]["ingest_id"] == ingest_id
 
@@ -822,13 +926,40 @@ class TestUploadRealStack:
         assert done == ingest_id
         assert await real_stack["redis"].get(f"ingest:by_sha:{sha}") is None
 
-        # 6. Re-upload the same bytes via /upload. Content-addressable keying
+        # 6. The worker's job span landed in the test-owned collector — the
+        # stack's telemetry must export to the Phoenix this fixture provides,
+        # never the default localhost:4317.
+        from phoenix.client import Client as PhoenixClient
+
+        phoenix = PhoenixClient(base_url=real_stack["phoenix_http_endpoint"])
+        span_deadline = time.time() + 30
+        worker_span = None
+        while time.time() < span_deadline:
+            spans_df = phoenix.spans.get_spans_dataframe(
+                project_identifier=f"cogniverse-{canonical_tenant}",
+                limit=200,
+                timeout=10,
+            )
+            if spans_df is not None and not spans_df.empty:
+                matches = spans_df[spans_df["name"] == "pipeline.worker.process_job"]
+                if not matches.empty:
+                    worker_span = matches.iloc[0]
+                    break
+            time.sleep(1)
+        assert worker_span is not None, (
+            "pipeline.worker.process_job span did not arrive in the test "
+            f"Phoenix project cogniverse-{canonical_tenant} within 30s"
+        )
+
+        # 7. Re-upload the same bytes via /upload. Content-addressable keying
         # maps the identical bytes to the SAME s3:// URL → the same idempotency
         # sha → a cache hit on the completed run. No second pipeline runs, so
         # the index is not doubled. (A uuid key defeated this and re-ran every
         # upload; source-URL idempotency is also exercised directly by
         # ``test_resubmit_same_source_url_hits_idempotency``.)
-        files2 = {"file": (VIDEO_PATH.name, io.BytesIO(video_bytes), "video/mp4")}
+        files2 = {
+            "file": (upload_video_path.name, io.BytesIO(video_bytes), "video/mp4")
+        }
         resp2 = await http_client.post(
             "/ingestion/upload",
             params={"wait": "true", "wait_timeout": 600},
@@ -837,11 +968,15 @@ class TestUploadRealStack:
         )
         assert resp2.status_code == 200, resp2.text
         body2 = resp2.json()
-        assert body2["existing"] is True, (
-            f"re-upload of identical bytes must hit idempotency, got {body2!r}"
-        )
-        assert body2["sha"] == sha, "identical bytes must produce the same sha"
-        assert body2["ingest_id"] == ingest_id, "re-upload returns the original id"
+        assert body2 == {
+            "ingest_id": ingest_id,
+            "sha": sha,
+            "state": "in_flight",
+            "existing": True,
+            "filename": UPLOAD_FILENAME,
+            "source_url": expected_source_url,
+            "status": "queued",
+        }
         vespa_doc_count_2 = _vespa_visit_count(
             real_stack["vespa_http_port"], PROFILE, TENANT_ID
         )
@@ -851,10 +986,10 @@ class TestUploadRealStack:
             f"{vespa_doc_count}, now {vespa_doc_count_2}"
         )
 
-    @_skip_no_videoprism
+    @pytest.mark.requires_inference("videoprism_jax")
     @pytest.mark.asyncio
     async def test_resubmit_same_source_url_hits_idempotency(
-        self, real_stack, worker_task, http_client
+        self, real_stack, worker_task, http_client, upload_video_path
     ):
         """The /upload path computes the idempotency sha on the s3:// URL it
         writes. Verify idempotency explicitly by calling enqueue_ingestion
@@ -863,8 +998,8 @@ class TestUploadRealStack:
         from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
 
         # First, upload once via /upload to get a real source_url.
-        video_bytes = VIDEO_PATH.read_bytes()
-        files = {"file": (VIDEO_PATH.name, io.BytesIO(video_bytes), "video/mp4")}
+        video_bytes = upload_video_path.read_bytes()
+        files = {"file": (upload_video_path.name, io.BytesIO(video_bytes), "video/mp4")}
         data = {"profile": PROFILE, "backend": "vespa", "tenant_id": TENANT_ID}
         first_resp = await http_client.post(
             "/ingestion/upload",
@@ -923,7 +1058,7 @@ class TestUploadRealStack:
         silently downgrade to a different code path."""
         self._blank_system_config_field(monkeypatch, minio_endpoint="")
         files = {
-            "file": (VIDEO_PATH.name, io.BytesIO(b"x"), "video/mp4"),
+            "file": (UPLOAD_FILENAME, io.BytesIO(b"x"), "video/mp4"),
         }
         resp = await http_client.post(
             "/ingestion/upload",
@@ -940,7 +1075,7 @@ class TestUploadRealStack:
         self, real_stack, http_client, monkeypatch
     ):
         self._blank_system_config_field(monkeypatch, redis_url="")
-        files = {"file": (VIDEO_PATH.name, io.BytesIO(b"x"), "video/mp4")}
+        files = {"file": (UPLOAD_FILENAME, io.BytesIO(b"x"), "video/mp4")}
         resp = await http_client.post(
             "/ingestion/upload",
             files=files,
@@ -958,7 +1093,7 @@ class TestUploadRealStack:
         credentials — the route must answer a retryable 503, not a raw
         RuntimeError/500."""
         monkeypatch.delenv("MINIO_ENDPOINT", raising=False)
-        files = {"file": (VIDEO_PATH.name, io.BytesIO(b"x"), "video/mp4")}
+        files = {"file": (UPLOAD_FILENAME, io.BytesIO(b"x"), "video/mp4")}
         resp = await http_client.post(
             "/ingestion/upload",
             files=files,

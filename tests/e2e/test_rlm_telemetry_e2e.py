@@ -32,7 +32,7 @@ import httpx
 import pytest
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import skip_if_no_runtime, unique_id
+from tests.e2e.conftest import unique_id
 
 
 def _free_port() -> int:
@@ -132,7 +132,6 @@ _RLM_CONTEXT = (
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTokensUsedReportedAndMonotone:
     """RLMResult.tokens_used > 0 and grows with iteration budget."""
 
@@ -180,7 +179,6 @@ class TestTokensUsedReportedAndMonotone:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestIncludeTrajectoryShape:
     """trajectory list shape + bounds; toggle controls structured emission."""
 
@@ -262,7 +260,6 @@ class TestIncludeTrajectoryShape:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestWasFallbackContract:
     """RLMResult.was_fallback exposes a strict bool consistent with telemetry.
 
@@ -301,7 +298,6 @@ class TestWasFallbackContract:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTelemetryDictShape:
     """RLMResult.to_telemetry_dict key set must be exact."""
 

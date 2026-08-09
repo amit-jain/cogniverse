@@ -28,12 +28,13 @@ RUN pip install --no-cache-dir \
         gliner==0.2.26 \
         numpy
 
-COPY server.py ./
+# The canonical server lives in the CLI modal-inference package. Build from
+# the repository root so this source path is available to Docker.
+COPY libs/cli/cogniverse_cli/modal_inference/servers/gliner.py ./server.py
 
-# Default to medium-v2.1 — narrower entity tokenisation matches the
-# production EntityExtractionAgent (GLiNERRelationshipExtractor pinned
-# to gliner_mediumv2.1) and keeps gateway classification fast on CPU.
-ENV MODEL_NAME=urchade/gliner_mediumv2.1 \
+# The server accepts only this pinned production model identifier.
+ENV MODEL_NAME=urchade/gliner_large-v2.1 \
+    MODEL_REVISION=abd49a1f1ebc12af1be84d06f6848221cf96dcad \
     DEVICE=cpu \
     HOST=0.0.0.0 \
     PORT=8080 \

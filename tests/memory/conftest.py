@@ -10,13 +10,26 @@ import requests
 import cogniverse_vespa  # noqa: F401
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.registries.backend_registry import BackendRegistry
-
-# Re-export the canonical session-scoped Vespa from the project root so
-# memory tests pick it up via pytest's normal discovery walk.
-from tests.conftest import shared_vespa  # noqa: F401
 from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
+from tests.utils.tenant_helpers import MEM0_ROUNDTRIP_TENANT_ID, MEMORY_TENANT_ID
+from tests.utils.vespa_test_helpers import (
+    deploy_tenant_schema,
+    make_config_manager,
+    schema_full_name,
+)
 
 logger = logging.getLogger(__name__)
+
+# Schemas the fixture deploys, per tenant. SchemaRegistry canonicalizes a
+# bare tenant id (``test_tenant`` → ``test_tenant:test_tenant``), so the
+# derived names are computed here rather than written out.
+MEMORY_BASE_SCHEMAS = ("agent_memories", "wiki_pages", "provenance")
+MEM0_ROUNDTRIP_BASE_SCHEMAS = ("agent_memories",)
+
+MEMORY_SCHEMA = schema_full_name("agent_memories", MEMORY_TENANT_ID)
+WIKI_SCHEMA = schema_full_name("wiki_pages", MEMORY_TENANT_ID)
+PROVENANCE_SCHEMA = schema_full_name("provenance", MEMORY_TENANT_ID)
+MEM0_ROUNDTRIP_SCHEMA = schema_full_name("agent_memories", MEM0_ROUNDTRIP_TENANT_ID)
 
 
 def wait_for_backend_ready(config_port: int, timeout: int = 120) -> bool:
@@ -149,40 +162,68 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 120) 
     return False
 
 
-@pytest.fixture(scope="session")
-def shared_memory_vespa(shared_vespa):  # noqa: F811  (shared_vespa is the imported fixture)
-    """Compatibility shim: yields the dict shape memory tests expect, but
-    backed by the single project-wide ``shared_vespa`` container.
+def deploy_memory_schemas(
+    shared_vespa: dict,
+    *,
+    config_manager=None,
+    force: bool = False,
+) -> dict:
+    """Deploy the memory suite's tenant schemas through SchemaRegistry.
 
-    Deploys the three data schemas memory tests need (``agent_memories``,
-    ``wiki_pages``, ``provenance``) once per session, all under the
-    historical ``test_tenant`` tenant_id so existing tests that hardcode
-    that string keep working. Other packages use their own tenant_ids
-    (see ``tests/utils/tenant_helpers.py``) so there's no cross-package
-    collision on the shared container.
+    ``deploy_schema`` collects every schema already registered for every
+    tenant and ships the complete list to Vespa, so a peer tenant's schema
+    survives the redeploy. Returns ``{(tenant_id, base_schema_name):
+    full_schema_name}``.
+    """
+    deployed = {}
+    for tenant_id, base_names in (
+        (MEMORY_TENANT_ID, MEMORY_BASE_SCHEMAS),
+        (MEM0_ROUNDTRIP_TENANT_ID, MEM0_ROUNDTRIP_BASE_SCHEMAS),
+    ):
+        for base_schema_name in base_names:
+            full_name = deploy_tenant_schema(
+                shared_vespa,
+                tenant_id=tenant_id,
+                base_schema_name=base_schema_name,
+                config_manager=config_manager,
+                force=force,
+            )
+            expected = schema_full_name(base_schema_name, tenant_id)
+            assert full_name == expected, (
+                f"deploy_schema returned {full_name!r} for "
+                f"{base_schema_name!r}/{tenant_id!r}; memory tests address "
+                f"{expected!r}"
+            )
+            deployed[(tenant_id, base_schema_name)] = full_name
+    return deployed
+
+
+@pytest.fixture(scope="session")
+def shared_memory_vespa(shared_vespa):
+    """The session-wide Vespa with the memory suite's schemas deployed.
+
+    Deploys ``agent_memories``, ``wiki_pages`` and ``provenance`` for
+    ``MEMORY_TENANT_ID`` plus ``agent_memories`` for
+    ``MEM0_ROUNDTRIP_TENANT_ID`` through SchemaRegistry, which merges every
+    already-registered schema into the deployment package. Other packages
+    hold their own tenants on the same container, and Vespa reads a
+    deployment package as the cluster's complete schema list, so the merge
+    is what keeps their schemas alive.
 
     Yields::
 
         {
             "http_port", "config_port", "container_name", "base_url",
-            "tenant_schema_name": "agent_memories_test_tenant",
-            "wiki_schema_name":   "wiki_pages_test_tenant",
+            "tenant_schema_name": <agent_memories_...>,
+            "wiki_schema_name":   <wiki_pages_...>,
+            "provenance_schema_name": <provenance_...>,
+            "mem0_roundtrip_schema_name": <agent_memories_... for the
+                                           round-trip tenant>,
             "config_manager":     <ConfigManager bound to shared_vespa>,
             "schema_loader":      <FilesystemSchemaLoader>,
         }
     """
-    import json
-    import time
-
-    from vespa.package import ApplicationPackage
-
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-    from cogniverse_foundation.config.manager import ConfigManager
-    from cogniverse_foundation.config.unified_config import SystemConfig
-    from cogniverse_sdk.interfaces.config_store import ConfigScope
-    from cogniverse_vespa.config.config_store import VespaConfigStore
-    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
     config_port = shared_vespa["config_port"]
     http_port = shared_vespa["http_port"]
@@ -190,110 +231,8 @@ def shared_memory_vespa(shared_vespa):  # noqa: F811  (shared_vespa is the impor
     Mem0MemoryManager._instances.clear()
     BackendRegistry._backend_instances.clear()
 
-    parser = JsonSchemaParser()
-    schemas_dir = Path("configs/schemas")
-
-    # Tenant-scope each schema by overwriting ``name`` and ``document.name``
-    # before parsing — the canonical SchemaRegistry pattern, replicated here
-    # because we deploy directly against the schema manager (faster than
-    # going through SchemaRegistry for the session-scoped one-shot deploy).
-    with open(schemas_dir / "agent_memories_schema.json") as f:
-        memory_schema_json = json.load(f)
-    memory_schema_json["name"] = "agent_memories_test_tenant"
-    memory_schema_json["document"]["name"] = "agent_memories_test_tenant"
-    memory_schema = parser.parse_schema(memory_schema_json)
-
-    with open(schemas_dir / "wiki_pages_schema.json") as f:
-        wiki_schema_json = json.load(f)
-    wiki_schema_json["name"] = "wiki_pages_test_tenant"
-    wiki_schema_json["document"]["name"] = "wiki_pages_test_tenant"
-    wiki_schema = parser.parse_schema(wiki_schema_json)
-
-    with open(schemas_dir / "provenance_schema.json") as f:
-        provenance_schema_json = json.load(f)
-    provenance_schema_json["name"] = "provenance_test_tenant"
-    provenance_schema_json["document"]["name"] = "provenance_test_tenant"
-    provenance_schema = parser.parse_schema(provenance_schema_json)
-
-    # Deploy as a merged package alongside the metadata schemas the root
-    # ``shared_vespa`` already deployed. ``_deploy_package`` does a
-    # full-replace, so we must include the metadata schemas too or we'd
-    # wipe them.
-    from cogniverse_vespa.metadata_schemas import (
-        create_adapter_registry_schema,
-        create_config_metadata_schema,
-        create_organization_metadata_schema,
-        create_tenant_metadata_schema,
-    )
-
-    metadata_schemas = [
-        create_organization_metadata_schema(),
-        create_tenant_metadata_schema(),
-        create_config_metadata_schema(),
-        create_adapter_registry_schema(),
-    ]
-
-    all_schemas = metadata_schemas + [memory_schema, wiki_schema, provenance_schema]
-    app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
-
-    schema_mgr = VespaSchemaManager(
-        backend_endpoint="http://localhost",
-        backend_port=config_port,
-    )
-    schema_mgr._deploy_package(app_package)
-
-    # Wait for the data port to converge after the redeploy.
-    for _ in range(60):
-        try:
-            resp = requests.get(
-                f"http://localhost:{http_port}/state/v1/health", timeout=2
-            )
-            if resp.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(2)
-
-    config_store = VespaConfigStore(
-        backend_url="http://localhost",
-        backend_port=http_port,
-    )
-    config_manager = ConfigManager(store=config_store)
-    config_manager.set_system_config(
-        SystemConfig(
-            backend_url="http://localhost",
-            backend_port=http_port,
-        )
-    )
-
-    # Register the deployed schemas in ConfigStore so any SchemaRegistry
-    # created by downstream fixtures finds them and skips redeploy.
-    # The schema_definition MUST be the real, parseable JSON — a stub
-    # would fail parse_schema during a later merge-and-redeploy.
-    tenant_schema_name = "agent_memories_test_tenant"
-    wiki_schema_name = "wiki_pages_test_tenant"
-    provenance_schema_name = "provenance_test_tenant"
-
-    for schema_name, base_name, schema_dict in [
-        (tenant_schema_name, "agent_memories", memory_schema_json),
-        (wiki_schema_name, "wiki_pages", wiki_schema_json),
-        (provenance_schema_name, "provenance", provenance_schema_json),
-    ]:
-        config_manager.set_config_value(
-            tenant_id="test_tenant",
-            scope=ConfigScope.SCHEMA,
-            service="schema_registry",
-            config_key=schema_name,
-            config_value={
-                "tenant_id": "test_tenant",
-                "base_schema_name": base_name,
-                "full_schema_name": schema_name,
-                "schema_definition": json.dumps(schema_dict),
-                "config": {},
-                "deployment_time": "2026-04-06T00:00:00",
-                "deleted": False,
-            },
-        )
+    config_manager = make_config_manager(shared_vespa)
+    deployed = deploy_memory_schemas(shared_vespa, config_manager=config_manager)
 
     BackendRegistry._backend_instances.clear()
 
@@ -302,20 +241,26 @@ def shared_memory_vespa(shared_vespa):  # noqa: F811  (shared_vespa is the impor
             f"Vespa data port {http_port} not ready 120s after data-schema deploy"
         )
 
-    if not wait_for_schema_ready(http_port, tenant_schema_name, timeout=120):
-        pytest.fail(f"Schema {tenant_schema_name} not ready 120s after deploy")
-
-    if not wait_for_schema_ready(http_port, wiki_schema_name, timeout=120):
-        pytest.fail(f"Schema {wiki_schema_name} not ready 120s after deploy")
+    for schema_name in (
+        deployed[(MEMORY_TENANT_ID, "agent_memories")],
+        deployed[(MEMORY_TENANT_ID, "wiki_pages")],
+        deployed[(MEM0_ROUNDTRIP_TENANT_ID, "agent_memories")],
+    ):
+        if not wait_for_schema_ready(http_port, schema_name, timeout=120):
+            pytest.fail(f"Schema {schema_name} not ready 120s after deploy")
 
     yield {
         "http_port": http_port,
         "config_port": config_port,
         "container_name": shared_vespa["container_name"],
         "base_url": shared_vespa["base_url"],
-        "tenant_schema_name": tenant_schema_name,
-        "wiki_schema_name": wiki_schema_name,
+        "tenant_schema_name": deployed[(MEMORY_TENANT_ID, "agent_memories")],
+        "wiki_schema_name": deployed[(MEMORY_TENANT_ID, "wiki_pages")],
+        "provenance_schema_name": deployed[(MEMORY_TENANT_ID, "provenance")],
+        "mem0_roundtrip_schema_name": deployed[
+            (MEM0_ROUNDTRIP_TENANT_ID, "agent_memories")
+        ],
         "config_manager": config_manager,
-        "schema_loader": FilesystemSchemaLoader(schemas_dir),
+        "schema_loader": FilesystemSchemaLoader(Path("configs/schemas")),
     }
     # No teardown — shared_vespa owns the container lifecycle.
