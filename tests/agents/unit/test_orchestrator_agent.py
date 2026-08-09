@@ -118,6 +118,11 @@ def orchestrator_agent(mock_agent_registry):
             config_manager=mock_config_manager,
             port=8013,
         )
+        span_context = MagicMock()
+        span_context.__enter__.return_value = Mock()
+        telemetry_manager = Mock()
+        telemetry_manager.span.return_value = span_context
+        agent.telemetry_manager = telemetry_manager
         return agent
 
 
@@ -476,6 +481,101 @@ class TestOrchestratorAgent:
         assert results["search_agent"]["status"] == "success"
 
     @pytest.mark.asyncio
+    async def test_execute_plan_records_observed_completion_order(
+        self, orchestrator_agent
+    ):
+        async def _post(url, **_kwargs):
+            if url.startswith("http://localhost:8000"):
+                await asyncio.sleep(0.03)
+                agent = "entity_extraction_agent"
+            else:
+                await asyncio.sleep(0)
+                agent = "profile_selection_agent"
+            response = Mock()
+            response.raise_for_status = Mock()
+            response.json = Mock(
+                return_value={
+                    "status": "success",
+                    "agent": agent,
+                    "confidence": (
+                        0.91 if agent == "entity_extraction_agent" else 0.82
+                    ),
+                }
+            )
+            return response
+
+        import asyncio
+
+        plan = OrchestrationPlan(
+            query="find Marie Curie footage",
+            steps=[
+                AgentStep(
+                    agent_name="entity_extraction_agent",
+                    input_data={"query": "find Marie Curie footage"},
+                    depends_on=[],
+                    reasoning="Extract the named scientist",
+                ),
+                AgentStep(
+                    agent_name="profile_selection_agent",
+                    input_data={"query": "find Marie Curie footage"},
+                    depends_on=[],
+                    reasoning="Choose the configured retrieval profile",
+                ),
+            ],
+            parallel_groups=[[0, 1]],
+            reasoning="Run independent preprocessing concurrently",
+        )
+        completion_order = []
+        observations = []
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=_post)
+
+        with patch(
+            "cogniverse_agents.orchestrator_agent._get_http_client",
+            new=AsyncMock(return_value=client),
+        ):
+            results = await orchestrator_agent._execute_plan(
+                plan,
+                tenant_id="test:unit",
+                execution_order_sink=completion_order,
+                agent_observations_sink=observations,
+            )
+
+        assert list(results) == [
+            "entity_extraction_agent",
+            "profile_selection_agent",
+        ]
+        assert completion_order == [
+            "profile_selection_agent",
+            "entity_extraction_agent",
+        ]
+        assert [
+            {key: observation[key] for key in ("agent_name", "success", "confidence")}
+            for observation in observations
+        ] == [
+            {
+                "agent_name": "entity_extraction_agent",
+                "success": True,
+                "confidence": 0.91,
+            },
+            {
+                "agent_name": "profile_selection_agent",
+                "success": True,
+                "confidence": 0.82,
+            },
+        ]
+        durations = {
+            observation["agent_name"]: observation["execution_time"]
+            for observation in observations
+        }
+        assert durations["entity_extraction_agent"] >= 0.02
+        assert (
+            durations["entity_extraction_agent"]
+            > durations["profile_selection_agent"]
+            >= 0.0
+        )
+
+    @pytest.mark.asyncio
     async def test_execute_plan_threads_search_hits_to_answer_step(
         self, orchestrator_agent
     ):
@@ -591,13 +691,21 @@ class TestOrchestratorAgent:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
+            observations = []
             results = await orchestrator_agent._execute_plan(
-                plan, tenant_id="test:unit"
+                plan,
+                tenant_id="test:unit",
+                agent_observations_sink=observations,
             )
 
         assert "search_agent" in results
         assert results["search_agent"]["status"] == "error"
         assert "Agent failed" in results["search_agent"]["message"]
+        assert len(observations) == 1
+        assert observations[0]["agent_name"] == "search_agent"
+        assert observations[0]["success"] is False
+        assert observations[0]["execution_time"] >= 0.0
+        assert "confidence" not in observations[0]
 
     @pytest.mark.asyncio
     async def test_execute_plan_empty_str_exception_includes_type(
@@ -684,6 +792,8 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, orchestrator_agent):
         """Test processing empty query"""
+        orchestrator_agent._emit_orchestration_outcome = AsyncMock()
+
         result = await orchestrator_agent._process_impl(
             OrchestratorInput(query="", tenant_id="test:unit")
         )
@@ -692,6 +802,7 @@ class TestOrchestratorAgent:
         assert len(result.plan_steps) == 0
         assert result.final_output["status"] == "error"
         assert "Empty query" in result.final_output["message"]
+        orchestrator_agent._emit_orchestration_outcome.assert_not_awaited()
 
     def test_generate_summary(self, orchestrator_agent):
         """Test execution summary generation"""
@@ -1000,6 +1111,7 @@ class TestOrchestratorIntelligence:
                 reasoning="Search",
             )
         )
+        agent._emit_orchestration_outcome = AsyncMock()
 
         mock_response = Mock()
         mock_response.raise_for_status = Mock()
@@ -1024,6 +1136,7 @@ class TestOrchestratorIntelligence:
         )
         # Execution was recorded
         mock_intelligence.record_workflow_execution.assert_called_once()
+        agent._emit_orchestration_outcome.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_cancel_workflow(self, orchestrator_agent):
@@ -1050,9 +1163,13 @@ class TestOrchestratorIntelligence:
         class _RecordingSpan:
             def __init__(self):
                 self.attrs = {}
+                self.status = None
 
             def set_attribute(self, key, value):
                 self.attrs[key] = value
+
+            def set_status(self, status):
+                self.status = status
 
         class _Ctx:
             def __init__(self, span):
@@ -1069,62 +1186,221 @@ class TestOrchestratorIntelligence:
                 self.calls = []
                 self.span_obj = _RecordingSpan()
 
-            def span(self, *, name, tenant_id):
-                self.calls.append({"name": name, "tenant_id": tenant_id})
+            def span(self, *, name, tenant_id, require_export):
+                self.calls.append(
+                    {
+                        "name": name,
+                        "tenant_id": tenant_id,
+                        "require_export": require_export,
+                    }
+                )
                 return _Ctx(self.span_obj)
 
         recorder = _RecordingTelemetry()
         orchestrator_agent.telemetry_manager = recorder
-        orchestrator_agent._current_tenant_id = "acme:prod"
 
         orchestrator_agent._emit_orchestration_span(
+            tenant_id="acme:prod",
             workflow_id="wf_test",
             query="q" * 300,
             agent_sequence=["search_agent", "summarizer_agent"],
             execution_time=1.5,
             success=True,
             tasks_completed=2,
+            pattern="sequential",
+            execution_order=["search_agent", "summarizer_agent"],
+            agent_observations=[
+                {
+                    "agent_name": "search_agent",
+                    "execution_time": 0.4,
+                    "success": True,
+                    "confidence": 0.93,
+                },
+                {
+                    "agent_name": "summarizer_agent",
+                    "execution_time": 1.0,
+                    "success": True,
+                },
+            ],
         )
 
         assert len(recorder.calls) == 1
         assert recorder.calls[0]["name"] == "cogniverse.orchestration"
         assert recorder.calls[0]["tenant_id"] == "acme:prod"
+        assert recorder.calls[0]["require_export"] is True
         attrs = recorder.span_obj.attrs
         assert attrs["operation"] == "orchestration"
         assert attrs["input.value"] == "q" * 300
         out = json.loads(attrs["output.value"])
         assert out["workflow_id"] == "wf_test"
         assert out["agent_sequence"] == ["search_agent", "summarizer_agent"]
+        assert out["execution_order"] == ["search_agent", "summarizer_agent"]
+        assert out["pattern"] == "sequential"
         assert out["execution_time"] == 1.5
         assert out["success"] is True
         assert out["tasks_completed"] == 2
+        assert out["agent_observations"] == [
+            {
+                "agent_name": "search_agent",
+                "execution_time": 0.4,
+                "success": True,
+                "confidence": 0.93,
+            },
+            {
+                "agent_name": "summarizer_agent",
+                "execution_time": 1.0,
+                "success": True,
+            },
+        ]
+        assert recorder.span_obj.status.status_code.name == "OK"
 
-    def test_orchestration_span_noop_without_telemetry(self, orchestrator_agent):
-        """No telemetry_manager -> silent no-op (back-compat, must not raise)."""
+    def test_orchestration_span_requires_telemetry(self, orchestrator_agent):
         orchestrator_agent.telemetry_manager = None
-        orchestrator_agent._emit_orchestration_span(
-            workflow_id="w",
-            query="q",
-            agent_sequence=["a"],
-            execution_time=0.1,
-            success=True,
-            tasks_completed=1,
-        )
-
-    def test_orchestration_span_requires_tenant(self, orchestrator_agent):
-        """Telemetry set but no _current_tenant_id -> raise (guards callers that
-        emit before _process_impl set the tenant)."""
-        orchestrator_agent.telemetry_manager = object()  # truthy; span never reached
-        orchestrator_agent._current_tenant_id = None
-        with pytest.raises(RuntimeError, match="_current_tenant_id"):
+        with pytest.raises(
+            RuntimeError,
+            match="OrchestratorAgent requires telemetry_manager",
+        ):
             orchestrator_agent._emit_orchestration_span(
+                tenant_id="acme:prod",
                 workflow_id="w",
                 query="q",
                 agent_sequence=["a"],
                 execution_time=0.1,
                 success=True,
                 tasks_completed=1,
+                pattern="sequential",
+                execution_order=["a"],
             )
+
+    def test_execution_outcome_counts_only_successful_observed_results(
+        self, orchestrator_agent
+    ):
+        success, tasks_completed = orchestrator_agent._execution_outcome(
+            agent_sequence=["entity", "profile", "search", "summary"],
+            agent_results={
+                "entity": {"status": "success"},
+                "profile": {"selected_profile": "frame_based_colpali"},
+                "search": {"status": "error", "message": "Vespa unavailable"},
+            },
+        )
+
+        assert success is False
+        assert tasks_completed == 2
+
+    @pytest.mark.asyncio
+    async def test_process_failure_exports_exact_failed_outcome(
+        self, orchestrator_agent
+    ):
+        import json
+
+        class _Span:
+            def __init__(self):
+                self.attrs = {}
+                self.status = None
+
+            def set_attribute(self, key, value):
+                self.attrs[key] = value
+
+            def set_status(self, status):
+                self.status = status
+
+        class _Context:
+            def __init__(self, span):
+                self.span = span
+
+            def __enter__(self):
+                return self.span
+
+            def __exit__(self, *_exc):
+                return False
+
+        class _Telemetry:
+            def __init__(self):
+                self.calls = []
+                self.span_obj = _Span()
+
+            def span(self, **kwargs):
+                self.calls.append(kwargs)
+                return _Context(self.span_obj)
+
+        telemetry = _Telemetry()
+        orchestrator_agent.telemetry_manager = telemetry
+        orchestrator_agent._process_impl_locked = AsyncMock(
+            side_effect=ConnectionError("Vespa disconnected")
+        )
+
+        with pytest.raises(ConnectionError, match="Vespa disconnected"):
+            await orchestrator_agent._process_impl(
+                OrchestratorInput(
+                    query="find Marie Curie footage",
+                    tenant_id="acme:prod",
+                )
+            )
+
+        assert telemetry.calls == [
+            {
+                "name": "cogniverse.orchestration",
+                "tenant_id": "acme:prod",
+                "require_export": True,
+            }
+        ]
+        output = json.loads(telemetry.span_obj.attrs["output.value"])
+        assert output["agent_sequence"] == []
+        assert output["execution_order"] == []
+        assert output["success"] is False
+        assert output["tasks_completed"] == 0
+        assert output["error_summary"] == "ConnectionError: Vespa disconnected"
+        assert telemetry.span_obj.status.status_code.name == "ERROR"
+        assert (
+            telemetry.span_obj.status.description
+            == "ConnectionError: Vespa disconnected"
+        )
+
+    @pytest.mark.asyncio
+    async def test_duplicate_plan_agents_fail_before_result_dict_overwrite(
+        self, orchestrator_agent
+    ):
+        duplicate_plan = OrchestrationPlan(
+            query="compare two exact sources",
+            steps=[
+                AgentStep(
+                    agent_name="search_agent",
+                    input_data={"query": "first"},
+                    depends_on=[],
+                    reasoning="first search",
+                ),
+                AgentStep(
+                    agent_name="search_agent",
+                    input_data={"query": "second"},
+                    depends_on=[0],
+                    reasoning="second search",
+                ),
+            ],
+            parallel_groups=[],
+            reasoning="two searches",
+        )
+        orchestrator_agent._ensure_memory_for_tenant = Mock()
+        orchestrator_agent.get_relevant_context = Mock(return_value="")
+        orchestrator_agent._create_plan = AsyncMock(return_value=duplicate_plan)
+        orchestrator_agent._emit_orchestration_outcome = AsyncMock()
+
+        with pytest.raises(
+            ValueError,
+            match="orchestration plan contains duplicate agent names: search_agent",
+        ):
+            await orchestrator_agent._process_impl(
+                OrchestratorInput(
+                    query="compare two exact sources",
+                    tenant_id="acme:prod",
+                )
+            )
+
+        state = orchestrator_agent._emit_orchestration_outcome.await_args.args[0]
+        assert state.agent_sequence == []
+        assert isinstance(
+            orchestrator_agent._emit_orchestration_outcome.await_args.kwargs["error"],
+            ValueError,
+        )
 
     def test_dynamic_agent_discovery(self, orchestrator_agent):
         """Test that agents come from registry, not hardcoded enum"""
