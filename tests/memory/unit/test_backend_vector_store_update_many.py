@@ -18,6 +18,7 @@ from cogniverse_core.memory.backend_vector_store import BackendVectorStore
 class _CapturingBackend:
     def __init__(self):
         self.ingest_calls: List[Dict[str, Any]] = []
+        self.search_calls: List[Dict[str, Any]] = []
         self.update_document_calls: List[str] = []
 
     def ingest_documents(self, documents, schema_name, operation_type="feed"):
@@ -32,6 +33,10 @@ class _CapturingBackend:
 
     def update_document(self, doc_id, doc, schema_name):
         self.update_document_calls.append(doc_id)
+
+    def search(self, query_dict):
+        self.search_calls.append(query_dict)
+        return []
 
 
 def _store() -> tuple[BackendVectorStore, _CapturingBackend]:
@@ -124,6 +129,55 @@ def test_update_many_builds_same_document_shape_as_update():
         "topic": "pets",
         "last_accessed": "2026-07-14T00:00:00+00:00",
     }
+
+
+def test_memory_search_requests_exact_nearest_neighbor():
+    backend = _CapturingBackend()
+    store = BackendVectorStore(
+        collection_name="agent_memories_acme_acme",
+        backend_client=backend,
+        embedding_model_dims=3,
+        tenant_id="acme:acme",
+        profile="agent_memories",
+    )
+
+    assert (
+        store.search(
+            "Marie Curie discovered radium",
+            vectors=[1.0, 0.0, 0.0],
+            limit=1,
+            filters={"user_id": "scientists", "agent_id": "research"},
+        )
+        == []
+    )
+
+    assert len(backend.search_calls) == 1
+    query = backend.search_calls[0]
+    assert set(query) == {
+        "query",
+        "type",
+        "profile",
+        "schema_name",
+        "strategy",
+        "top_k",
+        "filters",
+        "query_embeddings",
+        "tenant_id",
+        "nearest_neighbor_approximate",
+    }
+    assert query["query"] == "Marie Curie discovered radium"
+    assert query["type"] == "memory"
+    assert query["profile"] == "agent_memories"
+    assert query["schema_name"] == "agent_memories_acme_acme"
+    assert query["strategy"] == "semantic_search"
+    assert query["top_k"] == 1
+    assert query["filters"] == {
+        "user_id": "scientists",
+        "agent_id": "research",
+    }
+    assert query["query_embeddings"].tolist() == [1.0, 0.0, 0.0]
+    assert query["tenant_id"] == "acme:acme"
+    assert query["nearest_neighbor_approximate"] is False
 
 
 import pytest  # noqa: E402

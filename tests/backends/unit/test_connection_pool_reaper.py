@@ -28,6 +28,7 @@ def _bare_pool() -> ConnectionPool:
     pool._removing = set()
     pool._lock = threading.Lock()
     pool._returned = threading.Condition(pool._lock)
+    pool._closed = False
     pool.config = SimpleNamespace(
         max_connections=4,
         min_connections=1,

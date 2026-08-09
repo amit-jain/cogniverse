@@ -1496,6 +1496,38 @@ for result in results:
     print(f"Source video: {result.document.metadata['source_id']}")
 ```
 
+`export_embeddings()` walks Vespa's Document v1 continuation pages. Every page
+must return HTTP 200; an initial or continuation failure raises with the visit
+route instead of returning an empty or partial export.
+
+Search retries use the `RetryConfig` supplied to the constructor, including
+after `initialize()` is called. Reconstructed results retain the query content
+type; memory, wiki, and code profiles produce `ContentType.DOCUMENT`, not
+video documents.
+
+#### Point reads
+
+The public search-backend point-read methods require both physical routing
+values as keyword-only arguments:
+
+```python
+document = backend.get_document(
+    "memory-42",
+    schema_name="agent_memories_acme_production",
+    namespace="memory_content",
+)
+documents = backend.batch_get_documents(
+    ["memory-42", "memory-43"],
+    schema_name="agent_memories_acme_production",
+    namespace="memory_content",
+)
+```
+
+`get_document` returns `None` only for a genuine HTTP 404.
+`batch_get_documents` preserves input order and uses `None` for each genuine
+404. Transport failures and every other non-success status raise with the
+physical schema and namespace instead of being reported as missing documents.
+
 #### Multi-Tenant Search Example
 
 One backend instance serves every tenant; the `tenant_id` in each
@@ -1670,6 +1702,16 @@ processed_docs = [client.process(doc) for doc in documents]
 success_count, failed_ids = client._feed_prepared_batch(processed_docs, batch_size=100)
 print(f"Ingested {success_count}/{len(documents)} documents to {tenant_schema}")
 ```
+
+#### Point-read and delete contracts
+
+`check_document_exists(document_id)` returns `True` for HTTP 200 and `False`
+only for HTTP 404. `get_document_data(document_id)` returns the stored fields
+for HTTP 200 and `None` only for HTTP 404. `delete_document(document_id)`
+returns `True` for HTTP 200 and treats HTTP 404 as idempotent success.
+Connection failures and every other non-success status raise; returned
+non-success responses include the complete Document v1 route and are never
+converted into absent-document results.
 
 #### Document Processing
 
