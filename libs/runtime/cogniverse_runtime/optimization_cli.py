@@ -1883,6 +1883,25 @@ async def run_simba_optimization(
         return {"status": "failed", "error": str(e)}
 
 
+async def _save_workflow_learning_state(
+    store,
+    *,
+    tenant_id: str,
+    executions: list,
+    profiles: list,
+    patterns: dict,
+    templates: list,
+) -> None:
+    """Replace one tenant's workflow learning artifacts through its store."""
+    await store.replace_learning_state(
+        tenant_id,
+        executions,
+        profiles,
+        patterns,
+        templates,
+    )
+
+
 async def run_workflow_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
@@ -1895,8 +1914,6 @@ async def run_workflow_optimization(
     and saves them as artifacts.
     """
     from cogniverse_foundation.config.utils import create_default_config_manager
-    from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
-    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
     logger.info(
         "Starting workflow optimization for tenant=%s lookback=%dh",
@@ -1905,20 +1922,7 @@ async def run_workflow_optimization(
     )
 
     create_default_config_manager()
-    telemetry_manager = get_telemetry_manager()
-    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-    spans_df = await _query_spans_by_name(
-        telemetry_provider, tenant_id, SPAN_NAME_ORCHESTRATION, lookback_hours
-    )
-
-    if spans_df.empty:
-        logger.info("No orchestration spans found — nothing to optimize")
-        return {"status": "no_data", "spans_found": 0}
-
-    logger.info("Found %d orchestration spans", len(spans_df))
-
-    # Use OrchestrationEvaluator to extract workflow executions
     from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 
     intelligence = WorkflowIntelligence(tenant_id=tenant_id)
@@ -1932,17 +1936,27 @@ async def run_workflow_optimization(
         tenant_id=tenant_id,
     )
 
-    eval_result = await evaluator.evaluate_orchestration_spans(
-        lookback_hours=lookback_hours,
-    )
+    evaluation_end_time = datetime.now(timezone.utc)
+    spans_found = 0
+    workflows_extracted = 0
+    while True:
+        eval_result = await evaluator.evaluate_orchestration_spans(
+            lookback_hours=lookback_hours,
+            batch_size=50,
+            evaluation_end_time=evaluation_end_time,
+        )
+        spans_found += eval_result["spans_processed"]
+        workflows_extracted += eval_result["workflows_extracted"]
+        if not eval_result["has_more"]:
+            break
 
-    workflows_extracted = eval_result.get("workflows_extracted", 0)
     logger.info("Extracted %d workflow executions from spans", workflows_extracted)
 
     if workflows_extracted == 0:
+        logger.info("No orchestration spans found — nothing to optimize")
         return {
             "status": "no_data",
-            "spans_found": len(spans_df),
+            "spans_found": spans_found,
             "workflows_extracted": 0,
         }
 
@@ -2004,24 +2018,30 @@ async def run_workflow_optimization(
         for execution in intelligence.workflow_history
         if _agents_live(execution.agent_sequence)
     ]
-    profiles = list(intelligence.agent_performance.values())
+    profiles, templates = intelligence.derive_learning_artifacts(live_executions)
     patterns = (
         dict(intelligence.query_type_patterns)
         if intelligence.query_type_patterns
         else {}
     )
 
-    # One unit: a mid-sequence outage otherwise persists executions without the
-    # matching profiles the orchestrator reads them against.
-    await store.save_learning_corpus(tenant_id, live_executions, profiles, patterns)
+    await _save_workflow_learning_state(
+        store,
+        tenant_id=tenant_id,
+        executions=live_executions,
+        profiles=profiles,
+        patterns=patterns,
+        templates=templates,
+    )
 
     logger.info("Workflow optimization complete")
     return {
         "status": "success",
-        "spans_found": len(spans_df),
+        "spans_found": spans_found,
         "workflows_extracted": workflows_extracted,
         "execution_demos_saved": len(live_executions),
         "agent_profiles_saved": len(profiles),
+        "workflow_templates_saved": len(templates),
     }
 
 

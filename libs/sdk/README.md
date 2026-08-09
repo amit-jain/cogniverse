@@ -170,6 +170,11 @@ total executions, string sequences reject non-string members, and template
 task sequences contain dictionaries. Performance trends are `improving`,
 `degrading`, or `stable`.
 
+`WorkflowTemplate.expected_execution_time` and `success_rate` may be `None`
+when a template is a generated plan that has not executed yet. A numeric value
+always represents an observed metric and must satisfy the validation above;
+callers must not substitute a default performance claim for an unobserved plan.
+
 `AdapterStore` persists adapter metadata, artifacts, training examples,
 metrics, and activation state. Model types default to `"llm"` where the
 interface declares that default.

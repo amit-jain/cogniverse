@@ -232,8 +232,8 @@ class WorkflowTemplate:
     description: str
     query_patterns: List[str]
     task_sequence: List[Dict[str, Any]]
-    expected_execution_time: float
-    success_rate: float
+    expected_execution_time: Optional[float]
+    success_rate: Optional[float]
     usage_count: int = 0
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_used: Optional[datetime] = None
@@ -247,17 +247,19 @@ class WorkflowTemplate:
             not isinstance(task, dict) for task in self.task_sequence
         ):
             raise TypeError("task_sequence must be a list of dict")
-        _require_finite_float(
-            self.expected_execution_time,
-            "expected_execution_time",
-            minimum=0.0,
-        )
-        _require_finite_float(
-            self.success_rate,
-            "success_rate",
-            minimum=0.0,
-            maximum=1.0,
-        )
+        if self.expected_execution_time is not None:
+            _require_finite_float(
+                self.expected_execution_time,
+                "expected_execution_time",
+                minimum=0.0,
+            )
+        if self.success_rate is not None:
+            _require_finite_float(
+                self.success_rate,
+                "success_rate",
+                minimum=0.0,
+                maximum=1.0,
+            )
         _require_nonnegative_integer(self.usage_count, "usage_count")
         self.created_at = _utc_datetime(self.created_at, "created_at")
         if self.last_used is not None:
@@ -276,6 +278,16 @@ class WorkflowTemplate:
         if data["last_used"] is not None:
             data["last_used"] = _datetime_from_payload(data["last_used"], "last_used")
         return cls(**data)
+
+
+@dataclass(frozen=True)
+class WorkflowLearningState:
+    """One complete generation of workflow-learning data."""
+
+    executions: List[WorkflowExecution]
+    profiles: List[AgentPerformance]
+    patterns: Dict[str, List[str]]
+    templates: List[WorkflowTemplate]
 
 
 class WorkflowStore(ABC):
@@ -401,11 +413,43 @@ class WorkflowStore(ABC):
             )
             raise
 
+    @abstractmethod
+    async def replace_learning_state(
+        self,
+        tenant_id: str,
+        executions: List[WorkflowExecution],
+        profiles: List[AgentPerformance],
+        patterns: Dict[str, List[str]],
+        templates: List[WorkflowTemplate],
+    ) -> None:
+        """Replace every workflow-learning channel as one coordinated write.
+
+        Implementations must serialize writers for the same tenant across
+        processes and restore the exact prior templates, executions, profiles,
+        and query patterns before propagating a failed replacement.
+        """
+
+    @abstractmethod
+    async def load_learning_state(self, tenant_id: str) -> WorkflowLearningState:
+        """Load one complete workflow-learning generation.
+
+        Implementations must coordinate this read with replacements for the
+        same tenant so the returned channels all belong to one generation.
+        """
+
     # ==================== Workflow Templates ====================
 
     @abstractmethod
     async def save_template(self, tenant_id: str, template: WorkflowTemplate) -> str:
         """Create or update a template; returns its ``template_id``."""
+
+    @abstractmethod
+    async def save_generated_templates(
+        self,
+        tenant_id: str,
+        templates: List[WorkflowTemplate],
+    ) -> List[str]:
+        """Persist one generated batch atomically and return its ordered IDs."""
 
     @abstractmethod
     async def load_templates(self, tenant_id: str) -> List[WorkflowTemplate]:

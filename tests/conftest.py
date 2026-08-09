@@ -1001,14 +1001,62 @@ def config_manager_memory():
     return ConfigManager(store=store)
 
 
+@pytest.fixture(scope="session")
+def workflow_state_redis_url():
+    """Test-owned Redis for cross-process workflow-state coordination."""
+    import subprocess
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    container_name = f"cogniverse-workflow-state-{os.getpid()}"
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
+            "-p",
+            f"{port}:6379",
+            "redis:7.4-alpine",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"Failed to start workflow-state Redis: {result.stderr}")
+
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        ping = subprocess.run(
+            ["docker", "exec", container_name, "redis-cli", "ping"],
+            capture_output=True,
+            text=True,
+        )
+        if ping.stdout.strip() == "PONG":
+            break
+        time.sleep(0.25)
+    else:
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        pytest.fail("Workflow-state Redis did not become ready within 30 seconds")
+
+    try:
+        yield f"redis://127.0.0.1:{port}/0"
+    finally:
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+
 @pytest.fixture
-def workflow_store(telemetry_manager_with_phoenix):
+def workflow_store(telemetry_manager_with_phoenix, workflow_state_redis_url):
     """Resolve a workflow store via the registry — same path production uses.
 
     Going through ``WorkflowStoreRegistry`` (entry-point discovery + cache)
     rather than constructing ``TelemetryWorkflowStore(...)`` directly means a
     new backend lights up here automatically once it registers against the
-    ``cogniverse.workflow.stores`` entry-point group; the fixture is unchanged.
+    ``cogniverse.workflow.stores`` entry-point group.
 
     Backed by a real Phoenix provider so the store exercises the true
     ``ArtifactManager`` → Phoenix round-trip rather than an in-memory double.
@@ -1023,7 +1071,10 @@ def workflow_store(telemetry_manager_with_phoenix):
     WorkflowStoreRegistry.clear_cache()
     store = WorkflowStoreRegistry.get(
         name="telemetry",
-        config={"telemetry_provider": provider},
+        config={
+            "telemetry_provider": provider,
+            "redis_url": workflow_state_redis_url,
+        },
     )
     store.initialize()
     return store

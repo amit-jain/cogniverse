@@ -7,7 +7,10 @@ in-memory history (used by OrchestrationEvaluator in batch jobs). Does NOT run
 DSPy optimization inline.
 """
 
+import hashlib
+import json
 import logging
+import math
 import statistics
 from collections import defaultdict, deque
 from datetime import datetime, timezone
@@ -85,20 +88,35 @@ class WorkflowIntelligence:
         return list(self.workflow_templates.values())
 
     async def load_historical_data(self) -> None:
-        """Load historical data through the workflow store."""
+        """Load and publish one complete workflow-learning generation."""
         try:
-            for execution in await self._store.load_executions(self.tenant_id):
-                self.workflow_history.append(execution)
+            state = await self._store.load_learning_state(self.tenant_id)
+            executions = [
+                execution
+                for execution in state.executions
+                if self._validate_outcome_metadata(execution)
+            ]
+            staged_state = {
+                "workflow_history": deque(
+                    executions,
+                    maxlen=self.workflow_history.maxlen,
+                ),
+                "agent_performance": {
+                    profile.agent_name: profile for profile in state.profiles
+                },
+                "query_type_patterns": defaultdict(
+                    list,
+                    {
+                        query_type: list(patterns)
+                        for query_type, patterns in state.patterns.items()
+                    },
+                ),
+                "workflow_templates": {
+                    template.template_id: template for template in state.templates
+                },
+            }
 
-            for perf in await self._store.load_agent_profiles(self.tenant_id):
-                self.agent_performance[perf.agent_name] = perf
-
-            patterns = await self._store.load_query_patterns(self.tenant_id)
-            if patterns:
-                self.query_type_patterns = defaultdict(list, patterns)
-
-            for template in await self._store.load_templates(self.tenant_id):
-                self.workflow_templates[template.template_id] = template
+            self.__dict__.update(staged_state)
 
             self.logger.info(
                 f"Loaded {len(self.workflow_history)} executions, "
@@ -108,6 +126,7 @@ class WorkflowIntelligence:
 
         except Exception as e:
             self.logger.error(f"Failed to load historical data: {e}")
+            raise
 
     async def record_workflow_execution(self, workflow_plan: WorkflowPlan) -> None:
         """No-op — workflow executions are recorded via telemetry spans.
@@ -175,8 +194,11 @@ class WorkflowIntelligence:
                     pattern_score = intersection / union
                     score = max(score, pattern_score)
 
-            # Consider template success rate and usage
-            weighted_score = score * (0.7 + 0.3 * template.success_rate)
+            weighted_score = (
+                score
+                if template.success_rate is None
+                else score * (0.7 + 0.3 * template.success_rate)
+            )
 
             if (
                 weighted_score > best_score and weighted_score > 0.6
@@ -494,6 +516,81 @@ class WorkflowIntelligence:
             for template in self.workflow_templates.values()
         }
 
+    _REQUIRED_FIELD_SEMANTICS = {
+        False: {
+            "execution_time": "unobserved_zero_sentinel",
+            "success": "unobserved_false_sentinel",
+            "parallel_efficiency": "unobserved_zero_sentinel",
+            "confidence_score": "unobserved_zero_sentinel",
+        },
+        True: {
+            "execution_time": "observed_duration_seconds",
+            "success": "observed_execution_outcome",
+            "parallel_efficiency": "observed_parallel_efficiency",
+            "confidence_score": "observed_confidence_score",
+        },
+    }
+    _OBSERVED_REQUIRED_FIELD_SEMANTICS = {
+        "execution_time": {"observed_duration_seconds"},
+        "success": {"observed_execution_outcome"},
+        "parallel_efficiency": {
+            "observed_parallel_efficiency",
+            "unobserved_zero_sentinel",
+        },
+        "confidence_score": {
+            "observed_confidence_score",
+            "unobserved_zero_sentinel",
+        },
+    }
+    _UNOBSERVED_SENTINELS = {
+        "execution_time": 0.0,
+        "success": False,
+        "parallel_efficiency": 0.0,
+        "confidence_score": 0.0,
+    }
+
+    def _validate_outcome_metadata(self, workflow_execution: WorkflowExecution) -> bool:
+        outcome_metadata = workflow_execution.metadata.get("_outcome_metadata")
+        if outcome_metadata is None:
+            raise ValueError("metadata must contain _outcome_metadata")
+        if not isinstance(outcome_metadata, dict):
+            raise ValueError("metadata._outcome_metadata must be a dict")
+
+        observed = outcome_metadata.get("observed")
+        if type(observed) is not bool:
+            raise ValueError("metadata._outcome_metadata.observed must be a bool")
+
+        semantics = outcome_metadata.get("required_field_semantics")
+        if not isinstance(semantics, dict):
+            raise ValueError(
+                "metadata._outcome_metadata.required_field_semantics must be a dict"
+            )
+        if observed:
+            semantics_valid = set(semantics) == set(
+                self._OBSERVED_REQUIRED_FIELD_SEMANTICS
+            ) and all(
+                semantics[field] in allowed
+                for field, allowed in self._OBSERVED_REQUIRED_FIELD_SEMANTICS.items()
+            )
+        else:
+            semantics_valid = semantics == self._REQUIRED_FIELD_SEMANTICS[False]
+        if not semantics_valid:
+            observed_label = str(observed).lower()
+            raise ValueError(
+                "metadata._outcome_metadata.required_field_semantics must exactly "
+                f"match the observed={observed_label} contract"
+            )
+
+        for field, semantic in semantics.items():
+            if semantic.startswith("unobserved_") and (
+                getattr(workflow_execution, field) != self._UNOBSERVED_SENTINELS[field]
+            ):
+                raise ValueError(
+                    f"unobserved workflow execution field {field} must equal "
+                    "its declared sentinel"
+                )
+        return observed
+
     async def record_execution(self, workflow_execution: WorkflowExecution) -> None:
         """Record workflow execution directly (called by OrchestrationEvaluator in batch jobs).
 
@@ -504,12 +601,209 @@ class WorkflowIntelligence:
         patterns. The batch save persists the corpus; the serving path
         loads it read-only at startup.
         """
+        if not self._validate_outcome_metadata(workflow_execution):
+            self.logger.debug(
+                "Ignored unobserved workflow plan: %s",
+                workflow_execution.workflow_id,
+            )
+            return
+
         self.workflow_history.append(workflow_execution)
         if workflow_execution.success and workflow_execution.query.strip():
             self._learn_query_pattern(workflow_execution.query)
         self.logger.debug(
             "Recorded workflow execution: %s", workflow_execution.workflow_id
         )
+
+    def derive_learning_artifacts(
+        self,
+        executions: List[WorkflowExecution],
+    ) -> tuple[List[AgentPerformance], List[WorkflowTemplate]]:
+        """Derive serving profiles and replayable templates from executions."""
+        now = datetime.now(timezone.utc)
+        by_agent: Dict[
+            str,
+            List[tuple[WorkflowExecution, Dict[str, Any]]],
+        ] = defaultdict(list)
+        by_workflow: Dict[tuple[str, str, tuple[str, ...]], List[WorkflowExecution]] = (
+            defaultdict(list)
+        )
+
+        for execution in executions:
+            if len(execution.agent_sequence) != len(set(execution.agent_sequence)):
+                raise ValueError(
+                    f"workflow {execution.workflow_id!r} has duplicate agent names"
+                )
+            for observation in self._agent_profile_observations(execution):
+                by_agent[observation["agent_name"]].append((execution, observation))
+            pattern = execution.metadata.get("orchestration_pattern")
+            if not isinstance(pattern, str) or not pattern:
+                raise ValueError(
+                    f"workflow {execution.workflow_id!r} has no orchestration pattern"
+                )
+            by_workflow[
+                (execution.query_type, pattern, tuple(execution.agent_sequence))
+            ].append(execution)
+
+        profiles = []
+        for agent_name, samples in sorted(by_agent.items()):
+            confidence_samples = [
+                observation["confidence"]
+                for _, observation in samples
+                if "confidence" in observation
+            ]
+            if not confidence_samples:
+                continue
+            successful = [
+                (execution, observation)
+                for execution, observation in samples
+                if observation["success"]
+            ]
+            query_counts: Dict[str, int] = defaultdict(int)
+            for execution, _ in successful:
+                query_counts[execution.query_type] += 1
+            preferred_query_types = sorted(
+                query_counts,
+                key=lambda query_type: (-query_counts[query_type], query_type),
+            )
+            profiles.append(
+                AgentPerformance(
+                    agent_name=agent_name,
+                    total_executions=len(samples),
+                    successful_executions=len(successful),
+                    average_execution_time=float(
+                        statistics.fmean(
+                            observation["execution_time"] for _, observation in samples
+                        )
+                    ),
+                    average_confidence=float(statistics.fmean(confidence_samples)),
+                    error_rate=float((len(samples) - len(successful)) / len(samples)),
+                    preferred_query_types=preferred_query_types,
+                    performance_trend="stable",
+                    last_updated=now,
+                )
+            )
+
+        templates = []
+        for (query_type, pattern, agent_sequence), samples in sorted(
+            by_workflow.items()
+        ):
+            successful = [sample for sample in samples if sample.success]
+            if not successful or not agent_sequence:
+                continue
+            query_patterns = []
+            seen_queries = set()
+            for sample in successful:
+                normalized = sample.query.strip()
+                folded = normalized.casefold()
+                if folded not in seen_queries:
+                    seen_queries.add(folded)
+                    query_patterns.append(normalized)
+            signature = json.dumps(
+                [query_type, pattern, list(agent_sequence)],
+                separators=(",", ":"),
+            )
+            template_id = (
+                f"workflow-{hashlib.sha256(signature.encode()).hexdigest()[:16]}"
+            )
+            task_sequence = []
+            for index, agent_name in enumerate(agent_sequence):
+                dependencies = (
+                    []
+                    if pattern == "parallel" or index == 0
+                    else [f"template_task_{index - 1}"]
+                )
+                task_sequence.append(
+                    {
+                        "agent": agent_name,
+                        "task": "process",
+                        "dependencies": dependencies,
+                    }
+                )
+            templates.append(
+                WorkflowTemplate(
+                    template_id=template_id,
+                    name=f"{query_type} {pattern} workflow",
+                    description="Workflow learned from checked orchestration outcomes",
+                    query_patterns=query_patterns,
+                    task_sequence=task_sequence,
+                    expected_execution_time=float(
+                        statistics.fmean(sample.execution_time for sample in samples)
+                    ),
+                    success_rate=float(len(successful) / len(samples)),
+                    usage_count=0,
+                    created_at=now,
+                )
+            )
+
+        self.agent_performance = {profile.agent_name: profile for profile in profiles}
+        self.workflow_templates = {
+            template.template_id: template for template in templates
+        }
+        self.optimization_stats["templates_created"] = len(templates)
+        return profiles, templates
+
+    @staticmethod
+    def _agent_profile_observations(
+        execution: WorkflowExecution,
+    ) -> List[Dict[str, Any]]:
+        raw_observations = execution.metadata.get("agent_observations")
+        if raw_observations is None:
+            return []
+        if not isinstance(raw_observations, list):
+            raise ValueError(
+                f"workflow {execution.workflow_id!r} agent_observations must be a list"
+            )
+        allowed_agents = set(execution.agent_sequence)
+        observations = []
+        for raw in raw_observations:
+            if not isinstance(raw, dict):
+                raise ValueError(
+                    f"workflow {execution.workflow_id!r} agent observation must be "
+                    "a dict"
+                )
+            required = {"agent_name", "execution_time", "success"}
+            allowed = required | {"confidence"}
+            if set(raw) - allowed or not required <= set(raw):
+                raise ValueError(
+                    f"workflow {execution.workflow_id!r} agent observation must "
+                    "contain agent_name, execution_time, success, and optional "
+                    "confidence"
+                )
+            agent_name = raw["agent_name"]
+            if not isinstance(agent_name, str) or agent_name not in allowed_agents:
+                raise ValueError(
+                    f"workflow {execution.workflow_id!r} agent observation "
+                    "references an agent outside agent_sequence"
+                )
+            execution_time = raw["execution_time"]
+            if (
+                type(execution_time) is not float
+                or not math.isfinite(execution_time)
+                or execution_time < 0.0
+            ):
+                raise ValueError(
+                    f"workflow {execution.workflow_id!r} agent observation "
+                    "execution_time must be a non-negative finite float"
+                )
+            if type(raw["success"]) is not bool:
+                raise ValueError(
+                    f"workflow {execution.workflow_id!r} agent observation success "
+                    "must be a bool"
+                )
+            if "confidence" in raw:
+                confidence = raw["confidence"]
+                if (
+                    type(confidence) is not float
+                    or not math.isfinite(confidence)
+                    or not 0.0 <= confidence <= 1.0
+                ):
+                    raise ValueError(
+                        f"workflow {execution.workflow_id!r} agent observation "
+                        "confidence must be a finite float between 0 and 1"
+                    )
+            observations.append(dict(raw))
+        return observations
 
     _MAX_LEARNED_PATTERNS_PER_TYPE = 50
 
@@ -569,6 +863,7 @@ class WorkflowIntelligence:
 
     async def generate_synthetic_training_data(
         self,
+        agents_config: Dict[str, Any],
         count: int = 100,
         backend: Optional[Any] = None,
         backend_config: Optional[Dict[str, Any]] = None,
@@ -578,13 +873,14 @@ class WorkflowIntelligence:
         Generate synthetic training data using libs/synthetic system
 
         Args:
+            agents_config: Explicit agents section from the active configuration
             count: Number of synthetic examples to generate
             backend: Optional Backend instance for content sampling
             backend_config: Backend configuration with profiles
             generator_config: Optional SyntheticGeneratorConfig for DSPy modules
 
         Returns:
-            Number of examples added to workflow history
+            Number of distinct generated plans persisted as serving templates.
         """
         from cogniverse_synthetic import (
             SyntheticDataRequest,
@@ -597,14 +893,24 @@ class WorkflowIntelligence:
             backend=backend,
             backend_config=backend_config,
             generator_config=generator_config,
+            agents_config=agents_config,
         )
         request = SyntheticDataRequest(
             optimizer="workflow", count=count, tenant_id=self.tenant_id
         )
         response = await service.generate(request)
 
-        initial_count = len(self.workflow_history)
-        for example_data in response.data:
+        response_data = response.data
+        response_count = getattr(response, "count", None)
+        if response_count != count or len(response_data) != count:
+            raise RuntimeError(
+                f"Synthetic workflow response must contain exactly {count} plans: "
+                f"count={response_count} rows={len(response_data)}"
+            )
+
+        templates = []
+        seen_identities = set()
+        for example_data in response_data:
             execution = WorkflowExecution(
                 workflow_id=example_data["workflow_id"],
                 query=example_data["query"],
@@ -617,16 +923,93 @@ class WorkflowIntelligence:
                 confidence_score=example_data["confidence_score"],
                 user_satisfaction=example_data.get("user_satisfaction"),
                 error_details=example_data.get("error_details"),
+                timestamp=example_data.get(
+                    "timestamp",
+                    datetime.now(timezone.utc),
+                ),
                 metadata=example_data.get("metadata", {}),
             )
-            self.workflow_history.append(execution)
+            if self._validate_outcome_metadata(execution):
+                raise ValueError(
+                    "Synthetic workflow plans must not claim observed outcomes"
+                )
+            query = execution.query.strip()
+            if not query:
+                raise ValueError("Synthetic workflow plan query must be non-empty")
+            if (
+                not execution.agent_sequence
+                or execution.task_count != len(execution.agent_sequence)
+                or len(execution.agent_sequence) != len(set(execution.agent_sequence))
+            ):
+                raise ValueError(
+                    "Synthetic workflow plan must contain one unique agent per task"
+                )
+            identity_payload = json.dumps(
+                [execution.query_type, query, execution.agent_sequence],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if identity_payload in seen_identities:
+                continue
+            seen_identities.add(identity_payload)
+            template_id = (
+                "synthetic-workflow-"
+                f"{hashlib.sha256(identity_payload.encode()).hexdigest()[:16]}"
+            )
+            task_sequence = [
+                {
+                    "agent": agent_name,
+                    "task": "process",
+                    "dependencies": (
+                        [] if index == 0 else [f"template_task_{index - 1}"]
+                    ),
+                }
+                for index, agent_name in enumerate(execution.agent_sequence)
+            ]
+            templates.append(
+                WorkflowTemplate(
+                    template_id=template_id,
+                    name=f"{execution.query_type.lower()} generated workflow",
+                    description="Workflow plan generated from tenant content",
+                    query_patterns=[query],
+                    task_sequence=task_sequence,
+                    expected_execution_time=None,
+                    success_rate=None,
+                    created_at=execution.timestamp,
+                )
+            )
 
-        added_count = len(self.workflow_history) - initial_count
+        if len(templates) != count:
+            raise RuntimeError(
+                "Synthetic workflow response produced "
+                f"{len(templates)} unique grounded plans; expected {count}"
+            )
+
+        await self._persist_generated_templates(templates)
         self.logger.info(
-            f"Added {added_count} synthetic examples to workflow history "
-            f"(total: {len(self.workflow_history)})"
+            "Persisted %d generated workflow plans for tenant %s",
+            len(templates),
+            self.tenant_id,
         )
-        return added_count
+        return len(templates)
+
+    async def _persist_generated_templates(
+        self,
+        templates: List[WorkflowTemplate],
+    ) -> None:
+        stored_ids = await self._store.save_generated_templates(
+            self.tenant_id,
+            templates,
+        )
+        expected_ids = [template.template_id for template in templates]
+        if stored_ids != expected_ids:
+            raise RuntimeError(
+                "Workflow store returned the wrong generated template identities: "
+                f"expected={expected_ids} actual={stored_ids}"
+            )
+        self.workflow_templates.update(
+            {template.template_id: template for template in templates}
+        )
 
 
 def create_workflow_intelligence(
