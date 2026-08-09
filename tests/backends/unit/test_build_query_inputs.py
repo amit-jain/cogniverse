@@ -8,6 +8,8 @@ references an unbound tensor and ranking collapses.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pytest
 
@@ -133,3 +135,87 @@ def test_no_timeout_key_when_strategy_omits_it(backend: VespaSearchBackend) -> N
         correlation_id="t",
     )
     assert "timeout" not in params
+
+
+def _nearest_neighbor_query(
+    backend: VespaSearchBackend,
+    *,
+    nearest_neighbor_approximate: bool = True,
+) -> dict:
+    return backend._build_query(
+        query_text="Marie Curie discovered radium",
+        query_embeddings=np.array([1.0, 0.0, 0.0], dtype=np.float32),
+        rank_config={
+            "use_nearestneighbor": True,
+            "nearestneighbor_field": "embedding",
+            "nearestneighbor_tensor": "qt",
+            "inputs": {"qt": "tensor<float>(v[3])"},
+        },
+        ranking_profile="semantic_search",
+        schema_name="agent_memories_acme_acme",
+        limit=1,
+        filters={"user_id": "scientists"},
+        correlation_id="memory-query-contract",
+        nearest_neighbor_approximate=nearest_neighbor_approximate,
+    )
+
+
+def test_exact_nearest_neighbor_emits_canonical_vespa_annotation(
+    backend: VespaSearchBackend,
+) -> None:
+    params = _nearest_neighbor_query(
+        backend,
+        nearest_neighbor_approximate=False,
+    )
+
+    assert (
+        params["yql"] == "select * from agent_memories_acme_acme where "
+        "{targetHits: 1, approximate: false}nearestNeighbor(embedding, qt) "
+        'AND user_id contains "scientists"'
+    )
+
+
+def test_default_nearest_neighbor_remains_approximate(
+    backend: VespaSearchBackend,
+) -> None:
+    params = _nearest_neighbor_query(backend)
+
+    assert (
+        params["yql"] == "select * from agent_memories_acme_acme where "
+        "{targetHits: 1}nearestNeighbor(embedding, qt) "
+        'AND user_id contains "scientists"'
+    )
+    assert "approximate: false" not in params["yql"]
+
+
+def test_nearest_neighbor_approximate_rejects_non_boolean(
+    backend: VespaSearchBackend,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="nearest_neighbor_approximate must be a bool",
+    ):
+        _nearest_neighbor_query(
+            backend,
+            nearest_neighbor_approximate="false",
+        )
+
+
+def test_concurrent_exact_and_approximate_queries_do_not_share_mode(
+    backend: VespaSearchBackend,
+) -> None:
+    modes = [False, True] * 20
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        queries = list(
+            executor.map(
+                lambda mode: _nearest_neighbor_query(
+                    backend,
+                    nearest_neighbor_approximate=mode,
+                )["yql"],
+                modes,
+            )
+        )
+
+    for mode, yql in zip(modes, queries):
+        assert ("approximate: false" in yql) is (mode is False)

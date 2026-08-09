@@ -119,3 +119,74 @@ class TestOutageRaises:
         store = VespaAdapterStore(vespa_app=self._RaisingApp())
         with pytest.raises(ConnectionError):
             store.get_stats()
+
+
+def test_set_active_rejects_adapter_owned_by_another_tenant(monkeypatch):
+    store = _store(_empty_response())
+    monkeypatch.setattr(
+        store,
+        "get_adapter",
+        lambda _adapter_id: {
+            "fields": {
+                "adapter_id": "adapter-1",
+                "tenant_id": "tenant-b",
+                "agent_type": "routing",
+            }
+        },
+    )
+    writes = []
+    monkeypatch.setattr(
+        store,
+        "_update_adapter_fields",
+        lambda *args, **kwargs: writes.append((args, kwargs)),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="adapter-1 belongs to tenant-b/routing, not tenant-a/routing",
+    ):
+        store.set_active("adapter-1", "tenant-a", "routing")
+
+    assert writes == []
+
+
+def test_set_active_rejects_adapter_for_another_agent_type(monkeypatch):
+    store = _store(_empty_response())
+    monkeypatch.setattr(
+        store,
+        "get_adapter",
+        lambda _adapter_id: {
+            "fields": {
+                "adapter_id": "adapter-1",
+                "tenant_id": "tenant-a",
+                "agent_type": "summarization",
+            }
+        },
+    )
+    writes = []
+    monkeypatch.setattr(
+        store,
+        "_update_adapter_fields",
+        lambda *args, **kwargs: writes.append((args, kwargs)),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=("adapter-1 belongs to tenant-a/summarization, not tenant-a/routing"),
+    ):
+        store.set_active("adapter-1", "tenant-a", "routing")
+
+    assert writes == []
+
+
+def test_delete_adapter_raises_on_backend_failure():
+    class _FailingDeleteApp:
+        url = "http://localhost:8080"
+
+        def delete_data(self, **_kwargs):
+            raise ConnectionError("adapter store down")
+
+    store = VespaAdapterStore(vespa_app=_FailingDeleteApp())
+
+    with pytest.raises(ConnectionError, match="adapter store down"):
+        store.delete_adapter("adapter-1")

@@ -9,7 +9,7 @@ default config or "no adapter". The two cases must be distinguishable: absent
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,6 +21,7 @@ def _config_store(query_impl):
     store = object.__new__(VespaConfigStore)
     store.schema_name = "config_metadata"
     store.vespa_app = MagicMock()
+    store.vespa_app.url = "http://localhost:8080"
     store.vespa_app.query = query_impl
     return store
 
@@ -41,20 +42,30 @@ def _boom(*_args, **_kwargs):
     raise ConnectionError("vespa unreachable")
 
 
+def _empty_visit_response():
+    response = MagicMock()
+    response.json.return_value = {"documents": [], "continuation": None}
+    return response
+
+
 def test_config_absent_returns_none():
     store = _config_store(_empty_response)
-    result = store.get_config(
-        tenant_id="acme:acme",
-        scope=ConfigScope.BACKEND,
-        service="backend",
-        config_key="k",
-    )
+    with patch("requests.get", return_value=_empty_visit_response()):
+        result = store.get_config(
+            tenant_id="acme:acme",
+            scope=ConfigScope.BACKEND,
+            service="backend",
+            config_key="k",
+        )
     assert result is None
 
 
 def test_config_backend_error_raises():
     store = _config_store(_boom)
-    with pytest.raises(ConnectionError):
+    with (
+        patch("requests.get", side_effect=ConnectionError("vespa unreachable")),
+        pytest.raises(ConnectionError, match="vespa unreachable"),
+    ):
         store.get_config(
             tenant_id="acme:acme",
             scope=ConfigScope.BACKEND,
@@ -76,20 +87,24 @@ def test_adapter_backend_error_raises():
 
 def test_config_history_empty_returns_empty_list():
     store = _config_store(_empty_response)
-    assert (
-        store.get_config_history(
-            tenant_id="acme:acme",
-            scope=ConfigScope.BACKEND,
-            service="backend",
-            config_key="k",
+    with patch("requests.get", return_value=_empty_visit_response()):
+        assert (
+            store.get_config_history(
+                tenant_id="acme:acme",
+                scope=ConfigScope.BACKEND,
+                service="backend",
+                config_key="k",
+            )
+            == []
         )
-        == []
-    )
 
 
 def test_config_history_backend_error_raises():
     store = _config_store(_boom)
-    with pytest.raises(ConnectionError):
+    with (
+        patch("requests.get", side_effect=ConnectionError("vespa unreachable")),
+        pytest.raises(ConnectionError, match="vespa unreachable"),
+    ):
         store.get_config_history(
             tenant_id="acme:acme",
             scope=ConfigScope.BACKEND,
@@ -100,25 +115,25 @@ def test_config_history_backend_error_raises():
 
 def test_list_configs_empty_returns_empty_list():
     store = _config_store(_empty_response)
-    assert store.list_configs(tenant_id="acme:acme") == []
+    with patch("requests.get", return_value=_empty_visit_response()):
+        assert store.list_configs(tenant_id="acme:acme") == []
 
 
 def test_list_configs_backend_error_raises():
     store = _config_store(_boom)
-    with pytest.raises(ConnectionError):
+    with (
+        patch("requests.get", side_effect=ConnectionError("vespa unreachable")),
+        pytest.raises(ConnectionError, match="vespa unreachable"),
+    ):
         store.list_configs(tenant_id="acme:acme")
 
 
 def test_list_all_configs_empty_returns_empty_list():
     """list_all_configs reads the Document v1 visit path, not vespa_app.query."""
-    from unittest.mock import patch
-
     store = _config_store(_empty_response)
     store.vespa_app = SimpleNamespace(url="http://localhost:8080")
-    visit_response = MagicMock()
-    visit_response.json.return_value = {"documents": [], "continuation": None}
 
-    with patch("requests.get", return_value=visit_response):
+    with patch("requests.get", return_value=_empty_visit_response()):
         assert store.list_all_configs() == []
 
 

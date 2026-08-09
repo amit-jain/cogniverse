@@ -1815,7 +1815,7 @@ class OrchestratorAgent(
         analysis_module = self._get_query_analysis_module()
         try:
             prediction = await asyncio.to_thread(
-                analysis_module.forward,
+                analysis_module,
                 query=seeded_query,
                 search_context="general",
             )

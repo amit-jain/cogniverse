@@ -726,8 +726,8 @@ class VespaSchemaManager:
 
         Redeploys the application package without the target schema, using
         the contentTypeRemoval validation override, then tombstones the
-        registry entry. Vespa is authoritative; registry write failures
-        are logged but do not roll back the deploy.
+        registry entry. If the registry write fails after Vespa removal, the
+        failure is surfaced so the caller can retry the durable tombstone.
 
         Raises ValueError when the redeploy would also drop deployed
         schemas the registry does not know (the package is rebuilt from
@@ -819,6 +819,10 @@ class VespaSchemaManager:
                 f"Schema '{target}' removed from Vespa but registry tombstone "
                 f"write failed: {e}"
             )
+            raise RuntimeError(
+                f"Schema '{target}' was removed from Vespa, but its registry "
+                f"tombstone failed: {e}"
+            ) from e
 
         return target
 
@@ -944,7 +948,9 @@ class VespaSchemaManager:
             )
             registry_base_names.append(info.base_schema_name)
 
-        tenant_suffix = "_" + tenant_id.replace(":", "_")
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        tenant_suffix = "_" + canonical_tenant_id(tenant_id).replace(":", "_")
         try:
             deployed = self.list_deployed_document_types(raise_on_failure=True)
         except Exception as e:
@@ -958,20 +964,30 @@ class VespaSchemaManager:
         # Refuse (via _redeploy_dropping) rather than cascade into dropping a
         # peer-tenant orphan we cannot confirm is dead.
         deleted = self._redeploy_dropping(deletion_targets)
-        if not deleted:
-            return deleted
-        self._logger.info(
-            f"Successfully removed tenant '{tenant_id}' schemas from Vespa"
-        )
+        if deleted:
+            self._logger.info(
+                f"Successfully removed tenant '{tenant_id}' schemas from Vespa"
+            )
 
+        tombstone_failures = []
         for base in registry_base_names:
             try:
                 self._schema_registry.unregister_schema(tenant_id, base)
             except Exception as e:
+                tombstone_failures.append((base, e))
                 self._logger.error(
                     f"Vespa removal succeeded but registry tombstone failed "
                     f"for {self.get_tenant_schema_name(tenant_id, base)!r}: {e}"
                 )
+        if tombstone_failures:
+            names = [
+                self.get_tenant_schema_name(tenant_id, base)
+                for base, _ in tombstone_failures
+            ]
+            raise RuntimeError(
+                f"Vespa removal completed, but registry tombstone failed for "
+                f"{names}: {tombstone_failures[0][1]}"
+            ) from tombstone_failures[0][1]
         return deleted
 
     def delete_tenant_schemas_bulk(self, tenant_ids: list) -> list:
@@ -1004,6 +1020,8 @@ class VespaSchemaManager:
 
         deletion_targets: set = set()
         registry_bases_by_tenant: Dict[str, list] = {}
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
         for tid in tenant_ids:
             bases: list = []
             for info in self._schema_registry.get_tenant_schemas(tid):
@@ -1012,7 +1030,7 @@ class VespaSchemaManager:
                     self.get_tenant_schema_name(tid, info.base_schema_name)
                 )
             registry_bases_by_tenant[tid] = bases
-            suffix = "_" + tid.replace(":", "_")
+            suffix = "_" + canonical_tenant_id(tid).replace(":", "_")
             for name in deployed:
                 # Suffix-match genuine Vespa orphans only. A registered schema
                 # caught by a proper-suffix match — the healthy '..._acme_acme'
@@ -1028,23 +1046,72 @@ class VespaSchemaManager:
         # is an orphan would wipe a healthy peer. Same contract as the
         # per-tenant path.
         deleted = self._redeploy_dropping(deletion_targets)
-        if not deleted:
-            return deleted
-        self._logger.info(
-            f"Successfully removed schemas for {len(tenant_ids)} tenants "
-            f"({len(deleted)} schemas dropped)"
-        )
+        if deleted:
+            self._logger.info(
+                f"Successfully removed schemas for {len(tenant_ids)} tenants "
+                f"({len(deleted)} schemas dropped)"
+            )
 
+        tombstone_failures = []
         for tid, bases in registry_bases_by_tenant.items():
             for base in bases:
                 try:
                     self._schema_registry.unregister_schema(tid, base)
                 except Exception as e:
+                    tombstone_failures.append((tid, base, e))
                     self._logger.error(
                         f"Vespa removal succeeded but registry tombstone "
                         f"failed for {self.get_tenant_schema_name(tid, base)!r}: {e}"
                     )
+        if tombstone_failures:
+            names = [
+                self.get_tenant_schema_name(tid, base)
+                for tid, base, _ in tombstone_failures
+            ]
+            raise RuntimeError(
+                f"Vespa removal completed, but registry tombstone failed for "
+                f"{names}: {tombstone_failures[0][2]}"
+            ) from tombstone_failures[0][2]
         return deleted
+
+    def delete_orphan_schemas(self, full_schema_names: list[str]) -> list[str]:
+        """Delete exact deployed schemas that have no active registry record."""
+        if not self._schema_registry:
+            raise ValueError("schema_registry required for orphan schema operations")
+        if not full_schema_names:
+            return []
+
+        targets = set(full_schema_names)
+        protected = targets & self._PROTECTED_SCHEMAS
+        if protected:
+            raise ValueError(
+                f"Refusing to delete protected schema(s): {sorted(protected)}"
+            )
+
+        try:
+            deployed = set(self.list_deployed_document_types(raise_on_failure=True))
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cannot enumerate Vespa-deployed schemas before orphan delete: {exc}"
+            ) from exc
+
+        missing = targets - deployed
+        if missing:
+            raise ValueError(
+                f"Refusing to delete schema(s) not deployed in Vespa: {sorted(missing)}"
+            )
+
+        registered = {
+            info.full_schema_name
+            for info in (self._schema_registry._get_all_schemas() or [])
+        }
+        active = targets & registered
+        if active:
+            raise ValueError(
+                f"Refusing to delete registered schema(s): {sorted(active)}"
+            )
+
+        return self._redeploy_dropping(targets)
 
     def tenant_schema_exists(self, tenant_id: str, base_schema_name: str) -> bool:
         """

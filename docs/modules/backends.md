@@ -1496,6 +1496,38 @@ for result in results:
     print(f"Source video: {result.document.metadata['source_id']}")
 ```
 
+`export_embeddings()` walks Vespa's Document v1 continuation pages. Every page
+must return HTTP 200; an initial or continuation failure raises with the visit
+route instead of returning an empty or partial export.
+
+Search retries use the `RetryConfig` supplied to the constructor, including
+after `initialize()` is called. Reconstructed results retain the query content
+type; memory, wiki, and code profiles produce `ContentType.DOCUMENT`, not
+video documents.
+
+#### Point reads
+
+The public search-backend point-read methods require both physical routing
+values as keyword-only arguments:
+
+```python
+document = backend.get_document(
+    "memory-42",
+    schema_name="agent_memories_acme_production",
+    namespace="memory_content",
+)
+documents = backend.batch_get_documents(
+    ["memory-42", "memory-43"],
+    schema_name="agent_memories_acme_production",
+    namespace="memory_content",
+)
+```
+
+`get_document` returns `None` only for a genuine HTTP 404.
+`batch_get_documents` preserves input order and uses `None` for each genuine
+404. Transport failures and every other non-success status raise with the
+physical schema and namespace instead of being reported as missing documents.
+
 #### Multi-Tenant Search Example
 
 One backend instance serves every tenant; the `tenant_id` in each
@@ -1670,6 +1702,16 @@ processed_docs = [client.process(doc) for doc in documents]
 success_count, failed_ids = client._feed_prepared_batch(processed_docs, batch_size=100)
 print(f"Ingested {success_count}/{len(documents)} documents to {tenant_schema}")
 ```
+
+#### Point-read and delete contracts
+
+`check_document_exists(document_id)` returns `True` for HTTP 200 and `False`
+only for HTTP 404. `get_document_data(document_id)` returns the stored fields
+for HTTP 200 and `None` only for HTTP 404. `delete_document(document_id)`
+returns `True` for HTTP 200 and treats HTTP 404 as idempotent success.
+Connection failures and every other non-success status raise; returned
+non-success responses include the complete Document v1 route and are never
+converted into absent-document results.
 
 #### Document Processing
 
@@ -2125,6 +2167,15 @@ store = VespaAdapterStore(
 store.initialize()
 ```
 
+`set_active(adapter_id, tenant_id, agent_type)` verifies that the target
+adapter belongs to that exact tenant and agent type before changing either the
+current or target adapter.
+
+`delete_adapter(adapter_id)` returns `True` for HTTP 200 and `False` only for
+a genuine HTTP 404. Transport failures raise, and returned non-success
+responses raise with adapter context rather than being reported as "not
+found."
+
 ---
 
 ## Usage Examples
@@ -2549,11 +2600,18 @@ types the field as `string`, not a nested object:
     "config_key": "system_config",
     "config_value": "{\"model\": \"gemini-pro\", \"temperature\": 0.7}",
     "version": 1,
-    "created_at": "2024-01-01T00:00:00",
-    "updated_at": "2024-01-01T00:00:00"
+    "created_at": "2024-01-01T00:00:00+00:00",
+    "updated_at": "2024-01-01T00:00:00+00:00"
   }
 }
 ```
+
+The primary config lookup and list methods — `get_config`,
+`get_config_history`, `list_configs`, and `list_all_configs` — use the Document
+v1 visit API. A completed `set_config` is therefore immediately visible to
+those methods without sleeps or search-index convergence retries. Visit
+timeouts, malformed responses, and non-success statuses raise; only a
+successful visit with no matching document returns `None` or an empty list.
 
 ### Key Methods
 
@@ -2575,7 +2633,9 @@ entry = store.set_config(
     config_key="model_settings",
     config_value={"model": "gemini-pro", "temperature": 0.7}
 )
-# Creates new version on each update
+# Creates new version on each update. Concurrent writers use conditional
+# Document v1 puts, so each receives a distinct version instead of
+# overwriting a shared document ID.
 
 # Retrieve latest version
 entry = store.get_config(

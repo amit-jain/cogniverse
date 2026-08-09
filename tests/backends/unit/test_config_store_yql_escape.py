@@ -1,51 +1,62 @@
-"""get_config(version=N) must escape the config_id value.
+"""get_config(version=N) must escape Document visit selections.
 
 config_id derives from raw tenant_id/service/config_key (via
-_create_document_id) and was once interpolated unescaped — a quote in
-config_key broke or injected the YQL. The versioned branch queries
-``config_id contains <quoted> and version = <int>`` (Vespa has no queryable
-``documentid`` field; the old ``where documentid = ...`` form fails with a
-400), and the interpolated value must go through yql_quote.
+_create_document_id). A quote in tenant_id, scope, or service must not break
+the Document v1 selection expression.
 """
 
 from __future__ import annotations
 
+import requests
+
 from cogniverse_sdk.interfaces.config_store import ConfigScope
-from cogniverse_vespa._yql import yql_quote
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
 
-class _EmptyResponse:
-    hits: list = []
+class _EmptyVisitResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"documents": []}
 
 
-def test_versioned_config_id_is_escaped():
+def test_versioned_config_selection_is_escaped(monkeypatch):
     store = object.__new__(VespaConfigStore)
     store.schema_name = "config_metadata"
     captured = {}
 
     class _App:
-        def query(self, yql):
-            captured["yql"] = yql
-            return _EmptyResponse()
+        url = "http://localhost:8080"
 
     store.vespa_app = _App()
 
+    def capture_get(url, *, params, timeout):
+        captured["url"] = url
+        captured["params"] = dict(params)
+        captured["timeout"] = timeout
+        return _EmptyVisitResponse()
+
+    monkeypatch.setattr(requests, "get", capture_get)
     store.get_config(
-        tenant_id="acme:acme",
+        tenant_id='acme:"quoted',
         scope=ConfigScope.SCHEMA,
-        service="svc",
-        config_key='key"; bad',
+        service='svc"; bad',
+        config_key="key",
         version=2,
     )
 
-    config_id = store._create_document_id(
-        "acme:acme", ConfigScope.SCHEMA, "svc", 'key"; bad'
-    )
-    # yql_quote escapes the inner quote; pre-fix raw interpolation did not, so
-    # the escaped literal only appears when the value is quoted safely.
-    assert (
-        f"config_id contains {yql_quote(config_id)} and version = 2"
-        in (captured["yql"])
-    )
-    assert 'key\\"; bad' in captured["yql"]
+    assert captured == {
+        "url": (
+            "http://localhost:8080/document/v1/config_metadata/config_metadata/docid/"
+        ),
+        "params": {
+            "wantedDocumentCount": 1000,
+            "selection": (
+                'config_metadata.tenant_id == "acme:\\"quoted" and '
+                'config_metadata.scope == "schema" and '
+                'config_metadata.service == "svc\\"; bad"'
+            ),
+        },
+        "timeout": 30,
+    }

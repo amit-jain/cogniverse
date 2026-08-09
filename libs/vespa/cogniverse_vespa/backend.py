@@ -15,7 +15,7 @@ from cogniverse_sdk.interfaces.backend import Backend
 
 from ._vespa_factory import make_persistent_vespa_ops
 from .config_utils import calculate_config_port
-from .ingestion_client import VespaPyClient
+from .ingestion_client import VespaPyClient, document_namespace
 from .search_backend import VespaSearchBackend
 from .vespa_schema_manager import DEPLOY_REQUEST_TIMEOUT_S, VespaSchemaManager
 
@@ -63,6 +63,8 @@ class VespaBackend(Backend):
     # so real backends do not contend across instances.
     _metadata_app_lock = threading.Lock()
     _close_lock = threading.Lock()
+    _ingestion_clients_lock = threading.RLock()
+    _search_backend_lock = threading.RLock()
 
     def __init__(self, backend_config, schema_loader=None, config_manager=None):
         """
@@ -114,6 +116,8 @@ class VespaBackend(Backend):
         self._metadata_app_key = None
         self._metadata_app_lock = threading.Lock()
         self._close_lock = threading.Lock()
+        self._ingestion_clients_lock = threading.RLock()
+        self._search_backend_lock = threading.RLock()
 
         # SchemaRegistry will be injected later (no circular dependency)
         self.schema_registry = None
@@ -264,49 +268,50 @@ class VespaBackend(Backend):
         if target_schema_name in self._vespa_ingestion_clients:
             return self._vespa_ingestion_clients[target_schema_name]
 
-        # Deploy tenant schema only when creating a new client
-        if self._tenant_id:
-            if not self.schema_registry:
-                raise ValueError(
-                    "schema_registry not injected - backend initialization incomplete."
-                )
-            try:
-                self.schema_registry.deploy_schema(
-                    tenant_id=self._tenant_id, base_schema_name=schema_name
-                )
-            except Exception as e:
-                logger.error(f"Failed to deploy tenant schema: {e}")
-                raise
+        with self._ingestion_clients_lock:
+            cached = self._vespa_ingestion_clients.get(target_schema_name)
+            if cached is not None:
+                return cached
 
-        if target_schema_name not in self._vespa_ingestion_clients:
-            # Create new client with config dict
+            if self._tenant_id:
+                if not self.schema_registry:
+                    raise ValueError(
+                        "schema_registry not injected - backend initialization incomplete."
+                    )
+                try:
+                    self.schema_registry.deploy_schema(
+                        tenant_id=self._tenant_id, base_schema_name=schema_name
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to deploy tenant schema: {e}")
+                    raise
+
             logger.info(f"Creating new VespaPyClient for schema: {target_schema_name}")
 
-            # Get the specific profile config using BASE schema name (config uses base names)
             profile_config = {}
             if self.config:
                 profiles = self.config.get("profiles", {})
-                profile_config = profiles.get(
-                    schema_name, {}
-                )  # Use base name for config lookup
+                profile_config = profiles.get(schema_name, {})
 
-            # Pass connection details and profile config
             client_config = {
-                "schema_name": target_schema_name,  # Use tenant-scoped name for Vespa
-                "base_schema_name": schema_name,  # Base schema name for loading schema file
+                "schema_name": target_schema_name,
+                "base_schema_name": schema_name,
                 "url": self._url,
                 "port": self._port,
-                "profile_config": profile_config,  # Pass only the specific profile config
-                "schema_loader": self._schema_loader_instance,  # Pass schema_loader for StrategyAwareProcessor
+                "profile_config": profile_config,
+                "schema_loader": self._schema_loader_instance,
                 "use_async_ingestion": self.use_async_ingestion,
             }
 
             client = VespaPyClient(config=client_config, logger=logger)
-            client.connect()
+            if not client.connect():
+                raise ConnectionError(
+                    f"Failed to connect Vespa ingestion client for "
+                    f"{target_schema_name} at {self._url}:{self._port}"
+                )
 
             self._vespa_ingestion_clients[target_schema_name] = client
-
-        return self._vespa_ingestion_clients[target_schema_name]
+            return client
 
     def ingest_documents(
         self,
@@ -533,28 +538,20 @@ class VespaBackend(Backend):
         if not self.schema_manager:
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
-        try:
-            if not schema_name:
-                schema_name = self.config.get("schema_name")
-            if not schema_name:
-                logger.error("No schema_name in config for delete operation")
-                return False
+        if not schema_name:
+            schema_name = self.config.get("schema_name")
+        if not schema_name:
+            raise ValueError("schema_name is required for delete operations")
 
-            # Get ingestion client for this schema (handles tenant-aware schema naming)
-            client = self._get_or_create_ingestion_client(schema_name)
+        client = self._get_or_create_ingestion_client(schema_name)
+        success = client.delete_document(document_id)
 
-            # Call delete_document on the ingestion client
-            success = client.delete_document(document_id)
+        if success:
+            logger.info(f"Deleted document: {document_id}")
+        else:
+            logger.warning(f"Delete returned False for document: {document_id}")
 
-            if success:
-                logger.info(f"Deleted document: {document_id}")
-            else:
-                logger.warning(f"Delete returned False for document: {document_id}")
-
-            return success
-        except Exception as e:
-            logger.error(f"Failed to delete document {document_id}: {e}")
-            return False
+        return success
 
     def get_schema_info(self) -> Dict[str, Any]:
         """
@@ -655,37 +652,41 @@ class VespaBackend(Backend):
         """
         # Lazy initialization: create search backend if not already initialized
         if not self._vespa_search_backend:
-            logger.debug("Creating VespaSearchBackend on-demand with config")
+            with self._search_backend_lock:
+                if not self._vespa_search_backend:
+                    logger.debug("Creating VespaSearchBackend on-demand with config")
 
-            # Ensure profiles are loaded (may be missing if ingestion created
-            # the cached backend instance without passing profiles)
-            if not self.config.get("profiles") and self._config_manager_instance:
-                from cogniverse_foundation.config.utils import get_config
+                    # Ensure profiles are loaded (may be missing if ingestion
+                    # created the cached backend instance without profiles).
+                    if (
+                        not self.config.get("profiles")
+                        and self._config_manager_instance
+                    ):
+                        from cogniverse_foundation.config.utils import get_config
 
-                config_utils = get_config(
-                    tenant_id=self._tenant_id,
-                    config_manager=self._config_manager_instance,
-                )
-                backend_section = config_utils.get("backend", {})
-                if backend_section.get("profiles"):
-                    self.config["profiles"] = backend_section["profiles"]
-                    self.config["default_profiles"] = backend_section.get(
-                        "default_profiles", {}
+                        config_utils = get_config(
+                            tenant_id=self._tenant_id,
+                            config_manager=self._config_manager_instance,
+                        )
+                        backend_section = config_utils.get("backend", {})
+                        if backend_section.get("profiles"):
+                            self.config["profiles"] = backend_section["profiles"]
+                            self.config["default_profiles"] = backend_section.get(
+                                "default_profiles", {}
+                            )
+                            logger.info(
+                                f"Loaded {len(self.config['profiles'])} profiles "
+                                f"from config for tenant {self._tenant_id}"
+                            )
+
+                    search_backend = VespaSearchBackend(
+                        config=self.config,
+                        config_manager=self._config_manager_instance,
+                        schema_loader=self._schema_loader_instance,
                     )
-                    logger.info(
-                        f"Loaded {len(self.config['profiles'])} profiles from config "
-                        f"for tenant {self._tenant_id}"
-                    )
-
-            # Create VespaSearchBackend with merged backend config
-            # VespaSearchBackend will handle profile/strategy resolution per query
-            self._vespa_search_backend = VespaSearchBackend(
-                config=self.config,  # Pass merged config (includes url, port, profiles, default_profiles)
-                config_manager=self._config_manager_instance,
-                schema_loader=self._schema_loader_instance,
-            )
-            self._initialized_as_search = True
-            logger.info("VespaSearchBackend initialized with all profiles")
+                    self._vespa_search_backend = search_backend
+                    self._initialized_as_search = True
+                    logger.info("VespaSearchBackend initialized with all profiles")
 
         # Delegate directly to VespaSearchBackend.
         # Caller MUST set tenant_id in query_dict — VespaSearchBackend raises
@@ -761,10 +762,14 @@ class VespaBackend(Backend):
 
         if not schema_name:
             schema_name = self.config.get("schema_name")
+        if not schema_name:
+            raise ValueError("schema_name is required for batch document reads")
 
         if self._vespa_search_backend:
             return self._vespa_search_backend.batch_get_documents(
-                document_ids, schema_name=schema_name
+                document_ids,
+                schema_name=schema_name,
+                namespace=document_namespace(schema_name),
             )
 
         # No search backend — retrieve individually via ingestion client
@@ -791,10 +796,6 @@ class VespaBackend(Backend):
             "search_enabled": self._initialized_as_search,
         }
 
-    # ============================================================================
-    # Schema Management Operations (Backend interface implementation)
-    # ============================================================================
-
     def deploy_schemas(
         self,
         schema_definitions: List[Dict[str, Any]],
@@ -815,10 +816,10 @@ class VespaBackend(Backend):
                 - tenant_id: Tenant identifier
                 - base_schema_name: Original base schema name
             allow_schema_removal: When True, pass the Vespa
-                ``contentTypeRemoval`` validation override and skip the
-                discovery check that normally refuses to silently drop
-                schemas. Defaults to False — an operator who actually wants
-                to remove a schema must opt in explicitly.
+                ``contentTypeRemoval`` validation override. Schema discovery
+                and survivor reconstruction remain mandatory. Defaults to
+                False — an operator who actually wants to remove a schema must
+                opt in explicitly.
 
         Returns:
             True if successful, False otherwise
@@ -887,10 +888,11 @@ class VespaBackend(Backend):
 
             parser_for_existing = JsonSchemaParser()
 
+            registry_schemas: List[Any] = []
             if self.schema_registry is not None:
                 try:
-                    existing_schemas = self.schema_registry._get_all_schemas() or []
-                    for schema_info in existing_schemas:
+                    registry_schemas = self.schema_registry._get_all_schemas() or []
+                    for schema_info in registry_schemas:
                         full_name = schema_info.full_schema_name
                         if full_name in merged_schema_names:
                             continue
@@ -898,7 +900,7 @@ class VespaBackend(Backend):
                             existing_def = schema_info.schema_definition
                             if isinstance(existing_def, str):
                                 if not existing_def.strip():
-                                    continue
+                                    raise ValueError("schema definition is empty")
                                 existing_def = json.loads(existing_def)
                             existing_obj = parser_for_existing.parse_schema(
                                 existing_def
@@ -906,43 +908,38 @@ class VespaBackend(Backend):
                             merged_schemas.append(existing_obj)
                             merged_schema_names.add(full_name)
                         except Exception as merge_exc:
-                            logger.warning(
-                                f"Skipping existing schema {full_name} "
-                                f"during registry merge: {merge_exc}"
-                            )
+                            raise BackendDeploymentError(
+                                f"Cannot reconstruct registry schema "
+                                f"{full_name!r}; refusing to deploy a package "
+                                f"that would omit it: {merge_exc}"
+                            ) from merge_exc
                     logger.info(
                         f"Merged {len(merged_schemas) - len(schemas_to_deploy)} "
                         f"schemas from registry into deployment package"
                     )
                 except Exception as registry_exc:
-                    logger.warning(
-                        f"Could not fetch existing schemas from registry: {registry_exc}"
-                    )
+                    if isinstance(registry_exc, BackendDeploymentError):
+                        raise
+                    raise BackendDeploymentError(
+                        "Cannot enumerate the schema registry before deploy: "
+                        f"{registry_exc}"
+                    ) from registry_exc
 
             # Second source: ask the config server what is currently
             # deployed. Any schema here that the registry didn't cover
             # must be reconstructed or the deploy fails — silently
             # dropping a peer-tenant schema is never acceptable. The
-            # config-server listing is read-after-write consistent with
-            # prepareandactivate so a single call is enough; the retry
-            # exists only to ride out config-server bootstrap latency
-            # on a freshly-started cluster (empty result on the first
-            # call before the metadata schemas have been activated).
-            import time as _time
-
-            vespa_deployed: List[str] = []
-            for probe_attempt in range(5):
-                try:
-                    vespa_deployed = self.schema_manager.list_deployed_document_types()
-                except Exception as probe_exc:
-                    logger.warning(
-                        f"Vespa schema discovery failed (attempt "
-                        f"{probe_attempt + 1}/5): {probe_exc}"
-                    )
-                    vespa_deployed = []
-                if vespa_deployed:
-                    break
-                _time.sleep(2)
+            # config-server listing is authoritative. A successful empty list
+            # is a valid first deployment; a failed enumeration must abort.
+            try:
+                vespa_deployed = self.schema_manager.list_deployed_document_types(
+                    raise_on_failure=True
+                )
+            except Exception as probe_exc:
+                raise BackendDeploymentError(
+                    "Cannot enumerate Vespa-deployed schemas before deploy: "
+                    f"{probe_exc}"
+                ) from probe_exc
             logger.info(
                 f"Vespa-discovered schemas: {sorted(vespa_deployed)} "
                 f"(registry merge added "
@@ -969,11 +966,8 @@ class VespaBackend(Backend):
                 # cross-instance registry may have the definition even if
                 # the (tenant, base) lookup missed it).
                 registry_by_full_name: Dict[str, Any] = {}
-                if self.schema_registry is not None:
-                    for schema_info in self.schema_registry._get_all_schemas() or []:
-                        registry_by_full_name[schema_info.full_schema_name] = (
-                            schema_info
-                        )
+                for schema_info in registry_schemas:
+                    registry_by_full_name[schema_info.full_schema_name] = schema_info
 
                 unresolved = []
                 for full_name in unknown_in_vespa:
@@ -1348,10 +1342,6 @@ class VespaBackend(Backend):
         """
         return self.schema_manager.get_tenant_schema_name(tenant_id, base_schema_name)
 
-    # ============================================================================
-    # Metadata Document Operations (Backend interface implementation)
-    # ============================================================================
-
     def _metadata_vespa_app(self):
         """Cached pyvespa app for metadata ops; rebuilt only when url/port
         change so repeated metadata calls reuse one connection pool."""
@@ -1370,9 +1360,6 @@ class VespaBackend(Backend):
                 self._metadata_app_key = key
             return self._metadata_app
 
-    # ------------------------------------------------------------------
-    # Raw-fields document primitives (namespace-aware)
-    # ------------------------------------------------------------------
     # The single sanctioned Vespa Document v1 surface for callers that own
     # their field shapes (wiki pages, knowledge-graph nodes/edges, content
     # back-refs). Hand-built ``/document/v1`` HTTP bypassed session reuse,
@@ -1698,7 +1685,8 @@ class VespaBackend(Backend):
             schema: Schema name to query
             query: Text query (for userQuery() in YQL)
             yql: Direct YQL query
-            **kwargs: Additional query options (hits, filters, etc.)
+            **kwargs: Additional Vespa query options. ``tenant_id`` resolves the
+                base schema to that tenant's canonical physical schema.
 
         Returns:
             List of matching documents as dicts
@@ -1706,19 +1694,43 @@ class VespaBackend(Backend):
         if not self._url:
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
+        tenant_id = kwargs.pop("tenant_id", None)
+        query_schema = schema
+        if tenant_id:
+            if schema == "*":
+                raise ValueError(
+                    "tenant-scoped metadata queries require one explicit base schema"
+                )
+            query_schema = self.get_tenant_schema_name(tenant_id, schema)
+            if yql:
+                source_pattern = re.compile(
+                    rf"(\bfrom\s+(?:sources\s+)?){re.escape(schema)}(?=\s|$)",
+                    re.IGNORECASE,
+                )
+                yql, replacement_count = source_pattern.subn(
+                    lambda match: f"{match.group(1)}{query_schema}",
+                    yql,
+                )
+                if replacement_count != 1:
+                    raise ValueError(
+                        f"Tenant-scoped YQL must name base schema {schema!r} "
+                        "exactly once in its source clause"
+                    )
+
         try:
             vespa_client = self._metadata_vespa_app()
 
             # Build query parameters
-            query_params = {
-                "hits": kwargs.get("hits", 100),
-            }
+            hits = kwargs.pop("hits", 100)
+            offset = kwargs.pop("offset", None)
+            query_params = dict(kwargs)
+            query_params["hits"] = hits
             # Forward paging offset as Vespa's native query parameter. A YQL
             # `offset` alone is bounded by `hits`, so the second page of a
             # walk lands outside the hits window and returns empty; the
             # explicit parameter pages past it.
-            if kwargs.get("offset"):
-                query_params["offset"] = kwargs["offset"]
+            if offset:
+                query_params["offset"] = offset
 
             if yql:
                 query_params["yql"] = yql
@@ -1727,13 +1739,13 @@ class VespaBackend(Backend):
                     query_params["query"] = query
             elif query:
                 # Use userQuery() for text search
-                query_params["yql"] = f"select * from {schema} where userQuery()"
+                query_params["yql"] = f"select * from {query_schema} where userQuery()"
                 query_params["query"] = query
             else:
                 # Get all documents - Vespa requires at least one search term
                 # Using a match-all pattern with limit
                 query_params["yql"] = (
-                    f"select * from {schema} where true limit {kwargs.get('hits', 100)}"
+                    f"select * from {query_schema} where true limit {hits}"
                 )
 
             # Execute query
@@ -1748,7 +1760,7 @@ class VespaBackend(Backend):
                 error_body = results.json if hasattr(results, "json") else None
                 raise RuntimeError(
                     f"Vespa query returned HTTP {results.status_code} for schema "
-                    f"{schema}: {error_body!r}"
+                    f"{query_schema}: {error_body!r}"
                 )
 
             # A soft timeout or degraded coverage arrives as HTTP 200 with
@@ -1760,14 +1772,15 @@ class VespaBackend(Backend):
             errors = root.get("errors")
             if errors:
                 raise RuntimeError(
-                    f"Vespa query returned errors for schema {schema} "
+                    f"Vespa query returned errors for schema {query_schema} "
                     f"(HTTP 200 with a soft timeout or degraded coverage yields "
                     f"partial results): {errors!r}"
                 )
             coverage = root.get("coverage") or {}
             if coverage.get("degraded"):
                 raise RuntimeError(
-                    f"Vespa query coverage degraded for schema {schema}: {coverage!r}"
+                    "Vespa query coverage degraded for schema "
+                    f"{query_schema}: {coverage!r}"
                 )
 
             # Extract documents from response
@@ -1776,7 +1789,9 @@ class VespaBackend(Backend):
                 fields = hit.get("fields", {})
                 documents.append(fields)
 
-            logger.debug(f"Query returned {len(documents)} documents from {schema}")
+            logger.debug(
+                f"Query returned {len(documents)} documents from {query_schema}"
+            )
             return documents
         except Exception as e:
             # A rejected query or outage must not read as "no rows" — raise,
@@ -1818,10 +1833,6 @@ class VespaBackend(Backend):
             # report a delete that did not happen.
             logger.error(f"Failed to delete metadata document {schema}/{doc_id}: {e}")
             raise
-
-    # ============================================================================
-    # Connection Management
-    # ============================================================================
 
     def close(self) -> None:
         """
@@ -1888,9 +1899,6 @@ class VespaBackend(Backend):
         # Basic health check
         return self.schema_manager is not None
 
-    # -----------------------------------------------------------------
-    # Runtime profile mutation (SearchBackend interface override)
-    # -----------------------------------------------------------------
     # Keep self.config["profiles"] and the owned VespaSearchBackend's
     # in-memory dict in sync so runtime-added profiles are visible to
     # both the ingestion path (reads config directly) and the search

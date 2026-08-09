@@ -1,17 +1,19 @@
-"""Integration tests for ``VespaConfigStore.list_all_configs`` against a
-real Vespa instance.
+"""Integration tests for ``VespaConfigStore`` against a real Vespa instance.
 
-The read path was switched from a YQL ``/search/`` query (eventually
-consistent) to the Document v1 visit API (read-after-write consistent
-with feeds) so cross-process schema_registry writes become visible
-immediately on the next read. These tests pin that contract: a feed
-followed by a visit must observe the freshly written document with no
-sleep / retry.
+The read path uses the Document v1 visit API (read-after-write consistent
+with feeds) rather than a YQL ``/search/`` query (eventually consistent),
+so cross-process schema_registry writes become visible immediately on the
+next read. Version allocation feeds with a conditional write so two
+concurrent writers can never persist the same version number. These tests
+pin both contracts against a real Vespa instance.
 """
 
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+import requests
 
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
@@ -73,6 +75,195 @@ class TestVespaConfigStoreListAllConfigs:
                 config_key="rw_marker",
             )
 
+    def test_set_then_get_and_filtered_list_are_immediately_consistent(
+        self, vespa_config_store
+    ):
+        store = vespa_config_store
+        tenant, service, key = "cs_rw_point_a", "point_probe", "exact_key"
+        first = store.set_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SYSTEM,
+            service=service,
+            config_key=key,
+            config_value={"revision": 1},
+        )
+        second = store.set_config(
+            tenant_id=tenant,
+            scope=ConfigScope.SYSTEM,
+            service=service,
+            config_key=key,
+            config_value={"revision": 2},
+        )
+        try:
+            latest = store.get_config(
+                tenant,
+                ConfigScope.SYSTEM,
+                service,
+                key,
+            )
+            version_one = store.get_config(
+                tenant,
+                ConfigScope.SYSTEM,
+                service,
+                key,
+                version=1,
+            )
+            listed = store.list_configs(
+                tenant,
+                scope=ConfigScope.SYSTEM,
+                service=service,
+            )
+
+            assert (latest.version, latest.config_value) == (
+                second.version,
+                {"revision": 2},
+            )
+            assert (version_one.version, version_one.config_value) == (
+                first.version,
+                {"revision": 1},
+            )
+            assert [
+                (entry.config_key, entry.version, entry.config_value)
+                for entry in listed
+            ] == [(key, second.version, {"revision": 2})]
+        finally:
+            store.delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.SYSTEM,
+                service=service,
+                config_key=key,
+            )
+
+    def test_point_and_filtered_reads_propagate_visit_timeout(
+        self, vespa_config_store, monkeypatch
+    ):
+        def timeout(*args, **kwargs):
+            raise requests.Timeout("Document visit timed out")
+
+        monkeypatch.setattr(requests, "get", timeout)
+
+        with pytest.raises(requests.Timeout, match="Document visit timed out"):
+            vespa_config_store.get_config(
+                "cs_timeout_a",
+                ConfigScope.SYSTEM,
+                "runtime",
+                "key",
+            )
+        with pytest.raises(requests.Timeout, match="Document visit timed out"):
+            vespa_config_store.list_configs(
+                "cs_timeout_a",
+                scope=ConfigScope.SYSTEM,
+                service="runtime",
+            )
+
+    def test_concurrent_writers_allocate_distinct_versions(self, vespa_config_store):
+        store = vespa_config_store
+        tenant, service, key = "cs_concurrent_a", "version_probe", "same_key"
+        writer_count = 8
+        barrier = threading.Barrier(writer_count)
+        store.delete_config(
+            tenant_id=tenant,
+            scope=ConfigScope.BACKEND,
+            service=service,
+            config_key=key,
+        )
+
+        def write(writer: int):
+            barrier.wait()
+            return store.set_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service=service,
+                config_key=key,
+                config_value={"writer": writer},
+            )
+
+        try:
+            with ThreadPoolExecutor(max_workers=writer_count) as executor:
+                entries = list(executor.map(write, range(writer_count)))
+
+            history = store.get_config_history(
+                tenant,
+                ConfigScope.BACKEND,
+                service,
+                key,
+            )
+            assert sorted(entry.version for entry in entries) == list(
+                range(1, writer_count + 1)
+            )
+            assert [entry.version for entry in history] == list(
+                range(writer_count, 0, -1)
+            )
+            assert {entry.config_value["writer"] for entry in history} == set(
+                range(writer_count)
+            )
+        finally:
+            store.delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service=service,
+                config_key=key,
+            )
+
+    def test_delete_config_raises_after_a_mid_delete_failure(
+        self, vespa_config_store, monkeypatch
+    ):
+        store = vespa_config_store
+        tenant, service, key = "cs_delete_fault_a", "delete_probe", "same_key"
+        entries = [
+            store.set_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service=service,
+                config_key=key,
+                config_value={"revision": revision},
+            )
+            for revision in range(1, 4)
+        ]
+        config_id = store._create_document_id(tenant, ConfigScope.BACKEND, service, key)
+        failed_id = f"{store.schema_name}::{config_id}::2"
+        original_delete = store.vespa_app.delete_data
+        attempted_ids = []
+
+        def fail_second_version(*, schema, data_id):
+            attempted_ids.append(data_id)
+            if data_id == failed_id:
+                raise ConnectionError("Vespa disconnected during config deletion")
+            return original_delete(schema=schema, data_id=data_id)
+
+        monkeypatch.setattr(store.vespa_app, "delete_data", fail_second_version)
+        try:
+            with pytest.raises(
+                RuntimeError,
+                match="Failed to delete 1 of 3 versions.*version 2",
+            ):
+                store.delete_config(
+                    tenant_id=tenant,
+                    scope=ConfigScope.BACKEND,
+                    service=service,
+                    config_key=key,
+                )
+
+            assert attempted_ids == [
+                f"{store.schema_name}::{config_id}::{entry.version}"
+                for entry in entries[::-1]
+            ]
+            for entry in entries:
+                response = store.vespa_app.get_data(
+                    schema=store.schema_name,
+                    data_id=f"{store.schema_name}::{config_id}::{entry.version}",
+                    raise_on_not_found=False,
+                )
+                assert response.status_code == (200 if entry.version == 2 else 404)
+        finally:
+            monkeypatch.setattr(store.vespa_app, "delete_data", original_delete)
+            store.delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service=service,
+                config_key=key,
+            )
+
     def test_set_config_raises_on_version_query_failure_preserving_v1(
         self, vespa_config_store
     ):
@@ -83,16 +274,12 @@ class TestVespaConfigStoreListAllConfigs:
         store = vespa_config_store
         tenant, service, key = "cs_verr_a", "verr_probe", "k1"
 
-        # Guarantee exact version counting even if a prior run aborted.
-        try:
-            store.delete_config(
-                tenant_id=tenant,
-                scope=ConfigScope.BACKEND,
-                service=service,
-                config_key=key,
-            )
-        except Exception:
-            pass
+        store.delete_config(
+            tenant_id=tenant,
+            scope=ConfigScope.BACKEND,
+            service=service,
+            config_key=key,
+        )
 
         for i in (1, 2, 3):
             store.set_config(
@@ -471,6 +658,63 @@ class TestExportImportRoundTrip:
             config_key="agent_config",
         )
         assert restored_agent.config_value == {"thinking_enabled": False}
+
+    def test_import_raises_after_a_mid_import_failure(
+        self, vespa_config_store, monkeypatch
+    ):
+        import uuid
+
+        store = vespa_config_store
+        tenant = f"exp_fault_{uuid.uuid4().hex[:6]}"
+        configs = {
+            "configs": [
+                {
+                    "scope": "system",
+                    "service": "runtime",
+                    "config_key": "first",
+                    "config_value": {"position": 1},
+                },
+                {
+                    "scope": "system",
+                    "service": "runtime",
+                    "config_key": "second",
+                    "config_value": {"position": 2},
+                },
+            ]
+        }
+        original_set_config = store.set_config
+
+        def fail_second_config(**kwargs):
+            if kwargs["config_key"] == "second":
+                raise ConnectionError("Vespa disconnected during config import")
+            return original_set_config(**kwargs)
+
+        monkeypatch.setattr(store, "set_config", fail_second_config)
+        try:
+            with pytest.raises(
+                RuntimeError,
+                match="Failed to import 1 of 2 configurations.*second",
+            ):
+                store.import_configs(tenant, configs)
+
+            entries = [
+                entry
+                for entry in store.list_all_configs(
+                    scope=ConfigScope.SYSTEM, service="runtime"
+                )
+                if entry.tenant_id == tenant
+            ]
+            assert [(entry.config_key, entry.config_value) for entry in entries] == [
+                ("first", {"position": 1})
+            ]
+        finally:
+            monkeypatch.setattr(store, "set_config", original_set_config)
+            store.delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.SYSTEM,
+                service="runtime",
+                config_key="first",
+            )
 
     def test_export_with_history_returns_all_versions(self, vespa_config_store):
         import time

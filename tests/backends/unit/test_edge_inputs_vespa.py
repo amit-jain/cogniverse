@@ -12,10 +12,6 @@ from cogniverse_vespa.ingestion_client import (
     _validate_s_timestamp,
 )
 
-# ---------------------------------------------------------------------------
-# embedding_processor
-# ---------------------------------------------------------------------------
-
 
 def test_unsupported_payload_type_raises_type_error() -> None:
     """Pre-fix: ``process_embeddings(42)`` returned ``42`` and broke
@@ -63,11 +59,6 @@ def test_finite_embeddings_still_binarize() -> None:
     assert len(out) > 0
 
 
-# ---------------------------------------------------------------------------
-# ingestion_client timestamp magnitude validators
-# ---------------------------------------------------------------------------
-
-
 def test_ms_timestamp_seconds_value_rejected() -> None:
     """A seconds-shaped value (e.g. 1_700_000_000) passed to a ms field is a
     common bug — reject it so the document doesn't land at 1970-01-20."""
@@ -95,11 +86,6 @@ def test_negative_timestamp_rejected() -> None:
         _validate_ms_timestamp(-1, "creation_timestamp")
     with pytest.raises(ValueError):
         _validate_s_timestamp(-1, "created_at")
-
-
-# ---------------------------------------------------------------------------
-# yql_quote: newlines + NUL byte
-# ---------------------------------------------------------------------------
 
 
 def test_yql_quote_escapes_embedded_newline() -> None:
@@ -221,3 +207,98 @@ def test_get_document_data_raises_on_outage_and_none_on_404() -> None:
     app404.get_data.return_value = not_found
     client.app = app404
     assert client.get_document_data("doc-1") is None
+
+
+def test_document_existence_raises_on_outage_and_false_only_on_404() -> None:
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_vespa.ingestion_client import VespaPyClient
+
+    client = VespaPyClient(
+        {
+            "schema_name": "video_colpali_smol500_mv_frame",
+            "url": "http://localhost",
+            "port": 8080,
+            "schema_loader": FilesystemSchemaLoader(Path("configs/schemas")),
+        }
+    )
+    client._connected = True
+    client.app = MagicMock()
+    client.app.get_data.side_effect = ConnectionError("vespa down")
+
+    with pytest.raises(ConnectionError, match="vespa down"):
+        client.check_document_exists("doc-1")
+
+    client.app.get_data.side_effect = None
+    client.app.get_data.return_value = SimpleNamespace(status_code=404)
+    assert client.check_document_exists("doc-1") is False
+
+    client.app.get_data.return_value = SimpleNamespace(status_code=200)
+    assert client.check_document_exists("doc-1") is True
+
+
+def test_get_document_data_rejects_returned_non_success_status() -> None:
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_vespa.ingestion_client import VespaPyClient
+
+    client = VespaPyClient(
+        {
+            "schema_name": "video_colpali_smol500_mv_frame",
+            "url": "http://localhost",
+            "port": 8080,
+            "schema_loader": FilesystemSchemaLoader(Path("configs/schemas")),
+        }
+    )
+    client._connected = True
+    client.app = MagicMock()
+    client.app.get_data.return_value = SimpleNamespace(status_code=500)
+
+    with pytest.raises(RuntimeError, match="HTTP 500.*doc-1"):
+        client.get_document_data("doc-1")
+
+
+def test_get_document_data_connection_failure_names_configured_endpoint() -> None:
+    from unittest.mock import MagicMock
+
+    from cogniverse_vespa.ingestion_client import VespaPyClient
+
+    client = object.__new__(VespaPyClient)
+    client._connected = False
+    client.connect = MagicMock(return_value=False)
+    client.backend_url = "http://vespa.internal"
+    client.backend_port = 18080
+
+    with pytest.raises(
+        ConnectionError,
+        match=r"doc-1.*http://vespa\.internal:18080",
+    ):
+        client.get_document_data("doc-1")
+
+
+def test_document_namespace_matches_anchored_base_schema_tokens() -> None:
+    from cogniverse_vespa.ingestion_client import document_namespace
+
+    assert document_namespace("agent_memories") == "memory_content"
+    assert document_namespace("agent_memories_acme_acme") == "memory_content"
+    assert document_namespace("knowledge_graph_acme_acme") == "graph_content"
+    assert document_namespace("config_metadata") == "metadata"
+    assert document_namespace("tenant_metadata_acme_acme") == "metadata"
+    assert document_namespace("organization_metadata") == "metadata"
+    assert document_namespace("video_colpali_smol500_mv_frame_acme_acme") == "content"
+
+
+def test_document_namespace_rejects_embedded_base_schema_names() -> None:
+    """A base schema name embedded mid-name is a different schema; it must
+    resolve to the default content namespace, not the embedded base's."""
+    from cogniverse_vespa.ingestion_client import document_namespace
+
+    assert document_namespace("wiki_agent_memories_index") == "content"
+    assert document_namespace("legacy_knowledge_graph_acme_acme") == "content"
+    assert document_namespace("archived_config_metadata") == "content"

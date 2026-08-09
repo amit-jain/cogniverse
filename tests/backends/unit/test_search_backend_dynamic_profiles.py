@@ -10,10 +10,11 @@ backend, causing "profile not found" retry storms under concurrent load.
 from __future__ import annotations
 
 import threading
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cogniverse_core.common.utils.retry import RetryConfig
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 
@@ -98,6 +99,21 @@ def test_initialize_populates_profiles_from_top_level_config():
     assert backend.default_profiles == {"memory": {"profile": "alpha"}}
 
 
+def test_initialize_preserves_constructor_retry_configuration():
+    retry_config = RetryConfig(max_attempts=7, initial_delay=0, jitter=False)
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
+    ):
+        backend = VespaSearchBackend(
+            config={"url": "http://localhost", "port": 8080},
+            retry_config=retry_config,
+        )
+        backend.initialize({"url": "http://localhost", "port": 8080})
+
+    assert backend.retry_config is retry_config
+
+
 def test_initialize_reads_profiles_from_nested_backend_section():
     """``get_search_backend`` passes profiles under config['backend'] in some
     call paths (see ``backend_registry.get_search_backend``)."""
@@ -114,6 +130,44 @@ def test_initialize_reads_profiles_from_nested_backend_section():
             }
         )
     assert backend.profiles == {"beta": {"type": "video"}}
+
+
+def test_hybrid_audio_encoder_uses_semantic_model():
+    config_manager = MagicMock()
+    with (
+        patch("cogniverse_vespa.search_backend.ConnectionPool"),
+        patch("cogniverse_vespa.search_backend.SearchMetrics"),
+    ):
+        backend = VespaSearchBackend(
+            config={
+                "url": "http://localhost",
+                "port": 8080,
+            },
+            config_manager=config_manager,
+        )
+    profile = {
+        "embedding_model": "laion/clap-htsat-unfused",
+        "semantic_model": "lightonai/LateOn",
+        "embedding_type": "multi_vector",
+    }
+
+    with (
+        patch(
+            "cogniverse_foundation.config.utils.get_config",
+            return_value={"backend": {"profiles": {"audio": profile}}},
+        ),
+        patch(
+            "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
+            return_value=MagicMock(),
+        ) as create_encoder,
+    ):
+        backend._resolve_encoder_for_profile("audio", profile, "acme:content")
+
+    create_encoder.assert_called_once_with(
+        "audio",
+        "lightonai/LateOn",
+        config={"backend": {"profiles": {"audio": profile}}},
+    )
 
 
 def test_add_profile_is_thread_safe_under_concurrent_writes():
@@ -197,10 +251,16 @@ def test_search_accepts_empty_query_text_when_embeddings_provided():
     import numpy as np
 
     backend = _make_backend({"known": {"type": "memory"}})
-    # Past profile resolution → profile validation passes. The next failure
-    # (strategy/schema lookup, backend HTTP, etc.) is irrelevant — the point
-    # is that the "query_dict must contain 'query' key" path MUST NOT fire.
-    try:
+    with (
+        patch(
+            "cogniverse_vespa.search_backend._RANKING_STRATEGIES_CACHE",
+            {},
+        ),
+        pytest.raises(
+            ValueError,
+            match="No ranking strategies found for schema 'known'",
+        ),
+    ):
         backend.search(
             query_dict={
                 "query": "",
@@ -210,13 +270,6 @@ def test_search_accepts_empty_query_text_when_embeddings_provided():
                 "query_embeddings": np.zeros(768, dtype=np.float32),
             }
         )
-    except ValueError as exc:
-        assert "must contain 'query'" not in str(exc), (
-            f"Empty query + embeddings still raises the old validation: {exc}"
-        )
-    except Exception:
-        # Any other exception is downstream of the validation we fixed.
-        pass
 
 
 def test_search_still_rejects_missing_text_and_embeddings():

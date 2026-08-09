@@ -275,6 +275,18 @@ class VespaAdapterStore(AdapterStore):
             ValueError: If adapter not found
             Exception: If Vespa operation fails
         """
+        target = self.get_adapter(adapter_id)
+        if target is None:
+            raise ValueError(f"Adapter not found: {adapter_id}")
+        target_fields = target["fields"]
+        target_tenant = target_fields.get("tenant_id")
+        target_agent_type = target_fields.get("agent_type")
+        if target_tenant != tenant_id or target_agent_type != agent_type:
+            raise ValueError(
+                f"{adapter_id} belongs to {target_tenant}/{target_agent_type}, "
+                f"not {tenant_id}/{agent_type}"
+            )
+
         # First, deactivate any currently active adapter
         previous_id = None
         current_active = self.get_active_adapter(tenant_id, agent_type)
@@ -292,7 +304,9 @@ class VespaAdapterStore(AdapterStore):
         # model until a retry) — compensate by restoring the previous one.
         try:
             self._update_adapter_fields(
-                adapter_id, {"is_active": 1, "status": "active"}
+                adapter_id,
+                {"is_active": 1, "status": "active"},
+                current=target,
             )
         except Exception:
             if previous_id:
@@ -355,14 +369,29 @@ class VespaAdapterStore(AdapterStore):
         doc_id = f"{self.schema_name}::{adapter_id}"
 
         try:
-            self.vespa_app.delete_data(schema=self.schema_name, data_id=doc_id)
+            response = self.vespa_app.delete_data(
+                schema=self.schema_name, data_id=doc_id
+            )
+            status = getattr(response, "status_code", None)
+            if status == 404:
+                return False
+            if status != 200:
+                raise RuntimeError(
+                    f"Vespa returned HTTP {status} deleting adapter {adapter_id}"
+                )
             logger.info(f"Deleted adapter {adapter_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to delete adapter {adapter_id}: {e}")
-            return False
+            raise
 
-    def _update_adapter_fields(self, adapter_id: str, updates: Dict[str, Any]) -> None:
+    def _update_adapter_fields(
+        self,
+        adapter_id: str,
+        updates: Dict[str, Any],
+        *,
+        current: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Update several fields on an adapter in ONE read + ONE write.
 
         set_active/deactivate/deprecate change ``is_active`` AND ``status``
@@ -373,7 +402,7 @@ class VespaAdapterStore(AdapterStore):
             ValueError: If adapter not found
         """
         # Get current adapter
-        adapter = self.get_adapter(adapter_id)
+        adapter = current if current is not None else self.get_adapter(adapter_id)
         if not adapter:
             raise ValueError(f"Adapter not found: {adapter_id}")
 

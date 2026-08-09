@@ -147,8 +147,8 @@ def wipe_non_protected_schemas(get_backend):
     sm = backend.schema_manager
     try:
         deployed = sm.list_deployed_document_types()
-    except Exception:
-        return
+    except Exception as exc:
+        pytest.fail(f"Could not enumerate schemas for bounded cleanup: {exc}")
 
     for full_name in deployed:
         if full_name in sm._PROTECTED_SCHEMAS:
@@ -604,6 +604,40 @@ class TestBulkTenantDelete:
         backend = get_backend("bulk_noop")
         assert backend.schema_manager.delete_tenant_schemas_bulk([]) == []
 
+    def test_exact_orphan_name_round_trip(self, get_backend):
+        backend = get_backend("orphan_name_with_underscores:content")
+        tenant_id = "orphan_name_with_underscores:content"
+        base = "knowledge_graph"
+        full_name = "knowledge_graph_orphan_name_with_underscores_content"
+
+        backend.schema_registry.deploy_schema(tenant_id, base)
+        assert full_name in backend.schema_manager.list_deployed_document_types()
+
+        with pytest.raises(ValueError, match="registered schema"):
+            backend.schema_manager.delete_orphan_schemas([full_name])
+        assert full_name in backend.schema_manager.list_deployed_document_types()
+
+        backend.schema_registry.unregister_schema(tenant_id, base)
+        assert backend.schema_manager.delete_orphan_schemas([full_name]) == [full_name]
+        assert full_name not in backend.schema_manager.list_deployed_document_types()
+
+    def test_exact_orphan_delete_fails_loud_when_config_server_is_down(
+        self, get_backend
+    ):
+        backend = get_backend("orphan_boundary_down")
+        backend.schema_manager.backend_endpoint = "http://127.0.0.1"
+        backend.schema_manager.backend_port = 1
+
+        with pytest.raises(
+            RuntimeError,
+            match="Cannot enumerate Vespa-deployed schemas before orphan delete",
+        ) as exc:
+            backend.schema_manager.delete_orphan_schemas(
+                ["knowledge_graph_orphan_boundary_down_orphan_boundary_down"]
+            )
+
+        assert exc.value.__cause__ is not None
+
 
 @pytest.mark.integration
 @pytest.mark.ci_fast
@@ -773,15 +807,13 @@ class TestDeleteFailureSemantics:
         # the schema doesn't pollute later module-scoped tests.
         backend.schema_manager.delete_tenant_schemas("vespa_fail")
 
-    def test_registry_tombstone_failure_does_not_block_vespa_removal(
+    def test_registry_tombstone_failure_surfaces_after_vespa_removal(
         self, get_backend, monkeypatch, wipe_non_protected_schemas
     ):
         """When ``unregister_schema`` fails AFTER Vespa removal, the
-        schema must still be gone from Vespa (Vespa is authoritative).
-
-        The asymmetric failure mode the docstring acknowledges: Vespa
-        is the source of truth; a registry-side write failure is logged
-        and recovered later.
+        schema is gone from Vespa but the caller still receives the durable
+        registry failure. A retry must finish the tombstone even though there
+        is no Vespa schema left to remove.
         """
         backend = get_backend("tombstone_fail")
         backend.schema_registry.deploy_schema(
@@ -799,7 +831,8 @@ class TestDeleteFailureSemantics:
             backend.schema_registry, "unregister_schema", failing_unregister
         )
 
-        backend.schema_manager.delete_tenant_schemas("tombstone_fail")
+        with pytest.raises(RuntimeError, match="registry tombstone"):
+            backend.schema_manager.delete_tenant_schemas("tombstone_fail")
 
         monkeypatch.setattr(
             backend.schema_registry, "unregister_schema", original_unregister
@@ -811,15 +844,8 @@ class TestDeleteFailureSemantics:
             "registry tombstone failed; Vespa is authoritative."
         )
 
-        # Reconcile so the lingering registry entry doesn't pollute
-        # later tests. The tombstone failure was simulated; manually
-        # clean it up.
-        try:
-            backend.schema_registry.unregister_schema(
-                "tombstone_fail", "video_colpali_smol500_mv_frame"
-            )
-        except Exception:
-            pass
+        assert backend.schema_manager.delete_tenant_schemas("tombstone_fail") == []
+        assert backend.schema_registry.get_tenant_schemas("tombstone_fail") == []
 
 
 @pytest.mark.integration
