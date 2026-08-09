@@ -1,18 +1,27 @@
 """
-Unit tests for trace converters (SFT data and trajectory extraction).
+Tests for trace converters (SFT data and trajectory extraction).
 
 Tests:
 1. Single-turn instruction extraction (TraceToInstructionConverter)
 2. Multi-turn trajectory extraction (TraceToTrajectoryConverter)
 """
 
-from datetime import datetime
+import asyncio
+import json
+import threading
+import time
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
+import httpx
 import pandas as pd
 import pytest
 
 from cogniverse_finetuning.dataset.formatters import InstructionFormatter
+from cogniverse_finetuning.dataset.preference_extractor import PreferencePairExtractor
 from cogniverse_finetuning.dataset.trace_converter import (
     ConversationTrajectory,
     ConversationTurn,
@@ -23,6 +32,7 @@ from cogniverse_finetuning.dataset.trace_converter import (
     TrajectoryDataset,
 )
 from cogniverse_finetuning.orchestrator import validate_sft_dataset
+from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
 
 @pytest.mark.unit
@@ -31,10 +41,10 @@ class TestPropertyAccess:
 
     @pytest.mark.asyncio
     async def test_convert_queries_via_public_traces_property(self):
-        """convert() must fetch spans through provider.traces.get_spans (the
+        """convert() must fetch spans through provider.traces.get_all_spans (the
         public property), not a private _trace_store."""
         mock_provider = Mock()
-        mock_provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
+        mock_provider.traces.get_all_spans = AsyncMock(return_value=pd.DataFrame())
         mock_provider.annotations.get_annotations = AsyncMock(
             return_value=pd.DataFrame()
         )
@@ -48,7 +58,7 @@ class TestPropertyAccess:
                 project="cogniverse-t", agent_type="routing", min_annotations=1
             )
 
-        mock_provider.traces.get_spans.assert_awaited_once()
+        mock_provider.traces.get_all_spans.assert_awaited_once()
 
 
 @pytest.mark.unit
@@ -201,6 +211,73 @@ class TestAgentFiltering:
         assert len(filtered) == 1
         assert filtered.iloc[0]["attributes.agent_type"] == "entity_extraction"
 
+    def test_filter_approved_rejects_conflicting_label_and_score(self):
+        converter = TraceToInstructionConverter(provider=Mock())
+        annotations = pd.DataFrame(
+            [
+                {
+                    "span_id": "rejected-high",
+                    "result.label": "rejected",
+                    "result.score": 1.0,
+                },
+                {
+                    "span_id": "approved-low",
+                    "result.label": "approved",
+                    "result.score": 0.1,
+                },
+                {
+                    "span_id": "approved-consistent",
+                    "result.label": "approved",
+                    "result.score": 1.0,
+                },
+                {
+                    "span_id": "score-only",
+                    "result.label": None,
+                    "result.score": 0.95,
+                },
+                {
+                    "span_id": "rejected-consistent",
+                    "result.label": "rejected",
+                    "result.score": 0.0,
+                },
+            ]
+        )
+
+        approved = converter._filter_approved(annotations)
+
+        assert approved["span_id"].tolist() == [
+            "approved-consistent",
+            "score-only",
+        ]
+
+
+@pytest.mark.unit
+class TestCanonicalInstructionOutput:
+    def test_malformed_approved_span_raises_with_span_context(self):
+        converter = TraceToInstructionConverter(provider=Mock())
+        spans = pd.DataFrame(
+            [
+                {
+                    "context.span_id": "span-malformed-routing",
+                    "name": "cogniverse.routing",
+                    "attributes.input.value": "find sunset videos",
+                    "attributes.output.value": {"confidence": 0.98},
+                }
+            ]
+        )
+        annotations = pd.DataFrame(
+            [{"span_id": "span-malformed-routing", "result.label": "approved"}]
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                "approved routing span span-malformed-routing requires exactly "
+                "the recommended_agent field"
+            ),
+        ):
+            converter._create_instruction_examples(spans, annotations, "routing")
+
 
 # ============================================================================
 # Trajectory Data Structure Tests
@@ -234,7 +311,7 @@ class TestConversationTurn:
             turn_id=1,
             query="query",
             response="response",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             span_id="span1",
         )
 
@@ -455,20 +532,26 @@ class TestTraceToTrajectoryConverter:
         result = converter._extract_query(attributes)
         assert result == "basketball dunks"
 
-    def test_extract_response(self):
-        """Test response extraction from span attributes."""
+    def test_extract_response_projects_operational_output(self):
+        """Operational response fields do not leak into model-facing JSON."""
         mock_provider = Mock()
         converter = TraceToTrajectoryConverter(provider=mock_provider)
 
-        # Test with output.value attribute
-        attributes = {"attributes.output.value": "Here are the results..."}
-        result = converter._extract_response(attributes)
-        assert result == "Here are the results..."
+        attributes = {
+            "attributes.output.value": {
+                "recommended_agent": "video_search",
+                "confidence": 0.99,
+                "reasoning": "The request asks for videos.",
+            }
+        }
 
-        # Test with dict response (should be JSON-serialized)
-        attributes = {"attributes.output.value": {"results": ["v1", "v2"]}}
-        result = converter._extract_response(attributes)
-        assert '"results"' in result
+        result = converter._extract_response(
+            attributes,
+            "routing",
+            context="routing trajectory span span123 turn 1",
+        )
+
+        assert result == '{"recommended_agent":"video_search"}'
 
     def test_create_turn_from_span(self):
         """Test creating turn from span data."""
@@ -480,7 +563,10 @@ class TestTraceToTrajectoryConverter:
                 "context.span_id": "span123",
                 "start_time": datetime(2025, 1, 1, 12, 0, 0),
                 "attributes.input.value": "Test query",
-                "attributes.output.value": "Test response",
+                "attributes.output.value": {
+                    "recommended_agent": "video_search",
+                    "confidence": 0.99,
+                },
             }
         )
 
@@ -489,8 +575,48 @@ class TestTraceToTrajectoryConverter:
         assert turn is not None
         assert turn.turn_id == 1
         assert turn.query == "Test query"
-        assert turn.response == "Test response"
+        assert turn.response == '{"recommended_agent":"video_search"}'
         assert turn.span_id == "span123"
+
+    def test_create_turn_rejects_malformed_persisted_timestamp(self):
+        converter = TraceToTrajectoryConverter(provider=Mock())
+        span = pd.Series(
+            {
+                "context.span_id": "span-invalid-time",
+                "start_time": "not-a-timestamp",
+                "attributes.input.value": "Test query",
+                "attributes.output.value": {"recommended_agent": "video_search"},
+            }
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                "routing trajectory span span-invalid-time turn 3 has invalid "
+                "start_time 'not-a-timestamp'"
+            ),
+        ) as captured:
+            converter._create_turn_from_span(
+                span,
+                turn_idx=3,
+                agent_type="routing",
+            )
+
+        assert isinstance(captured.value.__cause__, ValueError)
+
+        span["start_time"] = "2025-01-01T12:00:00"
+        with pytest.raises(
+            ValueError,
+            match=(
+                "routing trajectory span span-invalid-time turn 3 requires "
+                "timezone-aware start_time"
+            ),
+        ):
+            converter._create_turn_from_span(
+                span,
+                turn_idx=3,
+                agent_type="routing",
+            )
 
 
 @pytest.mark.unit
@@ -502,7 +628,7 @@ class TestTraceToTrajectoryConverterAsync:
         """Test that empty spans raises ValueError."""
         mock_provider = Mock()
         mock_traces = AsyncMock()
-        mock_traces.get_spans = AsyncMock(return_value=pd.DataFrame())
+        mock_traces.get_all_spans = AsyncMock(return_value=pd.DataFrame())
         mock_provider.traces = mock_traces
 
         converter = TraceToTrajectoryConverter(provider=mock_provider)
@@ -518,7 +644,7 @@ class TestTraceToTrajectoryConverterAsync:
         mock_provider = Mock()
         mock_traces = AsyncMock()
         # Return spans but none matching agent type
-        mock_traces.get_spans = AsyncMock(
+        mock_traces.get_all_spans = AsyncMock(
             return_value=pd.DataFrame(
                 {
                     "context.span_id": ["span1"],
@@ -542,7 +668,7 @@ class TestTraceToTrajectoryConverterAsync:
         mock_provider = Mock()
         mock_traces = AsyncMock()
         # Return routing spans but no session_id column
-        mock_traces.get_spans = AsyncMock(
+        mock_traces.get_all_spans = AsyncMock(
             return_value=pd.DataFrame(
                 {
                     "context.span_id": ["span1"],
@@ -559,6 +685,48 @@ class TestTraceToTrajectoryConverterAsync:
             await converter.convert(
                 project="test-project",
                 agent_type="routing",
+            )
+
+    async def test_convert_rejects_malformed_turn_instead_of_dropping_it(self):
+        mock_provider = Mock()
+        mock_provider.traces.get_all_spans = AsyncMock(
+            return_value=pd.DataFrame(
+                [
+                    {
+                        "context.span_id": "span-valid",
+                        "name": "gateway_agent",
+                        "attributes.session_id": "session1",
+                        "start_time": datetime(2025, 1, 1, 12, 0, 0),
+                        "attributes.input.value": "find sunset videos",
+                        "attributes.output.value": {
+                            "recommended_agent": "video_search"
+                        },
+                    },
+                    {
+                        "context.span_id": "span-malformed",
+                        "name": "gateway_agent",
+                        "attributes.session_id": "session1",
+                        "start_time": datetime(2025, 1, 1, 12, 1, 0),
+                        "attributes.input.value": "find launch documents",
+                        "attributes.output.value": {"confidence": 0.99},
+                    },
+                ]
+            )
+        )
+        mock_provider.annotations = Mock()
+        converter = TraceToTrajectoryConverter(provider=mock_provider)
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                "routing trajectory span span-malformed turn 2 requires exactly "
+                "the recommended_agent field"
+            ),
+        ):
+            await converter.convert(
+                project="test-project",
+                agent_type="routing",
+                min_turns_per_session=2,
             )
 
     async def test_convert_groups_by_session(self):
@@ -590,11 +758,16 @@ class TestTraceToTrajectoryConverterAsync:
                     datetime(2025, 1, 1, 12, 3, 0),
                 ],
                 "attributes.input.value": ["q1", "q2", "q3", "q4"],
-                "attributes.output.value": ["r1", "r2", "r3", "r4"],
+                "attributes.output.value": [
+                    {"recommended_agent": "video_search"},
+                    {"recommended_agent": "document_agent"},
+                    {"recommended_agent": "video_search"},
+                    {"recommended_agent": "document_agent"},
+                ],
             }
         )
 
-        mock_traces.get_spans = AsyncMock(return_value=spans_df)
+        mock_traces.get_all_spans = AsyncMock(return_value=spans_df)
         mock_provider.traces = mock_traces
         mock_provider.annotations = mock_annotations
 
@@ -641,11 +814,16 @@ class TestTraceToTrajectoryConverterAsync:
                     datetime(2025, 1, 1, 12, 3, 0),
                 ],
                 "attributes.input.value": ["q1", "q2", "q3", "q4"],
-                "attributes.output.value": ["r1", "r2", "r3", "r4"],
+                "attributes.output.value": [
+                    {"recommended_agent": "video_search"},
+                    {"recommended_agent": "document_agent"},
+                    {"recommended_agent": "video_search"},
+                    {"recommended_agent": "document_agent"},
+                ],
             }
         )
 
-        mock_traces.get_spans = AsyncMock(return_value=spans_df)
+        mock_traces.get_all_spans = AsyncMock(return_value=spans_df)
         mock_provider.traces = mock_traces
         mock_provider.annotations = mock_annotations
 
@@ -679,7 +857,10 @@ class TestTraceToTrajectoryConverterAsync:
                     datetime(2025, 1, 1, 12, 1, 0),
                 ],
                 "attributes.input.value": ["q1", "q2"],
-                "attributes.output.value": ["r1", "r2"],
+                "attributes.output.value": [
+                    {"recommended_agent": "video_search"},
+                    {"recommended_agent": "document_agent"},
+                ],
             }
         )
 
@@ -692,7 +873,7 @@ class TestTraceToTrajectoryConverterAsync:
             }
         )
 
-        mock_traces.get_spans = AsyncMock(return_value=spans_df)
+        mock_traces.get_all_spans = AsyncMock(return_value=spans_df)
         mock_annotations.get_annotations = AsyncMock(return_value=annotations_df)
         mock_provider.traces = mock_traces
         mock_provider.annotations = mock_annotations
@@ -740,7 +921,12 @@ class TestTraceToTrajectoryConverterAsync:
                     datetime(2025, 1, 1, 12, 3, 0),
                 ],
                 "attributes.input.value": ["q1", "q2", "q3", "q4"],
-                "attributes.output.value": ["r1", "r2", "r3", "r4"],
+                "attributes.output.value": [
+                    {"recommended_agent": "video_search"},
+                    {"recommended_agent": "document_agent"},
+                    {"recommended_agent": "video_search"},
+                    {"recommended_agent": "document_agent"},
+                ],
             }
         )
 
@@ -757,7 +943,7 @@ class TestTraceToTrajectoryConverterAsync:
                 )
             return pd.DataFrame()
 
-        mock_traces.get_spans = AsyncMock(return_value=spans_df)
+        mock_traces.get_all_spans = AsyncMock(return_value=spans_df)
         mock_annotations.get_annotations = mock_get_annotations
         mock_provider.traces = mock_traces
         mock_provider.annotations = mock_annotations
@@ -868,3 +1054,364 @@ class TestTrajectoryFormatter:
 
         # Should not raise — all items have "text" field
         validate_sft_dataset(result)
+
+
+def _phoenix_provider(http_endpoint: str, grpc_endpoint: str) -> PhoenixProvider:
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": "finetuning-history-tests",
+            "http_endpoint": http_endpoint,
+            "grpc_endpoint": grpc_endpoint,
+        }
+    )
+    return provider
+
+
+def _routing_span(
+    *,
+    name: str,
+    query: str,
+    recommended_agent: str,
+    start_time: datetime,
+) -> tuple[dict, str]:
+    span_id = uuid4().hex[:16]
+    return (
+        {
+            "name": name,
+            "context": {"trace_id": uuid4().hex, "span_id": span_id},
+            "span_kind": "CHAIN",
+            "start_time": start_time.isoformat(),
+            "end_time": (start_time + timedelta(microseconds=1)).isoformat(),
+            "status_code": "OK",
+            "attributes": {
+                "input.value": query,
+                "output.value": json.dumps(
+                    {"recommended_agent": recommended_agent}, separators=(",", ":")
+                ),
+            },
+        },
+        span_id,
+    )
+
+
+async def _log_spans(http_endpoint: str, project: str, spans: list[dict]) -> None:
+    from phoenix.client import AsyncClient as PhoenixAsyncClient
+
+    async with httpx.AsyncClient(base_url=http_endpoint, timeout=120) as http_client:
+        client = PhoenixAsyncClient(
+            base_url=http_endpoint,
+            http_client=http_client,
+        )
+        result = await client.spans.log_spans(
+            project_identifier=project,
+            spans=spans,
+            timeout=120,
+        )
+    assert result == {"total_received": len(spans), "total_queued": len(spans)}
+
+
+async def _wait_for_span_count(
+    provider: PhoenixProvider,
+    project: str,
+    expected_count: int,
+) -> None:
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        frame = await provider.traces.get_all_spans(project=project)
+        if len(frame) == expected_count:
+            return
+        await asyncio.sleep(0.25)
+    pytest.fail(f"Phoenix did not expose exactly {expected_count} spans in {project}")
+
+
+async def _add_routing_reviews(
+    provider: PhoenixProvider,
+    project: str,
+    span_id: str,
+    *,
+    chosen: str,
+    rejected: str,
+) -> None:
+    await provider.annotations.add_annotation(
+        span_id=span_id,
+        name="history_chosen",
+        label="approved",
+        score=1.0,
+        metadata={
+            "response": json.dumps({"recommended_agent": chosen}, separators=(",", ":"))
+        },
+        project=project,
+    )
+    await provider.annotations.add_annotation(
+        span_id=span_id,
+        name="history_rejected",
+        label="rejected",
+        score=0.0,
+        metadata={
+            "response": json.dumps(
+                {"recommended_agent": rejected}, separators=(",", ":")
+            )
+        },
+        project=project,
+    )
+
+
+async def _wait_for_training_records(
+    provider: PhoenixProvider,
+    project: str,
+):
+    deadline = time.monotonic() + 60
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            instruction = await TraceToInstructionConverter(provider).convert(
+                project=project,
+                agent_type="routing",
+                min_annotations=1,
+            )
+            preference = await PreferencePairExtractor(provider).extract(
+                project=project,
+                agent_type="routing",
+                min_pairs=1,
+            )
+            return instruction, preference
+        except ValueError as error:
+            last_error = error
+            await asyncio.sleep(0.25)
+    pytest.fail(f"training records did not become visible in {project}: {last_error}")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_oldest_reviewed_span_survives_real_phoenix_pagination(
+    phoenix_container,
+):
+    provider = _phoenix_provider(
+        phoenix_container["http_endpoint"], phoenix_container["grpc_endpoint"]
+    )
+    project = f"finetuning-history-{uuid4().hex}"
+    target_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+    target, target_span_id = _routing_span(
+        name="routing_agent.oldest_reviewed",
+        query="find the oldest reviewed aurora video",
+        recommended_agent="video_search",
+        start_time=target_time,
+    )
+    noise = [
+        _routing_span(
+            name="search_noise",
+            query=f"irrelevant newer request {index}",
+            recommended_agent="document_agent",
+            start_time=target_time + timedelta(seconds=1, microseconds=index),
+        )[0]
+        for index in range(10_001)
+    ]
+    await _log_spans(phoenix_container["http_endpoint"], project, [target, *noise])
+    await _wait_for_span_count(provider, project, 10_002)
+    await _add_routing_reviews(
+        provider,
+        project,
+        target_span_id,
+        chosen="video_search",
+        rejected="document_agent",
+    )
+
+    instruction, preference = await _wait_for_training_records(provider, project)
+
+    assert instruction.metadata["total_spans"] == 10_002
+    assert [
+        (example.input, example.output, example.metadata["span_id"])
+        for example in instruction.examples
+    ] == [
+        (
+            "find the oldest reviewed aurora video",
+            '{"recommended_agent":"video_search"}',
+            target_span_id,
+        )
+    ]
+    assert preference.metadata["total_spans"] == 10_002
+    assert [
+        (pair.prompt, pair.chosen, pair.rejected, pair.metadata["span_id"])
+        for pair in preference.pairs
+    ] == [
+        (
+            "find the oldest reviewed aurora video",
+            '{"recommended_agent":"video_search"}',
+            '{"recommended_agent":"document_agent"}',
+            target_span_id,
+        )
+    ]
+
+
+async def _seed_reviewed_project(
+    provider: PhoenixProvider,
+    http_endpoint: str,
+    project: str,
+    *,
+    query: str,
+    chosen: str,
+    rejected: str,
+) -> str:
+    target, span_id = _routing_span(
+        name="routing_agent.tenant_reviewed",
+        query=query,
+        recommended_agent=chosen,
+        start_time=datetime.now(timezone.utc),
+    )
+    await _log_spans(http_endpoint, project, [target])
+    await _wait_for_span_count(provider, project, 1)
+    await _add_routing_reviews(
+        provider,
+        project,
+        span_id,
+        chosen=chosen,
+        rejected=rejected,
+    )
+    return span_id
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_concurrent_real_phoenix_reads_keep_tenant_history_isolated(
+    phoenix_container,
+):
+    provider = _phoenix_provider(
+        phoenix_container["http_endpoint"], phoenix_container["grpc_endpoint"]
+    )
+    alpha_project = f"finetuning-alpha-{uuid4().hex}"
+    beta_project = f"finetuning-beta-{uuid4().hex}"
+    alpha_span_id, beta_span_id = await asyncio.gather(
+        _seed_reviewed_project(
+            provider,
+            phoenix_container["http_endpoint"],
+            alpha_project,
+            query="alpha tenant exact video query",
+            chosen="video_search",
+            rejected="document_agent",
+        ),
+        _seed_reviewed_project(
+            provider,
+            phoenix_container["http_endpoint"],
+            beta_project,
+            query="beta tenant exact document query",
+            chosen="document_agent",
+            rejected="video_search",
+        ),
+    )
+
+    (
+        (alpha_instruction, alpha_preference),
+        (
+            beta_instruction,
+            beta_preference,
+        ),
+    ) = await asyncio.gather(
+        _wait_for_training_records(provider, alpha_project),
+        _wait_for_training_records(provider, beta_project),
+    )
+
+    assert [
+        (example.input, example.output, example.metadata["span_id"])
+        for example in alpha_instruction.examples
+    ] == [
+        (
+            "alpha tenant exact video query",
+            '{"recommended_agent":"video_search"}',
+            alpha_span_id,
+        )
+    ]
+    assert [
+        (pair.prompt, pair.chosen, pair.rejected, pair.metadata["span_id"])
+        for pair in alpha_preference.pairs
+    ] == [
+        (
+            "alpha tenant exact video query",
+            '{"recommended_agent":"video_search"}',
+            '{"recommended_agent":"document_agent"}',
+            alpha_span_id,
+        )
+    ]
+    assert [
+        (example.input, example.output, example.metadata["span_id"])
+        for example in beta_instruction.examples
+    ] == [
+        (
+            "beta tenant exact document query",
+            '{"recommended_agent":"document_agent"}',
+            beta_span_id,
+        )
+    ]
+    assert [
+        (pair.prompt, pair.chosen, pair.rejected, pair.metadata["span_id"])
+        for pair in beta_preference.pairs
+    ] == [
+        (
+            "beta tenant exact document query",
+            '{"recommended_agent":"document_agent"}',
+            '{"recommended_agent":"video_search"}',
+            beta_span_id,
+        )
+    ]
+
+
+class _GatewayTimeoutHandler(BaseHTTPRequestHandler):
+    def _send_timeout(self) -> None:
+        body = b'{"detail":"upstream Phoenix timed out"}'
+        self.send_response(504)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args) -> None:
+        return
+
+
+setattr(_GatewayTimeoutHandler, "do_GET", _GatewayTimeoutHandler._send_timeout)
+setattr(_GatewayTimeoutHandler, "do_POST", _GatewayTimeoutHandler._send_timeout)
+
+
+@contextmanager
+def _gateway_timeout_endpoint():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _GatewayTimeoutHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_gateway_timeout_is_not_reported_as_empty_training_history():
+    project = "finetuning-timeout-tenant"
+    with _gateway_timeout_endpoint() as endpoint:
+        provider = _phoenix_provider(endpoint, "http://127.0.0.1:1")
+        consumers = (
+            TraceToInstructionConverter(provider).convert(
+                project=project,
+                agent_type="routing",
+                min_annotations=1,
+            ),
+            PreferencePairExtractor(provider).extract(
+                project=project,
+                agent_type="routing",
+                min_pairs=1,
+            ),
+        )
+        results = await asyncio.gather(*consumers, return_exceptions=True)
+
+    assert [type(result) for result in results] == [RuntimeError, RuntimeError]
+    assert [str(result) for result in results] == [
+        f"Failed to query every span from Phoenix project {project}",
+        f"Failed to query every span from Phoenix project {project}",
+    ]
+    for result in results:
+        cause = result.__cause__
+        assert isinstance(cause, httpx.HTTPStatusError)
+        assert cause.response.status_code == 504
+        assert cause.response.json() == {"detail": "upstream Phoenix timed out"}

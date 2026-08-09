@@ -7,19 +7,82 @@ Integrates with existing infrastructure:
 - HumanApprovalAgent for mandatory human approval
 """
 
+import hashlib
+import json
 import logging
+import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 import pandas as pd
 
+from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_finetuning.dataset.preference_extractor import PreferencePairExtractor
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 if TYPE_CHECKING:
     from cogniverse_agents.approval import HumanApprovalAgent
 
 logger = logging.getLogger(__name__)
+
+
+def _count_unique_approved_synthetic(
+    examples: Optional[List[Dict[str, Any]]],
+) -> int:
+    seen_queries: Dict[str, int] = {}
+    for position, example in enumerate(examples or []):
+        if not isinstance(example, dict):
+            raise ValueError(
+                f"approved synthetic example at position {position} must be a "
+                "dictionary"
+            )
+        query = example.get("query")
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError(
+                f"approved synthetic example at position {position} requires a "
+                "non-empty query string"
+            )
+        canonical_query = query.strip()
+        if query != canonical_query:
+            raise ValueError(
+                f"approved synthetic example at position {position} query must "
+                "not contain surrounding whitespace"
+            )
+        previous_position = seen_queries.get(canonical_query)
+        if previous_position is not None:
+            raise ValueError(
+                "approved synthetic examples contain duplicate canonical query "
+                f"{canonical_query!r} at positions {previous_position} and {position}"
+            )
+        seen_queries[canonical_query] = position
+    return len(seen_queries)
+
+
+def _strict_json_value(value: Any, *, path: str) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{path} must not contain non-finite numbers")
+        return value
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{path} must include timezone information")
+        return value.isoformat()
+    if isinstance(value, list):
+        return [
+            _strict_json_value(item, path=f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if isinstance(value, dict):
+        canonical = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"{path} keys must be strings")
+            canonical[key] = _strict_json_value(item, path=f"{path}.{key}")
+        return canonical
+    raise TypeError(f"{path} contains unsupported {type(value).__name__}")
 
 
 @dataclass
@@ -101,10 +164,14 @@ class TrainingMethodSelector:
             f"Analyzing training data: project={project}, agent_type={agent_type}"
         )
 
-        # 1. Query spans from provider (using public properties)
-        spans_df = await provider.traces.get_spans(project=project)
+        try:
+            spans_df = await provider.traces.get_all_spans(project=project)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to query training spans from project {project}"
+            ) from exc
 
-        synthetic_count = len(approved_synthetic or [])
+        synthetic_count = _count_unique_approved_synthetic(approved_synthetic)
 
         if spans_df.empty:
             logger.warning(f"No spans found in project {project}")
@@ -129,11 +196,15 @@ class TrainingMethodSelector:
         agent_spans = self._filter_agent_spans(spans_df, agent_type)
         logger.info(f"Found {len(agent_spans)} {agent_type} spans")
 
-        # 2. Query annotations (using public properties)
-        annotations_df = await provider.annotations.get_annotations(
-            spans_df=agent_spans,
-            project=project,
-        )
+        try:
+            annotations_df = await provider.annotations.get_annotations(
+                spans_df=agent_spans,
+                project=project,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to query training annotations from project {project}"
+            ) from exc
 
         logger.info(f"Found {len(annotations_df)} annotations")
 
@@ -147,25 +218,23 @@ class TrainingMethodSelector:
             # (no span_id column); restore it as a column for the dedup below.
             if "span_id" not in annotations_df.columns:
                 annotations_df = annotations_df.reset_index()
-            # Count approved
-            approved_mask = (annotations_df["result.label"] == "approved") | (
-                annotations_df["result.score"] >= 0.5
+            classifications = annotations_df.apply(
+                PreferencePairExtractor._classify_annotation,
+                axis=1,
             )
-            approved = annotations_df[approved_mask]
+            approved = annotations_df[classifications == "approved"]
             approved_count = len(approved.drop_duplicates(subset=["span_id"]))
 
-            # Count rejected
-            rejected_mask = (annotations_df["result.label"] == "rejected") | (
-                annotations_df["result.score"] < 0.5
-            )
-            rejected = annotations_df[rejected_mask]
+            rejected = annotations_df[classifications == "rejected"]
             rejected_count = len(rejected.drop_duplicates(subset=["span_id"]))
 
-            # Count preference pairs (spans with BOTH approved AND rejected)
-            approved_span_ids = set(approved["span_id"].unique())
-            rejected_span_ids = set(rejected["span_id"].unique())
-            span_ids_with_both = approved_span_ids & rejected_span_ids
-            preference_pairs = len(span_ids_with_both)
+            preference_pairs = len(
+                PreferencePairExtractor(provider)._create_preference_pairs(
+                    agent_spans,
+                    annotations_df,
+                    agent_type,
+                )
+            )
 
         # Approved synthetic examples count toward the SFT threshold too.
         approved_count += synthetic_count
@@ -254,11 +323,7 @@ class TrainingMethodSelector:
                     "Pass synthetic_service and approval_agent to constructor."
                 )
 
-            # Calculate how many examples needed
-            num_needed = max(
-                min_sft_examples - analysis.approved_count,
-                min_dpo_pairs - analysis.preference_pairs,
-            )
+            num_needed = min_sft_examples - analysis.approved_count
 
             logger.info(
                 f"Generating {num_needed} synthetic examples for {agent_type}..."
@@ -353,12 +418,21 @@ class TrainingMethodSelector:
         from cogniverse_synthetic.schemas import SyntheticDataRequest
 
         # 1. Map agent_type to optimizer
+        tenant_id = require_tenant_id(
+            tenant_id,
+            source=f"synthetic generation for {agent_type}",
+        )
         optimizer_map = {
             "routing": "routing",
-            "profile_selection": "routing",  # Reuse routing optimizer
+            "profile_selection": "profile",
             "entity_extraction": "entity_extraction",
         }
-        optimizer_name = optimizer_map.get(agent_type, "routing")
+        try:
+            optimizer_name = optimizer_map[agent_type]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported finetuning synthetic agent_type {agent_type!r}"
+            ) from exc
 
         # 2. Generate synthetic via existing service
         request = SyntheticDataRequest(
@@ -375,12 +449,59 @@ class TrainingMethodSelector:
         logger.info(f"Generated {response.count} synthetic examples")
 
         # 3. Convert to ApprovalBatch
+        if response.count != num_needed or len(response.data) != num_needed:
+            raise RuntimeError(
+                f"Synthetic response must contain exactly {num_needed} examples: "
+                f"count={response.count} rows={len(response.data)}"
+            )
         items = []
-        for idx, example in enumerate(response.data):
+        seen_input_identities = set()
+        for example in response.data:
+            if not isinstance(example, dict):
+                raise TypeError("Synthetic training example must be a dictionary")
+            confidence = self.approval_agent.confidence_extractor.extract(example)
+            if (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not math.isfinite(confidence)
+                or not 0 <= confidence <= 1
+            ):
+                raise ValueError(
+                    "Synthetic confidence extractor must return a finite number "
+                    "in [0, 1]"
+                )
+            canonical_data = _strict_json_value(example, path="synthetic example")
+            query = canonical_data.get("query")
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError(
+                    "Synthetic training example query must be a non-empty string"
+                )
+            canonical_query = query.strip()
+            if query != canonical_query:
+                raise ValueError(
+                    "Synthetic training example query must not contain surrounding "
+                    "whitespace"
+                )
+            input_identity = json.dumps(
+                canonical_query,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
+            identity = hashlib.sha256(
+                f"{tenant_id}\0{agent_type}\0{input_identity}".encode()
+            ).hexdigest()[:24]
+            item_id = f"synthetic_{agent_type}_{identity}"
+            if input_identity in seen_input_identities:
+                raise RuntimeError(
+                    "Synthetic response contains duplicate canonical input query: "
+                    f"query={canonical_query!r}"
+                )
+            seen_input_identities.add(input_identity)
             item = ReviewItem(
-                item_id=f"synthetic_{agent_type}_{idx}",
-                data=example,  # Raw synthetic example
-                confidence=0.8,  # Default confidence for synthetic
+                item_id=item_id,
+                data=canonical_data,
+                confidence=float(confidence),
                 status=ApprovalStatus.PENDING_REVIEW,
                 metadata={
                     "agent_type": agent_type,
@@ -391,11 +512,27 @@ class TrainingMethodSelector:
             )
             items.append(item)
 
+        if len(items) != num_needed:
+            raise RuntimeError(
+                f"Synthetic response produced {len(items)} unique examples; "
+                f"expected {num_needed}"
+            )
+
+        batch_identity = hashlib.sha256(
+            json.dumps(
+                [item.item_id for item in items],
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()[:24]
+
         batch = ApprovalBatch(
-            batch_id=f"synthetic_{agent_type}_{datetime.now(timezone.utc).isoformat()}",
+            batch_id=f"synthetic_{agent_type}_{batch_identity}",
             items=items,
             context={
                 "purpose": "fine_tuning_data_generation",
+                "tenant_id": tenant_id,
                 "agent_type": agent_type,
                 "optimizer": optimizer_name,
                 "requested_count": num_needed,
