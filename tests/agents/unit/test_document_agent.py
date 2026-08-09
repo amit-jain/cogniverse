@@ -93,9 +93,9 @@ class TestDocumentAgent:
         query(qt) mapped tensor, tenant-scoped schema) and the document_path
         parse.
         """
-        # ColPali query encoder → 2 per-token (patch) 128-d vectors.
+        # Tomoro ColQwen3 query encoder → 2 per-token 320-d vectors.
         mock_encoder = MagicMock()
-        mock_encoder.encode.return_value = np.zeros((2, 128), dtype=np.float32)
+        mock_encoder.encode.return_value = np.zeros((2, 320), dtype=np.float32)
         mock_query_encoder.return_value = mock_encoder
 
         # Mock Vespa response
@@ -141,8 +141,8 @@ class TestDocumentAgent:
         assert sent["ranking.profile"] == "phased"
         assert isinstance(sent["input.query(qt)"], dict)
         assert isinstance(sent["input.query(qtb)"], dict)
-        # qtb is the packed binary form: 128 dims -> 16 int8 bytes per token.
-        assert all(len(v) == 16 for v in sent["input.query(qtb)"].values())
+        # qtb is the packed binary form: 320 dimensions -> 40 bytes per token.
+        assert all(len(v) == 40 for v in sent["input.query(qtb)"].values())
         assert "document_visual_" in sent["yql"]
         assert "str(" not in str(sent["input.query(qt)"])
 
@@ -154,7 +154,7 @@ class TestDocumentAgent:
     ):
         """A (dim,) query embedding must serialize as a flat list, not a
         dict of scalars keyed by element index."""
-        emb = np.full(128, -1.0, dtype=np.float32)
+        emb = np.full(320, -1.0, dtype=np.float32)
         emb[0] = 1.0
         mock_encoder = MagicMock()
         mock_encoder.encode.return_value = emb
@@ -168,9 +168,9 @@ class TestDocumentAgent:
         await self.agent._search_visual("q", limit=5)
 
         sent = mock_post.call_args.kwargs["json"]
-        assert sent["input.query(qt)"] == [1.0] + [-1.0] * 127
+        assert sent["input.query(qt)"] == [1.0] + [-1.0] * 319
         # Packed binary of [1, 0, ..., 0]: first byte 0b10000000 as int8.
-        assert sent["input.query(qtb)"] == [-128] + [0] * 15
+        assert sent["input.query(qtb)"] == [-128] + [0] * 39
 
     @pytest.mark.asyncio
     @patch.object(DocumentAgent, "query_encoder", new_callable=PropertyMock)
@@ -180,7 +180,7 @@ class TestDocumentAgent:
     ):
         """A (N, dim) query embedding serializes as {token_index: vector} with
         one packed-binary row per token."""
-        emb = np.zeros((2, 128), dtype=np.float32)
+        emb = np.zeros((2, 320), dtype=np.float32)
         emb[0, 0] = 1.0
         emb[1, 8] = 1.0
         mock_encoder = MagicMock()
@@ -195,12 +195,12 @@ class TestDocumentAgent:
         await self.agent._search_visual("q", limit=5)
 
         sent = mock_post.call_args.kwargs["json"]
-        row0 = [1.0] + [0.0] * 127
-        row1 = [0.0] * 8 + [1.0] + [0.0] * 119
+        row0 = [1.0] + [0.0] * 319
+        row1 = [0.0] * 8 + [1.0] + [0.0] * 311
         assert sent["input.query(qt)"] == {"0": row0, "1": row1}
         assert sent["input.query(qtb)"] == {
-            "0": [-128] + [0] * 15,
-            "1": [0, -128] + [0] * 14,
+            "0": [-128] + [0] * 39,
+            "1": [0, -128] + [0] * 38,
         }
 
     @pytest.mark.asyncio

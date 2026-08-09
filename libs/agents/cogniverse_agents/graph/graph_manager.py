@@ -58,6 +58,7 @@ class GraphManager:
         schema_name: str,
         colbert_endpoint_url: str,
         colbert_model: str = "lightonai/LateOn",
+        gliner_inference_url: Optional[str] = None,
     ) -> None:
         """
         Args:
@@ -71,6 +72,8 @@ class GraphManager:
             colbert_model: HF model id the service serves; sent in every
                 /pooling request and validated against the service's
                 pinned model.
+            gliner_inference_url: Explicit remote GLiNER endpoint. ``None``
+                selects the in-process model for environments that install it.
         """
         if not colbert_endpoint_url:
             raise ValueError(
@@ -87,7 +90,9 @@ class GraphManager:
         # requests helpers paid TCP setup per node/edge feed and per query.
         self._http = requests.Session()
         self._code_extractor = CodeExtractor()
-        self._doc_extractor = DocExtractor()
+        self._doc_extractor = DocExtractor(
+            gliner_inference_url=gliner_inference_url,
+        )
 
         loader = RemoteColBERTLoader(
             model_name=colbert_model,

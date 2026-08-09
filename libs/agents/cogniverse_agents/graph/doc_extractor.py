@@ -12,6 +12,7 @@ This extractor produces nodes only. SPO edges are produced by
 
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
@@ -22,6 +23,7 @@ from cogniverse_agents.graph.graph_schema import (
     Mention,
     Node,
 )
+from cogniverse_foundation.config.utils import get_config_manager_singleton
 
 logger = logging.getLogger(__name__)
 
@@ -210,78 +212,60 @@ class DocExtractor:
         self,
         labels: Optional[List[str]] = None,
         claim_extractor: Optional["ClaimExtractorProtocol"] = None,
+        gliner_inference_url: Optional[str] = None,
     ) -> None:
         self._labels = labels or list(_DEFAULT_LABELS)
         self._gliner = None
         self._gliner_failed = False
+        self._gliner_load_lock = threading.Lock()
         self._claim_extractor = claim_extractor
+        self._gliner_inference_url = gliner_inference_url
 
     def _get_gliner(self):
         """Lazily load the GLiNER model, caching the instance.
 
-        Prefers the deployed GLiNER inference service URL when one is registered
-        in ``SystemConfig.inference_service_urls`` so the runtime image doesn't
-        need the heavy local gliner+torch stack. The canonical server is
-        ``cogniverse_cli.modal_inference.servers.gliner``.
-        Falls back to a local-load (which usually fails in the slim
-        production image) only when the env doesn't expose the URL.
+        Uses the explicitly injected GLiNER inference service URL so the
+        runtime image doesn't need the heavy local gliner+torch stack. The
+        canonical server is ``cogniverse_cli.modal_inference.servers.gliner``.
+        A caller that injects ``None`` explicitly selects in-process loading.
         """
         if self._gliner is not None:
             return self._gliner
         if self._gliner_failed:
-            return None
-        from cogniverse_core.common.models import get_or_load_gliner
+            raise RuntimeError("GLiNER model is unavailable after a failed load")
+        with self._gliner_load_lock:
+            if self._gliner is not None:
+                return self._gliner
+            if self._gliner_failed:
+                raise RuntimeError("GLiNER model is unavailable after a failed load")
+            from cogniverse_core.common.models import get_or_load_gliner
 
-        inference_url = self._discover_gliner_url()
-        self._gliner = get_or_load_gliner(
-            "urchade/gliner_large-v2.1",
-            logger=logger,
-            inference_url=inference_url,
-        )
-        if self._gliner is None:
-            self._gliner_failed = True
-        return self._gliner
+            try:
+                model = get_or_load_gliner(
+                    "urchade/gliner_large-v2.1",
+                    logger=logger,
+                    inference_url=self._gliner_inference_url,
+                )
+            except Exception as exc:
+                self._gliner_failed = True
+                raise RuntimeError("GLiNER model failed to load") from exc
+            if model is None:
+                self._gliner_failed = True
+                raise RuntimeError("GLiNER model is unavailable")
+            self._gliner = model
+            return model
 
     @staticmethod
     def _discover_gliner_url():
-        """Return the GLiNER inference service URL from SystemConfig or env."""
-        import os as _os
-
+        """Return the GLiNER inference service URL from validated system configuration."""
         try:
-            from cogniverse_foundation.config.utils import (  # noqa: PLC0415
-                get_config_manager_singleton,
-            )
-
             sys_cfg = get_config_manager_singleton().get_system_config()
-            url = (sys_cfg.inference_service_urls or {}).get("gliner")
-            if url:
-                return url
-        except Exception as exc:  # noqa: BLE001 — log + degrade
-            # Fall through to env / None — the loader handles both.
-            # Log at debug so misconfig is investigable but doesn't
-            # spam the worker log every entity extraction.
-            logger.debug(
-                "GLiNER URL discovery via ConfigManager singleton failed "
-                "(falling back to env / default): %s",
-                exc,
-            )
-        # Env-backed override for processes that don't share the
-        # SystemConfig singleton (e.g. the ingestor worker, which builds
-        # its own ConfigManager). Reads INFERENCE_SERVICE_URLS or the
-        # dedicated GLINER_INFERENCE_URL var.
-        import json as _json
-
-        raw = _os.environ.get("INFERENCE_SERVICE_URLS")
-        if raw:
-            try:
-                parsed = _json.loads(raw)
-            except _json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, dict):
-                url = parsed.get("gliner")
-                if url:
-                    return url
-        return _os.environ.get("GLINER_INFERENCE_URL")
+        except Exception as exc:
+            raise RuntimeError(
+                "failed to resolve GLiNER inference service URL from system "
+                "configuration"
+            ) from exc
+        return (sys_cfg.inference_service_urls or {}).get("gliner")
 
     def extract(
         self,
@@ -422,56 +406,57 @@ class DocExtractor:
         segment_anchor: Mention,
     ) -> SegmentEntities:
         gliner = self._get_gliner()
+        if gliner is None:
+            raise RuntimeError("GLiNER model is unavailable")
         nodes: List[Node] = []
         seen: Set[str] = set()
         per_chunk_entity_names: List[List[str]] = []
         gliner_chunks = 0
         gliner_failures = 0
 
-        for chunk in self._chunk_text(text):
+        for chunk_index, chunk in enumerate(self._chunk_text(text), start=1):
             entities_in_chunk: List[Tuple[str, str]] = []
 
-            if gliner is not None:
-                gliner_chunks += 1
-                try:
-                    # 0.3 chosen empirically against the production
-                    # gliner_large-v2.1 inference service: at 0.5 the model
-                    # silently drops named entities scoring well above
-                    # the threshold (observed against a real video
-                    # transcript — 'Bear Grylls' at 0.917 was returned
-                    # at 0.3 but not at 0.5). 0.3 preserves real
-                    # entities; pronoun + verb noise is filtered
-                    # downstream by _PRONOUN_BLOCKLIST + _COMMON_VERB_
-                    # BLOCKLIST.
-                    raw = gliner.predict_entities(chunk, self._labels, threshold=0.3)
-                    logger.info(
-                        "GLiNER returned %d raw entities for chunk (len=%d): %s",
-                        len(raw),
-                        len(chunk),
-                        [
-                            (e.get("text"), e.get("label"), round(e.get("score", 0), 3))
-                            for e in raw[:8]
-                        ],
-                    )
-                    for ent in raw:
-                        name = ent.get("text", "").strip()
-                        label = ent.get("label", "Concept")
-                        if not name or len(name) < 2:
-                            continue
-                        if _is_blocked_entity(name):
-                            continue
-                        entities_in_chunk.append((name, label))
-                    logger.info(
-                        "After filtering: %d entities → %s",
-                        len(entities_in_chunk),
-                        entities_in_chunk[:8],
-                    )
-                except Exception as exc:
-                    gliner_failures += 1
-                    logger.warning("GLiNER prediction failed on chunk: %s", exc)
-
-            if not entities_in_chunk:
-                entities_in_chunk = self._fallback_extract(chunk)
+            gliner_chunks += 1
+            try:
+                # 0.3 chosen empirically against the production
+                # gliner_large-v2.1 inference service: at 0.5 the model
+                # silently drops named entities scoring well above
+                # the threshold (observed against a real video
+                # transcript — 'Bear Grylls' at 0.917 was returned
+                # at 0.3 but not at 0.5). 0.3 preserves real
+                # entities; pronoun + verb noise is filtered
+                # downstream by _PRONOUN_BLOCKLIST + _COMMON_VERB_
+                # BLOCKLIST.
+                raw = gliner.predict_entities(chunk, self._labels, threshold=0.3)
+                logger.info(
+                    "GLiNER returned %d raw entities for chunk (len=%d): %s",
+                    len(raw),
+                    len(chunk),
+                    [
+                        (e.get("text"), e.get("label"), round(e.get("score", 0), 3))
+                        for e in raw[:8]
+                    ],
+                )
+                for ent in raw:
+                    name = ent.get("text", "").strip()
+                    label = ent.get("label", "Concept")
+                    if not name or len(name) < 2:
+                        continue
+                    if _is_blocked_entity(name):
+                        continue
+                    entities_in_chunk.append((name, label))
+                logger.info(
+                    "After filtering: %d entities → %s",
+                    len(entities_in_chunk),
+                    entities_in_chunk[:8],
+                )
+            except Exception as exc:
+                gliner_failures += 1
+                raise RuntimeError(
+                    f"GLiNER prediction failed for chunk {chunk_index} "
+                    f"of source {source_doc_id!r}"
+                ) from exc
 
             chunk_evidence = _truncate(chunk, _MAX_EVIDENCE_CHARS)
             for name, label in entities_in_chunk:
@@ -503,20 +488,11 @@ class DocExtractor:
             # hints the claim pass merges with prior_entities for this chunk.
             per_chunk_entity_names.append([name for name, _ in entities_in_chunk])
 
-        # A total GLiNER outage — configured, but every chunk's prediction
-        # failed — would otherwise return a knowledge graph built entirely from
-        # regex-fallback noise while the ingest reports success. Fail loud so the
-        # outage surfaces instead of silently degrading KG quality.
-        if (
-            gliner is not None
-            and gliner_chunks > 0
-            and gliner_failures == gliner_chunks
-        ):
-            raise RuntimeError(
-                f"GLiNER entity extraction failed on all {gliner_chunks} "
-                f"chunk(s) (sidecar outage); refusing to return a regex-only "
-                f"knowledge graph."
-            )
+        logger.debug(
+            "GLiNER processed %d chunks with %d failures",
+            gliner_chunks,
+            gliner_failures,
+        )
 
         return SegmentEntities(
             nodes=nodes, per_chunk_entity_names=per_chunk_entity_names

@@ -315,7 +315,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         Search Vespa with ColPali embeddings
 
         Args:
-            query_embedding: ColPali query embedding [1024, 128]
+            query_embedding: Tomoro ColQwen3 query embedding [patches, 320]
             query_text: Original text query
             search_mode: "semantic" or "hybrid"
             limit: Number of results
