@@ -5,7 +5,10 @@ Generic human-in-the-loop approval agent using dependency injection.
 Works for any domain by accepting ConfidenceExtractor and FeedbackHandler.
 """
 
+import copy
 import logging
+import math
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from cogniverse_core.approval.interfaces import (
@@ -16,7 +19,9 @@ from cogniverse_core.approval.interfaces import (
     FeedbackHandler,
     ReviewDecision,
     ReviewItem,
+    approved_synthetic_dataset_name,
 )
+from cogniverse_core.common.tenant_utils import require_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +37,14 @@ class HumanApprovalAgent:
 
     Example usage:
         # For synthetic data
+        regenerator = ValidatedSyntheticExampleRegenerator(max_retries=3)
+        regenerator.lm = primary_lm
         agent = HumanApprovalAgent(
             confidence_extractor=SyntheticDataConfidenceExtractor(),
-            feedback_handler=SyntheticDataFeedbackHandler(generator),
+            feedback_handler=SyntheticDataFeedbackHandler(
+                generator=regenerator,
+                generation_timeout_seconds=primary_config.request_timeout,
+            ),
             confidence_threshold=0.85
         )
 
@@ -62,6 +72,13 @@ class HumanApprovalAgent:
             confidence_threshold: Auto-approve above this score (0-1)
             storage: Storage backend for approval data
         """
+        if (
+            isinstance(confidence_threshold, bool)
+            or not isinstance(confidence_threshold, (int, float))
+            or not math.isfinite(confidence_threshold)
+            or not 0 <= confidence_threshold <= 1
+        ):
+            raise ValueError("confidence_threshold must be a finite number in [0, 1]")
         self.confidence_extractor = confidence_extractor
         self.feedback_handler = feedback_handler
         self.threshold = confidence_threshold
@@ -93,6 +110,19 @@ class HumanApprovalAgent:
             storage=storage,
         )
 
+    @staticmethod
+    def _validated_confidence(item_id: str, confidence: Any) -> float:
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not math.isfinite(confidence)
+            or not 0 <= confidence <= 1
+        ):
+            raise ValueError(
+                f"Review item {item_id!r} confidence must be a finite number in [0, 1]"
+            )
+        return float(confidence)
+
     async def submit_for_review(self, batch: ApprovalBatch) -> ApprovalBatch:
         """Register a pre-built batch for human review and persist it.
 
@@ -110,6 +140,7 @@ class HumanApprovalAgent:
         items.
         """
         for item in batch.items:
+            item.confidence = self._validated_confidence(item.item_id, item.confidence)
             item.status = (
                 ApprovalStatus.AUTO_APPROVED
                 if item.confidence >= self.threshold
@@ -117,7 +148,7 @@ class HumanApprovalAgent:
             )
 
         if self.storage:
-            await self.storage.save_batch(batch)
+            await self._persist_submitted_batch(batch)
 
         logger.info(
             f"Submitted batch {batch.batch_id} for review: "
@@ -125,6 +156,50 @@ class HumanApprovalAgent:
             f"{len(batch.pending_review)} pending human review"
         )
         return batch
+
+    async def _persist_submitted_batch(self, batch: ApprovalBatch) -> None:
+        batch_tenant = require_tenant_id(
+            batch.context.get("tenant_id"),
+            source=f"approval batch {batch.batch_id} context",
+        )
+        storage_tenant = getattr(self.storage, "tenant_id", None)
+        if not isinstance(storage_tenant, str) or not storage_tenant.strip():
+            raise RuntimeError("Approval storage must expose a non-empty tenant_id")
+        if storage_tenant != batch_tenant:
+            raise ValueError(
+                "Approval batch tenant does not match its storage: "
+                f"batch={batch.batch_id} context_tenant={batch_tenant} "
+                f"storage_tenant={storage_tenant}"
+            )
+        batch.context["tenant_id"] = batch_tenant
+        persist_approved = getattr(self.storage, "persist_approved_item", None)
+        if batch.auto_approved and not callable(persist_approved):
+            raise RuntimeError(
+                "Approval storage must implement persist_approved_item before "
+                "auto-approved items can be submitted"
+            )
+        await self.storage.save_batch(batch)
+
+        for index, item in enumerate(list(batch.items)):
+            if item.status is not ApprovalStatus.AUTO_APPROVED:
+                continue
+            decision = ReviewDecision(
+                item_id=item.item_id,
+                approved=True,
+                feedback=(
+                    f"confidence {item.confidence} met automatic approval "
+                    f"threshold {self.threshold}"
+                ),
+                reviewer="cogniverse:auto-approval",
+                timestamp=item.created_at,
+            )
+            batch.items[index] = await persist_approved(
+                batch_id=batch.batch_id,
+                dataset_name=approved_synthetic_dataset_name(batch_tenant),
+                item=item,
+                decision=decision,
+                project_context=batch.context,
+            )
 
     async def process_batch(
         self, items: List[Dict[str, Any]], batch_id: str, context: Dict[str, Any]
@@ -143,12 +218,18 @@ class HumanApprovalAgent:
         Returns:
             ApprovalBatch with items split by confidence
         """
+        agent_type = context.get("agent_type")
+        if not isinstance(agent_type, str) or not agent_type.strip():
+            raise ValueError("context.agent_type must be a non-empty string")
         logger.info(f"Processing batch {batch_id} with {len(items)} items")
 
         # Convert to ReviewItems with confidence scores
         review_items = []
         for i, item in enumerate(items):
-            confidence = self.confidence_extractor.extract(item)
+            item_id = f"{batch_id}_{i}"
+            confidence = self._validated_confidence(
+                item_id, self.confidence_extractor.extract(item)
+            )
             status = (
                 ApprovalStatus.AUTO_APPROVED
                 if confidence >= self.threshold
@@ -156,10 +237,11 @@ class HumanApprovalAgent:
             )
 
             review_item = ReviewItem(
-                item_id=f"{batch_id}_{i}",
+                item_id=item_id,
                 data=item,
                 confidence=confidence,
                 metadata={
+                    "agent_type": agent_type,
                     "batch_id": batch_id,
                     "index": i,
                 },
@@ -172,7 +254,7 @@ class HumanApprovalAgent:
 
         # Save to storage if available
         if self.storage:
-            await self.storage.save_batch(batch)
+            await self._persist_submitted_batch(batch)
             logger.info(
                 f"Saved batch {batch_id} to storage "
                 f"(auto_approved: {len(batch.auto_approved)}, "
@@ -216,59 +298,152 @@ class HumanApprovalAgent:
         if not batch:
             raise ValueError(f"Batch {batch_id} not found")
 
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+        if isinstance(self.storage, ApprovalStorageImpl):
+            batch_tenant = require_tenant_id(
+                batch.context.get("tenant_id"),
+                source=f"approval batch {batch.batch_id} context",
+            )
+            if self.storage.tenant_id != batch_tenant:
+                raise ValueError(
+                    "Approval batch tenant does not match its storage: "
+                    f"batch={batch.batch_id} context_tenant={batch_tenant} "
+                    f"storage_tenant={self.storage.tenant_id}"
+                )
+            batch.context["tenant_id"] = batch_tenant
+
         item = next((i for i in batch.items if i.item_id == decision.item_id), None)
         if not item:
             raise ValueError(f"Item {decision.item_id} not found in batch {batch_id}")
 
-        # Apply decision. The audit annotation is written FIRST: it raises on
-        # an annotation-backend outage, and at that point nothing has been
-        # persisted — the item stays pending and the whole approval is
-        # retryable. The old order committed status=APPROVED before the
-        # annotation write, so an outage left the item approved-but-unaudited
-        # and skipped the training-dataset append. A re-approval after a
-        # failure later in the sequence re-runs every step (the status update
-        # is idempotent; a duplicate annotation is append-only evidence).
-        if decision.approved:
-            from cogniverse_agents.approval.approval_storage import (
-                ApprovalStorageImpl,
+        if isinstance(self.storage, ApprovalStorageImpl):
+            await self.storage.select_review_decision(
+                batch_id=batch.batch_id,
+                original_item_id=item.item_id,
+                decision=decision,
             )
 
+        if decision.approved:
             if isinstance(self.storage, ApprovalStorageImpl):
-                span_id = await self.storage.get_item_span_id(
-                    item.item_id, batch_id=batch.batch_id
+                batch_tenant = require_tenant_id(
+                    batch.context.get("tenant_id"),
+                    source=f"approval batch {batch.batch_id} context",
                 )
-                if span_id:
-                    await self.storage.log_approval_decision(
-                        span_id=span_id,
-                        item_id=item.item_id,
-                        approved=True,
-                        feedback=decision.feedback,
-                        reviewer=decision.reviewer,
+                if self.storage.tenant_id != batch_tenant:
+                    raise ValueError(
+                        "Approval batch tenant does not match its storage: "
+                        f"batch={batch.batch_id} context_tenant={batch_tenant} "
+                        f"storage_tenant={self.storage.tenant_id}"
                     )
-
-            item.status = ApprovalStatus.APPROVED
-            await self.storage.update_item(item, batch_id=batch.batch_id)
-
-            if isinstance(self.storage, ApprovalStorageImpl):
-                dataset_name = batch.context.get(
-                    "dataset_name", "approved_synthetic_data"
-                )
-                await self.storage.append_to_training_dataset(
-                    dataset_name=dataset_name,
-                    items=[item],
+                batch.context["tenant_id"] = batch_tenant
+                approved = await self.storage.persist_approved_item(
+                    batch_id=batch.batch_id,
+                    dataset_name=approved_synthetic_dataset_name(batch_tenant),
+                    item=item,
+                    decision=decision,
                     project_context=batch.context,
                 )
+            else:
+                if not isinstance(decision.timestamp, datetime):
+                    raise ValueError("Review decision timestamp is required")
+                if (
+                    decision.timestamp.tzinfo is None
+                    or decision.timestamp.utcoffset() is None
+                ):
+                    raise ValueError(
+                        "Review decision timestamp must include timezone information"
+                    )
+                approved = copy.deepcopy(item)
+                approved.status = ApprovalStatus.APPROVED
+                approved.reviewed_at = decision.timestamp
+                approved.metadata["decision"] = {
+                    "reviewer": decision.reviewer,
+                    "feedback": decision.feedback,
+                    "corrections": copy.deepcopy(decision.corrections),
+                    "timestamp": decision.timestamp.isoformat(),
+                }
+                await self.storage.update_item(approved, batch_id=batch.batch_id)
 
-            logger.info(f"Item {item.item_id} approved and added to training dataset")
-            return item
+            logger.info(
+                f"Item {approved.item_id} approved and added to training dataset"
+            )
+            return approved
 
         else:
-            # Same ordering contract as the approve branch: audit annotation
-            # first (raises on outage with nothing persisted), then status.
+            if self.feedback_handler:
+                logger.info(
+                    f"Item {item.item_id} rejected, attempting regeneration "
+                    f"with feedback: {decision.feedback}"
+                )
+                regenerated = await self.feedback_handler.process_rejection(
+                    item, decision
+                )
+                if regenerated:
+                    if decision.timestamp is None:
+                        raise ValueError("Review decision timestamp is required")
+                    agent_type = item.metadata.get("agent_type")
+                    if not isinstance(agent_type, str) or not agent_type.strip():
+                        raise ValueError(
+                            "original item metadata.agent_type must be a non-empty string"
+                        )
+                    regenerated.status = ApprovalStatus.REGENERATED
+                    regenerated.metadata["agent_type"] = agent_type
+                    regenerated.metadata["original_item_id"] = item.item_id
+                    regenerated.metadata["regeneration_feedback"] = decision.feedback
+                    regenerated.metadata["decision"] = {
+                        "reviewer": decision.reviewer,
+                        "feedback": decision.feedback,
+                        "corrections": dict(decision.corrections),
+                        "timestamp": decision.timestamp.isoformat(),
+                    }
+                    await self.storage.replace_item(batch.batch_id, item, regenerated)
+                    persisted_batch = await self.storage.get_batch(batch.batch_id)
+                    if persisted_batch is None:
+                        raise RuntimeError(
+                            "Replacement batch disappeared after persistence: "
+                            f"batch={batch.batch_id} original={item.item_id}"
+                        )
+                    canonical_replacements = [
+                        candidate
+                        for candidate in persisted_batch.items
+                        if candidate.status is ApprovalStatus.REGENERATED
+                        and candidate.metadata.get("original_item_id") == item.item_id
+                    ]
+                    if len(canonical_replacements) != 1:
+                        raise RuntimeError(
+                            "Expected one canonical replacement after persistence: "
+                            f"batch={batch.batch_id} original={item.item_id} "
+                            f"count={len(canonical_replacements)}"
+                        )
+                    regenerated = canonical_replacements[0]
+                    logger.info(
+                        f"Item {item.item_id} regenerated successfully as "
+                        f"{regenerated.item_id}"
+                    )
+                    return regenerated
+
+                logger.warning(f"Failed to regenerate item {item.item_id}")
+            else:
+                logger.info(
+                    f"Item {item.item_id} rejected, no feedback handler available"
+                )
+
+            # If regeneration produced no replacement, record the rejection
+            # before changing the item status so a failed write remains retryable.
             from cogniverse_agents.approval.approval_storage import (
                 ApprovalStorageImpl,
             )
 
+            if not isinstance(decision.timestamp, datetime):
+                raise ValueError("Review decision timestamp is required")
+            if (
+                decision.timestamp.tzinfo is None
+                or decision.timestamp.utcoffset() is None
+            ):
+                raise ValueError(
+                    "Review decision timestamp must include timezone information"
+                )
             if isinstance(self.storage, ApprovalStorageImpl):
                 span_id = await self.storage.get_item_span_id(
                     item.item_id, batch_id=batch.batch_id
@@ -280,38 +455,18 @@ class HumanApprovalAgent:
                         approved=False,
                         feedback=decision.feedback,
                         reviewer=decision.reviewer,
+                        decision_timestamp=decision.timestamp,
                     )
 
             item.status = ApprovalStatus.REJECTED
+            item.reviewed_at = decision.timestamp
+            item.metadata["decision"] = {
+                "reviewer": decision.reviewer,
+                "feedback": decision.feedback,
+                "corrections": copy.deepcopy(decision.corrections),
+                "timestamp": decision.timestamp.isoformat(),
+            }
             await self.storage.update_item(item, batch_id=batch.batch_id)
-
-            # Attempt regeneration if feedback handler available
-            if self.feedback_handler:
-                logger.info(
-                    f"Item {item.item_id} rejected, attempting regeneration "
-                    f"with feedback: {decision.feedback}"
-                )
-                regenerated = await self.feedback_handler.process_rejection(
-                    item, decision
-                )
-
-                if regenerated:
-                    regenerated.status = ApprovalStatus.REGENERATED
-                    regenerated.metadata["original_item_id"] = item.item_id
-                    regenerated.metadata["regeneration_feedback"] = decision.feedback
-                    await self.storage.update_item(regenerated, batch_id=batch.batch_id)
-                    logger.info(
-                        f"Item {item.item_id} regenerated successfully as "
-                        f"{regenerated.item_id}"
-                    )
-                    return regenerated
-                else:
-                    logger.warning(f"Failed to regenerate item {item.item_id}")
-            else:
-                logger.info(
-                    f"Item {item.item_id} rejected, no feedback handler available"
-                )
-
             return item
 
     async def apply_batch_decisions(
@@ -360,7 +515,9 @@ class HumanApprovalAgent:
 
         pending_items = []
         for batch in batches:
-            pending_items.extend(batch.pending_review)
+            for item in batch.pending_review:
+                item.metadata["approval_batch_id"] = batch.batch_id
+                pending_items.append(item)
 
         logger.info(
             f"Found {len(pending_items)} pending items across {len(batches)} batches"

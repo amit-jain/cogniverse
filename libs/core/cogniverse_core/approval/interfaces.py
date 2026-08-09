@@ -236,6 +236,22 @@ class ApprovalStorage(ABC):
         pass
 
     @abstractmethod
+    async def replace_item(
+        self,
+        batch_id: str,
+        original: ReviewItem,
+        replacement: ReviewItem,
+    ) -> None:
+        """Persist one rejected item and its regenerated replacement atomically.
+
+        Args:
+            batch_id: Batch containing the original item.
+            original: Existing item being rejected.
+            replacement: Regenerated item that supersedes the original.
+        """
+        pass
+
+    @abstractmethod
     async def get_pending_batches(
         self, context_filter: Optional[Dict[str, Any]] = None
     ) -> List[ApprovalBatch]:

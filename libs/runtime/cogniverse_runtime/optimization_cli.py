@@ -1456,47 +1456,107 @@ async def _load_approved_synthetic_data(
     telemetry_provider,
     tenant_id: str,
     optimizer_type: str,
-) -> list:
-    """Load approved synthetic datasets for an optimizer type.
+) -> list[dict[str, Any]]:
+    """Load optimizer inputs from the dataset written by human approval."""
+    from cogniverse_agents.approval.approval_storage import (
+        validate_approved_dataset_record,
+    )
+    from cogniverse_core.approval.interfaces import (
+        ApprovalStatus,
+        approved_synthetic_dataset_name,
+    )
+    from cogniverse_core.approval.training_schema import (
+        validate_approved_training_values,
+    )
+    from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
+    from cogniverse_synthetic.registry import (
+        APPROVED_TRAINING_AGENT_BY_OPTIMIZER,
+    )
 
-    Returns list of demo dicts from datasets with status APPROVED or AUTO_APPROVED.
-    Returns empty list if none found or if approval module is not available.
-    """
-    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    expected_agent_type = APPROVED_TRAINING_AGENT_BY_OPTIMIZER.get(optimizer_type)
+    if expected_agent_type is None:
+        raise ValueError(
+            f"optimizer {optimizer_type!r} has no approved training-data consumer"
+        )
 
-    am = ArtifactManager(telemetry_provider, tenant_id)
-    demos = await am.load_demonstrations(f"synthetic_{optimizer_type}")
-    if not demos:
+    dataset_name = approved_synthetic_dataset_name(tenant_id)
+    try:
+        dataset_df = await telemetry_provider.datasets.get_dataset(name=dataset_name)
+    except DatasetNotFoundError:
+        return []
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to load approved synthetic data for "
+            f"tenant={tenant_id} optimizer={optimizer_type} "
+            f"dataset={dataset_name}"
+        ) from exc
+
+    if dataset_df is None:
+        raise RuntimeError(
+            "Approved synthetic dataset provider returned no frame for "
+            f"tenant={tenant_id} optimizer={optimizer_type} "
+            f"dataset={dataset_name}"
+        )
+    if dataset_df.empty:
         return []
 
-    try:
-        from cogniverse_core.approval.interfaces import ApprovalStatus
-
-        approved_statuses = {
-            ApprovalStatus.APPROVED.value,
-            ApprovalStatus.AUTO_APPROVED.value,
-        }
-    except ImportError:
-        approved_statuses = {"approved", "auto_approved"}
-
+    bookkeeping_fields = {
+        "item_id",
+        "confidence",
+        "status",
+        "created_at",
+        "reviewed_at",
+    }
     approved = []
-    for demo in demos:
-        metadata = demo.get("metadata", {})
-        if isinstance(metadata, str):
-            try:
-                import json as _json
+    for position, (_, row) in enumerate(dataset_df.iterrows()):
+        record = row.get("input")
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"Approved synthetic dataset row {position} has no input record"
+            )
+        record = validate_approved_dataset_record(
+            record,
+            tenant_id=dataset_name.removeprefix("approved_synthetic_data-"),
+            dataset_name=dataset_name,
+            position=position,
+        )
+        if record.get("status") != ApprovalStatus.APPROVED.value:
+            continue
+        if record.get("context.optimizer") != optimizer_type:
+            continue
 
-                metadata = _json.loads(metadata)
-            except (ValueError, TypeError):
-                metadata = {}
-        status = metadata.get("approval_status", "")
-        if status in approved_statuses:
-            approved.append(demo)
+        agent_type = record.get("metadata.agent_type")
+        if agent_type != expected_agent_type:
+            raise ValueError(
+                f"Approved synthetic dataset row {position} for "
+                f"optimizer={optimizer_type} requires "
+                f"metadata.agent_type={expected_agent_type!r}, got {agent_type!r}"
+            )
+
+        example = {}
+        for key, value in record.items():
+            if (
+                key in bookkeeping_fields
+                or key.startswith("metadata.")
+                or key.startswith("context.")
+            ):
+                continue
+            example[key] = value
+        validate_approved_training_values(
+            example,
+            expected_agent_type,
+            context=(
+                f"Approved synthetic dataset row {position} for "
+                f"optimizer={optimizer_type}"
+            ),
+        )
+        approved.append(example)
 
     logger.info(
-        "Loaded %d/%d approved synthetic examples for %s",
+        "Loaded %d/%d approved synthetic examples from %s for %s",
         len(approved),
-        len(demos),
+        len(dataset_df),
+        dataset_name,
         optimizer_type,
     )
     return approved
