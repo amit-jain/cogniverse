@@ -137,16 +137,16 @@ class BackendQuerier:
             if strategy == "entity_rich"
             else None
         )
-        schema_name = self.backend.get_tenant_schema_name(
-            tenant_id,
-            base_schema_name,
-        )
+        # The backend resolves the tenant's physical schema from the base name
+        # and rewrites the YQL source clause; passing a pre-resolved name would
+        # double-apply the tenant suffix.
+        schema_name = base_schema_name
 
         query_size = max(sample_size, 10) if entity_fields is not None else sample_size
         logger.debug(
-            "Querying tenant schema %s for base profile %s with strategy '%s'",
+            "Querying base schema %s for tenant %s with strategy '%s'",
             schema_name,
-            base_schema_name,
+            tenant_id,
             strategy,
         )
 
