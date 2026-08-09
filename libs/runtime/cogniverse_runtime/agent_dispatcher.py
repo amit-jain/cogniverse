@@ -930,36 +930,44 @@ class AgentDispatcher:
 
         The mixin's ``set_session_id`` hook auto-applies the id to every
         ``add_memory`` write so EPHEMERAL_SESSION-kind writes pass schema
-        validation without each agent threading session_id through its
-        own metadata. Cleared on exit so a long-lived agent instance
-        doesn't bleed one request's session into the next.
+        validation without each agent threading session_id through its own
+        metadata. The hook is called with ``None`` before an id-less request
+        as well as on exit, so stale state cannot reach the request body.
+        Setup and cleanup failures raise with the agent and session named;
+        a cleanup failure never masks an in-flight request error.
 
         Agents that don't inherit MemoryAwareMixin silently no-op.
         """
         setter = getattr(agent, "set_session_id", None)
-        if setter is None or not session_id:
+        if setter is None:
             yield
             return
+        agent_name = getattr(agent, "_memory_agent_name", None) or type(agent).__name__
         try:
             setter(session_id)
         except Exception as exc:
-            logger.debug("set_session_id failed (non-fatal): %s", exc)
-            yield
-            return
+            raise RuntimeError(
+                f"Agent {agent_name!r} session {session_id!r} setup failed: {exc}"
+            ) from exc
         try:
             yield
-        finally:
+        except BaseException:
             try:
                 setter(None)
-            except Exception as exc:  # noqa: BLE001 — log + degrade
-                # Session-clear is best-effort cleanup; failures here
-                # leak session-id into the next request handled by this
-                # event-loop slot. Log so the leak is investigable.
-                logger.warning(
-                    "Session-id clear failed (next request may inherit "
-                    "stale session_id): %s",
-                    exc,
+            except Exception:
+                logger.exception(
+                    "Agent %r session %r cleanup failed after request error; "
+                    "the next request on this instance re-clears the scope",
+                    agent_name,
+                    session_id,
                 )
+            raise
+        try:
+            setter(None)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Agent {agent_name!r} session {session_id!r} cleanup failed: {exc}"
+            ) from exc
 
     @staticmethod
     def _resolve_signature_variant(tenant_id: str, agent_name: str) -> str:
