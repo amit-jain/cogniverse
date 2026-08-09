@@ -156,6 +156,16 @@ dual-read/dual-write paths, version shims, or silent acceptance of obsolete
 data. Treat old forms as invalid. If removal of an old production path is
 required, present the exact deletion for the user's approval.
 
+**5. Docs and comments describe what IS, briefly.** `docs/` documents the
+current system. Never add what was, what changed, what was removed, what was
+considered and rejected, or what might be done later — no history logs, no
+decision records, no migration narration, unless explicitly asked for that
+artifact. Rationale for a change belongs in its commit message; a branch that
+should not be merged is marked with `git config branch.<name>.description`, not
+a page in `docs/`. Same bar for length: write the shortest thing that is
+accurate and useful. No essays, no restating the obvious, no section headers
+padding two sentences. If a reader would skim it, cut it.
+
 ## Agent Directives
 
 The governing loop for all work: **gather context → take action → verify work → repeat.**
