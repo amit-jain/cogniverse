@@ -53,6 +53,17 @@ class TraceStore(ABC):
         pass
 
     @abstractmethod
+    async def get_all_spans(
+        self,
+        project: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> pd.DataFrame:
+        """Query every matching span using provider-native pagination."""
+        pass
+
+    @abstractmethod
     async def get_span_by_id(
         self, span_id: str, project: str
     ) -> Optional[Dict[str, Any]]:
@@ -349,6 +360,8 @@ class TelemetryProvider(ABC):
         use_batch_export: bool = True,
         batch_config: Optional[Any] = None,
         resource_attributes: Optional[Dict[str, str]] = None,
+        *,
+        raise_on_export_failure: bool,
     ) -> Any:
         """
         Configure OTLP span export for a project.
@@ -360,13 +373,20 @@ class TelemetryProvider(ABC):
             endpoint: OTLP gRPC endpoint for span export (e.g., "localhost:4317")
             project_name: Full project name (e.g., "cogniverse-tenant-service")
             use_batch_export: Use batch processor (True) vs simple/sync processor (False)
+            batch_config: Queue settings and export deadline. Required when
+                ``raise_on_export_failure`` is true.
+            resource_attributes: Resource attributes attached to every span.
+            raise_on_export_failure: Surface a synchronous exporter rejection to
+                the span caller. Must be false for batch export and requires a
+                positive ``batch_config.export_timeout_millis``.
 
         Returns:
             TracerProvider instance (OpenTelemetry type)
 
         Raises:
             RuntimeError: If span export configuration fails
-            ValueError: If endpoint or project_name invalid
+            ValueError: If the configuration cannot provide the requested
+                export guarantee.
         """
         pass
 

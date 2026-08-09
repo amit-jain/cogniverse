@@ -686,3 +686,147 @@ class TestManagerResetRebuildRealPhoenix:
         finally:
             TelemetryManager.reset()
             manager_mod._telemetry_manager = None
+
+
+@pytest.mark.integration
+@pytest.mark.telemetry
+@pytest.mark.ci_fast
+class TestRequiredSpanRealBoundary:
+    @pytest.mark.asyncio
+    async def test_required_span_round_trips_exact_record(self, phoenix_container):
+        import asyncio
+
+        TelemetryManager.reset()
+        run_id = uuid.uuid4().hex
+        tenant_id = f"required-{run_id[:8]}"
+        config = TelemetryConfig(
+            enabled=True,
+            level=TelemetryLevel.VERBOSE,
+            otlp_endpoint=phoenix_container["grpc_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            service_name="required-span-test",
+            environment="test",
+            batch_config=BatchExportConfig(
+                use_sync_export=False,
+                export_timeout_millis=10_000,
+            ),
+        )
+        manager = TelemetryManager(config)
+        project = config.get_project_name(tenant_id, "experiments")
+
+        try:
+            async with manager.required_span(
+                f"required_record_{run_id}",
+                tenant_id=tenant_id,
+                project_name="experiments",
+                attributes={
+                    "run.id": run_id,
+                    "record.kind": "adapter_publication",
+                },
+            ) as span:
+                span.set_attribute("record.state", "committed")
+
+            def emit_thread_control():
+                with manager.span(
+                    f"required_thread_control_{run_id}",
+                    tenant_id=tenant_id,
+                    project_name="experiments",
+                    attributes={"run.id": run_id},
+                    require_export=True,
+                ):
+                    pass
+
+            await asyncio.to_thread(emit_thread_control)
+
+            from phoenix.client import Client
+
+            client = Client(base_url=phoenix_container["http_endpoint"])
+
+            async def load_record():
+                project_names = set()
+                for _ in range(120):
+                    projects = await asyncio.to_thread(client.projects.list)
+                    project_names = {item["name"] for item in projects}
+                    for observed_project in project_names:
+                        frame = await asyncio.to_thread(
+                            client.spans.get_spans_dataframe,
+                            project_identifier=observed_project,
+                        )
+                        if frame.empty or "name" not in frame.columns:
+                            continue
+                        expected_names = {
+                            f"required_record_{run_id}",
+                            f"required_thread_control_{run_id}",
+                        }
+                        matches = frame[frame["name"].isin(expected_names)]
+                        if not matches.empty:
+                            return observed_project, matches, project_names
+                    await asyncio.sleep(0.1)
+                return None, None, project_names
+
+            observed_project, matches, project_names = await load_record()
+            assert observed_project == project, project_names
+            assert matches is not None
+            assert set(matches["name"]) == {
+                f"required_record_{run_id}",
+                f"required_thread_control_{run_id}",
+            }
+            assert len(matches) == 2
+            record = matches[matches["name"] == f"required_record_{run_id}"].iloc[0]
+            assert record["attributes.run"] == {"id": run_id}
+            assert record["attributes.record"] == {
+                "kind": "adapter_publication",
+                "state": "committed",
+            }
+            assert record["attributes.tenant"] == {"id": tenant_id}
+            assert record["attributes.service"] == {"name": "required-span-test"}
+            assert record["attributes.environment"] == "test"
+        finally:
+            TelemetryManager.reset()
+
+    @pytest.mark.asyncio
+    async def test_required_span_reports_closed_collector_failure(
+        self,
+        unused_tcp_port,
+    ):
+        TelemetryManager.reset()
+        endpoint = f"localhost:{unused_tcp_port}"
+        config = TelemetryConfig(
+            enabled=True,
+            level=TelemetryLevel.VERBOSE,
+            otlp_endpoint=endpoint,
+            service_name="required-span-test",
+            environment="test",
+            batch_config=BatchExportConfig(
+                use_sync_export=False,
+                export_timeout_millis=100,
+            ),
+        )
+        manager = TelemetryManager(config)
+
+        try:
+            with pytest.raises(
+                RuntimeError,
+                match=(
+                    "Required telemetry export failed: tenant=closed-boundary "
+                    "project=cogniverse-closed-boundary-experiments "
+                    f"endpoint={endpoint}"
+                ),
+            ) as exc_info:
+                async with manager.required_span(
+                    "required_record",
+                    tenant_id="closed-boundary",
+                    project_name="experiments",
+                    attributes={"run.id": "must-not-succeed"},
+                ):
+                    pass
+            assert str(exc_info.value.__cause__) == (
+                "Phoenix rejected required span export: "
+                "project=cogniverse-closed-boundary-experiments "
+                f"endpoint={endpoint}"
+            )
+        finally:
+            TelemetryManager.reset()
