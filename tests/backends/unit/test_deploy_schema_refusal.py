@@ -59,3 +59,48 @@ def test_unreconstructable_orphan_raises_and_does_not_deploy(backend_with_orphan
 
     # The destructive redeploy never ran.
     backend_with_orphan._deploy_package.assert_not_called()
+
+
+def test_config_server_enumeration_failure_aborts_before_deploy(
+    backend_with_orphan,
+    monkeypatch,
+):
+    manager = backend_with_orphan.schema_manager
+
+    def enumerate_schemas(*, raise_on_failure=False):
+        if raise_on_failure:
+            raise ConnectionError("config server unavailable")
+        return []
+
+    manager.list_deployed_document_types.side_effect = enumerate_schemas
+    backend_with_orphan._config_manager_instance = MagicMock()
+    backend_with_orphan._config_manager_instance.get_system_config.return_value = (
+        SimpleNamespace(application_name="cogniverse")
+    )
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    schema_defs = [
+        {"name": "video_acme_acme", "definition": {"name": "video_acme_acme"}}
+    ]
+
+    with pytest.raises(BackendDeploymentError, match="enumerate"):
+        backend_with_orphan.deploy_schemas(schema_defs)
+
+    manager.list_deployed_document_types.assert_called_once_with(raise_on_failure=True)
+    backend_with_orphan._deploy_package.assert_not_called()
+
+
+def test_registry_enumeration_failure_aborts_before_deploy(
+    backend_with_orphan,
+):
+    backend_with_orphan.schema_registry._get_all_schemas.side_effect = ConnectionError(
+        "registry unavailable"
+    )
+    schema_defs = [
+        {"name": "video_acme_acme", "definition": {"name": "video_acme_acme"}}
+    ]
+
+    with pytest.raises(BackendDeploymentError, match="registry"):
+        backend_with_orphan.deploy_schemas(schema_defs)
+
+    backend_with_orphan.schema_manager.list_deployed_document_types.assert_not_called()
+    backend_with_orphan._deploy_package.assert_not_called()

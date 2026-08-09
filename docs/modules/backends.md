@@ -2167,6 +2167,15 @@ store = VespaAdapterStore(
 store.initialize()
 ```
 
+`set_active(adapter_id, tenant_id, agent_type)` verifies that the target
+adapter belongs to that exact tenant and agent type before changing either the
+current or target adapter.
+
+`delete_adapter(adapter_id)` returns `True` for HTTP 200 and `False` only for
+a genuine HTTP 404. Transport failures raise, and returned non-success
+responses raise with adapter context rather than being reported as "not
+found."
+
 ---
 
 ## Usage Examples
