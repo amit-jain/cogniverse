@@ -67,8 +67,9 @@ cogniverse_core/
 │   ├── rails.py                 # Content rails (topic/safety/format) for agent I/O
 │   └── rlm_options.py           # RLMOptions — per-query Recursive Language Model config
 ├── approval/                    # Human-in-the-loop approval interfaces
-│   └── interfaces.py            # ApprovalStatus, ReviewItem, ReviewDecision, ApprovalBatch,
-│                                 # ConfidenceExtractor, FeedbackHandler, ApprovalStorage
+│   ├── interfaces.py            # ApprovalStatus, ReviewItem, ReviewDecision, ApprovalBatch,
+│   │                             # ConfidenceExtractor, FeedbackHandler, ApprovalStorage
+│   └── training_schema.py       # Exact approved synthetic supervision contracts
 ├── registries/                  # Component registries
 │   ├── agent_registry.py        # Agent class registration
 │   ├── backend_registry.py      # Backend provider registration
@@ -741,6 +742,13 @@ contracts. They live in `cogniverse_core` (rather than in one implementation
 package) specifically so both `cogniverse_agents` and `cogniverse_synthetic`
 can depend on the same interfaces without depending on each other.
 
+`approval/training_schema.py` is the shared validator for signed synthetic
+examples consumed by optimization and finetuning. It accepts only the canonical
+agent types, rejects surrounding whitespace rather than normalizing labels, and
+checks semantic supervision: entity relationships reference exact entity text,
+profile selections belong to the offered profile set with known modality and
+complexity labels, and query enhancements contain the complete observed output.
+
 ```python
 from cogniverse_core.approval import (
     ApprovalBatch,
@@ -754,13 +762,13 @@ from cogniverse_core.approval import (
 
 item = ReviewItem(item_id="q1", data={"query": "..."}, confidence=0.42)
 batch = ApprovalBatch(batch_id="b1", items=[item])
-batch.pending_review   # items awaiting human review
+batch.pending_review   # pending and regenerated items awaiting human review
 batch.approval_rate     # (auto_approved + approved) / total
 ```
 
 | Type | Role |
 |---|---|
-| `ApprovalStatus` | `auto_approved` / `pending_review` / `approved` / `rejected` / `regenerated` |
+| `ApprovalStatus` | `auto_approved` / `pending_review` / `approved` / `rejected` / `regenerated`; a regenerated replacement remains in `ApprovalBatch.pending_review` until a reviewer resolves it |
 | `ReviewItem` / `ReviewDecision` / `ApprovalBatch` | Dataclasses carrying domain-specific `data` + review outcome |
 | `ConfidenceExtractor` (ABC) | `extract(data) -> float` — domain-specific confidence scoring |
 | `FeedbackHandler` (ABC) | `process_rejection(item, decision) -> Optional[ReviewItem]` — regenerate on rejection |

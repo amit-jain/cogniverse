@@ -16,6 +16,17 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.common.tenant_utils import require_tenant_id
+
+
+def approved_synthetic_dataset_name(tenant_id: str) -> str:
+    """Return the one Phoenix dataset name for a tenant's approved examples."""
+    canonical_tenant = require_tenant_id(
+        tenant_id,
+        source="approved synthetic dataset",
+    )
+    return f"approved_synthetic_data-{canonical_tenant}"
+
 
 class ApprovalStatus(Enum):
     """Status of a review item"""
@@ -24,7 +35,7 @@ class ApprovalStatus(Enum):
     PENDING_REVIEW = "pending_review"  # Low confidence, awaiting human review
     APPROVED = "approved"  # Human approved
     REJECTED = "rejected"  # Human rejected
-    REGENERATED = "regenerated"  # Rejected and regenerated
+    REGENERATED = "regenerated"  # Regenerated and awaiting another review
 
 
 @dataclass
@@ -91,7 +102,10 @@ class ApprovalBatch:
     def pending_review(self) -> List[ReviewItem]:
         """Items awaiting human review"""
         return [
-            item for item in self.items if item.status == ApprovalStatus.PENDING_REVIEW
+            item
+            for item in self.items
+            if item.status
+            in {ApprovalStatus.PENDING_REVIEW, ApprovalStatus.REGENERATED}
         ]
 
     @property
