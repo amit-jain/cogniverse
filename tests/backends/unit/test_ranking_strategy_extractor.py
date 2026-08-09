@@ -15,6 +15,9 @@ Two regressions guarded here:
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
+import pytest
 
 from cogniverse_vespa.ranking_strategy_extractor import (
     RankingStrategyExtractor,
@@ -145,10 +148,6 @@ def test_extract_all_ranking_strategies_memoized_and_invalidates(tmp_path):
         extract_all_ranking_strategies(tmp_path)
         assert parsed == ["s_schema.json"]  # re-parsed after the edit
 
-
-from pathlib import Path  # noqa: E402
-
-import pytest  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _HYBRID_SCHEMAS = [
@@ -285,13 +284,33 @@ def test_memo_hit_returns_a_fresh_dict_not_the_shared_one(tmp_path):
     assert "s" in second
 
 
-# --------------------------------------------------------------------------- #
+def test_memo_hit_returns_fresh_nested_strategy_values(tmp_path):
+    _write_schema(
+        tmp_path,
+        {
+            "schema": "poison_probe",
+            "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
+            "rank-profiles": [_FLOAT_PROFILE],
+        },
+    )
+
+    first = extract_all_ranking_strategies(tmp_path)
+    first["s"]["float_float"].inputs["injected"] = "tensor<float>(x[1])"
+    first["s"]["float_float"].query_tensors_needed.append("injected")
+    first["s"]["injected_strategy"] = first["s"]["float_float"]
+
+    second = extract_all_ranking_strategies(tmp_path)
+
+    assert set(second["s"]) == {"float_float"}
+    assert second["s"]["float_float"].inputs == {"qt": "tensor<float>(x[128])"}
+    assert second["s"]["float_float"].query_tensors_needed == ["qt"]
+
+
 # nearestNeighbor is derived structurally from the schema: the profile's first
 # phase must score against a dense 1-d embedding attribute. The previous
 # profile-NAME allowlist silently dropped ANN for any profile named outside it
 # (the wiki hybrid/semantic_search profiles ranked BM25-only with a dead
 # closeness term), while text-first profiles must stay off ANN.
-# --------------------------------------------------------------------------- #
 
 _WIKI_FIELDS = {
     "fields": [

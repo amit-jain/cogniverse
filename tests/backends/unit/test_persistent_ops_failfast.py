@@ -11,6 +11,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -88,7 +89,10 @@ def test_health_check_probes_through_the_clamped_session():
     conn.connection_id = "c1"
     conn.is_healthy = True
     conn._sync = MagicMock()
-    conn._sync.query.return_value = {"root": {"children": []}}
+    conn._sync.query.return_value = SimpleNamespace(
+        status_code=200,
+        get_json=lambda: {"root": {"children": []}},
+    )
     conn.vespa = MagicMock()  # the un-clamped app — must NOT be probed
 
     assert conn.health_check() is True

@@ -8,7 +8,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import requests
+from requests.exceptions import HTTPError, RequestException
 from vespa.application import Vespa
+from vespa.exceptions import VespaError
 
 from cogniverse_sdk.interfaces.config_store import (
     ConfigEntry,
@@ -23,10 +26,24 @@ from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
 
+_MAX_VERSION_ALLOCATION_ATTEMPTS = 64
+
 
 def _raise_if_degraded(response: Any, config_id: str) -> None:
     """Raise on a degraded query response — shared guard, config context."""
     raise_if_degraded(response, f"config {config_id}")
+
+
+def _is_condition_miss(error: Exception) -> bool:
+    current: Optional[BaseException] = error
+    while current is not None:
+        response = getattr(current, "response", None)
+        if getattr(response, "status_code", None) == 412:
+            return True
+        if isinstance(current, HTTPError) and str(current).startswith("HTTP 412:"):
+            return True
+        current = current.__cause__
+    return False
 
 
 class VespaConfigStore(ConfigStore):
@@ -47,8 +64,8 @@ class VespaConfigStore(ConfigStore):
             "config_key": "system_config",
             "config_value": {...},
             "version": 1,
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00"
+            "created_at": "2024-01-01T00:00:00+00:00",
+            "updated_at": "2024-01-01T00:00:00+00:00"
         }
     }
     """
@@ -127,6 +144,78 @@ class VespaConfigStore(ConfigStore):
         config_id = f"{tenant_id}:{scope.value}:{service}:{config_key}"
         return config_id
 
+    @staticmethod
+    def _entry_from_fields(fields: Dict[str, Any]) -> ConfigEntry:
+        return ConfigEntry(
+            tenant_id=fields["tenant_id"],
+            scope=ConfigScope(fields["scope"]),
+            service=fields["service"],
+            config_key=fields["config_key"],
+            config_value=json.loads(fields["config_value"]),
+            version=fields["version"],
+            created_at=datetime.fromisoformat(fields["created_at"]),
+            updated_at=datetime.fromisoformat(fields["updated_at"]),
+        )
+
+    def _visit_config_entries(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        scope: Optional[ConfigScope] = None,
+        service: Optional[str] = None,
+        skip_malformed: bool = False,
+    ) -> List[tuple[str, ConfigEntry]]:
+        path = (
+            f"{self.vespa_app.url}/document/v1/"
+            f"{self.schema_name}/{self.schema_name}/docid/"
+        )
+        selection_parts = []
+        if tenant_id is not None:
+            selection_parts.append(
+                f"{self.schema_name}.tenant_id == {yql_quote(tenant_id)}"
+            )
+        if scope is not None:
+            selection_parts.append(
+                f"{self.schema_name}.scope == {yql_quote(scope.value)}"
+            )
+        if service is not None:
+            selection_parts.append(
+                f"{self.schema_name}.service == {yql_quote(service)}"
+            )
+        params: Dict[str, Any] = {"wantedDocumentCount": 1000}
+        if selection_parts:
+            params["selection"] = " and ".join(selection_parts)
+
+        entries: List[tuple[str, ConfigEntry]] = []
+        continuation: Optional[str] = None
+        while True:
+            if continuation:
+                params["continuation"] = continuation
+            response = requests.get(path, params=params, timeout=30)
+            response.raise_for_status()
+            payload = response.json()
+            documents = payload["documents"]
+            if not isinstance(documents, list):
+                raise ValueError("Vespa config visit documents must be a list")
+            for document in documents:
+                fields = document["fields"]
+                try:
+                    config_id = fields["config_id"]
+                    entry = self._entry_from_fields(fields)
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    if not skip_malformed:
+                        raise
+                    logger.warning(
+                        "Skipping malformed config_metadata doc %s: %s",
+                        document.get("id"),
+                        exc,
+                    )
+                    continue
+                entries.append((config_id, entry))
+            continuation = payload.get("continuation")
+            if not continuation:
+                return entries
+
     def _get_latest_version(
         self, tenant_id: str, scope: ConfigScope, service: str, config_key: str
     ) -> int:
@@ -181,69 +270,61 @@ class VespaConfigStore(ConfigStore):
         Returns:
             ConfigEntry with new version number
         """
-        # Get next version
-        current_version = self._get_latest_version(
-            tenant_id, scope, service, config_key
-        )
-        new_version = current_version + 1
-
-        # Create timestamps (tz-aware UTC — a naive now() reads as local time
-        # on whichever host writes the row)
-        now = datetime.now(timezone.utc)
-        created_at = now if new_version == 1 else None  # Only set on first version
-        updated_at = now
-
-        # Create config entry
-        entry = ConfigEntry(
-            tenant_id=tenant_id,
-            scope=scope,
-            service=service,
-            config_key=config_key,
-            config_value=config_value,
-            version=new_version,
-            created_at=created_at or now,
-            updated_at=updated_at,
-        )
-
-        # Create Vespa document ID
         config_id = self._create_document_id(tenant_id, scope, service, config_key)
-        doc_id = f"{self.schema_name}::{config_id}::{new_version}"
+        candidate_version = (
+            self._get_latest_version(tenant_id, scope, service, config_key) + 1
+        )
 
-        # Prepare document fields
-        fields = {
-            "config_id": config_id,
-            "tenant_id": tenant_id,
-            "scope": scope.value,
-            "service": service,
-            "config_key": config_key,
-            "config_value": json.dumps(config_value),
-            "version": new_version,
-            "created_at": entry.created_at.isoformat(),
-            "updated_at": entry.updated_at.isoformat(),
-        }
-
-        # Feed document to Vespa
-        try:
-            self.vespa_app.feed_data_point(
-                schema=self.schema_name,
-                data_id=doc_id,
-                fields=fields,
+        for _attempt in range(_MAX_VERSION_ALLOCATION_ATTEMPTS):
+            now = datetime.now(timezone.utc)
+            entry = ConfigEntry(
+                tenant_id=tenant_id,
+                scope=scope,
+                service=service,
+                config_key=config_key,
+                config_value=config_value,
+                version=candidate_version,
+                created_at=now,
+                updated_at=now,
             )
+            doc_id = f"{self.schema_name}::{config_id}::{candidate_version}"
+            fields = {
+                "config_id": config_id,
+                "tenant_id": tenant_id,
+                "scope": scope.value,
+                "service": service,
+                "config_key": config_key,
+                "config_value": json.dumps(config_value),
+                "version": candidate_version,
+                "created_at": entry.created_at.isoformat(),
+                "updated_at": entry.updated_at.isoformat(),
+            }
 
-            logger.info(f"Set config {entry.get_config_id()} v{new_version} in Vespa")
+            try:
+                self.vespa_app.feed_data_point(
+                    schema=self.schema_name,
+                    data_id=doc_id,
+                    fields=fields,
+                    condition=f"{self.schema_name}.version < {candidate_version}",
+                    create=True,
+                )
+            except Exception as error:
+                if _is_condition_miss(error):
+                    candidate_version += 1
+                    continue
+                logger.error(f"Failed to store config in Vespa: {error}")
+                raise
 
-            # Prune old versions to keep config_metadata size bounded.
-            # Without this every set_config call appends a new doc and old
-            # versions stick around forever — observed 5800+ backend_config
-            # rows after ~4 days of dev work, with each
-            # _get_latest_version query slowing as the table grew.
+            logger.info(
+                f"Set config {entry.get_config_id()} v{candidate_version} in Vespa"
+            )
             self._prune_old_versions(config_id, keep=self.keep_versions)
-
             return entry
 
-        except Exception as e:
-            logger.error(f"Failed to store config in Vespa: {e}")
-            raise
+        raise RuntimeError(
+            f"Could not allocate a version for config {config_id} after "
+            f"{_MAX_VERSION_ALLOCATION_ATTEMPTS} conditional writes"
+        )
 
     def _prune_old_versions(self, config_id: str, *, keep: int) -> int:
         """Delete every version of ``config_id`` older than the latest ``keep``.
@@ -263,7 +344,7 @@ class VespaConfigStore(ConfigStore):
         )
         try:
             response = self.vespa_app.query(yql=yql)
-        except Exception as exc:  # noqa: BLE001 — pruning is best-effort
+        except (RequestException, VespaError) as exc:
             logger.warning(f"Could not list versions to prune {config_id!r}: {exc}")
             return 0
         hits = list(response.hits or [])
@@ -277,7 +358,7 @@ class VespaConfigStore(ConfigStore):
             try:
                 self.vespa_app.delete_data(schema=self.schema_name, data_id=doc_id)
                 dropped += 1
-            except Exception as exc:  # noqa: BLE001 — best-effort prune
+            except (RequestException, VespaError) as exc:
                 logger.warning(f"Failed to prune {config_id!r} v{version}: {exc}")
         if dropped:
             logger.info(
@@ -347,7 +428,7 @@ class VespaConfigStore(ConfigStore):
                 continuation = payload.get("continuation")
                 if not continuation:
                     break
-        except Exception as exc:  # noqa: BLE001 — best-effort drain
+        except requests.RequestException as exc:
             logger.error(f"prune_all_configs: visit failed: {exc}")
             return 0
 
@@ -382,51 +463,21 @@ class VespaConfigStore(ConfigStore):
             ConfigEntry if found, None otherwise
         """
         config_id = self._create_document_id(tenant_id, scope, service, config_key)
-
-        # Build YQL query
-        # Use contains() for indexed string matching (avoids YQL colon parsing issues)
-        if version is None:
-            # Get latest version
-            yql = (
-                f"select * from {self.schema_name} "
-                f"where config_id contains {yql_quote(config_id)} "
-                f"order by version desc limit 1"
-            )
-        else:
-            # Get specific version. Query the indexed config_id + version
-            # fields — Vespa has no queryable ``documentid`` field, so a
-            # ``where documentid = ...`` clause fails with a 400.
-            yql = (
-                f"select * from {self.schema_name} "
-                f"where config_id contains {yql_quote(config_id)} "
-                f"and version = {int(version)}"
-            )
-
         try:
-            response = self.vespa_app.query(yql=yql)
-            _raise_if_degraded(response, config_id)
-
-            if not response.hits or len(response.hits) == 0:
+            matches = [
+                entry
+                for visited_id, entry in self._visit_config_entries(
+                    tenant_id=tenant_id,
+                    scope=scope,
+                    service=service,
+                )
+                if visited_id == config_id
+                and (version is None or entry.version == int(version))
+            ]
+            if not matches:
                 return None
-
-            # Parse first hit
-            hit = response.hits[0]["fields"]
-
-            return ConfigEntry(
-                tenant_id=hit["tenant_id"],
-                scope=ConfigScope(hit["scope"]),
-                service=hit["service"],
-                config_key=hit["config_key"],
-                config_value=json.loads(hit["config_value"]),
-                version=hit["version"],
-                created_at=datetime.fromisoformat(hit["created_at"]),
-                updated_at=datetime.fromisoformat(hit["updated_at"]),
-            )
-
+            return max(matches, key=lambda entry: entry.version)
         except Exception as e:
-            # A genuinely-absent config already returned None above; reaching
-            # here means the backend read FAILED. Raise so callers don't
-            # silently fall back to default config during a Vespa outage.
             logger.error(f"Failed to retrieve config from Vespa: {e!r}")
             raise
 
@@ -452,42 +503,22 @@ class VespaConfigStore(ConfigStore):
             List of ConfigEntry sorted by version (newest first)
         """
         config_id = self._create_document_id(tenant_id, scope, service, config_key)
-
-        # Vespa rejects a YQL ``limit`` above its default max-hits (400); config
-        # history is pruned to a small keep-window, so this ceiling never
-        # truncates real data but keeps the query valid.
-        query_limit = min(int(limit), 400)
-        yql = (
-            f"select * from {self.schema_name} "
-            f"where config_id contains {yql_quote(config_id)} "
-            f"order by version desc limit {query_limit}"
-        )
-
         try:
-            response = self.vespa_app.query(yql=yql)
-            _raise_if_degraded(response, config_id)
-
-            entries = []
-            for hit in response.hits:
-                fields = hit["fields"]
-                entries.append(
-                    ConfigEntry(
-                        tenant_id=fields["tenant_id"],
-                        scope=ConfigScope(fields["scope"]),
-                        service=fields["service"],
-                        config_key=fields["config_key"],
-                        config_value=json.loads(fields["config_value"]),
-                        version=fields["version"],
-                        created_at=datetime.fromisoformat(fields["created_at"]),
-                        updated_at=datetime.fromisoformat(fields["updated_at"]),
-                    )
+            entries = [
+                entry
+                for visited_id, entry in self._visit_config_entries(
+                    tenant_id=tenant_id,
+                    scope=scope,
+                    service=service,
                 )
-
-            return entries
-
+                if visited_id == config_id
+            ]
+            return sorted(
+                entries,
+                key=lambda entry: entry.version,
+                reverse=True,
+            )[: max(0, int(limit))]
         except Exception as e:
-            # A backend read FAILURE must not read as "no history" — raise,
-            # matching get_config's contract.
             logger.error(f"Failed to retrieve config history from Vespa: {e!r}")
             raise
 
@@ -510,57 +541,20 @@ class VespaConfigStore(ConfigStore):
         Returns:
             List of latest version ConfigEntry objects
         """
-        # Build YQL query with filters
-        # Use contains() for indexed string matching (avoids YQL colon parsing issues)
-        conditions = [f"tenant_id contains {yql_quote(tenant_id)}"]
-
-        if scope is not None:
-            conditions.append(f"scope contains {yql_quote(scope.value)}")
-
-        if service is not None:
-            conditions.append(f"service contains {yql_quote(service)}")
-
-        where_clause = " and ".join(conditions)
-
-        # Query all matching configs, then filter to latest versions
-        # Note: This is a simplified approach - for production, consider using
-        # Vespa grouping or ranking to get only latest versions efficiently
-        yql = f"select * from {self.schema_name} where {where_clause} limit 400"
-
         try:
-            response = self.vespa_app.query(yql=yql)
-            _raise_if_degraded(response, f"list({where_clause})")
-
-            # Group by config_id and keep only latest version
             latest_configs: Dict[str, ConfigEntry] = {}
-
-            for hit in response.hits:
-                fields = hit["fields"]
-                config_id = fields["config_id"]
-
-                entry = ConfigEntry(
-                    tenant_id=fields["tenant_id"],
-                    scope=ConfigScope(fields["scope"]),
-                    service=fields["service"],
-                    config_key=fields["config_key"],
-                    config_value=json.loads(fields["config_value"]),
-                    version=fields["version"],
-                    created_at=datetime.fromisoformat(fields["created_at"]),
-                    updated_at=datetime.fromisoformat(fields["updated_at"]),
-                )
-
-                # Keep only latest version for each config_id
+            for config_id, entry in self._visit_config_entries(
+                tenant_id=tenant_id,
+                scope=scope,
+                service=service,
+            ):
                 if (
                     config_id not in latest_configs
                     or entry.version > latest_configs[config_id].version
                 ):
                     latest_configs[config_id] = entry
-
             return list(latest_configs.values())
-
         except Exception as e:
-            # A backend read FAILURE must not read as "no configs" — raise,
-            # matching get_config's contract.
             logger.error(f"Failed to list configs from Vespa: {e!r}")
             raise
 
@@ -585,78 +579,20 @@ class VespaConfigStore(ConfigStore):
         Vespa's search endpoint is eventually consistent and races
         cross-process schema_registry writes.
         """
-        import requests
-
-        url = f"{self.vespa_app.url}/document/v1/"
-        namespace = self.schema_name
-        path = f"{url}{namespace}/{self.schema_name}/docid/"
-        selection_parts = []
-        if scope is not None:
-            selection_parts.append(
-                f"{self.schema_name}.scope == {yql_quote(scope.value)}"
-            )
-        if service is not None:
-            selection_parts.append(
-                f"{self.schema_name}.service == {yql_quote(service)}"
-            )
-        params: Dict[str, Any] = {"wantedDocumentCount": 400}
-        if selection_parts:
-            params["selection"] = " and ".join(selection_parts)
-
         latest_configs: Dict[str, ConfigEntry] = {}
-
         try:
-            continuation: Optional[str] = None
-            while True:
-                if continuation:
-                    params["continuation"] = continuation
-                resp = requests.get(path, params=params, timeout=30)
-                resp.raise_for_status()
-                payload = resp.json()
-                for doc in payload.get("documents") or []:
-                    fields = doc.get("fields") or {}
-                    if not fields:
-                        continue
-                    try:
-                        config_id = fields["config_id"]
-                        entry = ConfigEntry(
-                            tenant_id=fields["tenant_id"],
-                            scope=ConfigScope(fields["scope"]),
-                            service=fields["service"],
-                            config_key=fields["config_key"],
-                            config_value=json.loads(fields["config_value"]),
-                            version=fields["version"],
-                            created_at=datetime.fromisoformat(fields["created_at"]),
-                            updated_at=datetime.fromisoformat(fields["updated_at"]),
-                        )
-                    except (KeyError, ValueError, json.JSONDecodeError) as exc:
-                        # Skip a single malformed peer document — must not
-                        # bomb the whole list and leave the schema_registry
-                        # at 0 entries. A bad config_value JSON or missing
-                        # field on ONE doc otherwise dropped every other
-                        # tenant's schemas, causing deploy_schema to refuse
-                        # any new schema (Vespa-deployed > registry-known).
-                        logger.warning(
-                            "Skipping malformed config_metadata doc %s: %s",
-                            doc.get("id"),
-                            exc,
-                        )
-                        continue
-                    if (
-                        config_id not in latest_configs
-                        or entry.version > latest_configs[config_id].version
-                    ):
-                        latest_configs[config_id] = entry
-                continuation = payload.get("continuation")
-                if not continuation:
-                    break
-
+            for config_id, entry in self._visit_config_entries(
+                scope=scope,
+                service=service,
+                skip_malformed=True,
+            ):
+                if (
+                    config_id not in latest_configs
+                    or entry.version > latest_configs[config_id].version
+                ):
+                    latest_configs[config_id] = entry
             return list(latest_configs.values())
-
         except Exception as e:
-            # An outage read as "no configs at all" makes the schema registry
-            # load zero schemas and wipe its cache — raise so its designed
-            # keep-existing-cache fallback fires instead.
             logger.error(f"Failed to list all configs from Vespa: {e!r}")
             raise
 
@@ -691,6 +627,7 @@ class VespaConfigStore(ConfigStore):
 
         # Delete each version
         deleted_count = 0
+        failures: List[tuple[int, Exception]] = []
         for entry in history:
             doc_id = f"{self.schema_name}::{config_id}::{entry.version}"
             try:
@@ -698,13 +635,23 @@ class VespaConfigStore(ConfigStore):
                 deleted_count += 1
             except Exception as e:
                 logger.error(f"Failed to delete version {entry.version}: {e}")
+                failures.append((entry.version, e))
 
         logger.info(
             f"Deleted {deleted_count} versions of config "
             f"{tenant_id}:{scope.value}:{service}:{config_key}"
         )
 
-        return deleted_count > 0
+        if failures:
+            details = "; ".join(
+                f"version {version}: {error}" for version, error in failures
+            )
+            raise RuntimeError(
+                f"Failed to delete {len(failures)} of {len(history)} versions "
+                f"for {tenant_id}:{scope.value}:{service}:{config_key}: {details}"
+            ) from failures[0][1]
+
+        return True
 
     def export_configs(
         self,
@@ -796,9 +743,11 @@ class VespaConfigStore(ConfigStore):
         Returns:
             Number of configurations imported
         """
+        config_entries = configs.get("configs", [])
         imported_count = 0
+        failures: List[tuple[str, Exception]] = []
 
-        for config_data in configs.get("configs", []):
+        for index, config_data in enumerate(config_entries):
             try:
                 self.set_config(
                     tenant_id=tenant_id,
@@ -810,8 +759,21 @@ class VespaConfigStore(ConfigStore):
                 imported_count += 1
             except Exception as e:
                 logger.error(f"Failed to import config: {e}")
+                label = (
+                    str(config_data.get("config_key", f"index {index}"))
+                    if isinstance(config_data, dict)
+                    else f"index {index}"
+                )
+                failures.append((label, e))
 
         logger.info(f"Imported {imported_count} configs for tenant {tenant_id}")
+        if failures:
+            details = "; ".join(f"{label}: {error}" for label, error in failures)
+            raise RuntimeError(
+                f"Failed to import {len(failures)} of {len(config_entries)} "
+                f"configurations for tenant {tenant_id}: {details}"
+            ) from failures[0][1]
+
         return imported_count
 
     def get_stats(self) -> Dict[str, Any]:

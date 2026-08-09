@@ -16,6 +16,7 @@ conversions, keeping the backend-specific logic encapsulated.
 
 import logging
 import math
+import re
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,6 +27,46 @@ from cogniverse_vespa._vespa_factory import make_vespa_app
 
 from .embedding_processor import VespaEmbeddingProcessor, schema_is_single_vector
 from .strategy_aware_processor import StrategyAwareProcessor
+
+_NAMESPACE_BY_BASE_SCHEMA = {
+    "agent_memories": "memory_content",
+    "knowledge_graph": "graph_content",
+    "config_metadata": "metadata",
+    "tenant_metadata": "metadata",
+    "organization_metadata": "metadata",
+}
+
+
+def document_namespace(schema_name: str) -> str:
+    """Resolve the Document v1 namespace a Vespa schema's documents live in.
+
+    Tenant-scoped physical schemas append ``_<org>_<tenant>`` to the base
+    schema name, so a base matches only as the whole name or as a
+    ``<base>_``-anchored prefix, never as a bare substring.
+    """
+    for base, namespace in _NAMESPACE_BY_BASE_SCHEMA.items():
+        if schema_name == base or schema_name.startswith(base + "_"):
+            return namespace
+    return "content"
+
+
+def _http_status_of(exc: BaseException) -> Optional[int]:
+    """Extract an HTTP status from pyvespa's wrapped client exceptions."""
+    node: Optional[BaseException] = exc
+    for _ in range(5):
+        if node is None:
+            return None
+        status = getattr(getattr(node, "response", None), "status_code", None)
+        if isinstance(status, int):
+            return status
+        status = getattr(node, "status_code", None)
+        if isinstance(status, int):
+            return status
+        match = re.match(r"HTTP (\d{3})\b", str(node))
+        if match:
+            return int(match.group(1))
+        node = node.__cause__ or node.__context__
+    return None
 
 
 def _native_epoch(value):
@@ -195,18 +236,7 @@ class VespaPyClient:
 
         # Namespace for Vespa document API paths (GET/PUT/visit).
         # YQL search queries by schema type, not namespace.
-        if "agent_memories" in self.schema_name:
-            self.namespace = "memory_content"
-        elif "knowledge_graph" in self.schema_name:
-            self.namespace = "graph_content"
-        elif (
-            "config_metadata" in self.schema_name
-            or "tenant_metadata" in self.schema_name
-            or "organization_metadata" in self.schema_name
-        ):
-            self.namespace = "metadata"
-        else:
-            self.namespace = "content"
+        self.namespace = document_namespace(self.schema_name)
 
     def _load_schema_fields(self):
         """Load the fields defined in the schema using base schema name"""
@@ -627,16 +657,27 @@ class VespaPyClient:
         """Check if document exists using pyvespa"""
         if not self._connected:
             if not self.connect():
-                return False
+                raise ConnectionError(
+                    f"Cannot check {self.namespace}/{self.schema_name}/{doc_id}: "
+                    f"Vespa at {self.backend_url}:{self.backend_port} is unavailable"
+                )
 
         try:
             response = self.app.get_data(
                 schema=self.schema_name, data_id=doc_id, namespace=self.namespace
             )
-            return response is not None and response.status_code == 200
         except Exception as e:
             self.logger.error(f"Error checking document existence: {e}")
+            raise
+        status = getattr(response, "status_code", None)
+        if status == 200:
+            return True
+        if status == 404:
             return False
+        raise RuntimeError(
+            f"Vespa existence check returned HTTP {status} for "
+            f"{self.namespace}/{self.schema_name}/{doc_id}"
+        )
 
     def get_document_data(self, doc_id: str) -> Optional[Dict[str, Any]]:
         """Get document data using pyvespa.
@@ -650,7 +691,7 @@ class VespaPyClient:
             if not self.connect():
                 raise ConnectionError(
                     f"Cannot get document {doc_id}: Vespa connection at "
-                    f"{self.url}:{self.port} is unavailable"
+                    f"{self.backend_url}:{self.backend_port} is unavailable"
                 )
 
         try:
@@ -660,24 +701,42 @@ class VespaPyClient:
         except Exception as e:
             self.logger.error(f"Error getting document: {e}")
             raise
-        if response is not None and response.status_code == 200:
+        status = getattr(response, "status_code", None)
+        if status == 200:
             return response.json.get("fields", {})
-        return None
+        if status == 404:
+            return None
+        raise RuntimeError(
+            f"Vespa document read returned HTTP {status} for "
+            f"{self.namespace}/{self.schema_name}/{doc_id}"
+        )
 
     def delete_document(self, doc_id: str) -> bool:
-        """Delete document using pyvespa"""
+        """Delete a document, treating only a genuine 404 as idempotent."""
         if not self._connected:
             if not self.connect():
-                return False
+                raise ConnectionError(
+                    f"Cannot delete {self.namespace}/{self.schema_name}/{doc_id}: "
+                    f"Vespa at {self.backend_url}:{self.backend_port} is unavailable"
+                )
 
         try:
             response = self.app.delete_data(
                 schema=self.schema_name, data_id=doc_id, namespace=self.namespace
             )
-            return response is not None and response.status_code in [200, 404]
         except Exception as e:
-            self.logger.error(f"Error deleting document: {e}")
-            return False
+            if _http_status_of(e) == 404:
+                return True
+            route = f"{self.namespace}/{self.schema_name}/{doc_id}"
+            self.logger.error(f"Error deleting document {route}: {e}")
+            raise RuntimeError(f"Failed to delete {route}: {e}") from e
+        if response is not None and response.status_code in (200, 404):
+            return True
+        status = getattr(response, "status_code", None)
+        raise RuntimeError(
+            f"Failed to delete {self.namespace}/{self.schema_name}/{doc_id}: "
+            f"Vespa returned HTTP {status}"
+        )
 
     def close(self):
         """Close connection"""

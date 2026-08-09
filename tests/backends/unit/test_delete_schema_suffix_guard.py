@@ -126,6 +126,24 @@ class TestDeleteSchemaLiveGuard:
         assert isinstance(exc.value.__cause__, ConnectionError)
         assert mgr.deployed_packages == []
 
+    def test_registry_tombstone_failure_raises_after_vespa_removal(self):
+        mgr = _guard_manager(
+            survivor_names=[],
+            deployed_names=[*METADATA_SCHEMAS, "video_colpali_acme_acme"],
+        )
+
+        def fail_tombstone(*_args):
+            raise RuntimeError("registry write unavailable")
+
+        mgr._schema_registry.unregister_schema = fail_tombstone
+
+        with pytest.raises(RuntimeError, match="registry tombstone"):
+            mgr.delete_schema("acme", "video_colpali")
+
+        assert len(mgr.deployed_packages) == 1
+        deployed = {s.name for s in mgr.deployed_packages[0].schemas}
+        assert deployed == set(METADATA_SCHEMAS)
+
 
 class TestBackendDeleteSchemaWiring:
     """VespaBackend.delete_schema must delete THE NAMED schema through the
@@ -212,13 +230,12 @@ class TestBulkDeleteSuffixAndRefuseGuards:
         mgr._redeploy_dropping = _capture
         return mgr, captured
 
-    def test_registered_peer_excluded_from_suffix_match(self):
-        # Legacy single-suffix orphan 'knowledge_graph_acme' (unregistered)
-        # coexists with the registered, live 'knowledge_graph_acme_acme'.
-        registered = ["knowledge_graph_acme_acme", *METADATA_SCHEMAS]
+    def test_canonical_orphan_is_deleted_without_matching_registered_peer(self):
+        registered = ["knowledge_graph_other_acme_acme", *METADATA_SCHEMAS]
         deployed = [
-            "knowledge_graph_acme",  # the orphan, token 'acme'
-            "knowledge_graph_acme_acme",  # healthy peer, tenant 'acme_acme'
+            "knowledge_graph_acme_acme",
+            "knowledge_graph_other_acme_acme",
+            "knowledge_graph_acme",
             *METADATA_SCHEMAS,
         ]
         mgr, captured = self._capture_manager(
@@ -227,9 +244,9 @@ class TestBulkDeleteSuffixAndRefuseGuards:
 
         mgr.delete_tenant_schemas_bulk(["acme"])
 
-        assert "knowledge_graph_acme" in captured["targets"]  # orphan dropped
-        # The registered peer for a DIFFERENT tenant must survive.
-        assert "knowledge_graph_acme_acme" not in captured["targets"]
+        assert captured["targets"] == {"knowledge_graph_acme_acme"}
+        assert "knowledge_graph_other_acme_acme" not in captured["targets"]
+        assert "knowledge_graph_acme" not in captured["targets"]
 
     def test_bulk_refuses_on_unresolved_survivor(self):
         # A deployed schema with no registry record and outside the named
@@ -239,7 +256,7 @@ class TestBulkDeleteSuffixAndRefuseGuards:
 
         registered = [*METADATA_SCHEMAS]  # neither orphan nor survivor registered
         deployed = [
-            "knowledge_graph_acme",  # the named tenant's orphan -> deletion target
+            "knowledge_graph_acme_acme",
             "video_other_globex_globex",  # unregistered survivor, NOT named
             *METADATA_SCHEMAS,
         ]
@@ -259,6 +276,44 @@ class TestBulkDeleteSuffixAndRefuseGuards:
 
         # Refused before any redeploy — nothing was deployed.
         assert deployed_packages == []
+
+
+def test_single_tenant_delete_uses_canonical_suffix_only():
+    registry = _BulkRegistry([*METADATA_SCHEMAS], tenant_bases={"acme": []})
+    mgr = object.__new__(VespaSchemaManager)
+    mgr._schema_registry = registry
+    mgr._logger = logging.getLogger("test_single_tenant_suffix")
+    mgr.list_deployed_document_types = lambda **_: [
+        *METADATA_SCHEMAS,
+        "knowledge_graph_acme_acme",
+        "knowledge_graph_acme",
+    ]
+    captured = {}
+
+    def capture_targets(targets):
+        captured["targets"] = set(targets)
+        return []
+
+    mgr._redeploy_dropping = capture_targets
+
+    mgr.delete_tenant_schemas("acme")
+
+    assert captured["targets"] == {"knowledge_graph_acme_acme"}
+
+
+def test_tenant_tombstone_retries_even_when_vespa_schema_is_already_gone():
+    registry = _BulkRegistry(
+        ["video_acme_acme", *METADATA_SCHEMAS],
+        tenant_bases={"acme": ["video"]},
+    )
+    mgr = object.__new__(VespaSchemaManager)
+    mgr._schema_registry = registry
+    mgr._logger = logging.getLogger("test_tombstone_retry")
+    mgr.list_deployed_document_types = lambda **_: [*METADATA_SCHEMAS]
+    mgr._redeploy_dropping = lambda _targets: []
+
+    assert mgr.delete_tenant_schemas("acme") == []
+    assert registry.unregistered == [("acme", "video")]
 
 
 class TestSchemaEnumerationRefusesPartial:

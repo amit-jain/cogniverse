@@ -74,7 +74,7 @@ class TestReconcileOrphansDryRun:
         assert sorted(data["orphan_tenants"]) == ["alpha", "beta"]
         assert data["deleted"] == []
         # Crucial: the bulk delete was NOT called.
-        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+        schema_manager.delete_orphan_schemas.assert_not_called()
 
     def test_dry_run_with_clean_cluster_returns_empty(self, admin_client):
         client, _, schema_manager, schema_registry = admin_client
@@ -92,7 +92,7 @@ class TestReconcileOrphansDryRun:
         data = resp.json()
         assert data["orphan_schemas"] == []
         assert data["orphan_tenants"] == []
-        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+        schema_manager.delete_orphan_schemas.assert_not_called()
 
     def test_unknown_base_prefix_listed_separately(self, admin_client):
         """Schemas whose base prefix isn't in ``KNOWN_BASES`` are
@@ -210,7 +210,7 @@ class TestReconcileOrphansConfirm:
         legit = MagicMock()
         legit.full_schema_name = "knowledge_graph_legit"
         schema_registry._get_all_schemas.return_value = [legit]
-        schema_manager.delete_tenant_schemas_bulk.return_value = [
+        schema_manager.delete_orphan_schemas.return_value = [
             "knowledge_graph_alpha",
             "video_colpali_smol500_mv_frame_beta",
         ]
@@ -220,8 +220,11 @@ class TestReconcileOrphansConfirm:
         data = resp.json()
 
         assert data["dry_run"] is False
-        schema_manager.delete_tenant_schemas_bulk.assert_called_once_with(
-            ["alpha", "beta"]
+        schema_manager.delete_orphan_schemas.assert_called_once_with(
+            [
+                "knowledge_graph_alpha",
+                "video_colpali_smol500_mv_frame_beta",
+            ]
         )
         assert sorted(data["deleted"]) == [
             "knowledge_graph_alpha",
@@ -243,7 +246,7 @@ class TestReconcileOrphansConfirm:
         assert resp.status_code == 200
         data = resp.json()
         assert data["deleted"] == []
-        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+        schema_manager.delete_orphan_schemas.assert_not_called()
 
 
 @pytest.mark.unit
@@ -270,4 +273,4 @@ class TestReconcileOrphansSafetyGuard:
         resp = client.post("/admin/reconcile-orphans?dry_run=false")
         assert resp.status_code == 503
         # And crucially, nothing was deleted.
-        schema_manager.delete_tenant_schemas_bulk.assert_not_called()
+        schema_manager.delete_orphan_schemas.assert_not_called()

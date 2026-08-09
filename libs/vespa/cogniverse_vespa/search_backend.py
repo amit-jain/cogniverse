@@ -17,6 +17,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict, deque
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -51,6 +52,45 @@ _TRANSIENT_SEARCH_ERRORS = (
     TimeoutError,
     VespaError,
 )
+
+_SEARCH_CONTENT_TYPES = {
+    "audio": ContentType.AUDIO,
+    "code": ContentType.DOCUMENT,
+    "document": ContentType.DOCUMENT,
+    "image": ContentType.IMAGE,
+    "memory": ContentType.DOCUMENT,
+    "text": ContentType.TEXT,
+    "video": ContentType.VIDEO,
+    "wiki": ContentType.DOCUMENT,
+}
+
+
+def _query_health_error(response: Any) -> Optional[str]:
+    """Return the reason a Vespa query response is not fully healthy."""
+    if response is None:
+        return "health probe returned no response"
+    try:
+        status_code = response.status_code
+    except AttributeError:
+        return "health probe response is missing status_code"
+    if status_code != 200:
+        return f"health probe returned HTTP {status_code}"
+    try:
+        body = response.get_json() or {}
+    except AttributeError:
+        return "health probe response is missing get_json"
+    if not isinstance(body, Mapping):
+        return "health probe returned a malformed response"
+    root = body.get("root")
+    if not isinstance(root, Mapping):
+        return "health probe returned a malformed root"
+    errors = root.get("errors")
+    if errors:
+        return f"health probe returned errors: {errors!r}"
+    coverage = root.get("coverage") or {}
+    if isinstance(coverage, Mapping) and coverage.get("degraded"):
+        return f"health probe coverage degraded: {coverage!r}"
+    return None
 
 
 def _format_query_vector_param(arr: np.ndarray, input_type: str):
@@ -283,7 +323,7 @@ class VespaConnection:
             # Vespa would otherwise block the reaper's health sweep for minutes,
             # delaying detection and healing of the very connection it checks.
             result = self._sync.query(yql="select * from sources * where true limit 1")
-            self.is_healthy = result is not None
+            self.is_healthy = _query_health_error(result) is None
             return self.is_healthy
         except Exception as e:
             logger.warning(f"Health check failed for {self.connection_id}: {e}")
@@ -314,6 +354,7 @@ class ConnectionPool:
         # wake immediately instead of polling on a sleep loop.
         self._returned = threading.Condition(self._lock)
         self._stop_health_check = threading.Event()
+        self._closed = False
 
         self._initialize_connections()
 
@@ -339,6 +380,8 @@ class ConnectionPool:
         try:
             with self._returned:
                 while conn is None:
+                    if self._closed:
+                        raise RuntimeError("Vespa connection pool is closed")
                     if self._available:
                         conn = self._available.pop()
                     elif len(self._connections) < self.config.max_connections:
@@ -358,11 +401,14 @@ class ConnectionPool:
             yield conn
 
         finally:
-            # Return connection to pool
             close_on_return = False
             if conn is not None:
                 with self._returned:
-                    if conn in self._removing:
+                    if self._closed:
+                        self._removing.discard(conn)
+                        if conn in self._connections:
+                            self._connections.remove(conn)
+                    elif conn in self._removing:
                         # The reaper marked it unhealthy while we held it —
                         # drop and close it now instead of handing a bad
                         # connection to the next searcher.
@@ -435,6 +481,12 @@ class ConnectionPool:
 
     def close(self):
         """Close all connections and stop health checks"""
+        with self._returned:
+            if self._closed:
+                return
+            self._closed = True
+            self._returned.notify_all()
+
         self._stop_health_check.set()
         if self._health_check_thread.is_alive():
             self._health_check_thread.join(timeout=5)
@@ -526,7 +578,9 @@ class VespaSearchBackend(SearchBackend):
             self.vespa = make_vespa_app(url=self.backend_url, port=self.backend_port)
 
         self.retry_config = retry_config or RetryConfig(
-            max_attempts=3, initial_delay=0.5, exceptions=(Exception,)
+            max_attempts=3,
+            initial_delay=0.5,
+            exceptions=_TRANSIENT_SEARCH_ERRORS,
         )
 
         # Breaker around the (retried) search path, keyed per endpoint so a
@@ -589,10 +643,10 @@ class VespaSearchBackend(SearchBackend):
         # Initialize output manager
         self.output_manager = OutputManager()
 
+        old_pool = self.pool
+        if old_pool is not None:
+            old_pool.close()
         self.pool = ConnectionPool(full_url, ConnectionPoolConfig())
-        self.retry_config = RetryConfig(
-            max_attempts=3, initial_delay=0.5, exceptions=(Exception,)
-        )
 
         # Honor the enable_metrics choice from __init__ — initialize() used to
         # overwrite it with an unconditional SearchMetrics(), silently ignoring
@@ -621,7 +675,11 @@ class VespaSearchBackend(SearchBackend):
             self.profiles.pop(profile_name, None)
 
     def batch_get_documents(
-        self, document_ids: List[str], schema_name: Optional[str] = None
+        self,
+        document_ids: List[str],
+        *,
+        schema_name: str,
+        namespace: str,
     ) -> List[Optional[Document]]:
         """
         Retrieve multiple documents by ID using batch search query (primary batch method).
@@ -632,16 +690,14 @@ class VespaSearchBackend(SearchBackend):
                 all tenants and ``self.schema_name`` is rewritten by every search
                 request, so a caller MUST pass the schema it means to read —
                 relying on the shared attribute races concurrent requests and can
-                read another tenant's schema. Falls back to ``self.schema_name``
-                only for legacy callers.
+                read another tenant's schema.
+            namespace: Document v1 namespace used when the document was written.
 
         Returns:
             List of Document objects (None for not found), in the same order as document_ids
         """
         if not document_ids:
             return []
-
-        schema = schema_name or self.schema_name
 
         # Document v1 point GETs — an O(1) dictionary lookup per id. The
         # previous `id contains "<docid>"` YQL substring-matched the internal
@@ -650,13 +706,19 @@ class VespaSearchBackend(SearchBackend):
             results: Dict[str, Document] = {}
             for doc_id in document_ids:
                 response = handle.get_data(
-                    schema=schema,
+                    schema=schema_name,
                     data_id=doc_id,
-                    namespace="content",
+                    namespace=namespace,
                     raise_on_not_found=False,
                 )
-                if response.status_code != 200:
+                if response.status_code == 404:
                     continue
+                if response.status_code != 200:
+                    raise RuntimeError(
+                        "Vespa point read returned "
+                        f"HTTP {response.status_code} for "
+                        f"{namespace}/{schema_name}/{doc_id}"
+                    )
                 fields = response.json.get("fields", {})
                 doc = Document(
                     id=doc_id,
@@ -757,7 +819,9 @@ class VespaSearchBackend(SearchBackend):
 
                 return _DenseQueryEncoder(get_semantic_embedder())
 
-            model_name = profile_config.get("embedding_model")
+            model_name = profile_config.get("semantic_model") or profile_config.get(
+                "embedding_model"
+            )
             if not model_name or self._config_manager is None:
                 return None
             from cogniverse_core.query.encoders import QueryEncoderFactory
@@ -775,14 +839,11 @@ class VespaSearchBackend(SearchBackend):
             )
             return None
 
-    @retry_with_backoff(
-        config=RetryConfig(
-            max_attempts=3,
-            initial_delay=1.0,
-            exceptions=_TRANSIENT_SEARCH_ERRORS,
-        )
-    )
     def _search_retried(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
+        retry = retry_with_backoff(config=self.retry_config)(self._search_once)
+        return retry(query_dict)
+
+    def _search_once(self, query_dict: Dict[str, Any]) -> List[SearchResult]:
         """
         Search for documents using query dict format.
 
@@ -795,6 +856,9 @@ class VespaSearchBackend(SearchBackend):
                 - top_k: Number of results (optional, defaults to 10)
                 - filters: Optional filters dict
                 - query_embeddings: Pre-computed embeddings (optional)
+                - nearest_neighbor_approximate: Whether nearest-neighbor
+                  retrieval uses the approximate HNSW index (optional,
+                  defaults to True)
 
         Returns:
             List of SearchResult objects
@@ -845,10 +909,7 @@ class VespaSearchBackend(SearchBackend):
         # a per-tenant profile (or a backend built config-less at startup) may
         # be absent. Merge the query tenant's profiles per-request — locally,
         # so tenants can't leak profiles into each other's snapshots.
-        if self._config_manager is not None and (
-            not profiles_snapshot
-            or (requested_profile and requested_profile not in profiles_snapshot)
-        ):
+        if self._config_manager is not None:
             tenant_profiles, tenant_defaults = self._load_tenant_profiles(
                 query_dict.get("tenant_id")
             )
@@ -977,7 +1038,7 @@ class VespaSearchBackend(SearchBackend):
                 )
             elif len(available_strategies) > 1:
                 # 3. Check default_profiles for strategy
-                default_config = self.default_profiles.get(content_type, {})
+                default_config = default_profiles_snapshot.get(content_type, {})
                 strategy_name = default_config.get("strategy")
 
                 if not strategy_name:
@@ -1079,6 +1140,9 @@ class VespaSearchBackend(SearchBackend):
                 top_k,
                 filters,
                 correlation_id,
+                nearest_neighbor_approximate=query_dict.get(
+                    "nearest_neighbor_approximate", True
+                ),
             )
 
             # Execute search
@@ -1097,7 +1161,7 @@ class VespaSearchBackend(SearchBackend):
                 response = self.vespa.query(body=query_params)
 
             # Process results
-            results = self._process_results(response, correlation_id)
+            results = self._process_results(response, correlation_id, content_type)
 
             # Record metrics
             if self.metrics:
@@ -1187,8 +1251,11 @@ class VespaSearchBackend(SearchBackend):
         limit: int,
         filters: Dict[str, Any],
         correlation_id: str,
+        nearest_neighbor_approximate: bool = True,
     ) -> Dict[str, Any]:
         """Build Vespa query based on ranking strategy - NO HARDCODING!"""
+        if not isinstance(nearest_neighbor_approximate, bool):
+            raise ValueError("nearest_neighbor_approximate must be a bool")
 
         # Log schema name being used
         logger.info(
@@ -1220,13 +1287,16 @@ class VespaSearchBackend(SearchBackend):
             # Use nearestNeighbor for visual search
             nn_field = rank_config.get("nearestneighbor_field", "embedding")
             nn_tensor = rank_config.get("nearestneighbor_tensor", "qt")
+            nn_annotations = f"targetHits: {limit}"
+            if not nearest_neighbor_approximate:
+                nn_annotations += ", approximate: false"
+            nearest_neighbor = (
+                f"{{{nn_annotations}}}nearestNeighbor({nn_field}, {nn_tensor})"
+            )
 
             if rank_config.get("needs_text_query") and query_text:
                 # Hybrid search with nearestNeighbor
-                base_where = (
-                    f"userInput(@userQuery) OR "
-                    f"({{targetHits: {limit}}}nearestNeighbor({nn_field}, {nn_tensor}))"
-                )
+                base_where = f"userInput(@userQuery) OR ({nearest_neighbor})"
                 if filter_conditions:
                     query_params["yql"] = (
                         f"select * from {schema_name} where ({base_where}) AND {filter_conditions}"
@@ -1238,9 +1308,7 @@ class VespaSearchBackend(SearchBackend):
                 query_params["userQuery"] = query_text
             else:
                 # Pure semantic/visual search with nearestNeighbor
-                base_where = (
-                    f"{{targetHits: {limit}}}nearestNeighbor({nn_field}, {nn_tensor})"
-                )
+                base_where = nearest_neighbor
                 if filter_conditions:
                     query_params["yql"] = (
                         f"select * from {schema_name} where {base_where} AND {filter_conditions}"
@@ -1360,14 +1428,32 @@ class VespaSearchBackend(SearchBackend):
 
         return query_params
 
-    def _result_to_document(self, result: Dict[str, Any]) -> Document:
+    def _result_to_document(
+        self, result: Dict[str, Any], content_type: str
+    ) -> Document:
         """Convert Vespa result to Document object."""
+        if not isinstance(result, Mapping):
+            raise ValueError("Vespa hit must be a mapping")
+        raw_id = result.get("id")
+        if not isinstance(raw_id, str) or not raw_id:
+            raise ValueError("Vespa hit is missing a non-empty id")
         fields = result.get("fields", {})
+        if not isinstance(fields, Mapping):
+            raise ValueError("Vespa hit fields must be a mapping")
 
-        doc_id = result.get("id", "").split("::")[-1]
+        doc_id = raw_id.split("::")[-1]
+
+        try:
+            document_content_type = _SEARCH_CONTENT_TYPES[content_type]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported search content type: {content_type!r}"
+            ) from exc
 
         document = Document(
-            id=doc_id, content_type=ContentType.VIDEO, status=ProcessingStatus.COMPLETED
+            id=doc_id,
+            content_type=document_content_type,
+            status=ProcessingStatus.COMPLETED,
         )
 
         for text_field_name in ["text", "transcription", "text_content", "content"]:
@@ -1384,58 +1470,63 @@ class VespaSearchBackend(SearchBackend):
         return document
 
     def _process_results(
-        self, response: Any, correlation_id: str
+        self, response: Any, correlation_id: str, content_type: str
     ) -> List[SearchResult]:
         """Process Vespa response into SearchResult objects.
 
         Raises:
-            VespaError: If the response body carries ``root.errors``. Vespa
+            VespaError: If the response is missing, carries ``root.errors``, or
+                reports degraded coverage. Vespa
                 reports soft timeouts and container errors as HTTP 200 with
                 an errors list and partial/empty children — consuming hits
                 without this check turns a degraded backend into "no
                 results" recorded as success.
         """
-        results = []
+        if response is None:
+            raise VespaError(
+                f"[{correlation_id}] Vespa response is missing a hits collection"
+            )
 
-        if not response or not hasattr(response, "hits"):
-            logger.warning(f"[{correlation_id}] Empty response from Vespa")
-            return results
-
-        root = {}
-        if hasattr(response, "get_json"):
-            root = (response.get_json() or {}).get("root", {})
+        try:
+            hits = response.hits
+        except AttributeError as exc:
+            raise VespaError(
+                f"[{correlation_id}] Vespa response is missing a hits collection"
+            ) from exc
+        try:
+            body = response.get_json()
+        except AttributeError as exc:
+            raise VespaError(
+                f"[{correlation_id}] Vespa response is missing get_json"
+            ) from exc
+        if not isinstance(body, Mapping):
+            raise VespaError(f"[{correlation_id}] Vespa response body is malformed")
+        root = body.get("root")
+        if not isinstance(root, Mapping):
+            raise VespaError(f"[{correlation_id}] Vespa response root is malformed")
         errors = root.get("errors", [])
         if errors:
             raise VespaError(
                 f"[{correlation_id}] Vespa query returned errors: {errors}"
             )
         coverage = root.get("coverage", {})
+        if not isinstance(coverage, Mapping):
+            raise VespaError(f"[{correlation_id}] Vespa query coverage is malformed")
         if coverage.get("degraded"):
-            logger.warning(
-                f"[{correlation_id}] Vespa coverage degraded: "
-                f"{coverage.get('coverage')}% of corpus searched "
-                f"({coverage.get('degraded')})"
+            raise VespaError(
+                f"[{correlation_id}] Vespa query coverage degraded: {coverage!r}"
             )
 
-        logger.debug(
-            f"[{correlation_id}] Processing {len(response.hits)} hits from Vespa"
-        )
-        for hit in response.hits:
+        results = []
+        logger.debug(f"[{correlation_id}] Processing {len(hits)} hits from Vespa")
+        for hit in hits:
+            doc = self._result_to_document(hit, content_type)
             try:
-                doc = self._result_to_document(hit)
-                score = hit.get("relevance", 0.0)
-
-                # Extract highlights if available
-                highlights = {}
-                if "summaryfeatures" in hit:
-                    highlights = hit["summaryfeatures"]
-
-                results.append(SearchResult(doc, score, highlights))
-
-            except Exception as e:
-                logger.error(
-                    f"[{correlation_id}] Failed to process hit: {e}, hit data: {hit}"
-                )
+                score = hit["relevance"]
+            except KeyError as exc:
+                raise ValueError("Vespa hit is missing relevance") from exc
+            highlights = hit.get("summaryfeatures", {})
+            results.append(SearchResult(doc, score, highlights))
 
         return results
 
@@ -1502,9 +1593,14 @@ class VespaSearchBackend(SearchBackend):
         try:
             if self.pool:
                 with self.pool.get_connection() as conn:
-                    conn.health_check()
+                    healthy = conn.health_check()
             else:
-                self.vespa.query(yql="select * from sources * where true limit 1")
+                response = self.vespa.query(
+                    yql="select * from sources * where true limit 1"
+                )
+                healthy = _query_health_error(response) is None
+            if not healthy:
+                raise RuntimeError("health probe returned false")
             health["components"]["vespa"] = "healthy"
         except Exception as e:
             health["status"] = "degraded"
@@ -1516,7 +1612,11 @@ class VespaSearchBackend(SearchBackend):
         return health
 
     def get_document(
-        self, document_id: str, schema_name: Optional[str] = None
+        self,
+        document_id: str,
+        *,
+        schema_name: str,
+        namespace: str,
     ) -> Optional[Document]:
         """
         Retrieve a specific document by ID (uses batch method).
@@ -1525,12 +1625,15 @@ class VespaSearchBackend(SearchBackend):
             document_id: Document ID to retrieve
             schema_name: Vespa schema to read from — pass it explicitly; this
                 backend is shared across tenants (see batch_get_documents).
+            namespace: Document v1 namespace used when the document was written.
 
         Returns:
             Document if found, None otherwise
         """
         # Use batch method for consistency and optimization
-        results = self.batch_get_documents([document_id], schema_name=schema_name)
+        results = self.batch_get_documents(
+            [document_id], schema_name=schema_name, namespace=namespace
+        )
         return results[0] if results else None
 
     def export_embeddings(
@@ -1559,6 +1662,13 @@ class VespaSearchBackend(SearchBackend):
         target_schema = schema or self.schema_name
         visit_url = f"{self.backend_url}:{self.backend_port}/document/v1/{namespace}/{target_schema}/docid"
 
+        def require_success(response) -> None:
+            if response.status_code != 200:
+                raise RuntimeError(
+                    "Vespa embedding export returned "
+                    f"HTTP {response.status_code} from {visit_url}"
+                )
+
         # Document v1 visit selection. Each value is escaped via _yql_scalar
         # (yql_quote for strings, finite-checked literal for numbers) so a
         # value with an embedded quote can't break the expression or inject.
@@ -1580,15 +1690,47 @@ class VespaSearchBackend(SearchBackend):
                 },
                 timeout=30,
             )
+            require_success(response)
 
-            if response.status_code == 200:
+            data = response.json()
+
+            for doc in data.get("documents", []):
+                fields = doc.get("fields", {})
+                doc_data = {"id": doc.get("id", ""), **fields}
+
+                if include_embeddings:
+                    for emb_field in [
+                        "embedding",
+                        "frame_embedding",
+                        "video_embedding",
+                        "text_embedding",
+                        "colpali_embedding",
+                    ]:
+                        if emb_field in fields:
+                            doc_data[emb_field] = fields[emb_field]
+
+                documents.append(doc_data)
+
+            continuation = data.get("continuation")
+            while continuation and len(documents) < (max_documents or float("inf")):
+                response = requests.get(
+                    visit_url,
+                    params={
+                        "selection": selection,
+                        "continuation": continuation,
+                        "wantedDocumentCount": min(
+                            1000, (max_documents or 1000) - len(documents)
+                        ),
+                    },
+                    timeout=30,
+                )
+                require_success(response)
+
                 data = response.json()
-
                 for doc in data.get("documents", []):
                     fields = doc.get("fields", {})
                     doc_data = {"id": doc.get("id", ""), **fields}
 
-                    # Extract embeddings if present and requested
                     if include_embeddings:
                         for emb_field in [
                             "embedding",
@@ -1602,45 +1744,9 @@ class VespaSearchBackend(SearchBackend):
 
                     documents.append(doc_data)
 
-                # Handle continuation token for large datasets
                 continuation = data.get("continuation")
-                while continuation and len(documents) < (max_documents or float("inf")):
-                    response = requests.get(
-                        visit_url,
-                        params={
-                            "selection": selection,
-                            "continuation": continuation,
-                            "wantedDocumentCount": min(
-                                1000, (max_documents or 1000) - len(documents)
-                            ),
-                        },
-                        timeout=30,
-                    )
-
-                    if response.status_code == 200:
-                        data = response.json()
-                        for doc in data.get("documents", []):
-                            fields = doc.get("fields", {})
-                            doc_data = {"id": doc.get("id", ""), **fields}
-
-                            if include_embeddings:
-                                for emb_field in [
-                                    "embedding",
-                                    "frame_embedding",
-                                    "video_embedding",
-                                    "text_embedding",
-                                    "colpali_embedding",
-                                ]:
-                                    if emb_field in fields:
-                                        doc_data[emb_field] = fields[emb_field]
-
-                            documents.append(doc_data)
-
-                        continuation = data.get("continuation")
-                        if not data.get("documents"):
-                            break
-                    else:
-                        break
+                if not data.get("documents"):
+                    break
 
         except Exception as e:
             logger.error(f"Failed to export embeddings: {e}")

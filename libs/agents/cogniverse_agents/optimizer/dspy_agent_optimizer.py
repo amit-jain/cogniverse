@@ -135,7 +135,7 @@ class DSPyAgentPromptOptimizer:
 
             query = dspy.InputField(desc="User query to route")
             analysis_result = dspy.InputField(desc="Query analysis results")
-            available_agents = dspy.InputField(
+            available_agents: List[str] = dspy.InputField(
                 desc="List of available agent capabilities"
             )
 
@@ -376,24 +376,24 @@ class DSPyAgentOptimizerPipeline:
             dspy.Example(
                 query="Show me videos",
                 analysis_result="simple search",
-                available_agents="video_search",
-                recommended_workflow="direct_search",
+                available_agents=["video_search"],
+                recommended_workflow="raw_results",
                 primary_agent="video_search",
                 routing_confidence="0.9",
             ).with_inputs("query", "analysis_result", "available_agents"),
             dspy.Example(
                 query="Analyze data",
                 analysis_result="complex analysis",
-                available_agents="detailed_report",
-                recommended_workflow="detailed_analysis",
+                available_agents=["detailed_report"],
+                recommended_workflow="detailed_report",
                 primary_agent="detailed_report",
                 routing_confidence="0.85",
             ).with_inputs("query", "analysis_result", "available_agents"),
             dspy.Example(
                 query="Summarize content",
                 analysis_result="summarization",
-                available_agents="summarizer",
-                recommended_workflow="summarization",
+                available_agents=["summarizer"],
+                recommended_workflow="summary",
                 primary_agent="summarizer",
                 routing_confidence="0.95",
             ).with_inputs("query", "analysis_result", "available_agents"),
@@ -649,7 +649,6 @@ class DSPyAgentOptimizerPipeline:
 
             return score
 
-        # Return appropriate metric
         metrics = {
             "query_analysis": query_analysis_metric,
             "agent_routing": agent_routing_metric,
@@ -798,30 +797,24 @@ async def main():
     if not optimizer.initialize_language_model(
         endpoint_config, teacher_endpoint_config=llm_config.resolve_teacher()
     ):
-        print("Failed to initialize language model")
-        return
+        raise RuntimeError("Failed to initialize language model")
 
     pipeline = DSPyAgentOptimizerPipeline(optimizer)
 
     tenant_id = SYSTEM_TENANT_ID
     telemetry_provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
 
-    try:
-        optimized_modules = await pipeline.optimize_all_modules()
+    optimized_modules = await pipeline.optimize_all_modules()
 
-        print(f"\nSuccessfully optimized {len(optimized_modules)} modules:")
-        for module_name in optimized_modules:
-            print(f"   - {module_name}")
+    print(f"\nSuccessfully optimized {len(optimized_modules)} modules:")
+    for module_name in optimized_modules:
+        print(f"   - {module_name}")
 
-        await pipeline.save_optimized_prompts(
-            tenant_id=tenant_id,
-            telemetry_provider=telemetry_provider,
-        )
-        print(f"\nSaved optimized prompts for tenant '{tenant_id}' to telemetry store")
-
-    except Exception as e:
-        print(f"Optimization failed: {e}")
-        logger.error(f"DSPy optimization error: {e}")
+    await pipeline.save_optimized_prompts(
+        tenant_id=tenant_id,
+        telemetry_provider=telemetry_provider,
+    )
+    print(f"\nSaved optimized prompts for tenant '{tenant_id}' to telemetry store")
 
 
 if __name__ == "__main__":

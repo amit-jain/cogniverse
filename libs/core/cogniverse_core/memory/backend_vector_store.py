@@ -367,6 +367,7 @@ class BackendVectorStore(VectorStoreBase):
                 "filters": backend_filters,
                 "query_embeddings": query_embeddings,  # Pre-computed embeddings from mem0
                 "tenant_id": self.tenant_id,
+                "nearest_neighbor_approximate": False,
             }
 
             logger.debug(
