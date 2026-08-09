@@ -21,7 +21,7 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_synthetic import api as synthetic_api
 from cogniverse_synthetic.service import SyntheticDataService
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 
 
 @pytest.fixture

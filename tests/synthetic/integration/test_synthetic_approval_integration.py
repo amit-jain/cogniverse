@@ -43,6 +43,8 @@ from tests.utils.async_polling import wait_for_phoenix_processing
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
+
 
 def is_teacher_api_available() -> bool:
     """Check if router optimizer teacher API key is available."""

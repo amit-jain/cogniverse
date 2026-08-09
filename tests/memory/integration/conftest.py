@@ -14,11 +14,14 @@ import logging
 
 import pytest
 
-# Re-export both fixtures by name. Pytest discovers them via the symbol
+# Re-export the fixtures by name (including gemma_inference_endpoint,
+# which _dspy_lm_instance depends on — pytest resolves that dependency
+# from this package's scope too). Pytest discovers them via the symbol
 # table of the conftest module, so a plain import is enough.
 from tests.agents.integration.conftest import (  # noqa: F401
     _dspy_lm_instance,
     dspy_lm,
+    gemma_inference_endpoint,
 )
 
 logger = logging.getLogger(__name__)

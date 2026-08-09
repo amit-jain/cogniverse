@@ -20,7 +20,8 @@ def test_gate_runs_after_session_fixture_setup(monkeypatch):
     assert root_conftest.pytest_runtest_setup.pytest_impl["trylast"] is True
 
 
-def test_gate_skips_with_exact_endpoint_after_unsuccessful_provision(monkeypatch):
+def test_gate_fails_with_exact_endpoint_after_unsuccessful_provision(monkeypatch):
+    """Unreachable endpoint on a ``requires_lm`` test FAILS — never skips."""
     monkeypatch.setattr(llm_fixtures, "is_test_lm_available", lambda: False)
     monkeypatch.setattr(
         llm_fixtures,
@@ -29,9 +30,9 @@ def test_gate_skips_with_exact_endpoint_after_unsuccessful_provision(monkeypatch
     )
 
     with pytest.raises(
-        pytest.skip.Exception,
+        pytest.fail.Exception,
         match=(
-            r"Configured LLM endpoint not reachable "
+            r"Exact configured LLM endpoint not reachable "
             r"\(http://127\.0\.0\.1:29999/v1\)"
         ),
     ):

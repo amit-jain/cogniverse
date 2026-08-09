@@ -7,7 +7,7 @@ so the runtime stays slim.
 
 One endpoint, ``POST /predict_entities``, mirroring the in-process
 ``model.predict_entities(text, labels, threshold)`` shape so
-``RemoteGlinerLoader`` can replace the local loader transparently.
+``RemoteGlinerClient`` can replace the local loader transparently.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Any, List, Optional
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger("gliner_server")
 logging.basicConfig(
@@ -26,39 +26,54 @@ logging.basicConfig(
 )
 
 
+MODEL_ID = "urchade/gliner_large-v2.1"
+MODEL_REVISION = "abd49a1f1ebc12af1be84d06f6848221cf96dcad"
+
+
 class PredictRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Query text")
-    labels: List[str] = Field(..., min_length=1, description="Candidate label set")
+    labels: list[str] = Field(..., min_length=1, description="Candidate label set")
     threshold: float = Field(0.4, ge=0.0, le=1.0, description="Min entity score")
-    model: Optional[str] = Field(
+    model: str | None = Field(
         None,
-        description=(
-            "Optional GLiNER HF id to use for this request "
-            "(e.g. urchade/gliner_large-v2.1). Defaults to the sidecar's "
-            "MODEL_NAME env. Models are loaded on first use and cached."
-        ),
+        description="Optional canonical model identifier pinned by this service.",
     )
+
+    @field_validator("model")
+    @classmethod
+    def require_pinned_model(cls, model: str | None) -> str | None:
+        if model is not None and model != MODEL_ID:
+            raise ValueError(f"model must equal {MODEL_ID}")
+        return model
 
 
 class EntityOut(BaseModel):
     text: str
     label: str
     score: float
-    start: Optional[int] = None
-    end: Optional[int] = None
+    start: int | None = None
+    end: int | None = None
 
 
 class PredictResponse(BaseModel):
-    entities: List[EntityOut]
+    entities: list[EntityOut]
     model: str
 
 
-_models: dict = {}
+_models: dict[str, Any] = {}
 _model_lock = threading.Lock()
-_DEFAULT_MODEL = os.environ.get("MODEL_NAME", "urchade/gliner_mediumv2.1")
+
+if configured_model := os.environ.get("MODEL_NAME"):
+    if configured_model != MODEL_ID:
+        raise RuntimeError(f"MODEL_NAME must equal pinned model {MODEL_ID}")
+_DEVICE = os.environ.get("DEVICE", "cpu")
+if _DEVICE not in {"cpu", "cuda"}:
+    raise RuntimeError("DEVICE must equal cpu or cuda")
 
 
-def _get_model(name: str):
+def _get_model(name: str) -> Any:
+    if name != MODEL_ID:
+        raise ValueError(f"model must equal pinned model {MODEL_ID}")
     cached = _models.get(name)
     if cached is not None:
         return cached
@@ -69,7 +84,11 @@ def _get_model(name: str):
         from gliner import GLiNER
 
         logger.info("Loading GLiNER model=%s", name)
-        instance = GLiNER.from_pretrained(name)
+        instance = GLiNER.from_pretrained(
+            name,
+            revision=MODEL_REVISION,
+            map_location=_DEVICE,
+        )
         _models[name] = instance
         logger.info("GLiNER loaded: %s", name)
         return instance
@@ -80,27 +99,53 @@ app = FastAPI(title="cogniverse-gliner", version="1.0")
 
 @app.get("/health")
 def health() -> dict:
+    try:
+        _get_model(MODEL_ID)
+    except Exception as exc:
+        logger.exception("readiness model load failed for %s", MODEL_ID)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"gliner: model {MODEL_ID} load failed ({type(exc).__name__}): {exc}"
+            ),
+        ) from exc
     return {
-        "status": "ok",
-        "default_model": _DEFAULT_MODEL,
+        # ``model`` is the key the runtime's boot probe reads to identify the
+        # served model (inference_health_check._extract_model_from_health);
+        # a payload without it fails startup validation for every profile
+        # bound to this service.
+        "status": "ready",
+        "model": MODEL_ID,
+        "model_revision": MODEL_REVISION,
         "loaded_models": sorted(_models),
     }
 
 
 @app.post("/predict_entities", response_model=PredictResponse)
 def predict_entities(req: PredictRequest) -> PredictResponse:
-    model_name = req.model or _DEFAULT_MODEL
+    model_name = req.model or MODEL_ID
     try:
         model = _get_model(model_name)
     except Exception as exc:
         logger.exception("model load failed for %s", model_name)
-        raise HTTPException(status_code=503, detail=f"model load failed: {exc}")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"gliner: model {model_name} load failed ({type(exc).__name__}): {exc}"
+            ),
+        ) from exc
 
     try:
         raw = model.predict_entities(req.text, req.labels, threshold=req.threshold)
     except Exception as exc:
         logger.exception("predict_entities failed (model=%s)", model_name)
-        raise HTTPException(status_code=500, detail=f"predict failed: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"gliner: model {model_name} inference failed "
+                f"({type(exc).__name__}): {exc}"
+            ),
+        ) from exc
 
     entities = [
         EntityOut(

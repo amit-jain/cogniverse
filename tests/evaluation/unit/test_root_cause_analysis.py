@@ -219,9 +219,11 @@ class TestAttributeCorrelation:
         ]
         failed = [t for t in traces if t.status == "error"]
         patterns = analyzer._calculate_attribute_correlation(failed, traces, "profile")
-        # With uniform failure rate there should be no high-correlation pattern
+        # With uniform failure rate there should be no high-correlation pattern.
+        # failure_rate is a ratio in [0, 1], so pairing this with a
+        # ``<= 1.0`` alternative made the whole check unconditionally true.
         for p in patterns:
-            assert p.correlation_strength <= 0.3 or p.failure_rate <= 1.0
+            assert p.correlation_strength <= 0.3, p
 
 
 @pytest.mark.unit

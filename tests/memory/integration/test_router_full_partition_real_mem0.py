@@ -28,11 +28,9 @@ from cogniverse_runtime import messaging
 from cogniverse_runtime.routers import admin, tenant
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
+from tests.utils.tenant_helpers import MEM0_ROUNDTRIP_TENANT_ID
 
-# Canonical org:tenant form so the derived schema matches the single suffix
-# the shared fixture deploys (agent_memories_test_tenant); the bare form
-# derives the never-deployed double suffix.
-_TENANT = "test:tenant"
+_TENANT = MEM0_ROUNDTRIP_TENANT_ID
 _USER_MEMORY_AGENT = "_user_memories"
 
 

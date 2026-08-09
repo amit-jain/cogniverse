@@ -8,7 +8,6 @@ discovery, and the empty-batch short-circuit.
 """
 
 import logging
-from pathlib import Path
 
 import pytest
 

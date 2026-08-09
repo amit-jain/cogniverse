@@ -10,7 +10,6 @@ a live listener (reachable) and a closed port (unreachable).
 
 import contextlib
 import socket
-
 from unittest.mock import MagicMock, patch
 
 import pytest

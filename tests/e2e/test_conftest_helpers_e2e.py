@@ -6,23 +6,21 @@ e2e coverage work end-to-end:
   - unique_id() produces the expected shape,
   - the session-scoped Phoenix client is constructed once and reused,
   - the wait_for_span helper polls and times out cleanly on a nonexistent
-    span (the deterministic-timeout contract every later phase relies on).
+    span (the deterministic-timeout contract for Phoenix span tests).
 
-All later phase tests assume these helpers behave as asserted here, so a
-failure here is a load-bearing failure for the whole e2e knowledge-system
-work.
+Tests that use these helpers depend on the behavior asserted here.
 """
 
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
 import tests.e2e.conftest as e2e_conftest
 from tests.e2e.conftest import (
     _TEST_TENANT_PREFIXES,
-    skip_if_no_runtime,
     unique_id,
     wait_for_span,
 )
@@ -45,10 +43,9 @@ _NEW_PREFIXES = (
     "smk2_",
 )
 
-# The pre-existing prefixes the conftest had before this change. Recorded
-# here so the registry assertion catches any accidental removal of an
-# existing prefix during merges.
-_LEGACY_PREFIXES = (
+# Tenant prefixes used by the graph, isolation, schema, API, search, and
+# ingestion tests. The registry assertion catches accidental removals.
+_STANDARD_PREFIXES = (
     "graph_e2e_",
     "iso_",
     "mix_",
@@ -150,7 +147,9 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )
 
-        stack = e2e_conftest.e2e_stack.__wrapped__()
+        stack = e2e_conftest.e2e_stack.__wrapped__(
+            SimpleNamespace(session=SimpleNamespace(items=[])), {}
+        )
         next(stack)
         return stack, calls
 
@@ -321,7 +320,9 @@ class TestSharedClusterOwnership:
             ),
         )
 
-        stack = e2e_conftest.e2e_stack.__wrapped__()
+        stack = e2e_conftest.e2e_stack.__wrapped__(
+            SimpleNamespace(session=SimpleNamespace(items=[])), {}
+        )
         with pytest.raises(BaseException) as raised:
             next(stack)
 
@@ -412,7 +413,9 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
         )
 
-        stack = e2e_conftest.e2e_stack.__wrapped__()
+        stack = e2e_conftest.e2e_stack.__wrapped__(
+            SimpleNamespace(session=SimpleNamespace(items=[])), {}
+        )
         next(stack)
         stack.close()
 
@@ -457,7 +460,6 @@ class TestSharedClusterOwnership:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 def test_conftest_helpers_self_check(phoenix_client_session):
     """One self-check covering every conftest-helper contract.
 
@@ -477,8 +479,8 @@ def test_conftest_helpers_self_check(phoenix_client_session):
         f"unique_id hex suffix malformed: {hex_part!r}"
     )
 
-    # 2) _TEST_TENANT_PREFIXES is exactly legacy + new (order preserved).
-    expected_prefixes = _LEGACY_PREFIXES + _NEW_PREFIXES
+    # 2) _TEST_TENANT_PREFIXES is exactly standard + new (order preserved).
+    expected_prefixes = _STANDARD_PREFIXES + _NEW_PREFIXES
     assert _TEST_TENANT_PREFIXES == expected_prefixes, (
         f"_TEST_TENANT_PREFIXES drift: got {_TEST_TENANT_PREFIXES!r}, "
         f"expected {expected_prefixes!r}"
@@ -497,10 +499,10 @@ def test_conftest_helpers_self_check(phoenix_client_session):
     # 4) wait_for_span polling contract: when no span matches, the helper
     # MUST poll until the deadline and then return None — never raise on
     # a missing span and never short-circuit before the deadline. This is
-    # what every later phase relies on when it asserts a positive match
-    # within a known window. We test the negative path here because it's
-    # deterministic; the positive path is exercised by every later
-    # test that drives a real span (e.g. RLM telemetry, sandbox.exec).
+    # what each span-producing test relies on when it asserts a positive
+    # match within a known window. We test the negative path here because
+    # it's deterministic; the positive path is exercised by tests that
+    # drive a real span (e.g. RLM telemetry, sandbox.exec).
     bogus_project = f"cogniverse-{unique_id('know_selfcheck_bogus')}"
     started = time.monotonic()
     found = wait_for_span(

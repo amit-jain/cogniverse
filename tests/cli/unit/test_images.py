@@ -34,6 +34,8 @@ def _make_project_root(
     videoprism: bool = False,
     clap_embed: bool = False,
     face_embed: bool = False,
+    colbert_pylate: bool = False,
+    code_colbert_pylate: bool = False,
 ) -> Path:
     """A project root with just the chart files images.py reads: Chart.yaml
     (appVersion) and values.yaml (inference.<svc>.enabled → build set)."""
@@ -47,6 +49,8 @@ def _make_project_root(
             "videoprism_jax": {"enabled": videoprism},
             "clap_embed": {"enabled": clap_embed},
             "face_embed": {"enabled": face_embed},
+            "colbert_pylate": {"enabled": colbert_pylate},
+            "code_colbert_pylate": {"enabled": code_colbert_pylate},
         }
     }
     (chart_dir / "values.yaml").write_text(yaml.safe_dump(values))
@@ -135,13 +139,13 @@ class TestBuildImages:
         assert not any("SETUPTOOLS_SCM_PRETEND_VERSION" in a for a in gliner_cmd)
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_build_images_builds_gliner_not_pylate(
+    def test_build_images_builds_gliner_without_backend_arg(
         self, mock_run: object, tmp_path: Path
     ) -> None:
         """GLiNER (pullPolicy: Never in the chart) MUST be built+imported by
-        ``up`` or its pod ErrImageNeverPulls on a fresh deploy. The retired
-        pylate sidecar must never be built again. GLiNER takes no TORCH_BACKEND
-        arg and builds from its own ``deploy/gliner`` context."""
+        ``up`` or its pod ErrImageNeverPulls on a fresh deploy. GLiNER takes
+        no TORCH_BACKEND arg and builds from the repository root so its
+        canonical CLI server is available to the Dockerfile."""
         _completed(mock_run)
         root = _make_project_root(tmp_path)
 
@@ -157,12 +161,96 @@ class TestBuildImages:
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
         ]
         gliner_cmd = next(c for c in all_cmds if f"cogniverse/gliner:{DEV_TAG}" in c)
-        assert "deploy/gliner/Dockerfile" in gliner_cmd
-        assert "deploy/gliner" in gliner_cmd
-        assert not any(a.startswith("TORCH_BACKEND=") for a in gliner_cmd)
+        assert gliner_cmd == [
+            "docker",
+            "build",
+            "-f",
+            "deploy/gliner/Dockerfile",
+            "-t",
+            f"cogniverse/gliner:{DEV_TAG}",
+            ".",
+        ]
         for cmd in all_cmds:
             assert "deploy/pylate/Dockerfile" not in cmd
             assert "cogniverse/pylate" not in " ".join(cmd)
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_enabled_lateon_services_build_one_pylate_image_with_backend(
+        self, mock_run: object, tmp_path: Path
+    ) -> None:
+        """Both LateOn services share the cogniverse/pylate image, so enabling
+        both builds it exactly once, from the repository root (the canonical
+        CLI PyLate server is COPY'd in) with the host-matching TORCH_BACKEND.
+        Both chart entries still get the dev-tag override."""
+        _completed(mock_run)
+        root = _make_project_root(
+            tmp_path, colbert_pylate=True, code_colbert_pylate=True
+        )
+
+        built = build_images(root, torch_backend="rocm", version=DEV_VERSION)
+
+        assert built == [
+            f"cogniverse/runtime-rocm:{DEV_TAG}",
+            f"cogniverse/dashboard-rocm:{DEV_TAG}",
+            f"cogniverse/gliner:{DEV_TAG}",
+            f"cogniverse/pylate:{DEV_TAG}",
+        ]
+        pylate_cmds = [
+            call[0][0]
+            for call in mock_run.call_args_list  # type: ignore[attr-defined]
+            if f"cogniverse/pylate:{DEV_TAG}" in call[0][0]
+        ]
+        assert pylate_cmds == [
+            [
+                "docker",
+                "build",
+                "-f",
+                "deploy/pylate/Dockerfile",
+                "--build-arg",
+                "TORCH_BACKEND=rocm",
+                "-t",
+                f"cogniverse/pylate:{DEV_TAG}",
+                ".",
+            ]
+        ]
+
+        overrides = dev_image_set_values(
+            root, torch_backend="rocm", version=DEV_VERSION
+        )
+        assert overrides["inference.colbert_pylate.image.tag"] == DEV_TAG
+        assert overrides["inference.code_colbert_pylate.image.tag"] == DEV_TAG
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_enabled_videoprism_build_uses_canonical_server_context(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """VideoPrism builds from the repository root so its canonical CLI
+        server is available to the Dockerfile."""
+        _completed(mock_run)
+        root = _make_project_root(tmp_path, videoprism=True)
+
+        built = build_images(root, torch_backend="cpu", version=DEV_VERSION)
+
+        assert built == [
+            f"cogniverse/runtime-cpu:{DEV_TAG}",
+            f"cogniverse/dashboard-cpu:{DEV_TAG}",
+            f"cogniverse/gliner:{DEV_TAG}",
+            f"cogniverse/videoprism:{DEV_TAG}",
+        ]
+        videoprism_cmd = next(
+            call[0][0]
+            for call in mock_run.call_args_list
+            if f"cogniverse/videoprism:{DEV_TAG}" in call[0][0]
+        )
+        assert videoprism_cmd == [
+            "docker",
+            "build",
+            "-f",
+            "deploy/videoprism/Dockerfile",
+            "-t",
+            f"cogniverse/videoprism:{DEV_TAG}",
+            ".",
+        ]
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_disabled_sidecars_are_not_built(
@@ -214,6 +302,26 @@ class TestBuildImages:
         assert "deploy/face_embed/Dockerfile" in face_cmd
         assert face_cmd[-1] == "."  # repo-root context
         assert not any(a.startswith("TORCH_BACKEND=") for a in face_cmd)
+
+
+def test_release_gliner_and_videoprism_builds_include_canonical_servers() -> None:
+    workflow_path = Path(__file__).parents[3] / ".github/workflows/release-images.yml"
+    workflow = yaml.safe_load(workflow_path.read_text())
+    image_matrix = workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
+    entries = {entry["repo"]: entry for entry in image_matrix}
+
+    assert entries["gliner"] == {
+        "repo": "gliner",
+        "dockerfile": "deploy/gliner/Dockerfile",
+        "context": ".",
+        "backend": "",
+    }
+    assert entries["videoprism"] == {
+        "repo": "videoprism",
+        "dockerfile": "deploy/videoprism/Dockerfile",
+        "context": ".",
+        "backend": "",
+    }
 
 
 class TestDevImageSetValues:
@@ -659,3 +767,51 @@ class TestPullAndImportThirdParty:
         pull_and_import_third_party("cogniverse", vf, skip_llm=True)
 
         mock_run.assert_not_called()  # type: ignore[attr-defined]
+
+
+class TestDeviceOverlaySidecarTags:
+    """Tag overrides are emitted per ENABLED sidecar, so whoever deploys must
+    compute them from the same overlays it hands helm."""
+
+    REPO_ROOT = Path(__file__).resolve().parents[3]
+
+    def _chart(self, name: str) -> Path:
+        path = self.REPO_ROOT / "charts" / "cogniverse" / name
+        assert path.exists(), f"missing chart values file: {path}"
+        return path
+
+    def test_rocm_overlay_enables_a_sidecar_the_defaults_do_not(self) -> None:
+        """The real chart layering the deploy relies on: the second LateOn
+        service exists only once the device overlay is merged in."""
+        defaults = enabled_sidecars(self.REPO_ROOT, None)
+        with_rocm = enabled_sidecars(self.REPO_ROOT, [self._chart("values.rocm.yaml")])
+
+        assert "code_colbert_pylate" not in defaults
+        assert "colbert_pylate" in defaults
+        assert with_rocm == ["colbert_pylate", "code_colbert_pylate"]
+
+    def test_overrides_cover_every_sidecar_the_overlay_enables(self) -> None:
+        overrides = dev_image_set_values(
+            self.REPO_ROOT,
+            torch_backend="rocm",
+            values_files=[self._chart("values.rocm.yaml")],
+            version=DEV_VERSION,
+        )
+
+        assert overrides["inference.colbert_pylate.image.tag"] == DEV_TAG
+        assert overrides["inference.code_colbert_pylate.image.tag"] == DEV_TAG
+
+    def test_omitting_the_overlay_leaves_its_sidecar_on_the_placeholder_tag(
+        self,
+    ) -> None:
+        """Computing overrides from chart defaults while helm applies the
+        overlay is the trap: the overlay-only service keeps the chart's static
+        placeholder tag, which no build ever produces, so the pod cannot pull
+        it under pullPolicy=Never.
+        """
+        overrides = dev_image_set_values(
+            self.REPO_ROOT, torch_backend="rocm", version=DEV_VERSION
+        )
+
+        assert "inference.colbert_pylate.image.tag" in overrides
+        assert "inference.code_colbert_pylate.image.tag" not in overrides

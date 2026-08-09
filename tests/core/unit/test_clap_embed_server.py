@@ -1,24 +1,22 @@
 """Unit tests for the CLAP-embed sidecar.
 
-Loads ``cogniverse_runtime/sidecars/clap_embed.py`` with the heavy model
+Imports ``cogniverse_cli.modal_inference.servers.clap`` with the heavy model
 patched by a deterministic stand-in. The audio decode path runs for real
 (librosa over a generated WAV), so the request → 48 kHz-mono-array →
 processor → 512-vec contract is exercised end to end in-process.
 """
 
 import base64
-import importlib.util
 import io
-from pathlib import Path
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from cogniverse_cli.modal_inference.servers import clap as clap_embed_server
 from fastapi.testclient import TestClient
-
-SERVER_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "libs/runtime/cogniverse_runtime/sidecars/clap_embed.py"
-)
 
 
 class _FakeTensor:
@@ -62,11 +60,7 @@ class _FakeClapProcessor:
 
 @pytest.fixture
 def server_module():
-    spec = importlib.util.spec_from_file_location(
-        "clap_embed_server_under_test", str(SERVER_PATH)
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = clap_embed_server
     mod._MODEL = _FakeClapModel()
     mod._PROCESSOR = _FakeClapProcessor()
     return mod
@@ -90,10 +84,124 @@ def _wav_b64(duration_s: float = 0.5, sr: int = 16000) -> str:
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
-def test_health(client):
+def test_health_reports_exact_model_identity(client):
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {
+        "status": "ready",
+        "model": "laion/clap-htsat-unfused",
+        "model_revision": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a",
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_concurrent_cold_load_initializes_one_exact_model(
+    monkeypatch,
+    server_module,
+):
+    events: list[tuple] = []
+    loaded_processor = object()
+    simultaneous = Barrier(12)
+
+    class LoadedModel:
+        def to(self, device):
+            events.append(("device", device))
+
+        def eval(self):
+            events.append(("eval",))
+
+    loaded_model = LoadedModel()
+
+    class Processor:
+        @staticmethod
+        def from_pretrained(model_id, *, revision):
+            events.append(("processor", model_id, revision))
+            return loaded_processor
+
+    class Model:
+        @staticmethod
+        def from_pretrained(model_id, *, revision):
+            events.append(("model", model_id, revision))
+            return loaded_model
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(ClapModel=Model, ClapProcessor=Processor),
+    )
+    server_module._MODEL = None
+    server_module._PROCESSOR = None
+    config = server_module.ClapEmbedConfig(device="cuda")
+
+    def load():
+        simultaneous.wait(timeout=3)
+        return server_module._load_model(config)
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        loaded = list(executor.map(lambda _: load(), range(12)))
+
+    revision = "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a"
+    assert not simultaneous.broken
+    assert events == [
+        ("processor", "laion/clap-htsat-unfused", revision),
+        ("model", "laion/clap-htsat-unfused", revision),
+        ("device", "cuda"),
+        ("eval",),
+    ]
+    assert loaded == [(loaded_model, loaded_processor)] * 12
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_model_load_failure_propagates_exact_context(
+    monkeypatch,
+    client,
+    server_module,
+):
+    class BrokenArtifact:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise OSError("checkpoint is truncated")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(ClapModel=BrokenArtifact, ClapProcessor=BrokenArtifact),
+    )
+    server_module._MODEL = None
+    server_module._PROCESSOR = None
+
+    response = client.post("/embed/text", json={"text": "rain on a roof"})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": (
+            "clap_embed: model laion/clap-htsat-unfused load failed "
+            "(OSError): checkpoint is truncated"
+        )
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_model_inference_failure_propagates_exact_context(client, server_module):
+    class BrokenModel:
+        def get_text_features(self, **inputs):
+            raise RuntimeError("device execution failed")
+
+    server_module._MODEL = BrokenModel()
+    server_module._PROCESSOR = lambda **kwargs: {}
+
+    response = client.post("/embed/text", json={"text": "rain on a roof"})
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": (
+            "clap_embed: model laion/clap-htsat-unfused inference failed "
+            "(RuntimeError): device execution failed"
+        )
+    }
 
 
 @pytest.mark.unit
@@ -131,6 +239,8 @@ def test_embed_audio_rejects_invalid_b64(client):
     assert "audio_b64 decode failed" in resp.json()["detail"]
 
 
+@pytest.mark.filterwarnings("ignore:PySoundFile failed:UserWarning")
+@pytest.mark.filterwarnings("ignore:librosa.core.audio.__audioread_load:FutureWarning")
 def test_embed_audio_rejects_undecodable_bytes(client):
     junk = base64.b64encode(b"definitely not audio bytes").decode()
     resp = client.post("/embed/audio", json={"audio_b64": junk})

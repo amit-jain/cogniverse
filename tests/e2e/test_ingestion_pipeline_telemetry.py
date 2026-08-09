@@ -13,7 +13,8 @@ Locks the contract:
 * ``TelemetryLevel`` filter controls emission: pipeline spans land
   at DETAILED+ and disappear at BASIC.
 
-Skips when the cogniverse-runtime pod or Phoenix isn't reachable.
+The autouse E2E fixture provisions the runtime and Phoenix. An unavailable
+service or tracked video fixture fails with its exact endpoint or path.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -28,36 +30,37 @@ import pytest
 RUNTIME_BASE = os.environ.get("COGNIVERSE_RUNTIME_BASE", "http://localhost:33000")
 PHOENIX_BASE = os.environ.get("COGNIVERSE_PHOENIX_BASE", "http://localhost:33006")
 _TENANT = "flywheel_org:production"
+_SAMPLE_VIDEO = (
+    Path(__file__).resolve().parents[2]
+    / "tests/system/resources/videos/v_-D1gdv_gQyw.mp4"
+)
 
 
-def _runtime_reachable() -> bool:
+def _require_service(name: str, url: str) -> None:
     try:
-        with httpx.Client(timeout=2.0) as c:
-            r = c.get(f"{RUNTIME_BASE}/health")
-        return r.status_code == 200
-    except Exception:
-        return False
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(url)
+    except httpx.HTTPError as exc:
+        pytest.fail(
+            f"{name} unavailable at {url}: {type(exc).__name__}: {exc}",
+            pytrace=False,
+        )
+    if response.status_code != 200:
+        pytest.fail(
+            f"{name} unavailable at {url}: HTTP {response.status_code} "
+            f"body={response.text[:300]!r}",
+            pytrace=False,
+        )
 
 
-def _phoenix_reachable() -> bool:
-    try:
-        with httpx.Client(timeout=2.0) as c:
-            r = c.get(f"{PHOENIX_BASE}/v1/traces")
-        return r.status_code == 200
-    except Exception:
-        return False
+pytestmark = pytest.mark.e2e
 
 
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not (_runtime_reachable() and _phoenix_reachable()),
-        reason=(
-            f"requires cogniverse-runtime at {RUNTIME_BASE} AND Phoenix at "
-            f"{PHOENIX_BASE}"
-        ),
-    ),
-]
+@pytest.fixture(scope="module", autouse=True)
+def _require_telemetry_services() -> None:
+    """Report an exact endpoint when the provisioned stack is unavailable."""
+    _require_service("cogniverse runtime", f"{RUNTIME_BASE}/health/live")
+    _require_service("Phoenix", f"{PHOENIX_BASE}/v1/traces")
 
 
 def _attr(row, *paths):
@@ -119,6 +122,7 @@ def _query_pipeline_spans(ingest_id: str, timeout_s: float = 60.0) -> list[dict]
     # exception reads as "no spans yet" until the poll budget dies.
     window_start = datetime.now(timezone.utc) - timedelta(hours=1)
     deadline = time.time() + timeout_s
+    last_error: Exception | None = None
     while time.time() < deadline:
         try:
             spans = px.spans.get_spans_dataframe(
@@ -127,7 +131,9 @@ def _query_pipeline_spans(ingest_id: str, timeout_s: float = 60.0) -> list[dict]
                 limit=2000,
                 timeout=90,
             )
-        except Exception:
+            last_error = None
+        except Exception as exc:
+            last_error = exc
             time.sleep(1.0)
             continue
         if len(spans) == 0:
@@ -187,6 +193,12 @@ def _query_pipeline_spans(ingest_id: str, timeout_s: float = 60.0) -> list[dict]
             }
             for _, r in matching.iterrows()
         ]
+    if last_error is not None:
+        pytest.fail(
+            f"Phoenix span query unavailable at {PHOENIX_BASE} for "
+            f"ingest_id={ingest_id!r}: {type(last_error).__name__}: {last_error}",
+            pytrace=False,
+        )
     return []
 
 
@@ -196,26 +208,17 @@ def _upload_fixture(tenant_id: str) -> str:
     Phoenix span query so the test can isolate this run's emissions
     from other ingest traffic.
     """
-    # Default to the smallest bundled sample so the test runs without env
-    # setup — an unset fixture used to skip, which hid this surface from
-    # every full-suite run.
-    fixture = os.environ.get("COGNIVERSE_INGEST_FIXTURE") or os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "..",
-        "data",
-        "testset",
-        "evaluation",
-        "sample_videos",
-        "v_-6dz6tBH77I.mp4",
-    )
-    if not os.path.exists(fixture):
+    # Default to the tracked real video so a clean checkout always exercises
+    # the ingestion boundary. An explicit override remains useful for focused
+    # local runs and must resolve to a real file too.
+    fixture = Path(os.environ.get("COGNIVERSE_INGEST_FIXTURE") or _SAMPLE_VIDEO)
+    if not fixture.is_file():
         pytest.fail(
-            f"ingest fixture video not found at {fixture} — set "
-            "COGNIVERSE_INGEST_FIXTURE or restore the sample_videos data dir"
+            f"ingest fixture video unavailable at {fixture}",
+            pytrace=False,
         )
     upload_name = f"pipeline_test_{uuid.uuid4().hex[:8]}.mp4"
-    with open(fixture, "rb") as fh:
+    with fixture.open("rb") as fh:
         with httpx.Client(timeout=600.0) as c:
             r = c.post(
                 f"{RUNTIME_BASE}/ingestion/upload",

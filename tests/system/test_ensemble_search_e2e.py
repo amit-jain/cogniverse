@@ -26,6 +26,15 @@ from cogniverse_agents.search_agent import SearchInput
 
 logger = logging.getLogger(__name__)
 
+# Ingestion embeds through the profile's inference_services.embedding
+# service; the tomoro model these profiles pin cannot load in-process
+# (pylate caps transformers below the 4.57 it needs), so the endpoint
+# must be provisioned or every document fails to embed.
+pytestmark = [
+    pytest.mark.requires_inference("vllm_colpali"),
+    pytest.mark.requires_inference("videoprism_jax"),
+]
+
 
 @pytest.fixture(scope="module")
 def ensemble_system_setup():
@@ -62,7 +71,12 @@ def ensemble_system_setup():
         # Setup Vespa
         logger.info("📦 Setting up Vespa container...")
         if not manager.full_setup():
-            pytest.fail("Failed to setup Vespa")
+            pytest.fail(
+                "VespaTestManager.full_setup() failed — see the printed "
+                "step that returned False (application directory, deploy, "
+                "or video ingestion, which needs the profile's embedding "
+                "inference service reachable)"
+            )
 
         logger.info(f"✅ Vespa ready at http://localhost:{ensemble_http_port}")
 
@@ -272,10 +286,18 @@ class TestEnsembleSearchEndToEnd:
         # VALIDATE: RRF metadata on results (if any returned)
         if result.results:
             first_result = result.results[0]
-            metadata = first_result.get("metadata", {})
-            assert "rrf_score" in metadata, "Should have RRF score in metadata"
-            assert "profile_ranks" in metadata, "Should have profile ranks in metadata"
-            assert "num_profiles" in metadata, "Should have profile count in metadata"
+            # The fusion fields are ranking, so they sit beside ``score`` in the
+            # public shape rather than in the payload.
+            assert "rrf_score" in first_result, f"Should have RRF score: {first_result}"
+            assert "profile_ranks" in first_result, (
+                f"Should have profile ranks: {first_result}"
+            )
+            assert "num_profiles" in first_result, (
+                f"Should have profile count: {first_result}"
+            )
+            assert "rrf_score" not in first_result.get("metadata", {}), (
+                f"rrf_score must not be duplicated into metadata: {first_result}"
+            )
 
         # VALIDATE: Latency (relaxed for E2E with mocked encoders)
         logger.info(
@@ -453,16 +475,15 @@ class TestEnsembleSearchEndToEnd:
             assert len(video1_results) == 1, "test_video_1 should appear once"
 
             video1 = video1_results[0]
-            video1_meta = video1.get("metadata", {})
-            assert video1_meta.get("num_profiles") == 3, (
+            assert video1.get("num_profiles") == 3, (
                 f"test_video_1 should appear in 3 profiles, got "
-                f"{video1_meta.get('num_profiles')}"
+                f"{video1.get('num_profiles')}"
             )
 
             # VALIDATE: test_video_0 appears in 2 profiles
             video0_results = [r for r in results if r["id"] == "test_video_0"]
             if video0_results:
-                assert video0_results[0].get("metadata", {}).get("num_profiles") == 2
+                assert video0_results[0].get("num_profiles") == 2
 
             # VALIDATE: Videos in more profiles rank higher (generally)
             # Get rank of video1 (3 profiles) vs video4 (1 profile)

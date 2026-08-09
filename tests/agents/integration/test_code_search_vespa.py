@@ -232,25 +232,26 @@ class TestCodeSearchVespaEndToEnd:
     ):
         """Full round-trip: parse → encode with LateOn-Code-edge → feed Vespa → search → verify.
 
-        Uses the vespa_with_schema fixture's 320-dim schema. LateOn-Code-edge
-        48-dim embeddings are zero-padded to 320-dim for compatibility with the
-        existing test schema. MaxSim ranking works correctly — the padded zeros
-        contribute nothing to the score, so search results are ordered by the
-        real 48 dimensions.
+        LateOn-Code-edge emits 48-dim vectors; the vespa_with_schema fixture's
+        schema declares a wider patch tensor, so each vector is zero-padded to
+        the width the schema declares. MaxSim ranking works correctly — the
+        padded zeros contribute nothing to the score, so search results are
+        ordered by the real 48 dimensions.
 
         In production, the code_lateon_mv schema uses native 48-dim tensors.
         """
         import numpy as np
         import requests
 
-        from tests.utils.vespa_test_helpers import schema_full_name
+        from tests.utils.vespa_test_helpers import schema_full_name, schema_tensor_dim
 
         base_url = vespa_with_schema["base_url"]
         base_schema = vespa_with_schema["default_schema"]
         # deploy_schema canonicalizes test_tenant → test_tenant:test_tenant, so
         # the deployed doc type is double-suffixed; build the same name here.
         schema_name = schema_full_name(base_schema, "test_tenant")
-        schema_embedding_dim = 320
+        schema_embedding_dim = schema_tensor_dim(base_schema, "embedding")
+        schema_binary_dim = schema_tensor_dim(base_schema, "embedding_binary")
 
         # 1. Parse real agent files
         repo_root = Path(__file__).resolve().parents[3]
@@ -274,7 +275,7 @@ class TestCodeSearchVespaEndToEnd:
         texts = [seg["content"][:8192] for seg in segments_to_ingest]
         doc_embeddings = colbert_model.encode(texts, is_query=False)
 
-        # 3. Feed to Vespa (pad 48→320 for test schema compatibility)
+        # 3. Feed to Vespa (pad 48→schema width for test schema compatibility)
         for idx, (seg, emb) in enumerate(zip(segments_to_ingest, doc_embeddings)):
             emb_np = np.array(emb, dtype=np.float32)
 
@@ -288,7 +289,7 @@ class TestCodeSearchVespaEndToEnd:
             if emb_np.shape[0] > 2048:
                 emb_np = emb_np[:2048]
 
-            assert emb_np.shape[1] == 320
+            assert emb_np.shape[1] == schema_embedding_dim
 
             float_dict = {}
             for patch_idx in range(emb_np.shape[0]):
@@ -297,7 +298,7 @@ class TestCodeSearchVespaEndToEnd:
             binary = np.packbits(
                 np.where(emb_np > 0, 1, 0).astype(np.uint8), axis=1
             ).astype(np.int8)
-            assert binary.shape[1] == 40
+            assert binary.shape[1] == schema_binary_dim
             binary_dict = {}
             for patch_idx in range(binary.shape[0]):
                 binary_dict[str(patch_idx)] = binary[patch_idx].tolist()
@@ -343,7 +344,7 @@ class TestCodeSearchVespaEndToEnd:
             )
             query_np = np.hstack([query_np, q_pad])
 
-        assert query_np.shape[1] == 320
+        assert query_np.shape[1] == schema_embedding_dim
 
         qt_cells = []
         for tok_idx in range(query_np.shape[0]):

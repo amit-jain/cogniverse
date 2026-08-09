@@ -4,6 +4,7 @@ Tests for ChunkProcessor
 """
 
 import json
+import subprocess
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -124,14 +125,36 @@ class TestChunkProcessor:
     def test_extract_chunk_failure(
         self, mock_subprocess, processor, sample_video_path, tmp_path
     ):
-        """Test chunk extraction failure."""
+        """An ffmpeg failure exposes the segment and decoder error."""
         chunk_path = tmp_path / "chunk.mp4"
-        mock_subprocess.side_effect = Exception("ffmpeg error")
+        mock_subprocess.side_effect = subprocess.CalledProcessError(
+            7, ["ffmpeg"], stderr="decoder rejected stream"
+        )
 
-        result = processor._extract_chunk(sample_video_path, chunk_path, 10.0, 30.0)
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                rf"ffmpeg failed for {sample_video_path} at 10\.000s for "
+                r"30\.000s with exit 7: decoder rejected stream"
+            ),
+        ):
+            processor._extract_chunk(sample_video_path, chunk_path, 10.0, 30.0)
 
-        assert result is False
-        processor.logger.error.assert_called()
+    @patch("cogniverse_runtime.ingestion.processors.chunk_processor.subprocess.run")
+    def test_extract_chunk_timeout_exposes_segment_deadline(
+        self, mock_subprocess, processor, sample_video_path, tmp_path
+    ):
+        chunk_path = tmp_path / "chunk.mp4"
+        mock_subprocess.side_effect = subprocess.TimeoutExpired(["ffmpeg"], 300.0)
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                rf"ffmpeg timed out for {sample_video_path} at 10\.000s for "
+                r"30\.000s after 300\.0s"
+            ),
+        ):
+            processor._extract_chunk(sample_video_path, chunk_path, 10.0, 30.0)
 
     @patch.object(ChunkProcessor, "_extract_chunk")
     @patch.object(ChunkProcessor, "_get_video_duration")

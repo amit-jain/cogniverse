@@ -148,8 +148,9 @@ class GatewayOutput(AgentOutput):
         description=(
             "True when GLiNER entity extraction hit an outage; the query was "
             "still routed (conservatively, to the orchestrator), but the "
-            "modality classification was keyword-only. Distinguishes a sidecar "
-            "outage from a genuinely low-confidence classification."
+            "modality classification was keyword-only. Distinguishes an "
+            "inference service outage from a genuinely low-confidence "
+            "classification."
         ),
     )
 
@@ -169,8 +170,8 @@ class GatewayDeps(AgentDeps):
     gliner_inference_url: Optional[str] = Field(
         None,
         description=(
-            "Optional remote GLiNER service URL (e.g. the deploy/gliner "
-            "sidecar). When set, classification posts to this endpoint "
+            "Optional remote GLiNER inference service URL. When set, "
+            "classification posts to this endpoint "
             "instead of importing gliner in-process."
         ),
     )
@@ -386,8 +387,8 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         """Run GLiNER entity prediction on the query.
 
         Returns ``(entities, extraction_failed)``; ``extraction_failed`` is True
-        only on a prediction outage, so a sidecar failure is distinguishable
-        from a genuine no-entities result.
+        only on a prediction outage, so an inference service failure is
+        distinguishable from a genuine no-entities result.
 
         ``gliner_threshold`` lets a request pass the value from its captured
         threshold snapshot; when omitted it falls back to the live deps value.
@@ -408,7 +409,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             )
         except Exception as e:
             # A prediction outage: surface it so the caller can flag the routing
-            # decision as sidecar-degraded rather than genuinely low-confidence.
+            # decision as service-degraded rather than genuinely low-confidence.
             logger.error("GLiNER prediction failed: %s", e)
             return [], True
         return [

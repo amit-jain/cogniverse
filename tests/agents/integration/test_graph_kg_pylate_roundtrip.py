@@ -1,10 +1,11 @@
-"""End-to-end round-trip of the KG → vLLM /pooling → Vespa write path.
+"""End-to-end round-trip of the KG → PyLate /pooling → Vespa write path.
 
 Spins up an HTTP stub that mimics both:
-  - the vLLM token-embed (LateOn) ``POST /pooling`` endpoint (returns
+  - the PyLate service (LateOn) ``POST /pooling`` endpoint (returns
     canonical (N, 128) per-token embeddings); query vs document is
-    distinguished by the client-side ``[Q] ``/``[D] `` prefix, never an
-    ``is_query`` field
+    carried by the ``is_query`` request field — the service applies the
+    ``[Q] ``/``[D] `` markers and query expansion itself, so the client
+    sends raw text
   - Vespa's Document v1 ``PUT /document/v1/...`` (records the payload)
 
 Routes a node upsert through GraphManager and asserts the wire-format
@@ -43,7 +44,7 @@ def _free_port() -> int:
 
 
 class _StubHandler(BaseHTTPRequestHandler):
-    """Two-faced stub: /pooling for vLLM token-embed, /document/v1 for Vespa."""
+    """Two-faced stub: /pooling for the PyLate service, /document/v1 for Vespa."""
 
     pooling_requests: list[dict] = []
     feed_payloads: list[tuple[str, dict]] = []  # (path, payload)
@@ -62,10 +63,10 @@ class _StubHandler(BaseHTTPRequestHandler):
 
         if self.path == "/pooling":
             _StubHandler.pooling_requests.append(body)
-            # vLLM /pooling must NOT receive is_query — query vs document
-            # is encoded client-side via the [Q] / [D] prefix.
-            assert "is_query" not in body, (
-                f"is_query must not be sent to vLLM /pooling; got keys: "
+            # The PyLate service owns query vs document encoding — the
+            # client must send raw text plus an explicit is_query flag.
+            assert isinstance(body.get("is_query"), bool), (
+                f"/pooling requires a boolean is_query field; got keys: "
                 f"{list(body.keys())}"
             )
             n = _StubHandler.pooling_n_tokens
@@ -88,7 +89,9 @@ class _StubHandler(BaseHTTPRequestHandler):
 
         if self.path == "/search/":
             _StubHandler.search_requests.append(body)
-            payload = b'{"root":{"children":[]}}'
+            payload = json.dumps(
+                {"root": {"fields": {"totalCount": 0}, "children": []}}
+            ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
@@ -193,12 +196,12 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(graph_manage
         "failed_ids": [],
     }
 
-    # 1. Stub saw a /pooling request with the [D] document prefix and no
-    #    is_query field (vLLM contract).
+    # 1. Stub saw a /pooling request carrying the raw node text with
+    #    is_query false (the service applies the document marker itself).
     assert len(capture.pooling_requests) == 1
     pool_req = capture.pooling_requests[0]
-    assert "is_query" not in pool_req
-    assert pool_req["input"] == ["[D] Alpha\nFirst node under test"]
+    assert pool_req["is_query"] is False
+    assert pool_req["input"] == ["Alpha\nFirst node under test"]
 
     # 2. Stub saw exactly one PUT to /document/v1/... for the node.
     assert len(capture.feed_payloads) == 1
@@ -234,17 +237,21 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(graph_manage
         )
 
 
-def test_query_encoding_prefixes_query_and_builds_block_inputs(graph_manager):
+def test_query_encoding_sends_raw_text_with_is_query(graph_manager):
     manager, capture = graph_manager
 
     results = manager.search_nodes("find me alpha", top_k=5)
-
-    query_reqs = [
-        req for req in capture.pooling_requests if req["input"] == ["[Q] find me alpha"]
-    ]
-    assert len(query_reqs) == 1
-    assert "is_query" not in query_reqs[0]
     assert results == []
+
+    # The encoder sent the raw query text with is_query true — the service
+    # applies the [Q] marker and query expansion itself.
+    assert len(capture.pooling_requests) == 1
+    query_req = capture.pooling_requests[0]
+    assert query_req["input"] == ["find me alpha"]
+    assert query_req["is_query"] is True
+
+    # The encoded query reached /search/ as per-token MaxSim inputs: one
+    # block per stub token for both the bfloat16 and binary query tensors.
     assert len(capture.search_requests) == 1
     search_request = capture.search_requests[0]
     assert search_request["yql"] == (
@@ -256,6 +263,8 @@ def test_query_encoding_prefixes_query_and_builds_block_inputs(graph_manager):
     assert search_request["hits"] == 5
     assert search_request["ranking.profile"] == "hybrid_binary_bm25"
     assert search_request["model.restrict"] == "knowledge_graph_test_tenant"
+    # Sign-packed binary of the stub embeddings: positive tokens (0, 2) pack
+    # to 0xFF bytes (int8 -1), negative tokens (1, 3) to 0x00.
     assert search_request["input.query(qtb)"] == {
         "blocks": {
             "0": [-1] * 16,
@@ -265,7 +274,8 @@ def test_query_encoding_prefixes_query_and_builds_block_inputs(graph_manager):
         }
     }
     query_blocks = search_request["input.query(qt)"]["blocks"]
-    assert set(query_blocks) == {"0", "1", "2", "3"}
+    assert set(query_blocks) == {str(i) for i in range(capture.pooling_n_tokens)}
+    assert all(len(block) == 128 for block in query_blocks.values())
     assert query_blocks["0"] == pytest.approx([0.4] * 128)
     assert query_blocks["1"] == pytest.approx([-0.35] * 128)
     assert query_blocks["2"] == pytest.approx([0.5] * 128)

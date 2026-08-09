@@ -209,7 +209,7 @@ def _assert_results_well_formed(results, strategy):
 
 @pytest.mark.integration
 @pytest.mark.requires_vespa
-@pytest.mark.requires_colpali
+@pytest.mark.requires_inference("vllm_colpali")
 class TestRankingStrategiesReal:
     """Every rank profile in the schema exercised against real Vespa + ColPali."""
 
@@ -289,7 +289,7 @@ class TestRankingStrategiesReal:
 
 @pytest.mark.integration
 @pytest.mark.requires_vespa
-@pytest.mark.requires_colpali
+@pytest.mark.requires_inference("vllm_colpali")
 class TestAutoSelectDefaultRanking:
     """Omitting ``strategy`` must auto-resolve the schema's default rank profile
     and return results — the contract SearchAgent now relies on after dropping

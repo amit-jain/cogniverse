@@ -268,9 +268,12 @@ async def test_knowledge_summarises_real_subject_slice(
         r"(?:refund.{0,100}\b30[- ]days?\b|\b30[- ]days?\b.{0,100}refund)",
         summary_lower,
     ), summary_text
+    # ``14 additional days`` / ``14 extra days`` are ordinary paraphrases, so
+    # the duration and its unit may be separated by a qualifier — bounded so
+    # the number still has to belong to the EU clause.
     assert re.search(
-        r"(?:eu|european union).{0,120}\b14[- ]days?\b"
-        r"|\b14[- ]days?\b.{0,120}(?:eu|european union)",
+        r"(?:eu|european union).{0,120}\b14\b.{0,30}\bdays?\b"
+        r"|\b14\b.{0,30}\bdays?\b.{0,120}(?:eu|european union)",
         summary_lower,
     ), summary_text
     assert re.search(

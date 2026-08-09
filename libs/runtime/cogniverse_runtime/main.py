@@ -41,6 +41,7 @@ from fastapi.responses import JSONResponse
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.bootstrap import parse_inference_service_urls
 from cogniverse_foundation.config.utils import get_config
 
 # Import routers
@@ -557,9 +558,19 @@ def build_pin_lookup(knowledge_registry):
     return _pin_lookup
 
 
+# dspy.configure grants ambient-binding ownership to the first async task
+# that calls it; the ambient LM is process-wide, so it is bound exactly once
+# per process (tests boot several lifespans in one process). Per-tenant and
+# per-request paths override via dspy.context(lm=...).
+_DSPY_AMBIENT_CONFIGURED = False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
+
+    new_service_urls_json = os.environ.get("INFERENCE_SERVICE_URLS", "")
+    new_service_urls = parse_inference_service_urls(new_service_urls_json)
 
     # Startup
     # Bound the default asyncio executor — every ``asyncio.to_thread`` /
@@ -866,20 +877,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # COLPALI keeps its dedicated var; ColBERT-family services are carried
     # in the INFERENCE_SERVICE_URLS JSON dict keyed by service name.
     new_colpali = os.environ.get("COLPALI_INFERENCE_URL", "")
-    new_service_urls_json = os.environ.get("INFERENCE_SERVICE_URLS", "")
-    if new_service_urls_json:
-        try:
-            new_service_urls = json.loads(new_service_urls_json)
-            if not isinstance(new_service_urls, dict):
-                raise ValueError("INFERENCE_SERVICE_URLS must be a JSON object")
-        except (json.JSONDecodeError, ValueError) as exc:
-            logger.error(
-                f"Invalid INFERENCE_SERVICE_URLS env var: {exc}. "
-                f"Expected JSON object like {{'general': 'http://...'}}"
-            )
-            raise
-    else:
-        new_service_urls = {}
     if new_colpali != system_config.colpali_inference_url:
         system_config.colpali_inference_url = new_colpali
         updated = True
@@ -1084,8 +1081,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # AdapterParseError on small local models.
     from cogniverse_foundation.dspy import LenientJSONAdapter
 
-    dspy.configure(lm=primary_lm, adapter=LenientJSONAdapter())
-    logger.info(f"DSPy configured with LM: {llm_config.primary.model}")
+    global _DSPY_AMBIENT_CONFIGURED
+    if not _DSPY_AMBIENT_CONFIGURED:
+        try:
+            dspy.configure(lm=primary_lm, adapter=LenientJSONAdapter())
+            _DSPY_AMBIENT_CONFIGURED = True
+            logger.info(f"DSPy configured with LM: {llm_config.primary.model}")
+        except RuntimeError as exc:
+            # Another component in this process (a worker job, an earlier
+            # test) already owns the ambient binding's async-task slot.
+            # First writer wins by design; boot continues on dspy.context
+            # overrides.
+            logger.warning(f"DSPy ambient configure skipped: {exc}")
+    else:
+        logger.info("DSPy ambient LM already configured for this process")
     # NOTE: OpenInference DSPy instrumentation runs at module-top
     # bootstrap (see the top of this file) so DSPy classes are
     # wrapped BEFORE any agent imports bind references to the

@@ -32,11 +32,16 @@ def client() -> TestClient:
 
 
 @pytest.fixture
-def phoenix_env(phoenix_container, monkeypatch):
-    """Point the canary endpoints at the docker-managed Phoenix (per-pid port)."""
-    monkeypatch.setenv("PHOENIX_HTTP_ENDPOINT", phoenix_container["http_endpoint"])
-    monkeypatch.setenv("PHOENIX_GRPC_ENDPOINT", phoenix_container["otlp_endpoint"])
+def phoenix_env(phoenix_container):
+    """Point the canary/pin-quota endpoints at the docker-managed Phoenix
+    (per-pid port). The router reads the module state wired at startup via
+    set_phoenix_endpoints, not the process environment."""
+    saved = dict(admin._phoenix_endpoints)
+    admin.set_phoenix_endpoints(
+        phoenix_container["http_endpoint"], phoenix_container["otlp_endpoint"]
+    )
     yield
+    admin.set_phoenix_endpoints(saved["http_endpoint"], saved["grpc_endpoint"])
 
 
 # ----- pin-quota endpoints ----------------------------------------------

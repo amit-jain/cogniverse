@@ -29,12 +29,11 @@ from tests.e2e.conftest import (
     fill_input,
     fill_textarea,
     set_tenant,
-    skip_if_no_dashboard,
     unique_id,
     wait_for_streamlit,
 )
 
-pytestmark = [pytest.mark.e2e, pytest.mark.browser, skip_if_no_dashboard]
+pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
 # Streamlit takes time to rerun on interactions
 INTERACTION_TIMEOUT = 30_000

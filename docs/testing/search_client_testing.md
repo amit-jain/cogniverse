@@ -52,8 +52,11 @@ Each case asserts on the returned `List[SearchResult]`:
 ## Prerequisites
 
 - `docker` available (vLLM and Vespa run in containers).
-- HuggingFace cache at `~/.cache/huggingface` (mounted into the vLLM
-  container so `tomoro-colqwen3-embed-4b` weights are reused across runs).
+- The test-owned HuggingFace cache at `~/.cache/cogniverse-tests/huggingface`
+  (created automatically; mounted into test containers, which run as the
+  invoking user, so `tomoro-colqwen3-embed-4b` weights are reused across
+  runs and every cache entry stays user-owned — the personal
+  `~/.cache/huggingface` is never mounted into test containers).
 - Host RAM headroom for the vLLM CPU sidecar: `tests/utils/vllm_sidecar.py`
   sets `VLLM_CPU_MEMORY_UTILIZATION=0.05` and `VLLM_CPU_KVCACHE_SPACE=2`
   (GiB) on the container, plus a merged `--gpu-memory-utilization 0.10`

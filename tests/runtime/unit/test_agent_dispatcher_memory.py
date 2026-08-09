@@ -274,3 +274,64 @@ class TestGatewayAgentCaching:
         entry = mock_dispatcher._gateway_agents.get("acme:prod")
         assert entry is not None
         assert isinstance(entry.agent, _FakeGateway)
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestDispatchClearsRequestTenant:
+    """``dispatch()`` must clear the request-scoped tenant ContextVar when it
+    finishes, so a later caller on the same context (a worker draining jobs
+    sequentially, a sync caller) resolves its own binding instead of the
+    previous request's."""
+
+    def _wire(self, mock_dispatcher, execute):
+        endpoint = MagicMock()
+        endpoint.capabilities = ["summarization"]
+        mock_dispatcher._registry.get_agent.return_value = endpoint
+        mock_dispatcher._execute_summarization_task = execute
+        # Keep the post-dispatch wiki auto-file out of this test's scope.
+        mock_dispatcher._spawn_background = lambda coro: coro.close()
+
+    @pytest.mark.asyncio
+    async def test_clears_request_tenant_after_successful_dispatch(
+        self, mock_dispatcher
+    ):
+        from cogniverse_agents.memory_aware_mixin import _MEMORY_TENANT_ID
+
+        seen = {}
+
+        async def execute(query, tenant_id, context=None):
+            _MEMORY_TENANT_ID.set(tenant_id)
+            seen["tenant"] = tenant_id
+            return {"status": "ok", "answer": "fine"}
+
+        self._wire(mock_dispatcher, execute)
+
+        result = await mock_dispatcher.dispatch(
+            "summarizer_agent", "hello", context={"tenant_id": "acme:acme"}
+        )
+
+        assert result == {"status": "ok", "answer": "fine"}
+        assert seen["tenant"] == "acme:acme"
+        assert _MEMORY_TENANT_ID.get() is None, (
+            "request tenant leaked past dispatch completion"
+        )
+
+    @pytest.mark.asyncio
+    async def test_clears_request_tenant_when_dispatch_raises(self, mock_dispatcher):
+        from cogniverse_agents.memory_aware_mixin import _MEMORY_TENANT_ID
+
+        async def execute(query, tenant_id, context=None):
+            _MEMORY_TENANT_ID.set(tenant_id)
+            raise RuntimeError("execution blew up mid-request")
+
+        self._wire(mock_dispatcher, execute)
+
+        with pytest.raises(RuntimeError, match="execution blew up mid-request"):
+            await mock_dispatcher.dispatch(
+                "summarizer_agent", "hello", context={"tenant_id": "acme:acme"}
+            )
+
+        assert _MEMORY_TENANT_ID.get() is None, (
+            "request tenant leaked past a failed dispatch"
+        )

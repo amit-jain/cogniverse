@@ -261,7 +261,7 @@ flowchart LR
 
 #### Class Definition
 
-```python
+```text
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_core.agents.a2a_agent import A2AAgent
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -304,7 +304,7 @@ class SearchAgent(
 
 Text search. **This method is synchronous** (not async). `tenant_id` is required per-request.
 
-```python
+```text
 def search_by_text(
     self,
     query: str,
@@ -385,7 +385,7 @@ results = search_agent._search_by_video(
 
 #### Multi-Tenant Search Flow
 
-```python
+```text
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 
@@ -424,7 +424,7 @@ GatewayAgent is the first agent to handle every incoming query. It uses GLiNER z
 
 #### Input / Output
 
-```python
+```text
 class GatewayInput(AgentInput):
     query: str          # User query to classify and route
     tenant_id: Optional[str]  # Per-request tenant identifier
@@ -486,7 +486,7 @@ Emits a `cogniverse.gateway` span for every classified query through the
 canonical span contract (`record_span_io`): `input.value` is the query,
 `operation` is `gateway`, and `output.value` is a JSON object:
 
-```
+```text
 complexity       — "simple" | "complex"
 modality         — detected modality
 generation_type  — detected generation type
@@ -501,7 +501,7 @@ routing decision (`chosen_agent`, `recommended_agent`, `confidence`,
 
 #### Configuration
 
-```python
+```text
 class GatewayDeps(AgentDeps):
     gliner_model_name: str = "urchade/gliner_large-v2.1"
     gliner_threshold: float = 0.3           # entity detection confidence floor
@@ -569,7 +569,7 @@ flowchart TB
 
 The orchestrator uses DSPy for planning and AgentRegistry for discovery:
 
-```python
+```text
 from cogniverse_agents.orchestrator_agent import (
     OrchestratorAgent,
     OrchestratorDeps,
@@ -714,7 +714,7 @@ class ProfileSelectionSignature(dspy.Signature):
 
 #### Class Definition
 
-```python
+```text
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -823,7 +823,7 @@ class ProfileSelectionAgent(
 
 Main processing method (required by AgentBase).
 
-```python
+```text
 async def _process_impl(
     self,
     input: ProfileSelectionInput
@@ -863,7 +863,7 @@ async def _process_impl(
 
 The `ProfileSelectionDeps.available_profiles` field lists the profiles this agent will consider when none are specified in the request:
 
-```python
+```text
 # Default available profiles (matched to config.json backend.profiles)
 deps = ProfileSelectionDeps(
     available_profiles=[
@@ -999,7 +999,7 @@ flowchart LR
 
 #### Class Definition
 
-```python
+```text
 import json
 import dspy
 from pydantic import BaseModel, Field
@@ -1050,7 +1050,7 @@ class EntityExtractionDeps(AgentDeps):
     gliner_inference_url: Optional[str] = Field(
         None,
         description=(
-            "Optional remote GLiNER service URL (deploy/gliner sidecar). "
+            "Optional remote GLiNER service URL (GLiNER inference service). "
             "When set, the fast path posts to this endpoint instead of "
             "loading gliner in-process — required on slim runtime images."
         ),
@@ -1103,7 +1103,7 @@ entity-extraction optimizer reads the (query -> entities) training pair back via
 
 Helper method to parse entities from DSPy output.
 
-```python
+```text
 def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
     """Parse entities from DSPy output format"""
     entities = []
@@ -1143,14 +1143,14 @@ def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
 `EntityExtractionDeps` has two optional fields that control the GLiNER fast path:
 
 - `gliner_model_name` — GLiNER model identifier (`None` resolves to the default in `GLiNERRelationshipExtractor`).
-- `gliner_inference_url` — URL of a remote GLiNER service (the `deploy/gliner` sidecar). When set, the fast path POSTs to it instead of loading GLiNER in-process — required on slim runtime images that omit the heavy torch stack.
+- `gliner_inference_url` — URL of the remote GLiNER inference service. When set, the fast path POSTs to it instead of loading GLiNER in-process — required on slim runtime images that omit the heavy torch stack. The canonical server is `cogniverse_cli.modal_inference.servers.gliner`.
 
 The DSPy LLM fallback is scoped per-call via `dspy.context(lm=...)` using `create_dspy_lm()` from the centralized `llm_config`.
 
-```python
+```text
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 
-# Remote GLiNER via the deploy/gliner sidecar (production):
+# Remote GLiNER inference service (production):
 deps = EntityExtractionDeps(gliner_inference_url="http://cogniverse-gliner:8080")
 agent = EntityExtractionAgent(deps=deps, port=8010)
 
@@ -1281,7 +1281,7 @@ sequenceDiagram
 
 #### Class Definition
 
-```python
+```text
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from pydantic import Field
@@ -1378,7 +1378,7 @@ class OrchestratorAgent(
 
 Main processing method (required by AgentBase).
 
-```python
+```text
 async def _process_impl(
     self,
     input: Union[OrchestratorInput, Dict[str, Any]]
@@ -1425,7 +1425,7 @@ async def _process_impl(
 
 Planning Phase: Create execution plan using LLM reasoning with dynamic agent discovery.
 
-```python
+```text
 async def _create_plan(
     self, query: str, conversation_context: str = "", gateway_context: str = ""
 ) -> OrchestrationPlan:
@@ -1485,7 +1485,7 @@ Action Phase: Execute orchestration plan with parallel execution support.
 Emits streaming progress events per step and checks for cancellation between
 steps.
 
-```python
+```text
 async def _execute_plan(
     self,
     plan: OrchestrationPlan,
@@ -1540,7 +1540,7 @@ Cross-modal fusion of results from all agents. Detects modality per result,
 selects fusion strategy (SCORE_BASED, TEMPORAL, HIERARCHICAL, or SIMPLE),
 and dispatches to the appropriate fusion method.
 
-```python
+```text
 def _aggregate_results(
     self, query: str, agent_results: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -1571,7 +1571,7 @@ def _aggregate_results(
 
 Generate execution summary.
 
-```python
+```text
 def _generate_summary(
     self,
     plan: OrchestrationPlan,
@@ -1657,7 +1657,7 @@ User Query → Planning Phase → Action Phase → Post-processing → Results
 
 **Response**:
 
-```json
+```text
 {
   "id": "task_003",
   "messages": [
@@ -1751,13 +1751,38 @@ flowchart TB
     style Final fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
+#### Ensemble Result Shape
+
+`SearchOutput.results` carries public-shaped dicts. Identity and ranking sit at
+the top level; everything else is payload under `metadata`:
+
+```python
+{
+    "id": "v_-6dz6tBH77I_seg_0",
+    "document_id": "id:content:video_colpali_smol500_mv_frame_acme_acme::v_-6dz6tBH77I_seg_0",
+    "score": 3.04,               # backend relevance for the profile that matched
+    "metadata": {...},           # remaining backend fields
+    "temporal_info": {"start_time": 0.0, "end_time": 5.0},  # when both are present
+    # ensemble mode only:
+    "rrf_score": 0.0333,         # the value the result set is ORDERED by
+    "profile_ranks": {"video_colpali_smol500_mv_frame": 0, "video_colqwen_omni_mv_chunk_30s": 1},
+    "profile_scores": {"video_colpali_smol500_mv_frame": 3.04, "video_colqwen_omni_mv_chunk_30s": 1.1},
+    "num_profiles": 2,
+}
+```
+
+`score` and `rrf_score` are different quantities on different scales: `score` is
+one profile's backend relevance, `rrf_score` is the fused rank. Sort order
+follows `rrf_score`, so clients that re-sort should use it. A single-profile
+search carries none of the ensemble keys.
+
 #### Key Methods (New/Enhanced)
 
 **`_search_ensemble(query, profiles, modality, limit) -> List[SearchResult]`** (Internal)
 
 Execute ensemble search across multiple profiles.
 
-```python
+```text
 async def _search_ensemble(
     self,
     query: str,
@@ -1805,7 +1830,7 @@ async def _search_ensemble(
 
 Execute searches across all profiles concurrently.
 
-```python
+```text
 async def _execute_parallel_searches(
     self,
     query: str,
@@ -1839,7 +1864,7 @@ async def _execute_parallel_searches(
 
 Fuse results using Reciprocal Rank Fusion.
 
-```python
+```text
 def _fuse_results_rrf(
     self,
     profile_results: Dict[str, List[SearchResult]],
@@ -1924,7 +1949,7 @@ def _fuse_results_rrf(
 
 **Single Profile Mode**:
 
-```python
+```text
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
 # Note: schema_loader is REQUIRED, config_manager is optional
@@ -1987,7 +2012,7 @@ flowchart TD
 ```
 
 **Type Signature:**
-```python
+```text
 class DetailedReportAgent(
     MemoryAwareMixin,
     A2AAgent[DetailedReportInput, DetailedReportOutput, DetailedReportDeps],
@@ -2022,7 +2047,7 @@ class DetailedReportAgent(
 `config_manager` has a default of `None` in the signature but is required —
 the constructor raises `ValueError` if it is not supplied:
 
-```python
+```text
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
@@ -2117,7 +2142,7 @@ flowchart LR
 ```
 
 **Type Signature:**
-```python
+```text
 class DocumentAgent(MemoryAwareMixin, A2AAgent[DocumentSearchInput, DocumentSearchOutput, DocumentAgentDeps])
 ```
 
@@ -2186,7 +2211,7 @@ flowchart LR
 
 **Type Signature:**
 
-```python
+```text
 class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearchDeps])
 ```
 
@@ -2259,7 +2284,7 @@ flowchart TD
 
 **Type Signature:**
 
-```python
+```text
 class SummarizerAgent(
     MemoryAwareMixin,
     A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps],
@@ -2346,7 +2371,7 @@ flowchart LR
 
 **Type Signature:**
 
-```python
+```text
 class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnalysisDeps])
 ```
 
@@ -2387,6 +2412,9 @@ local path and POSTs the file multipart to
 `{whisper_endpoint}/v1/audio/transcriptions` (OpenAI-compatible vLLM
 Whisper). The response is mapped to a
 `TranscriptionResult(text, segments, language, confidence)`.
+The pinned vLLM response represents `duration` as a non-negative decimal
+string; the agent validates that exact wire type and converts it to seconds
+before checking segment bounds.
 
 `whisper_endpoint` and `whisper_model` are fields on `AudioAnalysisDeps`.
 The runtime populates `whisper_endpoint` from
@@ -2394,6 +2422,25 @@ The runtime populates `whisper_endpoint` from
 deployed and which model it serves are chart concerns — see
 [`docs/operations/setup-installation.md`](../operations/setup-installation.md)
 and the `inference.vllm_asr` block in `charts/cogniverse/values.yaml`.
+
+Modal Whisper URLs obtain their bearer credential only from
+`COGNIVERSE_INFERENCE_API_KEY` and reject `whisper_headers`; non-Modal endpoints
+may accept one canonical `Authorization: Bearer ...` mapping. `AudioAnalysisDeps`
+validates HTTPS and authentication before any request, and the agent snapshots
+the resolved headers as one immutable mapping for every multipart request. An
+authentication error, timeout, or serving failure is raised to the caller
+without exposing the credential or producing an empty transcript.
+
+Remote acoustic-query encoding uses `AudioAnalysisDeps.clap_endpoint`. Modal
+URLs obtain their bearer credential from `COGNIVERSE_INFERENCE_API_KEY` and
+reject `clap_headers`; non-Modal endpoints may accept one canonical
+`Authorization: Bearer ...` mapping. `AudioEmbeddingGenerator` resolves the
+credential before constructing its pooled HTTP client.
+Per-keyframe face extraction obtains Modal credentials from
+`COGNIVERSE_INFERENCE_API_KEY`; non-Modal endpoints may pass a canonical bearer
+mapping through `extract_faces_per_keyframe(..., headers=...)`. The internally
+owned HTTP client uses the resolved immutable headers for every concurrent
+keyframe request.
 
 ---
 
@@ -2434,7 +2481,7 @@ print(f"Result: {result}")
 Refactored video search agent using the unified search service architecture. Provides a simpler interface compared to the original SearchAgent.
 
 **Constructor:**
-```python
+```text
 SearchAgent(
     deps: SearchAgentDeps,
     schema_loader=None,     # REQUIRED
@@ -2444,7 +2491,7 @@ SearchAgent(
 ```
 
 **Methods:**
-```python
+```text
 def search_by_text(
     query: str,
     *,
@@ -2504,7 +2551,7 @@ print(output.enhanced_query, output.expansion_terms)
 Iterative code generation agent: searches code semantically via the `code_lateon_mv` Vespa profile (LateOn-Code-edge multi-vector embeddings with tree-sitter AST chunking), plans an implementation with DSPy, generates code, executes it in a sandbox, evaluates the result, and iterates up to `max_iterations` times.
 
 **Constructor:**
-```python
+```text
 CodingAgent(
     deps: CodingDeps,
     config: A2AAgentConfig | None = None,
@@ -2534,7 +2581,7 @@ print(output.plan, output.summary)
 Multi-step research agent: decomposes a complex query into sub-questions, dispatches parallel searches for each, evaluates evidence sufficiency, refines and re-searches if gaps remain, then synthesizes a cited report.
 
 **Constructor:**
-```python
+```text
 DeepResearchAgent(
     deps: DeepResearchDeps,
     config: A2AAgentConfig | None = None,
@@ -2577,7 +2624,7 @@ storage yet) is silently skipped.
 
 All agents extend `A2AAgent[InputT, OutputT, DepsT]` from `cogniverse_core`, providing compile-time type safety:
 
-```python
+```text
 # libs/core/cogniverse_core/agents/a2a_agent.py
 
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
@@ -2659,7 +2706,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
 
 Provides memory integration for all agents:
 
-```python
+```text
 class MemoryAwareMixin:
     """
     Mixin for agent memory integration via Mem0.
@@ -2731,7 +2778,7 @@ KG agents — `CitationTracingAgent`, `TemporalReasoningAgent`,
 `ContradictionReconciliationAgent` — mix this in to share one setter and one
 guard instead of redeclaring them:
 
-```python
+```text
 class GraphBindableMixin:
     """Bind a single GraphManager to a KG-aware agent."""
 
@@ -2749,7 +2796,7 @@ class GraphBindableMixin:
 Usage in an agent (mixed in ahead of `MemoryAwareMixin` so the binding API
 sits at the front of the MRO):
 
-```python
+```text
 class CitationTracingAgent(
     GraphBindableMixin,
     MemoryAwareMixin,
@@ -2793,7 +2840,7 @@ the agent returns its Mem0-only answer.
 
 Provides standardized multi-tenant support for all agents, eliminating ~10 lines of duplicated validation code per agent:
 
-```python
+```text
 class TenantAwareAgentMixin:
     """
     Mixin class that adds multi-tenant capabilities to agents.
@@ -2960,7 +3007,7 @@ class TenantAwareAgentMixin:
 
 **With Type-Safe A2AAgent (Recommended)**:
 
-```python
+```text
 # libs/agents/cogniverse_agents/orchestrator_agent.py
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -2984,7 +3031,7 @@ class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, Orchestr
 #### Key Methods
 
 **Note**: All examples below assume agent is initialized with deps (tenant-agnostic):
-```python
+```text
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
@@ -2997,7 +3044,7 @@ agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_man
 
 Returns tenant context for logging, telemetry, and debugging:
 
-```python
+```text
 context = agent.get_tenant_context()
 # {
 #     "tenant_id": "acme",
@@ -3010,7 +3057,7 @@ context = agent.get_tenant_context()
 
 Validates cross-tenant access attempts:
 
-```python
+```text
 # Same tenant - allow
 assert agent.validate_tenant_access("acme") is True
 
@@ -3022,7 +3069,7 @@ assert agent.validate_tenant_access("startup") is False
 
 Generates tenant-scoped keys for caching/storage:
 
-```python
+```text
 cache_key = agent.get_tenant_scoped_key("embeddings/video_123")
 # "acme:embeddings/video_123"
 ```
@@ -3031,7 +3078,7 @@ cache_key = agent.get_tenant_scoped_key("embeddings/video_123")
 
 Logs operations with full tenant context:
 
-```python
+```text
 agent.log_tenant_operation(
     "search_completed",
     {"query": "machine learning", "results": 10},
@@ -3115,7 +3162,7 @@ sequenceDiagram
 
 **Example**:
 
-```python
+```text
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
@@ -3135,7 +3182,7 @@ agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_man
 
 ### Example 1: Basic Routing via Orchestrator
 
-```python
+```text
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
@@ -3156,7 +3203,7 @@ print(f"Summary: {result.execution_summary}")
 
 ### Example 2: Video Search
 
-```python
+```text
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 
@@ -3178,7 +3225,7 @@ for result in results:
 
 ### Example 3: Multi-Agent Orchestration
 
-```python
+```text
 from cogniverse_agents.orchestrator_agent import (
     OrchestratorAgent, OrchestratorDeps, OrchestratorInput,
 )
@@ -3206,7 +3253,7 @@ print(f"Summary: {result.execution_summary}")
 
 ### Example 4: Memory-Aware Search
 
-```python
+```text
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -3307,7 +3354,7 @@ flowchart LR
 
 When creating agents, override `_process_impl()` for core logic:
 
-```python
+```text
 class MyAgent(A2AAgent[MyInput, MyOutput, MyDeps]):
 
     async def _process_impl(self, input: MyInput) -> MyOutput:
@@ -3323,7 +3370,7 @@ class MyAgent(A2AAgent[MyInput, MyOutput, MyDeps]):
 
 The A2A endpoint `/tasks/send` supports streaming via `stream` field:
 
-```python
+```http
 # Non-streaming request
 POST /tasks/send
 {"query": "...", "context": "..."}
@@ -3408,7 +3455,7 @@ rlm_opts = RLMOptions(
 
 #### RLMInference (Core Wrapper)
 
-```python
+```text
 from cogniverse_agents.inference.rlm_inference import RLMInference, RLMResult
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -3441,7 +3488,7 @@ resolved endpoint is routed through the gateway (task `rlm_inference`) before
 the RLM's LM is built; `tenant_id` is also threaded onto the `RLMInference` for
 event scoping. Omitting them keeps the direct-to-backend path:
 
-```python
+```text
 from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
 
 rlm = build_rlm_from_options(
@@ -3461,7 +3508,7 @@ unreachable. Call sites that construct `RLMInference` directly rather than via
 `build_rlm_from_options` — e.g. the orchestrator's deep-synthesis workflow —
 route their resolved endpoint through it before construction:
 
-```python
+```text
 from cogniverse_agents.inference.rlm_inference import (
     RLMInference,
     route_rlm_endpoint,
@@ -3475,7 +3522,7 @@ rlm = RLMInference(llm_config=llm_primary, tenant_id=tenant_id)
 
 Agents inherit from `RLMAwareMixin` to gain RLM capabilities:
 
-```python
+```text
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
 class SearchAgent(RLMAwareMixin, MemoryAwareMixin, A2AAgent[...]):
@@ -3587,7 +3634,7 @@ and returns a typed `ABResult` with both arms plus a side-by-side
 comparison. Both arms share an `ab_id` stamped in their result metadata
 so Phoenix spans correlate across the pair.
 
-```python
+```text
 from cogniverse_agents.inference.ab_harness import RLMABRunner
 
 runner = RLMABRunner(
@@ -3631,7 +3678,7 @@ separate class so its cost is local and explicit, the default trace shape
 stays clean, and the RLM A/B harness can compare the two paths on a curated
 benchmark before promotion.
 
-```python
+```text
 from cogniverse_agents.deep_synthesis_workflow import (
     DeepSynthesisConfig,
     DeepSynthesisWorkflow,
@@ -3938,7 +3985,7 @@ from a starting subject_key (or memory id resolving to one) and returns
 a structured `(nodes, edges)` view plus an optional RLM-summarised
 narrative for large traversals.
 
-```python
+```text
 from cogniverse_agents.kg_traversal_agent import (
     KGTraversalDeps,
     KGTraversalInput,
@@ -3982,7 +4029,7 @@ A2A agent that produces a coherent answer across N source documents
 provenance carries `derivation_kind=synthesis` and `derived_from`
 referencing every input document. RLM-capable for large document sets.
 
-```python
+```text
 from cogniverse_agents.multi_document_synthesis_agent import (
     DocumentRef,
     MultiDocSynthesisDeps,
@@ -4098,7 +4145,7 @@ to the caller.
 
 When RLM is enabled, `SearchOutput` includes:
 
-```python
+```text
 class SearchOutput(AgentOutput):
     # ... standard fields ...
     results: List[Dict[str, Any]]
@@ -4115,7 +4162,7 @@ class SearchOutput(AgentOutput):
 
 ### Timeout and Error Handling
 
-```python
+```text
 from cogniverse_agents.inference.rlm_inference import RLMTimeoutError
 
 try:
@@ -4136,7 +4183,7 @@ RLM operations can be long-running (up to 5 minutes). Use `InstrumentedRLM` with
 
 `InstrumentedRLM` subclasses `dspy.RLM` (via `TolerantRLM`) to emit events at each iteration:
 
-```python
+```text
 from cogniverse_agents.inference import InstrumentedRLM, RLMCancelledError
 from cogniverse_core.events import get_queue_manager
 
@@ -4167,7 +4214,7 @@ result = rlm(context=large_context, query="Summarize this")
 
 Users can cancel RLM operations mid-execution via the CancellationToken:
 
-```python
+```text
 # Cancel from another coroutine (cancel() is synchronous, not a coroutine)
 event_queue.cancellation_token.cancel(reason="User requested")
 
@@ -4182,7 +4229,7 @@ except RLMCancelledError as e:
 
 `RLMInference` automatically uses `InstrumentedRLM` when `event_queue` is provided:
 
-```python
+```text
 from cogniverse_agents.inference import RLMInference
 from cogniverse_core.events import get_queue_manager
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
@@ -4219,7 +4266,7 @@ result = rlm.process(query="Summarize", context=large_context)
 
 **Location**: `tests/agents/unit/`
 
-```python
+```text
 # tests/agents/unit/test_orchestrator_agent.py
 
 import pytest
@@ -4261,7 +4308,7 @@ class TestOrchestratorAgent:
 
 **Location**: `tests/agents/integration/`
 
-```python
+```text
 # Example integration test (actual tests exist in tests/agents/integration/)
 
 import pytest
@@ -4453,7 +4500,7 @@ patterns are found.
 
 ### 1. Always Use Deps with Tenant ID
 
-```python
+```text
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
@@ -4467,7 +4514,7 @@ agent = OrchestratorAgent()  # TypeError: missing deps
 
 ### 2. Initialize Config Manager for SearchAgent
 
-```python
+```text
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 
@@ -4482,7 +4529,7 @@ results = agent.search_by_text("query", tenant_id="acme", top_k=10)
 
 ### 3. Use Telemetry for Observability
 
-```python
+```text
 # OrchestratorAgent automatically initializes telemetry per-request
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -4498,7 +4545,7 @@ result = await orchestrator._process_impl(
 
 ### 4. Test Tenant Isolation
 
-```python
+```text
 # Always verify tenants are isolated
 def test_tenant_isolation(config_manager):
     # ONE orchestrator serves all tenants — tenant_id is per-request
@@ -4527,7 +4574,7 @@ The `OrchestratorAgent` integrates with the A2A EventQueue system for real-time 
 
 ### Enabling EventQueue
 
-```python
+```text
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_core.events import get_queue_manager
 
@@ -4566,7 +4613,7 @@ by the ingestion pipeline, not the orchestrator.
 
 ### Subscribing to Events
 
-```python
+```text
 # Subscribe to workflow progress
 async for event in queue.subscribe():
     print(f"[{event.event_type}] {event.phase}: {event.message}")
@@ -4576,7 +4623,7 @@ async for event in queue.subscribe():
 
 ### Cancellation
 
-```python
+```text
 # Cancel a running workflow
 await manager.cancel_task("workflow_123", reason="User requested")
 
@@ -4641,7 +4688,7 @@ flowchart TB
 
 ### Quick Example
 
-```python
+```text
 from cogniverse_agents.approval import ApprovalStorageImpl, HumanApprovalAgent, ReviewDecision
 
 # Initialize
@@ -4768,7 +4815,7 @@ RLM (Recursive Language Model) enables LLMs to handle near-infinite context by:
 
 Wrapper around DSPy's RLM module with timeout handling and optional EventQueue integration.
 
-```python
+```text
 from cogniverse_agents.inference import RLMInference, RLMResult, RLMTimeoutError
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -4793,7 +4840,7 @@ print(f"Latency: {result.latency_ms:.0f}ms")
 
 **With EventQueue for Progress Tracking:**
 
-```python
+```text
 from cogniverse_core.events import get_queue_manager
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -4815,7 +4862,7 @@ result = rlm.process(query="Analyze documents", context=docs)
 
 Dataclass with telemetry data for A/B testing and monitoring.
 
-```python
+```text
 @dataclass
 class RLMResult:
     answer: str                    # Final answer from RLM
@@ -4849,7 +4896,7 @@ class RLMResult:
 
 Subclass of `dspy.RLM` (via `TolerantRLM`, which hardens the Deno JSON-RPC channel against stale `id: null` messages) with real-time progress events and cancellation support.
 
-```python
+```text
 from cogniverse_agents.inference import InstrumentedRLM, RLMCancelledError
 
 rlm = InstrumentedRLM(
@@ -4877,7 +4924,7 @@ except RLMCancelledError as e:
 
 **Cancellation Support:**
 
-```python
+```text
 # Client can cancel via CancellationToken (cancel() is synchronous)
 event_queue.cancel("User requested cancellation")
 
@@ -4898,6 +4945,24 @@ destination. External SaaS providers use their own litellm prefix:
 | OpenAI (SaaS) | `openai/{model}` | `openai/gpt-4o` |
 | Anthropic | `anthropic/{model}` | `anthropic/claude-3-5-sonnet-20241022` |
 | Together, Anyscale, etc. | Provider-prefixed | `together/meta-llama/Llama-3-70b` |
+
+### Integration-test generation endpoints
+
+Agent integration tests use the same pinned production models as the deployed
+runtime. `INFERENCE_SERVICE_URLS` may name the authenticated Modal endpoints for
+`vllm_llm_student` and `vllm_asr`, while
+`COGNIVERSE_INFERENCE_API_KEY` supplies their bearer credential. The fixture
+validates `/v1/models` through the canonical endpoint resolver before exposing
+either URL. A configured endpoint with the wrong model, revision, or
+credentials fails immediately and never falls through to a local model.
+
+The Gemma fixture injects `openai/google/gemma-4-e4b-it`, the endpoint `/v1` URL, and
+the resolved bearer key into `LLMEndpointConfig`. When no Modal URL is present,
+it uses the test-owned exact-model LM. The Whisper fixture similarly prefers
+the validated `openai/whisper-large-v3-turbo` service and otherwise starts the
+test-owned vLLM sidecar with the production generate arguments. Session teardown
+returns test-owned local processes to their prior state; Modal lifecycle
+commands control remote warm-container counts independently.
 
 ---
 

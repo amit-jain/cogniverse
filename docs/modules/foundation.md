@@ -55,7 +55,7 @@ flowchart TB
         RegistryDir["<span style='color:#000'><b>registry/</b><br/>Generic entry-point plugin registry</span>"]
         CachingDir["<span style='color:#000'><b>caching/</b><br/>Tenant-scoped LRU cache</span>"]
         DspyDir["<span style='color:#000'><b>dspy/</b><br/>DSPy adapters &amp; model-format helpers</span>"]
-        CommonDir["<span style='color:#000'><b>common/</b><br/>Tenant identity &amp; DSPy registry helpers</span>"]
+        CommonDir["<span style='color:#000'><b>common/</b><br/>Tenant identity, DSPy registry &amp; Argo client helpers</span>"]
         ConfidencePy["<span style='color:#000'>confidence.py<br/>parse_confidence()</span>"]
         InitPy["<span style='color:#000'>__init__.py</span>"]
     end
@@ -65,10 +65,11 @@ flowchart TB
         UnifiedConfigFile["<span style='color:#000'>unified_config.py<br/>SystemConfig, BackendConfig, LLMConfig</span>"]
         AgentConfigFile["<span style='color:#000'>agent_config.py<br/>AgentConfig, DSPy settings</span>"]
         LlmFactory["<span style='color:#000'>llm_factory.py<br/>create_dspy_lm()</span>"]
+        InferenceAuth["<span style='color:#000'>inference_auth.py<br/>inference_headers</span>"]
         SemanticRouterFile["<span style='color:#000'>semantic_router.py<br/>apply_semantic_routing, create_routed_lm</span>"]
         Utils["<span style='color:#000'>utils.py<br/>ConfigUtils, create_default_config_manager</span>"]
         ApiMixin["<span style='color:#000'>api_mixin.py<br/>ConfigAPIMixin (FastAPI endpoints)</span>"]
-        Bootstrap["<span style='color:#000'>bootstrap.py<br/>BootstrapConfig</span>"]
+        Bootstrap["<span style='color:#000'>bootstrap.py<br/>BootstrapConfig, parse_inference_service_urls</span>"]
         VespaStore["<span style='color:#000'>VespaConfigStore<br/>(in cogniverse_vespa)</span>"]
     end
 
@@ -92,6 +93,7 @@ flowchart TB
     subgraph CommonFiles["<span style='color:#000'><b>common/ files</b></span>"]
         TenantUtilsFile["<span style='color:#000'>tenant_utils.py<br/>SYSTEM_TENANT_ID, require_tenant_id, etc.</span>"]
         DspyModuleRegistryFile["<span style='color:#000'>dspy_module_registry.py<br/>DSPyModuleRegistry, DSPyOptimizerRegistry</span>"]
+        ArgoClientFile["<span style='color:#000'>argo_client.py<br/>build_argo_async_client</span>"]
     end
 
     subgraph SeparatePackages["<span style='color:#000'><b>Separate Packages</b></span>"]
@@ -134,6 +136,7 @@ flowchart TB
     style UnifiedConfigFile fill:#ffb74d,stroke:#ef6c00,color:#000
     style AgentConfigFile fill:#ffb74d,stroke:#ef6c00,color:#000
     style LlmFactory fill:#ffb74d,stroke:#ef6c00,color:#000
+    style InferenceAuth fill:#ffb74d,stroke:#ef6c00,color:#000
     style SemanticRouterFile fill:#ffb74d,stroke:#ef6c00,color:#000
     style Utils fill:#ffb74d,stroke:#ef6c00,color:#000
     style ApiMixin fill:#ffb74d,stroke:#ef6c00,color:#000
@@ -178,7 +181,7 @@ flowchart TB
   of being treated as an empty configuration.
 - Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore)
 
-```python
+```text
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Initialize config manager
@@ -194,6 +197,25 @@ config_manager.set_agent_config(
     agent_config=agent_config
 )
 ```
+
+### Inference endpoint credentials
+
+`cogniverse_foundation.config.inference_auth.inference_headers(base_url)` is
+the shared client-side credential boundary for remote inference. A
+`*.modal.run` endpoint must be an HTTPS root URL and requires the
+`COGNIVERSE_INFERENCE_API_KEY` environment variable; the function returns an
+immutable `Authorization: Bearer ...` mapping. Cluster-local and loopback URLs
+receive no Modal credential. The key stays in the process environment and is
+never written into persisted `SystemConfig` data. The environment read is
+centralized in the bootstrap configuration boundary and each client snapshots
+the resulting immutable mapping when it is constructed.
+
+`parse_inference_service_urls(raw)` is the shared startup parser for the API
+runtime and ingestion worker. It accepts only a duplicate-free JSON object of
+non-empty service names to root HTTP(S) URLs, rejects credentials and URL
+suffixes, removes a single trailing slash, and returns `{}` for an absent
+environment value. Malformed input raises `ValueError` without echoing endpoint
+contents.
 
 **API Reference:**
 
@@ -416,7 +438,7 @@ Configurations are organized by scope for isolation:
 | `SCHEMA` | Deployed Vespa schema tracking (used by `cogniverse_core.registries.schema_registry`) | schema_name, deployment status |
 | `BACKEND` | Backend profiles | embedding_model, schema_name, pipeline_config |
 
-```python
+```text
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 # Get arbitrary config value by scope
@@ -476,7 +498,7 @@ flowchart TB
 
 **Configuration Resolution Example:**
 
-```python
+```text
 from cogniverse_foundation.config.unified_config import BackendConfig, BackendProfileConfig
 
 # System default (hardcoded)
@@ -527,7 +549,7 @@ class to expose `self.agent_config` (an `AgentConfig`) plus
 `update_module_config()` / `update_optimizer_config()` methods (provided by
 `DynamicDSPyMixin` in `cogniverse_core`).
 
-```python
+```text
 class MyAgent(DynamicDSPyMixin, ConfigAPIMixin):
     def __init__(self, tenant_id, config_manager):
         self.initialize_dynamic_dspy(agent_config)
@@ -605,7 +627,7 @@ that should share a session, or by nesting `span()` calls inside one
 
 Creating spans with tenant isolation:
 
-```python
+```text
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 telemetry = get_telemetry_manager()
@@ -633,7 +655,7 @@ async def process(query: str):
 
 Track multi-turn conversations across requests:
 
-```python
+```text
 async def handle_request(query: str, session_id: str):
     # At API entry point - establish session context
     with telemetry.session_span(
@@ -659,7 +681,7 @@ with telemetry.session_span("session.start", tenant_id="acme", session_id="sessi
 
 Register projects with custom endpoints (useful for tests):
 
-```python
+```text
 # Register with default config
 telemetry.register_project(
     tenant_id="acme",
@@ -716,7 +738,7 @@ codebase are thin subclasses of this base:
 
 ### Defining a new registry
 
-```python
+```text
 from cogniverse_foundation.registry import EntryPointRegistry
 from my_pkg.interfaces import MyStore
 
@@ -757,7 +779,7 @@ modules) in memory; without a bound, a multi-tenant server accumulates one
 instance per tenant indefinitely. `EntryPointRegistry` itself uses a
 `TenantLRUCache` for its per-instance plugin cache.
 
-```python
+```text
 from cogniverse_foundation.caching import TenantLRUCache
 
 def close_client(tenant_id: str, client) -> None:
@@ -794,7 +816,7 @@ LRU pressure. Registration holds only a weak reference (a `weakref.WeakSet`),
 so a cache owned by a discarded consumer drops out on garbage collection
 rather than leaking through the registry.
 
-```python
+```text
 from cogniverse_foundation.caching import (
     TenantLRUCache,
     register_tenant_cache,
@@ -953,9 +975,26 @@ config_manager.set_agent_config(
 )
 ```
 
+### Argo Workflows HTTP Client
+
+`argo-server` runs in secure mode behind a self-signed in-cluster certificate,
+so a default-verifying client fails every request before it reaches the API.
+Build Argo clients through the shared factory rather than constructing `httpx`
+clients inline, so that TLS posture is decided in one place:
+
+```text
+from cogniverse_foundation.common.argo_client import build_argo_async_client
+
+client = build_argo_async_client()          # DEFAULT_ARGO_TIMEOUT (10s)
+client = build_argo_async_client(30.0)      # longer budget for submissions
+```
+
+Used by the tenant job-scheduling routes and the quality-monitor optimization
+submissions — the two paths that post CronWorkflows and Workflows to Argo.
+
 ### Tenant-Specific Profile Overrides
 
-```python
+```text
 from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 
 # Start with system profile, customize for tenant
@@ -972,7 +1011,7 @@ config_manager.update_backend_profile(
 
 ### Telemetry with Phoenix
 
-```python
+```text
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
@@ -1010,7 +1049,7 @@ async def process_query(query: str, tenant_id: str):
 
 ### Querying Telemetry Data
 
-```python
+```text
 from datetime import datetime, timezone
 
 async def query_and_annotate():

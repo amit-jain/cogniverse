@@ -356,7 +356,7 @@ class TestSearchAgentEnsemble:
         # by every one of the three profiles (genuine cross-profile fusion).
         contributing = set()
         for doc in result.results:
-            ranks = (doc.get("metadata") or {}).get("profile_ranks") or {}
+            ranks = doc.get("profile_ranks") or {}
             contributing.update(ranks.keys())
         assert set(contributing) == set(profiles), (
             f"RRF only fused profiles {contributing}, expected all of {profiles}"
@@ -502,28 +502,26 @@ class TestSearchAgentEnsemble:
         assert result.search_mode == "ensemble"
         results = result.results
 
-        # Validate RRF metadata structure on all results. The public
-        # result shape (``_format_public_result``) nests every non-identity
-        # field into ``metadata``, so RRF-derived fields land at
-        # ``doc["metadata"]["rrf_score"]`` rather than at the top level —
-        # ``doc["score"]``, ``doc["id"]``, ``doc["document_id"]`` are the
-        # only top-level fields the public contract guarantees.
+        # Validate RRF structure on all results. The public result shape
+        # (``_format_public_result``) keeps identity and ranking at the top
+        # level and buckets the rest under ``metadata``; the fusion fields are
+        # ranking, and ``rrf_score`` is what the set is ordered by.
         for doc in results:
-            metadata = doc.get("metadata") or {}
-            assert "rrf_score" in metadata, (
-                f"Missing rrf_score in metadata for doc {doc.get('id')}"
+            assert "rrf_score" in doc, f"Missing rrf_score for doc {doc.get('id')}"
+            assert "profile_ranks" in doc, (
+                f"Missing profile_ranks for doc {doc.get('id')}"
             )
-            assert "profile_ranks" in metadata, (
-                f"Missing profile_ranks in metadata for doc {doc.get('id')}"
+            assert "num_profiles" in doc, (
+                f"Missing num_profiles for doc {doc.get('id')}"
             )
-            assert "num_profiles" in metadata, (
-                f"Missing num_profiles in metadata for doc {doc.get('id')}"
+            assert doc["rrf_score"] > 0, (
+                f"Invalid RRF score {doc['rrf_score']} in doc {doc.get('id')}"
             )
-            assert metadata["rrf_score"] > 0, (
-                f"Invalid RRF score {metadata['rrf_score']} in doc {doc.get('id')}"
+            assert doc["num_profiles"] == len(doc["profile_ranks"]), (
+                f"num_profiles disagrees with profile_ranks in doc {doc.get('id')}"
             )
-            assert metadata["num_profiles"] >= 1, (
-                f"Invalid num_profiles {metadata['num_profiles']} in doc {doc.get('id')}"
+            assert "rrf_score" not in (doc.get("metadata") or {}), (
+                f"rrf_score must not be duplicated into metadata: {doc.get('id')}"
             )
 
         logger.info(

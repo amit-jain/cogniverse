@@ -33,10 +33,10 @@ PRE-REQS
 * Tenant ``flywheel_org:production`` registered (the chart ships
   it as the default test tenant).
 * Sample video at
-  ``data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4``.
+  ``tests/system/resources/videos/v_-D1gdv_gQyw.mp4``.
 
-The test will skip with a clear reason when any prereq is missing —
-no silent passes.
+The autouse E2E fixture provisions the stack. A missing runtime or tracked
+video fails with its exact endpoint or path.
 """
 
 import re
@@ -51,53 +51,54 @@ from cogniverse_agents.graph.graph_schema import (
     node_id_from_doc_id,
     normalize_name,
 )
+from cogniverse_runtime.ingestion_worker.status_api import TERMINAL_STATES
 
 pytestmark = pytest.mark.e2e
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SAMPLE_VIDEO = REPO_ROOT / "data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4"
+SAMPLE_VIDEO = REPO_ROOT / "tests/system/resources/videos/v_-D1gdv_gQyw.mp4"
 RUNTIME_URL = "http://localhost:33000"
 VESPA_URL = "http://localhost:33080"
 TENANT_FULL_ID = "flywheel_org:production"
+
+# The sample clip is 17.98s at 30fps and the profile samples at 0.5 fps, so
+# the extractor keeps every int(30 / 0.5) = 60th frame across its ~540 frames
+# — 10 keyframes, one segment each. Changing the profile's ``fps`` changes
+# this number; update it here with the same arithmetic rather than relaxing
+# the equality.
+EXPECTED_KEYFRAMES = 10
 PROFILE = "video_colpali_smol500_mv_frame"
 SCHEMA_NAME = "video_colpali_smol500_mv_frame_flywheel_org_production"
 KG_SCHEMA_NAME = "knowledge_graph_flywheel_org_production"
 
 
 # --------------------------------------------------------------------- #
-# Liveness gates                                                         #
+# Prerequisite failures                                                  #
 # --------------------------------------------------------------------- #
 
 
-def _service_up(url: str, timeout: float = 3.0) -> bool:
-    try:
-        return requests.get(url, timeout=timeout).status_code == 200
-    except requests.RequestException:
-        return False
-
-
-def _tenant_registered() -> bool:
-    try:
-        resp = requests.get(
-            f"{RUNTIME_URL}/admin/organizations/flywheel_org/tenants", timeout=5
+@pytest.fixture(scope="module", autouse=True)
+def _require_ingestion_prerequisites() -> None:
+    if not SAMPLE_VIDEO.is_file():
+        pytest.fail(
+            f"ingestion fixture video unavailable at {SAMPLE_VIDEO}",
+            pytrace=False,
         )
-        if resp.status_code != 200:
-            return False
-        return any(
-            t.get("tenant_full_id") == TENANT_FULL_ID
-            for t in resp.json().get("tenants", [])
+    health_url = f"{RUNTIME_URL}/health/live"
+    try:
+        response = requests.get(health_url, timeout=10)
+    except requests.RequestException as exc:
+        pytest.fail(
+            f"cogniverse runtime unavailable at {health_url}: "
+            f"{type(exc).__name__}: {exc}",
+            pytrace=False,
         )
-    except requests.RequestException:
-        return False
-
-
-pytestmark = [
-    pytest.mark.e2e,
-    pytest.mark.skipif(
-        not SAMPLE_VIDEO.exists(),
-        reason=f"sample video missing: {SAMPLE_VIDEO}",
-    ),
-]
+    if response.status_code != 200:
+        pytest.fail(
+            f"cogniverse runtime unavailable at {health_url}: "
+            f"HTTP {response.status_code} body={response.text[:300]!r}",
+            pytrace=False,
+        )
 
 
 # --------------------------------------------------------------------- #
@@ -141,9 +142,12 @@ def _wait_terminal(ingest_id: str, deadline_s: int = 2400) -> dict:
         resp = requests.get(f"{RUNTIME_URL}/ingestion/{ingest_id}/status", timeout=5)
         resp.raise_for_status()
         payload = resp.json()
-        state = payload.get("state")
+        state = payload["state"]
         last = payload.get("latest", {})
-        if state in ("complete", "completed", "failed", "error"):
+        # The worker emits queued / running / complete / failed; the terminal
+        # pair matches status_api.TERMINAL_STATES, which is what closes the
+        # SSE stream and what `cogniverse index` waits on.
+        if state in TERMINAL_STATES:
             return payload
         time.sleep(5)
     pytest.fail(
@@ -194,17 +198,22 @@ def test_upload_returns_queued_ingest_id(upload_result):
 
 
 def test_ingestion_reaches_terminal_complete_state(upload_result):
-    """The async job completes (not failed, not error, not stalled)."""
+    """The async job completes (not failed, not stalled).
+
+    ``complete`` is the exact literal the worker emits and the exact literal
+    ``cogniverse index`` requires; any other spelling is a job the CLI
+    reports as failed.
+    """
     final = upload_result["final"]
-    assert final["state"] in ("complete", "completed"), final
+    assert final["state"] == "complete", final
     latest = final["latest"]
-    assert latest["state"] in ("complete", "completed")
+    assert latest["state"] == "complete", latest
     result = latest["result"]
     # Pipeline's own counts: 18s @ 30fps with the smol500_mv_frame
     # profile produces exactly 19 keyframes.
-    assert result["keyframes"] == 19
-    assert result["documents_fed"] == 19
-    assert result["chunks"] == 19
+    assert result["keyframes"] == EXPECTED_KEYFRAMES
+    assert result["documents_fed"] == EXPECTED_KEYFRAMES
+    assert result["chunks"] == EXPECTED_KEYFRAMES
 
 
 # --------------------------------------------------------------------- #
@@ -233,7 +242,7 @@ def test_persisted_documents_carry_expected_fields(upload_result):
     video_id = upload_result["final"]["latest"]["result"]["video_id"]
     yql = f'select * from sources {SCHEMA_NAME} where video_id contains "{video_id}"'
     docs = _vespa_search(yql, hits=50)
-    assert len(docs) == 19
+    assert len(docs) == EXPECTED_KEYFRAMES
 
     # Every doc shares video_id.
     assert all(d.get("video_id") == video_id for d in docs)
@@ -241,7 +250,7 @@ def test_persisted_documents_carry_expected_fields(upload_result):
     # 19 distinct integer segment_ids (the pipeline assigns 0..18 in
     # frame-based mode).
     seg_ids = sorted(int(d.get("segment_id")) for d in docs)
-    assert seg_ids == list(range(19))
+    assert seg_ids == list(range(EXPECTED_KEYFRAMES))
 
     # start_time / end_time present + non-negative; the sequence
     # starts at 0.0 and durations are monotonic.
@@ -249,8 +258,8 @@ def test_persisted_documents_carry_expected_fields(upload_result):
     seg_0 = by_seg[0]
     assert float(seg_0["start_time"]) == 0.0
     assert float(seg_0["end_time"]) > 0.0
-    starts = [float(by_seg[i]["start_time"]) for i in range(19)]
-    ends = [float(by_seg[i]["end_time"]) for i in range(19)]
+    starts = [float(by_seg[i]["start_time"]) for i in range(EXPECTED_KEYFRAMES)]
+    ends = [float(by_seg[i]["end_time"]) for i in range(EXPECTED_KEYFRAMES)]
     assert all(e > s for s, e in zip(starts, ends, strict=True))
     assert starts == sorted(starts)  # monotonic across segment_ids
     # The frame-based profile produces 1-second windows per keyframe.
@@ -290,10 +299,12 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
     video_id = upload_result["final"]["latest"]["result"]["video_id"]
     yql = f'select * from sources {SCHEMA_NAME} where video_id contains "{video_id}"'
     docs = _vespa_search(yql, hits=50)
-    assert len(docs) == 19
+    assert len(docs) == EXPECTED_KEYFRAMES
 
     by_seg = {int(d["segment_id"]): d for d in docs}
-    per_seg = {i: list(by_seg[i].get("entity_ids") or []) for i in range(19)}
+    per_seg = {
+        i: list(by_seg[i].get("entity_ids") or []) for i in range(EXPECTED_KEYFRAMES)
+    }
     # Surface the real distribution in the run log — model output varies, so
     # this records what this run actually extracted for later inspection.
     print("KG entity_ids per segment:", per_seg)
@@ -302,14 +313,16 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
     all_ids = [e for ids in per_seg.values() for e in ids]
     distinct = set(all_ids)
 
-    # Extraction populated backrefs on the vast majority of the 19 segments —
+    # Extraction populated backrefs on the vast majority of the segments —
     # the per-keyframe VLM description alone yields entities for every frame,
     # so a mostly-empty result means the extraction/parse regressed to the
-    # pre-fix silent-empty behaviour. The floor allows a few frames whose
-    # terse description filters to nothing without flaking on LM variance.
-    assert len(populated) >= 12, (
-        f"KG backrefs populated on only {len(populated)}/19 segments "
-        f"(pre-fix silent-empty regression?): {per_seg}"
+    # silent-empty behaviour. The floor allows a couple of frames whose terse
+    # description filters to nothing without flaking on LM variance, and is
+    # expressed against the segment count so it cannot exceed it.
+    floor = EXPECTED_KEYFRAMES - 2
+    assert len(populated) >= floor, (
+        f"KG backrefs populated on only {len(populated)}/{EXPECTED_KEYFRAMES} "
+        f"segments (expected at least {floor}): {per_seg}"
     )
 
     # Content: the sample clip shows a man lighting a fire in a wooded /
@@ -346,9 +359,14 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
     # the extraction tracks the video's actual narrative progression rather
     # than emitting generic tokens.
     assert fire_segs, f"no fire/smoke entity from a fire-lighting clip: {per_seg}"
-    assert max(fire_segs) >= 10, (
-        f"fire/smoke only in early segments {fire_segs}; expected it as the "
-        f"fire develops toward the end of the clip: {per_seg}"
+    # "Later" is expressed against the segment count: a fixed index outruns
+    # the clip whenever the sampling rate changes, and an unreachable floor
+    # fails on arithmetic rather than on what the extraction found.
+    latter_half = EXPECTED_KEYFRAMES // 2
+    assert max(fire_segs) >= latter_half, (
+        f"fire/smoke only in early segments {fire_segs}; expected it at or "
+        f"after segment {latter_half} as the fire develops toward the end of "
+        f"the clip: {per_seg}"
     )
 
     node_id_re = re.compile(r"^[a-z0-9][a-z0-9_]*$")
@@ -405,7 +423,7 @@ def test_persisted_documents_have_kg_backrefs(upload_result):
     # present depending on whether the LM emitted extractable relations for
     # this clip; assert only the shape and the same node-normalized id form
     # when present, never exact identity.
-    for seg in range(19):
+    for seg in range(EXPECTED_KEYFRAMES):
         for field in ("relation_ids", "claim_ids"):
             vals = by_seg[seg].get(field) or []
             assert isinstance(vals, list), f"seg={seg} {field} not a list: {vals!r}"

@@ -7,6 +7,7 @@ Tests the actual HTTP endpoints with real ConfigStore and Mem0.
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -97,22 +98,30 @@ class TestTenantMemoryAPI:
         self, tenant_api_client, shared_memory_vespa
     ):
         client, _ = tenant_api_client
-        vespa_url = f"http://localhost:{shared_memory_vespa['http_port']}"
 
-        client.post(
+        create = client.post(
             "/test_tenant/memories",
             json={"text": "I always prefer dark mode for all interfaces"},
         )
+        assert create.status_code == 200, create.text
+        assert create.json()["id"]
 
-        wait_for_vespa_indexing(
-            backend_url=vespa_url, delay=3, description="memory add"
-        )
+        # Poll until the write is search-visible — a fixed sleep loses the
+        # race on a long-lived shared container under load.
+        deadline = time.monotonic() + 30
+        data = {"count": 0, "memories": []}
+        while time.monotonic() < deadline:
+            resp = client.get("/test_tenant/memories?q=dark+mode&type=preference")
+            assert resp.status_code == 200
+            data = resp.json()
+            if any(
+                "dark" in mem["memory"].lower() or "mode" in mem["memory"].lower()
+                for mem in data["memories"]
+            ):
+                break
+            time.sleep(1)
 
-        resp = client.get("/test_tenant/memories?q=dark+mode&type=preference")
-        assert resp.status_code == 200
-        data = resp.json()
         assert data["count"] >= 1
-
         found = False
         for mem in data["memories"]:
             assert mem["type"] == "preference"
@@ -184,10 +193,13 @@ class TestTenantMemoryDelete:
         client, mm = tenant_api_client
         vespa_url = f"http://localhost:{shared_memory_vespa['http_port']}"
 
+        # infer=False stores the literal content directly — the LLM
+        # extraction pass is not under test here and may store nothing.
         mm.add_memory(
             content="I prefer using Rust for all systems programming tasks",
             tenant_id="test_tenant",
             agent_name="_strategy_store",
+            infer=False,
         )
 
         client.post(

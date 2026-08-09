@@ -23,6 +23,7 @@ from cogniverse_core.common.tenant_utils import (
     sanitize_k8s_label_value,
 )
 from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_foundation.common.argo_client import build_argo_async_client
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import get_workflow_settings
 from cogniverse_sdk.interfaces.config_store import ConfigScope
@@ -45,7 +46,7 @@ async def _shared_argo_client() -> httpx.AsyncClient:
     loop = asyncio.get_running_loop()
     client = _argo_clients.get(loop)
     if client is None or client.is_closed:
-        client = httpx.AsyncClient(timeout=_ARGO_CLIENT_TIMEOUT)
+        client = build_argo_async_client(_ARGO_CLIENT_TIMEOUT)
         _argo_clients[loop] = client
     return client
 

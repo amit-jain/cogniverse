@@ -11,10 +11,10 @@ looks up a key nobody writes, and every minted token comes back invalid.
 
 import httpx
 import pytest
-from cogniverse_core.messaging_auth import InviteTokenManager
 from cogniverse_messaging.runtime_client import RuntimeClient
 from fastapi import FastAPI
 
+from cogniverse_core.messaging_auth import InviteTokenManager
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.routers import admin as admin_router
 from tests.utils.memory_store import InMemoryConfigStore

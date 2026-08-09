@@ -94,6 +94,21 @@ class FakeTelemetryManager:
         return self._provider
 
 
+@pytest.fixture(autouse=True)
+def _fresh_workflow_store_registry():
+    """WorkflowStoreRegistry caches store instances process-wide, and
+    TelemetryWorkflowStore caches per-tenant ArtifactManagers bound to the
+    provider resolved at first touch. A store cached by an earlier test would
+    bypass this file's telemetry patches (and a store built under the patches
+    must not hand a fake provider to later callers) — clear on both sides so
+    every get() rebuilds against whatever is patched right now."""
+    from cogniverse_core.registries import WorkflowStoreRegistry
+
+    WorkflowStoreRegistry.clear_cache()
+    yield
+    WorkflowStoreRegistry.clear_cache()
+
+
 @pytest.fixture
 def empty_provider():
     return FakeTelemetryProvider(spans_df=pd.DataFrame())
@@ -125,6 +140,15 @@ def _patch_infra(fake_mgr):
         patch(_PATCH_CONFIG),
         _patch_telemetry(fake_mgr),
     )
+
+
+def _expected_primary_lm():
+    """``llm_config.primary`` from the active config — the endpoint the CLI
+    modes resolve for their DSPy work."""
+    from cogniverse_foundation.config.unified_config import LLMConfig
+    from tests.utils.llm_config import _load_config
+
+    return LLMConfig.from_dict(_load_config()["llm_config"]).primary
 
 
 # ---------------------------------------------------------------------------
@@ -552,6 +576,520 @@ class TestEntityExtractionOptimization:
 
 
 # ---------------------------------------------------------------------------
+# Test: the compile modes bind their LM task-locally
+# ---------------------------------------------------------------------------
+
+
+def _expected_optimization_lm():
+    """``llm_config.resolve("optimization")`` from the active config — the
+    endpoint the simba / profile / entity-extraction compiles run against."""
+    from cogniverse_foundation.config.unified_config import LLMConfig
+    from tests.utils.llm_config import _load_config
+
+    return LLMConfig.from_dict(_load_config()["llm_config"]).resolve("optimization")
+
+
+def _expected_teacher_lm():
+    """``llm_config.resolve_teacher()`` — the bootstrap teacher endpoint."""
+    from cogniverse_foundation.config.unified_config import LLMConfig
+    from tests.utils.llm_config import _load_config
+
+    return LLMConfig.from_dict(_load_config()["llm_config"]).resolve_teacher()
+
+
+async def _foreign_task_owns_dspy(monkeypatch):
+    """Hand DSPy's ambient binding to an async task that has finished by the
+    time the mode under test runs, and return that task's LM.
+
+    Ownership is recorded in module globals and never released, so this is the
+    state any long-lived process is in once something else configured DSPy
+    first (the runtime lifespan, an ingest job, an earlier request)."""
+    import asyncio
+    from importlib import import_module
+
+    import dspy
+
+    # The module, not the ``settings`` singleton the package re-exports —
+    # ambient ownership lives in module-level globals.
+    dspy_settings = import_module("dspy.dsp.utils.settings")
+    monkeypatch.setattr(dspy_settings, "config_owner_async_task", None)
+    monkeypatch.setitem(dspy_settings.main_thread_config, "lm", None)
+
+    owner_lm = dspy.LM(
+        model="openai/ambient-owner",
+        api_base="http://127.0.0.1:29071/v1",
+        api_key="not-required",
+    )
+
+    async def _claim():
+        dspy.configure(lm=owner_lm)
+
+    await asyncio.create_task(_claim())
+    return owner_lm
+
+
+def _ambient_lm():
+    """The process-wide LM binding, read the way ``dspy.configure`` writes it."""
+    from importlib import import_module
+
+    return import_module("dspy.dsp.utils.settings").main_thread_config["lm"]
+
+
+def _record_compile(monkeypatch, seen: Dict[str, Any], key_of):
+    """Capture the LM DSPy resolves inside ``BootstrapFewShot.compile``.
+
+    The compile is the one step that needs a live LM endpoint (one call per
+    trainset row per bootstrap round, plus the teacher's); everything around it
+    — span extraction, the synthetic merge, ``dump_state`` serialization, the
+    ArtifactManager dataset round-trip — runs for real. The student module is
+    returned unchanged so the saved artifact holds real DSPy state.
+
+    ``key_of(trainset)`` names the slot in ``seen`` so concurrent runs can be
+    told apart."""
+    import dspy
+    from dspy.teleprompt import BootstrapFewShot
+
+    def _compile(self, student, *, teacher=None, trainset):
+        seen[key_of(trainset)] = {
+            "student_lm": dspy.settings.lm,
+            "teacher_lm": self.teacher_settings["lm"],
+            "trainset_size": len(trainset),
+            "max_bootstrapped_demos": self.max_bootstrapped_demos,
+        }
+        return student
+
+    monkeypatch.setattr(BootstrapFewShot, "compile", _compile)
+
+
+def _saved_blob(provider, dataset_name: str) -> dict:
+    """The DSPy state persisted under ``dataset_name``, parsed."""
+    created = [c for c in provider.datasets.created if c["name"] == dataset_name]
+    assert len(created) == 1
+    return json.loads(created[0]["data"]["content"].iloc[0])
+
+
+_QUERY_ENHANCEMENT_SPANS = [
+    {
+        "attributes.input.value": "robot arms",
+        "attributes.output.value": json.dumps(
+            {"enhanced_query": "robotic arms assembling cars", "confidence": 0.9}
+        ),
+    },
+    {
+        "attributes.input.value": "solar panels",
+        "attributes.output.value": json.dumps(
+            {"enhanced_query": "photovoltaic panel rooftop install", "confidence": 0.7}
+        ),
+    },
+]
+
+
+class TestCompileModesBindLmTaskLocally:
+    """simba / profile / entity-extraction compile under the resolved
+    ``optimization`` endpoint even when another async task owns DSPy's ambient
+    binding. That binding can only be written by the task that claimed it
+    first, so writing it here aborted the whole mode before the compile."""
+
+    @pytest.mark.asyncio
+    async def test_simba_compile_reaches_a_live_endpoint(self, monkeypatch, tmp_path):
+        """The unstubbed BootstrapFewShot compile, over a real HTTP LM socket,
+        with a foreign async task holding DSPy's ambient binding: the bootstrap
+        call reaches the configured endpoint and the answer it returns is what
+        lands in the saved artifact."""
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+        from cogniverse_runtime.optimization_cli import run_simba_optimization
+        from tests.utils.llm_config import _load_config
+
+        answer = {
+            "enhanced_query": "robotic manipulator arms on an assembly line",
+            "expansion_terms": "manipulator,assembly line,industrial robot",
+            "synonyms": "robot arm,manipulator",
+            "context": "manufacturing,factory automation",
+            "confidence": "0.83",
+            "reasoning": "Broadened the query with manufacturing vocabulary.",
+        }
+        # The served fields come from the signature the module actually runs,
+        # reasoning field included, in the order the adapter expects them.
+        served = "".join(
+            f"[[ ## {name} ## ]]\n{answer[name]}\n\n"
+            for name in QueryEnhancementModule().enhancer.predict.signature.output_fields
+        )
+        received: List[Dict[str, Any]] = []
+
+        class _ChatCompletions(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                received.append({"path": self.path, "body": body})
+                payload = json.dumps(
+                    {
+                        "id": "chatcmpl-stub",
+                        "object": "chat.completion",
+                        "created": 0,
+                        "model": body["model"],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": served + "[[ ## completed ## ]]",
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 1,
+                            "completion_tokens": 1,
+                            "total_tokens": 2,
+                        },
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _ChatCompletions)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            blob = _load_config()
+            base = f"http://127.0.0.1:{port}/v1"
+            # The model ids carry the port so DSPy's response cache cannot
+            # answer this run from an earlier session's entry.
+            blob["llm_config"]["primary"] = {
+                **blob["llm_config"]["primary"],
+                "model": f"openai/stub-student-{port}",
+                "api_base": base,
+                "api_key": "not-required",
+            }
+            blob["llm_config"]["teacher"] = {
+                **blob["llm_config"]["teacher"],
+                "model": f"openai/stub-teacher-{port}",
+                "api_base": base,
+                "api_key": "not-required",
+            }
+            config_path = tmp_path / "config.json"
+            config_path.write_text(json.dumps(blob))
+            monkeypatch.setenv("COGNIVERSE_CONFIG", str(config_path))
+
+            provider = FakeTelemetryProvider(
+                _make_spans_df(
+                    "cogniverse.query_enhancement", _QUERY_ENHANCEMENT_SPANS[:1]
+                )
+            )
+            owner_lm = await _foreign_task_owns_dspy(monkeypatch)
+
+            p1, p2 = _patch_infra(FakeTelemetryManager(provider))
+            with p1, p2:
+                result = await run_simba_optimization(
+                    tenant_id="test:unit", lookback_hours=1
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        assert result == {
+            "status": "success",
+            "spans_found": 1,
+            "training_examples": 1,
+            "artifact_id": "dataset-1",
+        }
+        # BootstrapFewShot runs the bootstrap on the teacher endpoint.
+        assert [r["path"] for r in received] == ["/v1/chat/completions"]
+        assert received[0]["body"]["model"] == f"stub-teacher-{port}"
+
+        state = _saved_blob(provider, "dspy-model-test:unit-simba_query_enhancement")
+        demos = state["enhancer.predict"]["demos"]
+        assert len(demos) == 1
+        assert demos[0]["query"] == "robot arms"
+        assert demos[0]["enhanced_query"] == answer["enhanced_query"]
+        assert demos[0]["confidence"] == answer["confidence"]
+        assert _ambient_lm() is owner_lm
+
+    @pytest.mark.asyncio
+    async def test_simba_compiles_under_optimization_lm(self, monkeypatch):
+        from cogniverse_runtime.optimization_cli import run_simba_optimization
+
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", _QUERY_ENHANCEMENT_SPANS)
+        )
+        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
+        seen: Dict[str, Any] = {}
+        _record_compile(monkeypatch, seen, lambda trainset: "simba")
+
+        p1, p2 = _patch_infra(FakeTelemetryManager(provider))
+        with p1, p2:
+            result = await run_simba_optimization(
+                tenant_id="test:unit", lookback_hours=1
+            )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 2,
+            "training_examples": 2,
+            "artifact_id": "dataset-1",
+        }
+
+        expected = _expected_optimization_lm()
+        compiled_with = seen["simba"]
+        assert compiled_with["student_lm"].model == expected.model
+        assert compiled_with["student_lm"].kwargs["api_base"] == expected.api_base
+        assert compiled_with["student_lm"] is not owner_lm
+        assert compiled_with["teacher_lm"].model == _expected_teacher_lm().model
+        assert compiled_with["trainset_size"] == 2
+        assert compiled_with["max_bootstrapped_demos"] == 4
+
+        state = _saved_blob(provider, "dspy-model-test:unit-simba_query_enhancement")
+        assert sorted(state) == ["enhancer.predict"]
+        # The binding is contextual, so the artifact carries no LM of its own.
+        assert state["enhancer.predict"]["lm"] is None
+        assert provider.datasets.deleted == [
+            "dspy-model-test:unit-simba_query_enhancement"
+        ]
+        assert _ambient_lm() is owner_lm
+
+    @pytest.mark.asyncio
+    async def test_profile_compiles_under_optimization_lm(self, monkeypatch):
+        from cogniverse_runtime.optimization_cli import run_profile_optimization
+
+        provider = FakeTelemetryProvider(
+            _make_spans_df(
+                "cogniverse.profile_selection",
+                [
+                    {
+                        "attributes.input.value": "show me the factory floor",
+                        "attributes.output.value": json.dumps(
+                            {
+                                "selected_profile": "video_colpali_smol500_mv_frame",
+                                "modality": "video",
+                                "complexity": "simple",
+                                "intent": "video_search",
+                                "confidence": 0.9,
+                            }
+                        ),
+                    }
+                ],
+            )
+        )
+        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
+        seen: Dict[str, Any] = {}
+        _record_compile(monkeypatch, seen, lambda trainset: "profile")
+
+        p1, p2 = _patch_infra(FakeTelemetryManager(provider))
+        with p1, p2:
+            result = await run_profile_optimization(
+                tenant_id="test:unit", lookback_hours=1
+            )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 1,
+            "training_examples": 1,
+            "artifact_id": "dataset-1",
+        }
+
+        expected = _expected_optimization_lm()
+        compiled_with = seen["profile"]
+        assert compiled_with["student_lm"].model == expected.model
+        assert compiled_with["student_lm"].kwargs["api_base"] == expected.api_base
+        assert compiled_with["student_lm"] is not owner_lm
+        assert compiled_with["teacher_lm"].model == _expected_teacher_lm().model
+        assert compiled_with["trainset_size"] == 1
+
+        state = _saved_blob(provider, "dspy-model-test:unit-profile_selection")
+        assert sorted(state) == ["selector.predict"]
+        assert state["selector.predict"]["lm"] is None
+        assert _ambient_lm() is owner_lm
+
+    @pytest.mark.asyncio
+    async def test_entity_extraction_compiles_under_optimization_lm(self, monkeypatch):
+        from cogniverse_runtime.optimization_cli import (
+            run_entity_extraction_optimization,
+        )
+
+        provider = FakeTelemetryProvider(
+            _make_spans_df(
+                "cogniverse.entity_extraction",
+                [
+                    {
+                        "attributes.input.value": "videos of Boston Dynamics robots",
+                        "attributes.output.value": json.dumps(
+                            {
+                                "entities": [
+                                    {
+                                        "text": "Boston Dynamics",
+                                        "type": "ORG",
+                                        "confidence": 0.9,
+                                    }
+                                ]
+                            }
+                        ),
+                    }
+                ],
+            )
+        )
+        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
+        seen: Dict[str, Any] = {}
+        _record_compile(monkeypatch, seen, lambda trainset: "entity_extraction")
+
+        p1, p2 = _patch_infra(FakeTelemetryManager(provider))
+        with p1, p2:
+            result = await run_entity_extraction_optimization(
+                tenant_id="test:unit", lookback_hours=1
+            )
+
+        assert result == {
+            "status": "success",
+            "spans_found": 1,
+            "training_examples": 1,
+            "artifact_id": "dataset-1",
+        }
+
+        expected = _expected_optimization_lm()
+        compiled_with = seen["entity_extraction"]
+        assert compiled_with["student_lm"].model == expected.model
+        assert compiled_with["student_lm"].kwargs["api_base"] == expected.api_base
+        assert compiled_with["student_lm"] is not owner_lm
+        assert compiled_with["teacher_lm"].model == _expected_teacher_lm().model
+        assert compiled_with["trainset_size"] == 1
+
+        state = _saved_blob(provider, "dspy-model-test:unit-entity_extraction")
+        assert sorted(state) == ["extractor.predict"]
+        assert state["extractor.predict"]["lm"] is None
+        assert _ambient_lm() is owner_lm
+
+    @pytest.mark.asyncio
+    async def test_compile_failure_unwinds_the_lm_binding(self, monkeypatch):
+        """A compile that dies against the LM endpoint reports the failure,
+        writes no artifact, and releases the LM it bound — the ambient binding
+        the foreign task owns must come back untouched."""
+        import dspy
+        from dspy.teleprompt import BootstrapFewShot
+
+        from cogniverse_runtime.optimization_cli import run_simba_optimization
+
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", _QUERY_ENHANCEMENT_SPANS)
+        )
+        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
+
+        bound_during_compile = []
+
+        def _dead_endpoint(self, student, *, teacher=None, trainset):
+            bound_during_compile.append(dspy.settings.lm)
+            raise ConnectionError("optimization LM endpoint refused the connection")
+
+        monkeypatch.setattr(BootstrapFewShot, "compile", _dead_endpoint)
+
+        p1, p2 = _patch_infra(FakeTelemetryManager(provider))
+        with p1, p2:
+            result = await run_simba_optimization(
+                tenant_id="test:unit", lookback_hours=1
+            )
+
+        assert result == {
+            "status": "failed",
+            "error": "optimization LM endpoint refused the connection",
+        }
+        assert bound_during_compile[0].model == _expected_optimization_lm().model
+        assert provider.datasets.created == []
+        assert provider.datasets.deleted == []
+        assert _ambient_lm() is owner_lm
+        assert dspy.settings.lm is owner_lm
+
+    @pytest.mark.asyncio
+    async def test_concurrent_simba_runs_keep_their_own_lm_binding(self, monkeypatch):
+        """Two simba runs in flight at once each compile under the LM they
+        built. A process-wide binding would hand both compiles whichever LM
+        was written last (and leave that LM behind for the rest of the
+        process); the task-local one cannot bleed across runs."""
+        import asyncio
+        import itertools
+
+        import dspy
+
+        from cogniverse_runtime.optimization_cli import run_simba_optimization
+
+        both_in_flight = asyncio.Barrier(2)
+
+        class _BarrierTraceStore(FakeTraceStore):
+            """Holds each run inside its span query until both are running."""
+
+            async def get_spans(self, **kwargs):
+                await both_in_flight.wait()
+                return await super().get_spans(**kwargs)
+
+        def _provider() -> FakeTelemetryProvider:
+            spans_df = _make_spans_df(
+                "cogniverse.query_enhancement", _QUERY_ENHANCEMENT_SPANS
+            )
+            provider = FakeTelemetryProvider(spans_df)
+            provider._trace_store = _BarrierTraceStore(spans_df)
+            return provider
+
+        providers = {"test:one": _provider(), "test:two": _provider()}
+
+        class _PerTenantTelemetryManager:
+            def __init__(self):
+                self.config = FakeTelemetryConfig()
+
+            def get_provider(self, tenant_id):
+                return providers[tenant_id]
+
+        tags = itertools.count(1)
+
+        def _tagged_lm(config):
+            return dspy.LM(
+                model=f"openai/tagged-{next(tags)}",
+                api_base=config.api_base,
+                api_key="not-required",
+            )
+
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.llm_factory.create_dspy_lm", _tagged_lm
+        )
+        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
+
+        seen: Dict[str, Any] = {}
+        # Both runs compile the same trainset, so each compile is keyed by the
+        # LM tag it was handed.
+        _record_compile(monkeypatch, seen, lambda trainset: dspy.settings.lm.model)
+
+        p1, p2 = _patch_infra(_PerTenantTelemetryManager())
+        with p1, p2:
+            results = await asyncio.gather(
+                run_simba_optimization(tenant_id="test:one", lookback_hours=1),
+                run_simba_optimization(tenant_id="test:two", lookback_hours=1),
+            )
+
+        def _tag(lm) -> int:
+            return int(lm.model.rsplit("-", 1)[1])
+
+        assert sorted(seen) == ["openai/tagged-1", "openai/tagged-3"]
+        first, second = seen["openai/tagged-1"], seen["openai/tagged-3"]
+        assert first["student_lm"] is not second["student_lm"]
+        # Each run's teacher is the LM it built right after its own student —
+        # a shared binding would cross the pairs.
+        assert _tag(first["teacher_lm"]) == 2
+        assert _tag(second["teacher_lm"]) == 4
+        assert [r["status"] for r in results] == ["success", "success"]
+        assert [c["name"] for c in providers["test:one"].datasets.created] == [
+            "dspy-model-test:one-simba_query_enhancement"
+        ]
+        assert [c["name"] for c in providers["test:two"].datasets.created] == [
+            "dspy-model-test:two-simba_query_enhancement"
+        ]
+        assert _ambient_lm() is owner_lm
+
+
+# ---------------------------------------------------------------------------
 # Test: routing mode
 # ---------------------------------------------------------------------------
 
@@ -917,7 +1455,8 @@ class TestSyntheticGeneration:
 
     @pytest.mark.asyncio
     async def test_synthetic_no_backend_returns_failed(self, fake_telemetry_manager):
-        """Synthetic generation without backend config should fail gracefully."""
+        """Synthetic generation with no reachable backend reports the failure
+        per optimizer type instead of raising out of the CLI mode."""
         from cogniverse_runtime.optimization_cli import run_synthetic_generation
 
         p1, p2 = _patch_infra(fake_telemetry_manager)
@@ -928,10 +1467,167 @@ class TestSyntheticGeneration:
                 count=5,
             )
 
-        # Should fail (no real backend) but not crash
-        assert "results" in result
-        assert "simba" in result["results"]
-        assert result["results"]["simba"]["status"] in ("success", "failed", "no_data")
+        assert result["status"] == "failed"
+        assert list(result["results"]) == ["simba"]
+        assert result["results"]["simba"]["status"] == "failed"
+        assert result["results"]["simba"]["error"] != ""
+
+    @pytest.mark.asyncio
+    async def test_synthetic_generation_binds_lm_when_another_task_owns_dspy(
+        self, fake_telemetry_manager, monkeypatch
+    ):
+        """The generators must see the configured LM even when a DIFFERENT
+        async task already owns DSPy's ambient binding — writing that binding
+        (``dspy.configure`` or ``dspy.settings.lm = ...``) raises for every
+        task but the owner, which aborted the whole synthetic run.
+
+        The search backend the generators sample content from needs a Vespa
+        container, which this in-process test has none of, so the registry
+        hands back an inert stand-in; the LM binding under test is read inside
+        ``generate``, where production reads it."""
+        import asyncio
+        from importlib import import_module
+
+        import dspy
+
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+        from cogniverse_runtime.optimization_cli import run_synthetic_generation
+        from cogniverse_synthetic.schemas import SyntheticDataResponse
+        from cogniverse_synthetic.service import SyntheticDataService
+
+        # The module, not the ``settings`` singleton the package re-exports —
+        # ambient ownership lives in module-level globals.
+        dspy_settings = import_module("dspy.dsp.utils.settings")
+        monkeypatch.setattr(dspy_settings, "config_owner_async_task", None)
+        monkeypatch.setitem(dspy_settings.main_thread_config, "lm", None)
+
+        owner_lm = dspy.LM(
+            model="openai/ambient-owner",
+            api_base="http://127.0.0.1:29071/v1",
+            api_key="not-required",
+        )
+
+        async def _claim_ambient():
+            dspy.configure(lm=owner_lm)
+
+        await asyncio.create_task(_claim_ambient())
+
+        seen: Dict[str, Any] = {}
+
+        async def _record_bound_lm(self, request):
+            seen["lm"] = dspy.settings.lm
+            return SyntheticDataResponse(
+                optimizer=request.optimizer,
+                schema_name="RoutingExampleSchema",
+                count=0,
+                selected_profiles=[],
+                profile_selection_reasoning="",
+                data=[],
+                metadata={},
+            )
+
+        monkeypatch.setattr(SyntheticDataService, "generate", _record_bound_lm)
+        monkeypatch.setattr(
+            BackendRegistry,
+            "get_search_backend",
+            lambda *a, **k: object(),
+        )
+
+        p1, p2 = _patch_infra(fake_telemetry_manager)
+        with p1, p2:
+            result = await run_synthetic_generation(
+                tenant_id="test:unit",
+                optimizer_types=["simba"],
+                count=5,
+            )
+
+        expected = _expected_primary_lm()
+        assert seen["lm"].model == expected.model
+        assert seen["lm"].kwargs["api_base"] == expected.api_base
+        assert seen["lm"] is not owner_lm
+        assert result["results"]["simba"] == {
+            "status": "no_data",
+            "examples_generated": 0,
+        }
+        # The ambient binding still belongs to the task that claimed it.
+        assert dspy_settings.main_thread_config["lm"] is owner_lm
+
+    @pytest.mark.asyncio
+    async def test_concurrent_synthetic_runs_keep_their_own_lm_binding(
+        self, fake_telemetry_manager, monkeypatch
+    ):
+        """Two synthetic runs in flight at once each generate under their own
+        LM. A process-wide binding would hand both runs whichever LM was
+        written last; the task-local one cannot bleed across runs.
+
+        The search backend needs a Vespa container this in-process test has
+        none of, so the registry hands back an inert stand-in."""
+        import asyncio
+        import itertools
+
+        import dspy
+
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+        from cogniverse_runtime.optimization_cli import run_synthetic_generation
+        from cogniverse_synthetic.schemas import SyntheticDataResponse
+        from cogniverse_synthetic.service import SyntheticDataService
+
+        tags = itertools.count(1)
+
+        def _tagged_lm(config):
+            return dspy.LM(
+                model=f"openai/tagged-{next(tags)}",
+                api_base=config.api_base,
+                api_key="not-required",
+            )
+
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.llm_factory.create_dspy_lm", _tagged_lm
+        )
+        monkeypatch.setattr(
+            BackendRegistry, "get_search_backend", lambda *a, **k: object()
+        )
+
+        both_inside = asyncio.Barrier(2)
+        seen: Dict[str, Any] = {}
+
+        async def _record_bound_lm(self, request):
+            seen[request.tenant_id] = dspy.settings.lm
+            # Hold both runs inside generate so their bindings are live at once.
+            await both_inside.wait()
+            return SyntheticDataResponse(
+                optimizer=request.optimizer,
+                schema_name="RoutingExampleSchema",
+                count=0,
+                selected_profiles=[],
+                profile_selection_reasoning="",
+                data=[],
+                metadata={},
+            )
+
+        monkeypatch.setattr(SyntheticDataService, "generate", _record_bound_lm)
+
+        p1, p2 = _patch_infra(fake_telemetry_manager)
+        with p1, p2:
+            results = await asyncio.gather(
+                run_synthetic_generation(
+                    tenant_id="test:one", optimizer_types=["simba"], count=1
+                ),
+                run_synthetic_generation(
+                    tenant_id="test:two", optimizer_types=["simba"], count=1
+                ),
+            )
+
+        assert sorted(seen) == ["test:one", "test:two"]
+        assert seen["test:one"] is not seen["test:two"]
+        assert {seen["test:one"].model, seen["test:two"].model} == {
+            "openai/tagged-1",
+            "openai/tagged-2",
+        }
+        assert [r["results"]["simba"]["status"] for r in results] == [
+            "no_data",
+            "no_data",
+        ]
 
 
 class TestOptimizeAgentPersistence:

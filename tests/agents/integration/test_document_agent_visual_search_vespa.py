@@ -17,20 +17,28 @@ import pytest
 import requests
 
 from cogniverse_agents.document_agent import DocumentAgent
-from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
+from tests.utils.vespa_test_helpers import (
+    deploy_tenant_schema,
+    schema_full_name,
+    schema_tensor_dim,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 
 TENANT = "docvis_rt"
-_MATCH = [0.1] * 320
-_OPPOSED = [-0.1] * 320
+_DIM = schema_tensor_dim("document_visual", "colpali_embedding")
+_BIN_DIM = schema_tensor_dim("document_visual", "colpali_embedding_binary")
+_MATCH = [0.1] * _DIM
+_OPPOSED = [-0.1] * _DIM
 # Binary (packbits) form of the float vectors: all-positive -> 0xFF (-1 int8),
 # all-negative -> 0x00. The phased profile's hamming first-phase reads these.
-_MATCH_BIN = [-1] * 40
-_OPPOSED_BIN = [0] * 40
+_MATCH_BIN = [-1] * _BIN_DIM
+_OPPOSED_BIN = [0] * _BIN_DIM
 
 
 def test_fixture_vectors_match_tomoro_schema_contract():
+    assert _DIM == 320
+    assert _BIN_DIM == 40
     assert len(_MATCH) == 320
     assert len(_OPPOSED) == 320
     assert len(_MATCH_BIN) == 40

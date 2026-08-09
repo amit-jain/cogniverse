@@ -29,7 +29,6 @@ pytestmark = pytest.mark.slow
 from tests.e2e.conftest import (
     PHOENIX_URL,
     TENANT_ID,
-    skip_if_no_runtime,
 )
 
 KUBECTL_CONTEXT = "k3d-cogniverse"
@@ -155,26 +154,69 @@ COMPLEX_QUERIES = [
 ]
 
 
-def _call_agent(agent_name: str, query: str) -> bool:
-    """Call an agent endpoint. Returns True on success."""
+def _call_agent(agent_name: str, query: str) -> None:
+    resp = httpx.post(
+        f"{RUNTIME}/agents/{agent_name}/process",
+        json={
+            "agent_name": agent_name,
+            "query": query,
+            "context": {"tenant_id": TENANT_ID},
+            "top_k": 3,
+        },
+        timeout=120.0,
+    )
+    assert resp.status_code == 200, (
+        f"{agent_name} rejected span-seeding query {query!r}: "
+        f"HTTP {resp.status_code} {resp.text[:500]}"
+    )
+
+
+@pytest.fixture(scope="module")
+def _kubectl_cluster_ready() -> None:
+    """Require kubectl access after the session E2E stack is initialized."""
+    command = [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "get",
+        "namespace",
+        NAMESPACE,
+        "-o",
+        "name",
+    ]
+    command_text = " ".join(command)
     try:
-        resp = httpx.post(
-            f"{RUNTIME}/agents/{agent_name}/process",
-            json={
-                "agent_name": agent_name,
-                "query": query,
-                "context": {"tenant_id": TENANT_ID},
-                "top_k": 3,
-            },
-            timeout=120.0,
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
-        return resp.status_code == 200
-    except Exception:
-        return False
+    except FileNotFoundError as exc:
+        pytest.fail(
+            f"kubectl executable unavailable after E2E stack setup; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; error={exc}",
+            pytrace=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"kubectl cluster check timed out after E2E stack setup; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; "
+            f"timeout={exc.timeout}s; stdout={exc.stdout!r}; stderr={exc.stderr!r}",
+            pytrace=False,
+        )
+    if result.returncode != 0:
+        pytest.fail(
+            f"kubectl cannot reach the E2E cluster after stack setup; "
+            f"command={command_text!r}; context={KUBECTL_CONTEXT!r}; "
+            f"returncode={result.returncode}; stdout={result.stdout!r}; "
+            f"stderr={result.stderr!r}",
+            pytrace=False,
+        )
 
 
 @pytest.fixture(scope="module", autouse=True)
-def generate_spans_for_batch_jobs():
+def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     """Generate enough spans in Phoenix for all batch job tests.
 
     Calls agent endpoints to produce:
@@ -185,13 +227,10 @@ def generate_spans_for_batch_jobs():
 
     Runs once per module, before any batch job test.
     """
-    # Check if runtime is available
-    try:
-        r = httpx.get(f"{RUNTIME}/health", timeout=5.0)
-        if r.status_code != 200:
-            pytest.skip("Runtime not available")
-    except Exception:
-        pytest.skip("Runtime not available")
+    response = httpx.get(f"{RUNTIME}/health", timeout=5.0)
+    assert response.status_code == 200, (
+        f"runtime health returned HTTP {response.status_code}: {response.text[:500]}"
+    )
 
     # Per-agent span count. BootstrapFewShot samples demos from these; the
     # project originally generated 100 per agent which takes ~9 hours on CPU
@@ -201,6 +240,7 @@ def generate_spans_for_batch_jobs():
     import os as _os
 
     spans_per_agent = int(_os.environ.get("BATCH_SPAN_COUNT", "20"))
+    assert spans_per_agent > 0, "BATCH_SPAN_COUNT must be a positive integer"
 
     # Gateway spans — simple queries through gateway
     for i in range(spans_per_agent):
@@ -235,33 +275,6 @@ def generate_spans_for_batch_jobs():
     time.sleep(15)
 
     yield
-
-
-def _kubectl_available() -> bool:
-    """Check if kubectl can reach the k3d cluster."""
-    try:
-        result = subprocess.run(
-            [
-                "kubectl",
-                "--context",
-                KUBECTL_CONTEXT,
-                "get",
-                "ns",
-                NAMESPACE,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
-skip_if_no_kubectl = pytest.mark.skipif(
-    not _kubectl_available(),
-    reason=f"kubectl cannot reach {KUBECTL_CONTEXT} cluster",
-)
 
 
 def _run_batch_job(
@@ -532,8 +545,6 @@ def seeded_gateway_traffic():
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 @pytest.mark.usefixtures("seeded_gateway_traffic")
 class TestGatewayThresholds:
     """Verify gateway-thresholds batch job produces valid threshold artifact."""
@@ -651,8 +662,6 @@ class TestGatewayThresholds:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 class TestWorkflowOptimization:
     """Verify workflow batch job extracts orchestration patterns."""
 
@@ -792,8 +801,6 @@ class TestWorkflowOptimization:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 class TestSimbaOptimization:
     """Verify SIMBA batch job compiles the query enhancement module."""
 
@@ -870,8 +877,6 @@ class TestSimbaOptimization:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 class TestProfileOptimization:
     """Verify profile selection batch job compiles the profile module."""
 
@@ -937,8 +942,6 @@ class TestProfileOptimization:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 class TestProfileSelectionArtifactReload:
     """Verify ProfileSelectionAgent's ``_load_artifact`` actually runs at
     startup and applies the optimized DSPy state to its in-memory
@@ -1031,7 +1034,6 @@ class TestProfileSelectionArtifactReload:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestBatchJobsReadCorrectSpanTypes:
     """Verify the span types that each batch job reads exist in Phoenix."""
 
@@ -1110,8 +1112,6 @@ class TestBatchJobsReadCorrectSpanTypes:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 class TestEntityExtractionOptimization:
     """Verify entity extraction batch job compiles the entity extraction module."""
 
@@ -1190,8 +1190,6 @@ class TestEntityExtractionOptimization:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 class TestArtifactLoadingRoundTrip:
     """Full loop: batch job → artifact → pod restart → agent uses optimized thresholds."""
 
@@ -1487,8 +1485,6 @@ class TestArtifactLoadingRoundTrip:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
-@skip_if_no_kubectl
 class TestSyntheticGeneration:
     """Verify --mode synthetic runs inside the pod."""
 

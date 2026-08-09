@@ -22,7 +22,6 @@ from cogniverse_agents.deep_research_agent import (
     DeepResearchOutput,
 )
 from tests.fixtures.llm import (
-    is_test_lm_available,
     resolve_api_key,
     resolve_base_url,
     resolve_prefixed_model,
@@ -31,20 +30,11 @@ from tests.fixtures.llm import (
 logger = logging.getLogger(__name__)
 
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _require_test_lm():
-    """Runtime LM gate. An import-time skipif latches the PRE-session-fixture
-    endpoint state — ``ensure_host_ollama`` provisions the LM only at session
-    setup, so the gate must probe after fixtures run, not at collection."""
-    if not is_test_lm_available():
-        pytest.skip(f"Test LM not reachable at {resolve_base_url()}")
-
-
-@pytest.fixture(scope="module", autouse=True)
-def configure_dspy(_require_test_lm):
+def configure_dspy(ensure_host_ollama):
     lm = dspy.LM(
         resolve_prefixed_model(),
         api_base=resolve_base_url(),

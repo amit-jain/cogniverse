@@ -90,8 +90,8 @@ def file_markers(test_file: Path) -> set[str]:
     """Explicit ``pytest.mark.*`` mentions plus the location-derived marker.
 
     Mirrors the ``pytest_collection_modifyitems`` hook in tests/conftest.py:
-    tests under a ``unit/`` (``integration/``) directory carry that marker
-    from their location unless the file declares ``local_only``.
+    tests under a ``unit/`` (``integration/``, ``e2e/``) directory carry that
+    marker from their location unless the file declares ``local_only``.
     """
     markers = set(_MARKER_RE.findall(test_file.read_text()))
     if LOCAL_ONLY_MARKER not in markers:
@@ -100,6 +100,8 @@ def file_markers(test_file: Path) -> set[str]:
             markers.add("unit")
         elif "/integration/" in path:
             markers.add("integration")
+        elif "/e2e/" in path:
+            markers.add("e2e")
     return markers
 
 
@@ -160,3 +162,47 @@ def test_every_test_file_is_visible_to_its_ci_selection():
         "these files are invisible to their directory's CI -m selection:\n"
         + "\n".join(invisible)
     )
+
+
+_NON_E2E_SWEEP = (
+    "not e2e and not e2e_heavy and not benchmark and not "
+    "requires_teacher_model and not requires_optimizer_data and not local_only"
+)
+
+
+def test_e2e_files_are_deselected_by_the_non_e2e_sweep():
+    """Everything under tests/e2e needs the deployed cluster, so no file there
+    may satisfy the sweep that excludes e2e — a file claiming ``integration``
+    instead of ``e2e`` gets collected by that sweep and errors on the cluster
+    it never provisioned."""
+    selected = [
+        test_file.relative_to(REPO_ROOT).as_posix()
+        for test_file in sorted((TESTS_ROOT / "e2e").rglob("test_*.py"))
+        if expr_matches(_NON_E2E_SWEEP, file_markers(test_file))
+    ]
+    assert selected == [], (
+        "these tests/e2e files are collected by the non-e2e sweep:\n"
+        + "\n".join(selected)
+    )
+
+
+def test_e2e_location_derives_the_e2e_marker():
+    """The directory is the taxonomy: an item under tests/e2e that declares no
+    e2e marker gets one at collection."""
+    from tests.fixtures.markers import apply_location_markers
+
+    class _Item:
+        def __init__(self, path):
+            self.path = path
+            self.own_markers = []
+
+        def get_closest_marker(self, name):
+            return next((m for m in self.own_markers if m.name == name), None)
+
+        def add_marker(self, marker):
+            self.own_markers.append(marker.mark)
+
+    item = _Item(TESTS_ROOT / "e2e" / "test_unmarked_e2e.py")
+    apply_location_markers([item])
+
+    assert [m.name for m in item.own_markers] == ["e2e"]

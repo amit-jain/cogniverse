@@ -12,6 +12,7 @@ import pytest
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from tests.utils.async_polling import wait_for_vespa_indexing
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
+from tests.utils.tenant_helpers import MEM0_ROUNDTRIP_TENANT_ID
 
 
 @pytest.fixture
@@ -45,10 +46,7 @@ def memory_manager(shared_memory_vespa, shared_denseon):
     from cogniverse_foundation.config.unified_config import SystemConfig
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
-    # Canonical org:tenant form so the derived schema matches the single
-    # suffix the shared fixture deploys (agent_memories_test_tenant); the bare
-    # "test_tenant" derives the never-deployed double-suffix schema.
-    manager = Mem0MemoryManager(tenant_id="test:tenant")
+    manager = Mem0MemoryManager(tenant_id=MEM0_ROUNDTRIP_TENANT_ID)
 
     config_store = VespaConfigStore(
         backend_url="http://localhost",
@@ -584,9 +582,7 @@ class TestMem0ProfileRegistrationIntegration:
             "otherwise we're not proving dynamic registration worked."
         )
 
-        # Use the canonical org:tenant identity whose derived
-        # agent_memories_test_tenant schema the fixture deploys.
-        tenant_id = "test:tenant"
+        tenant_id = MEM0_ROUNDTRIP_TENANT_ID
         agent_name = f"propagation_agent_{uuid.uuid4().hex[:8]}"
 
         manager = Mem0MemoryManager(tenant_id=tenant_id)

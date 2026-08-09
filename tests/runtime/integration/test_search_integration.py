@@ -214,7 +214,7 @@ class TestListProfilesIntegration:
 
 @pytest.mark.integration
 @pytest.mark.requires_vespa
-@pytest.mark.requires_colpali
+@pytest.mark.requires_inference("vllm_colpali")
 class TestSearchIntegration:
     # Drops the ``ci_fast`` marker the sibling TestListProfilesIntegration
     # carries. This class spins up a real vLLM-CPU container with

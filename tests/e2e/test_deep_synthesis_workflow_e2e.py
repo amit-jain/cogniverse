@@ -39,7 +39,7 @@ from cogniverse_agents.deep_synthesis_workflow import (
     DeepSynthesisWorkflow,
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import run_async, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import run_async, unique_id
 
 # ---------------------------------------------------------------------------
 # vLLM port-forward fixture (mirrors test_rlm_telemetry_e2e.py:38-94 pattern)
@@ -152,7 +152,6 @@ class _ScriptedRLM:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestDeepSynthesisOverHundredDocuments:
     """Pre-write 100 external_doc memories under one tenant. Workflow's
     dispatcher fetches matching memories per sub-query keyword → real

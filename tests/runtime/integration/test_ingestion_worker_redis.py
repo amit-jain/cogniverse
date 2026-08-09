@@ -32,6 +32,20 @@ pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 CONTAINER_NAME = "redis-ingestion-v2-tests"
 
 
+@pytest.fixture(autouse=True)
+def _disable_worker_telemetry_export():
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    TelemetryManager.reset()
+    telemetry_manager_module._telemetry_manager = TelemetryManager(
+        TelemetryConfig(enabled=False, otlp_enabled=False)
+    )
+    yield
+    TelemetryManager.reset()
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -991,12 +1005,24 @@ class TestColdBuildOffload:
 
         from cogniverse_runtime.ingestion_worker import worker
 
+        monkeypatch.setenv("REDIS_URL", "redis://worker:6379/0")
+        monkeypatch.setenv(
+            "INFERENCE_SERVICE_URLS",
+            '{"denseon":"http://denseon-at-startup:8000/"}',
+        )
+        config = worker.WorkerConfig()
+        monkeypatch.setenv(
+            "INFERENCE_SERVICE_URLS",
+            '{"denseon":"http://changed-after-startup:9000"}',
+        )
         loop_thread = threading.get_ident()
         seen: dict = {}
         release = threading.Event()
 
-        def _blocking_context():
+        def _blocking_context(actual_config):
             seen["thread"] = threading.get_ident()
+            seen["config"] = actual_config
+            seen["urls"] = dict(actual_config.inference_service_urls)
             seen["released"] = release.wait(timeout=5.0)
             return (object(), object())
 
@@ -1036,14 +1062,16 @@ class TestColdBuildOffload:
             tenant_id="acme:acme",
             sha="sha_offload",
         )
-        task = asyncio.create_task(worker._default_processor(job))
+        task = asyncio.create_task(worker._default_processor(job, config=config))
         deadline = time.time() + 5.0
-        while "thread" not in seen and time.time() < deadline:
+        while "thread" not in seen and not task.done() and time.time() < deadline:
             await asyncio.sleep(0.01)
         release.set()
         result = await asyncio.wait_for(task, timeout=10.0)
 
         assert result["status"] == "success" and result["video_id"] == "v1"
+        assert seen["config"] is config
+        assert seen["urls"] == {"denseon": "http://denseon-at-startup:8000"}
         assert seen["thread"] != loop_thread, "cold build ran ON the event loop"
         assert seen["released"] is True, (
             "loop never serviced the release while the builder blocked — "

@@ -3,11 +3,10 @@
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
+from tests.e2e.conftest import RUNTIME, TENANT_ID
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestWikiEndpoints:
     def test_wiki_save(self):
         """POST /wiki/save creates wiki pages."""

@@ -30,24 +30,19 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementDeps,
     QueryEnhancementInput,
 )
-from tests.fixtures.llm import is_test_lm_available, make_dspy_lm
+from tests.fixtures.llm import make_dspy_lm
 
-
-@pytest.fixture(scope="module", autouse=True)
-def _require_test_lm():
-    """Runtime LM gate. An import-time skipif latches the PRE-session-fixture
-    endpoint state — ``ensure_host_ollama`` provisions the LM only at session
-    setup, so the gate must probe after fixtures run, not at collection."""
-    if not is_test_lm_available():
-        pytest.skip("Test LM not available")
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 
 
 @pytest.fixture
-def real_dspy_lm():
-    """Real DSPy LM configured from TEST_LLM_* env vars."""
-    if not is_test_lm_available():
-        pytest.skip("Test LM not available")
+def real_dspy_lm(gemma_inference_endpoint):
+    """Real DSPy LM against the endpoint provisioned by the session fixture.
 
+    ``gemma_inference_endpoint`` (tests/agents/integration/conftest.py)
+    resolves the Modal Gemma service or the local test LM and exports the
+    ``TEST_LLM_*`` env vars ``make_dspy_lm`` reads.
+    """
     lm = make_dspy_lm()
     test_response = lm("test")
     assert test_response is not None
@@ -117,6 +112,10 @@ def orchestrator_with_real_agents(vespa_with_schema, dspy_lm):
         ("profile_selection", ["profile_selection"]),
         ("query_enhancement", ["query_enhancement"]),
         ("search", ["search"]),
+        # The dispatcher serves this via the "summarization" capability;
+        # registered so five-step plans (mixed parallel/sequential) validate
+        # against the registry instead of dropping their final step.
+        ("summarizer", ["summarization"]),
     ]:
         registry.register_agent(
             AgentEndpoint(

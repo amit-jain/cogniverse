@@ -23,22 +23,59 @@ fallbacks.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shlex
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import requests
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
 DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
-HOST_HF_CACHE = os.path.expanduser("~/.cache/huggingface")
+# Test-owned Hugging Face cache, deliberately separate from the user's
+# ~/.cache/huggingface: containers previously ran as root and wrote
+# root-owned entries into the personal cache, which breaks host-side
+# (in-process) model loads with permission errors. Test containers mount
+# this directory at /hf-cache and run as the invoking user, so every
+# entry stays user-owned; host-side oracles share it via ``hub/``.
+TEST_HF_CACHE = os.path.expanduser("~/.cache/cogniverse-tests/huggingface")
+CONTAINER_HF_CACHE = "/hf-cache"
+
+
+def writable_test_hf_cache() -> str:
+    """Create the test-owned HF cache and prove it is writable.
+
+    Raises with context instead of letting a model load fail later with an
+    opaque permission error mid-download.
+    """
+    hub = Path(TEST_HF_CACHE) / "hub"
+    try:
+        hub.mkdir(parents=True, exist_ok=True)
+        probe = hub / f".writable-probe-{os.getpid()}"
+        probe.write_bytes(b"")
+        probe.unlink()
+    except OSError as exc:
+        raise RuntimeError(
+            f"test HF cache {TEST_HF_CACHE} is not writable "
+            f"({type(exc).__name__}: {exc}); remove foreign-owned entries or "
+            "free the path"
+        ) from exc
+    return TEST_HF_CACHE
+
+
 E2E_CONTEXT = "k3d-cogniverse-e2e"
 E2E_CLUSTER = "cogniverse-e2e"
 DEV_CONTEXT = "k3d-cogniverse"
@@ -87,6 +124,197 @@ def reap_dead_owner_containers(label: str = OWNER_LABEL) -> None:
             timeout=30,
             check=False,
         )
+
+
+# Exact-model sidecars (see tests/utils/hermetic_llm.py) are reused across
+# pytest sessions on purpose, because re-provisioning one reloads multi-GB
+# weights. They therefore carry a marker of their own instead of OWNER_LABEL:
+# the owner-pid reaper removes every container whose spawning session is gone,
+# which is exactly the state a reusable sidecar sits in between sessions.
+# Their lifetime is bounded by age instead.
+EXACT_MODEL_LABEL = "cogniverse-test-exact-model"
+
+# A resident sidecar keeps its model weights in host memory — on a ROCm host
+# the GPU's GTT aperture backs them with system RAM (~26GB for gemma-4-e4b) —
+# and the shared Vespa refuses to boot with less than 4GB available. Six hours
+# covers one working stretch of repeated pytest runs against a warm container,
+# so reuse still pays for itself, while a forgotten sidecar costs part of a day
+# of RAM rather than holding it until the host reboots. Re-provisioning after
+# the window is one load from the local Hugging Face cache.
+EXACT_MODEL_MAX_AGE_SECONDS = 6 * 3600
+
+EXACT_MODEL_LOCK_PATH = (
+    Path(tempfile.gettempdir()) / f"cogniverse-exact-llm-sidecars-{os.getuid()}.lock"
+)
+_EXACT_MODEL_LEASE_DIR = (
+    Path(tempfile.gettempdir()) / f"cogniverse-exact-llm-leases-{os.getuid()}"
+)
+
+
+@contextmanager
+def exact_model_provisioning_lock(*, blocking: bool = True):
+    """Serialize exact-model selection and age reclaim across pytest processes.
+
+    Yields whether the lock was taken. With ``blocking=False`` a lock already
+    held by another session yields ``False`` instead of waiting: that session is
+    provisioning right now, so it is actively using its sidecars and a reclaim
+    has nothing to do while it runs.
+    """
+    EXACT_MODEL_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with EXACT_MODEL_LOCK_PATH.open("a+") as lock_file:
+        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+        try:
+            fcntl.flock(lock_file.fileno(), flags)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def lease_exact_model_container(container: str) -> None:
+    """Record that this pytest process serves tests from ``container``.
+
+    A lease held by a live process keeps the age reclaim away from a sidecar a
+    session has already resolved into its config; a lease whose process is gone
+    is dropped by the reclaim itself.
+    """
+    _EXACT_MODEL_LEASE_DIR.mkdir(parents=True, exist_ok=True)
+    (_EXACT_MODEL_LEASE_DIR / f"{container}.{os.getpid()}").touch()
+
+
+def _live_leased_containers() -> set[str]:
+    """Containers leased by a live process, dropping the leases of dead ones."""
+    try:
+        entries = sorted(_EXACT_MODEL_LEASE_DIR.iterdir())
+    except FileNotFoundError:
+        return set()
+    leased: set[str] = set()
+    for entry in entries:
+        container, _, holder_pid = entry.name.rpartition(".")
+        if not container or not holder_pid.isdigit():
+            continue
+        if os.path.exists(f"/proc/{holder_pid}"):
+            leased.add(container)
+        else:
+            entry.unlink(missing_ok=True)
+    return leased
+
+
+def _container_age_seconds(container_id: str) -> float | None:
+    """Age from docker's own creation time; ``None`` when it is already gone."""
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.Created}}", container_id],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    if result.returncode != 0:
+        if "No such" in detail:
+            return None
+        raise RuntimeError(
+            f"docker could not read the creation time of exact-model container "
+            f"{container_id}: {detail or f'exit {result.returncode}'}"
+        )
+    created = result.stdout.strip()
+    try:
+        created_at = datetime.fromisoformat(created)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"docker reported an unreadable creation time for exact-model "
+            f"container {container_id}: {created!r}"
+        ) from exc
+    if created_at.tzinfo is None:
+        raise RuntimeError(
+            f"docker reported a creation time without a timezone for exact-model "
+            f"container {container_id}: {created!r}"
+        )
+    return (datetime.now(timezone.utc) - created_at).total_seconds()
+
+
+def reclaim_stale_exact_model_containers(
+    max_age_seconds: float = EXACT_MODEL_MAX_AGE_SECONDS,
+) -> None:
+    """Remove exact-model sidecars older than ``max_age_seconds``.
+
+    ``hermetic_llm`` reuses these sidecars across sessions, so they carry no
+    owner pid and ``reap_dead_owner_containers`` never sees them: without an age
+    bound nothing removes one, and a forgotten sidecar holds its weights in host
+    RAM until the host reboots. Age comes from docker's creation timestamp, so
+    neither a restart nor an in-process bookkeeping gap can make a container
+    look fresher than it is.
+
+    A sidecar leased by a live pytest process is kept whatever its age, and the
+    whole pass is skipped while another session holds the provisioning lock, so
+    a reclaim can never take a container a session has selected or is in the
+    middle of selecting. ``ensure_llm`` re-provisions on demand afterwards.
+    """
+    with exact_model_provisioning_lock(blocking=False) as acquired:
+        if not acquired:
+            return
+        listing = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "-a",
+                "--filter",
+                f"label={EXACT_MODEL_LABEL}",
+                "--format",
+                "{{.ID}}\t{{.Names}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if listing.returncode != 0:
+            detail = "\n".join(
+                part for part in (listing.stdout, listing.stderr) if part
+            ).strip()
+            raise RuntimeError(
+                f"docker could not list exact-model containers: "
+                f"{detail or f'exit {listing.returncode}'}"
+            )
+        candidates: list[tuple[str, str]] = []
+        for line in listing.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 2:
+                continue
+            candidates.append((parts[0], parts[1]))
+        if not candidates:
+            return
+
+        leased = _live_leased_containers()
+        removal_errors: list[str] = []
+        for container_id, name in candidates:
+            if name in leased:
+                continue
+            age_seconds = _container_age_seconds(container_id)
+            if age_seconds is None or age_seconds <= max_age_seconds:
+                continue
+            removed = subprocess.run(
+                ["docker", "rm", "-f", container_id],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            detail = "\n".join(
+                part for part in (removed.stdout, removed.stderr) if part
+            ).strip()
+            if removed.returncode != 0 and "No such container" not in detail:
+                removal_errors.append(
+                    f"{name} ({container_id}): {detail or f'exit {removed.returncode}'}"
+                )
+        if removal_errors:
+            raise RuntimeError(
+                "docker could not remove stale exact-model containers: "
+                + "; ".join(removal_errors)
+            )
 
 
 def _merge_serve_args(model: str, extra_args: Optional[list[str]]) -> list[str]:
@@ -437,6 +665,10 @@ def _append_image_command(
         command.extend([image, "--model", model, *serve_args])
         return
     serve_command = shlex.join(["vllm", "serve", model, *serve_args])
+    # The container runs as the invoking (non-root) user, so pip cannot
+    # write into the image's root-owned venv — install the audio extras
+    # into the writable cache mount and expose them via PYTHONPATH.
+    extras_dir = f"{CONTAINER_HF_CACHE}/.pip-audio-extras"
     command.extend(
         [
             "--entrypoint",
@@ -444,7 +676,9 @@ def _append_image_command(
             image,
             "-c",
             (
-                "pip install --no-cache-dir --quiet soundfile librosa || exit 1; "
+                f"pip install --no-cache-dir --quiet --target {extras_dir} "
+                "soundfile librosa || exit 1; "
+                f'export PYTHONPATH="{extras_dir}${{PYTHONPATH:+:$PYTHONPATH}}"; '
                 f"exec {serve_command}"
             ),
         ]
@@ -475,6 +709,59 @@ class _SpawnedSidecar:
     base_url: str
 
 
+def _prepare_pinned_snapshot(
+    model: str,
+    revision: str,
+    required_files: tuple[str, ...],
+) -> None:
+    if not required_files:
+        raise ValueError("Pinned model snapshots require an explicit file contract")
+
+    cache_dir = os.path.join(writable_test_hf_cache(), "hub")
+    snapshot_path: str | None = None
+    try:
+        snapshot_path = snapshot_download(
+            repo_id=model,
+            revision=revision,
+            cache_dir=cache_dir,
+            local_files_only=True,
+        )
+    except LocalEntryNotFoundError:
+        pass
+
+    missing = (
+        list(required_files)
+        if snapshot_path is None
+        else [
+            relative_path
+            for relative_path in required_files
+            if not os.path.isfile(os.path.join(snapshot_path, relative_path))
+        ]
+    )
+    if missing:
+        try:
+            snapshot_path = snapshot_download(
+                repo_id=model,
+                revision=revision,
+                cache_dir=cache_dir,
+                local_files_only=False,
+            )
+        except (HfHubHTTPError, LocalEntryNotFoundError, OSError) as exc:
+            raise RuntimeError(
+                f"Failed to provision pinned model {model!r} at {revision}: {exc}"
+            ) from exc
+        missing = [
+            relative_path
+            for relative_path in required_files
+            if not os.path.isfile(os.path.join(snapshot_path, relative_path))
+        ]
+    if missing:
+        raise RuntimeError(
+            f"Pinned model {model!r} at {revision} is missing required files: "
+            + ", ".join(missing)
+        )
+
+
 @dataclass
 class VllmSidecarFactory:
     """Per-session manager for exact remote services and local sidecars."""
@@ -491,6 +778,8 @@ class VllmSidecarFactory:
         self,
         model: str,
         *,
+        model_revision: str | None = None,
+        required_snapshot_files: tuple[str, ...] = (),
         extra_args: Optional[list[str]] = None,
         image: Optional[str] = None,
         device: str = "cpu",
@@ -500,6 +789,8 @@ class VllmSidecarFactory:
         image = image or self.image
         key = (
             model,
+            model_revision,
+            required_snapshot_files,
             image,
             tuple(extra_args or ()),
             device,
@@ -520,6 +811,21 @@ class VllmSidecarFactory:
                     container=None, base_url=configured_url
                 )
                 return configured_url
+
+            resolved_env = dict(env or {})
+            resolved_args = list(extra_args or ())
+            if model_revision is not None:
+                if "--revision" in resolved_args:
+                    raise ValueError(
+                        "Pass the pinned revision through model_revision only"
+                    )
+                _prepare_pinned_snapshot(
+                    model,
+                    model_revision,
+                    required_snapshot_files,
+                )
+                resolved_args.extend(["--revision", model_revision])
+                resolved_env["HF_HUB_OFFLINE"] = "1"
 
             # Reclaim RAM from sidecars whose owning session was SIGKILLed
             # before its teardown could run.
@@ -543,7 +849,7 @@ class VllmSidecarFactory:
                 "VLLM_CPU_KVCACHE_SPACE=2",
                 "--oom-score-adj=500",
             ]
-            for env_key, env_value in (env or {}).items():
+            for env_key, env_value in resolved_env.items():
                 cmd.extend(["-e", f"{env_key}={env_value}"])
             if device == "rocm":
                 cmd.extend(
@@ -560,13 +866,33 @@ class VllmSidecarFactory:
                         "seccomp=unconfined",
                     ]
                 )
-            if os.path.isdir(HOST_HF_CACHE):
-                cmd.extend(["-v", f"{HOST_HF_CACHE}:/root/.cache/huggingface"])
+            # Run as the invoking user against the test-owned cache so model
+            # downloads and engine caches stay user-owned on the host. HOME
+            # inside the mount keeps every ~-derived cache path writable;
+            # LOGNAME/USER keep getpass.getuser() working for a uid with no
+            # container passwd entry (torch inductor derives its cache dir
+            # from it and crashes on KeyError otherwise).
+            cmd.extend(
+                [
+                    "--user",
+                    f"{os.getuid()}:{os.getgid()}",
+                    "-e",
+                    f"HOME={CONTAINER_HF_CACHE}",
+                    "-e",
+                    f"HF_HOME={CONTAINER_HF_CACHE}",
+                    "-e",
+                    "LOGNAME=cogniverse",
+                    "-e",
+                    "USER=cogniverse",
+                    "-v",
+                    f"{writable_test_hf_cache()}:{CONTAINER_HF_CACHE}",
+                ]
+            )
             _append_image_command(
                 cmd,
                 image,
                 model,
-                _merge_serve_args(model, extra_args),
+                _merge_serve_args(model, resolved_args),
             )
 
             base_url = f"http://127.0.0.1:{port}"

@@ -271,6 +271,7 @@ class TestWorkflowIntelligenceRoundTrip:
         await wi.record_execution(execution)
         assert len(wi.workflow_history) == 1
         assert wi.workflow_history[0].workflow_id == execution.workflow_id
+        assert wi.workflow_history[0].timestamp == execution.timestamp
 
     @pytest.mark.asyncio
     async def test_load_historical_data_empty(self, real_provider):

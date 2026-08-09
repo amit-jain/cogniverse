@@ -27,11 +27,12 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from cogniverse_vespa.backend import VespaBackend
+from tests.utils.vespa_test_helpers import schema_full_name
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 _NAMESPACE = "wiki_content"
-_SCHEMA = "wiki_pages_test_tenant"
+_SCHEMA = schema_full_name("wiki_pages", "test_tenant")
 
 
 def _dead_port() -> int:

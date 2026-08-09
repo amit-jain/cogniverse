@@ -359,11 +359,19 @@ spec:
         {{- if .Values.argo.enabled }}
         # Wire Argo so the runtime can submit CronWorkflows (for scheduled
         # jobs) and one-off Workflows (for dashboard-triggered optimisation).
-        # argo-workflows subchart exposes its server as ``{release}-argo-workflows-server``
-        # in the same namespace when server.enabled=true; the dashboard path
-        # requires that flag.
+        # Follow the same gate the CronWorkflow templates use: the in-release
+        # subchart exposes ``{release}-argo-workflows-server`` in this
+        # namespace, but it is off by default (argo.subchart.enabled), and the
+        # standalone install that ``cogniverse up`` manages serves at
+        # argo-server.argo.svc. Addressing the subchart unconditionally points
+        # the runtime at a Service that does not exist in the default
+        # configuration, and every job submission fails DNS resolution.
         - name: WORKFLOW_API_URL
+          {{- if (dig "subchart" "enabled" false .Values.argo) }}
           value: "http://{{ .Release.Name }}-argo-workflows-server.{{ .Release.Namespace }}.svc.cluster.local:2746"
+          {{- else }}
+          value: "https://argo-server.argo.svc.cluster.local:2746"
+          {{- end }}
         - name: WORKFLOW_NAMESPACE
           value: {{ .Release.Namespace | quote }}
         # Workflow pods must run under the runtime SA, which the chart RBAC
@@ -1753,7 +1761,7 @@ spec:
           - {{ . | quote }}
           {{- end }}
       {{- else if eq $engine "gliner" }}
-      # FastAPI sidecar (deploy/gliner) wrapping the gliner library.
+      # FastAPI sidecar built from the canonical CLI GLiNER server.
       # GatewayAgent + EntityExtractionAgent post text + label set to
       # /predict_entities; the slim runtime image does NOT bundle
       # torch+gliner so they MUST route through this sidecar.
@@ -1766,6 +1774,42 @@ spec:
         env:
         - name: MODEL_NAME
           value: {{ $cfg.model | quote }}
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        {{- if $cfg.hfTokenSecret }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $cfg.hfTokenSecret | quote }}
+              key: HF_TOKEN
+        {{- end }}
+      {{- else if eq $engine "pylate" }}
+      # PyLate ColBERT sidecar built from the canonical CLI PyLate server
+      # (deploy/pylate). LateOn-family retrieval needs PyLate's exact
+      # encode — query expansion over masked padding positions — which
+      # generic token-embedding servers cannot reproduce because their
+      # request schema carries no attention mask. ``POST /pooling`` takes
+      # raw text plus ``is_query`` and returns the exact per-token matrix.
+      - name: pylate
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ $cfg.service.port }}
+        env:
+        {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
+        - name: MODEL_NAME
+          value: {{ $cfg.model | quote }}
+        - name: MODEL_REVISION
+          value: {{ $cfg.modelRevision | quote }}
+        - name: DEVICE
+          # PyTorch reuses the cuda:N namespace for ROCm; passing "rocm"
+          # to torch.device fails parsing.
+          value: {{ ternary "cuda" $device (eq $device "rocm") | quote }}
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: {{ $cfg.service.port | quote }}
         - name: HF_HOME
           value: /root/.cache/huggingface
         {{- if $cfg.hfTokenSecret }}

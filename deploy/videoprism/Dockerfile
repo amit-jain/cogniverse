@@ -46,11 +46,15 @@ RUN pip install --no-cache-dir \
         huggingface-hub \
         sentencepiece \
     && pip install --no-cache-dir --no-deps \
-        "videoprism @ git+https://github.com/google-deepmind/videoprism.git@main"
+        "videoprism @ git+https://github.com/google-deepmind/videoprism.git@d481d91b9bf8c9d330d1e526e511a359c799bbe1"
 
-COPY server.py ./
+# The canonical server lives in the CLI modal-inference package. Build from
+# the repository root so this source path is available to Docker.
+COPY libs/cli/cogniverse_cli/modal_inference/servers/videoprism.py ./server.py
 
 ENV MODEL_NAME=videoprism_public_v1_base_hf \
+    MODEL_REVISION=be719a406d563b66f0ac969e7c94bab8e997c81a \
+    SOURCE_REVISION=d481d91b9bf8c9d330d1e526e511a359c799bbe1 \
     HOST=0.0.0.0 \
     PORT=7999 \
     JAX_PLATFORM_NAME=cpu \

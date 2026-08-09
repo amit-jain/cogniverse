@@ -21,9 +21,6 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 
-# Re-export the canonical session-scoped Vespa from the project root.
-from tests.conftest import shared_vespa  # noqa: F401, E402
-
 # Direct import (not pytest_plugins — rejected in non-rootdir conftests);
 # same pattern as tests/ingestion/conftest.py.
 from tests.fixtures.sidecars import vllm_sidecar  # noqa: F401, E402
@@ -34,23 +31,20 @@ SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
 
 
 @pytest.fixture(autouse=True)
-def dspy_lm():
+def dspy_lm(ensure_host_ollama):
     """Configure DSPy with the configured test LM for integration tests.
 
-    The LM is provisioned once by the session-scoped ``ensure_host_ollama``
-    fixture (tests/conftest.py); here we only resolve and configure it. No
-    per-suite vLLM sidecar spawn — that duplicated the Ollama provisioner
-    and the two stomped on each other's ``TEST_LLM_MODEL``/``COGNIVERSE_CONFIG``.
+    Depends on the session-scoped ``ensure_host_ollama`` provisioner
+    (tests/conftest.py) so ``TEST_LLM_*`` is exported before the env
+    read below; here we only resolve and configure the LM. No per-suite
+    vLLM sidecar spawn — that duplicated the Ollama provisioner and the
+    two stomped on each other's ``TEST_LLM_MODEL``/``COGNIVERSE_CONFIG``.
     """
     from tests.fixtures.llm import (
-        is_test_lm_available,
         resolve_api_key,
         resolve_base_url,
         resolve_prefixed_model,
     )
-
-    if not is_test_lm_available():
-        pytest.skip(f"Test LM not available (resolved {resolve_base_url()})")
 
     config = LLMEndpointConfig(
         model=resolve_prefixed_model(),
@@ -64,7 +58,7 @@ def dspy_lm():
 
 
 @pytest.fixture(scope="module")
-def vespa_instance(shared_vespa):  # noqa: F811
+def vespa_instance(shared_vespa):
     """Compatibility shim: yields the dict shape routing/integration tests
     expect, backed by the project-wide ``shared_vespa``.
 

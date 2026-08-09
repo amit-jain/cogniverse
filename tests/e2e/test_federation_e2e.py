@@ -46,7 +46,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, unique_id
 
 VESPA_HTTP_PORT = 8080
 VESPA_CONFIG_PORT = 33071
@@ -225,7 +225,6 @@ def _sibling_tenants() -> tuple[str, str, str]:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestOrgTrunkVisibleToBothTenants:
     """t1 promotes → t2 (and t1) federated view contain the promoted record."""
 
@@ -294,7 +293,6 @@ class TestOrgTrunkVisibleToBothTenants:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTenantOverlayWinsOnSubjectKeyCollision:
     """Tenant writes a local entry on the same subject_key → tenant wins."""
 
@@ -380,7 +378,6 @@ class TestTenantOverlayWinsOnSubjectKeyCollision:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestTenantPrivateRefusesPromotion:
     """A tenant_instruction (sensitivity=TENANT_PRIVATE) cannot be promoted."""
 
@@ -412,7 +409,6 @@ class TestTenantPrivateRefusesPromotion:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestCrossOrgIsolation:
     """A promotion in org A's trunk is invisible from org B's federated view."""
 

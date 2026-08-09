@@ -27,6 +27,7 @@ from cogniverse_evaluation.evaluators.agent_evaluators import (
     get_agent_evaluator,
 )
 from cogniverse_evaluation.metrics.custom import calculate_metrics_suite
+from cogniverse_foundation.common.argo_client import build_argo_async_client
 from cogniverse_foundation.common.tenant_utils import (
     canonical_tenant_id,
     sanitize_k8s_label_value,
@@ -192,7 +193,7 @@ async def submit_argo_optimization_workflow(
     """
     owns_client = http_client is None
     if owns_client:
-        http_client = httpx.AsyncClient(timeout=30.0, verify=False)
+        http_client = build_argo_async_client(30.0)
     pod_spec = pod_spec or OptimizationWorkflowPodSpec()
     container: Dict[str, Any] = {
         "image": pod_spec.image,

@@ -45,7 +45,11 @@ from tests.fixtures.llm import (
     resolve_prefixed_model,
 )
 
-pytestmark = pytest.mark.integration
+# Every case here drives the real LM through ``dspy_lm``. The marker both
+# arms the reachability gate and tells the session provisioner this module
+# needs the primary endpoint only — without it the provisioner falls back to
+# starting the 26B teacher as well.
+pytestmark = [pytest.mark.integration, pytest.mark.requires_lm]
 
 
 @pytest.fixture
@@ -478,8 +482,9 @@ async def test_final_answer_text_byte_equal_golden(captured_spans, dspy_lm):
     answer_text = aggregated["aggregated_content"]
     assert "Marie Curie discovered radium" in answer_text
     assert_golden_text(answer_text, "iter_loop_answer.txt")
-    # Sanity: loop emitted the joint-trace evidence the answer is grounded on
-    assert len(loop_result.evidence) >= 1
+    # The answer is grounded on the three snippets the two iterations
+    # accumulated (seg_3, seg_4, curie_sorbonne seg_2).
+    assert len(loop_result.evidence) == 3, loop_result.evidence
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +558,8 @@ async def test_token_budget_breach_exits_at_iter1(captured_spans, dspy_lm, monke
     answer_text = aggregated["aggregated_content"]
     assert "Marie Curie discovered radium" in answer_text
     assert_golden_text(answer_text, "iter_loop_answer_budget_breach.txt")
+    # Only iteration 1's snippet made it in before the cap tripped.
+    assert len(loop_result.evidence) == 1, loop_result.evidence
 
 
 # ---------------------------------------------------------------------------

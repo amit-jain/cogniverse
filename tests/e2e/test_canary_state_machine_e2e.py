@@ -22,7 +22,7 @@ import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
-from tests.e2e.conftest import run_async, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import run_async, unique_id
 
 PHOENIX_HTTP = "http://localhost:33006"
 PHOENIX_GRPC = "localhost:33317"
@@ -64,7 +64,6 @@ async def _seed_three_versions(am: ArtifactManager, agent_type: str) -> None:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestCanaryLifecycleHappyPath:
     """promote_to_canary then promote_canary_to_active flips state correctly."""
 
@@ -109,7 +108,6 @@ class TestCanaryLifecycleHappyPath:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestPromoteWorseCanaryThenRetire:
     """retire_canary uses the supplied reason and leaves active in place."""
 
@@ -142,7 +140,6 @@ class TestPromoteWorseCanaryThenRetire:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestStableRoutingByRequestSeed:
     """Per-seed determinism + 10% canary band lands in [5, 20] over N=100."""
 
@@ -191,7 +188,6 @@ class TestStableRoutingByRequestSeed:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestPromoteToCanaryRejectsInvalidTrafficPct:
     """traffic_pct outside [1, 100] raises ValueError with the canonical text."""
 
@@ -210,7 +206,6 @@ class TestPromoteToCanaryRejectsInvalidTrafficPct:
 
 
 @pytest.mark.e2e
-@skip_if_no_runtime
 class TestPromoteCanaryToActiveWithoutCanaryFails:
     """A fresh agent with no canary set raises ValueError 'no canary set'."""
 

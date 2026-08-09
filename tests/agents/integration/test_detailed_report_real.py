@@ -142,7 +142,9 @@ async def test_report_mentions_input_topics(report_agent):
     full_text = (
         result.executive_summary
         + " "
-        + " ".join(str(f.get("content", "")) for f in result.detailed_findings)
+        # Findings carry category/finding/details/significance — there is no
+        # "content" key, so reading one contributed an empty string here.
+        + " ".join(f"{f['category']} {f['finding']}" for f in result.detailed_findings)
         + " "
         + " ".join(result.recommendations)
     ).lower()

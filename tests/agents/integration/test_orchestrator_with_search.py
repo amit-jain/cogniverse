@@ -89,13 +89,19 @@ def dspy_lm():
 
 
 @pytest.fixture
-def agent_instances(vespa_with_schema, dspy_lm):
+def agent_instances(vespa_with_schema, dspy_lm, tomoro_inference_url):
     """
     Create real in-process agent instances for orchestrator dispatch.
 
     Returns a dict mapping agent URL → agent instance for direct invocation.
+    The visual profiles bind ``inference_services.embedding='vllm_colpali'``
+    (Tomoro is remote-only), so the sidecar URL must land on this fixture's
+    SystemConfig before SearchAgent builds its query encoder.
     """
+    from tests.agents.integration.conftest import inject_tomoro_url
+
     config_manager = vespa_with_schema["manager"].config_manager
+    inject_tomoro_url(config_manager, tomoro_inference_url)
     vespa_http_port = vespa_with_schema["http_port"]
     vespa_config_port = vespa_with_schema["config_port"]
     default_schema = vespa_with_schema["default_schema"]

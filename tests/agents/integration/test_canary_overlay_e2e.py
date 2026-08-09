@@ -229,7 +229,9 @@ def _report_text(result) -> str:
     return (
         result.executive_summary
         + " "
-        + " ".join(str(f.get("content", "")) for f in result.detailed_findings)
+        # Findings carry category/finding/details/significance — there is no
+        # "content" key, so reading one contributed an empty string here.
+        + " ".join(f"{f['category']} {f['finding']}" for f in result.detailed_findings)
         + " "
         + " ".join(result.recommendations or [])
     )

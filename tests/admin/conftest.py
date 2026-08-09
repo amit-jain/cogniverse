@@ -1,8 +1,8 @@
 """Integration test configuration for admin profile tests.
 
-Re-exports the project-wide ``shared_vespa`` container; admin tests
-only need the metadata schemas (already deployed at session start) and
-their own ConfigManager wiring (built per-test).
+Admin tests need only the metadata schemas (already deployed at session
+start by ``shared_vespa``) and their own ConfigManager wiring (built
+per-test).
 """
 
 import logging
@@ -13,13 +13,12 @@ import pytest
 import cogniverse_vespa  # noqa: F401
 
 # Re-export the canonical session-scoped Vespa from the project root.
-from tests.conftest import shared_vespa  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
-def vespa_instance(shared_vespa):  # noqa: F811
+def vespa_instance(shared_vespa):
     """Compatibility shim: yields the dict shape admin tests expect
     (``http_port``, ``config_port``, ``base_url``, ``container_name``)
     backed by ``shared_vespa``. No pre-deploy needed — admin tests

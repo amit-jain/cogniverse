@@ -1,13 +1,13 @@
 """Shared fixtures and helpers for E2E tests.
 
-Provides availability checks, skip markers, and Streamlit interaction helpers
+Provides stack checks, artifact generation, and Streamlit interaction helpers
 for both API (httpx) and dashboard (Playwright) E2E tests.
 
 Test artifact paths (real data used for ingestion tests):
-- Video: data/testset/evaluation/sample_videos/v_-nl4G-00PtA.mp4
-- Image: data/testset/evaluation/processed/keyframes/big_buck_bunny_clip/frame_0000.jpg
-- Audio: extracted via ffmpeg from sample video (real speech/sound)
-- PDF: Video-ChatGPT paper from arxiv (related to the test dataset)
+- Video: tests/system/resources/videos/v_-D1gdv_gQyw.mp4
+- Image: first frame extracted from that tracked video
+- Audio: ten seconds extracted from that tracked video's real audio stream
+- PDF: repository evaluation-dataset content written as a deterministic PDF
 - Document: data/testset/dataset_summary.md (real markdown about the evaluation set)
 """
 
@@ -32,55 +32,46 @@ import pytest
 collect_ignore_glob: list[str] = ["deployment/*"]
 
 
-def _openshell_sandbox_ready() -> bool:
-    """True iff the openshell-mtls Secret is present in-cluster.
+def _modal_inference_deselections(config, items):
+    explicit = os.environ.get("RUN_MODAL_INFERENCE_E2E") == "1" or (
+        "requires_modal_inference" in (config.option.markexpr or "")
+    )
+    if explicit:
+        return []
+    return [
+        item
+        for item in items
+        if any(item.iter_markers(name="requires_modal_inference"))
+    ]
 
-    Runtime needs it to dial the host gateway; without it the coding
-    agent's sandbox dispatch raises a deterministic RuntimeError that
-    can't be resolved from the test harness.
-    """
-    try:
-        result = subprocess.run(
-            [
-                "kubectl",
-                "get",
-                "secret",
-                "openshell-mtls",
-                "-n",
-                "cogniverse",
-                "--ignore-not-found",
-                "-o",
-                "name",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-    return bool(result.stdout.strip())
+
+def _require_modal_inference_endpoints(items, endpoints) -> None:
+    for item in items:
+        for marker in item.iter_markers(name="requires_modal_inference"):
+            if len(marker.args) != 1 or not isinstance(marker.args[0], str):
+                raise pytest.UsageError(
+                    "requires_modal_inference must name exactly one inference service"
+                )
+            service = marker.args[0]
+            endpoint = endpoints.get(service)
+            provider = endpoint.provider if endpoint is not None else None
+            if provider != "modal":
+                pytest.fail(
+                    f"{item.nodeid} requires Modal provider for {service!r}; "
+                    f"resolved {provider!r}",
+                    pytrace=False,
+                )
 
 
 def pytest_collection_modifyitems(config, items):
-    """Run async tests before playwright, and deselect tests whose external
-    deps aren't available.
+    """Run async tests before playwright and select paid model tests explicitly.
 
     pytest-playwright leaves a registered asyncio event loop after teardown,
     which trips later pytest-asyncio tests with "cannot be called from a
     running event loop". Ordering pure-async first sidesteps the collision.
 
-    Telegram tests need a bot token + chat ID, and the coding-sandbox test
-    needs the openshell-mtls Secret in-cluster. Deselect (not skip) when
-    those aren't set up.
     """
     skip_substrings: list[str] = []
-    if not os.environ.get("TELEGRAM_BOT_TOKEN") or not os.environ.get(
-        "TELEGRAM_TEST_CHAT_ID"
-    ):
-        skip_substrings.append("TestTelegramRealFlow")
-
-    if not _openshell_sandbox_ready():
-        skip_substrings.append("test_coding_agent_full_execution_with_sandbox")
 
     # Teacher-model optimization e2e requires scaling up cogniverse-vllm-llm-teacher
     # which is a 1-2 hour run end-to-end. Off by default; opt in via
@@ -92,22 +83,14 @@ def pytest_collection_modifyitems(config, items):
     if not teacher_optim_explicit:
         skip_substrings.append("test_router_optimization_e2e")
 
-    # Non-router optimizer persistence tests are slow (each invokes
-    # optimization_cli end-to-end against the cluster) and need real
-    # telemetry traces to produce meaningful output. Off by default;
-    # opt in via RUN_OPTIMIZER_PERSISTENCE_E2E=1 or
-    # ``pytest -m requires_optimizer_data``.
-    optimizer_data_explicit = os.environ.get(
-        "RUN_OPTIMIZER_PERSISTENCE_E2E"
-    ) == "1" or "requires_optimizer_data" in (config.option.markexpr or "")
-    if not optimizer_data_explicit:
-        skip_substrings.append("test_optimizer_persistence_e2e")
-
-    if skip_substrings:
+    modal_deselections = _modal_inference_deselections(config, items)
+    if skip_substrings or modal_deselections:
         keep = []
         deselected = []
         for item in items:
-            if any(s in item.nodeid for s in skip_substrings):
+            if item in modal_deselections or any(
+                substring in item.nodeid for substring in skip_substrings
+            ):
                 deselected.append(item)
             else:
                 keep.append(item)
@@ -117,7 +100,7 @@ def pytest_collection_modifyitems(config, items):
             reporter = config.pluginmanager.get_plugin("terminalreporter")
             if reporter is not None:
                 reporter.write_line(
-                    "e2e conftest deselected (external dep not configured): "
+                    "e2e conftest deselected (explicit requirement unavailable): "
                     + ", ".join(sorted({item.nodeid for item in deselected})),
                     yellow=True,
                 )
@@ -180,7 +163,7 @@ def _ensure_stack_running() -> bool:
     drops the first connection with ``RemoteProtocolError`` even when
     the pod is healthy (same reason ``_runtime_already_up_for_collect``
     already retries 3× at collect time). Without the retry here, one
-    such blip skipped the entire session.
+    such blip made the session health gate fail even though the stack was ready.
     """
     import time as _t
 
@@ -190,28 +173,6 @@ def _ensure_stack_running() -> bool:
         if attempt < 4:
             _t.sleep(3.0)
     return False
-
-
-def _skip_if_no_runtime():
-    """Skip marker that checks runtime availability at test time, not import time."""
-    if not runtime_available():
-        pytest.skip(
-            "Runtime not available at localhost:33000 — run 'cogniverse up' first"
-        )
-
-
-def _skip_if_no_dashboard():
-    """Skip marker that checks dashboard availability at test time, not import time."""
-    if not dashboard_available():
-        pytest.skip(
-            "Dashboard not available at localhost:33501 — run 'cogniverse up' first"
-        )
-
-
-# Keep the old names for backward compat but make them no-ops
-# The actual check happens in e2e_stack fixture (autouse, session-scoped)
-skip_if_no_runtime = pytest.mark.e2e
-skip_if_no_dashboard = pytest.mark.e2e
 
 
 _MINTED_TENANTS_THIS_TEST: list[str] = []
@@ -654,9 +615,18 @@ def _bootstrap_tenant_and_schemas() -> None:
             timeout=30,
         )
         if resp.status_code not in (200, 201, 409):
-            print(f"Tenant creation returned {resp.status_code}: {resp.text[:200]}")
+            # Every later step assumes this tenant exists, so a swallowed
+            # failure here resurfaces as an unrelated-looking 404 from the
+            # first request that uses it (a Vespa write block reads as
+            # "tenant not registered"). Fail on the real cause instead.
+            pytest.fail(
+                f"e2e tenant {TENANT_ID!r} could not be created: "
+                f"HTTP {resp.status_code}: {resp.text[:400]}"
+            )
     except (httpx.HTTPError, OSError) as exc:
-        print(f"Tenant creation failed: {exc}")
+        pytest.fail(
+            f"e2e tenant {TENANT_ID!r} creation failed: {type(exc).__name__}: {exc}"
+        )
 
     # Delete-then-create so config.json edits take effect: POST rejects
     # re-creation and PUT can't change embedding_model. delete_schema=false
@@ -706,15 +676,19 @@ def _bootstrap_tenant_and_schemas() -> None:
 def _ingest_sample_video() -> None:
     """Ingest a sample video so search tests have data to query.
 
-    Uses the runtime's POST /ingestion/upload endpoint with the sample
-    ActivityNet video. Idempotent — re-ingesting the same video is harmless.
+    Uses the runtime's POST /ingestion/upload endpoint with the tracked
+    real video. Idempotent — re-ingesting the same video is harmless.
     """
     video_path = (
-        DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
+        DATA_ROOT.parent
+        / "tests"
+        / "system"
+        / "resources"
+        / "videos"
+        / "v_-D1gdv_gQyw.mp4"
     )
     if not video_path.exists():
-        print(f"Sample video not found at {video_path}, skipping ingestion")
-        return
+        raise FileNotFoundError(f"Tracked E2E source video is missing: {video_path}")
 
     config_path = DATA_ROOT.parent / "configs" / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
@@ -748,6 +722,11 @@ def _ingest_sample_video() -> None:
         with open(video_path, "rb") as f:
             resp = httpx.post(
                 f"{RUNTIME}/ingestion/upload",
+                # The route validates wait_timeout as ge=10, le=900; anything
+                # above that is rejected 422 before ingestion starts, so this
+                # asks for the documented maximum rather than a value the API
+                # cannot accept.
+                params={"wait": "true", "wait_timeout": "900"},
                 files={"file": (video_path.name, f, "video/mp4")},
                 data={
                     "profile": active_profile,
@@ -758,18 +737,21 @@ def _ingest_sample_video() -> None:
             )
         if resp.status_code == 200:
             data = resp.json()
+            assert data["state"] == "complete", data
+            assert data["status"] == "success", data
             fed = data.get("documents_fed", 0)
             chunks = data.get("chunks_created", 0)
             print(f"Sample video ingested: {chunks} chunks, {fed} documents fed")
-            if fed == 0 and chunks > 0:
-                print(
-                    "WARNING: chunks created but 0 documents fed to Vespa — "
-                    "search tests will have no data"
+            if chunks == 0 or fed == 0:
+                pytest.fail(
+                    f"sample ingestion produced chunks={chunks}, documents_fed={fed}"
                 )
         else:
-            print(f"Video ingestion returned {resp.status_code}: {resp.text[:200]}")
+            pytest.fail(
+                f"sample ingestion returned HTTP {resp.status_code}: {resp.text[:500]}"
+            )
     except (httpx.HTTPError, OSError) as exc:
-        print(f"Video ingestion failed (non-fatal): {exc}")
+        pytest.fail(f"sample ingestion boundary failed: {type(exc).__name__}: {exc}")
 
 
 E2E_CLUSTER_NAME = "cogniverse-e2e"
@@ -974,7 +956,7 @@ def _e2e_cluster_state(fingerprint: str) -> tuple[str, str]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def e2e_stack():
+def e2e_stack(request, resolved_inference_endpoints):
     """Provide a healthy, bootstrapped e2e stack without replacing shared state.
 
     The cluster is a dedicated k3d deployment whose loadbalancer maps the
@@ -999,10 +981,19 @@ def e2e_stack():
       * TEARDOWN — the cluster is left warm unless this session created it for
         an ``E2E_FRESH`` run. A session never deletes a cluster it did not own.
 
+    Tests marked ``requires_modal_inference(service)`` are checked against the
+    resolved endpoints before any cluster work, so a locally-provisioned
+    service fails the run instead of quietly standing in for Modal.
+
     After the stack is healthy (reused or fresh) the E2E tenant + schemas +
     sample data are (idempotently) bootstrapped and CronWorkflows suspended
     for the session.
     """
+    _require_modal_inference_endpoints(
+        request.session.items,
+        resolved_inference_endpoints,
+    )
+
     from cogniverse_cli.cluster import start_cluster
 
     from tests.e2e.deployment.conftest import (
@@ -1113,10 +1104,8 @@ def e2e_stack():
         cron_restore = _suspend_cronworkflows_for_session()
         _bootstrap_tenant_and_schemas()
         _ingest_sample_video()
-        # Ollama model-pulling is owned by the chart's ``model-pulling``
-        # post-install hook — engine-gated (no-op for vLLM), readiness-waiting,
-        # and retrying. The old conftest ``_ensure_llm_model`` duplicated it
-        # (worse: not gated, no wait) and was removed.
+        # The chart's ``model-pulling`` post-install hook owns engine-gated,
+        # readiness-waiting, retrying Ollama model provisioning.
         _ensure_sandbox_gateway()
         try:
             yield
@@ -1756,150 +1745,180 @@ def set_tenant(page, tenant_id: str, retries: int = 3):
     )
 
 
-# Video-ChatGPT paper (arxiv) — directly related to the test dataset
-ARXIV_PDF_URL = "https://arxiv.org/pdf/2306.05424"
+_TRACKED_E2E_VIDEO = (
+    DATA_ROOT.parent / "tests" / "system" / "resources" / "videos" / "v_-D1gdv_gQyw.mp4"
+)
 
 
-def _download_if_missing(url: str, dest: Path, timeout: float = 60.0) -> Path:
-    """Download a file if it doesn't already exist (cached across test runs)."""
-    if dest.exists() and dest.stat().st_size > 0:
-        return dest
+def _atomic_artifact(dest: Path, writer) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        resp = client.get(url)
-        resp.raise_for_status()
-        dest.write_bytes(resp.content)
+    with tempfile.NamedTemporaryFile(
+        dir=dest.parent,
+        prefix=f".{dest.name}.",
+        delete=False,
+    ) as handle:
+        staged = Path(handle.name)
+    try:
+        writer(staged)
+        if not staged.exists() or staged.stat().st_size == 0:
+            raise RuntimeError(f"E2E artifact writer produced an empty file: {dest}")
+        staged.replace(dest)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
     return dest
 
 
-@pytest.fixture(scope="session")
-def real_pdf_path():
-    """Download Video-ChatGPT arxiv paper (related to test videos)."""
-    dest = E2E_ARTIFACT_DIR / "video_chatgpt_2306.05424.pdf"
-    try:
-        return _download_if_missing(ARXIV_PDF_URL, dest)
-    except (httpx.HTTPError, OSError) as exc:
-        pytest.skip(f"Cannot download test PDF: {exc}")
-
-
-@pytest.fixture(scope="session")
-def real_image_path():
-    """Real 1280x720 Big Buck Bunny keyframe — cached, or extracted from
-    big_buck_bunny_clip.mp4 via PyAV on fresh checkouts.
-    """
-    cached = (
-        DATA_ROOT
-        / "testset"
-        / "evaluation"
-        / "processed"
-        / "keyframes"
-        / "big_buck_bunny_clip"
-        / "frame_0000.jpg"
+def _write_pdf_fixture(dest: Path, text: str) -> Path:
+    lines = []
+    for line in text.splitlines():
+        escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        lines.append(f"({escaped}) Tj")
+    content = "BT\n/F1 12 Tf\n72 720 Td\n14 TL\n" + "\nT*\n".join(lines) + "\nET\n"
+    objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+        ),
+        f"<< /Length {len(content.encode('latin-1'))} >>\nstream\n{content}endstream",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    payload = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for object_number, value in enumerate(objects, 1):
+        offsets.append(len(payload))
+        payload.extend(f"{object_number} 0 obj\n{value}\nendobj\n".encode("latin-1"))
+    xref_offset = len(payload)
+    payload.extend(f"xref\n0 {len(objects) + 1}\n".encode())
+    payload.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        payload.extend(f"{offset:010d} 00000 n \n".encode())
+    payload.extend(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode()
     )
-    if cached.exists():
-        return cached
+    return _atomic_artifact(dest, lambda staged: staged.write_bytes(payload))
 
-    source_video = (
-        DATA_ROOT
-        / "testset"
-        / "evaluation"
-        / "sample_videos"
-        / "big_buck_bunny_clip.mp4"
-    )
+
+def _extract_image_fixture(source_video: Path, dest: Path) -> Path:
     if not source_video.exists():
-        pytest.skip(f"Cannot generate keyframe — source video missing: {source_video}")
+        raise FileNotFoundError(f"E2E source video does not exist: {source_video}")
 
-    dest = E2E_ARTIFACT_DIR / "big_buck_bunny_frame_0000.jpg"
-    if dest.exists() and dest.stat().st_size > 0:
-        return dest
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
+    def write_image(staged: Path) -> None:
         import av
 
         with av.open(str(source_video)) as container:
-            stream = container.streams.video[0]
-            for frame in container.decode(stream):
-                frame.to_image().save(str(dest), format="JPEG", quality=92)
-                break
-    except Exception as exc:
-        pytest.skip(f"Cannot extract first frame via PyAV: {exc}")
-    if not dest.exists() or dest.stat().st_size == 0:
-        pytest.skip(f"Frame extraction produced no output at {dest}")
-    return dest
+            for frame in container.decode(video=0):
+                frame.to_image().save(staged, format="JPEG", quality=92)
+                return
+        raise RuntimeError(
+            f"E2E source video contains no decodable frame: {source_video}"
+        )
+
+    return _atomic_artifact(dest, write_image)
 
 
-@pytest.fixture(scope="session")
-def real_video_path():
-    """Real 874KB ActivityNet sample video."""
-    path = DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
-    if not path.exists():
-        pytest.skip(f"Sample video not found: {path}")
-    return path
+def _extract_audio_fixture(
+    source_video: Path, dest: Path, duration_seconds: int = 10
+) -> Path:
+    if not source_video.exists():
+        raise FileNotFoundError(f"E2E source video does not exist: {source_video}")
 
-
-@pytest.fixture(scope="session")
-def real_document_path():
-    """Real dataset summary markdown from the repo."""
-    path = DATA_ROOT / "testset" / "dataset_summary.md"
-    if not path.exists():
-        pytest.skip(f"Document not found: {path}")
-    return path
-
-
-@pytest.fixture(scope="session")
-def extracted_audio_path(real_video_path):
-    """Extract 10s mono 16kHz PCM WAV from sample video via PyAV+wave.
-
-    Uses PyAV instead of subprocess ffmpeg so the fixture works on
-    machines without a system ffmpeg binary.
-    """
-    dest = E2E_ARTIFACT_DIR / "extracted_video_audio.wav"
-    if dest.exists() and dest.stat().st_size > 0:
-        return dest
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
+    def write_audio(staged: Path) -> None:
         import wave
 
         import av
         import numpy as np
 
-        with av.open(str(real_video_path)) as container:
-            audio_streams = [s for s in container.streams if s.type == "audio"]
-            if not audio_streams:
-                pytest.skip(
-                    f"Sample video {real_video_path} has no audio stream — "
-                    f"audio fixture cannot generate test wav"
+        target_rate = 16_000
+        required_samples = target_rate * duration_seconds
+        chunks: list[np.ndarray] = []
+        collected = 0
+        with av.open(str(source_video)) as container:
+            audio_streams = [
+                stream for stream in container.streams if stream.type == "audio"
+            ]
+            if len(audio_streams) != 1:
+                raise RuntimeError(
+                    f"E2E source video must contain exactly one audio stream: {source_video}"
                 )
-            stream = audio_streams[0]
-            target_rate = 16000
             resampler = av.AudioResampler(format="s16", layout="mono", rate=target_rate)
-            chunks: list[np.ndarray] = []
-            collected = 0
-            need = target_rate * 10  # 10s of mono samples
-            for frame in container.decode(stream):
+            for frame in container.decode(audio_streams[0]):
                 for resampled in resampler.resample(frame):
-                    arr = resampled.to_ndarray().reshape(-1)
-                    chunks.append(arr)
-                    collected += arr.size
-                    if collected >= need:
+                    samples = resampled.to_ndarray().reshape(-1)
+                    chunks.append(samples)
+                    collected += samples.size
+                    if collected >= required_samples:
                         break
-                if collected >= need:
+                if collected >= required_samples:
                     break
-
-        if not chunks:
-            pytest.skip(f"PyAV decoded no audio frames from {real_video_path}")
-
-        samples = np.concatenate(chunks)[:need].astype(np.int16, copy=False)
-        with wave.open(str(dest), "wb") as wav:
+        if collected < required_samples:
+            raise RuntimeError(
+                f"E2E source video yielded {collected} audio samples; "
+                f"expected {required_samples}: {source_video}"
+            )
+        samples = np.concatenate(chunks)[:required_samples].astype(np.int16, copy=False)
+        with wave.open(str(staged), "wb") as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
             wav.setframerate(target_rate)
             wav.writeframes(samples.tobytes())
-    except Exception as exc:
-        pytest.skip(f"Cannot extract audio via PyAV: {exc}")
-    return dest
+
+    return _atomic_artifact(dest, write_audio)
+
+
+@pytest.fixture(scope="session")
+def real_document_path():
+    path = DATA_ROOT / "testset" / "dataset_summary.md"
+    if not path.exists():
+        raise FileNotFoundError(f"E2E document does not exist: {path}")
+    return path
+
+
+@pytest.fixture(scope="session")
+def real_pdf_path(real_document_path):
+    summary = real_document_path.read_text(encoding="utf-8")
+    required_lines = (
+        "Evaluation Dataset",
+        "Video-ChatGPT Benchmark",
+        "Provides 500 test videos from ActivityNet-200.",
+    )
+    for line in required_lines[:2]:
+        if line not in summary:
+            raise RuntimeError(f"Repository dataset summary is missing {line!r}")
+    return _write_pdf_fixture(
+        E2E_ARTIFACT_DIR / "evaluation_dataset.pdf",
+        "\n".join(required_lines),
+    )
+
+
+@pytest.fixture(scope="session")
+def real_video_path():
+    if not _TRACKED_E2E_VIDEO.exists():
+        raise FileNotFoundError(
+            f"E2E source video does not exist: {_TRACKED_E2E_VIDEO}"
+        )
+    return _TRACKED_E2E_VIDEO
+
+
+@pytest.fixture(scope="session")
+def real_image_path(real_video_path):
+    return _extract_image_fixture(
+        real_video_path,
+        E2E_ARTIFACT_DIR / "tracked_video_frame.jpg",
+    )
+
+
+@pytest.fixture(scope="session")
+def extracted_audio_path(real_video_path):
+    return _extract_audio_fixture(
+        real_video_path,
+        E2E_ARTIFACT_DIR / "tracked_video_audio.wav",
+    )
 
 
 E2E_REPORT_DIR = Path("/tmp")
@@ -2464,6 +2483,10 @@ def _ensure_playwright_browsers() -> None:
 def pytest_configure(config):
     """Install the HTTP recording hook and Playwright browsers at session start."""
     global _report_collector
+    config.addinivalue_line(
+        "markers",
+        "requires_modal_inference(service): require a live Modal provider",
+    )
     _report_collector = E2EReportCollector()
     _report_collector.install_hook()
     _ensure_playwright_browsers()

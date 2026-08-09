@@ -1,7 +1,7 @@
 """Integration tests for the joint-trace ColBERT query encoding.
 
 Exercises ``ColBERTQueryEncoder.encode(query, trace=...)`` against the
-real vLLM ``lightonai/LateOn`` sidecar the ``pylate_server`` fixture
+real PyLate ``lightonai/LateOn`` sidecar the ``pylate_server`` fixture
 provisions. The sidecar is self-provisioned, so these run on a fresh
 checkout without any pre-started service.
 
@@ -36,9 +36,10 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 # Goldens are committed (see ../goldens/) so this suite runs on a fresh
-# checkout. They bind to model ``lightonai/LateOn`` served by vLLM with the
-# ``ColBERTModernBertModel`` hf-override (the pylate_server fixture). Re-record
-# after a deliberate model/serving change with ``RECORD_GOLDEN=1 uv run pytest
+# checkout. They bind to model ``lightonai/LateOn`` served by the PyLate
+# sidecar (the pylate_server fixture) — its exact query expansion over
+# masked padding. Re-record after a deliberate model/serving change with
+# ``RECORD_GOLDEN=1 uv run pytest
 # tests/core/integration/test_joint_trace_encoding.py``.
 GOLDEN_DIR = Path(__file__).parent / "goldens"
 RECORD_GOLDEN = os.environ.get("RECORD_GOLDEN") == "1"

@@ -9,7 +9,7 @@ store and drive the real CLI against real Phoenix:
   * ``test_resume_skips_already_compiled_agents`` stubs the DSPy compile for
     fast, deterministic wiring coverage (mutation-proven).
   * ``test_resume_skips_a_real_dspy_compile`` runs an actual BootstrapFewShot
-    compile against a test-managed Ollama LM (``ensure_host_ollama``) and
+    compile against the test-managed LM (``teacher_role_on_test_lm``) and
     proves a resume run does NOT re-run that expensive real compile.
 """
 
@@ -189,14 +189,14 @@ async def test_resume_skips_a_real_dspy_compile(
     multi_agent_trigger_dataset,
     config_manager,
     phoenix_container,
-    ensure_host_ollama,
+    teacher_role_on_test_lm,
     monkeypatch,
 ):
     """End-to-end: a REAL DSPy compile is checkpointed and a resume run SKIPS it.
 
-    Run 1 really compiles ``search`` against the test-managed Ollama LM
-    (``ensure_host_ollama``), then crashes on ``detailed_report`` — leaving an
-    active checkpoint. Run 2 resumes and must NOT re-run search's expensive
+    Run 1 really compiles ``search`` against the test-managed LM — student and
+    bootstrap teacher both (``teacher_role_on_test_lm``) — then crashes on
+    ``detailed_report``, leaving an active checkpoint. Run 2 resumes and must NOT re-run search's expensive
     compile: it returns the checkpointed real artifact and retries only the
     failed agent. Durable execution is enabled through the real Vespa config
     store."""

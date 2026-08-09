@@ -453,8 +453,10 @@ class TestFullProfileValidation:
         )  # At least: name, type, schema, embedding_model, embedding_type
         error_text = " ".join(errors)
         assert "Profile name" in error_text
-        assert "Profile type" in error_text or "type" in error_text
-        assert "Schema template" in error_text or "schema" in error_text
+        # The validator's own wording, not a substring any sibling error
+        # ("Invalid embedding type", "Schema template not found") also matches.
+        assert "Invalid profile type 'invalid_type'" in error_text
+        assert "Schema template not found" in error_text
         assert "Embedding" in error_text
 
     def test_update_skips_uniqueness_check(
