@@ -80,19 +80,49 @@ class TestBaseGenerator:
                 sampled_content=[{"test": "data"}], target_count=0
             )
 
-        assert "must be positive" in str(exc_info.value)
+        assert str(exc_info.value) == ("target_count must be a positive integer, got 0")
 
         with pytest.raises(ValueError):
             generator.validate_inputs(
                 sampled_content=[{"test": "data"}], target_count=-1
             )
 
-    def test_validate_inputs_empty_content(self):
-        """Test validate_inputs with empty sampled content"""
+    @pytest.mark.parametrize("target_count", [True, False, 1.0, "1", None])
+    def test_validate_inputs_requires_positive_integer_count(self, target_count):
         generator = ConcreteGenerator()
 
-        # Should log warning but not raise exception
-        generator.validate_inputs(sampled_content=[], target_count=10)
+        with pytest.raises(ValueError) as error:
+            generator.validate_inputs(
+                sampled_content=[{"test": "data"}], target_count=target_count
+            )
+
+        assert str(error.value) == (
+            f"target_count must be a positive integer, got {target_count!r}"
+        )
+
+    def test_validate_inputs_empty_content(self):
+        """Empty backend samples cannot produce grounded training data."""
+        generator = ConcreteGenerator()
+
+        with pytest.raises(
+            ValueError,
+            match="sampled_content must be a non-empty list of dict records",
+        ):
+            generator.validate_inputs(sampled_content=[], target_count=10)
+
+    @pytest.mark.parametrize(
+        "sampled_content",
+        [None, {}, "content", ({},), ["content"], [{}, 1]],
+    )
+    def test_validate_inputs_requires_non_empty_list_of_records(self, sampled_content):
+        generator = ConcreteGenerator()
+
+        with pytest.raises(ValueError) as error:
+            generator.validate_inputs(sampled_content=sampled_content, target_count=1)
+
+        assert str(error.value) == (
+            "sampled_content must be a non-empty list of dict records"
+        )
 
     def test_get_generator_info(self):
         """Test get_generator_info method"""

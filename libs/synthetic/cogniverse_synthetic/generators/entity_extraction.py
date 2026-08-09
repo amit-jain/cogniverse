@@ -1,14 +1,10 @@
-"""Entity-extraction synthetic data generator.
+"""Entity-extraction training examples labelled by the production agent."""
 
-Produces ``(query -> entities)`` training examples for
-``EntityExtractionAgent`` optimization. Each example pairs a text built from
-sampled backend content with the entities extracted from it by a capitalization
-heuristic (no LM), so generation is deterministic and testable against real
-sampled content. The finetuning evaluator scores each entity on its ``text``
-and ``type``.
-"""
-
+import asyncio
 import logging
+import math
+import re
+from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -18,14 +14,8 @@ from cogniverse_synthetic.schemas import EntityExtractionExampleSchema
 
 logger = logging.getLogger(__name__)
 
-# Words that look capitalized but are not entities (sentence starts, etc.).
-_STOPWORDS = {"the", "a", "an", "this", "that", "these", "those", "how", "what"}
-
-_DEFAULT_TEXTS = [
-    "PyTorch was released by Meta AI",
-    "TensorFlow is maintained by Google Brain",
-    "Transformers power modern NLP at OpenAI",
-]
+EntityExtractor = Callable[[str, str], Awaitable[Any]]
+DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS = 300.0
 
 
 class EntityExtractionGenerator(BaseGenerator):
@@ -40,106 +30,207 @@ class EntityExtractionGenerator(BaseGenerator):
         """Generate EntityExtractionExample data.
 
         Args:
-            sampled_content: Backend-sampled content used as source texts
-                (falls back to _DEFAULT_TEXTS when it yields no entity-bearing text).
+            sampled_content: Backend-sampled content used as source texts.
             target_count: Number of examples to generate.
         """
         self.validate_inputs(sampled_content, target_count)
 
-        logger.info(f"Generating {target_count} EntityExtractionExample examples")
+        tenant_id = kwargs.get("tenant_id")
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise ValueError("tenant_id is required for entity extraction")
 
-        texts = self._candidate_texts(sampled_content) or list(_DEFAULT_TEXTS)
+        logger.info("Generating %d EntityExtractionExample examples", target_count)
 
-        examples: List[BaseModel] = []
-        idx = 0
-        # Cycle through candidate texts until we have target_count examples that
-        # actually contain at least one entity.
-        while len(examples) < target_count and idx < target_count * 5:
-            text = texts[idx % len(texts)]
-            idx += 1
-            entities = self._extract_entities(text)
-            if not entities:
-                continue
-            entity_types = ",".join(dict.fromkeys(e["type"] for e in entities))
-            examples.append(
-                EntityExtractionExampleSchema(
-                    query=text,
-                    entities=entities,
-                    entity_types=entity_types,
-                    relationships=self._relationships(entities),
+        candidate_texts = self._candidate_texts(sampled_content)
+        labelled_examples: List[EntityExtractionExampleSchema] = []
+        skipped_without_entities = 0
+        for text in candidate_texts:
+            try:
+                extraction = await asyncio.wait_for(
+                    self.entity_extractor(text, tenant_id),
+                    timeout=self.extraction_timeout_seconds,
                 )
-            )
+            except TimeoutError as exc:
+                raise RuntimeError(
+                    "entity extraction timed out after "
+                    f"{self.extraction_timeout_seconds:g} seconds for source text "
+                    f"{text!r}"
+                ) from exc
+            except Exception as exc:
+                raise RuntimeError(
+                    f"entity extraction failed for source text {text!r}"
+                ) from exc
 
-        # Guarantee target_count: fall back to defaults if content was sparse.
-        while len(examples) < target_count:
-            text = _DEFAULT_TEXTS[len(examples) % len(_DEFAULT_TEXTS)]
-            entities = self._extract_entities(text)
-            entity_types = ",".join(dict.fromkeys(e["type"] for e in entities))
-            examples.append(
-                EntityExtractionExampleSchema(
-                    query=text,
-                    entities=entities,
-                    entity_types=entity_types,
-                    relationships=self._relationships(entities),
-                )
-            )
+            example = self._to_example(text, extraction)
+            if example is not None:
+                labelled_examples.append(example)
+                if len(labelled_examples) == target_count:
+                    break
+            else:
+                skipped_without_entities += 1
 
-        logger.info(f"Generated {len(examples)} EntityExtractionExample examples")
+        self.require_exact_target_count(
+            labelled_examples,
+            target_count,
+            source_context=(
+                f"{len(candidate_texts)} unique source texts, "
+                f"{skipped_without_entities} without entities"
+            ),
+        )
+
+        examples: List[BaseModel] = list(labelled_examples)
+
+        logger.info("Generated %d EntityExtractionExample examples", len(examples))
         return examples
 
     def _candidate_texts(self, sampled_content: List[Dict[str, Any]]) -> List[str]:
         texts: List[str] = []
-        for item in sampled_content[:100]:
+        seen_texts = set()
+        for item in sampled_content:
             for field in ("title", "content", "description", "topic"):
                 text = item.get(field)
-                if isinstance(text, str) and text.strip():
-                    texts.append(text.strip())
-                    break
+                if not isinstance(text, str) or not text.strip():
+                    continue
+                normalized = text.strip()
+                if normalized not in seen_texts:
+                    seen_texts.add(normalized)
+                    texts.append(normalized)
         return texts
 
     @staticmethod
-    def _extract_entities(text: str) -> List[Dict[str, str]]:
-        """Capitalization heuristic: contiguous Capitalized / ALLCAPS tokens form
-        an entity. ALLCAPS -> ORG, otherwise -> CONCEPT."""
-        entities: List[Dict[str, str]] = []
-        seen = set()
-        words = text.split()
-        current: List[str] = []
-        for word in words + [""]:
-            token = word.strip(".,:;!?()")
-            is_entity_word = (
-                token and token[0].isupper() and token.lower() not in _STOPWORDS
-            )
-            if is_entity_word:
-                current.append(token)
-                continue
-            if current:
-                phrase = " ".join(current)
-                key = phrase.lower()
-                if key not in seen:
-                    seen.add(key)
-                    etype = "ORG" if phrase.isupper() else "CONCEPT"
-                    entities.append({"text": phrase, "type": etype})
-                current = []
-        return entities
+    def _to_mapping(value: Any, *, field: str) -> Dict[str, Any]:
+        if isinstance(value, BaseModel):
+            return value.model_dump()
+        if isinstance(value, dict):
+            return value
+        raise ValueError(f"entity extractor {field} must be an object")
 
-    @staticmethod
-    def _relationships(entities: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        if len(entities) < 2:
-            return []
-        return [
-            {
-                "source": entities[0]["text"],
-                "target": entities[1]["text"],
-                "type": "related_to",
-            }
-        ]
+    @classmethod
+    def _to_example(
+        cls, text: str, extraction: Any
+    ) -> Optional[EntityExtractionExampleSchema]:
+        payload = cls._to_mapping(extraction, field="result")
+        if payload.get("query") != text:
+            raise ValueError("entity extractor result query must match the source text")
+
+        raw_entities = payload.get("entities")
+        if not isinstance(raw_entities, list):
+            raise ValueError("entity extractor result entities must be a list")
+        if not raw_entities:
+            return None
+
+        entities: List[Dict[str, str]] = []
+        entity_types_by_text: Dict[str, str] = {}
+        for index, raw_entity in enumerate(raw_entities):
+            entity = cls._to_mapping(raw_entity, field=f"entities[{index}]")
+            entity_text = entity.get("text")
+            entity_type = entity.get("type")
+            if not isinstance(entity_text, str) or not entity_text.strip():
+                raise ValueError(
+                    f"entity extractor entities[{index}].text must be non-empty"
+                )
+            if not isinstance(entity_type, str) or not entity_type.strip():
+                raise ValueError(
+                    f"entity extractor entities[{index}].type must be non-empty"
+                )
+            if entity_text != entity_text.strip():
+                raise ValueError(
+                    f"entity extractor entities[{index}].text contains "
+                    "surrounding whitespace"
+                )
+            if entity_type != entity_type.strip():
+                raise ValueError(
+                    f"entity extractor entities[{index}].type contains "
+                    "surrounding whitespace"
+                )
+            if (
+                re.search(
+                    rf"(?<!\w){re.escape(entity_text)}(?!\w)",
+                    text,
+                )
+                is None
+            ):
+                raise ValueError(
+                    f"entity extractor entities[{index}].text must be an exact "
+                    "complete source span"
+                )
+            prior_type = entity_types_by_text.get(entity_text)
+            if prior_type == entity_type:
+                continue
+            if prior_type is not None:
+                raise ValueError(
+                    "entity extractor result contains conflicting types for "
+                    f"duplicate entity text {entity_text!r}: {prior_type!r} and "
+                    f"{entity_type!r}"
+                )
+            entity_types_by_text[entity_text] = entity_type
+            entities.append({"text": entity_text, "type": entity_type})
+
+        raw_relationships = payload.get("relationships")
+        if not isinstance(raw_relationships, list):
+            raise ValueError("entity extractor result relationships must be a list")
+        relationships: List[Dict[str, str]] = []
+        entity_texts = {entity["text"] for entity in entities}
+        for index, raw_relationship in enumerate(raw_relationships):
+            relationship = cls._to_mapping(
+                raw_relationship, field=f"relationships[{index}]"
+            )
+            subject = relationship.get("subject")
+            relation = relationship.get("relation")
+            object_ = relationship.get("object")
+            if not all(
+                isinstance(value, str) and value.strip()
+                for value in (subject, relation, object_)
+            ):
+                raise ValueError(
+                    "entity extractor relationships"
+                    f"[{index}] requires subject, relation, and object"
+                )
+            for field_name, value in (
+                ("subject", subject),
+                ("relation", relation),
+                ("object", object_),
+            ):
+                if value != value.strip():
+                    raise ValueError(
+                        f"entity extractor relationships[{index}].{field_name} "
+                        "contains surrounding whitespace"
+                    )
+            if subject not in entity_texts or object_ not in entity_texts:
+                raise ValueError(
+                    f"entity extractor relationships[{index}] references "
+                    "an entity absent from the result"
+                )
+            relationships.append(
+                {"source": subject, "target": object_, "type": relation}
+            )
+
+        entity_types = ",".join(dict.fromkeys(e["type"] for e in entities))
+        return EntityExtractionExampleSchema(
+            query=text,
+            entities=entities,
+            entity_types=entity_types,
+            relationships=relationships,
+        )
 
     def __init__(
         self,
+        entity_extractor: EntityExtractor,
         pattern_extractor: Optional[Any] = None,
         agent_inferrer: Optional[Any] = None,
         optimizer_config: Optional[Any] = None,
+        extraction_timeout_seconds: float = DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS,
     ):
         super().__init__(pattern_extractor, agent_inferrer)
+        if not callable(entity_extractor):
+            raise ValueError("entity_extractor is required")
+        if (
+            isinstance(extraction_timeout_seconds, bool)
+            or not isinstance(extraction_timeout_seconds, (int, float))
+            or not math.isfinite(extraction_timeout_seconds)
+            or extraction_timeout_seconds <= 0
+        ):
+            raise ValueError("extraction_timeout_seconds must be finite and positive")
+        self.entity_extractor = entity_extractor
+        self.extraction_timeout_seconds = float(extraction_timeout_seconds)
         self.optimizer_config = optimizer_config

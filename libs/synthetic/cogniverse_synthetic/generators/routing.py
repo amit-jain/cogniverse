@@ -4,17 +4,66 @@ Generates RoutingExperience synthetic training data via DSPy LLM-driven
 entity-rich query generation.
 """
 
+import asyncio
+import importlib
 import logging
-import random
+import math
+import re
+import threading
+from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
 from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
 from cogniverse_synthetic.generators.base import BaseGenerator
+from cogniverse_synthetic.generators.entity_extraction import (
+    DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS,
+    EntityExtractionGenerator,
+    EntityExtractor,
+)
 from cogniverse_synthetic.schemas import RoutingExperienceSchema
 
 logger = logging.getLogger(__name__)
+
+RoutingDecider = Callable[[str, str], Awaitable[Any]]
+DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
+
+
+class _QueryGeneratorBoundaryError(Exception):
+    """Distinguish a boundary-raised timeout from the caller's deadline."""
+
+
+def _enhance_entity_query(query: str, entities: List[Dict]) -> str:
+    """Add entity annotations to every complete entity occurrence."""
+    annotations: Dict[str, str] = {}
+    for entity in entities:
+        text = entity.get("text")
+        entity_type = entity.get("type")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("entity text must be a non-empty string")
+        if not isinstance(entity_type, str) or not entity_type.strip():
+            raise ValueError("entity type must be a non-empty string")
+        text = text.strip()
+        entity_type = entity_type.strip()
+        key = text.casefold()
+        existing_type = annotations.get(key)
+        if existing_type is not None and existing_type != entity_type:
+            raise ValueError(f"conflicting entity types for '{text}'")
+        annotations[key] = entity_type
+
+    if not annotations:
+        return query
+
+    alternatives = sorted(annotations, key=len, reverse=True)
+    entity_pattern = re.compile(
+        rf"(?<!\w)(?:{'|'.join(re.escape(text) for text in alternatives)})(?!\w)",
+        flags=re.IGNORECASE,
+    )
+    return entity_pattern.sub(
+        lambda match: f"{match.group(0)}({annotations[match.group(0).casefold()]})",
+        query,
+    )
 
 
 class RoutingGenerator(BaseGenerator):
@@ -26,7 +75,7 @@ class RoutingGenerator(BaseGenerator):
     2. Generate entity-rich queries using DSPy modules
     3. Create enhanced queries with entity annotations
     4. Infer agents based on content characteristics
-    5. Generate realistic quality metrics
+    5. Mark execution-dependent outcomes as unobserved
 
     Uses OptimizerGenerationConfig with DSPy modules.
     Configuration is REQUIRED - no fallbacks or defaults.
@@ -34,31 +83,68 @@ class RoutingGenerator(BaseGenerator):
 
     def __init__(
         self,
+        entity_extractor: EntityExtractor,
+        routing_decider: Optional[RoutingDecider] = None,
         pattern_extractor: Optional[Any] = None,
-        agent_inferrer: Optional[Any] = None,
         optimizer_config: Optional[OptimizerGenerationConfig] = None,
+        production_label_timeout_seconds: float = DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS,
+        entity_extraction_timeout_seconds: float = DEFAULT_ENTITY_EXTRACTION_TIMEOUT_SECONDS,
     ):
         """
         Initialize routing generator with configuration
 
         Args:
+            entity_extractor: Production entity agent used for typed supervision
             pattern_extractor: Utility for extracting patterns from content
-            agent_inferrer: Utility for inferring correct agents
+            routing_decider: Production gateway/routing call used for labels
             optimizer_config: Optimizer generation configuration with DSPy modules (REQUIRED)
+            production_label_timeout_seconds: Maximum routing callback and DSPy
+                query-generation duration
+            entity_extraction_timeout_seconds: Maximum nested entity-agent duration
 
         Raises:
             ValueError: If optimizer_config is not provided
         """
-        super().__init__(pattern_extractor, agent_inferrer)
+        super().__init__(pattern_extractor, None)
+
+        if not callable(entity_extractor):
+            raise ValueError("entity_extractor is required")
+        if not callable(routing_decider):
+            raise ValueError("routing_decider is required")
 
         if optimizer_config is None:
             raise ValueError(
                 "RoutingGenerator requires optimizer_config with DSPy modules. "
                 "Configuration must be explicitly provided."
             )
+        if (
+            isinstance(production_label_timeout_seconds, bool)
+            or not isinstance(production_label_timeout_seconds, (int, float))
+            or not math.isfinite(production_label_timeout_seconds)
+            or production_label_timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "production_label_timeout_seconds must be finite and positive"
+            )
+        if (
+            isinstance(entity_extraction_timeout_seconds, bool)
+            or not isinstance(entity_extraction_timeout_seconds, (int, float))
+            or not math.isfinite(entity_extraction_timeout_seconds)
+            or entity_extraction_timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "entity_extraction_timeout_seconds must be finite and positive"
+            )
 
         self.optimizer_config = optimizer_config
+        self.routing_decider = routing_decider
+        self.production_label_timeout_seconds = float(production_label_timeout_seconds)
+        self.entity_labeler = EntityExtractionGenerator(
+            entity_extractor=entity_extractor,
+            extraction_timeout_seconds=entity_extraction_timeout_seconds,
+        )
         self.query_generator = None
+        self._query_generator_lock = threading.Lock()
         logger.info("Initialized RoutingGenerator with configuration")
 
     async def generate(
@@ -79,215 +165,230 @@ class RoutingGenerator(BaseGenerator):
 
         logger.info(f"Generating {target_count} RoutingExperience examples")
 
-        if self.pattern_extractor and sampled_content:
-            patterns = self.pattern_extractor.extract(sampled_content)
-        else:
-            patterns = {
-                "topics": ["machine learning", "neural networks"],
-                "entities": ["TensorFlow", "Python", "PyTorch"],
-                "temporal": [],
-                "content_types": [],
-            }
+        if self.pattern_extractor is None:
+            raise ValueError("RoutingGenerator requires pattern_extractor")
+        tenant_id = kwargs.get("tenant_id")
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise ValueError("tenant_id is required for routing generation")
 
         examples = []
+        canonical_labels: set[tuple[str, tuple[tuple[str, str], ...], str]] = set()
 
-        for i in range(target_count):
-            # Pick random content or generate from patterns
-            if sampled_content:
-                content = random.choice(sampled_content)
-            else:
-                content = {"schema_name": "video_content"}
+        for index in range(target_count):
+            content = sampled_content[index % len(sampled_content)]
+            patterns = self.pattern_extractor.extract([content])
 
-            # Extract/generate entities
-            entities = self._generate_entities(patterns)
-
-            # Generate relationships
-            relationships = []
-            if self.pattern_extractor and len(entities) >= 2:
-                relationships = self.pattern_extractor.extract_relationships(entities)
-            elif len(entities) >= 2:
-                # Simple relationship
-                relationships = [
-                    {
-                        "source": entities[0]["text"],
-                        "target": entities[1]["text"],
-                        "type": "RELATED_TO",
-                        "confidence": 0.7,
-                    }
-                ]
+            labelled = await self.entity_labeler.generate(
+                sampled_content=[content],
+                target_count=1,
+                tenant_id=tenant_id,
+            )
+            entities = labelled[0].entities
+            relationships = labelled[0].relationships
 
             # Generate query from entities using DSPy
-            query, generation_metadata = self._generate_entity_query(entities, patterns)
+            query, generation_metadata = await self._generate_entity_query(
+                entities, patterns
+            )
 
             # Create enhanced query with entity annotations
             enhanced_query = self._enhance_query(query, entities)
 
-            # Infer agent
-            if self.agent_inferrer:
-                chosen_agent = self.agent_inferrer.infer_from_characteristics(
-                    content, entities, relationships
+            decision = await self._request_routing_label(query, tenant_id)
+            if isinstance(decision, BaseModel):
+                decision = decision.model_dump()
+            if not isinstance(decision, dict):
+                raise ValueError("routing decision must be an object")
+            chosen_agent = decision.get("routed_to")
+            if not isinstance(chosen_agent, str) or not chosen_agent.strip():
+                raise ValueError(
+                    "routing decision routed_to must be a non-empty string"
                 )
-            else:
-                chosen_agent = "video_search_agent"
+            routing_confidence = decision.get("confidence")
+            if (
+                isinstance(routing_confidence, bool)
+                or not isinstance(routing_confidence, float)
+                or not math.isfinite(routing_confidence)
+                or not 0.0 <= routing_confidence <= 1.0
+            ):
+                raise ValueError(
+                    "routing decision confidence must be a finite float between "
+                    f"0 and 1; got {routing_confidence!r}"
+                )
 
-            # Generate realistic metrics
-            routing_confidence = random.uniform(0.65, 0.95)
-            search_quality = random.uniform(0.6, 0.9)
-            agent_success = routing_confidence > 0.7
-            user_satisfaction = (
-                search_quality * random.uniform(0.9, 1.1) if agent_success else None
+            chosen_agent = chosen_agent.strip()
+            canonical_entities = tuple(
+                sorted((entity["text"], entity["type"]) for entity in entities)
             )
-            if user_satisfaction:
-                user_satisfaction = min(1.0, user_satisfaction)
+            canonical_label = (query, canonical_entities, chosen_agent)
+            if canonical_label in canonical_labels:
+                raise ValueError(
+                    "RoutingGenerator generated duplicate canonical label "
+                    f"(query={query!r}, entities={canonical_entities!r}, "
+                    f"chosen_agent={chosen_agent!r})"
+                )
+            canonical_labels.add(canonical_label)
 
-            # Create example with generation metadata
+            metadata = {
+                **generation_metadata,
+                "_outcome_metadata": {
+                    "observed": True,
+                    "required_field_semantics": {
+                        "routing_confidence": "observed_gateway_confidence",
+                        "search_quality": "unobserved_zero_sentinel",
+                        "agent_success": "unobserved_false_sentinel",
+                        "processing_time": "unobserved_zero_sentinel",
+                    },
+                },
+            }
+
             example = RoutingExperienceSchema(
                 query=query,
                 entities=entities,
                 relationships=relationships,
                 enhanced_query=enhanced_query,
                 chosen_agent=chosen_agent,
-                routing_confidence=round(routing_confidence, 2),
-                search_quality=round(search_quality, 2),
-                agent_success=agent_success,
-                user_satisfaction=(
-                    round(user_satisfaction, 2) if user_satisfaction else None
-                ),
-                metadata=generation_metadata,
+                routing_confidence=routing_confidence,
+                search_quality=0.0,
+                agent_success=False,
+                user_satisfaction=None,
+                processing_time=0.0,
+                metadata=metadata,
             )
             examples.append(example)
 
         logger.info(f"Generated {len(examples)} RoutingExperience examples")
         return examples
 
-    def _generate_entities(
-        self, patterns: Dict[str, List[str]]
-    ) -> List[Dict[str, Any]]:
-        """Generate entity list from patterns"""
-        entities = []
+    async def _request_routing_label(self, query: str, tenant_id: str) -> Any:
+        async def invoke_callback() -> Any:
+            try:
+                return await self.routing_decider(query, tenant_id)
+            except Exception as exc:
+                raise RuntimeError(
+                    "routing optimizer callback routing_decider failed for "
+                    f"tenant={tenant_id!r} query={query!r}"
+                ) from exc
 
-        # Add 1-3 entities
-        num_entities = random.randint(1, 3)
-
-        for _ in range(num_entities):
-            if patterns["entities"]:
-                entity_text = random.choice(patterns["entities"])
-                entity_type = self._infer_entity_type(entity_text)
-            else:
-                entity_text = "Python"
-                entity_type = "TECHNOLOGY"
-
-            entities.append(
-                {
-                    "text": entity_text,
-                    "type": entity_type,
-                    "confidence": round(random.uniform(0.7, 0.95), 2),
-                }
+        try:
+            return await asyncio.wait_for(
+                invoke_callback(),
+                timeout=self.production_label_timeout_seconds,
             )
+        except TimeoutError as exc:
+            raise TimeoutError(
+                "routing optimizer callback routing_decider timed out after "
+                f"{self.production_label_timeout_seconds:g} seconds for "
+                f"tenant={tenant_id!r} query={query!r}"
+            ) from exc
 
-        return entities
-
-    def _infer_entity_type(self, entity_text: str) -> str:
-        """Infer entity type from text"""
-        if any(
-            tech in entity_text for tech in ["Flow", "Torch", "Python", "Java", "Go"]
-        ):
-            return "TECHNOLOGY"
-        elif any(topic in entity_text for topic in ["Network", "Learning", "Model"]):
-            return "TOPIC"
-        elif entity_text[0].isupper():
-            return "ORGANIZATION"
-        else:
-            return "CONCEPT"
-
-    def _generate_entity_query(
+    async def _generate_entity_query(
         self, entities: List[Dict], patterns: Dict
     ) -> tuple[str, Dict[str, Any]]:
         """
         Generate query mentioning entities using validated DSPy module.
 
         ValidatedEntityQueryGenerator uses retry logic to get the entities into
-        the query. A fallback query is still used when there are no entities or
-        generation fails (both flag ``fallback_used`` in the metadata).
+        the query. Empty entity inputs and exhausted output-validation retries
+        fail instead of fabricating an ungrounded query.
 
         Returns:
             Tuple of (query, metadata) where metadata includes generation details
         """
         if not entities:
-            return "find tutorial on machine learning", {
-                "_generation_metadata": {
-                    "retry_count": 0,
-                    "max_retries": 0,
-                    "fallback_used": True,
-                }
-            }
+            raise ValueError("entities must contain at least one item")
 
         # Get or initialize validated DSPy query generator
         query_generator = self._get_query_generator()
 
         # Prepare inputs
-        topics_str = (
-            ", ".join(patterns["topics"][:3])
-            if patterns["topics"]
-            else "machine learning"
-        )
-        entities_str = ", ".join([e["text"] for e in entities])
-        entity_types_str = ", ".join([e["type"] for e in entities])
+        topics = patterns.get("topics")
+        if not isinstance(topics, list) or not topics:
+            raise ValueError("patterns must contain at least one source-derived topic")
+        topics_str = ", ".join(topics[:3])
+        entity_texts = [entity["text"] for entity in entities]
+        entity_types = [entity["type"] for entity in entities]
+
+        def invoke_query_generator():
+            try:
+                return query_generator(
+                    topics=topics_str,
+                    entities=entity_texts,
+                    entity_types=entity_types,
+                )
+            except Exception as exc:
+                raise _QueryGeneratorBoundaryError from exc
 
         # Generate validated query using DSPy (with retry logic built-in)
         try:
-            result = query_generator(
-                topics=topics_str, entities=entities_str, entity_types=entity_types_str
+            result = await asyncio.wait_for(
+                asyncio.to_thread(invoke_query_generator),
+                timeout=self.production_label_timeout_seconds,
             )
+            query = getattr(result, "query", None)
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError(
+                    "query generator returned query that is not a non-empty string"
+                )
+            reasoning = getattr(result, "reasoning", None)
+            if not isinstance(reasoning, str) or not reasoning.strip():
+                raise ValueError(
+                    "query generator returned reasoning that is not a non-empty string"
+                )
+            retry_count = getattr(result, "_retry_count", None)
+            max_retries = getattr(result, "_max_retries", None)
+            if (
+                isinstance(retry_count, bool)
+                or not isinstance(retry_count, int)
+                or retry_count < 0
+            ):
+                raise ValueError(
+                    "query generator returned retry_count that is not a non-negative integer"
+                )
+            if (
+                isinstance(max_retries, bool)
+                or not isinstance(max_retries, int)
+                or max_retries < 1
+                or retry_count >= max_retries
+            ):
+                raise ValueError(
+                    "query generator returned inconsistent max_retries metadata"
+                )
 
             metadata = {
                 "_generation_metadata": {
-                    "retry_count": getattr(result, "_retry_count", 0),
-                    "max_retries": getattr(result, "_max_retries", 3),
-                    "fallback_used": False,
-                    "reasoning": getattr(result, "reasoning", ""),
+                    "retry_count": retry_count,
+                    "max_retries": max_retries,
+                    "reasoning": reasoning.strip(),
                 }
             }
 
-            return result.query, metadata
+            return query.strip(), metadata
 
+        except TimeoutError as exc:
+            raise TimeoutError(
+                "routing optimizer DSPy query_generator timed out after "
+                f"{self.production_label_timeout_seconds:g} seconds for entities: "
+                + ", ".join(entity_texts)
+            ) from exc
+        except _QueryGeneratorBoundaryError as exc:
+            raise RuntimeError(
+                "entity query generation failed for entities: "
+                + ", ".join(entity_texts)
+            ) from exc.__cause__
         except ValueError as e:
             raise ValueError(
                 f"Failed to generate valid entity query after {query_generator.max_retries} retries: {e}"
             ) from e
+        except Exception as e:
+            raise RuntimeError(
+                "entity query generation failed for entities: "
+                + ", ".join(entity_texts)
+            ) from e
 
     def _enhance_query(self, query: str, entities: List[Dict]) -> str:
         """Add entity annotations to query (case-insensitive)"""
-        enhanced = query
-
-        for entity in entities:
-            text = entity["text"]
-            entity_type = entity["type"]
-
-            # Find the entity text in query (case-insensitive)
-            # Use case-insensitive search and preserve original casing
-            lower_query = enhanced.lower()
-            lower_text = text.lower()
-
-            if lower_text in lower_query:
-                # Find the position of the entity in the query
-                start_idx = lower_query.find(lower_text)
-                end_idx = start_idx + len(text)
-
-                # Get the actual text from the query (preserving case)
-                actual_text = enhanced[start_idx:end_idx]
-
-                # Replace with annotated version
-                enhanced = (
-                    enhanced[:start_idx]
-                    + f"{actual_text}({entity_type})"
-                    + enhanced[end_idx:]
-                )
-
-                # Update lower_query for next iteration
-                lower_query = enhanced.lower()
-
-        return enhanced
+        return _enhance_entity_query(query, entities)
 
     def _get_query_generator(self):
         """
@@ -301,6 +402,15 @@ class RoutingGenerator(BaseGenerator):
         """
         if self.query_generator is not None:
             return self.query_generator
+
+        with self._query_generator_lock:
+            if self.query_generator is not None:
+                return self.query_generator
+            self.query_generator = self._build_query_generator()
+            return self.query_generator
+
+    def _build_query_generator(self):
+        """Construct a fully configured query generator for atomic publication."""
 
         if not self.optimizer_config.dspy_modules:
             raise ValueError(
@@ -317,7 +427,39 @@ class RoutingGenerator(BaseGenerator):
 
         from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
 
-        self.query_generator = ValidatedEntityQueryGenerator(max_retries=3)
-        logger.info("Initialized ValidatedEntityQueryGenerator with retry validation")
+        module_path, separator, signature_name = (
+            module_config.signature_class.rpartition(".")
+        )
+        if not separator:
+            raise ValueError("query_generator signature_class must be fully qualified")
+        signature = getattr(importlib.import_module(module_path), signature_name)
 
-        return self.query_generator
+        import dspy
+
+        module_types = {
+            "ChainOfThought": dspy.ChainOfThought,
+            "Predict": dspy.Predict,
+        }
+        module_class = module_types.get(module_config.module_type)
+        if module_class is None:
+            raise ValueError(
+                "query_generator module_type must be one of: ChainOfThought, Predict"
+            )
+        max_retries = module_config.metadata.get("max_retries", 3)
+        if (
+            isinstance(max_retries, bool)
+            or not isinstance(max_retries, int)
+            or max_retries < 1
+        ):
+            raise ValueError("query_generator metadata.max_retries must be at least 1")
+        lm = dspy.LM(**module_config.lm_config) if module_config.lm_config else None
+        query_generator = ValidatedEntityQueryGenerator(max_retries=max_retries)
+        query_generator.generate = module_class(signature)
+        query_generator.lm = lm
+        logger.info(
+            "Initialized validated %s with %s retries",
+            module_config.module_type,
+            max_retries,
+        )
+
+        return query_generator

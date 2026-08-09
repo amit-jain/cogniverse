@@ -71,12 +71,31 @@ class BaseGenerator(ABC):
         Raises:
             ValueError: If inputs are invalid
         """
-        if target_count <= 0:
-            raise ValueError(f"target_count must be positive, got {target_count}")
+        if type(target_count) is not int or target_count <= 0:
+            raise ValueError(
+                f"target_count must be a positive integer, got {target_count!r}"
+            )
 
-        if not sampled_content:
-            logger.warning(
-                "No sampled content provided - will use fallback data if available"
+        if (
+            not isinstance(sampled_content, list)
+            or not sampled_content
+            or any(not isinstance(record, dict) for record in sampled_content)
+        ):
+            raise ValueError("sampled_content must be a non-empty list of dict records")
+
+    def require_exact_target_count(
+        self,
+        examples: List[Any],
+        target_count: int,
+        *,
+        source_context: str,
+    ) -> None:
+        """Reject partial training sets when grounded sources are insufficient."""
+        if len(examples) != target_count:
+            raise ValueError(
+                f"{self.__class__.__name__} generated {len(examples)} unique "
+                f"grounded examples but target_count={target_count}; "
+                f"source_context={source_context}"
             )
 
     def get_generator_info(self) -> Dict[str, Any]:

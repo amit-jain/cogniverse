@@ -2,14 +2,15 @@
 
 Produces ``(query -> enhanced_query)`` training examples for
 ``QueryEnhancementAgent`` optimization. Each example pairs a base query built
-from sampled backend content with an enhanced query that appends expansion
-terms drawn from the same content, so the SIMBA/BootstrapFewShot trainer learns
-to broaden queries with related terms. Pattern-based (no LM), so generation is
-deterministic and testable against real sampled content.
+from sampled backend content with the exact label returned by the production
+query-enhancement agent. The sampled profile name remains attached as context
+so approved examples retain their source boundary.
 """
 
+import asyncio
 import logging
-import random
+import math
+from collections.abc import Awaitable, Callable
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -18,6 +19,9 @@ from cogniverse_synthetic.generators.base import BaseGenerator
 from cogniverse_synthetic.schemas import QueryEnhancementExampleSchema
 
 logger = logging.getLogger(__name__)
+
+QueryEnhancer = Callable[[str, str], Awaitable[Any]]
+DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
 
 
 class QueryEnhancementGenerator(BaseGenerator):
@@ -31,13 +35,6 @@ class QueryEnhancementGenerator(BaseGenerator):
         "explain {topic}",
     ]
 
-    DEFAULT_TOPICS = [
-        "neural networks",
-        "transformer architecture",
-        "video retrieval",
-        "image classification",
-    ]
-
     async def generate(
         self,
         sampled_content: List[Dict[str, Any]],
@@ -48,85 +45,193 @@ class QueryEnhancementGenerator(BaseGenerator):
 
         Args:
             sampled_content: Backend-sampled content used to source topics and
-                expansion terms (falls back to DEFAULT_TOPICS when empty).
+                expansion terms.
             target_count: Number of examples to generate.
         """
         self.validate_inputs(sampled_content, target_count)
 
         logger.info(f"Generating {target_count} QueryEnhancementExample examples")
 
-        topics = self._extract_topics(sampled_content) or self.DEFAULT_TOPICS
+        tenant_id = kwargs.get("tenant_id")
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise ValueError("tenant_id is required for query enhancement")
+        if self.query_enhancer is None:
+            raise ValueError("query_enhancer is required")
+
+        sources = self._source_records(sampled_content)
+
+        grounded_queries: list[tuple[str, List[str], str]] = []
+        seen_queries: set[str] = set()
+        for topic, allowed_terms, context in sources:
+            for template in self.QUERY_TEMPLATES:
+                query = template.format(topic=topic)
+                if query in seen_queries:
+                    continue
+                seen_queries.add(query)
+                grounded_queries.append((query, allowed_terms, context))
+
+        self.require_exact_target_count(
+            grounded_queries[:target_count],
+            target_count,
+            source_context=f"{len(grounded_queries)} unique source-template queries",
+        )
 
         examples: List[BaseModel] = []
-        for _ in range(target_count):
-            topic = random.choice(topics)
-            template = random.choice(self.QUERY_TEMPLATES)
-            query = template.format(topic=topic)
-
-            expansion_terms = self._expansion_terms(topic, sampled_content)
-            synonyms = self._synonyms(topic)
-            enhanced_query = " ".join([query, *expansion_terms]).strip()
+        for query, allowed_terms, context in grounded_queries[:target_count]:
+            result = await self._request_enhancement_label(query, tenant_id)
+            if isinstance(result, BaseModel):
+                result = result.model_dump()
+            if not isinstance(result, dict):
+                raise ValueError("query enhancement result must be an object")
+            if result.get("original_query") != query:
+                raise ValueError(
+                    "query enhancement original_query must match generated query"
+                )
+            enhanced_query = result.get("enhanced_query")
+            if (
+                not isinstance(enhanced_query, str)
+                or not enhanced_query.strip()
+                or enhanced_query.strip() == query
+            ):
+                raise ValueError(
+                    "query enhancement enhanced_query must be non-empty and changed"
+                )
+            expansion_terms = self._output_terms(
+                result.get("expansion_terms"), "expansion_terms"
+            )
+            allowed_term_keys = {term.casefold() for term in allowed_terms}
+            unrelated_terms = [
+                term
+                for term in expansion_terms
+                if term.casefold() not in allowed_term_keys
+            ]
+            if unrelated_terms:
+                raise ValueError(
+                    "query_enhancement optimizer callback query_enhancer returned "
+                    "expansion_terms absent from sampled source for "
+                    f"tenant={tenant_id!r} query={query!r}: {unrelated_terms!r}"
+                )
+            synonyms = self._output_terms(result.get("synonyms", []), "synonyms")
+            reasoning = result.get("reasoning")
+            if not isinstance(reasoning, str) or not reasoning.strip():
+                raise ValueError(
+                    "query enhancement reasoning must be a non-empty string"
+                )
 
             examples.append(
                 QueryEnhancementExampleSchema(
                     query=query,
-                    enhanced_query=enhanced_query,
+                    enhanced_query=enhanced_query.strip(),
                     expansion_terms=expansion_terms,
                     synonyms=synonyms,
-                    context=self._context(sampled_content),
-                    confidence=round(random.uniform(0.7, 0.95), 2),
-                    reasoning=(
-                        f"Broadened '{query}' with related terms "
-                        f"{', '.join(expansion_terms)}"
-                    ),
+                    context=context,
+                    reasoning=reasoning.strip(),
                 )
             )
 
         logger.info(f"Generated {len(examples)} QueryEnhancementExample examples")
         return examples
 
-    def _extract_topics(self, sampled_content: List[Dict[str, Any]]) -> List[str]:
-        topics: List[str] = []
-        for item in sampled_content[:50]:
-            title = item.get("title") or item.get("topic") or item.get("content") or ""
-            if isinstance(title, str) and title.strip():
-                topic = " ".join(title.split()[:4]).strip()
-                if topic:
-                    topics.append(topic)
-        return topics
+    async def _request_enhancement_label(self, query: str, tenant_id: str) -> Any:
+        async def invoke_callback() -> Any:
+            try:
+                return await self.query_enhancer(query, tenant_id)
+            except Exception as exc:
+                raise RuntimeError(
+                    "query_enhancement optimizer callback query_enhancer failed for "
+                    f"tenant={tenant_id!r} query={query!r}"
+                ) from exc
 
-    def _expansion_terms(
-        self, topic: str, sampled_content: List[Dict[str, Any]]
-    ) -> List[str]:
-        """Expansion terms: other salient topic words from the content sample,
-        excluding words already in the base topic. Always returns at least one
-        term so enhanced_query differs from query."""
+        try:
+            return await asyncio.wait_for(
+                invoke_callback(),
+                timeout=self.production_label_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise TimeoutError(
+                "query_enhancement optimizer callback query_enhancer timed out after "
+                f"{self.production_label_timeout_seconds:g} seconds for "
+                f"tenant={tenant_id!r} query={query!r}"
+            ) from exc
+
+    @staticmethod
+    def _output_terms(value: Any, field_name: str) -> List[str]:
+        if not isinstance(value, list) or any(
+            not isinstance(term, str) or not term.strip() for term in value
+        ):
+            raise ValueError(
+                f"query enhancement {field_name} must be a list of non-empty strings"
+            )
+        return [term.strip() for term in value]
+
+    def _source_records(
+        self, sampled_content: List[Dict[str, Any]]
+    ) -> List[tuple[str, List[str], str]]:
+        records = []
+        for item in sampled_content[:50]:
+            topic = self._extract_topic(item)
+            if topic is None:
+                continue
+            records.append(
+                (
+                    topic,
+                    self._expansion_terms(topic, item),
+                    self._context(item),
+                )
+            )
+        if not records:
+            raise ValueError("sampled_content contains no usable topic text")
+        return records
+
+    @staticmethod
+    def _extract_topic(item: Dict[str, Any]) -> str | None:
+        for field in ("title", "topic", "content", "video_title"):
+            value = item.get(field)
+            if isinstance(value, str) and value.strip():
+                return " ".join(value.split()[:4])
+        return None
+
+    def _expansion_terms(self, topic: str, item: Dict[str, Any]) -> List[str]:
+        """Return expansion terms grounded in the topic's source item."""
         topic_words = set(topic.lower().split())
         candidates: List[str] = []
-        for item in sampled_content[:50]:
-            for field in ("title", "topic", "content", "description"):
-                text = item.get(field)
-                if isinstance(text, str):
-                    for word in text.lower().split():
-                        w = word.strip(".,:;!?()")
-                        if len(w) > 3 and w not in topic_words and w not in candidates:
-                            candidates.append(w)
+        for field in (
+            "title",
+            "topic",
+            "content",
+            "description",
+            "video_title",
+            "segment_description",
+            "transcript",
+            "audio_transcript",
+        ):
+            text = item.get(field)
+            if isinstance(text, str):
+                for word in text.lower().split():
+                    candidate = word.strip(".,:;!?()")
+                    if (
+                        len(candidate) > 3
+                        and candidate not in topic_words
+                        and candidate not in candidates
+                    ):
+                        candidates.append(candidate)
         if not candidates:
-            candidates = ["overview", "explained", "guide"]
+            raise ValueError(
+                f"sampled_content contains no expansion terms outside topic '{topic}'"
+            )
         return candidates[:3]
 
     @staticmethod
-    def _synonyms(topic: str) -> List[str]:
-        head = topic.split()[0] if topic.split() else topic
-        return [f"{head} basics"] if head else []
-
-    @staticmethod
-    def _context(sampled_content: List[Dict[str, Any]]) -> str:
-        for item in sampled_content[:10]:
-            ctype = item.get("content_type") or item.get("modality")
-            if isinstance(ctype, str) and ctype.strip():
-                return ctype.strip()
-        return "general"
+    def _context(item: Dict[str, Any]) -> str:
+        content_type = (
+            item.get("profile_name")
+            or item.get("content_type")
+            or item.get("modality")
+            or item.get("schema_name")
+        )
+        if isinstance(content_type, str) and content_type.strip():
+            return content_type.strip()
+        raise ValueError("sampled_content contains no content context")
 
     # Optional config parameter accepted for parity with other generators.
     def __init__(
@@ -134,6 +239,19 @@ class QueryEnhancementGenerator(BaseGenerator):
         pattern_extractor: Optional[Any] = None,
         agent_inferrer: Optional[Any] = None,
         optimizer_config: Optional[Any] = None,
+        query_enhancer: Optional[QueryEnhancer] = None,
+        production_label_timeout_seconds: float = DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS,
     ):
         super().__init__(pattern_extractor, agent_inferrer)
+        if (
+            isinstance(production_label_timeout_seconds, bool)
+            or not isinstance(production_label_timeout_seconds, (int, float))
+            or not math.isfinite(production_label_timeout_seconds)
+            or production_label_timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "production_label_timeout_seconds must be finite and positive"
+            )
         self.optimizer_config = optimizer_config
+        self.query_enhancer = query_enhancer
+        self.production_label_timeout_seconds = float(production_label_timeout_seconds)
