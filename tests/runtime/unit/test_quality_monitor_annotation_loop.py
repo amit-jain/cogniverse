@@ -160,6 +160,7 @@ def test_default_branch_launches_and_cancels_annotation_task(monkeypatch):
     monkeypatch.setattr(qm, "_annotation_loop", stub_loop)
     monkeypatch.setattr(qm, "_build_phoenix_provider", lambda **k: None)
     monkeypatch.setattr(qm, "_workflow_pod_spec_from_env", lambda: None)
+    monkeypatch.setattr(qm, "_wait_for_runtime_search", lambda **kwargs: None)
     monkeypatch.setattr(
         "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
         lambda *a, **k: _StubTelemetry(),
