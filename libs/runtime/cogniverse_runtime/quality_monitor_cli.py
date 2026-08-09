@@ -17,11 +17,134 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+def _wait_for_telemetry_manager(
+    *,
+    get_manager=None,
+    timeout_seconds: float = 300.0,
+    poll_interval_seconds: float = 2.0,
+):
+    """Wait for the config store used by the telemetry manager to be ready."""
+    import httpr
+    import requests
+
+    if get_manager is None:
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        get_manager = get_telemetry_manager
+
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            return get_manager()
+        except (httpr.TransportError, requests.RequestException) as error:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                attempt_word = "attempt" if attempts == 1 else "attempts"
+                raise RuntimeError(
+                    "Telemetry configuration dependency was not ready after "
+                    f"{attempts} {attempt_word} within {timeout_seconds:.1f}s: "
+                    f"{type(error).__name__}: {error}"
+                ) from error
+            logger.warning(
+                "Telemetry configuration dependency is not ready "
+                "(attempt %d, retrying in %.1fs): %s: %s",
+                attempts,
+                min(poll_interval_seconds, remaining),
+                type(error).__name__,
+                error,
+            )
+            time.sleep(min(poll_interval_seconds, remaining))
+
+
+def _wait_for_runtime_search(
+    *,
+    runtime_url: str,
+    tenant_id: str,
+    golden_dataset_path: str | None = None,
+    golden_queries: list[dict] | None = None,
+    timeout_seconds: float = 300.0,
+    poll_interval_seconds: float = 2.0,
+    post=None,
+) -> dict:
+    """Wait until the production search route accepts a real golden query."""
+    import requests
+
+    if golden_queries is None:
+        if golden_dataset_path is None:
+            raise ValueError("golden_dataset_path or golden_queries is required")
+        with open(golden_dataset_path, encoding="utf-8") as golden_file:
+            golden_queries = json.load(golden_file)
+    query = next(
+        (
+            entry["query"]
+            for entry in golden_queries
+            if isinstance(entry, dict)
+            and isinstance(entry.get("query"), str)
+            and entry["query"].strip()
+        ),
+        None,
+    )
+    if query is None:
+        raise ValueError("Golden dataset has no non-empty query for readiness")
+
+    post = post or requests.post
+    payload = {
+        "query": query,
+        "profile": "video_colpali_smol500_mv_frame",
+        "top_k": 1,
+        "tenant_id": tenant_id,
+    }
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    last_error: Exception | None = None
+    while True:
+        attempts += 1
+        try:
+            response = post(
+                f"{runtime_url.rstrip('/')}/search/",
+                json=payload,
+                timeout=30,
+            )
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"HTTP {response.status_code}: {getattr(response, 'text', '')[:300]}"
+                )
+            result = response.json()
+            if not isinstance(result, dict) or not isinstance(
+                result.get("results"), list
+            ):
+                raise RuntimeError("HTTP 200 response does not contain a results list")
+            return result
+        except (ConnectionError, requests.RequestException, RuntimeError) as error:
+            last_error = error
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            attempt_word = "attempt" if attempts == 1 else "attempts"
+            raise RuntimeError(
+                "Runtime search dependency was not ready after "
+                f"{attempts} {attempt_word} within {timeout_seconds:.1f}s: "
+                f"{type(last_error).__name__}: {last_error}"
+            ) from last_error
+        logger.warning(
+            "Runtime search dependency is not ready "
+            "(attempt %d, retrying in %.1fs): %s: %s",
+            attempts,
+            min(poll_interval_seconds, remaining),
+            type(last_error).__name__,
+            last_error,
+        )
+        time.sleep(min(poll_interval_seconds, remaining))
 
 
 def _load_automation_rules(tenant_id: str, config_manager=None):
@@ -617,6 +740,18 @@ def main():
         help="Number of spans to sample per agent for live eval",
     )
     parser.add_argument(
+        "--startup-timeout",
+        type=float,
+        default=300.0,
+        help="Seconds to wait for the telemetry configuration store (default: 300)",
+    )
+    parser.add_argument(
+        "--startup-poll-interval",
+        type=float,
+        default=2.0,
+        help="Seconds between telemetry configuration readiness checks (default: 2)",
+    )
+    parser.add_argument(
         "--once",
         action="store_true",
         help=(
@@ -659,9 +794,19 @@ def main():
     # AnnotationAgent, dataset store) derive Phoenix's HTTP endpoint from
     # TELEMETRY_OTLP_ENDPOINT's host on the fixed :6006 port; point them at
     # --phoenix-url before any provider is constructed and cached.
-    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-    get_telemetry_manager().config.provider_config["http_endpoint"] = args.phoenix_url
+    telemetry_manager = _wait_for_telemetry_manager(
+        timeout_seconds=args.startup_timeout,
+        poll_interval_seconds=args.startup_poll_interval,
+    )
+    telemetry_manager.config.provider_config["http_endpoint"] = args.phoenix_url
+    if not args.annotation_cycle and not args.annotation_feedback:
+        _wait_for_runtime_search(
+            runtime_url=args.runtime_url,
+            tenant_id=args.tenant_id,
+            golden_dataset_path=args.golden_dataset_path,
+            timeout_seconds=args.startup_timeout,
+            poll_interval_seconds=args.startup_poll_interval,
+        )
 
     from cogniverse_evaluation.quality_monitor import QualityMonitor
 
