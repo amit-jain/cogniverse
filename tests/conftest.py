@@ -266,7 +266,11 @@ def pytest_collection_modifyitems(items):
         if _requests_teacher_lm(item):
             roles.update(("primary", "teacher"))
         if directly_requested:
-            roles.update(("primary", "teacher"))
+            # A direct request only pins the primary role; teacher-consuming
+            # tests declare that via requires_teacher_model or a teacher_lm
+            # fixture, and primary-only sessions park the teacher on a dead
+            # port (see teacher_role_on_test_lm).
+            roles.add("primary")
         if not roles:
             continue
         item._cogniverse_lm_roles = frozenset(roles)
