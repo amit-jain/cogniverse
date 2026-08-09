@@ -19,6 +19,10 @@ dependencies = [
     # load (search.service.SearchService, graph.graph_schema.Mention), so a
     # base install without agents cannot even import the app to start.
     "cogniverse-agents",
+    # Admin canary routes and the optimization/quality-monitor CLIs construct
+    # PhoenixProvider directly. The provider also supplies their evaluation
+    # dependency, so these installed entry points require it in the base package.
+    "cogniverse-telemetry-phoenix",
 
     # FastAPI and server
     "fastapi==0.135.3",
@@ -50,6 +54,9 @@ dependencies = [
 
     # Utilities
     "msgpack==1.1.2",
+    # Quality-monitor startup distinguishes retryable config-store transport
+    # failures from configuration and programming errors.
+    "httpr==0.4.1",
 
     # A2A Protocol
     "a2a-sdk[http-server]==0.3.26",
@@ -100,6 +107,7 @@ cogniverse-core = { workspace = true }
 cogniverse-synthetic = { workspace = true }
 cogniverse-vespa = { workspace = true }
 cogniverse-agents = { workspace = true }
+cogniverse-telemetry-phoenix = { workspace = true }
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
