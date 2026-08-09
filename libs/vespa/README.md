@@ -1,478 +1,220 @@
 # Cogniverse Vespa Backend
 
-**Package**: `cogniverse-vespa`
-**Layer**: Implementation Layer (Yellow/Green)
-**Version**: 0.1.0
-
-Multi-tenant Vespa backend implementation providing schema management, document feeding, and search capabilities for the Cogniverse SDK.
-
----
-
-## Purpose
-
-The `cogniverse-vespa` package provides:
-- **VespaBackend**: Primary interface for Vespa operations (feed, search, delete)
-- **Schema Management**: Dynamic schema deployment with tenant isolation
-- **Multi-Tenant Support**: Automatic tenant suffix appending to schema names
-- **JSON Schema Parsing**: Convert JSON schema definitions to PyVespa objects
-
----
-
-## Architecture
-
-### Position in 10-Package Structure
-
-```
-Foundation Layer (Blue)
-├── cogniverse-sdk
-└── cogniverse-foundation ← cogniverse-vespa depends on this
-
-Core Layer (Pink)
-├── cogniverse-core ← cogniverse-vespa depends on this
-├── cogniverse-evaluation
-└── cogniverse-telemetry-phoenix
-
-Implementation Layer (Yellow/Green)
-├── cogniverse-agents
-├── cogniverse-vespa ← YOU ARE HERE
-└── cogniverse-synthetic
-
-Application Layer (Light Blue/Purple)
-├── cogniverse-runtime
-└── cogniverse-dashboard
-```
-
-### Dependencies
-
-**Workspace Dependencies:**
-- `cogniverse-core` (required) - Configuration, agent context, memory
-- `cogniverse-foundation` (transitive) - Base configuration and telemetry
-
-**External Dependencies:**
-- `pyvespa>=0.44.0` - Official Vespa Python client
-- `requests>=2.31.0` - HTTP requests for Vespa API
-- `httpx>=0.25.0` - Async HTTP client
-
----
-
-## Key Features
-
-### 1. Multi-Tenant Schema Management
-
-Automatically appends tenant suffixes to schema names via `VespaSchemaManager`:
-
-```python
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-# Initialize schema manager (backend_endpoint and backend_port are REQUIRED)
-schema_manager = VespaSchemaManager(
-    backend_endpoint="http://localhost",
-    backend_port=8080,
-)
-
-# Get tenant-specific schema name (colon → underscore)
-schema_name = schema_manager.get_tenant_schema_name(
-    tenant_id="acme_corp",
-    base_schema_name="video_colpali_smol500_mv_frame"
-)
-# Returns: "video_colpali_smol500_mv_frame_acme_corp"
-# For "acme:production": "video_colpali_smol500_mv_frame_acme_production"
-```
-
-### 2. Dynamic Schema Deployment
-
-```python
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-
-# Parse JSON schema definition
-parser = JsonSchemaParser()
-schema = parser.load_schema_from_json_file("configs/schemas/video_colpali_smol500_mv_frame_schema.json")
-
-# Deploy schema — schema_registry required for tenant operations
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from cogniverse_core.registries.schema_registry import SchemaRegistry
-from cogniverse_foundation.config.utils import create_default_config_manager
-from pathlib import Path
-
-config_manager = create_default_config_manager()
-schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
-schema_registry = SchemaRegistry(config_manager=config_manager, backend=None, schema_loader=schema_loader)
-
-manager = VespaSchemaManager(
-    backend_endpoint="http://localhost",
-    backend_port=8080,
-    schema_loader=schema_loader,
-    schema_registry=schema_registry,
-)
-
-# Delete tenant schemas (unregisters from registry, then immediately redeploys to Vespa
-# with allow_schema_removal=True so Vespa accepts the content type removal)
-deleted = manager.delete_tenant_schemas(tenant_id="acme_corp")
-# Returns: ["video_colpali_smol500_mv_frame_acme_corp", ...]
-```
-
-### 3. Document Operations
-
-```python
-from cogniverse_vespa.backend import VespaBackend
-from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from pathlib import Path
-
-config_manager = create_default_config_manager()
-schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
-
-backend = VespaBackend(
-    backend_config={"url": "http://localhost", "port": 8080},
-    schema_loader=schema_loader,
-    config_manager=config_manager,
-)
-
-# Feed documents (synchronous)
-backend.feed_datapoint(
-    doc_id="video1",
-    data={"title": "ML Tutorial", "embedding": [0.1, 0.2]},
-    schema_name="video_colpali_smol500_mv_frame_acme_corp",
-)
-
-# Search documents (synchronous)
-results = backend.search(
-    query_dict={"query": "machine learning", "schema": "video_colpali_smol500_mv_frame_acme_corp"},
-    tenant_id="acme_corp",
-)
-```
-
-### 4. Tenant Schema Operations
-
-```python
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-# Full initialization with schema_registry for tenant operations
-manager = VespaSchemaManager(
-    backend_endpoint="http://localhost",
-    backend_port=8080,
-    schema_loader=schema_loader,
-    schema_registry=schema_registry,
-)
-
-# Check if tenant schema exists
-exists = manager.tenant_schema_exists(
-    tenant_id="acme_corp",
-    base_schema_name="video_colpali_smol500_mv_frame"
-)
-
-# Delete tenant schemas (immediately redeploys to Vespa without deleted schemas)
-deleted = manager.delete_tenant_schemas(tenant_id="acme_corp")
-# Returns: List of deleted schema names
-```
-
----
+`cogniverse-vespa` implements Cogniverse document ingestion, search, tenant
+schema management, configuration storage, and adapter storage on Vespa.
 
 ## Installation
 
-### Development (Editable Mode)
+From the workspace root:
 
 ```bash
-# From workspace root
 uv sync
+```
 
-# Or install individually
+To install only this package in editable mode:
+
+```bash
 uv pip install -e libs/vespa
 ```
 
-### Production
+The package declares its direct workspace dependencies
+(`cogniverse-sdk`, `cogniverse-core`, and `cogniverse-foundation`) and its
+direct external dependencies (`pyvespa`, `numpy`, `pydantic`, and `requests`).
+
+## Package structure
+
+| Module | Responsibility |
+| --- | --- |
+| `backend.py` | Registry-facing `VespaBackend` for ingestion, search, schema operations, raw document operations, and lifecycle management |
+| `ingestion_client.py` | `VespaPyClient` document mapping plus synchronous and asynchronous pyvespa feeds |
+| `search_backend.py` | Profile-aware queries, result conversion, connection pooling, metrics, health checks, and embedding export |
+| `vespa_schema_manager.py` | Application-package deployment and tenant schema creation, discovery, and deletion |
+| `json_schema_parser.py` and `metadata_schemas.py` | Conversion of repository JSON schemas to pyvespa objects and assembly of the four management schemas |
+| `ranking_strategy_extractor.py` and `strategy_aware_processor.py` | Ranking-profile inspection and selection of the embedding fields required during ingestion and search |
+| `embedding_processor.py` | Single-vector and multi-vector float or binary embedding conversion |
+| `config/config_store.py` | Versioned tenant configuration persistence through `VespaConfigStore` |
+| `registry/adapter_store.py` | Adapter metadata persistence and activation through `VespaAdapterStore` |
+| `memory_config.py` | Strict `VespaConfig` model for vector-store connection settings |
+| `config_utils.py` | Data-port and config-server-port conventions |
+| `_vespa_factory.py` and `_yql.py` | Internal persistent-client, fail-fast response, and YQL-quoting helpers |
+
+## Backend setup
+
+Use `BackendRegistry` to construct an initialized backend. The registry wires
+the schema registry and shares the backend instance with other Cogniverse
+components.
+
+`create_default_config_manager()` reads the Vespa data endpoint from the
+bootstrap environment:
 
 ```bash
-pip install cogniverse-vespa
-
-# Automatically installs:
-# - cogniverse-core
-# - cogniverse-foundation
-# - pyvespa
-# - requests
-# - httpx
+export BACKEND_URL="http://localhost"
+export BACKEND_PORT="8080"
 ```
 
----
-
-## Usage
-
-### Basic Setup
-
 ```python
-from cogniverse_vespa.backend import VespaBackend
-from cogniverse_foundation.config.utils import create_default_config_manager
+from pathlib import Path
+
+from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from pathlib import Path
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize dependencies
+tenant_id = "acme:production"
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 config_manager = create_default_config_manager()
-schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
 
-# Initialize backend
-backend = VespaBackend(
-    backend_config={"url": "http://localhost", "port": 8080},
-    schema_loader=schema_loader,
+backend = BackendRegistry.get_instance().get_ingestion_backend(
+    name="vespa",
+    tenant_id=tenant_id,
+    config={
+        "backend": {
+            "url": "http://localhost",
+            "port": 8080,
+            "config_port": 19071,
+            "profiles": {
+                "agent_memories": {
+                    "type": "document",
+                    "schema_name": "agent_memories",
+                }
+            },
+        }
+    },
     config_manager=config_manager,
-)
-```
-
-### Feed Documents
-
-```python
-backend.feed_datapoint(
-    doc_id="video_001",
-    data={
-        "title": "Machine Learning Basics",
-        "embedding": [0.1, 0.2, ...],  # vector matching schema dimension
-    },
-    schema_name="video_colpali_smol500_mv_frame_acme_corp",
-)
-```
-
-### Search Documents
-
-```python
-# Construct query dict for Vespa YQL
-results = backend.search(
-    query_dict={
-        "query": "machine learning tutorial",
-        "schema": "video_colpali_smol500_mv_frame_acme_corp",
-        "hits": 10,
-    },
-    tenant_id="acme_corp",
-)
-
-for result in results:
-    print(f"Document: {result.get('id')}, Score: {result.get('relevance')}")
-```
-
-### Deploy Tenant Schemas
-
-```python
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-from cogniverse_core.registries.schema_registry import SchemaRegistry
-from pathlib import Path
-
-schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
-schema_registry = SchemaRegistry(
-    config_manager=config_manager, backend=None, schema_loader=schema_loader
-)
-
-manager = VespaSchemaManager(
-    backend_endpoint="http://localhost",
-    backend_port=8080,
     schema_loader=schema_loader,
-    schema_registry=schema_registry,
 )
-
-# Delete tenant schemas — immediately redeploys Vespa without the removed schemas
-deleted = manager.delete_tenant_schemas(tenant_id="acme_corp")
-print(f"Deleted schemas: {deleted}")
 ```
 
----
+The content endpoint and config server are separate boundaries. `port` is the
+Vespa content port; `config_port` is the Vespa config-server port.
+
+## Tenant schemas
+
+Tenant IDs are canonicalized before they are used in schema names:
+
+| Input tenant | Canonical tenant | Schema suffix |
+| --- | --- | --- |
+| `acme` | `acme:acme` | `acme_acme` |
+| `acme:production` | `acme:production` | `acme_production` |
+
+Deploy a base schema through the backend's schema registry, then ask the
+backend for the physical tenant schema:
+
+```python
+backend.schema_registry.deploy_schema(
+    tenant_id=tenant_id,
+    base_schema_name="agent_memories",
+)
+tenant_schema = backend.get_tenant_schema_name(tenant_id, "agent_memories")
+assert tenant_schema == "agent_memories_acme_production"
+```
+
+Deployment preserves registered and live schemas. If either registry
+enumeration or Vespa document-type enumeration fails, deployment raises
+instead of treating the unavailable source as empty.
+
+Tenant deletion first removes the schema from Vespa and then records the
+registry tombstone. A tombstone failure is reported to the caller and can be
+retried even when Vespa has already removed the schema. A returned `[]` means
+there was no live schema left to remove; it does not hide registry errors.
+
+## Raw document operations
+
+The public raw-field methods exercise Vespa's document API without going
+through a model-dependent ingestion pipeline:
+
+```python
+fields = {
+    "id": "memory-42",
+    "text": "The deployment completed at 09:15 UTC.",
+    "user_id": "operator-7",
+    "agent_id": "release-agent",
+    "metadata_": '{"tenant_id":"acme:production"}',
+    "created_at": 1785038100000,
+    "embedding": [0.0] * 768,
+}
+
+backend.put_document_fields(
+    "memory-42",
+    fields,
+    schema_name=tenant_schema,
+    namespace="memory_content",
+)
+
+stored = backend.get_document_fields(
+    "memory-42",
+    schema_name=tenant_schema,
+    namespace="memory_content",
+)
+assert stored["text"] == fields["text"]
+
+backend.delete_document_fields(
+    "memory-42",
+    schema_name=tenant_schema,
+    namespace="memory_content",
+)
+```
+
+Point reads should always pass both the physical schema and namespace. A
+genuine 404 maps to `None` for `get_document_fields`. The mapped
+`delete_document` operation treats a genuine 404 as idempotent; transport
+failures and other non-success statuses raise.
+
+## Search
+
+Search uses a configured backend profile and always requires a tenant:
+
+```python
+import numpy as np
+
+query_embedding = np.asarray([1.0] + [0.0] * 767, dtype=np.float32)
+results = backend.search(
+    {
+        "query": "deployment completion time",
+        "type": "document",
+        "profile": "agent_memories",
+        "strategy": "semantic_search",
+        "tenant_id": tenant_id,
+        "top_k": 5,
+        "query_embeddings": query_embedding,
+    }
+)
+```
+
+The result is a list of `cogniverse_sdk.document.SearchResult` values in Vespa
+ranking order. Missing or malformed hits, root-level Vespa errors, and
+degraded coverage raise; they are not converted into an empty result set.
+
+Tenant profile definitions override same-named global profiles. The search
+request uses one immutable profile snapshot, so a concurrent profile update
+cannot mix schema and ranking settings within a single request.
+
+## Health and lifecycle
+
+After the lazy search backend has been constructed, `backend.health_check()`
+probes Vespa and rejects non-200 responses, root errors, and degraded coverage.
+Before that search path exists, it reports whether schema management was
+initialized; it does not issue a network probe.
+
+`backend.close()` closes the search connection pool and cached document
+sessions. Once a pool is closed, waiting and future acquisitions fail rather
+than reusing a connection after shutdown.
 
 ## Development
 
-### Running Tests
+Always run Python commands through `uv`:
 
 ```bash
-# Run Vespa-specific tests
-uv run pytest tests/backends/unit/ -v -k vespa
-
-# Run integration tests (requires Vespa running)
-uv run pytest tests/backends/integration/ -v -k vespa
+uv run ruff check libs/vespa tests/backends
+uv run ruff format --check libs/vespa tests/backends
+uv run pytest tests/backends/unit -v --tb=long
+uv run pytest tests/backends/integration -v --tb=long
 ```
 
-### Local Vespa Instance
+Integration tests manage their own Vespa container and unique host ports.
 
-```bash
-# Start Vespa using Docker
-docker run --detach --name vespa --hostname vespa-container \
-  --publish 8080:8080 --publish 19071:19071 \
-  vespaengine/vespa
+Further details:
 
-# Wait for Vespa to be ready
-curl -s --head http://localhost:19071/ApplicationStatus
-
-# Deploy test schema
-uv run python scripts/deploy_test_schema.py
-```
-
-### Code Style
-
-```bash
-# Format code
-uv run ruff format libs/vespa
-
-# Lint code
-uv run ruff check libs/vespa
-
-# Type check
-uv run mypy libs/vespa
-```
-
----
-
-## Configuration
-
-Configuration is provided via `SystemConfig` from `cogniverse-foundation`:
-
-```python
-from cogniverse_foundation.config.unified_config import SystemConfig
-
-config = SystemConfig(
-    tenant_id="acme_corp",
-    backend_url="http://localhost",
-    backend_port=8080,
-)
-```
-
-### Environment Variables
-
-```bash
-export VESPA_URL="http://localhost:8080"
-export VESPA_CONFIG_URL="http://localhost:19071"
-export TENANT_ID="acme_corp"
-```
-
----
-
-## Schema Format
-
-The production ColPali schema uses
-`TomoroAI/tomoro-colqwen3-embed-4b` with 320-dimensional patch embeddings:
-
-```json
-{
-  "name": "video_colpali_smol500_mv_frame",
-  "document": {
-    "fields": [
-      {
-        "name": "id",
-        "type": "string",
-        "indexing": "summary | attribute"
-      },
-      {
-        "name": "embedding",
-        "type": "tensor<bfloat16>(patch{}, v[320])",
-        "indexing": "summary | attribute | index"
-      },
-      {
-        "name": "title",
-        "type": "string",
-        "indexing": "summary | index"
-      }
-    ]
-  },
-  "rank-profiles": [
-    {
-      "name": "vector_similarity",
-      "first-phase": "closeness(embedding)"
-    }
-  ]
-}
-```
-
----
-
-## Multi-Tenant Naming Convention
-
-The package automatically handles tenant isolation:
-
-| Base Schema | Tenant ID | Actual Schema Name |
-|-------------|-----------|-------------------|
-| `video_colpali_smol500_mv_frame` | `acme_corp` | `video_colpali_smol500_mv_frame_acme_corp` |
-| `video_videoprism_base` | `globex_inc` | `video_videoprism_base_globex_inc` |
-| `agent_memories` | `default` | `agent_memories_default` |
-
-**Key Points:**
-- Schema names ALWAYS include tenant suffix
-- No cross-tenant data access possible
-- Each tenant has isolated document space
-- Same base schema can be deployed for multiple tenants
-
----
-
-## Documentation
-
-- **Architecture**: [10-Package Architecture](../../docs/architecture/10-package-architecture.md)
-- **Multi-Tenant**: [Multi-Tenant Architecture](../../docs/architecture/multi-tenant.md)
-- **Diagrams**: [SDK Architecture Diagrams](../../docs/diagrams/sdk-architecture-diagrams.md)
-- **Vespa Docs**: [PyVespa Documentation](https://pyvespa.readthedocs.io/)
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-**1. Connection Refused**
-```bash
-# Ensure Vespa is running
-curl http://localhost:8080/
-```
-
-**2. Schema Deployment Fails**
-```bash
-# Check config server
-curl http://localhost:19071/ApplicationStatus
-
-# Verify schema JSON is valid
-uv run python -c "import json; json.load(open('schema.json'))"
-```
-
-**3. Tenant Schema Not Found**
-```python
-# Check if tenant schema exists via schema_manager
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-manager = VespaSchemaManager(
-    backend_endpoint="http://localhost",
-    backend_port=8080,
-    schema_registry=schema_registry,
-)
-exists = manager.tenant_schema_exists(
-    tenant_id="acme_corp",
-    base_schema_name="video_colpali_smol500_mv_frame"
-)
-print(f"Schema exists: {exists}")
-```
-
-**4. Document Feed Fails**
-- Check document format matches schema fields
-- Ensure tensor dimensions match the schema definition: production ColPali uses `TomoroAI/tomoro-colqwen3-embed-4b` with 320-dimensional patches; VideoPrism uses 768 dimensions for base and 1024 for large
-
----
-
-## Contributing
-
-```bash
-# Create feature branch
-git checkout -b feature/vespa-improvement
-
-# Make changes
-# ...
-
-# Run tests
-uv run pytest tests/backends/unit/ -v -k vespa
-
-# Submit PR
-```
-
----
-
-## License
-
-MIT License - See [LICENSE](../../LICENSE) for details.
-
----
-
-## Related Packages
-
-- **cogniverse-core**: Multi-agent orchestration (depends on this)
-- **cogniverse-agents**: Agent implementations (depends on this)
-- **cogniverse-synthetic**: Synthetic data generation (depends on this)
-- **cogniverse-runtime**: FastAPI server (depends on this)
+- [Backend module guide](../../docs/modules/backends.md)
+- [Multi-tenant architecture](../../docs/architecture/multi-tenant.md)
+- [Multi-tenant operations](../../docs/operations/multi-tenant-ops.md)
+- [Vespa search strategies](../../docs/testing/vespa_search_strategies.md)

@@ -182,6 +182,49 @@ def test_export_embeddings_no_filters_selects_true(
     assert calls[0]["params"]["selection"] == "true"
 
 
+def test_export_embeddings_raises_on_initial_visit_failure(
+    export_backend: VespaSearchBackend,
+) -> None:
+    response = SimpleNamespace(status_code=503)
+
+    with (
+        patch(
+            "cogniverse_vespa.search_backend.requests.get", return_value=response
+        ) as get,
+        pytest.raises(RuntimeError, match="HTTP 503.*video_frame/docid"),
+    ):
+        export_backend.export_embeddings(schema="video_frame")
+
+    assert get.call_count == 1
+
+
+def test_export_embeddings_raises_instead_of_returning_partial_prefix(
+    export_backend: VespaSearchBackend,
+) -> None:
+    first_page = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "documents": [
+                {"id": "id:content:video_frame::first", "fields": {"value": 1}}
+            ],
+            "continuation": "next-page",
+        },
+    )
+    failed_page = SimpleNamespace(status_code=504)
+
+    with (
+        patch(
+            "cogniverse_vespa.search_backend.requests.get",
+            side_effect=[first_page, failed_page],
+        ) as get,
+        pytest.raises(RuntimeError, match="HTTP 504.*video_frame/docid"),
+    ):
+        export_backend.export_embeddings(schema="video_frame")
+
+    assert get.call_count == 2
+    assert get.call_args_list[1].kwargs["params"]["continuation"] == "next-page"
+
+
 @pytest.mark.parametrize(
     "bad_key",
     [
