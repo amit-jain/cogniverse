@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
     DSPyModuleConfig,
@@ -16,6 +17,8 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_sdk.interfaces.workflow_store import (
     WorkflowExecution,
+    WorkflowLearningState,
+    WorkflowTemplate,
 )
 from cogniverse_synthetic.generators import (
     ProfileGenerator,
@@ -26,6 +29,7 @@ from cogniverse_synthetic.generators import (
 from cogniverse_synthetic.schemas import (
     ProfileSelectionExampleSchema,
     RoutingExperienceSchema,
+    SyntheticDataResponse,
     WorkflowExecutionSchema,
 )
 from cogniverse_synthetic.utils import AgentInferrer, PatternExtractor
@@ -45,6 +49,20 @@ def create_routing_config():
         },
     )
 
+
+UNOBSERVED_WORKFLOW_SEMANTICS = {
+    "execution_time": "unobserved_zero_sentinel",
+    "success": "unobserved_false_sentinel",
+    "parallel_efficiency": "unobserved_zero_sentinel",
+    "confidence_score": "unobserved_zero_sentinel",
+}
+
+OBSERVED_WORKFLOW_SEMANTICS = {
+    "execution_time": "observed_duration_seconds",
+    "success": "observed_execution_outcome",
+    "parallel_efficiency": "observed_parallel_efficiency",
+    "confidence_score": "observed_confidence_score",
+}
 
 CONFIGURED_AGENTS = {
     "search_agent": {
@@ -1027,6 +1045,551 @@ class TestWorkflowGeneratorIntegration:
             "WorkflowGenerator generated 3 unique grounded examples but "
             "target_count=4; source_context=3 unique source-workflow queries"
         )
+
+    @pytest.mark.asyncio
+    async def test_workflow_intelligence_persists_generated_plan_for_serving(
+        self, monkeypatch
+    ):
+        example = (
+            await WorkflowGenerator(
+                agent_inferrer=configured_agent_inferrer()
+            ).generate(
+                sampled_content=[video_workflow_sample("Marie Curie radium")],
+                target_count=1,
+            )
+        )[0]
+        response = SyntheticDataResponse(
+            optimizer="workflow",
+            schema_name="WorkflowExecutionSchema",
+            count=1,
+            selected_profiles=["video_frames"],
+            profile_selection_reasoning="Selected source video profile",
+            data=[example.model_dump(mode="python")],
+            metadata={"sampled_content_count": 1},
+        )
+
+        class StaticSyntheticDataService:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def generate(self, _request):
+                return response
+
+        import cogniverse_synthetic
+
+        monkeypatch.setattr(
+            cogniverse_synthetic,
+            "SyntheticDataService",
+            StaticSyntheticDataService,
+        )
+
+        class TemplateStore:
+            def __init__(self):
+                self.templates = {}
+
+            async def save_generated_templates(self, _tenant_id, templates):
+                for template in templates:
+                    self.templates[template.template_id] = template
+                return [template.template_id for template in templates]
+
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        store = TemplateStore()
+        intelligence._store = store
+
+        added = await intelligence.generate_synthetic_training_data(
+            count=1,
+            backend=object(),
+            backend_config={"profiles": {"video_frames": {}}},
+            generator_config=object(),
+            agents_config=CONFIGURED_AGENTS,
+        )
+
+        assert added == 1
+        assert list(intelligence.workflow_history) == []
+        assert dict(intelligence.query_type_patterns) == {}
+        assert len(store.templates) == 1
+        template = next(iter(store.templates.values()))
+        assert intelligence.workflow_templates == {template.template_id: template}
+        assert template.query_patterns == ["find Marie Curie radium"]
+        assert template.task_sequence == [
+            {"agent": "search_agent", "task": "process", "dependencies": []}
+        ]
+        assert template.expected_execution_time is None
+        assert template.success_rate is None
+        assert (
+            intelligence._find_matching_template("find Marie Curie radium") is template
+        )
+
+    @pytest.mark.asyncio
+    async def test_workflow_intelligence_rejects_recycled_source_plans_before_save(
+        self, monkeypatch
+    ):
+        examples = await WorkflowGenerator(
+            agent_inferrer=configured_agent_inferrer()
+        ).generate(
+            sampled_content=[video_workflow_sample("Marie Curie radium")],
+            target_count=3,
+        )
+        examples.append(
+            examples[0].model_copy(
+                update={"workflow_id": "synthetic_workflow_recycled_input"}
+            )
+        )
+        response = SyntheticDataResponse(
+            optimizer="workflow",
+            schema_name="WorkflowExecutionSchema",
+            count=4,
+            selected_profiles=["video_frames"],
+            profile_selection_reasoning="Selected source video profile",
+            data=[example.model_dump(mode="python") for example in examples],
+            metadata={"sampled_content_count": 1},
+        )
+
+        class StaticSyntheticDataService:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def generate(self, _request):
+                return response
+
+        class RecordingStore:
+            def __init__(self):
+                self.saved = []
+
+            async def save_generated_templates(self, _tenant_id, templates):
+                self.saved.extend(templates)
+                return [template.template_id for template in templates]
+
+        import cogniverse_synthetic
+
+        monkeypatch.setattr(
+            cogniverse_synthetic,
+            "SyntheticDataService",
+            StaticSyntheticDataService,
+        )
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        store = RecordingStore()
+        intelligence._store = store
+
+        with pytest.raises(
+            RuntimeError,
+            match="Synthetic workflow response produced 3 unique grounded plans; expected 4",
+        ):
+            await intelligence.generate_synthetic_training_data(
+                count=4,
+                backend=object(),
+                backend_config={"profiles": {"video_frames": {}}},
+                generator_config=object(),
+                agents_config=CONFIGURED_AGENTS,
+            )
+
+        assert store.saved == []
+        assert intelligence.workflow_templates == {}
+
+    @pytest.mark.asyncio
+    async def test_generated_plan_save_failure_restores_prior_templates(
+        self, monkeypatch
+    ):
+        examples = await WorkflowGenerator(
+            agent_inferrer=configured_agent_inferrer()
+        ).generate(
+            sampled_content=[video_workflow_sample("Marie Curie radium")],
+            target_count=2,
+        )
+        response = SyntheticDataResponse(
+            optimizer="workflow",
+            schema_name="WorkflowExecutionSchema",
+            count=2,
+            selected_profiles=["video_frames"],
+            profile_selection_reasoning="Selected source video profile",
+            data=[example.model_dump(mode="python") for example in examples],
+            metadata={"sampled_content_count": 1},
+        )
+
+        class StaticSyntheticDataService:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def generate(self, _request):
+                return response
+
+        prior = WorkflowTemplate(
+            template_id="prior-template",
+            name="prior workflow",
+            description="Previously persisted observed workflow",
+            query_patterns=["find prior source"],
+            task_sequence=[
+                {"agent": "search_agent", "task": "process", "dependencies": []}
+            ],
+            expected_execution_time=1.25,
+            success_rate=0.9,
+        )
+
+        class FailingReplacementTemplateStore:
+            def __init__(self):
+                self.templates = {prior.template_id: prior}
+
+            async def save_generated_templates(self, _tenant_id, _templates):
+                raise TimeoutError("template blob store timed out")
+
+        import cogniverse_synthetic
+
+        monkeypatch.setattr(
+            cogniverse_synthetic,
+            "SyntheticDataService",
+            StaticSyntheticDataService,
+        )
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        store = FailingReplacementTemplateStore()
+        intelligence._store = store
+        intelligence.workflow_templates = {prior.template_id: prior}
+
+        with pytest.raises(TimeoutError, match="template blob store timed out"):
+            await intelligence.generate_synthetic_training_data(
+                count=2,
+                backend=object(),
+                backend_config={"profiles": {"video_frames": {}}},
+                generator_config=object(),
+                agents_config=CONFIGURED_AGENTS,
+            )
+
+        assert store.templates == {prior.template_id: prior}
+        assert intelligence.workflow_templates == {prior.template_id: prior}
+
+    @pytest.mark.asyncio
+    async def test_concurrent_generated_plan_retries_serialize_template_writes(
+        self, monkeypatch
+    ):
+        examples = await WorkflowGenerator(
+            agent_inferrer=configured_agent_inferrer()
+        ).generate(
+            sampled_content=[video_workflow_sample("Marie Curie radium")],
+            target_count=2,
+        )
+        response = SyntheticDataResponse(
+            optimizer="workflow",
+            schema_name="WorkflowExecutionSchema",
+            count=2,
+            selected_profiles=["video_frames"],
+            profile_selection_reasoning="Selected source video profile",
+            data=[example.model_dump(mode="python") for example in examples],
+            metadata={"sampled_content_count": 1},
+        )
+
+        class StaticSyntheticDataService:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def generate(self, _request):
+                await asyncio.sleep(0)
+                return response
+
+        class InterleavingStore:
+            def __init__(self):
+                self.templates = {}
+                self.active_batches = 0
+                self.max_active_batches = 0
+                self.lock = asyncio.Lock()
+
+            async def save_generated_templates(self, _tenant_id, templates):
+                async with self.lock:
+                    self.active_batches += 1
+                    self.max_active_batches = max(
+                        self.max_active_batches,
+                        self.active_batches,
+                    )
+                    await asyncio.sleep(0.01)
+                    for template in templates:
+                        self.templates[template.template_id] = template
+                    self.active_batches -= 1
+                    return [template.template_id for template in templates]
+
+        import cogniverse_synthetic
+
+        monkeypatch.setattr(
+            cogniverse_synthetic,
+            "SyntheticDataService",
+            StaticSyntheticDataService,
+        )
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        store = InterleavingStore()
+        intelligence._store = store
+        call = {
+            "count": 2,
+            "backend": object(),
+            "backend_config": {"profiles": {"video_frames": {}}},
+            "generator_config": object(),
+            "agents_config": CONFIGURED_AGENTS,
+        }
+
+        counts = await asyncio.gather(
+            intelligence.generate_synthetic_training_data(**call),
+            intelligence.generate_synthetic_training_data(**call),
+        )
+
+        assert counts == [2, 2]
+        assert store.max_active_batches == 1
+        assert len(store.templates) == 2
+        assert set(store.templates) == set(intelligence.workflow_templates)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_unobserved_workflows_never_enter_history(self):
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        executions = [
+            workflow_execution(
+                f"synthetic-{index}",
+                observed=False,
+                semantics=dict(UNOBSERVED_WORKFLOW_SEMANTICS),
+                query=f"find source {index}",
+            )
+            for index in range(20)
+        ]
+
+        await asyncio.gather(
+            *(intelligence.record_execution(execution) for execution in executions)
+        )
+
+        assert list(intelligence.workflow_history) == []
+        assert dict(intelligence.query_type_patterns) == {}
+
+    @pytest.mark.asyncio
+    async def test_persisted_executions_use_the_validated_recording_path(self):
+        unobserved = workflow_execution(
+            "synthetic-persisted",
+            observed=False,
+            semantics=dict(UNOBSERVED_WORKFLOW_SEMANTICS),
+        )
+        observed = workflow_execution(
+            "observed-persisted",
+            observed=True,
+            semantics=dict(OBSERVED_WORKFLOW_SEMANTICS),
+            success=True,
+            query="show me persisted source footage",
+        )
+
+        class StaticWorkflowStore:
+            async def load_learning_state(self, _tenant_id):
+                return WorkflowLearningState(
+                    executions=[unobserved, observed],
+                    profiles=[],
+                    patterns={"video_search": ["show me persisted source footage"]},
+                    templates=[],
+                )
+
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        intelligence._store = StaticWorkflowStore()
+
+        await intelligence.load_historical_data()
+
+        assert [
+            execution.workflow_id for execution in intelligence.workflow_history
+        ] == ["observed-persisted"]
+        assert dict(intelligence.query_type_patterns) == {
+            "video_search": ["show me persisted source footage"]
+        }
+
+    @pytest.mark.asyncio
+    async def test_persisted_malformed_provenance_fails_without_partial_history(self):
+        observed = workflow_execution(
+            "observed-before-malformed",
+            observed=True,
+            semantics=dict(OBSERVED_WORKFLOW_SEMANTICS),
+            success=True,
+        )
+        malformed = workflow_execution(
+            "synthetic-malformed",
+            observed=False,
+            semantics=None,
+        )
+
+        class StaticWorkflowStore:
+            async def load_learning_state(self, _tenant_id):
+                return WorkflowLearningState(
+                    executions=[observed, malformed],
+                    profiles=[],
+                    patterns={},
+                    templates=[],
+                )
+
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        intelligence._store = StaticWorkflowStore()
+
+        with pytest.raises(ValueError) as error:
+            await intelligence.load_historical_data()
+
+        assert str(error.value) == (
+            "metadata._outcome_metadata.required_field_semantics must be a dict"
+        )
+        assert list(intelligence.workflow_history) == []
+        assert dict(intelligence.query_type_patterns) == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("observed", "semantics", "expected_error"),
+        [
+            (
+                False,
+                None,
+                "metadata._outcome_metadata.required_field_semantics must be a dict",
+            ),
+            (
+                False,
+                {},
+                "metadata._outcome_metadata.required_field_semantics must exactly "
+                "match the observed=false contract",
+            ),
+            (
+                False,
+                {
+                    **UNOBSERVED_WORKFLOW_SEMANTICS,
+                    "success": "observed_execution_outcome",
+                },
+                "metadata._outcome_metadata.required_field_semantics must exactly "
+                "match the observed=false contract",
+            ),
+            (
+                False,
+                {**UNOBSERVED_WORKFLOW_SEMANTICS, "unexpected": "value"},
+                "metadata._outcome_metadata.required_field_semantics must exactly "
+                "match the observed=false contract",
+            ),
+            (
+                True,
+                None,
+                "metadata._outcome_metadata.required_field_semantics must be a dict",
+            ),
+            (
+                True,
+                dict(UNOBSERVED_WORKFLOW_SEMANTICS),
+                "metadata._outcome_metadata.required_field_semantics must exactly "
+                "match the observed=true contract",
+            ),
+            (
+                True,
+                {**OBSERVED_WORKFLOW_SEMANTICS, "unexpected": "value"},
+                "metadata._outcome_metadata.required_field_semantics must exactly "
+                "match the observed=true contract",
+            ),
+        ],
+    )
+    async def test_required_field_semantics_are_exact(
+        self, observed, semantics, expected_error
+    ):
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        execution = workflow_execution(
+            "semantic-contract",
+            observed=observed,
+            semantics=semantics,
+            success=observed,
+        )
+
+        with pytest.raises(ValueError) as error:
+            await intelligence.record_execution(execution)
+
+        assert str(error.value) == expected_error
+        assert list(intelligence.workflow_history) == []
+        assert dict(intelligence.query_type_patterns) == {}
+
+    @pytest.mark.asyncio
+    async def test_observed_execution_accepts_explicit_unobserved_confidence(self):
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        semantics = {
+            **OBSERVED_WORKFLOW_SEMANTICS,
+            "confidence_score": "unobserved_zero_sentinel",
+        }
+        execution = workflow_execution(
+            "observed-without-confidence",
+            observed=True,
+            semantics=semantics,
+            success=True,
+        )
+        execution.confidence_score = 0.0
+
+        await intelligence.record_execution(execution)
+
+        assert [item.workflow_id for item in intelligence.workflow_history] == [
+            "observed-without-confidence"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_malformed_outcome_provenance_fails_before_history_mutation(self):
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        execution = WorkflowExecution(
+            workflow_id="synthetic-malformed",
+            query="find source",
+            query_type="VIDEO",
+            execution_time=0.0,
+            success=False,
+            agent_sequence=["search_agent"],
+            task_count=1,
+            parallel_efficiency=0.0,
+            confidence_score=0.0,
+            metadata={"_outcome_metadata": {"observed": "false"}},
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=r"^metadata\._outcome_metadata\.observed must be a bool$",
+        ):
+            await intelligence.record_execution(execution)
+
+        assert list(intelligence.workflow_history) == []
+        assert dict(intelligence.query_type_patterns) == {}
+
+    @pytest.mark.asyncio
+    async def test_missing_outcome_provenance_fails_before_history_mutation(self):
+        intelligence = WorkflowIntelligence(tenant_id="test:unit")
+        execution = WorkflowExecution(
+            workflow_id="missing-provenance",
+            query="find source footage",
+            query_type="VIDEO",
+            execution_time=1.25,
+            success=True,
+            agent_sequence=["search_agent"],
+            task_count=1,
+            parallel_efficiency=0.75,
+            confidence_score=0.875,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=r"^metadata must contain _outcome_metadata$",
+        ):
+            await intelligence.record_execution(execution)
+
+        assert list(intelligence.workflow_history) == []
+        assert dict(intelligence.query_type_patterns) == {}
+
+    def test_orchestration_span_marks_execution_outcomes_observed(self):
+        from cogniverse_agents.routing.orchestration_evaluator import (
+            OrchestrationEvaluator,
+        )
+
+        evaluator = object.__new__(OrchestrationEvaluator)
+        evaluator.tenant_id = "acme:acme"
+        execution = evaluator._extract_workflow_execution(
+            {
+                "attributes.input.value": "find the Curie laboratory footage",
+                "attributes.output.value": {
+                    "workflow_id": "workflow-observed",
+                    "pattern": "sequential",
+                    "agent_sequence": ["search_agent"],
+                    "execution_order": ["search_agent"],
+                    "execution_time": 1.25,
+                    "success": True,
+                    "tasks_completed": 1,
+                    "confidence": 0.875,
+                },
+                "status_code": "OK",
+                "context.span_id": "span-observed",
+            }
+        )
+
+        assert execution is not None
+        assert execution.metadata["_outcome_metadata"] == {
+            "observed": True,
+            "required_field_semantics": dict(OBSERVED_WORKFLOW_SEMANTICS),
+        }
 
 
 class TestAllGeneratorsTogether:

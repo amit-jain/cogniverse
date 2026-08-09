@@ -8,6 +8,9 @@ Requires Docker to be running. Uses the ``phoenix_container`` and
 ``telemetry_manager_with_phoenix`` fixtures from tests/conftest.py.
 """
 
+import asyncio
+from datetime import datetime, timezone
+
 import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import (
@@ -24,6 +27,35 @@ pytestmark = pytest.mark.integration
 def real_provider(telemetry_manager_with_phoenix):
     """Get a real PhoenixProvider from the telemetry manager."""
     return telemetry_manager_with_phoenix.get_provider(tenant_id="artifact-test")
+
+
+def _observed_workflow_metadata(**metadata):
+    return metadata | {
+        "_outcome_metadata": {
+            "observed": True,
+            "required_field_semantics": {
+                "execution_time": "observed_duration_seconds",
+                "success": "observed_execution_outcome",
+                "parallel_efficiency": "observed_parallel_efficiency",
+                "confidence_score": "observed_confidence_score",
+            },
+        }
+    }
+
+
+def _workflow_template(template_id, query, agent):
+    from cogniverse_sdk.interfaces.workflow_store import WorkflowTemplate
+
+    return WorkflowTemplate(
+        template_id=template_id,
+        name=f"{agent} workflow",
+        description=f"Run {agent} for {query}",
+        query_patterns=[query],
+        task_sequence=[{"agent": agent, "task": "process", "dependencies": []}],
+        expected_execution_time=None,
+        success_rate=None,
+        created_at=datetime(2026, 8, 5, 6, 30, tzinfo=timezone.utc),
+    )
 
 
 class TestArtifactManagerRoundTrip:
@@ -663,7 +695,9 @@ class TestDSPyAgentArtifactRoundTrip:
         assert loaded_demos == injected_demos
 
     @pytest.mark.asyncio
-    async def test_orchestrator_loads_workflow_templates(self, real_provider):
+    async def test_orchestrator_loads_workflow_templates(
+        self, real_provider, workflow_state_redis_url
+    ):
         """Save workflow data → OrchestratorAgent loads via load_historical_data."""
         from datetime import datetime, timezone
         from unittest.mock import Mock, patch
@@ -696,7 +730,11 @@ class TestDSPyAgentArtifactRoundTrip:
         )
         WorkflowStoreRegistry.clear_cache()
         store = WorkflowStoreRegistry.get(
-            name="telemetry", config={"telemetry_provider": real_provider}
+            name="telemetry",
+            config={
+                "telemetry_provider": real_provider,
+                "redis_url": workflow_state_redis_url,
+            },
         )
         await store.save_template(tenant_id, template)
 
@@ -743,7 +781,294 @@ class TestWorkflowStoreRoundTrip:
     """
 
     @pytest.mark.asyncio
-    async def test_save_via_store_load_via_intelligence(self, real_provider):
+    async def test_generated_template_batch_requires_redis_configuration(self):
+        from cogniverse_agents.workflow.telemetry_workflow_store import (
+            TelemetryWorkflowStore,
+        )
+
+        store = TelemetryWorkflowStore(telemetry_provider=object(), redis_url="")
+        template = _workflow_template("requires-redis", "find radium", "search_agent")
+
+        with pytest.raises(
+            RuntimeError,
+            match="requires SystemConfig.redis_url",
+        ):
+            await store.save_generated_templates("acme:prod", [template])
+
+        assert store._am_cache == {}
+
+    @pytest.mark.asyncio
+    async def test_generated_templates_serialize_across_intelligence_instances(
+        self, real_provider, workflow_state_redis_url
+    ):
+        import uuid
+
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_agents.workflow.telemetry_workflow_store import (
+            TelemetryWorkflowStore,
+        )
+
+        tenant_id = f"wf-generated-concurrent-{uuid.uuid4().hex[:8]}"
+        first_store = TelemetryWorkflowStore(
+            telemetry_provider=real_provider,
+            redis_url=workflow_state_redis_url,
+        )
+        second_store = TelemetryWorkflowStore(
+            telemetry_provider=real_provider,
+            redis_url=workflow_state_redis_url,
+        )
+        first_store._TEMPLATE_LOCK_LEASE_MS = 150
+        second_store._TEMPLATE_LOCK_LEASE_MS = 150
+        first_store._TEMPLATE_LOCK_WAIT_SECONDS = 5.0
+        second_store._TEMPLATE_LOCK_WAIT_SECONDS = 5.0
+
+        first_templates = [
+            _workflow_template("first-search", "find radium", "search_agent"),
+            _workflow_template("first-summary", "summarize radium", "summarizer_agent"),
+        ]
+        second_templates = [
+            _workflow_template("second-search", "find polonium", "search_agent"),
+            _workflow_template(
+                "second-report", "report on polonium", "detailed_report_agent"
+            ),
+        ]
+        first_intelligence = WorkflowIntelligence(tenant_id)
+        second_intelligence = WorkflowIntelligence(tenant_id)
+        first_intelligence._store = first_store
+        second_intelligence._store = second_store
+
+        first_entered = asyncio.Event()
+        second_entered = asyncio.Event()
+        release_first = asyncio.Event()
+        real_first_save = first_store._save_template_unlocked
+        real_second_save = second_store._save_template_unlocked
+
+        async def hold_first_write(locked_tenant_id, template):
+            if template.template_id == "first-search":
+                first_entered.set()
+                await release_first.wait()
+            return await real_first_save(locked_tenant_id, template)
+
+        async def record_second_write(locked_tenant_id, template):
+            second_entered.set()
+            return await real_second_save(locked_tenant_id, template)
+
+        first_store._save_template_unlocked = hold_first_write
+        second_store._save_template_unlocked = record_second_write
+        first_task = asyncio.create_task(
+            first_intelligence._persist_generated_templates(first_templates)
+        )
+        await asyncio.wait_for(first_entered.wait(), timeout=10)
+        second_task = asyncio.create_task(
+            second_intelligence._persist_generated_templates(second_templates)
+        )
+        try:
+            await asyncio.sleep(0.4)
+            assert second_entered.is_set() is False
+            assert second_task.done() is False
+        finally:
+            release_first.set()
+
+        results = await asyncio.wait_for(
+            asyncio.gather(first_task, second_task), timeout=60
+        )
+        assert results == [None, None]
+        loaded = {
+            template.template_id: template
+            for template in await first_store.load_templates(tenant_id)
+        }
+        assert loaded == {
+            template.template_id: template
+            for template in [*first_templates, *second_templates]
+        }
+        assert first_intelligence.workflow_templates == {
+            template.template_id: template for template in first_templates
+        }
+        assert second_intelligence.workflow_templates == {
+            template.template_id: template for template in second_templates
+        }
+
+    @pytest.mark.asyncio
+    async def test_generated_template_failure_restores_only_written_content(
+        self, real_provider, workflow_state_redis_url
+    ):
+        import uuid
+
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_agents.workflow.telemetry_workflow_store import (
+            TelemetryWorkflowStore,
+        )
+
+        tenant_id = f"wf-generated-rollback-{uuid.uuid4().hex[:8]}"
+        failing_store = TelemetryWorkflowStore(
+            telemetry_provider=real_provider,
+            redis_url=workflow_state_redis_url,
+        )
+        successful_store = TelemetryWorkflowStore(
+            telemetry_provider=real_provider,
+            redis_url=workflow_state_redis_url,
+        )
+        prior = _workflow_template("replace-me", "find original", "search_agent")
+        unrelated = _workflow_template("unrelated", "find cobalt", "search_agent")
+        replacement = _workflow_template(
+            "replace-me", "summarize replacement", "summarizer_agent"
+        )
+        failed_tail = _workflow_template("failed-tail", "find thorium", "search_agent")
+        concurrent = _workflow_template(
+            "other-pod", "report on uranium", "detailed_report_agent"
+        )
+        await failing_store.save_template(tenant_id, prior)
+        await failing_store.save_template(tenant_id, unrelated)
+
+        first_written = asyncio.Event()
+        concurrent_entered = asyncio.Event()
+        allow_failure = asyncio.Event()
+        boundary_failure = ConnectionError("Phoenix failed on the second template")
+        real_failing_save = failing_store._save_template_unlocked
+        real_successful_save = successful_store._save_template_unlocked
+
+        async def fail_second_write(locked_tenant_id, template):
+            if template.template_id == failed_tail.template_id:
+                await allow_failure.wait()
+                raise boundary_failure
+            stored_id = await real_failing_save(locked_tenant_id, template)
+            if template.template_id == replacement.template_id:
+                first_written.set()
+            return stored_id
+
+        async def record_concurrent_write(locked_tenant_id, template):
+            concurrent_entered.set()
+            return await real_successful_save(locked_tenant_id, template)
+
+        failing_store._save_template_unlocked = fail_second_write
+        successful_store._save_template_unlocked = record_concurrent_write
+        failing_intelligence = WorkflowIntelligence(tenant_id)
+        successful_intelligence = WorkflowIntelligence(tenant_id)
+        failing_intelligence._store = failing_store
+        successful_intelligence._store = successful_store
+        failing_intelligence.workflow_templates = {
+            prior.template_id: prior,
+            unrelated.template_id: unrelated,
+        }
+
+        failing_task = asyncio.create_task(
+            failing_intelligence._persist_generated_templates(
+                [replacement, failed_tail]
+            )
+        )
+        await asyncio.wait_for(first_written.wait(), timeout=30)
+        successful_task = asyncio.create_task(
+            successful_intelligence._persist_generated_templates([concurrent])
+        )
+        try:
+            await asyncio.sleep(0.2)
+            assert concurrent_entered.is_set() is False
+            assert successful_task.done() is False
+        finally:
+            allow_failure.set()
+
+        failure_result, success_result = await asyncio.wait_for(
+            asyncio.gather(failing_task, successful_task, return_exceptions=True),
+            timeout=60,
+        )
+        assert failure_result is boundary_failure
+        assert success_result is None
+        loaded = {
+            template.template_id: template
+            for template in await successful_store.load_templates(tenant_id)
+        }
+        assert loaded == {
+            prior.template_id: prior,
+            unrelated.template_id: unrelated,
+            concurrent.template_id: concurrent,
+        }
+        assert failing_intelligence.workflow_templates == {
+            prior.template_id: prior,
+            unrelated.template_id: unrelated,
+        }
+        assert successful_intelligence.workflow_templates == {
+            concurrent.template_id: concurrent
+        }
+
+    @pytest.mark.asyncio
+    async def test_live_parallel_execution_round_trip(
+        self, real_provider, workflow_state_redis_url
+    ):
+        import uuid
+        from datetime import timezone
+
+        from cogniverse_agents.routing.orchestration_evaluator import (
+            OrchestrationEvaluator,
+        )
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_core.registries import WorkflowStoreRegistry
+
+        tenant_id = f"wf-live-rt-{uuid.uuid4().hex[:8]}"
+        evaluator = object.__new__(OrchestrationEvaluator)
+        evaluator.tenant_id = tenant_id
+        execution = evaluator._extract_workflow_execution(
+            {
+                "attributes.input.value": "find videos and documents about Curie",
+                "attributes.output.value": {
+                    "workflow_id": "wf-live-parallel",
+                    "pattern": "parallel",
+                    "agent_sequence": ["search_agent", "document_agent"],
+                    "execution_order": ["search_agent", "document_agent"],
+                    "execution_time": 1.0,
+                    "success": True,
+                    "tasks_completed": 2,
+                },
+                "context.span_id": "span-live-parallel",
+            }
+        )
+
+        assert execution is not None
+        assert execution.parallel_efficiency == 0.0
+        assert execution.confidence_score == 0.0
+        assert execution.success is True
+        assert execution.timestamp.tzinfo is timezone.utc
+        assert execution.metadata == {
+            "orchestration_pattern": "parallel",
+            "execution_order": ["search_agent", "document_agent"],
+            "tasks_completed": 2,
+            "span_id": "span-live-parallel",
+            "tenant_id": tenant_id,
+            "_outcome_metadata": {
+                "observed": True,
+                "required_field_semantics": {
+                    "execution_time": "observed_duration_seconds",
+                    "success": "observed_execution_outcome",
+                    "parallel_efficiency": "unobserved_zero_sentinel",
+                    "confidence_score": "unobserved_zero_sentinel",
+                },
+            },
+        }
+
+        WorkflowStoreRegistry.clear_cache()
+        store = WorkflowStoreRegistry.get(
+            name="telemetry",
+            config={
+                "telemetry_provider": real_provider,
+                "redis_url": workflow_state_redis_url,
+            },
+        )
+        await store.save_executions(tenant_id, [execution])
+
+        loaded = await store.load_executions(tenant_id)
+        assert [record.to_dict() for record in loaded] == [execution.to_dict()]
+        assert loaded[0].timestamp.tzinfo is timezone.utc
+        assert loaded[0].metadata == execution.metadata
+
+        intelligence = WorkflowIntelligence(tenant_id)
+        await intelligence.load_historical_data()
+        assert [record.to_dict() for record in intelligence.workflow_history] == [
+            execution.to_dict()
+        ]
+
+    @pytest.mark.asyncio
+    async def test_save_via_store_load_via_intelligence(
+        self, real_provider, workflow_state_redis_url
+    ):
         import uuid
         from datetime import datetime, timezone
 
@@ -771,7 +1096,7 @@ class TestWorkflowStoreRoundTrip:
                 user_satisfaction=0.75,
                 error_details=None,
                 timestamp=datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
-                metadata={"source": "roundtrip"},
+                metadata=_observed_workflow_metadata(source="roundtrip"),
             )
         ]
         profiles = [
@@ -806,7 +1131,11 @@ class TestWorkflowStoreRoundTrip:
         # provider is not shadowed by an instance another test cached.
         WorkflowStoreRegistry.clear_cache()
         store = WorkflowStoreRegistry.get(
-            name="telemetry", config={"telemetry_provider": real_provider}
+            name="telemetry",
+            config={
+                "telemetry_provider": real_provider,
+                "redis_url": workflow_state_redis_url,
+            },
         )
         await store.save_executions(tenant_id, executions)
         await store.save_agent_profiles(tenant_id, profiles)
@@ -865,7 +1194,7 @@ class TestWorkflowStoreRoundTrip:
             user_satisfaction=0.7,
             error_details=None,
             timestamp=datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc),
-            metadata={},
+            metadata=_observed_workflow_metadata(),
         )
         profile = AgentPerformance(
             agent_name="video_search_agent",
@@ -1373,7 +1702,9 @@ class TestArtifactAffectsBehavior:
         )
 
     @pytest.mark.asyncio
-    async def test_orchestrator_template_affects_planning(self, real_provider):
+    async def test_orchestrator_template_affects_planning(
+        self, real_provider, workflow_state_redis_url
+    ):
         """Loaded workflow template should be matched and injected into plan context.
 
         Saves a template with query_patterns that match "find cooking videos",
@@ -1412,7 +1743,11 @@ class TestArtifactAffectsBehavior:
         )
         WorkflowStoreRegistry.clear_cache()
         store = WorkflowStoreRegistry.get(
-            name="telemetry", config={"telemetry_provider": real_provider}
+            name="telemetry",
+            config={
+                "telemetry_provider": real_provider,
+                "redis_url": workflow_state_redis_url,
+            },
         )
         await store.save_template(tenant_id, template)
 

@@ -472,6 +472,7 @@ from cogniverse_sdk.interfaces.workflow_store import (
     WorkflowStore,
     WorkflowExecution,
     AgentPerformance,
+    WorkflowLearningState,
     WorkflowTemplate,
 )
 
@@ -513,7 +514,26 @@ class WorkflowStore(ABC):
     ) -> None: ...
 
     @abstractmethod
+    async def replace_learning_state(
+        self,
+        tenant_id: str,
+        executions: List[WorkflowExecution],
+        profiles: List[AgentPerformance],
+        patterns: Dict[str, List[str]],
+        templates: List[WorkflowTemplate],
+    ) -> None: ...
+
+    @abstractmethod
+    async def load_learning_state(
+        self, tenant_id: str
+    ) -> WorkflowLearningState: ...
+
+    @abstractmethod
     async def save_template(self, tenant_id: str, template: WorkflowTemplate) -> str: ...
+    @abstractmethod
+    async def save_generated_templates(
+        self, tenant_id: str, templates: List[WorkflowTemplate]
+    ) -> List[str]: ...
     @abstractmethod
     async def load_templates(self, tenant_id: str) -> List[WorkflowTemplate]: ...
     @abstractmethod
@@ -531,6 +551,13 @@ different tenants retain independent locks. If a forward write fails, every
 restore step is attempted. A successful restore re-raises the forward error; if
 any restore also fails, an `ExceptionGroup` contains the forward error followed
 by each restore error.
+
+The live optimizer and serving loader use `replace_learning_state()` and
+`load_learning_state()`. The telemetry implementation holds one renewable
+per-tenant Redis lease across all four Phoenix channels, including replacement
+compensation and complete-state reads. A load therefore returns one generation;
+it cannot combine executions or profiles from one replacement with patterns or
+templates from another.
 
 **Data Classes:**
 ```python
@@ -822,6 +849,7 @@ cogniverse_sdk/
 - `WorkflowExecution`: Dataclass for a historical workflow execution
 - `AgentPerformance`: Dataclass for an agent performance profile
 - `WorkflowTemplate`: Dataclass for a reusable workflow template
+- `WorkflowLearningState`: Dataclass containing one complete four-channel generation
 
 **Methods** (data methods are async; save methods replace the tenant's set):
 
@@ -834,13 +862,20 @@ cogniverse_sdk/
   mapping; same-tenant calls are serialized, executions are written last, and
   every prior channel is restored after a failure. Restore failures are
   collected with the forward error in an `ExceptionGroup`.
+- `replace_learning_state(tenant_id, executions, profiles, patterns, templates)`:
+  replace all four channels under the implementation's distributed tenant lock,
+  restoring the complete prior generation before propagating a failed write
+- `load_learning_state(tenant_id)`: load one coherent four-channel generation
+  under the same distributed tenant lock used by replacement
 - `save_template(tenant_id, template)`: Create or update a template
+- `save_generated_templates(tenant_id, templates)`: Persist one generated batch
+  atomically and return its template IDs in input order
 - `load_templates(tenant_id)`: Load all templates for tenant
 - `delete_template(tenant_id, template_id)`: Delete a template by id
 - `health_check()`: Check storage health
 - `get_stats()`: Get storage statistics
 
-**Lines of Code**: ~191
+**Lines of Code**: ~470
 
 #### `interfaces/adapter_store.py`
 **Purpose**: Adapter registry and activation management
@@ -1229,9 +1264,9 @@ video_doc = Document(
     }
 )
 
-# Add frame-based embeddings (ColPali)
-colpali_embeddings = np.random.randn(100, 768)  # 100 frames, 768 dims
-video_doc.add_embedding("colpali_frame", colpali_embeddings)
+# Add one frame's ColPali/ColQwen3 patch embeddings
+colpali_embeddings = np.random.randn(1024, 320)  # 1024 patches, 320 dims
+video_doc.add_embedding("colpali_patch", colpali_embeddings)
 
 # Add global embeddings (VideoPrism)
 videoprism_embedding = np.random.randn(768)  # Global video embedding
@@ -1263,7 +1298,7 @@ image_doc = Document(
 )
 
 # Add image embeddings (ColQwen)
-colqwen_embedding = np.random.randn(768)
+colqwen_embedding = np.random.randn(1024, 320)
 image_doc.add_embedding("colqwen", colqwen_embedding)
 
 # ===== DOCUMENT CONTENT =====

@@ -239,20 +239,30 @@ class TestXGBoostMetaModelRoundTrip:
 
 
 class TestWorkflowIntelligenceRoundTrip:
-    """Verify WorkflowIntelligence is now a read-only template loader.
+    """Verify WorkflowIntelligence loads typed records from its workflow store.
 
-    Inline recording/persistence was removed — record_execution and
-    record_workflow_execution are no-ops. Templates and executions are
-    loaded from artifacts persisted by batch Argo jobs.
+    ``record_execution`` updates only in-memory learning state. Batch jobs persist
+    workflow records through ``WorkflowStore`` and serving instances load them at
+    startup.
     """
 
     @pytest.mark.asyncio
-    async def test_record_execution_is_noop(self, real_provider):
-        """record_execution no longer persists inline."""
+    async def test_execution_utc_round_trip_through_workflow_store(
+        self, real_provider, workflow_state_redis_url
+    ):
+        """An explicitly UTC execution retains its timestamp through Phoenix."""
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_agents.workflow.telemetry_workflow_store import (
+            TelemetryWorkflowStore,
+        )
         from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 
-        wi = WorkflowIntelligence(tenant_id="wi-exec-test")
+        tenant_id = f"wi-exec-{uuid.uuid4().hex[:8]}"
+        store = TelemetryWorkflowStore(
+            telemetry_provider=real_provider,
+            redis_url=workflow_state_redis_url,
+        )
+        timestamp = datetime.now(timezone.utc)
 
         execution = WorkflowExecution(
             workflow_id=f"wf-{uuid.uuid4().hex[:8]}",
@@ -264,21 +274,58 @@ class TestWorkflowIntelligenceRoundTrip:
             task_count=2,
             parallel_efficiency=0.85,
             confidence_score=0.92,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=timestamp,
+            metadata={
+                "_outcome_metadata": {
+                    "observed": True,
+                    "required_field_semantics": {
+                        "execution_time": "observed_duration_seconds",
+                        "success": "observed_execution_outcome",
+                        "parallel_efficiency": "observed_parallel_efficiency",
+                        "confidence_score": "observed_confidence_score",
+                    },
+                }
+            },
         )
 
-        # record_execution stores to in-memory workflow_history
-        await wi.record_execution(execution)
-        assert len(wi.workflow_history) == 1
-        assert wi.workflow_history[0].workflow_id == execution.workflow_id
-        assert wi.workflow_history[0].timestamp == execution.timestamp
+        await store.save_executions(tenant_id, [execution])
+        loaded = await store.load_executions(tenant_id)
+
+        assert [record.to_dict() for record in loaded] == [execution.to_dict()]
+        assert loaded[0].timestamp == timestamp
+        assert loaded[0].timestamp.tzinfo is timezone.utc
+        assert loaded[0].metadata["_outcome_metadata"] == {
+            "observed": True,
+            "required_field_semantics": {
+                "execution_time": "observed_duration_seconds",
+                "success": "observed_execution_outcome",
+                "parallel_efficiency": "observed_parallel_efficiency",
+                "confidence_score": "observed_confidence_score",
+            },
+        }
+
+        wi = WorkflowIntelligence(tenant_id=tenant_id)
+        wi._store = store
+        await wi.load_historical_data()
+        assert [record.to_dict() for record in wi.workflow_history] == [
+            execution.to_dict()
+        ]
 
     @pytest.mark.asyncio
-    async def test_load_historical_data_empty(self, real_provider):
+    async def test_load_historical_data_empty(
+        self, real_provider, workflow_state_redis_url
+    ):
         """load_historical_data works with no prior artifacts."""
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_agents.workflow.telemetry_workflow_store import (
+            TelemetryWorkflowStore,
+        )
 
         wi = WorkflowIntelligence(tenant_id="wi-empty-test")
+        wi._store = TelemetryWorkflowStore(
+            telemetry_provider=real_provider,
+            redis_url=workflow_state_redis_url,
+        )
         await wi.load_historical_data()
         # No artifacts persisted, so everything is empty
         assert len(wi.workflow_history) == 0

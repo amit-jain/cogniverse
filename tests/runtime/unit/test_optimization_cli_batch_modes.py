@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
@@ -17,6 +18,7 @@ import pandas as pd
 import pytest
 
 from cogniverse_runtime.optimization_cli import build_parser
+from cogniverse_sdk.interfaces.workflow_store import WorkflowLearningState
 
 # Patch targets: these are imported locally inside each function,
 # so we patch at the source module.
@@ -81,9 +83,14 @@ class FakeTraceStore:
 
     def __init__(self, spans_df: pd.DataFrame | None = None):
         self._spans_df = spans_df if spans_df is not None else pd.DataFrame()
+        self.calls: List[Dict[str, Any]] = []
 
     async def get_spans(self, **kwargs) -> pd.DataFrame:
         return self._spans_df
+
+    async def get_all_spans(self, **kwargs) -> pd.DataFrame:
+        self.calls.append(kwargs)
+        return self._spans_df.copy(deep=True)
 
 
 class FakeDatasetStore:
@@ -131,6 +138,38 @@ class FakeTelemetryProvider:
     @property
     def datasets(self):
         return self._dataset_store
+
+
+class FakeWorkflowStore:
+    """Canonical in-memory workflow-state boundary for CLI unit tests."""
+
+    def __init__(self):
+        self.states = {}
+
+    async def replace_learning_state(
+        self, tenant_id, executions, profiles, patterns, templates
+    ):
+        self.states[tenant_id] = {
+            "executions": list(executions),
+            "profiles": list(profiles),
+            "patterns": dict(patterns),
+            "templates": list(templates),
+        }
+
+    def _state(self, tenant_id):
+        return self.states.get(
+            tenant_id,
+            {"executions": [], "profiles": [], "patterns": {}, "templates": []},
+        )
+
+    async def load_learning_state(self, tenant_id):
+        state = self._state(tenant_id)
+        return WorkflowLearningState(
+            executions=list(state["executions"]),
+            profiles=list(state["profiles"]),
+            patterns=dict(state["patterns"]),
+            templates=list(state["templates"]),
+        )
 
 
 class FakeTelemetryManager:
@@ -538,15 +577,32 @@ class TestWorkflowOptimization:
             {
                 "name": "cogniverse.orchestration",
                 "context.span_id": f"span-{i}",
+                "start_time": datetime.now(timezone.utc) - timedelta(seconds=3 - i),
                 "attributes.input.value": f"test query {i}",
                 "attributes.output.value": json.dumps(
                     {
                         "workflow_id": f"wf-{i}",
                         "pattern": "sequential",
                         "agent_sequence": ["search_agent", "summarizer_agent"],
+                        "execution_order": ["search_agent", "summarizer_agent"],
                         "execution_time": 2.5,
+                        "success": True,
                         "tasks_completed": 2,
                         "confidence": 0.8,
+                        "agent_observations": [
+                            {
+                                "agent_name": "search_agent",
+                                "execution_time": 1.0,
+                                "success": True,
+                                "confidence": 0.9,
+                            },
+                            {
+                                "agent_name": "summarizer_agent",
+                                "execution_time": 1.5,
+                                "success": True,
+                                "confidence": 0.7,
+                            },
+                        ],
                     }
                 ),
                 "status_code": "OK",
@@ -560,8 +616,13 @@ class TestWorkflowOptimization:
 
         from cogniverse_runtime.optimization_cli import run_workflow_optimization
 
+        workflow_store = FakeWorkflowStore()
         p1, p2 = _patch_infra(mgr)
-        with p1, p2:
+        workflow_store_patch = patch(
+            "cogniverse_core.registries.WorkflowStoreRegistry.get",
+            return_value=workflow_store,
+        )
+        with p1, p2, workflow_store_patch:
             result = await run_workflow_optimization(
                 tenant_id="test:unit", lookback_hours=1
             )
@@ -570,10 +631,224 @@ class TestWorkflowOptimization:
         assert result["spans_found"] == 3
         assert result["workflows_extracted"] == 3
 
+    @pytest.mark.asyncio
+    async def test_drains_more_than_one_batch_and_persists_serving_artifacts(self):
+        query = "find exact aurora video"
+        evaluation_base = datetime.now(timezone.utc) - timedelta(minutes=2)
+        rows = [
+            {
+                "name": "cogniverse.orchestration",
+                "context.span_id": f"span-page-{index:02d}",
+                "start_time": evaluation_base + timedelta(milliseconds=index),
+                "attributes.input.value": query,
+                "attributes.output.value": json.dumps(
+                    {
+                        "workflow_id": f"wf-page-{index:02d}",
+                        "pattern": "sequential",
+                        "agent_sequence": ["search_agent", "summarizer_agent"],
+                        "execution_order": ["search_agent", "summarizer_agent"],
+                        "execution_time": 2.5,
+                        "success": True,
+                        "tasks_completed": 2,
+                        "confidence": 0.8,
+                        "agent_observations": [
+                            {
+                                "agent_name": "search_agent",
+                                "execution_time": 1.0,
+                                "success": True,
+                                "confidence": 0.9,
+                            },
+                            {
+                                "agent_name": "summarizer_agent",
+                                "execution_time": 1.5,
+                                "success": True,
+                                "confidence": 0.7,
+                            },
+                        ],
+                    }
+                ),
+                "status_code": "OK",
+                "status_message": None,
+            }
+            for index in range(55)
+        ]
+        provider = FakeTelemetryProvider(pd.DataFrame(rows))
+        manager = FakeTelemetryManager(provider)
 
-# ---------------------------------------------------------------------------
-# Test: entity-extraction mode
-# ---------------------------------------------------------------------------
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_runtime.optimization_cli import run_workflow_optimization
+
+        workflow_store = FakeWorkflowStore()
+        config_patch, telemetry_patch = _patch_infra(manager)
+        workflow_store_patch = patch(
+            "cogniverse_core.registries.WorkflowStoreRegistry.get",
+            return_value=workflow_store,
+        )
+        with config_patch, telemetry_patch, workflow_store_patch:
+            result = await run_workflow_optimization(
+                tenant_id="test:workflow-pagination",
+                lookback_hours=1,
+            )
+            fresh_intelligence = WorkflowIntelligence(
+                tenant_id="test:workflow-pagination"
+            )
+            await fresh_intelligence.load_historical_data()
+
+        assert result == {
+            "status": "success",
+            "spans_found": 55,
+            "workflows_extracted": 55,
+            "execution_demos_saved": 55,
+            "agent_profiles_saved": 2,
+            "workflow_templates_saved": 1,
+        }
+        assert len(provider.traces.calls) == 2
+        assert {call["end_time"] for call in provider.traces.calls} == {
+            provider.traces.calls[0]["end_time"]
+        }
+        assert len(fresh_intelligence.workflow_history) == 55
+        assert set(fresh_intelligence.agent_performance) == {
+            "search_agent",
+            "summarizer_agent",
+        }
+        search_profile = fresh_intelligence.agent_performance["search_agent"]
+        assert (
+            search_profile.total_executions,
+            search_profile.successful_executions,
+            search_profile.average_execution_time,
+            search_profile.average_confidence,
+            search_profile.error_rate,
+            search_profile.preferred_query_types,
+        ) == (55, 55, 1.0, 0.9, 0.0, ["sequential_query"])
+
+        summarizer_profile = fresh_intelligence.agent_performance["summarizer_agent"]
+        assert (
+            summarizer_profile.total_executions,
+            summarizer_profile.successful_executions,
+            summarizer_profile.average_execution_time,
+            summarizer_profile.average_confidence,
+            summarizer_profile.error_rate,
+            summarizer_profile.preferred_query_types,
+        ) == (55, 55, 1.5, 0.7, 0.0, ["sequential_query"])
+
+        template = fresh_intelligence._find_matching_template(query)
+        assert template is not None
+        assert template.query_patterns == [query]
+        assert template.task_sequence == [
+            {"agent": "search_agent", "task": "process", "dependencies": []},
+            {
+                "agent": "summarizer_agent",
+                "task": "process",
+                "dependencies": ["template_task_0"],
+            },
+        ]
+        assert template.expected_execution_time == 2.5
+        assert template.success_rate == 1.0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure_point", ["template", "corpus"])
+    async def test_learning_state_helper_forwards_exact_state_and_store_failure(
+        self, failure_point
+    ):
+        from cogniverse_runtime.optimization_cli import (
+            _save_workflow_learning_state,
+        )
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowTemplate
+
+        def template(template_id, agent):
+            return WorkflowTemplate(
+                template_id=template_id,
+                name=template_id,
+                description=f"template for {agent}",
+                query_patterns=[f"query for {agent}"],
+                task_sequence=[{"agent": agent, "task": "process", "dependencies": []}],
+                expected_execution_time=1.0,
+                success_rate=1.0,
+            )
+
+        previous = template("previous", "search_agent")
+        replacements = [
+            template("replacement-a", "search_agent"),
+            template("replacement-b", "summarizer_agent"),
+        ]
+        failure = ConnectionError(f"{failure_point} store unavailable")
+
+        class Store:
+            def __init__(self):
+                self.templates = {previous.template_id: previous}
+                self.calls = []
+
+            async def replace_learning_state(
+                self, tenant_id, executions, profiles, patterns, templates
+            ):
+                self.calls.append(
+                    (tenant_id, executions, profiles, patterns, templates)
+                )
+                raise failure
+
+        store = Store()
+
+        with pytest.raises(ConnectionError) as exc_info:
+            await _save_workflow_learning_state(
+                store,
+                tenant_id="acme:prod",
+                executions=[],
+                profiles=[],
+                patterns={},
+                templates=replacements,
+            )
+
+        assert exc_info.value is failure
+        assert store.templates == {"previous": previous}
+        assert store.calls == [("acme:prod", [], [], {}, replacements)]
+
+    @pytest.mark.asyncio
+    async def test_learning_state_helper_awaits_store_owned_serialization(self):
+        from cogniverse_runtime.optimization_cli import (
+            _save_workflow_learning_state,
+        )
+
+        class Store:
+            def __init__(self):
+                self.active = 0
+                self.max_active = 0
+                self.calls = []
+                self.lock = asyncio.Lock()
+
+            async def replace_learning_state(
+                self, tenant_id, executions, profiles, patterns, templates
+            ):
+                self.calls.append(
+                    (tenant_id, executions, profiles, patterns, templates)
+                )
+                async with self.lock:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                    await asyncio.sleep(0.02)
+                    self.active -= 1
+
+        store = Store()
+
+        await asyncio.gather(
+            *(
+                _save_workflow_learning_state(
+                    store,
+                    tenant_id="acme:prod",
+                    executions=[],
+                    profiles=[],
+                    patterns={},
+                    templates=[],
+                )
+                for _ in range(2)
+            )
+        )
+
+        assert store.max_active == 1
+        assert store.active == 0
+        assert store.calls == [
+            ("acme:prod", [], [], {}, []),
+            ("acme:prod", [], [], {}, []),
+        ]
 
 
 class TestEntityExtractionOptimization:

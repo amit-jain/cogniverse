@@ -12,6 +12,7 @@ import pytest
 
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 from cogniverse_agents.routing.orchestration_evaluator import OrchestrationEvaluator
+from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 
@@ -87,3 +88,106 @@ async def test_real_phoenix_batches_return_every_workflow_once(real_telemetry):
     assert len(recorder.workflow_ids) == len(set(recorder.workflow_ids)) == 5
     assert [result["workflows_extracted"] for result in results] == [2, 2, 1, 0]
     assert [result["spans_processed"] for result in results] == [2, 2, 1, 0]
+
+
+@pytest.mark.asyncio
+async def test_real_cli_drains_and_persists_profiles_and_template(
+    real_telemetry,
+    workflow_state_redis_url,
+):
+    from cogniverse_core.registries import WorkflowStoreRegistry
+    from cogniverse_runtime.optimization_cli import run_workflow_optimization
+
+    tenant_id = canonical_tenant_id(f"orchlearn{uuid4().hex[:8]}")
+    query = "find exact aurora video"
+    workflow_ids = [f"wf-learn-{index:02d}" for index in range(55)]
+    emitter = SimpleNamespace(
+        telemetry_manager=real_telemetry,
+        _current_tenant_id=tenant_id,
+        _validated_agent_observations=OrchestratorAgent._validated_agent_observations,
+    )
+    for index, workflow_id in enumerate(workflow_ids):
+        failed = index == 54
+        await asyncio.to_thread(
+            OrchestratorAgent._emit_orchestration_span,
+            emitter,
+            tenant_id=tenant_id,
+            workflow_id=workflow_id,
+            query=query,
+            agent_sequence=["search_agent"],
+            execution_time=1.25,
+            success=not failed,
+            tasks_completed=0 if failed else 1,
+            pattern="sequential",
+            execution_order=["search_agent"],
+            error_summary="ReadTimeout: Vespa query exceeded 30s" if failed else None,
+            agent_observations=[
+                {
+                    "agent_name": "search_agent",
+                    "execution_time": 1.5 if failed else 0.75,
+                    "success": not failed,
+                    "confidence": 0.1 if failed else 0.9,
+                }
+            ],
+        )
+
+    provider = real_telemetry.get_provider(tenant_id=tenant_id)
+    project = real_telemetry.config.get_project_name(tenant_id)
+    await _wait_for_workflows(provider, project, set(workflow_ids))
+
+    WorkflowStoreRegistry.clear_cache()
+    WorkflowStoreRegistry.get(
+        name="telemetry",
+        config={
+            "telemetry_provider": provider,
+            "redis_url": workflow_state_redis_url,
+        },
+    )
+    result = await run_workflow_optimization(tenant_id=tenant_id, lookback_hours=1)
+    fresh_intelligence = WorkflowIntelligence(tenant_id=tenant_id)
+    await fresh_intelligence.load_historical_data()
+
+    assert result == {
+        "status": "success",
+        "spans_found": 55,
+        "workflows_extracted": 55,
+        "execution_demos_saved": 55,
+        "agent_profiles_saved": 1,
+        "workflow_templates_saved": 1,
+    }
+    assert len(fresh_intelligence.workflow_history) == 55
+    failed_executions = [
+        execution
+        for execution in fresh_intelligence.workflow_history
+        if not execution.success
+    ]
+    assert [execution.workflow_id for execution in failed_executions] == ["wf-learn-54"]
+    assert failed_executions[0].error_details == (
+        "ReadTimeout: Vespa query exceeded 30s"
+    )
+
+    profile = fresh_intelligence.agent_performance["search_agent"]
+    assert (
+        profile.total_executions,
+        profile.successful_executions,
+        profile.average_execution_time,
+        profile.average_confidence,
+        profile.error_rate,
+        profile.preferred_query_types,
+    ) == (
+        55,
+        54,
+        pytest.approx(42 / 55),
+        pytest.approx(48.7 / 55),
+        1 / 55,
+        ["sequential_query"],
+    )
+
+    template = fresh_intelligence._find_matching_template(query)
+    assert template is not None
+    assert template.query_patterns == [query]
+    assert template.task_sequence == [
+        {"agent": "search_agent", "task": "process", "dependencies": []}
+    ]
+    assert template.expected_execution_time == 1.25
+    assert template.success_rate == 54 / 55
