@@ -9,6 +9,9 @@ status DICT — always truthy, even when degraded.
 from __future__ import annotations
 
 import socket
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
 
 import pytest
@@ -455,3 +458,189 @@ class TestWriteFaultContracts:
         backend._metadata_vespa_app = MagicMock(return_value=app)
 
         assert backend.create_metadata_document("tenant_metadata", "t1", {}) is False
+
+    def test_document_delete_is_idempotent_only_for_a_genuine_404(self):
+        from types import SimpleNamespace
+
+        from vespa.exceptions import VespaError
+
+        from cogniverse_vespa.ingestion_client import VespaPyClient
+
+        client = object.__new__(VespaPyClient)
+        client._connected = True
+        client.schema_name = "wiki_pages_acme_acme"
+        client.namespace = "content"
+        client.logger = MagicMock()
+        client.app = MagicMock()
+
+        client.app.delete_data.return_value = SimpleNamespace(status_code=404)
+        assert client.delete_document("missing") is True
+
+        client.app.delete_data.side_effect = VespaError("HTTP 404: not found")
+        assert client.delete_document("missing") is True
+
+    def test_document_delete_transport_failure_raises_with_route_context(self):
+        from cogniverse_vespa.ingestion_client import VespaPyClient
+
+        client = object.__new__(VespaPyClient)
+        client._connected = True
+        client.schema_name = "wiki_pages_acme_acme"
+        client.namespace = "content"
+        client.logger = MagicMock()
+        client.app = MagicMock()
+        client.app.delete_data.side_effect = ConnectionError("vespa unreachable")
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"content/wiki_pages_acme_acme/doc-7.*vespa unreachable",
+        ):
+            client.delete_document("doc-7")
+
+    def test_backend_document_delete_propagates_client_failure(self):
+        backend = _bare_backend()
+        backend.config = {"schema_name": "wiki_pages"}
+        client = MagicMock()
+        client.delete_document.side_effect = RuntimeError(
+            "content/wiki_pages_acme_acme/doc-7: vespa unreachable"
+        )
+        backend._get_or_create_ingestion_client = MagicMock(return_value=client)
+
+        with pytest.raises(RuntimeError, match="vespa unreachable"):
+            backend.delete_document("doc-7", schema_name="wiki_pages")
+
+
+def _lazy_backend() -> VespaBackend:
+    backend = object.__new__(VespaBackend)
+    backend._tenant_id = ""
+    backend._url = "http://vespa"
+    backend._port = 8080
+    backend._schema_loader_instance = MagicMock()
+    backend._config_manager_instance = None
+    backend._vespa_ingestion_clients = {}
+    backend._vespa_search_backend = None
+    backend._ingestion_clients_lock = threading.Lock()
+    backend._search_backend_lock = threading.Lock()
+    backend._initialized_as_search = False
+    backend.use_async_ingestion = False
+    backend.config = {
+        "profiles": {"wiki": {"type": "wiki", "schema_name": "wiki_pages"}},
+        "default_profiles": {"wiki": {"profile": "wiki"}},
+    }
+    return backend
+
+
+def test_concurrent_ingestion_first_touch_builds_one_client(monkeypatch):
+    from cogniverse_vespa import backend as backend_module
+
+    backend = _lazy_backend()
+    built = []
+
+    def build_client(*, config, logger):
+        time.sleep(0.02)
+        client = MagicMock()
+        client.config = config
+        client.connect.return_value = True
+        built.append(client)
+        return client
+
+    monkeypatch.setattr(backend_module, "VespaPyClient", build_client)
+    start = threading.Barrier(12)
+
+    def get_client():
+        start.wait()
+        return backend._get_or_create_ingestion_client("wiki_pages")
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        clients = list(executor.map(lambda _: get_client(), range(12)))
+
+    assert len(built) == 1
+    assert {id(client) for client in clients} == {id(built[0])}
+    assert backend._vespa_ingestion_clients == {"wiki_pages": built[0]}
+
+
+def test_failed_ingestion_first_touch_is_not_cached(monkeypatch):
+    from cogniverse_vespa import backend as backend_module
+
+    backend = _lazy_backend()
+    failed = MagicMock()
+    failed.connect.return_value = False
+    healthy = MagicMock()
+    healthy.connect.return_value = True
+    monkeypatch.setattr(
+        backend_module,
+        "VespaPyClient",
+        MagicMock(side_effect=[failed, healthy]),
+    )
+
+    with pytest.raises(ConnectionError, match="wiki_pages"):
+        backend._get_or_create_ingestion_client("wiki_pages")
+    assert backend._vespa_ingestion_clients == {}
+
+    assert backend._get_or_create_ingestion_client("wiki_pages") is healthy
+    assert backend._vespa_ingestion_clients == {"wiki_pages": healthy}
+
+
+def test_concurrent_search_first_touch_builds_one_backend(monkeypatch):
+    from cogniverse_vespa import backend as backend_module
+
+    backend = _lazy_backend()
+    search_backend = MagicMock()
+    search_backend.search.side_effect = lambda query: query["request_id"]
+    built = []
+
+    def build_search_backend(**kwargs):
+        time.sleep(0.02)
+        built.append(kwargs)
+        return search_backend
+
+    monkeypatch.setattr(
+        backend_module,
+        "VespaSearchBackend",
+        build_search_backend,
+    )
+    start = threading.Barrier(12)
+
+    def search(request_id):
+        start.wait()
+        return backend.search(
+            {
+                "request_id": request_id,
+                "query": "tenant content",
+                "type": "wiki",
+                "tenant_id": "acme:acme",
+            }
+        )
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        results = list(executor.map(search, range(12)))
+
+    assert results == list(range(12))
+    assert len(built) == 1
+    assert backend._vespa_search_backend is search_backend
+    assert search_backend.search.call_count == 12
+
+
+def test_failed_search_first_touch_is_retried_cleanly(monkeypatch):
+    from cogniverse_vespa import backend as backend_module
+
+    backend = _lazy_backend()
+    healthy = MagicMock()
+    healthy.search.return_value = ["doc-1"]
+    factory = MagicMock(
+        side_effect=[RuntimeError("search construction failed"), healthy]
+    )
+    monkeypatch.setattr(backend_module, "VespaSearchBackend", factory)
+    query = {
+        "query": "tenant content",
+        "type": "wiki",
+        "tenant_id": "acme:acme",
+    }
+
+    with pytest.raises(RuntimeError, match="construction failed"):
+        backend.search(query)
+    assert backend._vespa_search_backend is None
+    assert backend._initialized_as_search is False
+
+    assert backend.search(query) == ["doc-1"]
+    assert backend._vespa_search_backend is healthy
+    assert factory.call_count == 2
