@@ -12,13 +12,17 @@ authors = [
 dependencies = [
     "cogniverse-sdk",
     "cogniverse-core",
+    "cogniverse-foundation",
     "pyvespa==1.1.2",
     "numpy==2.4.4",
+    "pydantic==2.12.5",
+    "requests==2.33.1",
 ]
 
 [tool.uv.sources]
 cogniverse-sdk = { workspace = true }
 cogniverse-core = { workspace = true }
+cogniverse-foundation = { workspace = true }
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

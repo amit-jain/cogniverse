@@ -2549,11 +2549,18 @@ types the field as `string`, not a nested object:
     "config_key": "system_config",
     "config_value": "{\"model\": \"gemini-pro\", \"temperature\": 0.7}",
     "version": 1,
-    "created_at": "2024-01-01T00:00:00",
-    "updated_at": "2024-01-01T00:00:00"
+    "created_at": "2024-01-01T00:00:00+00:00",
+    "updated_at": "2024-01-01T00:00:00+00:00"
   }
 }
 ```
+
+The primary config lookup and list methods — `get_config`,
+`get_config_history`, `list_configs`, and `list_all_configs` — use the Document
+v1 visit API. A completed `set_config` is therefore immediately visible to
+those methods without sleeps or search-index convergence retries. Visit
+timeouts, malformed responses, and non-success statuses raise; only a
+successful visit with no matching document returns `None` or an empty list.
 
 ### Key Methods
 
@@ -2575,7 +2582,9 @@ entry = store.set_config(
     config_key="model_settings",
     config_value={"model": "gemini-pro", "temperature": 0.7}
 )
-# Creates new version on each update
+# Creates new version on each update. Concurrent writers use conditional
+# Document v1 puts, so each receives a distinct version instead of
+# overwriting a shared document ID.
 
 # Retrieve latest version
 entry = store.get_config(
