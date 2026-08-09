@@ -1004,7 +1004,7 @@ async def reconcile_orphans(
         }
 
     backend = get_backend()
-    deleted = backend.schema_manager.delete_tenant_schemas_bulk(diff["orphan_tenants"])
+    deleted = backend.schema_manager.delete_orphan_schemas(diff["orphan_schemas"])
     return {
         "dry_run": False,
         "deleted": deleted,

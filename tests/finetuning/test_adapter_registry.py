@@ -5,6 +5,7 @@ Tests the registry models, registry interface, and vespa store with mocks.
 """
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -547,11 +548,20 @@ class TestVespaAdapterStore:
         assert by_id["adp_new"]["status"] == "active"
 
     def test_delete_adapter(self, adapter_store, mock_vespa_app):
-        """Test deleting adapter."""
+        """Delete returns True for HTTP 200 and False only for a real 404."""
+        mock_vespa_app.delete_data.return_value = SimpleNamespace(status_code=200)
+
         result = adapter_store.delete_adapter("test-adapter-123")
 
         assert result is True
         mock_vespa_app.delete_data.assert_called_once()
+
+        mock_vespa_app.delete_data.return_value = SimpleNamespace(status_code=404)
+        assert adapter_store.delete_adapter("test-adapter-123") is False
+
+        mock_vespa_app.delete_data.return_value = SimpleNamespace(status_code=503)
+        with pytest.raises(RuntimeError, match="HTTP 503"):
+            adapter_store.delete_adapter("test-adapter-123")
 
     def test_health_check_healthy(self, adapter_store, mock_vespa_app):
         """Test health check when Vespa is healthy."""

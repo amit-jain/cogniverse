@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import threading
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -375,8 +376,7 @@ def extract_all_ranking_strategies(
     with _ALL_STRATEGIES_LOCK:
         cached = _ALL_STRATEGIES_CACHE.get(cache_key)
     if cached is not None:
-        # Shallow copy so a caller mutating the mapping can't poison the memo.
-        return dict(cached)
+        return deepcopy(cached)
 
     extractor = RankingStrategyExtractor()
     all_strategies = {}
@@ -400,7 +400,7 @@ def extract_all_ranking_strategies(
         for stale_key in [k for k in _ALL_STRATEGIES_CACHE if k[0] == dir_key]:
             del _ALL_STRATEGIES_CACHE[stale_key]
         _ALL_STRATEGIES_CACHE[cache_key] = all_strategies
-    return dict(all_strategies)
+    return deepcopy(all_strategies)
 
 
 def save_ranking_strategies(
