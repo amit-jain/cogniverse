@@ -4,7 +4,7 @@ Unit tests for preference pair extraction.
 Tests deduplication logic and proper property access.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock
 
 import pandas as pd
@@ -44,7 +44,7 @@ class TestPreferencePairDeduplication:
                     "name": "gateway_agent",
                     "attributes.input.query": "test query",
                     "attributes.output.response": "same response",
-                    "start_time": datetime.utcnow(),
+                    "start_time": datetime.now(timezone.utc),
                 }
             ]
         )
@@ -56,13 +56,13 @@ class TestPreferencePairDeduplication:
                     "span_id": "span1",
                     "result.label": "approved",
                     "result.score": 1.0,
-                    "metadata.response": "same response",  # Same!
+                    "metadata.response": '{"recommended_agent":"video_search"}',
                 },
                 {
                     "span_id": "span1",
                     "result.label": "rejected",
                     "result.score": 0.0,
-                    "metadata.response": "same response",  # Same!
+                    "metadata.response": '{"recommended_agent":"video_search"}',
                 },
             ]
         )
@@ -83,7 +83,7 @@ class TestPreferencePairDeduplication:
                     "name": "gateway_agent",
                     "attributes.input.query": "test query",
                     "attributes.output.response": "default response",
-                    "start_time": datetime.utcnow(),
+                    "start_time": datetime.now(timezone.utc),
                 }
             ]
         )
@@ -95,13 +95,13 @@ class TestPreferencePairDeduplication:
                     "span_id": "span1",
                     "result.label": "approved",
                     "result.score": 1.0,
-                    "metadata.response": "good response",  # Different
+                    "metadata.response": '{"recommended_agent":"video_search"}',
                 },
                 {
                     "span_id": "span1",
                     "result.label": "rejected",
                     "result.score": 0.0,
-                    "metadata.response": "bad response",  # Different
+                    "metadata.response": '{"recommended_agent":"document_agent"}',
                 },
             ]
         )
@@ -111,8 +111,8 @@ class TestPreferencePairDeduplication:
 
         # Should have 1 pair
         assert len(pairs) == 1
-        assert pairs[0].chosen == "good response"
-        assert pairs[0].rejected == "bad response"
+        assert pairs[0].chosen == '{"recommended_agent":"video_search"}'
+        assert pairs[0].rejected == '{"recommended_agent":"document_agent"}'
 
     def test_multiple_pairs_some_identical(self, extractor):
         """Test filtering when some pairs are identical"""
@@ -123,14 +123,14 @@ class TestPreferencePairDeduplication:
                     "name": "gateway_agent",
                     "attributes.input.query": "query1",
                     "attributes.output.response": "default1",
-                    "start_time": datetime.utcnow(),
+                    "start_time": datetime.now(timezone.utc),
                 },
                 {
                     "context.span_id": "span2",
                     "name": "gateway_agent",
                     "attributes.input.query": "query2",
                     "attributes.output.response": "default2",
-                    "start_time": datetime.utcnow(),
+                    "start_time": datetime.now(timezone.utc),
                 },
             ]
         )
@@ -142,26 +142,26 @@ class TestPreferencePairDeduplication:
                     "span_id": "span1",
                     "result.label": "approved",
                     "result.score": 1.0,
-                    "metadata.response": "same",
+                    "metadata.response": '{"recommended_agent":"video_search"}',
                 },
                 {
                     "span_id": "span1",
                     "result.label": "rejected",
                     "result.score": 0.0,
-                    "metadata.response": "same",
+                    "metadata.response": '{"recommended_agent":"video_search"}',
                 },
                 # span2: different (should be kept)
                 {
                     "span_id": "span2",
                     "result.label": "approved",
                     "result.score": 1.0,
-                    "metadata.response": "good",
+                    "metadata.response": '{"recommended_agent":"video_search"}',
                 },
                 {
                     "span_id": "span2",
                     "result.label": "rejected",
                     "result.score": 0.0,
-                    "metadata.response": "bad",
+                    "metadata.response": '{"recommended_agent":"document_agent"}',
                 },
             ]
         )
@@ -171,6 +171,151 @@ class TestPreferencePairDeduplication:
         # Should have only 1 pair (span2)
         assert len(pairs) == 1
         assert pairs[0].prompt == "query2"
+
+    def test_span_output_cannot_replace_a_missing_reviewed_response(self, extractor):
+        spans_df = pd.DataFrame(
+            [
+                {
+                    "context.span_id": "span1",
+                    "name": "gateway_agent",
+                    "attributes.input.query": "find sunset videos",
+                    "attributes.output.response": "default route",
+                }
+            ]
+        )
+        annotations_df = pd.DataFrame(
+            [
+                {
+                    "span_id": "span1",
+                    "result.label": "approved",
+                    "result.score": 1.0,
+                    "metadata": {},
+                },
+                {
+                    "span_id": "span1",
+                    "result.label": "rejected",
+                    "result.score": 0.0,
+                    "metadata": {"response": "document_agent"},
+                },
+            ]
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                "routing preference span span1 chosen response must be present "
+                "in annotation metadata"
+            ),
+        ):
+            extractor._create_preference_pairs(
+                spans_df,
+                annotations_df,
+                "routing",
+            )
+
+    def test_operational_responses_are_projected_to_exact_training_json(
+        self, extractor
+    ):
+        spans_df = pd.DataFrame(
+            [
+                {
+                    "context.span_id": "span-projection",
+                    "name": "gateway_agent",
+                    "attributes.input.value": "find sunset videos",
+                }
+            ]
+        )
+        annotations_df = pd.DataFrame(
+            [
+                {
+                    "span_id": "span-projection",
+                    "result.label": "approved",
+                    "result.score": 1.0,
+                    "metadata": {
+                        "response": {
+                            "recommended_agent": "video_search",
+                            "confidence": 0.99,
+                            "reasoning": "The request asks for videos.",
+                        }
+                    },
+                },
+                {
+                    "span_id": "span-projection",
+                    "result.label": "rejected",
+                    "result.score": 0.0,
+                    "metadata": {
+                        "response": {
+                            "recommended_agent": "document_agent",
+                            "confidence": 0.31,
+                            "reasoning": "This route ignores the requested medium.",
+                        }
+                    },
+                },
+            ]
+        )
+
+        pairs = extractor._create_preference_pairs(spans_df, annotations_df, "routing")
+
+        assert len(pairs) == 1
+        assert pairs[0].chosen == '{"recommended_agent":"video_search"}'
+        assert pairs[0].rejected == '{"recommended_agent":"document_agent"}'
+
+    @pytest.mark.parametrize(
+        ("malformed_role", "approved_response", "rejected_response"),
+        [
+            (
+                "chosen",
+                {"confidence": 0.99},
+                {"recommended_agent": "document_agent"},
+            ),
+            (
+                "rejected",
+                {"recommended_agent": "video_search"},
+                {"confidence": 0.31},
+            ),
+        ],
+    )
+    def test_malformed_response_raises_with_span_and_role_context(
+        self,
+        extractor,
+        malformed_role,
+        approved_response,
+        rejected_response,
+    ):
+        spans_df = pd.DataFrame(
+            [
+                {
+                    "context.span_id": "span-malformed",
+                    "name": "gateway_agent",
+                    "attributes.input.query": "find sunset videos",
+                }
+            ]
+        )
+        annotations_df = pd.DataFrame(
+            [
+                {
+                    "span_id": "span-malformed",
+                    "result.label": "approved",
+                    "result.score": 1.0,
+                    "metadata": {"response": approved_response},
+                },
+                {
+                    "span_id": "span-malformed",
+                    "result.label": "rejected",
+                    "result.score": 0.0,
+                    "metadata": {"response": rejected_response},
+                },
+            ]
+        )
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                rf"routing preference span span-malformed {malformed_role} response "
+                r"requires exactly the recommended_agent field"
+            ),
+        ):
+            extractor._create_preference_pairs(spans_df, annotations_df, "routing")
 
 
 @pytest.mark.unit
@@ -195,7 +340,7 @@ class TestPropertyAccess:
         the provider's public .traces/.annotations stores and returns a
         PreferenceDataset whose pairs and metadata reflect the source data.
         """
-        mock_provider.traces.get_spans = AsyncMock(
+        mock_provider.traces.get_all_spans = AsyncMock(
             return_value=pd.DataFrame(
                 [
                     {
@@ -203,7 +348,7 @@ class TestPropertyAccess:
                         "name": "routing_agent",
                         "attributes.input.query": "find sunset videos",
                         "attributes.output.response": "default route",
-                        "start_time": datetime.utcnow(),
+                        "start_time": datetime.now(timezone.utc),
                     }
                 ]
             )
@@ -218,12 +363,14 @@ class TestPropertyAccess:
                     {
                         "result.label": "approved",
                         "result.score": 1.0,
-                        "metadata": {"response": "good route"},
+                        "metadata": {"response": {"recommended_agent": "video_search"}},
                     },
                     {
                         "result.label": "rejected",
                         "result.score": 0.0,
-                        "metadata": {"response": "bad route"},
+                        "metadata": {
+                            "response": {"recommended_agent": "document_agent"}
+                        },
                     },
                 ],
                 index=pd.Index(["span1", "span1"], name="span_id"),
@@ -239,25 +386,24 @@ class TestPropertyAccess:
         )
 
         # The public stores carried the call, with the documented query kwargs.
-        mock_provider.traces.get_spans.assert_called_once_with(
+        mock_provider.traces.get_all_spans.assert_called_once_with(
             project="test-project",
             start_time=None,
             end_time=None,
-            limit=10000,
         )
         assert (
             mock_provider.annotations.get_annotations.call_args.kwargs["project"]
             == "test-project"
         )
-        mock_provider._trace_store.get_spans.assert_not_called()
+        mock_provider._trace_store.get_all_spans.assert_not_called()
         mock_provider._annotation_store.get_annotations.assert_not_called()
 
         # The returned dataset reflects the source span + its two annotations.
         assert len(dataset.pairs) == 1
         pair = dataset.pairs[0]
         assert pair.prompt == "find sunset videos"
-        assert pair.chosen == "good route"
-        assert pair.rejected == "bad route"
+        assert pair.chosen == '{"recommended_agent":"video_search"}'
+        assert pair.rejected == '{"recommended_agent":"document_agent"}'
         assert pair.metadata["span_id"] == "span1"
         assert pair.metadata["agent_type"] == "routing"
         assert pair.metadata["chosen_score"] == 1.0
@@ -274,7 +420,7 @@ class TestPropertyAccess:
     async def test_extract_raises_below_min_pairs(self, mock_provider):
         """When fewer pairs than min_pairs are found, extract() raises rather
         than returning a short dataset."""
-        mock_provider.traces.get_spans = AsyncMock(
+        mock_provider.traces.get_all_spans = AsyncMock(
             return_value=pd.DataFrame(
                 [
                     {
@@ -282,7 +428,7 @@ class TestPropertyAccess:
                         "name": "routing_agent",
                         "attributes.input.query": "find sunset videos",
                         "attributes.output.response": "default route",
-                        "start_time": datetime.utcnow(),
+                        "start_time": datetime.now(timezone.utc),
                     }
                 ]
             )
@@ -296,12 +442,14 @@ class TestPropertyAccess:
                     {
                         "result.label": "approved",
                         "result.score": 1.0,
-                        "metadata": {"response": "good route"},
+                        "metadata": {"response": {"recommended_agent": "video_search"}},
                     },
                     {
                         "result.label": "rejected",
                         "result.score": 0.0,
-                        "metadata": {"response": "bad route"},
+                        "metadata": {
+                            "response": {"recommended_agent": "document_agent"}
+                        },
                     },
                 ],
                 index=pd.Index(["span1", "span1"], name="span_id"),

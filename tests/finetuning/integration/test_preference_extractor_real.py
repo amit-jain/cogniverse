@@ -11,12 +11,14 @@ that a mocked provider can only assume.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from cogniverse_finetuning.dataset.preference_extractor import PreferencePairExtractor
+from cogniverse_foundation.telemetry.span_contract import OP_ROUTING, record_span_io
 
 pytestmark = pytest.mark.integration
 
@@ -61,12 +63,16 @@ async def test_extract_builds_pair_from_real_phoenix(
         name="routing_agent",
         tenant_id=tenant_id,
         project_name=project_name,
-        attributes={
-            "input.query": "find sunset videos",
-            "output.response": "default route",
-        },
-    ):
-        pass
+    ) as span:
+        record_span_io(
+            span,
+            input_value="find sunset videos",
+            output={
+                "recommended_agent": "video_search",
+                "confidence": 0.88,
+            },
+            operation=OP_ROUTING,
+        )
     telemetry_manager.force_flush(timeout_millis=10000)
 
     provider = telemetry_manager.get_provider(
@@ -102,7 +108,15 @@ async def test_extract_builds_pair_from_real_phoenix(
         name="human_review_approved",
         label="approved",
         score=1.0,
-        metadata={"response": "good route"},
+        metadata={
+            "response": json.dumps(
+                {
+                    "recommended_agent": "video_search",
+                    "confidence": 0.99,
+                    "reasoning": "The request asks for videos.",
+                }
+            )
+        },
         project=full_project,
     )
     await provider.annotations.add_annotation(
@@ -110,7 +124,15 @@ async def test_extract_builds_pair_from_real_phoenix(
         name="human_review_rejected",
         label="rejected",
         score=0.0,
-        metadata={"response": "bad route"},
+        metadata={
+            "response": json.dumps(
+                {
+                    "recommended_agent": "document_agent",
+                    "confidence": 0.31,
+                    "reasoning": "This route ignores the requested medium.",
+                }
+            )
+        },
         project=full_project,
     )
 
@@ -138,8 +160,8 @@ async def test_extract_builds_pair_from_real_phoenix(
     assert len(dataset.pairs) == 1
     pair = dataset.pairs[0]
     assert pair.prompt == "find sunset videos"
-    assert pair.chosen == "good route"
-    assert pair.rejected == "bad route"
+    assert pair.chosen == '{"recommended_agent":"video_search"}'
+    assert pair.rejected == '{"recommended_agent":"document_agent"}'
     assert pair.metadata["span_id"] == span_id
     assert dataset.metadata["agent_type"] == "routing"
     assert dataset.metadata["preference_pairs"] == 1
@@ -168,12 +190,13 @@ async def test_extract_matches_gateway_named_span(phoenix_container, telemetry_m
         name="GatewayAgent.process",
         tenant_id=tenant_id,
         project_name=project_name,
-        attributes={
-            "input.query": "find sunset videos",
-            "output.response": "default route",
-        },
-    ):
-        pass
+    ) as span:
+        record_span_io(
+            span,
+            input_value="find sunset videos",
+            output={"recommended_agent": "video_search"},
+            operation=OP_ROUTING,
+        )
     telemetry_manager.force_flush(timeout_millis=10000)
 
     provider = telemetry_manager.get_provider(
@@ -203,7 +226,7 @@ async def test_extract_matches_gateway_named_span(phoenix_container, telemetry_m
         name="human_review_approved",
         label="approved",
         score=1.0,
-        metadata={"response": "good route"},
+        metadata={"response": json.dumps({"recommended_agent": "video_search"})},
         project=full_project,
     )
     await provider.annotations.add_annotation(
@@ -211,7 +234,7 @@ async def test_extract_matches_gateway_named_span(phoenix_container, telemetry_m
         name="human_review_rejected",
         label="rejected",
         score=0.0,
-        metadata={"response": "bad route"},
+        metadata={"response": json.dumps({"recommended_agent": "document_agent"})},
         project=full_project,
     )
 
@@ -239,8 +262,100 @@ async def test_extract_matches_gateway_named_span(phoenix_container, telemetry_m
     assert len(dataset.pairs) == 1
     pair = dataset.pairs[0]
     assert pair.prompt == "find sunset videos"
-    assert pair.chosen == "good route"
-    assert pair.rejected == "bad route"
+    assert pair.chosen == '{"recommended_agent":"video_search"}'
+    assert pair.rejected == '{"recommended_agent":"document_agent"}'
     assert pair.metadata["span_id"] == span_id
     assert dataset.metadata["agent_type"] == "routing"
     assert dataset.metadata["preference_pairs"] == 1
+
+
+@pytest.mark.asyncio
+async def test_extract_rejects_malformed_reviewed_output_from_real_phoenix(
+    phoenix_container, telemetry_manager
+):
+    tenant_id = "pref_malformed_rt"
+    project_name = "finetuning"
+    full_project = f"cogniverse-{tenant_id}-{project_name}"
+
+    telemetry_manager.register_project(
+        tenant_id=tenant_id,
+        project_name=project_name,
+        otlp_endpoint=phoenix_container["grpc_endpoint"],
+        http_endpoint=phoenix_container["http_endpoint"],
+        use_sync_export=True,
+    )
+
+    with telemetry_manager.span(
+        name="routing_agent",
+        tenant_id=tenant_id,
+        project_name=project_name,
+    ) as span:
+        record_span_io(
+            span,
+            input_value="find launch videos",
+            output={"recommended_agent": "video_search"},
+            operation=OP_ROUTING,
+        )
+    telemetry_manager.force_flush(timeout_millis=10000)
+
+    provider = telemetry_manager.get_provider(
+        tenant_id=tenant_id, project_name=project_name
+    )
+    span_id = None
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        end = datetime.now(timezone.utc)
+        spans = await provider.traces.get_spans(
+            project=full_project,
+            start_time=end - timedelta(hours=1),
+            end_time=end,
+            limit=1000,
+        )
+        if spans is not None and not spans.empty and "name" in spans.columns:
+            match = spans[spans["name"] == "routing_agent"]
+            if not match.empty:
+                span_id = match.iloc[0]["context.span_id"]
+                break
+        await asyncio.sleep(2)
+    assert span_id is not None, f"routing_agent span not found in {full_project}"
+
+    await provider.annotations.add_annotation(
+        span_id=span_id,
+        name="human_review_approved",
+        label="approved",
+        score=1.0,
+        metadata={"response": json.dumps({"confidence": 0.99})},
+        project=full_project,
+    )
+    await provider.annotations.add_annotation(
+        span_id=span_id,
+        name="human_review_rejected",
+        label="rejected",
+        score=0.0,
+        metadata={"response": json.dumps({"recommended_agent": "document_agent"})},
+        project=full_project,
+    )
+
+    extractor = PreferencePairExtractor(provider=provider)
+    malformed_error = None
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        try:
+            end = datetime.now(timezone.utc)
+            await extractor.extract(
+                project=full_project,
+                agent_type="routing",
+                min_pairs=1,
+                start_time=end - timedelta(hours=1),
+                end_time=end,
+            )
+        except ValueError as error:
+            if f"routing preference span {span_id} chosen response" in str(error):
+                malformed_error = error
+                break
+        await asyncio.sleep(2)
+
+    assert str(malformed_error) == (
+        f"routing preference span {span_id} chosen response requires exactly "
+        "the recommended_agent field"
+    )

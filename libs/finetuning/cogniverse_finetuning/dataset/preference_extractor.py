@@ -5,17 +5,49 @@ Uses AnnotationStore to extract approved/rejected annotation pairs
 for Direct Preference Optimization (DPO) training.
 """
 
+import json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
 
+from cogniverse_finetuning.dataset.output_projection import project_training_output
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 from cogniverse_foundation.telemetry.span_contract import PREFERENCE_CHOSEN_THRESHOLD
 
 logger = logging.getLogger(__name__)
+
+
+def classify_preference_annotation(annotation_row: pd.Series) -> Optional[str]:
+    """Classify one review annotation only when label and score agree."""
+    label = annotation_row.get("result.label")
+    label_classification = (
+        label.lower()
+        if isinstance(label, str) and label.lower() in {"approved", "rejected"}
+        else None
+    )
+
+    score = annotation_row.get("result.score")
+    score_classification = None
+    if (
+        not isinstance(score, bool)
+        and isinstance(score, (int, float))
+        and math.isfinite(float(score))
+    ):
+        score_classification = (
+            "approved" if float(score) >= PREFERENCE_CHOSEN_THRESHOLD else "rejected"
+        )
+
+    if (
+        label_classification is not None
+        and score_classification is not None
+        and label_classification != score_classification
+    ):
+        return None
+    return label_classification or score_classification
 
 
 @dataclass
@@ -122,11 +154,10 @@ class PreferencePairExtractor:
 
         # 1. Query spans for the agent type
         logger.info(f"Querying spans from project={project}...")
-        spans_df = await trace_store.get_spans(
+        spans_df = await trace_store.get_all_spans(
             project=project,
             start_time=start_time,
             end_time=end_time,
-            limit=10000,
         )
 
         if spans_df.empty:
@@ -231,16 +262,12 @@ class PreferencePairExtractor:
         grouped_annotations = annotations_df.groupby("span_id")
 
         for span_id, annotation_group in grouped_annotations:
-            # Check if we have both approved and rejected for this span
-            approved_mask = (annotation_group["result.label"] == "approved") | (
-                annotation_group["result.score"] >= PREFERENCE_CHOSEN_THRESHOLD
+            classifications = annotation_group.apply(
+                self._classify_annotation,
+                axis=1,
             )
-            rejected_mask = (annotation_group["result.label"] == "rejected") | (
-                annotation_group["result.score"] < PREFERENCE_CHOSEN_THRESHOLD
-            )
-
-            approved = annotation_group[approved_mask]
-            rejected = annotation_group[rejected_mask]
+            approved = annotation_group[classifications == "approved"]
+            rejected = annotation_group[classifications == "rejected"]
 
             if approved.empty or rejected.empty:
                 continue
@@ -257,23 +284,54 @@ class PreferencePairExtractor:
             if not prompt:
                 continue
 
-            # Extract chosen and rejected responses
-            chosen_response = self._extract_response_from_annotation(
-                approved.iloc[0], span_row
-            )
-            rejected_response = self._extract_response_from_annotation(
-                rejected.iloc[0], span_row
-            )
+            projected_approved = [
+                (
+                    approved_row,
+                    self._project_reviewed_response(
+                        approved_row,
+                        agent_type=agent_type,
+                        span_id=str(span_id),
+                        role="chosen",
+                    ),
+                )
+                for _, approved_row in approved.iterrows()
+            ]
+            projected_rejected = [
+                (
+                    rejected_row,
+                    self._project_reviewed_response(
+                        rejected_row,
+                        agent_type=agent_type,
+                        span_id=str(span_id),
+                        role="rejected",
+                    ),
+                )
+                for _, rejected_row in rejected.iterrows()
+            ]
 
-            if not chosen_response or not rejected_response:
-                continue
+            selected = None
+            for approved_row, chosen_response in projected_approved:
+                for rejected_row, rejected_response in projected_rejected:
+                    if chosen_response != rejected_response:
+                        selected = (
+                            approved_row,
+                            rejected_row,
+                            chosen_response,
+                            rejected_response,
+                        )
+                        break
+                if selected is not None:
+                    break
 
-            # Skip pairs where chosen and rejected are identical (no learning signal)
-            if chosen_response == rejected_response:
+            if selected is None:
                 logger.warning(
-                    f"Skipping pair with identical chosen/rejected responses for span {span_id}"
+                    "Skipping preference span %s whose canonical chosen and "
+                    "rejected responses are identical",
+                    span_id,
                 )
                 continue
+
+            approved_row, rejected_row, chosen_response, rejected_response = selected
 
             pairs.append(
                 PreferencePair(
@@ -283,18 +341,40 @@ class PreferencePairExtractor:
                     metadata={
                         "span_id": span_id,
                         "agent_type": agent_type,
-                        "chosen_score": float(
-                            approved.iloc[0].get("result.score", 1.0)
-                        ),
-                        "rejected_score": float(
-                            rejected.iloc[0].get("result.score", 0.0)
-                        ),
+                        "chosen_score": float(approved_row["result.score"]),
+                        "rejected_score": float(rejected_row["result.score"]),
                         "start_time": span_row.get("start_time"),
                     },
                 )
             )
 
         return pairs
+
+    def _project_reviewed_response(
+        self,
+        annotation_row: pd.Series,
+        *,
+        agent_type: str,
+        span_id: str,
+        role: str,
+    ) -> str:
+        context = f"{agent_type} preference span {span_id} {role} response"
+        response = self._extract_annotation_response(annotation_row).strip()
+        if not response:
+            raise ValueError(f"{context} must be present in annotation metadata")
+        try:
+            response_values = json.loads(response)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{context} must be valid JSON: {error.msg}") from error
+        return project_training_output(
+            agent_type,
+            response_values,
+            context=context,
+        )
+
+    @staticmethod
+    def _classify_annotation(annotation_row: pd.Series) -> Optional[str]:
+        return classify_preference_annotation(annotation_row)
 
     def _extract_prompt(self, span_row: pd.Series, agent_type: str) -> str:
         """Extract prompt from span attributes."""
@@ -303,6 +383,7 @@ class PreferencePairExtractor:
 
         # Common input attribute names
         input_keys = [
+            "attributes.input.value",
             "attributes.input.query",
             "attributes.input.text",
             "attributes.input.request",
@@ -341,32 +422,9 @@ class PreferencePairExtractor:
         Returns:
             Response text
         """
-        # First try to get response from annotation metadata
-        # (if human edited the response). Phoenix returns metadata as a nested
-        # dict in a single ``metadata`` column; some sources flatten it to
-        # ``metadata.<key>`` columns. Handle both.
-        meta = annotation_row.get("metadata")
-        if isinstance(meta, dict):
-            for key, value in meta.items():
-                if ("response" in key.lower() or "output" in key.lower()) and value:
-                    if isinstance(value, (dict, list)):
-                        import json
-
-                        return json.dumps(value)
-                    return str(value)
-
-        metadata_cols = [
-            col for col in annotation_row.index if col.startswith("metadata.")
-        ]
-        for col in metadata_cols:
-            if "response" in col.lower() or "output" in col.lower():
-                value = annotation_row[col]
-                if value:
-                    if isinstance(value, (dict, list)):
-                        import json
-
-                        return json.dumps(value)
-                    return str(value)
+        annotation_response = self._extract_annotation_response(annotation_row)
+        if annotation_response:
+            return annotation_response
 
         # Fallback to span output attributes
         attributes = {k: v for k, v in span_row.items() if k.startswith("attributes.")}
@@ -395,6 +453,34 @@ class PreferencePairExtractor:
             for sub in ("response", "result", "decision", "value"):
                 if ns.get(sub):
                     value = ns[sub]
+                    if isinstance(value, (dict, list)):
+                        import json
+
+                        return json.dumps(value)
+                    return str(value)
+
+        return ""
+
+    @staticmethod
+    def _extract_annotation_response(annotation_row: pd.Series) -> str:
+        """Extract an explicitly reviewed response from annotation metadata."""
+        meta = annotation_row.get("metadata")
+        if isinstance(meta, dict):
+            for key, value in meta.items():
+                if ("response" in key.lower() or "output" in key.lower()) and value:
+                    if isinstance(value, (dict, list)):
+                        import json
+
+                        return json.dumps(value)
+                    return str(value)
+
+        metadata_cols = [
+            col for col in annotation_row.index if col.startswith("metadata.")
+        ]
+        for col in metadata_cols:
+            if "response" in col.lower() or "output" in col.lower():
+                value = annotation_row[col]
+                if value:
                     if isinstance(value, (dict, list)):
                         import json
 

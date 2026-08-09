@@ -9,12 +9,15 @@ KeyError('span_id'). This pins the reset_index normalization.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from cogniverse_finetuning.dataset.method_selector import TrainingMethodSelector
+from cogniverse_finetuning.dataset.preference_extractor import PreferencePairExtractor
+from cogniverse_foundation.telemetry.span_contract import OP_ROUTING, record_span_io
 
 pytestmark = pytest.mark.integration
 
@@ -59,12 +62,13 @@ async def test_analyze_data_counts_from_real_phoenix(
         name="routing_agent",
         tenant_id=tenant_id,
         project_name=project_name,
-        attributes={
-            "input.query": "find sunset videos",
-            "output.response": "default route",
-        },
-    ):
-        pass
+    ) as span:
+        record_span_io(
+            span,
+            input_value="find sunset videos",
+            output={"recommended_agent": "video_search"},
+            operation=OP_ROUTING,
+        )
     telemetry_manager.force_flush(timeout_millis=10000)
 
     provider = telemetry_manager.get_provider(
@@ -96,7 +100,7 @@ async def test_analyze_data_counts_from_real_phoenix(
         name="human_review_approved",
         label="approved",
         score=1.0,
-        metadata={},
+        metadata={"response": json.dumps({"recommended_agent": "video_search"})},
         project=full_project,
     )
     await provider.annotations.add_annotation(
@@ -104,7 +108,7 @@ async def test_analyze_data_counts_from_real_phoenix(
         name="human_review_rejected",
         label="rejected",
         score=0.0,
-        metadata={},
+        metadata={"response": json.dumps({"recommended_agent": "document_agent"})},
         project=full_project,
     )
 
@@ -134,3 +138,16 @@ async def test_analyze_data_counts_from_real_phoenix(
     assert analysis.preference_pairs == 1
     assert analysis.recommended_method == "dpo"
     assert analysis.needs_synthetic is False
+
+    end = datetime.now(timezone.utc)
+    dataset = await PreferencePairExtractor(provider).extract(
+        project=full_project,
+        agent_type="routing",
+        min_pairs=1,
+        start_time=end - timedelta(hours=1),
+        end_time=end,
+    )
+    assert len(dataset.pairs) == analysis.preference_pairs == 1
+    assert dataset.pairs[0].prompt == "find sunset videos"
+    assert dataset.pairs[0].chosen == '{"recommended_agent":"video_search"}'
+    assert dataset.pairs[0].rejected == '{"recommended_agent":"document_agent"}'

@@ -17,8 +17,11 @@ from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
 
+from cogniverse_finetuning.dataset.output_projection import project_training_output
+from cogniverse_finetuning.dataset.preference_extractor import (
+    classify_preference_annotation,
+)
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
-from cogniverse_foundation.telemetry.span_contract import PREFERENCE_CHOSEN_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -218,11 +221,10 @@ class TraceToInstructionConverter:
 
         # 1. Query spans for the agent type
         logger.info(f"Querying spans from project={project}...")
-        spans_df = await trace_store.get_spans(
+        spans_df = await trace_store.get_all_spans(
             project=project,
             start_time=start_time,
             end_time=end_time,
-            limit=10000,
         )
 
         if spans_df.empty:
@@ -314,11 +316,11 @@ class TraceToInstructionConverter:
         if annotations_df.empty:
             return annotations_df
 
-        # Approved annotations have label="approved" or a high enough score.
-        mask = (annotations_df["result.label"] == "approved") | (
-            annotations_df["result.score"] >= PREFERENCE_CHOSEN_THRESHOLD
+        classifications = annotations_df.apply(
+            classify_preference_annotation,
+            axis=1,
         )
-        return annotations_df[mask].copy()
+        return annotations_df[classifications == "approved"].copy()
 
     def _create_instruction_examples(
         self,
@@ -354,15 +356,13 @@ class TraceToInstructionConverter:
                 continue
 
             # Extract instruction and output from span attributes
-            example = self._extract_example_from_span(span_row, agent_type)
-            if example:
-                examples.append(example)
+            examples.append(self._extract_example_from_span(span_row, agent_type))
 
         return examples
 
     def _extract_example_from_span(
         self, span_row: pd.Series, agent_type: str
-    ) -> Optional[InstructionExample]:
+    ) -> InstructionExample:
         """
         Extract instruction example from span row.
 
@@ -371,54 +371,46 @@ class TraceToInstructionConverter:
             agent_type: Type of agent
 
         Returns:
-            InstructionExample or None if extraction fails
+            Canonical instruction example.
+
+        Raises:
+            ValueError: If an approved span does not contain canonical training data.
         """
-        try:
-            # Extract input/output from span attributes
-            # Convention: input in attributes.input.*, output in attributes.output.*
-            attributes = {
-                k: v for k, v in span_row.items() if k.startswith("attributes.")
-            }
+        span_id = span_row.get("context.span_id")
+        context = f"approved {agent_type} span {span_id}"
+        attributes = {
+            key: value
+            for key, value in span_row.items()
+            if key.startswith("attributes.")
+        }
 
-            # Get input (query, request, etc.)
-            input_text = self._extract_input(attributes, agent_type)
-            if not input_text:
-                logger.warning(
-                    f"No input found in span {span_row.get('context.span_id')}"
-                )
-                return None
+        input_text = self._extract_input(attributes, agent_type)
+        if not input_text.strip():
+            raise ValueError(f"{context} requires a non-empty input.value")
 
-            # Get output (response, decision, etc.)
-            output_text = self._extract_output(attributes, agent_type)
-            if not output_text:
-                logger.warning(
-                    f"No output found in span {span_row.get('context.span_id')}"
-                )
-                return None
+        output_text = self._extract_output(
+            attributes,
+            agent_type,
+            context=context,
+        )
 
-            # Get instruction template for agent type
-            instruction = self._get_instruction_template(agent_type)
-
-            return InstructionExample(
-                instruction=instruction,
-                input=input_text,
-                output=output_text,
-                metadata={
-                    "span_id": span_row.get("context.span_id"),
-                    "agent_type": agent_type,
-                    "start_time": span_row.get("start_time"),
-                    "end_time": span_row.get("end_time"),
-                },
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to extract example from span: {e}")
-            return None
+        return InstructionExample(
+            instruction=self._get_instruction_template(agent_type),
+            input=input_text,
+            output=output_text,
+            metadata={
+                "span_id": span_id,
+                "agent_type": agent_type,
+                "start_time": span_row.get("start_time"),
+                "end_time": span_row.get("end_time"),
+            },
+        )
 
     def _extract_input(self, attributes: Dict[str, Any], agent_type: str) -> str:
         """Extract input text from span attributes."""
         # Common input attribute names
         input_keys = [
+            "attributes.input.value",
             "attributes.input.query",
             "attributes.input.text",
             "attributes.input.request",
@@ -444,45 +436,27 @@ class TraceToInstructionConverter:
 
         return ""
 
-    def _extract_output(self, attributes: Dict[str, Any], agent_type: str) -> str:
-        """Extract output text from span attributes."""
-        # Common output attribute names
-        output_keys = [
-            "attributes.output.response",
-            "attributes.output.result",
-            "attributes.output.decision",
-            "attributes.response",
-            "attributes.result",
-        ]
-
-        for key in output_keys:
-            if key in attributes and attributes[key]:
-                value = attributes[key]
-                # Handle dict/list outputs
-                if isinstance(value, (dict, list)):
-                    import json
-
-                    return json.dumps(value)
-                return str(value)
-
-        # Phoenix groups namespaced attributes into a nested dict column:
-        # output.response -> attributes.output == {"response": ...}.
-        for ns_col, subkeys in (
-            ("attributes.output", ("response", "result", "decision", "value")),
-            ("attributes.response", ("value",)),
-        ):
-            ns = attributes.get(ns_col)
-            if isinstance(ns, dict):
-                for sub in subkeys:
-                    if ns.get(sub):
-                        val = ns[sub]
-                        if isinstance(val, (dict, list)):
-                            import json
-
-                            return json.dumps(val)
-                        return str(val)
-
-        return ""
+    def _extract_output(
+        self,
+        attributes: Dict[str, Any],
+        agent_type: str,
+        *,
+        context: str,
+    ) -> str:
+        """Project the public telemetry ``output.value`` onto training JSON."""
+        value = attributes.get("attributes.output.value")
+        if value is None:
+            grouped_output = attributes.get("attributes.output")
+            if isinstance(grouped_output, dict):
+                value = grouped_output.get("value")
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    f"{context} output.value must be a JSON object: {error.msg}"
+                ) from error
+        return project_training_output(agent_type, value, context=context)
 
     def _get_instruction_template(self, agent_type: str) -> str:
         """Get instruction template for agent type."""
@@ -538,8 +512,10 @@ class TraceToTrajectoryConverter:
         trace_store = self.provider.traces
 
         # Query spans
-        spans_df = await trace_store.get_spans(
-            project=project, start_time=start_time, end_time=end_time, limit=10000
+        spans_df = await trace_store.get_all_spans(
+            project=project,
+            start_time=start_time,
+            end_time=end_time,
         )
 
         if spans_df.empty:
@@ -620,11 +596,7 @@ class TraceToTrajectoryConverter:
             turns = []
             for turn_idx, span in enumerate(session_spans, 1):
                 turn = self._create_turn_from_span(span, turn_idx, agent_type)
-                if turn:
-                    turns.append(turn)
-
-            if not turns:
-                continue
+                turns.append(turn)
 
             # Create trajectory
             trajectory = ConversationTrajectory(
@@ -675,7 +647,7 @@ class TraceToTrajectoryConverter:
 
     def _create_turn_from_span(
         self, span: pd.Series, turn_idx: int, agent_type: str
-    ) -> Optional[ConversationTurn]:
+    ) -> ConversationTurn:
         """
         Create a ConversationTurn from a span.
 
@@ -685,44 +657,48 @@ class TraceToTrajectoryConverter:
             agent_type: Agent type
 
         Returns:
-            ConversationTurn or None if extraction fails
+            ConversationTurn containing the canonical model-facing response.
+
+        Raises:
+            ValueError: If the span lacks a valid query, canonical output, or
+                timestamp.
         """
-        try:
-            # Extract query/response from span attributes
-            attributes = {k: v for k, v in span.items() if k.startswith("attributes.")}
+        attributes = {k: v for k, v in span.items() if k.startswith("attributes.")}
+        span_id = str(span.get("context.span_id", ""))
+        context = f"{agent_type} trajectory span {span_id} turn {turn_idx}"
 
-            # Get query (input)
-            query = self._extract_query(attributes)
+        query = self._extract_query(attributes)
+        if not query.strip():
+            raise ValueError(f"{context} requires a non-empty input.value")
 
-            # Get response (output)
-            response = self._extract_response(attributes)
+        response = self._extract_response(
+            attributes,
+            agent_type,
+            context=context,
+        )
 
-            # Get span ID
-            span_id = span.get("context.span_id", "")
+        timestamp = span.get("start_time")
+        if isinstance(timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(
+                    f"{context} has invalid start_time {timestamp!r}"
+                ) from exc
+            if timestamp.utcoffset() is None:
+                raise ValueError(f"{context} requires timezone-aware start_time")
 
-            # Get timestamp
-            timestamp = span.get("start_time")
-            if isinstance(timestamp, str):
-                try:
-                    timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                except ValueError:
-                    timestamp = datetime.now(timezone.utc)
-
-            return ConversationTurn(
-                turn_id=turn_idx,
-                query=query,
-                response=response,
-                timestamp=timestamp,
-                span_id=span_id,
-                metadata={
-                    "agent_type": agent_type,
-                    "latency_ms": span.get("attributes.latency_ms"),
-                },
-            )
-
-        except Exception as e:
-            logger.warning(f"Failed to create turn from span: {e}")
-            return None
+        return ConversationTurn(
+            turn_id=turn_idx,
+            query=query,
+            response=response,
+            timestamp=timestamp,
+            span_id=span_id,
+            metadata={
+                "agent_type": agent_type,
+                "latency_ms": span.get("attributes.latency_ms"),
+            },
+        )
 
     def _extract_query(self, attributes: Dict[str, Any]) -> str:
         """Extract query from span attributes."""
@@ -749,23 +725,24 @@ class TraceToTrajectoryConverter:
 
         return ""
 
-    def _extract_response(self, attributes: Dict[str, Any]) -> str:
-        """Extract response from span attributes."""
-        # Try various output attribute names
-        output_keys = [
-            "attributes.output.value",
-            "attributes.output.response",
-            "attributes.output.result",
-            "attributes.response",
-            "attributes.result",
-        ]
-
-        for key in output_keys:
-            if key in attributes and attributes[key]:
-                value = attributes[key]
-                # Handle dict/list outputs
-                if isinstance(value, (dict, list)):
-                    return json.dumps(value)
-                return str(value)
-
-        return ""
+    def _extract_response(
+        self,
+        attributes: Dict[str, Any],
+        agent_type: str,
+        *,
+        context: str,
+    ) -> str:
+        """Project the public telemetry ``output.value`` onto training JSON."""
+        value = attributes.get("attributes.output.value")
+        if value is None:
+            grouped_output = attributes.get("attributes.output")
+            if isinstance(grouped_output, dict):
+                value = grouped_output.get("value")
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    f"{context} output.value must be a JSON object: {error.msg}"
+                ) from error
+        return project_training_output(agent_type, value, context=context)

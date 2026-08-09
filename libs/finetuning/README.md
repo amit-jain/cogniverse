@@ -24,6 +24,7 @@ provider = manager.get_provider("tenant1", "cogniverse-tenant1")
 # Example 1: Local Training (CPU/GPU)
 result = await finetune(
     telemetry_provider=provider,
+    telemetry_manager=manager,
     tenant_id="tenant1",
     project="cogniverse-tenant1",
     model_type="llm",  # or "embedding"
@@ -35,6 +36,7 @@ result = await finetune(
 # Example 2: Remote GPU Training (Modal)
 result = await finetune(
     telemetry_provider=provider,
+    telemetry_manager=manager,
     tenant_id="tenant1",
     project="cogniverse-tenant1",
     model_type="llm",
@@ -82,4 +84,3 @@ modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 | **SFT** | Instruction tuning | 50+ approved examples |
 | **DPO** | Preference learning | 20+ preference pairs |
 | **Embedding** | Semantic search | 100+ search triplets |
-
