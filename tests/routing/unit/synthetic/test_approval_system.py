@@ -119,6 +119,35 @@ class TestApprovalInterfaces:
         assert len(batch.rejected) == 0
         assert batch.approval_rate == pytest.approx(1 / 3)
 
+    def test_regenerated_item_remains_pending_for_human_review(self):
+        original = ReviewItem(
+            item_id="original",
+            data={"query": "Find a framework tutorial"},
+            confidence=0.4,
+            status=ApprovalStatus.REJECTED,
+        )
+        replacement = ReviewItem(
+            item_id="original_regen_0",
+            data={"query": "Find exact PyTorch tutorials"},
+            confidence=0.91,
+            status=ApprovalStatus.REGENERATED,
+        )
+        approved = ReviewItem(
+            item_id="approved",
+            data={"query": "Find exact JAX tutorials"},
+            confidence=0.88,
+            status=ApprovalStatus.APPROVED,
+        )
+
+        batch = ApprovalBatch(
+            batch_id="regenerated-review",
+            items=[original, replacement, approved],
+        )
+
+        assert [(item.item_id, item.status) for item in batch.pending_review] == [
+            (replacement.item_id, ApprovalStatus.REGENERATED)
+        ]
+
 
 class TestConfidenceExtractor:
     @staticmethod
