@@ -1,16 +1,14 @@
-"""Vespa soft-timeout (degraded) reads must raise, not read as absent config.
+"""Config reads distinguish successful absence from backend degradation.
 
-A Vespa soft-timeout is HTTP 200 with ``root.errors`` and degraded coverage
-plus empty/partial hits. VespaConfigStore.get_config must raise on that shape
-so the caller never mistakes a degraded backend for a genuinely-absent config
-(which would trigger mass re-submit + cooldown wipe in quality_monitor_cli).
-A genuinely-absent config (empty hits, no errors, coverage not degraded) must
-still return None.
+Public config reads use Document v1 visits and propagate transport failures.
+Query-backed maintenance operations still reject HTTP-200 soft timeouts with
+root errors or degraded coverage instead of reporting empty state.
 """
 
 from datetime import datetime, timezone
 
 import pytest
+import requests
 
 from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
@@ -69,13 +67,8 @@ def _clean_absent_response():
     )
 
 
-_STORED_AT = datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc)
-
-
 def _healthy_hit_response():
-    # set_config writes ``datetime.now(timezone.utc).isoformat()``, so a
-    # stored row always carries the UTC offset.
-    now = _STORED_AT.isoformat()
+    now = datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc).isoformat()
     return _FakeQueryResponse(
         {
             "root": {
@@ -104,38 +97,97 @@ def _store_with(response):
     return VespaConfigStore(vespa_app=_FakeVespaApp(response))
 
 
-def test_get_config_raises_on_soft_timeout():
-    store = _store_with(_soft_timeout_response())
-    with pytest.raises(RuntimeError, match="degraded"):
+class _FakeVisitResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+def _visit_payload(fields=None):
+    documents = [] if fields is None else [{"id": "id:config::entry", "fields": fields}]
+    return {"documents": documents}
+
+
+def _healthy_fields():
+    return _healthy_hit_response().hits[0]["fields"]
+
+
+def test_get_config_raises_on_visit_timeout(monkeypatch):
+    store = _store_with(_clean_absent_response())
+
+    def timeout(*args, **kwargs):
+        raise requests.Timeout("visit timed out")
+
+    monkeypatch.setattr(requests, "get", timeout)
+    with pytest.raises(requests.Timeout, match="visit timed out"):
         store.get_config("acme", ConfigScope.SYSTEM, "system", "poll_state")
 
 
-def test_get_config_returns_none_on_clean_absence():
+def test_get_config_returns_none_on_clean_absence(monkeypatch):
     store = _store_with(_clean_absent_response())
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *args, **kwargs: _FakeVisitResponse(_visit_payload()),
+    )
     result = store.get_config("acme", ConfigScope.SYSTEM, "system", "poll_state")
     assert result is None
 
 
-def test_get_config_returns_entry_on_healthy_hit():
+def test_get_config_returns_entry_on_healthy_hit(monkeypatch):
     store = _store_with(_healthy_hit_response())
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *args, **kwargs: _FakeVisitResponse(_visit_payload(_healthy_fields())),
+    )
     entry = store.get_config("acme", ConfigScope.SYSTEM, "system", "poll_state")
     assert isinstance(entry, ConfigEntry)
     assert entry.config_key == "poll_state"
     assert entry.version == 7
     assert entry.config_value == {"last_run": 42}
-    assert entry.created_at == _STORED_AT
-    assert entry.updated_at == _STORED_AT
+    assert entry.created_at == datetime(2026, 7, 20, 12, 0, 0, tzinfo=timezone.utc)
+    assert entry.updated_at == entry.created_at
 
 
-def test_get_config_history_raises_on_soft_timeout():
-    store = _store_with(_soft_timeout_response())
-    with pytest.raises(RuntimeError, match="degraded"):
+def test_get_config_rejects_obsolete_naive_timestamp(monkeypatch):
+    fields = _healthy_fields()
+    fields["created_at"] = "2026-07-20T12:00:00"
+
+    store = _store_with(_clean_absent_response())
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *args, **kwargs: _FakeVisitResponse(_visit_payload(fields)),
+    )
+    with pytest.raises(ValueError, match="created_at.*timezone"):
+        store.get_config("acme", ConfigScope.SYSTEM, "system", "poll_state")
+
+
+def test_get_config_history_raises_on_visit_timeout(monkeypatch):
+    store = _store_with(_clean_absent_response())
+
+    def timeout(*args, **kwargs):
+        raise requests.Timeout("visit timed out")
+
+    monkeypatch.setattr(requests, "get", timeout)
+    with pytest.raises(requests.Timeout, match="visit timed out"):
         store.get_config_history("acme", ConfigScope.SYSTEM, "system", "poll_state")
 
 
-def test_list_configs_raises_on_soft_timeout():
-    store = _store_with(_soft_timeout_response())
-    with pytest.raises(RuntimeError, match="degraded"):
+def test_list_configs_raises_on_visit_timeout(monkeypatch):
+    store = _store_with(_clean_absent_response())
+
+    def timeout(*args, **kwargs):
+        raise requests.Timeout("visit timed out")
+
+    monkeypatch.setattr(requests, "get", timeout)
+    with pytest.raises(requests.Timeout, match="visit timed out"):
         store.list_configs("acme")
 
 
