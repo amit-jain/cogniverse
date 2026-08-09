@@ -1639,6 +1639,8 @@ python -m cogniverse_runtime.quality_monitor_cli \
 
 `--tenant-id` and `--llm-model` are required; `--argo-url` defaults to `None`, which disables auto-submission of optimization workflows (the monitor still evaluates and logs, it just won't trigger retraining). `--once` runs a single forced optimization cycle and exits (bypassing the quality-threshold check), for Argo CronWorkflows doing scheduled distillation, instead of looping.
 
+Startup blocks until its dependencies are ready instead of crash-looping on boot ordering: it retries the telemetry configuration store while it raises transport errors (`httpr.TransportError` / `requests.RequestException`), and — for the monitor loop and `--once` (not the annotation modes) — posts the first golden-dataset query to the runtime's `/search/` route until it returns HTTP 200 with a results list. Both gates share `--startup-timeout` (seconds, default 300) and `--startup-poll-interval` (seconds, default 2); on expiry the CLI exits with the attempt count and the last transport failure as the cause.
+
 ---
 
 ## Related Documentation

@@ -11,7 +11,11 @@ second asyncio.run).
 from __future__ import annotations
 
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import httpr
 import pytest
 
 from cogniverse_runtime import quality_monitor_cli as qm
@@ -56,6 +60,9 @@ def patched(monkeypatch):
     )
     monkeypatch.setattr(
         "cogniverse_evaluation.quality_monitor.QualityMonitor", _StubMonitor
+    )
+    monkeypatch.setattr(
+        qm, "_wait_for_runtime_search", lambda **kwargs: None, raising=False
     )
     _StubMonitor.force_result = {"status": "ok"}
     _StubMonitor.run_exc = None
@@ -106,6 +113,28 @@ def test_once_status_ok_exits_0_and_closes(patched):
     assert _StubMonitor.instances[-1].closed is True
 
 
+def test_main_waits_for_runtime_search_before_constructing_monitor(patched):
+    calls = []
+
+    def wait_for_search(**kwargs):
+        calls.append(kwargs)
+
+    patched.setattr(qm, "_wait_for_runtime_search", wait_for_search, raising=False)
+
+    assert _main_exit(patched, [*_BASE, "--once"]) == 0
+    assert calls == [
+        {
+            "runtime_url": "http://localhost:28000",
+            "tenant_id": "acme:acme",
+            "golden_dataset_path": (
+                "data/testset/evaluation/sample_videos_retrieval_queries.json"
+            ),
+            "timeout_seconds": 300.0,
+            "poll_interval_seconds": 2.0,
+        }
+    ]
+
+
 def test_once_status_error_exits_1_and_closes(patched):
     _StubMonitor.force_result = {"status": "error", "reason": "eval failed"}
     code = _main_exit(patched, [*_BASE, "--once"])
@@ -139,6 +168,160 @@ def test_default_monitor_keyboard_interrupt_exits_0(patched):
     code = _main_exit(patched, _BASE)
     assert code == 0
     assert _StubMonitor.instances[-1].closed is True
+
+
+def test_startup_dependency_retry_isolated_across_concurrent_waiters():
+    waiter_count = 8
+    first_attempts = threading.Barrier(waiter_count)
+    thread_state = threading.local()
+    attempt_count = 0
+    attempt_lock = threading.Lock()
+    manager = object()
+
+    def get_manager():
+        nonlocal attempt_count
+        with attempt_lock:
+            attempt_count += 1
+        thread_attempt = getattr(thread_state, "attempt", 0) + 1
+        thread_state.attempt = thread_attempt
+        if thread_attempt == 1:
+            first_attempts.wait(timeout=5)
+            raise httpr.ConnectError("Vespa is still starting")
+        return manager
+
+    def wait_for_manager():
+        return qm._wait_for_telemetry_manager(
+            get_manager=get_manager,
+            timeout_seconds=1,
+            poll_interval_seconds=0,
+        )
+
+    with ThreadPoolExecutor(max_workers=waiter_count) as pool:
+        results = list(pool.map(lambda _: wait_for_manager(), range(waiter_count)))
+
+    assert results == [manager] * waiter_count
+    assert attempt_count == waiter_count * 2
+
+
+def test_startup_dependency_timeout_raises_with_last_transport_failure():
+    def unavailable_manager():
+        raise httpr.ConnectError("Vespa config query refused")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        qm._wait_for_telemetry_manager(
+            get_manager=unavailable_manager,
+            timeout_seconds=0,
+            poll_interval_seconds=0,
+        )
+
+    assert str(exc_info.value) == (
+        "Telemetry configuration dependency was not ready after 1 attempt "
+        "within 0.0s: ConnectError: Vespa config query refused"
+    )
+    assert isinstance(exc_info.value.__cause__, httpr.ConnectError)
+
+
+def test_runtime_search_readiness_uses_real_request_and_exact_payload(tmp_path):
+    golden = tmp_path / "golden.json"
+    golden.write_text(
+        '[{"query":"man lifting a barbell","expected_videos":["video-7"]}]',
+        encoding="utf-8",
+    )
+    requests_seen = []
+
+    class SearchHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            import json
+
+            body = json.loads(
+                self.rfile.read(int(self.headers["Content-Length"])).decode()
+            )
+            requests_seen.append({"path": self.path, "body": body})
+            if len(requests_seen) == 1:
+                payload = b'{"detail":"starting"}'
+                self.send_response(503)
+            elif len(requests_seen) == 2:
+                payload = b'{"unexpected":[]}'
+                self.send_response(200)
+            else:
+                payload = b'{"results":[{"source_id":"video-7","score":1.0}]}'
+                self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SearchHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = qm._wait_for_runtime_search(
+            runtime_url=f"http://127.0.0.1:{server.server_port}",
+            tenant_id="acme:production",
+            golden_dataset_path=str(golden),
+            timeout_seconds=2,
+            poll_interval_seconds=0.001,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    expected_request = {
+        "path": "/search/",
+        "body": {
+            "query": "man lifting a barbell",
+            "profile": "video_colpali_smol500_mv_frame",
+            "top_k": 1,
+            "tenant_id": "acme:production",
+        },
+    }
+    assert requests_seen == [expected_request, expected_request, expected_request]
+    assert result == {"results": [{"source_id": "video-7", "score": 1.0}]}
+
+
+def test_runtime_search_waiters_keep_independent_attempt_counts():
+    waiter_count = 8
+    first_attempts = threading.Barrier(waiter_count)
+    local_state = threading.local()
+    observed_attempts = []
+    lock = threading.Lock()
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"results": []}
+
+    def post(*args, **kwargs):
+        attempt = getattr(local_state, "attempt", 0) + 1
+        local_state.attempt = attempt
+        if attempt == 1:
+            first_attempts.wait(timeout=5)
+            raise ConnectionError("runtime starting")
+        with lock:
+            observed_attempts.append(attempt)
+        return Response()
+
+    def wait():
+        return qm._wait_for_runtime_search(
+            runtime_url="http://runtime",
+            tenant_id="acme:production",
+            golden_queries=[{"query": "probe"}],
+            timeout_seconds=2,
+            poll_interval_seconds=0,
+            post=post,
+        )
+
+    with ThreadPoolExecutor(max_workers=waiter_count) as pool:
+        results = list(pool.map(lambda _: wait(), range(waiter_count)))
+
+    assert results == [{"results": []}] * waiter_count
+    assert observed_attempts == [2] * waiter_count
 
 
 class TestConfigErrorExitsCleanly:
