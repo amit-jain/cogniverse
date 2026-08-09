@@ -31,6 +31,28 @@ from .relationship_extraction_tools import (
 logger = logging.getLogger(__name__)
 
 
+def _validate_available_agents(
+    available_agents: Optional[List[str]],
+) -> List[str]:
+    """Validate and return the canonical routing agent-name list."""
+    if available_agents is None:
+        return []
+    if not isinstance(available_agents, list):
+        raise TypeError("available_agents must be a list[str] or None")
+    if not available_agents:
+        raise ValueError("available_agents must contain at least one agent name")
+    for index, agent_name in enumerate(available_agents):
+        if not isinstance(agent_name, str):
+            raise TypeError(f"available_agents[{index}] must be a non-empty str")
+        if not agent_name.strip():
+            raise ValueError("available_agents must not contain empty agent names")
+        if agent_name != agent_name.strip():
+            raise ValueError(
+                f"available_agents[{index}] must not contain surrounding whitespace"
+            )
+    return available_agents
+
+
 class ComposableQueryAnalysisModule(dspy.Module):
     """
     Composable DSPy module that combines entity extraction, relationship inference,
@@ -127,7 +149,6 @@ class ComposableQueryAnalysisModule(dspy.Module):
         all_relationships = gliner_relationships + spacy_relationships
         relationships = self._deduplicate_relationships(all_relationships)
 
-        # Call LLM reformulator with pre-extracted entities and relationships
         entities_json = json.dumps(entities)
         relationships_json = json.dumps(relationships)
 
@@ -268,13 +289,13 @@ class DSPyBasicRoutingModule(dspy.Module):
         Returns:
             DSPy prediction with routing analysis
         """
+        agents = _validate_available_agents(available_agents)
         try:
             # Analyze query characteristics
             analysis_result = self._analyze_query_characteristics(
-                query, context, available_agents
+                query, context, agents
             )
 
-            # Create prediction with analysis results
             prediction = dspy.Prediction()
             prediction.primary_intent = analysis_result["intent"]
             prediction.complexity_level = analysis_result["complexity"]
@@ -290,7 +311,6 @@ class DSPyBasicRoutingModule(dspy.Module):
         except Exception as e:
             logger.error(f"Basic routing analysis failed: {e}")
 
-            # Return fallback prediction
             prediction = dspy.Prediction()
             prediction.primary_intent = "search"
             prediction.complexity_level = "moderate"
@@ -374,7 +394,7 @@ class DSPyBasicRoutingModule(dspy.Module):
 
         # Agent recommendation — pick from available agents by matching
         # intent keywords against agent names. No hardcoded agent names.
-        agents = available_agents or []
+        agents = available_agents if available_agents is not None else []
         default_agent = agents[0] if agents else "search_agent"
 
         # Map intent to keywords that should appear in the agent name
@@ -486,6 +506,7 @@ class DSPyAdvancedRoutingModule(dspy.Module):
         Returns:
             DSPy prediction with comprehensive routing decision
         """
+        _validate_available_agents(available_agents)
         try:
             # Step 1: Basic query analysis
             basic_analysis = self.basic_module.forward(
@@ -493,7 +514,10 @@ class DSPyAdvancedRoutingModule(dspy.Module):
             )
 
             # Step 2: Composable query analysis (entities + relationships + enhancement)
-            analysis_result = self.analysis_module.forward(query)
+            analysis_result = self.analysis_module(
+                query=query,
+                search_context="general",
+            )
 
             # Step 3: Routing decision — the LM predictor decides, fed the
             # relationship analysis through its context input; the
@@ -522,7 +546,6 @@ class DSPyAdvancedRoutingModule(dspy.Module):
                 query, analysis_result
             )
 
-            # Create comprehensive prediction
             prediction = dspy.Prediction()
 
             # Query analysis
@@ -561,7 +584,6 @@ class DSPyAdvancedRoutingModule(dspy.Module):
                 query, context, available_agents=available_agents
             )
 
-            # Create minimal advanced prediction
             prediction = dspy.Prediction()
             prediction.query_analysis = {"error": str(e)}
             prediction.extracted_entities = []
