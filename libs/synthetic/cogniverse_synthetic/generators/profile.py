@@ -8,114 +8,54 @@ template with the backend profile it best fits, supplying the
 needs to compile the agent's DSPy module.
 """
 
+import asyncio
 import logging
-import random
-from typing import Any, Dict, List, Optional
+import math
+from collections.abc import Awaitable, Callable
+from typing import Any, Dict, List
 
 from pydantic import BaseModel
 
+from cogniverse_core.approval.training_schema import (
+    PROFILE_TRAINING_MODALITIES,
+    validate_approved_training_values,
+)
 from cogniverse_synthetic.generators.base import BaseGenerator
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 
 logger = logging.getLogger(__name__)
 
+ProfileLabeler = Callable[[str, List[str], str], Awaitable[Any]]
+DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
+
 
 class ProfileGenerator(BaseGenerator):
     """Generate ProfileSelectionExample data for ProfileSelectionAgent.
 
-    Strategy:
-    1. Pick a target profile from the available universe.
-    2. Pull modality / complexity / intent traits for that profile
-       from a heuristic mapping (per-profile capability hints).
-    3. Pick a query template that suits the profile's encoder
-       granularity (frame vs chunk vs detailed).
-    4. Substitute a topic from the sampled content (or a default
-       seed list) to produce a realistic query.
-    5. Emit a ``(query, available_profiles) -> selected_profile``
-       example with realistic confidence and reasoning fields.
-
-    The default profile universe matches the comma-separated list in
-    ``run_profile_optimization`` so synthetic demos stay aligned with
-    the production trainset shape. Operators can override via the
-    ``available_profiles`` keyword to ``generate``.
+    Profile labels and queries are derived from deployed profile configuration.
+    A profile without a canonical modality is invalid because substituting a
+    default modality would train the selector with a false supervision signal.
     """
 
-    DEFAULT_PROFILES: List[str] = [
-        "video_colpali_smol500_mv_frame",
-        "video_colqwen_omni_mv_chunk_30s",
-        "video_videoprism_base_mv_chunk_30s",
-        "video_videoprism_large_mv_chunk_30s",
-    ]
+    SUPPORTED_MODALITIES = PROFILE_TRAINING_MODALITIES
 
-    PROFILE_TRAITS: Dict[str, Dict[str, Any]] = {
-        "video_colpali_smol500_mv_frame": {
-            "modality": "video",
-            "complexity": "simple",
-            "intent": "video_search",
-            "templates": [
-                "find the frame where {topic}",
-                "show me a still of {topic}",
-                "still image showing {topic}",
-                "snapshot of {topic}",
-            ],
-        },
-        "video_colqwen_omni_mv_chunk_30s": {
-            "modality": "video",
-            "complexity": "medium",
-            "intent": "video_search",
-            "templates": [
-                "find a clip about {topic}",
-                "video segment discussing {topic}",
-                "scene of {topic}",
-                "30-second clip of {topic}",
-            ],
-        },
-        "video_videoprism_base_mv_chunk_30s": {
-            "modality": "video",
-            "complexity": "medium",
-            "intent": "video_search",
-            "templates": [
-                "show me video about {topic}",
-                "find videos covering {topic}",
-                "video discussing {topic}",
-            ],
-        },
-        "video_videoprism_large_mv_chunk_30s": {
-            "modality": "video",
-            "complexity": "complex",
-            "intent": "video_search",
-            "templates": [
-                "comprehensive video analysis of {topic}",
-                "detailed video walkthrough of {topic}",
-                "in-depth video explanation of {topic}",
-                "thorough video coverage of {topic}",
-            ],
-        },
-    }
-
-    DEFAULT_TRAITS: Dict[str, Any] = {
-        "modality": "video",
-        "complexity": "medium",
-        "intent": "video_search",
-        "templates": [
-            "find {topic}",
-            "show me {topic}",
-            "search for {topic}",
-        ],
-    }
-
-    DEFAULT_TOPICS: List[str] = [
-        "machine learning",
-        "neural network training",
-        "transformer architecture",
-        "data preprocessing",
-        "feature engineering",
-        "kubernetes deployment",
-        "docker containers",
-        "graph neural networks",
-        "reinforcement learning",
-        "natural language processing",
-    ]
+    def __init__(
+        self,
+        profile_labeler: ProfileLabeler | None = None,
+        production_label_timeout_seconds: float = DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS,
+    ):
+        super().__init__()
+        if (
+            isinstance(production_label_timeout_seconds, bool)
+            or not isinstance(production_label_timeout_seconds, (int, float))
+            or not math.isfinite(production_label_timeout_seconds)
+            or production_label_timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "production_label_timeout_seconds must be finite and positive"
+            )
+        self.profile_labeler = profile_labeler
+        self.production_label_timeout_seconds = float(production_label_timeout_seconds)
 
     async def generate(
         self,
@@ -127,61 +67,283 @@ class ProfileGenerator(BaseGenerator):
 
         Args:
             sampled_content: Backend-sampled content used to source
-                topic strings (optional; falls back to DEFAULT_TOPICS).
+                topic strings.
             target_count: Number of examples to generate.
-            **kwargs: ``available_profiles`` (List[str]) overrides the
-                default profile universe.
+            **kwargs: ``profile_configs`` is the complete deployed profile map
+                and ``tenant_id`` identifies the production selection request.
         """
         self.validate_inputs(sampled_content, target_count)
 
         logger.info(f"Generating {target_count} ProfileSelectionExample examples")
 
-        profiles = self._resolve_profiles(kwargs.get("available_profiles"))
-        topics = self._extract_topics(sampled_content) or self.DEFAULT_TOPICS
-        available_str = ",".join(profiles)
+        profile_configs = self._validate_profile_configs(kwargs.get("profile_configs"))
+        if not callable(self.profile_labeler):
+            raise ValueError("ProfileGenerator requires a production profile_labeler")
+        tenant_id = kwargs.get("tenant_id")
+        if not isinstance(tenant_id, str) or not tenant_id.strip():
+            raise ValueError("tenant_id is required for profile generation")
+        if kwargs.get("cross_modal", False):
+            return await self._generate_cross_modal(
+                sampled_content,
+                target_count,
+                profile_configs,
+                tenant_id,
+            )
+
+        topics = self._extract_topics(sampled_content)
+        if not topics:
+            raise ValueError("sampled_content contains no usable profile topic")
+        self.require_exact_target_count(
+            topics[:target_count],
+            target_count,
+            source_context=f"{len(topics)} unique source topics",
+        )
 
         examples: List[BaseModel] = []
-        for _ in range(target_count):
-            profile = random.choice(profiles)
-            traits = self.PROFILE_TRAITS.get(profile, self.DEFAULT_TRAITS)
-            topic = random.choice(topics)
-            template = random.choice(traits["templates"])
-            query = template.format(topic=topic)
-            confidence = round(random.uniform(0.7, 0.95), 2)
-
-            examples.append(
-                ProfileSelectionExampleSchema(
-                    query=query,
-                    available_profiles=available_str,
-                    selected_profile=profile,
-                    modality=traits["modality"],
-                    complexity=traits["complexity"],
-                    query_intent=traits["intent"],
-                    confidence=confidence,
-                    reasoning=(
-                        f"Selected {profile} for {traits['modality']}/"
-                        f"{traits['complexity']} query"
-                    ),
-                )
-            )
+        for query in topics[:target_count]:
+            examples.append(await self._label_query(query, profile_configs, tenant_id))
 
         logger.info(f"Generated {len(examples)} ProfileSelectionExample examples")
         return examples
 
-    def _resolve_profiles(self, override: Optional[List[str]]) -> List[str]:
-        if override:
-            cleaned = [p.strip() for p in override if p and p.strip()]
-            if cleaned:
-                return cleaned
-        return list(self.DEFAULT_PROFILES)
+    def _validate_profile_configs(self, raw_configs: Any) -> Dict[str, Dict[str, Any]]:
+        if not isinstance(raw_configs, dict) or not raw_configs:
+            raise ValueError("ProfileGenerator requires deployed profile_configs")
+
+        profile_configs: Dict[str, Dict[str, Any]] = {}
+        for profile_name, profile_config in raw_configs.items():
+            if not isinstance(profile_name, str) or not profile_name.strip():
+                raise ValueError("Backend profile name must be a non-empty string")
+            if profile_name != profile_name.strip():
+                raise ValueError(
+                    f"Backend profile name must be canonical, got {profile_name!r}"
+                )
+            if not isinstance(profile_config, dict):
+                raise ValueError(
+                    f"Backend profile '{profile_name}' configuration must be a mapping"
+                )
+
+            modality = profile_config.get("type")
+            if (
+                not isinstance(modality, str)
+                or not modality
+                or modality != modality.strip().lower()
+                or modality not in self.SUPPORTED_MODALITIES
+            ):
+                raise ValueError(
+                    f"Backend profile '{profile_name}' requires a supported non-empty "
+                    f"type: {', '.join(sorted(self.SUPPORTED_MODALITIES))}"
+                )
+
+            schema_name = profile_config.get("schema_name")
+            if not isinstance(schema_name, str) or not schema_name.strip():
+                raise ValueError(
+                    f"Backend profile '{profile_name}' requires a non-empty string "
+                    "schema_name"
+                )
+            profile_configs[profile_name] = dict(profile_config)
+
+        return profile_configs
+
+    async def _label_query(
+        self,
+        query: str,
+        profile_configs: Dict[str, Dict[str, Any]],
+        tenant_id: str,
+    ) -> ProfileSelectionExampleSchema:
+        profiles = list(profile_configs)
+        selection = await self._request_profile_label(query, profiles, tenant_id)
+        if isinstance(selection, BaseModel):
+            selection = selection.model_dump()
+        if not isinstance(selection, dict):
+            raise ValueError("profile selection result must be an object")
+        if selection.get("query") != query:
+            raise ValueError(
+                "profile selection query must match the source-grounded query"
+            )
+        selected_profile = selection.get("selected_profile")
+        if selected_profile not in profiles:
+            raise ValueError(
+                "profile selection selected_profile must be one of the "
+                "available profiles"
+            )
+        output_fields = {}
+        for field_name in (
+            "modality",
+            "complexity",
+            "query_intent",
+            "reasoning",
+        ):
+            value = selection.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"profile selection {field_name} must be a non-empty string"
+                )
+            output_fields[field_name] = value
+
+        example = ProfileSelectionExampleSchema(
+            query=query,
+            available_profiles=",".join(profiles),
+            selected_profile=selected_profile,
+            **output_fields,
+        )
+        validate_approved_training_values(
+            example.model_dump(),
+            "profile_selection",
+            context=(f"profile selection tenant={tenant_id!r} query={query!r}"),
+        )
+        configured_modality = profile_configs[selected_profile]["type"]
+        if example.modality != configured_modality:
+            raise ValueError(
+                "profile selection modality must match selected profile "
+                f"{selected_profile!r} configured type {configured_modality!r}"
+            )
+        return example
+
+    async def _request_profile_label(
+        self,
+        query: str,
+        profiles: List[str],
+        tenant_id: str,
+    ) -> Any:
+        async def invoke_callback() -> Any:
+            try:
+                return await self.profile_labeler(query, profiles, tenant_id)
+            except Exception as exc:
+                raise RuntimeError(
+                    "profile optimizer callback profile_labeler failed: "
+                    f"Profile selection failed for tenant={tenant_id!r} "
+                    f"query={query!r}: {exc}"
+                ) from exc
+
+        try:
+            return await asyncio.wait_for(
+                invoke_callback(),
+                timeout=self.production_label_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise TimeoutError(
+                "profile optimizer callback profile_labeler timed out after "
+                f"{self.production_label_timeout_seconds:g} seconds for "
+                f"tenant={tenant_id!r} query={query!r}"
+            ) from exc
+
+    def _profile_traits(self, profile_config: Dict[str, Any]) -> Dict[str, str]:
+        modality = profile_config["type"]
+        pipeline = profile_config.get("pipeline_config") or {}
+        embedding_type = profile_config.get("embedding_type")
+
+        if embedding_type == "multi_vector":
+            complexity = "complex"
+        elif embedding_type == "single_vector":
+            complexity = "simple"
+        else:
+            complexity = "medium"
+
+        if modality == "audio" and pipeline.get("transcribe_audio") is True:
+            template = "find {topic} in an audio transcript"
+        elif modality == "video" and pipeline.get("extract_keyframes") is True:
+            template = "find a video frame showing {topic}"
+        elif modality == "document":
+            template = "find {topic} in document content"
+        else:
+            template = f"find {modality} content about {{topic}}"
+
+        return {
+            "modality": modality,
+            "complexity": complexity,
+            "intent": f"{modality}_search",
+            "template": template,
+        }
+
+    async def _generate_cross_modal(
+        self,
+        sampled_content: List[Dict[str, Any]],
+        target_count: int,
+        profile_configs: Dict[str, Dict[str, Any]],
+        tenant_id: str,
+    ) -> List[BaseModel]:
+        profiles_by_modality: Dict[str, List[str]] = {}
+        schema_modalities: Dict[str, str] = {}
+        for profile_name, profile_config in profile_configs.items():
+            modality = profile_config["type"]
+            profiles_by_modality.setdefault(modality, []).append(profile_name)
+            schema_name = profile_config["schema_name"]
+            prior_modality = schema_modalities.setdefault(schema_name, modality)
+            if prior_modality != modality:
+                raise ValueError(
+                    f"Backend schema '{schema_name}' maps to multiple modalities"
+                )
+
+        if len(profiles_by_modality) < 2:
+            raise ValueError("cross_modal requires at least two configured modalities")
+
+        samples_by_modality: Dict[str, List[str]] = {}
+        for item in sampled_content:
+            schema_name = item.get("schema_name")
+            modality = schema_modalities.get(schema_name)
+            if modality is None:
+                raise ValueError(
+                    f"Sampled content schema {schema_name!r} has no configured profile"
+                )
+            topic = self._extract_topic(item)
+            if topic is None:
+                raise ValueError(
+                    f"Sampled {modality} content requires a non-empty topic or title"
+                )
+            topics = samples_by_modality.setdefault(modality, [])
+            if topic not in topics:
+                topics.append(topic)
+
+        modalities = [
+            modality
+            for modality in profiles_by_modality
+            if modality in samples_by_modality
+        ]
+        if len(modalities) < 2:
+            raise ValueError(
+                "cross_modal requires sampled content from at least two modalities"
+            )
+
+        queries = []
+        for first_modality in modalities:
+            for second_modality in modalities:
+                if first_modality == second_modality:
+                    continue
+                for first_topic in samples_by_modality[first_modality]:
+                    for second_topic in samples_by_modality[second_modality]:
+                        query = (
+                            f"find {first_topic} in {first_modality} content together "
+                            f"with {second_topic} in {second_modality} content"
+                        )
+                        if query not in queries:
+                            queries.append(query)
+
+        self.require_exact_target_count(
+            queries[:target_count],
+            target_count,
+            source_context=(f"{len(queries)} unique cross-modal query combinations"),
+        )
+
+        examples = [
+            await self._label_query(query, profile_configs, tenant_id)
+            for query in queries[:target_count]
+        ]
+
+        logger.info(f"Generated {len(examples)} cross-modal examples")
+        return examples
+
+    def _extract_topic(self, item: Dict[str, Any]) -> str | None:
+        for field in ("topic", "title", "video_title", "description", "transcript"):
+            value = item.get(field)
+            if isinstance(value, str) and value.strip():
+                return " ".join(value.split()[:5])
+        return None
 
     def _extract_topics(self, sampled_content: List[Dict[str, Any]]) -> List[str]:
-        topics: List[str] = []
-        for item in sampled_content[:50]:
-            title = item.get("title") or item.get("topic") or ""
-            if isinstance(title, str) and title.strip():
-                words = title.split()[:5]
-                topic = " ".join(words).strip()
-                if topic:
-                    topics.append(topic)
+        topics = []
+        for item in sampled_content:
+            topic = self._extract_topic(item)
+            if topic is not None and topic not in topics:
+                topics.append(topic)
         return topics
