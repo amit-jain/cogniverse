@@ -167,6 +167,48 @@ async def test_two_dispatches_build_the_agent_once(dispatcher):
 
 
 @pytest.mark.asyncio
+async def test_profile_dispatch_forwards_candidate_profiles(dispatcher, monkeypatch):
+    from cogniverse_agents.profile_selection_agent import ProfileSelectionOutput
+
+    captured = {}
+
+    class CapturingProfileAgent:
+        async def process(self, typed_input):
+            captured["input"] = typed_input
+            return ProfileSelectionOutput(
+                query=typed_input.query,
+                selected_profile="document_semantic",
+                confidence=0.94,
+                reasoning="The selector chose document retrieval.",
+                query_intent="research_lookup",
+                modality="document",
+                complexity="medium",
+            )
+
+    async def get_profile_agent(*args, **kwargs):
+        return CapturingProfileAgent()
+
+    monkeypatch.setattr(
+        dispatcher,
+        "_get_or_build_generic_agent",
+        get_profile_agent,
+    )
+
+    result = await dispatcher._execute_generic_agent(
+        "profile_selection_agent",
+        "quantum computing",
+        {"profiles": ["audio_semantic", "document_semantic"]},
+        "acme:media",
+    )
+
+    assert captured["input"].available_profiles == [
+        "audio_semantic",
+        "document_semantic",
+    ]
+    assert result["selected_profile"] == "document_semantic"
+
+
+@pytest.mark.asyncio
 async def test_first_build_loads_artifact_once(dispatcher):
     d = dispatcher
 

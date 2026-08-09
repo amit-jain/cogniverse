@@ -1378,7 +1378,7 @@ async def _query_spans_by_name(
     for attempt in range(_SPAN_QUERY_ATTEMPTS):
         try:
             spans_df = await asyncio.wait_for(
-                telemetry_provider.traces.get_spans(
+                telemetry_provider.traces.get_all_spans(
                     project=project_name,
                     start_time=start_time,
                     end_time=end_time,
@@ -1386,7 +1386,6 @@ async def _query_spans_by_name(
                     # window and filtering client-side costs a full scan of a
                     # project that accumulates thousands of spans a day.
                     filters={"name": span_name},
-                    limit=10000,
                 ),
                 timeout=_SPAN_QUERY_TIMEOUT_S,
             )
@@ -1416,6 +1415,16 @@ async def _query_spans_by_name(
     return spans_df[spans_df["name"] == span_name]
 
 
+def _approved_example_exact_metric(example, prediction, trace=None) -> bool:
+    """Accept a bootstrapped demonstration only when every reviewed label matches."""
+    del trace
+    expected = example.labels().toDict()
+    return all(
+        key in prediction and prediction[key] == value
+        for key, value in expected.items()
+    )
+
+
 def _create_teleprompter(trainset_size: int, teacher_settings: dict | None = None):
     """Select DSPy optimizer config based on training set size.
 
@@ -1435,6 +1444,7 @@ def _create_teleprompter(trainset_size: int, teacher_settings: dict | None = Non
             trainset_size,
         )
         return BootstrapFewShot(
+            metric=_approved_example_exact_metric,
             max_bootstrapped_demos=8,
             max_labeled_demos=16,
             max_rounds=2,
@@ -1444,11 +1454,51 @@ def _create_teleprompter(trainset_size: int, teacher_settings: dict | None = Non
 
     logger.info("Using BootstrapFewShot for %d examples", trainset_size)
     return BootstrapFewShot(
+        metric=_approved_example_exact_metric,
         max_bootstrapped_demos=4,
         max_labeled_demos=8,
         max_rounds=1,
         max_errors=5,
         teacher_settings=teacher_settings,
+    )
+
+
+def _project_approved_optimizer_example(
+    optimizer_type: str, example: dict[str, Any]
+) -> dict[str, Any]:
+    """Project a validated approved record onto its production DSPy signature."""
+    if optimizer_type == "query_enhancement":
+        return {
+            "query": example["query"],
+            "enhanced_query": example["enhanced_query"],
+            "expansion_terms": ", ".join(example["expansion_terms"]),
+            "synonyms": ", ".join(example["synonyms"]),
+            "context": example["context"],
+            "confidence": "0.0",
+            "reasoning": example["reasoning"],
+        }
+    if optimizer_type == "profile":
+        return {
+            "query": example["query"],
+            "available_profiles": example["available_profiles"],
+            "selected_profile": example["selected_profile"],
+            "confidence": "0.0",
+            "reasoning": example["reasoning"],
+            "query_intent": example["query_intent"],
+            "modality": example["modality"],
+            "complexity": example["complexity"],
+        }
+    if optimizer_type == "entity_extraction":
+        entities = "\n".join(
+            f"{entity['text']}|{entity['type']}|1.0" for entity in example["entities"]
+        )
+        return {
+            "query": example["query"],
+            "entities": entities,
+            "entity_types": example["entity_types"],
+        }
+    raise ValueError(
+        f"optimizer {optimizer_type!r} has no approved DSPy example projection"
     )
 
 
@@ -1653,11 +1703,10 @@ async def run_monthly_reports(
         provider = telemetry_manager.get_provider(tenant_id=tid)
         project = telemetry_manager.config.get_project_name(tid)
         try:
-            spans_df = await provider.traces.get_spans(
+            spans_df = await provider.traces.get_all_spans(
                 project=project,
                 start_time=start,
                 end_time=end,
-                limit=10000,
             )
         except Exception as exc:
             perf_per_tenant[tid] = {"error": f"phoenix query failed: {exc}"}
@@ -1777,10 +1826,6 @@ async def run_simba_optimization(
         telemetry_provider, tenant_id, SPAN_NAME_QUERY_ENHANCEMENT, lookback_hours
     )
 
-    if spans_df.empty:
-        logger.info("No query_enhancement spans found — nothing to optimize")
-        return {"status": "no_data", "spans_found": 0}
-
     logger.info("Found %d query_enhancement spans", len(spans_df))
 
     # Build DSPy training examples from the canonical span slots.
@@ -1799,33 +1844,18 @@ async def run_simba_optimization(
         for pair in _query_enhancement_pairs(spans_df)
     ]
 
-    if not trainset:
-        logger.info("No valid training examples extracted from spans")
-        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
-
-    logger.info("Built %d training examples for SIMBA compilation", len(trainset))
-
     # Merge approved synthetic data
-    import json as _json
-
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "query_enhancement"
     )
     production_count = len(trainset)
     for demo in synthetic_demos:
-        inp = demo.get("input", "")
-        if isinstance(inp, str):
-            try:
-                inp = _json.loads(inp)
-            except (ValueError, TypeError):
-                continue
-        if isinstance(inp, dict):
-            q = str(inp.get("query", "")).strip()
-            eq = str(inp.get("enhanced_query", "")).strip()
-            if q and eq and q == eq:
-                continue
-            example = dspy.Example(**inp).with_inputs("query")
-            trainset.append(example)
+        projected = _project_approved_optimizer_example("query_enhancement", demo)
+        example = dspy.Example(**projected).with_inputs("query")
+        trainset.append(example)
+    if not trainset:
+        logger.info("No valid production or approved synthetic examples")
+        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
         len(synthetic_demos),
@@ -1842,7 +1872,7 @@ async def run_simba_optimization(
     llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
-    optimization_lm = create_dspy_lm(llm_endpoint)
+    dspy.configure(lm=create_dspy_lm(llm_endpoint))
 
     module = QueryEnhancementModule()
 
@@ -1852,11 +1882,7 @@ async def run_simba_optimization(
     )
 
     try:
-        # DSPy's ambient binding belongs to whichever async task configured it
-        # first and raises for every other task, so the student LM is bound
-        # task-locally around the compile that reads it.
-        with dspy.context(lm=optimization_lm):
-            compiled = teleprompter.compile(module, trainset=trainset)
+        compiled = teleprompter.compile(module, trainset=trainset)
 
         # Save compiled module via ArtifactManager
         import json as _json
@@ -2462,10 +2488,6 @@ async def run_profile_optimization(
         telemetry_provider, tenant_id, SPAN_NAME_PROFILE_SELECTION, lookback_hours
     )
 
-    if spans_df.empty:
-        logger.info("No profile_selection spans found — nothing to optimize")
-        return {"status": "no_data", "spans_found": 0}
-
     logger.info("Found %d profile_selection spans", len(spans_df))
 
     # Build DSPy training examples from the canonical span slots.
@@ -2485,32 +2507,21 @@ async def run_profile_optimization(
         for pair in _profile_selection_pairs(spans_df)
     ]
 
-    if not trainset:
-        logger.info("No valid training examples extracted from spans")
-        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
-
-    logger.info("Built %d training examples for profile optimization", len(trainset))
-
     # Merge approved synthetic data
-    import json as _json
-
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "profile"
     )
     production_count = len(trainset)
     for demo in synthetic_demos:
-        inp = demo.get("input", "")
-        if isinstance(inp, str):
-            try:
-                inp = _json.loads(inp)
-            except (ValueError, TypeError):
-                continue
-        if isinstance(inp, dict):
-            # ProfileSelectionSignature has query AND available_profiles as
-            # InputFields; match the production trainset's input set so
-            # BootstrapFewShot doesn't see split-shape demos.
-            example = dspy.Example(**inp).with_inputs("query", "available_profiles")
-            trainset.append(example)
+        # ProfileSelectionSignature has query AND available_profiles as
+        # InputFields; match the production trainset's input set so
+        # BootstrapFewShot doesn't see split-shape demos.
+        projected = _project_approved_optimizer_example("profile", demo)
+        example = dspy.Example(**projected).with_inputs("query", "available_profiles")
+        trainset.append(example)
+    if not trainset:
+        logger.info("No valid production or approved synthetic examples")
+        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
         len(synthetic_demos),
@@ -2527,7 +2538,7 @@ async def run_profile_optimization(
     llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
-    optimization_lm = create_dspy_lm(llm_endpoint)
+    dspy.configure(lm=create_dspy_lm(llm_endpoint))
 
     module = ProfileSelectionModule()
 
@@ -2537,11 +2548,7 @@ async def run_profile_optimization(
     )
 
     try:
-        # DSPy's ambient binding belongs to whichever async task configured it
-        # first and raises for every other task, so the student LM is bound
-        # task-locally around the compile that reads it.
-        with dspy.context(lm=optimization_lm):
-            compiled = teleprompter.compile(module, trainset=trainset)
+        compiled = teleprompter.compile(module, trainset=trainset)
 
         import json as _json
 
@@ -2595,10 +2602,6 @@ async def run_entity_extraction_optimization(
         telemetry_provider, tenant_id, SPAN_NAME_ENTITY_EXTRACTION, lookback_hours
     )
 
-    if spans_df.empty:
-        logger.info("No entity_extraction spans found — nothing to optimize")
-        return {"status": "no_data", "spans_found": 0}
-
     logger.info("Found %d entity_extraction spans", len(spans_df))
 
     import json as _json
@@ -2614,29 +2617,18 @@ async def run_entity_extraction_optimization(
         for pair in _entity_extraction_pairs(spans_df)
     ]
 
-    if not trainset:
-        logger.info("No valid training examples extracted from entity_extraction spans")
-        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
-
-    logger.info(
-        "Built %d training examples for entity extraction optimization", len(trainset)
-    )
-
     # Merge approved synthetic data
     synthetic_demos = await _load_approved_synthetic_data(
         telemetry_provider, tenant_id, "entity_extraction"
     )
     production_count = len(trainset)
     for demo in synthetic_demos:
-        inp = demo.get("input", "")
-        if isinstance(inp, str):
-            try:
-                inp = _json.loads(inp)
-            except (ValueError, TypeError):
-                continue
-        if isinstance(inp, dict):
-            example = dspy.Example(**inp).with_inputs("query")
-            trainset.append(example)
+        projected = _project_approved_optimizer_example("entity_extraction", demo)
+        example = dspy.Example(**projected).with_inputs("query")
+        trainset.append(example)
+    if not trainset:
+        logger.info("No valid production or approved synthetic examples")
+        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
         len(synthetic_demos),
@@ -2652,7 +2644,7 @@ async def run_entity_extraction_optimization(
     llm_config = config.get_llm_config()
     llm_endpoint = llm_config.resolve("optimization")
 
-    optimization_lm = create_dspy_lm(llm_endpoint)
+    dspy.configure(lm=create_dspy_lm(llm_endpoint))
 
     module = EntityExtractionModule()
 
@@ -2662,11 +2654,7 @@ async def run_entity_extraction_optimization(
     )
 
     try:
-        # DSPy's ambient binding belongs to whichever async task configured it
-        # first and raises for every other task, so the student LM is bound
-        # task-locally around the compile that reads it.
-        with dspy.context(lm=optimization_lm):
-            compiled = teleprompter.compile(module, trainset=trainset)
+        compiled = teleprompter.compile(module, trainset=trainset)
 
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
@@ -2690,6 +2678,224 @@ async def run_entity_extraction_optimization(
         return {"status": "failed", "error": str(e)}
 
 
+def _synthetic_aggregate_status(results: dict[str, dict[str, Any]]) -> str:
+    statuses = {
+        optimizer_type: result.get("status")
+        for optimizer_type, result in results.items()
+    }
+    unsupported = {
+        optimizer_type: status
+        for optimizer_type, status in statuses.items()
+        if status not in {"success", "no_data", "failed", "error"}
+    }
+    if unsupported:
+        raise ValueError(f"Unsupported synthetic result statuses: {unsupported}")
+    if not statuses:
+        raise ValueError("Synthetic generation requires at least one optimizer result")
+    if any(status in {"failed", "error"} for status in statuses.values()):
+        return "failed"
+    if any(status == "success" for status in statuses.values()):
+        return "success"
+    return "no_data"
+
+
+async def _build_cli_entity_extractor(
+    *,
+    config_manager,
+    telemetry_manager,
+    tenant_id: str,
+):
+    """Build the production entity agent used to label synthetic examples."""
+    from cogniverse_agents.entity_extraction_agent import (
+        EntityExtractionAgent,
+        EntityExtractionDeps,
+        EntityExtractionInput,
+    )
+
+    system_config = config_manager.get_system_config()
+    service_urls = system_config.inference_service_urls
+    gliner_url = service_urls.get("gliner") if isinstance(service_urls, dict) else None
+    if not isinstance(gliner_url, str) or not gliner_url.strip():
+        raise ValueError(
+            "GLiNER inference endpoint is required for synthetic entity extraction "
+            f"for tenant={tenant_id!r}"
+        )
+
+    def build_agent():
+        agent = EntityExtractionAgent(
+            deps=EntityExtractionDeps(gliner_inference_url=gliner_url)
+        )
+        agent.telemetry_manager = telemetry_manager
+        agent._config_manager = config_manager
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+        return agent
+
+    try:
+        agent = await asyncio.to_thread(build_agent)
+    except Exception as exc:
+        raise RuntimeError(
+            "Entity extraction agent initialization failed for "
+            f"tenant={tenant_id!r} endpoint={gliner_url!r}: {exc}"
+        ) from exc
+
+    async def extract_entities(source_text: str, request_tenant_id: str):
+        if request_tenant_id != tenant_id:
+            raise ValueError(
+                "Entity extraction agent tenant mismatch: "
+                f"configured={tenant_id!r} requested={request_tenant_id!r}"
+            )
+        typed_input = EntityExtractionInput(
+            query=source_text,
+            tenant_id=request_tenant_id,
+        )
+        try:
+            return await agent.process(typed_input)
+        except Exception as exc:
+            raise RuntimeError(
+                "Entity extraction agent failed for "
+                f"tenant={request_tenant_id!r} source_text={source_text!r}: {exc}"
+            ) from exc
+
+    return extract_entities
+
+
+async def _build_cli_routing_decider(
+    *, config_manager: Any, telemetry_manager: Any, tenant_id: str
+):
+    """Build a tenant-bound production GatewayAgent routing callback."""
+    from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
+
+    system_config = config_manager.get_system_config()
+    service_urls = system_config.inference_service_urls
+    gliner_url = service_urls.get("gliner") if isinstance(service_urls, dict) else None
+    if not isinstance(gliner_url, str) or not gliner_url.strip():
+        raise ValueError(
+            "GLiNER inference endpoint is required for synthetic routing "
+            f"for tenant={tenant_id!r}"
+        )
+
+    def build_agent():
+        agent = GatewayAgent(deps=GatewayDeps(gliner_inference_url=gliner_url))
+        agent.telemetry_manager = telemetry_manager
+        agent._config_manager = config_manager
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+        return agent
+
+    try:
+        agent = await asyncio.to_thread(build_agent)
+    except Exception as exc:
+        raise RuntimeError(
+            "Gateway agent initialization failed for "
+            f"tenant={tenant_id!r} endpoint={gliner_url!r}: {exc}"
+        ) from exc
+
+    async def route_query(query: str, request_tenant_id: str):
+        if request_tenant_id != tenant_id:
+            raise ValueError(
+                "Gateway agent tenant mismatch: "
+                f"configured={tenant_id!r} requested={request_tenant_id!r}"
+            )
+        try:
+            return await agent.process(
+                GatewayInput(query=query, tenant_id=request_tenant_id)
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Gateway agent failed for "
+                f"tenant={request_tenant_id!r} query={query!r}: {exc}"
+            ) from exc
+
+    return route_query
+
+
+async def _build_cli_query_enhancer(
+    *, config_manager: Any, telemetry_manager: Any, tenant_id: str
+):
+    """Build a tenant-bound production QueryEnhancementAgent callback."""
+    from cogniverse_agents.query_enhancement_agent import (
+        QueryEnhancementAgent,
+        QueryEnhancementDeps,
+        QueryEnhancementInput,
+    )
+
+    agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+    agent.telemetry_manager = telemetry_manager
+    agent._config_manager = config_manager
+    agent._artifact_tenant_id = tenant_id
+    agent._load_artifact()
+
+    async def enhance_query(query: str, request_tenant_id: str):
+        if request_tenant_id != tenant_id:
+            raise ValueError(
+                "Query enhancement agent tenant mismatch: "
+                f"configured={tenant_id!r} requested={request_tenant_id!r}"
+            )
+        try:
+            return await agent.process(
+                QueryEnhancementInput(query=query, tenant_id=request_tenant_id)
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Query enhancement agent failed for "
+                f"tenant={request_tenant_id!r} query={query!r}: {exc}"
+            ) from exc
+
+    return enhance_query
+
+
+async def _build_cli_profile_labeler(
+    *, config_manager: Any, telemetry_manager: Any, tenant_id: str
+):
+    """Build a tenant-bound production ProfileSelectionAgent callback."""
+    from cogniverse_agents.profile_selection_agent import (
+        ProfileSelectionAgent,
+        ProfileSelectionDeps,
+        ProfileSelectionInput,
+    )
+
+    def build_agent():
+        agent = ProfileSelectionAgent(deps=ProfileSelectionDeps(available_profiles=[]))
+        agent.telemetry_manager = telemetry_manager
+        agent._config_manager = config_manager
+        agent._artifact_tenant_id = tenant_id
+        agent._load_artifact()
+        return agent
+
+    try:
+        agent = await asyncio.to_thread(build_agent)
+    except Exception as exc:
+        raise RuntimeError(
+            "Profile selection agent initialization failed for "
+            f"tenant={tenant_id!r}: {exc}"
+        ) from exc
+
+    async def label_profile(
+        query: str, available_profiles: list[str], request_tenant_id: str
+    ):
+        if request_tenant_id != tenant_id:
+            raise ValueError(
+                "Profile selection agent tenant mismatch: "
+                f"configured={tenant_id!r} requested={request_tenant_id!r}"
+            )
+        try:
+            return await agent.process(
+                ProfileSelectionInput(
+                    query=query,
+                    available_profiles=list(available_profiles),
+                    tenant_id=request_tenant_id,
+                )
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Profile selection agent failed for "
+                f"tenant={request_tenant_id!r} query={query!r}: {exc}"
+            ) from exc
+
+    return label_profile
+
+
 async def run_synthetic_generation(
     tenant_id: str,
     optimizer_types: list[str] | None = None,
@@ -2697,18 +2903,33 @@ async def run_synthetic_generation(
 ) -> dict:
     """Generate synthetic training data for optimizer types.
 
-    Uses SyntheticDataService to create training examples, then saves
-    them as demonstrations via ArtifactManager for later merge into
-    batch optimization jobs.
+    Uses SyntheticDataService to create training examples, then persists
+    them as pending review batches for later human approval.
     """
+    from cogniverse_core.common.tenant_utils import require_tenant_id
     from cogniverse_foundation.config.utils import (
         create_default_config_manager,
         get_config,
     )
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+    from cogniverse_synthetic.registry import (
+        APPROVED_TRAINING_AGENT_BY_OPTIMIZER,
+    )
+
+    tenant_id = require_tenant_id(tenant_id, source="run_synthetic_generation")
 
     if optimizer_types is None:
-        optimizer_types = ["query_enhancement", "profile", "workflow"]
+        optimizer_types = list(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
+    unsupported_types = [
+        optimizer_type
+        for optimizer_type in optimizer_types
+        if optimizer_type not in APPROVED_TRAINING_AGENT_BY_OPTIMIZER
+    ]
+    if unsupported_types:
+        raise ValueError(
+            "synthetic optimizer types have no approved training-data consumer: "
+            f"{unsupported_types}"
+        )
 
     logger.info(
         "Starting synthetic generation for tenant=%s types=%s count=%d",
@@ -2719,15 +2940,87 @@ async def run_synthetic_generation(
 
     config_manager = create_default_config_manager()
     config = get_config(tenant_id=tenant_id, config_manager=config_manager)
-    telemetry_manager = get_telemetry_manager()
-    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-    # Synthetic generators that wrap DSPy modules (RoutingGenerator) need a
-    # bound LM. This runs inside an asyncio task, where DSPy only lets the
-    # task that first configured the ambient binding write it again — both
-    # ``dspy.configure`` and ``dspy.settings.lm = ...`` raise for anyone else.
-    # ``dspy.context`` is task-local and always available, so the binding is
-    # scoped to the generate call.
+    from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+    try:
+        synthetic_runtime_config = parse_synthetic_runtime_config(
+            config,
+            tenant_id=tenant_id,
+        )
+    except ValueError as exc:
+        error = str(exc)
+        logger.error("Synthetic configuration rejected: %s", error)
+        results = {
+            optimizer_type: {"status": "failed", "error": error}
+            for optimizer_type in optimizer_types
+        }
+        return {"status": "failed", "results": results}
+
+    telemetry_manager = get_telemetry_manager()
+    entity_extractor = None
+    routing_decider = None
+    query_enhancer = None
+    profile_labeler = None
+    entity_dependent_types = {"routing", "entity_extraction"}
+    results = {}
+    if set(optimizer_types) & entity_dependent_types:
+        try:
+            entity_extractor = await _build_cli_entity_extractor(
+                config_manager=config_manager,
+                telemetry_manager=telemetry_manager,
+                tenant_id=tenant_id,
+            )
+        except (RuntimeError, ValueError) as exc:
+            error = str(exc)
+            logger.error("Synthetic entity extraction unavailable: %s", error)
+            results.update(
+                {
+                    optimizer_type: {"status": "failed", "error": error}
+                    for optimizer_type in optimizer_types
+                    if optimizer_type in entity_dependent_types
+                }
+            )
+
+    if "routing" in optimizer_types and "routing" not in results:
+        try:
+            routing_decider = await _build_cli_routing_decider(
+                config_manager=config_manager,
+                telemetry_manager=telemetry_manager,
+                tenant_id=tenant_id,
+            )
+        except (RuntimeError, ValueError) as exc:
+            error = str(exc)
+            logger.error("Synthetic routing unavailable: %s", error)
+            results["routing"] = {"status": "failed", "error": error}
+
+    if "query_enhancement" in optimizer_types:
+        try:
+            query_enhancer = await _build_cli_query_enhancer(
+                config_manager=config_manager,
+                telemetry_manager=telemetry_manager,
+                tenant_id=tenant_id,
+            )
+        except (RuntimeError, ValueError) as exc:
+            error = str(exc)
+            logger.error("Synthetic query enhancement unavailable: %s", error)
+            results["query_enhancement"] = {"status": "failed", "error": error}
+
+    if "profile" in optimizer_types:
+        try:
+            profile_labeler = await _build_cli_profile_labeler(
+                config_manager=config_manager,
+                telemetry_manager=telemetry_manager,
+                tenant_id=tenant_id,
+            )
+        except (RuntimeError, ValueError) as exc:
+            error = str(exc)
+            logger.error("Synthetic profile selection unavailable: %s", error)
+            results["profile"] = {"status": "failed", "error": error}
+
+    # Synthetic generators that wrap DSPy modules need an LM scoped to this
+    # async task. A global DSPy configuration can only be changed by its owner
+    # task and would also leak the tenant's binding into concurrent runs.
     import dspy
 
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
@@ -2735,58 +3028,18 @@ async def run_synthetic_generation(
     llm_endpoint = config.get_llm_config().primary
     synthetic_lm = create_dspy_lm(llm_endpoint)
 
-    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-
-    am = ArtifactManager(telemetry_provider, tenant_id)
-
-    results = {}
     for opt_type in optimizer_types:
+        if opt_type in results:
+            continue
         try:
-            from cogniverse_synthetic.schemas import SyntheticDataRequest
-            from cogniverse_synthetic.service import SyntheticDataService
-
-            backend_config = config.get("backend", {})
-            generator_config = config.get("synthetic", {})
-
-            # Create backend instance for content sampling. Stamp the
-            # unpacked dicts with the caller's tenant_id if they don't
-            # already carry one — synthetic runs are always per-tenant.
-            from cogniverse_foundation.config.unified_config import (
-                BackendConfig,
-                SyntheticGeneratorConfig,
-            )
-
-            if isinstance(backend_config, dict):
-                backend_config = {**backend_config}
-                backend_config.setdefault("tenant_id", tenant_id)
-                # Use ``from_dict`` (not ``BackendConfig(**...)``)
-                # because the chart-rendered config.json stores the
-                # backend kind under the JSON-friendly ``type`` key
-                # while the dataclass attribute is ``backend_type``.
-                # ``from_dict`` does the rename + nested profile parse;
-                # plain kwargs raise ``unexpected keyword argument 'type'``.
-                bc = BackendConfig.from_dict(backend_config)
-            else:
-                bc = backend_config
-            if isinstance(generator_config, dict):
-                generator_config = {**generator_config}
-                generator_config.setdefault("tenant_id", tenant_id)
-                # Use ``from_dict`` (not ``SyntheticGeneratorConfig(**...)``)
-                # because the nested ``optimizer_configs[key]`` values
-                # need to be hydrated as ``OptimizerGenerationConfig``
-                # instances — kwargs construction leaves them as raw
-                # dicts, so the generator later trips on
-                # ``'dict' object has no attribute 'profile_scoring_rules'``.
-                gc = SyntheticGeneratorConfig.from_dict(generator_config)
-            else:
-                gc = generator_config
-
             from pathlib import Path
 
             from cogniverse_core.registries.backend_registry import BackendRegistry
             from cogniverse_core.schemas.filesystem_loader import (
                 FilesystemSchemaLoader,
             )
+            from cogniverse_synthetic.schemas import SyntheticDataRequest
+            from cogniverse_synthetic.service import SyntheticDataService
 
             # BackendRegistry is a singleton — its __new__ takes no args.
             # get_search_backend is the public accessor; tenant isolation
@@ -2798,17 +3051,30 @@ async def run_synthetic_generation(
             schemas_dir = Path(
                 os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas")
             )
-            registry = BackendRegistry()
-            backend = registry.get_search_backend(
-                name=bc.backend_type,
-                config_manager=config_manager,
-                schema_loader=FilesystemSchemaLoader(schemas_dir),
-            )
+            try:
+                registry = BackendRegistry()
+                backend = registry.get_search_backend(
+                    name=synthetic_runtime_config.backend_config.backend_type,
+                    config_manager=config_manager,
+                    schema_loader=FilesystemSchemaLoader(schemas_dir),
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Synthetic backend access failed for "
+                    f"tenant={tenant_id!r} "
+                    "backend="
+                    f"{synthetic_runtime_config.backend_config.backend_type!r}: {exc}"
+                ) from exc
 
             service = SyntheticDataService(
                 backend=backend,
-                backend_config=bc,
-                generator_config=gc,
+                backend_config=synthetic_runtime_config.backend_config,
+                generator_config=synthetic_runtime_config.generator_config,
+                agents_config=synthetic_runtime_config.agents_config,
+                entity_extractor=entity_extractor,
+                routing_decider=routing_decider,
+                query_enhancer=query_enhancer,
+                profile_labeler=profile_labeler,
             )
 
             request = SyntheticDataRequest(
@@ -2819,47 +3085,83 @@ async def run_synthetic_generation(
             with dspy.context(lm=synthetic_lm):
                 response = await service.generate(request)
 
-            # Save as demonstrations with approval_status=pending
-            demos = []
-            for item in response.data:
-                demos.append(
-                    {
-                        "input": json.dumps(item, default=str),
-                        "output": json.dumps(
-                            item.get("expected_output", ""), default=str
-                        ),
-                        "metadata": json.dumps(
-                            {
-                                "approval_status": "pending",
-                                "optimizer_type": opt_type,
-                                "generated_at": datetime.now().isoformat(),
-                            }
-                        ),
-                    }
+            if response.data:
+                from cogniverse_agents.approval.approval_storage import (
+                    ApprovalStorageImpl,
+                )
+                from cogniverse_core.approval.interfaces import (
+                    ApprovalBatch,
+                    ApprovalStatus,
+                    ReviewItem,
+                )
+                from cogniverse_synthetic.approval.confidence_extractor import (
+                    SyntheticDataConfidenceExtractor,
                 )
 
-            if demos:
-                dataset_id = await am.save_demonstrations(
-                    f"synthetic_{opt_type}", demos
+                system_config = config_manager.get_system_config()
+                if not system_config.redis_url:
+                    raise ValueError(
+                        "redis_url is required to persist synthetic review batches"
+                    )
+                grpc_endpoint = system_config.telemetry_collector_endpoint
+                if not grpc_endpoint.startswith("http"):
+                    grpc_endpoint = f"http://{grpc_endpoint}"
+                storage = ApprovalStorageImpl(
+                    grpc_endpoint=grpc_endpoint,
+                    http_endpoint=system_config.telemetry_url,
+                    tenant_id=tenant_id,
+                    telemetry_manager=telemetry_manager,
+                    redis_url=system_config.redis_url,
                 )
+                batch_id = f"synthetic_{opt_type}_{uuid.uuid4().hex}"
+                agent_type = APPROVED_TRAINING_AGENT_BY_OPTIMIZER[opt_type]
+                confidence_extractor = SyntheticDataConfidenceExtractor()
+                review_items = [
+                    ReviewItem(
+                        item_id=f"{batch_id}_{index}",
+                        data=dict(item),
+                        confidence=confidence_extractor.extract(item),
+                        status=ApprovalStatus.PENDING_REVIEW,
+                        metadata={
+                            "agent_type": agent_type,
+                            "optimizer_type": opt_type,
+                            "synthetic": True,
+                        },
+                    )
+                    for index, item in enumerate(response.data)
+                ]
+                batch = ApprovalBatch(
+                    batch_id=batch_id,
+                    items=review_items,
+                    context={
+                        "tenant_id": tenant_id,
+                        "agent_type": agent_type,
+                        "optimizer": opt_type,
+                        "purpose": "optimizer_training",
+                    },
+                )
+                persisted_batch_id = await storage.save_batch(batch)
                 results[opt_type] = {
                     "status": "success",
-                    "examples_generated": len(demos),
-                    "dataset_id": dataset_id,
+                    "examples_generated": len(review_items),
+                    "batch_id": persisted_batch_id,
+                    "pending_review": len(review_items),
                 }
             else:
                 results[opt_type] = {"status": "no_data", "examples_generated": 0}
 
-            logger.info("Generated %d synthetic examples for %s", len(demos), opt_type)
+            logger.info(
+                "Generated %d synthetic examples for %s",
+                len(response.data),
+                opt_type,
+            )
 
         except Exception as e:
             logger.error("Synthetic generation failed for %s: %s", opt_type, e)
             results[opt_type] = {"status": "failed", "error": str(e)}
 
     return {
-        "status": "success"
-        if any(r["status"] == "success" for r in results.values())
-        else "failed",
+        "status": _synthetic_aggregate_status(results),
         "results": results,
     }
 
@@ -3507,14 +3809,11 @@ def _run_failed(result: Any) -> bool:
     """Whether a mode result reports failure — drives the exit code, which
     is the only success signal Argo sees for a workflow step.
 
-    Modes with a top-level ``status`` own their aggregation (e.g. synthetic
-    reports success when any optimizer succeeded) and short-circuit here.
-    Results without one (batch and cleanup) encode per-entry failure three
-    ways — ``run_cleanup`` emits all of them: a nested ``{"status": ...}``
-    dict, a ``{"failed": ...}`` dict, or a free-form ``"failed: ..."`` /
-    ``"error: ..."`` string keyed under a per-tenant id — so a total mem0 /
-    Vespa outage in the cleanup cron must not report exit-0 success. Recurse
-    so any of those shapes at any depth fails the run.
+    A top-level status never masks a failed requested result. Batch and cleanup
+    modes also encode per-entry failure as a nested ``{"status": ...}`` dict,
+    a ``{"failed": ...}`` dict, or a free-form ``"failed: ..."`` /
+    ``"error: ..."`` string. Recurse so any failure shape at any depth fails
+    the run.
     """
     if isinstance(result, str):
         marker = result.strip().lower()
@@ -3523,8 +3822,8 @@ def _run_failed(result: Any) -> bool:
         return any(_run_failed(item) for item in result)
     if not isinstance(result, dict):
         return False
-    if "status" in result:
-        return result["status"] in ("failed", "error")
+    if result.get("status") in ("failed", "error"):
+        return True
     if result.get("failed"):
         return True
     return any(_run_failed(value) for value in result.values())
@@ -3689,7 +3988,11 @@ def main():
             )
         )
     elif args.mode == "synthetic":
-        optimizer_types = ["query_enhancement", "profile", "workflow"]
+        from cogniverse_synthetic.registry import (
+            APPROVED_TRAINING_AGENT_BY_OPTIMIZER,
+        )
+
+        optimizer_types = list(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
         if args.agents:
             optimizer_types = [a.strip() for a in args.agents.split(",")]
         result = asyncio.run(

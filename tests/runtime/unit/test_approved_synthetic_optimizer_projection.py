@@ -1,0 +1,252 @@
+from types import SimpleNamespace
+
+import pandas as pd
+import pytest
+
+from cogniverse_runtime.optimization_cli import _project_approved_optimizer_example
+
+pytestmark = pytest.mark.unit
+
+
+def test_query_enhancement_projection_matches_production_signature_exactly():
+    projected = _project_approved_optimizer_example(
+        "query_enhancement",
+        {
+            "query": "transformer architecture",
+            "enhanced_query": (
+                "transformer architecture attention mechanism self-attention"
+            ),
+            "expansion_terms": ["attention mechanism", "self-attention"],
+            "synonyms": ["neural network model"],
+            "context": "machine learning",
+            "reasoning": "Added the two source-grounded attention terms.",
+        },
+    )
+
+    assert projected == {
+        "query": "transformer architecture",
+        "enhanced_query": "transformer architecture attention mechanism self-attention",
+        "expansion_terms": "attention mechanism, self-attention",
+        "synonyms": "neural network model",
+        "context": "machine learning",
+        "confidence": "0.0",
+        "reasoning": "Added the two source-grounded attention terms.",
+    }
+
+
+def test_profile_projection_matches_production_signature_exactly():
+    projected = _project_approved_optimizer_example(
+        "profile",
+        {
+            "query": "find the product launch recording",
+            "available_profiles": "video_colpali,document_colpali",
+            "selected_profile": "video_colpali",
+            "reasoning": "The requested recording is video content.",
+            "query_intent": "video_search",
+            "modality": "video",
+            "complexity": "simple",
+        },
+    )
+
+    assert projected == {
+        "query": "find the product launch recording",
+        "available_profiles": "video_colpali,document_colpali",
+        "selected_profile": "video_colpali",
+        "confidence": "0.0",
+        "reasoning": "The requested recording is video content.",
+        "query_intent": "video_search",
+        "modality": "video",
+        "complexity": "simple",
+    }
+
+
+def test_entity_projection_matches_production_signature_and_omits_relationships():
+    projected = _project_approved_optimizer_example(
+        "entity_extraction",
+        {
+            "query": "PyTorch was created by Meta AI in Menlo Park",
+            "entities": [
+                {"text": "PyTorch", "type": "PRODUCT"},
+                {"text": "Meta AI", "type": "ORG"},
+                {"text": "Menlo Park", "type": "PLACE"},
+            ],
+            "entity_types": "PRODUCT,ORG,PLACE",
+            "relationships": [
+                {"source": "Meta AI", "target": "PyTorch", "type": "created"}
+            ],
+        },
+    )
+
+    assert projected == {
+        "query": "PyTorch was created by Meta AI in Menlo Park",
+        "entities": ("PyTorch|PRODUCT|1.0\nMeta AI|ORG|1.0\nMenlo Park|PLACE|1.0"),
+        "entity_types": "PRODUCT,ORG,PLACE",
+    }
+
+
+def test_projection_rejects_optimizer_without_a_signature_contract():
+    with pytest.raises(
+        ValueError,
+        match="optimizer 'workflow' has no approved DSPy example projection",
+    ):
+        _project_approved_optimizer_example("workflow", {"query": "q"})
+
+
+@pytest.mark.parametrize(
+    ("runner_name", "optimizer_type", "module_type", "input_names", "demo"),
+    [
+        (
+            "run_simba_optimization",
+            "query_enhancement",
+            "QueryEnhancementModule",
+            ["query"],
+            {
+                "query": "transformer architecture",
+                "enhanced_query": "transformer architecture attention mechanism",
+                "expansion_terms": ["attention mechanism"],
+                "synonyms": ["neural network model"],
+                "context": "machine learning",
+                "reasoning": "Added the exact source term.",
+            },
+        ),
+        (
+            "run_profile_optimization",
+            "profile",
+            "ProfileSelectionModule",
+            ["query", "available_profiles"],
+            {
+                "query": "find the product launch recording",
+                "available_profiles": "video_colpali,document_colpali",
+                "selected_profile": "video_colpali",
+                "reasoning": "The requested recording is video content.",
+                "query_intent": "video_search",
+                "modality": "video",
+                "complexity": "simple",
+            },
+        ),
+        (
+            "run_entity_extraction_optimization",
+            "entity_extraction",
+            "EntityExtractionModule",
+            ["query"],
+            {
+                "query": "PyTorch was created by Meta AI",
+                "entities": [
+                    {"text": "PyTorch", "type": "PRODUCT"},
+                    {"text": "Meta AI", "type": "ORG"},
+                ],
+                "entity_types": "PRODUCT,ORG",
+                "relationships": [
+                    {"source": "Meta AI", "target": "PyTorch", "type": "created"}
+                ],
+            },
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_synthetic_only_data_compiles_the_actual_production_module(
+    monkeypatch,
+    runner_name,
+    optimizer_type,
+    module_type,
+    input_names,
+    demo,
+):
+    import dspy
+
+    import cogniverse_runtime.optimization_cli as optimization_cli
+
+    captured = {}
+    provider = SimpleNamespace()
+    telemetry_manager = SimpleNamespace(get_provider=lambda tenant_id: provider)
+    lm_config = SimpleNamespace(
+        resolve=lambda purpose: f"{purpose}-student",
+        resolve_teacher=lambda: "teacher",
+    )
+    config = SimpleNamespace(get_llm_config=lambda: lm_config)
+
+    async def empty_spans(*args, **kwargs):
+        return pd.DataFrame()
+
+    async def approved_data(received_provider, tenant_id, received_optimizer):
+        assert received_provider is provider
+        assert tenant_id == "acme:production"
+        assert received_optimizer == optimizer_type
+        return [demo]
+
+    class Compiled:
+        def dump_state(self):
+            return {"compiled": optimizer_type}
+
+    class Teleprompter:
+        def compile(self, module, trainset):
+            captured["module"] = type(module).__name__
+            captured["example"] = trainset[0]
+            return Compiled()
+
+    class ArtifactManager:
+        def __init__(self, received_provider, tenant_id):
+            assert received_provider is provider
+            assert tenant_id == "acme:production"
+
+        async def save_blob(self, kind, key, content):
+            captured["artifact"] = (kind, key, content)
+            return f"artifact-{optimizer_type}"
+
+    monkeypatch.setattr(optimization_cli, "_query_spans_by_name", empty_spans)
+    monkeypatch.setattr(
+        optimization_cli, "_load_approved_synthetic_data", approved_data
+    )
+    monkeypatch.setattr(
+        optimization_cli,
+        "_create_teleprompter",
+        lambda *args, **kwargs: Teleprompter(),
+    )
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda: telemetry_manager,
+    )
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config",
+        lambda **kwargs: config,
+    )
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+        lambda endpoint: endpoint,
+    )
+    monkeypatch.setattr(dspy, "configure", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+        ArtifactManager,
+    )
+
+    result = await getattr(optimization_cli, runner_name)("acme:production", 1)
+
+    example = captured["example"]
+    expected = _project_approved_optimizer_example(optimizer_type, demo)
+    assert captured["module"] == module_type
+    assert example.toDict() == expected
+    assert list(example.inputs().toDict()) == input_names
+    assert example.labels().toDict() == {
+        key: value for key, value in expected.items() if key not in input_names
+    }
+    artifact_key = {
+        "query_enhancement": "simba_query_enhancement",
+        "profile": "profile_selection",
+        "entity_extraction": "entity_extraction",
+    }[optimizer_type]
+    assert captured["artifact"] == (
+        "model",
+        artifact_key,
+        f'{{"compiled": "{optimizer_type}"}}',
+    )
+    assert result == {
+        "status": "success",
+        "spans_found": 0,
+        "training_examples": 1,
+        "artifact_id": f"artifact-{optimizer_type}",
+    }

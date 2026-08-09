@@ -32,6 +32,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from enum import StrEnum
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -41,12 +42,12 @@ from fastapi.responses import JSONResponse
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_foundation.config.bootstrap import parse_inference_service_urls
 from cogniverse_foundation.config.utils import get_config
 
 # Import routers
 from cogniverse_runtime.admin import tenant_manager
 from cogniverse_runtime.config_loader import get_config_loader
+from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.routers import (
     admin,
     agents,
@@ -60,6 +61,7 @@ from cogniverse_runtime.routers import (
     tenant,
     wiki,
 )
+from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
 from cogniverse_synthetic.api import router as synthetic_router
 
 logger = logging.getLogger(__name__)
@@ -124,12 +126,18 @@ def _build_graph_manager_factory(graph_backend, config_manager):
 
             sys_cfg = config_manager.get_system_config()
             colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
+            gliner_url = sys_cfg.inference_service_urls.get("gliner")
             if not colbert_url:
                 raise RuntimeError(
                     "knowledge_graph requires the colbert_pylate inference "
                     "service to be deployed and present in "
                     "INFERENCE_SERVICE_URLS. Available services: "
                     f"{sorted(sys_cfg.inference_service_urls)}"
+                )
+            if not gliner_url:
+                raise RuntimeError(
+                    "knowledge_graph requires gliner in INFERENCE_SERVICE_URLS. "
+                    f"Available: {sorted(sys_cfg.inference_service_urls)}"
                 )
             return GraphManager(
                 backend=graph_backend,
@@ -138,6 +146,7 @@ def _build_graph_manager_factory(graph_backend, config_manager):
                     tenant_id, "knowledge_graph"
                 ),
                 colbert_endpoint_url=colbert_url,
+                gliner_inference_url=gliner_url,
             )
 
         if deploy:
@@ -301,25 +310,35 @@ def _log_workflow_submission_status() -> None:
         )
 
 
-async def _wait_for_backend_ready(
+class BackendStartupState(StrEnum):
+    FEED_READY = "feed_ready"
+    FRESH_INSTALL = "fresh_install"
+    UNAVAILABLE = "unavailable"
+
+
+async def _wait_for_backend_startup(
     vespa_base: str,
+    config_server_base: str,
     *,
     max_attempts: int = 60,
     retry_interval: float = 5.0,
     timeout: float = 5.0,
-) -> bool:
-    """Poll Vespa container + feed readiness without blocking the event loop.
+) -> BackendStartupState:
+    """Distinguish a ready data plane from a fresh Vespa installation.
 
-    Vespa's two-port architecture means the container node (GET
-    ``/ApplicationStatus``) converges before the content/distributor nodes
-    that serve PUT/feed, so we additionally probe a document GET (404 =
-    schema exists and feed works; 200 = doc exists). Returns True once feed
-    is ready, False after ``max_attempts`` retries.
+    A fresh config server cannot expose ``/ApplicationStatus`` or document
+    endpoints until its first application package is deployed. Polling only
+    those endpoints therefore creates a startup cycle. The config-server
+    application resource returns 404 only for that fresh state; 200 means an
+    application exists and its data plane still needs to converge.
     """
     import httpx
 
     vespa_feed_probe = (
         f"{vespa_base}/document/v1/config_metadata/config_metadata/docid/probe"
+    )
+    application_resource = (
+        f"{config_server_base}/application/v2/tenant/default/application/default"
     )
     async with httpx.AsyncClient() as client:
         for attempt in range(max_attempts):
@@ -331,14 +350,21 @@ async def _wait_for_backend_ready(
                     raise ConnectionError("Container node not ready")
                 resp = await client.get(vespa_feed_probe, timeout=timeout)
                 if resp.status_code in (200, 404):
-                    return True
+                    return BackendStartupState.FEED_READY
             except (httpx.HTTPError, OSError, ConnectionError):
+                pass
+            try:
+                resp = await client.get(application_resource, timeout=timeout)
+                if resp.status_code == 404:
+                    return BackendStartupState.FRESH_INSTALL
+            except (httpx.HTTPError, OSError):
                 pass
             logger.info(
                 f"Backend not ready, retrying ({attempt + 1}/{max_attempts})..."
             )
-            await asyncio.sleep(retry_interval)
-    return False
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(retry_interval)
+    return BackendStartupState.UNAVAILABLE
 
 
 def _wait_for_config_server(
@@ -558,6 +584,86 @@ def build_pin_lookup(knowledge_registry):
     return _pin_lookup
 
 
+def _dispatcher_entity_extractor(dispatcher):
+    """Label source text through the runtime's production agent dispatcher."""
+
+    async def extract_entities(source_text: str, tenant_id: str):
+        try:
+            return await dispatcher.dispatch(
+                agent_name="entity_extraction_agent",
+                query=source_text,
+                context={"tenant_id": tenant_id},
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Entity extraction dispatch failed for "
+                f"tenant={tenant_id!r} source_text={source_text!r}: {exc}"
+            ) from exc
+
+    return extract_entities
+
+
+def _dispatcher_routing_decider(dispatcher):
+    """Label generated queries through the runtime's production gateway."""
+
+    async def route_query(query: str, tenant_id: str):
+        from cogniverse_agents.gateway_agent import GatewayInput
+
+        try:
+            gateway_agent = await dispatcher._get_or_build_gateway_agent(tenant_id)
+            return await gateway_agent.process(
+                GatewayInput(query=query, tenant_id=tenant_id)
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Gateway routing decision failed for "
+                f"tenant={tenant_id!r} query={query!r}: {exc}"
+            ) from exc
+
+    return route_query
+
+
+def _dispatcher_query_enhancer(dispatcher):
+    """Label generated queries through the production enhancement agent."""
+
+    async def enhance_query(query: str, tenant_id: str):
+        try:
+            return await dispatcher.dispatch(
+                agent_name="query_enhancement_agent",
+                query=query,
+                context={"tenant_id": tenant_id},
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Query enhancement dispatch failed for "
+                f"tenant={tenant_id!r} query={query!r}: {exc}"
+            ) from exc
+
+    return enhance_query
+
+
+def _dispatcher_profile_labeler(dispatcher):
+    """Label source-grounded queries through the production profile selector."""
+
+    async def label_profile(query: str, available_profiles: list[str], tenant_id: str):
+        try:
+            return await dispatcher.dispatch(
+                agent_name="profile_selection_agent",
+                query=query,
+                context={
+                    "tenant_id": tenant_id,
+                    "profiles": available_profiles,
+                },
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Profile selection dispatch failed for "
+                f"tenant={tenant_id!r} query={query!r}: {exc}"
+            ) from exc
+
+    return label_profile
+
+
 # dspy.configure grants ambient-binding ownership to the first async task
 # that calls it; the ambient LM is process-wide, so it is bound exactly once
 # per process (tests boot several lifespans in one process). Per-tenant and
@@ -569,8 +675,9 @@ _DSPY_AMBIENT_CONFIGURED = False
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
 
-    new_service_urls_json = os.environ.get("INFERENCE_SERVICE_URLS", "")
-    new_service_urls = parse_inference_service_urls(new_service_urls_json)
+    inference_service_urls = parse_inference_service_urls(
+        os.environ.get("INFERENCE_SERVICE_URLS")
+    )
 
     # Startup
     # Bound the default asyncio executor — every ``asyncio.to_thread`` /
@@ -597,22 +704,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("Starting Cogniverse Runtime...")
 
-    # 1. Wait for backend to be reachable before loading config.
-    # In k8s, the runtime pod may start before Vespa is ready.
+    # 1. Resolve fresh-install versus existing data-plane readiness before
+    # loading config. In k8s, the runtime pod may start before Vespa is ready.
+    from urllib.parse import urlparse
+
     from cogniverse_foundation.config.bootstrap import BootstrapConfig
+    from cogniverse_vespa.config_utils import calculate_config_port
 
     bootstrap = BootstrapConfig.from_environment()
 
     vespa_base = f"{bootstrap.backend_url}:{bootstrap.backend_port}"
+    parsed_backend_url = urlparse(bootstrap.backend_url)
+    config_server_host = parsed_backend_url.hostname or bootstrap.backend_url
+    config_server_base = (
+        f"http://{config_server_host}:{calculate_config_port(bootstrap.backend_port)}"
+    )
     # Expose the resolved backend base so the health/readiness probes can ping
     # it for real connectivity instead of only checking class registration.
     app.state.backend_base_url = vespa_base
-    logger.info(f"Waiting for backend feed readiness at {vespa_base}...")
+    logger.info(f"Waiting for backend startup readiness at {vespa_base}...")
 
-    if await _wait_for_backend_ready(vespa_base):
-        logger.info("Backend feed endpoint is ready")
-    else:
-        logger.warning("Backend not ready after 5 minutes, proceeding anyway")
+    backend_state = await _wait_for_backend_startup(vespa_base, config_server_base)
+    if backend_state is BackendStartupState.FRESH_INSTALL:
+        from cogniverse_foundation.config.unified_config import SystemConfig
+
+        logger.info("Fresh backend detected; deploying metadata schemas")
+        await asyncio.to_thread(
+            _bootstrap_metadata_schemas,
+            bootstrap,
+            SystemConfig().application_name,
+        )
+        backend_state = await _wait_for_backend_startup(vespa_base, config_server_base)
+
+    if backend_state is not BackendStartupState.FEED_READY:
+        raise RuntimeError(
+            f"Backend data and config planes did not become ready at {vespa_base}"
+        )
+    logger.info("Backend feed endpoint is ready")
 
     # 2. Load configuration
     from pathlib import Path
@@ -622,14 +750,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     config_manager = create_default_config_manager()
 
-    # 2a. First-install probe. A FRESH backend serves health while its query
-    # chain has NO application deployed, so every config read fails until
-    # the metadata schemas (config_metadata included) deploy — which this
-    # lifespan does late, not eagerly at backend construction. Probe with a
-    # real config read; on failure deploy the metadata application and re-probe
-    # with a convergence budget. A read still failing after that is a genuine
-    # outage and raises, preserving the fail-fast contract. Clusters with
-    # persisted data pass the first probe and never bootstrap.
+    # 2a. Re-probe the store after feed readiness. A read failure here is not
+    # proof of a fresh install: the startup state already handled that case.
+    # The guarded bootstrap refuses to touch a deployed application, while a
+    # rare fresh-install race may still safely complete metadata deployment.
     try:
         await asyncio.to_thread(config_manager.get_system_config)
     except Exception as probe_exc:
@@ -872,16 +996,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("RUNTIME_URL"):
         system_config.agent_registry_url = os.environ["RUNTIME_URL"]
         updated = True
-    # Inference URLs: set from env if present, clear if absent (prevents
-    # stale URLs from previous deployments persisting in Vespa config).
-    # COLPALI keeps its dedicated var; ColBERT-family services are carried
-    # in the INFERENCE_SERVICE_URLS JSON dict keyed by service name.
+    # Inference URLs explicitly supplied by the deployment replace persisted
+    # service discovery. An absent variable leaves persisted discovery intact.
+    # COLPALI keeps its dedicated variable.
     new_colpali = os.environ.get("COLPALI_INFERENCE_URL", "")
     if new_colpali != system_config.colpali_inference_url:
         system_config.colpali_inference_url = new_colpali
         updated = True
-    if new_service_urls != system_config.inference_service_urls:
-        system_config.inference_service_urls = new_service_urls
+    if (
+        inference_service_urls is not None
+        and inference_service_urls != system_config.inference_service_urls
+    ):
+        system_config.inference_service_urls = inference_service_urls
         updated = True
     # Orchestrator iterative-loop knobs. Env reads belong here at the
     # startup boundary — the orchestrator itself reads them from
@@ -1065,12 +1191,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     import dspy
 
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
-    from cogniverse_foundation.config.unified_config import (
-        AgentMappingRule,
-        DSPyModuleConfig,
-        OptimizerGenerationConfig,
-        SyntheticGeneratorConfig,
-    )
     from cogniverse_synthetic.api import configure_service as configure_synthetic
 
     llm_config = config.get_llm_config()
@@ -1140,63 +1260,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to rebind DSPy instrumentation to Phoenix: %s", exc)
 
-    modality_config = OptimizerGenerationConfig(
-        optimizer_type="modality",
-        dspy_modules={
-            "query_generator": DSPyModuleConfig(
-                signature_class="cogniverse_synthetic.dspy_signatures.GenerateModalityQuery",
-                module_type="ChainOfThought",
-            ),
-        },
-        agent_mappings=[
-            AgentMappingRule(modality="VIDEO", agent_name="video_search_agent"),
-            AgentMappingRule(modality="DOCUMENT", agent_name="document_agent"),
-            AgentMappingRule(modality="IMAGE", agent_name="image_search_agent"),
-            AgentMappingRule(modality="AUDIO", agent_name="audio_analysis_agent"),
-        ],
-    )
-    routing_config = OptimizerGenerationConfig(
-        optimizer_type="routing",
-        dspy_modules={
-            "query_generator": DSPyModuleConfig(
-                signature_class="cogniverse_synthetic.dspy_signatures.GenerateEntityQuery",
-                module_type="ChainOfThought",
-            ),
-        },
-    )
-    synthetic_gen_config = SyntheticGeneratorConfig(
+    synthetic_runtime_config = parse_synthetic_runtime_config(
+        config,
         tenant_id=SYSTEM_TENANT_ID,
-        optimizer_configs={
-            "modality": modality_config,
-            "routing": routing_config,
-        },
+        loaded_agent_names=set(agent_registry.list_agents()),
     )
-    # Wire the real search backend so /synthetic/generate samples the tenant's
-    # actual corpus. Without a backend the service falls back to a hardcoded
-    # mock profile/topic list and every tenant gets fabricated training data.
+    # Wire the search backend and complete configured profile map required by
+    # SyntheticDataService so /synthetic/generate samples tenant schemas.
     # Mirrors the optimization CLI's wiring (optimization_cli.py).
-    from cogniverse_foundation.config.unified_config import BackendConfig
-
-    synthetic_backend_section = config.get("backend", {})
-    if isinstance(synthetic_backend_section, dict):
-        synthetic_backend_section = {**synthetic_backend_section}
-        synthetic_backend_section.setdefault("tenant_id", SYSTEM_TENANT_ID)
-        synthetic_backend_config = BackendConfig.from_dict(synthetic_backend_section)
-    else:
-        synthetic_backend_config = synthetic_backend_section
-    synthetic_backend = BackendRegistry.get_instance().get_search_backend(
-        name=synthetic_backend_config.backend_type,
-        config_manager=config_manager,
-        schema_loader=schema_loader,
-    )
+    try:
+        synthetic_backend = BackendRegistry.get_instance().get_search_backend(
+            name=synthetic_runtime_config.backend_config.backend_type,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Synthetic backend access failed for "
+            f"tenant={SYSTEM_TENANT_ID!r} "
+            f"backend={synthetic_runtime_config.backend_config.backend_type!r}: {exc}"
+        ) from exc
     configure_synthetic(
         backend=synthetic_backend,
-        backend_config=synthetic_backend_config,
-        generator_config=synthetic_gen_config,
+        backend_config=synthetic_runtime_config.backend_config,
+        generator_config=synthetic_runtime_config.generator_config,
+        agents_config=synthetic_runtime_config.agents_config,
+        entity_extractor=_dispatcher_entity_extractor(dispatcher),
+        routing_decider=_dispatcher_routing_decider(dispatcher),
+        query_enhancer=_dispatcher_query_enhancer(dispatcher),
+        profile_labeler=_dispatcher_profile_labeler(dispatcher),
     )
     logger.info(
         "Synthetic data service configured with %s backend",
-        synthetic_backend_config.backend_type,
+        synthetic_runtime_config.backend_config.backend_type,
     )
 
     # 10. Optimization runs via Argo CronWorkflows (not as background task).

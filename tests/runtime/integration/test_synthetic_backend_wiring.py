@@ -2,21 +2,136 @@
 search backend.
 
 ``/synthetic/generate`` serves the process-global service configured at
-startup. When that service is built with ``backend=None`` the BackendQuerier
-falls back to a hardcoded mock profile/topic list, so every tenant's generated
-training data is fabricated instead of sampled from its Vespa corpus — and the
-route still returns HTTP 200, so nothing surfaces the substitution.
+startup. The service requires both a live backend and a non-empty configured
+profile map so requests can resolve tenant schemas and sample the tenant's
+Vespa corpus.
 
-This boots the real ``main.py`` lifespan and asserts the global service holds a
-non-None backend.
+This boots the real ``main.py`` lifespan and asserts the global service holds
+the canonical configured Vespa profile.
 """
 
 from __future__ import annotations
+
+import asyncio
+import copy
+import json
+import threading
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 
 pytestmark = pytest.mark.integration
+
+
+def _configured_synthetic_section() -> dict:
+    root = Path(__file__).resolve().parents[3]
+    return json.loads((root / "configs/config.json").read_text())["synthetic"]
+
+
+def _configured_runtime_sections() -> dict:
+    root = Path(__file__).resolve().parents[3]
+    return json.loads((root / "configs/config.json").read_text())
+
+
+def test_deployable_synthetic_config_has_exact_routing_contract():
+    section = _configured_synthetic_section()
+
+    assert set(section) == {
+        "field_mappings",
+        "optimizer_configs",
+    }
+    assert "tenant_id" not in section
+    assert section["optimizer_configs"]["routing"]["dspy_modules"] == {
+        "query_generator": {
+            "signature_class": (
+                "cogniverse_synthetic.dspy_signatures.GenerateEntityQuery"
+            ),
+            "module_type": "ChainOfThought",
+            "lm_config": {},
+            "metadata": {},
+        }
+    }
+    assert {
+        mapping["modality"]: mapping["agent_name"]
+        for mapping in section["optimizer_configs"]["modality"]["agent_mappings"]
+    } == {
+        "VIDEO": "search_agent",
+        "DOCUMENT": "document_agent",
+        "IMAGE": "image_search_agent",
+        "AUDIO": "audio_analysis_agent",
+        "CODE": "coding_agent",
+        "WIKI": "document_agent",
+    }
+
+
+def test_runtime_synthetic_config_rejects_missing_and_unknown_agent():
+    from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Synthetic runtime configuration for tenant='acme:alpha' "
+            "requires object section 'backend'"
+        ),
+    ):
+        parse_synthetic_runtime_config({}, tenant_id="acme:alpha")
+
+    sections = _configured_runtime_sections()
+    sections["synthetic"]["optimizer_configs"]["modality"]["agent_mappings"][0][
+        "agent_name"
+    ] = "unloaded_agent"
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Invalid synthetic runtime configuration for tenant='acme:alpha': "
+            "mapping for modality 'VIDEO' targets unknown agent 'unloaded_agent'"
+        ),
+    ):
+        parse_synthetic_runtime_config(sections, tenant_id="acme:alpha")
+
+
+@pytest.mark.asyncio
+async def test_runtime_synthetic_config_is_isolated_across_concurrent_tenants():
+    from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+    sections = _configured_runtime_sections()
+    barrier = threading.Barrier(2)
+
+    def resolve(tenant_id: str, marker: str):
+        tenant_sections = copy.deepcopy(sections)
+        tenant_sections["synthetic"]["optimizer_configs"]["profile"][
+            "profile_scoring_rules"
+        ][0]["reason"] = marker
+        barrier.wait()
+        return parse_synthetic_runtime_config(
+            tenant_sections,
+            tenant_id=tenant_id,
+        )
+
+    alpha, beta = await asyncio.gather(
+        asyncio.to_thread(resolve, "acme:alpha", "alpha-only"),
+        asyncio.to_thread(resolve, "acme:beta", "beta-only"),
+    )
+
+    assert (
+        alpha.generator_config.tenant_id,
+        alpha.generator_config.optimizer_configs["profile"]
+        .profile_scoring_rules[0]
+        .reason,
+    ) == (
+        "acme:alpha",
+        "alpha-only",
+    )
+    assert (
+        beta.generator_config.tenant_id,
+        beta.generator_config.optimizer_configs["profile"]
+        .profile_scoring_rules[0]
+        .reason,
+    ) == (
+        "acme:beta",
+        "beta-only",
+    )
 
 
 class TestLifespanWiresSyntheticBackend:
@@ -35,14 +150,56 @@ class TestLifespanWiresSyntheticBackend:
         async with lifespan(app):
             service = synthetic_api._service
             assert service is not None, "lifespan did not configure the service"
-            assert service.backend is not None, (
-                "synthetic service was configured without a backend — "
-                "/synthetic/generate would serve fabricated mock data"
-            )
-            # The backend config must carry the real backend kind, not the
-            # mock default.
-            assert service.backend_config is not None
+            assert service.backend is not None
             assert service.backend_config.backend_type == "vespa"
+            profile = service.backend_config.profiles["video_colpali_smol500_mv_frame"]
+            assert profile.type == "video"
+            assert profile.schema_name == "video_colpali_smol500_mv_frame"
+            assert profile.embedding_type == "multi_vector"
+            assert profile.pipeline_config["extract_keyframes"] is True
+            modality_config = service.generator_config.optimizer_configs["modality"]
+            assert {
+                mapping.modality: mapping.agent_name
+                for mapping in modality_config.agent_mappings
+            } == {
+                "VIDEO": "search_agent",
+                "DOCUMENT": "document_agent",
+                "IMAGE": "image_search_agent",
+                "AUDIO": "audio_analysis_agent",
+                "CODE": "coding_agent",
+                "WIKI": "document_agent",
+            }
+            assert {
+                modality: service.agent_inferrer.infer_from_modality(modality)
+                for modality in (
+                    "VIDEO",
+                    "DOCUMENT",
+                    "IMAGE",
+                    "AUDIO",
+                    "CODE",
+                    "WIKI",
+                )
+            } == {
+                "VIDEO": "search_agent",
+                "DOCUMENT": "document_agent",
+                "IMAGE": "image_search_agent",
+                "AUDIO": "audio_analysis_agent",
+                "CODE": "coding_agent",
+                "WIKI": "document_agent",
+            }
+            extraction = await service.entity_extractor(
+                "Marie Curie discovered radium",
+                "acme:science",
+            )
+            assert extraction["query"] == "Marie Curie discovered radium"
+            assert [
+                {"text": entity["text"], "type": entity["type"]}
+                for entity in extraction["entities"]
+            ] == [
+                {"text": "Marie Curie", "type": "PERSON"},
+                {"text": "discovered", "type": "EVENT"},
+                {"text": "radium", "type": "CONCEPT"},
+            ]
 
     @pytest.fixture
     def _dspy_ambient_state(self):

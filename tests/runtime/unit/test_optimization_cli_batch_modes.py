@@ -9,8 +9,10 @@ Tests:
 import asyncio
 import hashlib
 import json
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
@@ -85,9 +87,6 @@ class FakeTraceStore:
         self._spans_df = spans_df if spans_df is not None else pd.DataFrame()
         self.calls: List[Dict[str, Any]] = []
 
-    async def get_spans(self, **kwargs) -> pd.DataFrame:
-        return self._spans_df
-
     async def get_all_spans(self, **kwargs) -> pd.DataFrame:
         self.calls.append(kwargs)
         return self._spans_df.copy(deep=True)
@@ -140,6 +139,15 @@ class FakeTelemetryProvider:
         return self._dataset_store
 
 
+class FakeTelemetryManager:
+    def __init__(self, provider):
+        self._provider = provider
+        self.config = FakeTelemetryConfig()
+
+    def get_provider(self, tenant_id):
+        return self._provider
+
+
 class FakeWorkflowStore:
     """Canonical in-memory workflow-state boundary for CLI unit tests."""
 
@@ -170,30 +178,6 @@ class FakeWorkflowStore:
             patterns=dict(state["patterns"]),
             templates=list(state["templates"]),
         )
-
-
-class FakeTelemetryManager:
-    def __init__(self, provider):
-        self._provider = provider
-        self.config = FakeTelemetryConfig()
-
-    def get_provider(self, tenant_id):
-        return self._provider
-
-
-@pytest.fixture(autouse=True)
-def _fresh_workflow_store_registry():
-    """WorkflowStoreRegistry caches store instances process-wide, and
-    TelemetryWorkflowStore caches per-tenant ArtifactManagers bound to the
-    provider resolved at first touch. A store cached by an earlier test would
-    bypass this file's telemetry patches (and a store built under the patches
-    must not hand a fake provider to later callers) — clear on both sides so
-    every get() rebuilds against whatever is patched right now."""
-    from cogniverse_core.registries import WorkflowStoreRegistry
-
-    WorkflowStoreRegistry.clear_cache()
-    yield
-    WorkflowStoreRegistry.clear_cache()
 
 
 @pytest.fixture
@@ -229,13 +213,147 @@ def _patch_infra(fake_mgr):
     )
 
 
-def _expected_primary_lm():
-    """``llm_config.primary`` from the active config — the endpoint the CLI
-    modes resolve for their DSPy work."""
-    from cogniverse_foundation.config.unified_config import LLMConfig
-    from tests.utils.llm_config import _load_config
-
-    return LLMConfig.from_dict(_load_config()["llm_config"]).primary
+def _synthetic_runtime_sections(*, marker: str = "fixture") -> dict[str, Any]:
+    """Return a complete strict configuration for one VIDEO profile."""
+    return {
+        "backend": {
+            "type": "vespa",
+            "url": f"http://vespa-{marker}.test",
+            "port": 8080,
+            "profiles": {
+                "video_fixture": {
+                    "type": "video",
+                    "description": f"{marker} video profile",
+                    "schema_name": f"video_{marker}",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                    "pipeline_config": {"extract_keyframes": True},
+                    "strategies": {},
+                    "embedding_type": "multi_vector",
+                    "schema_config": {"embedding_dim": 320},
+                }
+            },
+            "default_profiles": {
+                "video": {"profile": "video_fixture", "strategy": "segmentation"}
+            },
+            "metadata": {"marker": marker},
+        },
+        "synthetic": {
+            "field_mappings": {
+                "topic_fields": ["video_title"],
+                "description_fields": ["segment_description"],
+                "transcript_fields": ["audio_transcript"],
+                "entity_fields": ["video_title"],
+                "temporal_fields": {"start": "start_time", "end": "end_time"},
+                "metadata_fields": {"source": "source_uri"},
+            },
+            "optimizer_configs": {
+                "modality": {
+                    "optimizer_type": "modality",
+                    "agent_mappings": [
+                        {
+                            "modality": "VIDEO",
+                            "agent_name": "search_agent",
+                        }
+                    ],
+                },
+                "cross_modal": {
+                    "optimizer_type": "cross_modal",
+                    "profile_scoring_rules": [
+                        {
+                            "condition": {"field": "type", "equals": "video"},
+                            "score_adjustment": 1.0,
+                            "reason": "video cross-modal source",
+                        }
+                    ],
+                },
+                "entity_extraction": {
+                    "optimizer_type": "entity_extraction",
+                    "profile_scoring_rules": [
+                        {
+                            "condition": {"field": "type", "equals": "video"},
+                            "score_adjustment": 2.0,
+                            "reason": "video entity source",
+                        }
+                    ],
+                },
+                "profile": {
+                    "optimizer_type": "profile",
+                    "profile_scoring_rules": [
+                        {
+                            "condition": {"field": "type", "equals": "video"},
+                            "score_adjustment": 1.5,
+                            "reason": "video profile",
+                        }
+                    ],
+                },
+                "query_enhancement": {
+                    "optimizer_type": "query_enhancement",
+                    "profile_scoring_rules": [
+                        {
+                            "condition": {"field": "type", "equals": "video"},
+                            "score_adjustment": 1.0,
+                            "reason": "video query source",
+                        }
+                    ],
+                },
+                "routing": {
+                    "optimizer_type": "routing",
+                    "dspy_modules": {
+                        "query_generator": {
+                            "signature_class": (
+                                "cogniverse_synthetic.dspy_signatures."
+                                "GenerateEntityQuery"
+                            ),
+                            "module_type": "ChainOfThought",
+                            "lm_config": {},
+                            "metadata": {},
+                        }
+                    },
+                    "profile_scoring_rules": [
+                        {
+                            "condition": {"field": "type", "equals": "video"},
+                            "score_adjustment": 3.0,
+                            "reason": "video routing source",
+                        }
+                    ],
+                },
+                "unified": {
+                    "optimizer_type": "unified",
+                    "profile_scoring_rules": [
+                        {
+                            "condition": {"field": "type", "equals": "video"},
+                            "score_adjustment": 1.0,
+                            "reason": "video unified source",
+                        }
+                    ],
+                },
+                "workflow": {
+                    "optimizer_type": "workflow",
+                    "profile_scoring_rules": [
+                        {
+                            "condition": {"field": "type", "equals": "video"},
+                            "score_adjustment": 1.0,
+                            "reason": "video workflow source",
+                        }
+                    ],
+                },
+            },
+        },
+        "agents": {
+            "search_agent": {
+                "enabled": True,
+                "url": f"http://search-{marker}.test",
+                "capabilities": ["search", "video_search"],
+                "modalities": ["VIDEO"],
+            },
+            "disabled_video_agent": {
+                "enabled": False,
+                "url": "http://disabled.test",
+                "capabilities": ["video_search"],
+                "modalities": ["VIDEO"],
+            },
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +420,672 @@ class TestCliArgumentParser:
     def test_invalid_mode_rejected(self, parser):
         with pytest.raises(SystemExit):
             parser.parse_args(["--mode", "nonexistent"])
+
+
+class TestSyntheticRuntimeConfig:
+    def test_hydrates_exact_canonical_objects_and_enabled_agents(self):
+        from cogniverse_foundation.config.unified_config import (
+            BackendConfig,
+            SyntheticGeneratorConfig,
+        )
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections(marker="alpha")
+
+        parsed = parse_synthetic_runtime_config(
+            sections,
+            tenant_id="acme:alpha",
+            loaded_agent_names={"search_agent"},
+        )
+
+        assert isinstance(parsed.backend_config, BackendConfig)
+        assert (
+            parsed.backend_config.tenant_id,
+            parsed.backend_config.backend_type,
+            parsed.backend_config.url,
+            parsed.backend_config.port,
+            parsed.backend_config.metadata,
+        ) == (
+            "acme:alpha",
+            "vespa",
+            "http://vespa-alpha.test",
+            8080,
+            {"marker": "alpha"},
+        )
+        profile = parsed.backend_config.profiles["video_fixture"]
+        assert (
+            profile.type,
+            profile.description,
+            profile.schema_name,
+            profile.embedding_model,
+            profile.pipeline_config,
+            profile.embedding_type,
+            profile.schema_config,
+        ) == (
+            "video",
+            "alpha video profile",
+            "video_alpha",
+            "TomoroAI/tomoro-colqwen3-embed-4b",
+            {"extract_keyframes": True},
+            "multi_vector",
+            {"embedding_dim": 320},
+        )
+        assert isinstance(parsed.generator_config, SyntheticGeneratorConfig)
+        assert parsed.generator_config.tenant_id == "acme:alpha"
+        assert set(parsed.generator_config.optimizer_configs) == {
+            "cross_modal",
+            "entity_extraction",
+            "modality",
+            "profile",
+            "query_enhancement",
+            "routing",
+            "unified",
+            "workflow",
+        }
+        modality = parsed.generator_config.optimizer_configs["modality"]
+        assert (
+            modality.agent_mappings[0].modality,
+            modality.agent_mappings[0].agent_name,
+        ) == ("VIDEO", "search_agent")
+        assert parsed.agents_config == {
+            "search_agent": sections["agents"]["search_agent"]
+        }
+        assert parsed.agents_config is not sections["agents"]
+        assert parsed.backend_default_profiles == {
+            "video": {"profile": "video_fixture", "strategy": "segmentation"}
+        }
+
+    @pytest.mark.parametrize(
+        ("url", "detail"),
+        [
+            ("search.test", "must be an absolute HTTP(S) URL"),
+            ("ftp://search.test", "must be an absolute HTTP(S) URL"),
+            ("http:///search", "must be an absolute HTTP(S) URL"),
+        ],
+    )
+    def test_rejects_non_http_absolute_agent_urls(self, url, detail):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections()
+        sections["agents"]["search_agent"]["url"] = url
+
+        with pytest.raises(ValueError) as error:
+            parse_synthetic_runtime_config(sections, tenant_id="acme:invalid")
+
+        assert str(error.value) == (
+            "Invalid synthetic runtime configuration for tenant='acme:invalid': "
+            f"agents.search_agent.url {detail}"
+        )
+
+    @pytest.mark.parametrize(
+        ("mutate", "detail"),
+        [
+            (
+                lambda sections: sections["synthetic"].update({"sampling_config": {}}),
+                "synthetic has invalid keys: missing=[] unknown=['sampling_config']",
+            ),
+            (
+                lambda sections: sections["synthetic"]["optimizer_configs"]["modality"][
+                    "agent_mappings"
+                ][0].update({"confidence_threshold": 0.8}),
+                "synthetic.optimizer_configs.modality.agent_mappings[0] "
+                "has invalid keys: missing=[] unknown=['confidence_threshold']",
+            ),
+            (
+                lambda sections: sections["synthetic"]["optimizer_configs"][
+                    "profile"
+                ].update({"num_examples_target": 17}),
+                "synthetic.optimizer_configs.profile has invalid keys: "
+                "missing=[] unknown=['num_examples_target']",
+            ),
+        ],
+    )
+    def test_rejects_obsolete_synthetic_fields(self, mutate, detail):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections()
+        mutate(sections)
+
+        with pytest.raises(ValueError) as error:
+            parse_synthetic_runtime_config(sections, tenant_id="acme:invalid")
+
+        assert str(error.value) == (
+            "Invalid synthetic runtime configuration for tenant='acme:invalid': "
+            f"{detail}"
+        )
+
+    @pytest.mark.parametrize(
+        ("target", "unknown_key", "source"),
+        [
+            ("profile", "silent_profile_typo", "backend.profiles.video_fixture"),
+            ("agent", "silent_agent_typo", "agents.search_agent"),
+        ],
+    )
+    def test_rejects_unknown_profile_and_agent_keys(
+        self,
+        target,
+        unknown_key,
+        source,
+    ):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections()
+        if target == "profile":
+            sections["backend"]["profiles"]["video_fixture"][unknown_key] = True
+        else:
+            sections["agents"]["search_agent"][unknown_key] = True
+
+        with pytest.raises(ValueError) as error:
+            parse_synthetic_runtime_config(sections, tenant_id="acme:invalid")
+
+        assert str(error.value) == (
+            "Invalid synthetic runtime configuration for tenant='acme:invalid': "
+            f"{source} has invalid keys: missing=[] unknown=['{unknown_key}']"
+        )
+
+    @pytest.mark.parametrize(
+        ("mutate", "detail"),
+        [
+            (
+                lambda sections: sections["backend"]["default_profiles"][
+                    "video"
+                ].update({"legacy_profile": "video_fixture"}),
+                "backend.default_profiles.video has invalid keys: "
+                "missing=[] unknown=['legacy_profile']",
+            ),
+            (
+                lambda sections: sections["backend"]["default_profiles"][
+                    "video"
+                ].update({"profile": "missing_profile"}),
+                "backend.default_profiles.video.profile references unknown profile "
+                "'missing_profile'",
+            ),
+        ],
+    )
+    def test_rejects_invalid_default_profile_contract(self, mutate, detail):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections()
+        mutate(sections)
+
+        with pytest.raises(ValueError) as error:
+            parse_synthetic_runtime_config(sections, tenant_id="acme:invalid")
+
+        assert str(error.value) == (
+            "Invalid synthetic runtime configuration for tenant='acme:invalid': "
+            f"{detail}"
+        )
+
+    @pytest.mark.parametrize(
+        ("section", "replacement", "expected"),
+        [
+            (
+                "backend",
+                None,
+                "Synthetic runtime configuration for tenant='acme:invalid' "
+                "requires object section 'backend'",
+            ),
+            (
+                "synthetic",
+                None,
+                "Synthetic runtime configuration for tenant='acme:invalid' "
+                "requires object section 'synthetic'",
+            ),
+            (
+                "agents",
+                None,
+                "Synthetic runtime configuration for tenant='acme:invalid' "
+                "requires object section 'agents'",
+            ),
+            (
+                "backend",
+                {},
+                "Synthetic runtime configuration for tenant='acme:invalid' "
+                "section 'backend' must not be empty",
+            ),
+            (
+                "synthetic",
+                {},
+                "Synthetic runtime configuration for tenant='acme:invalid' "
+                "section 'synthetic' must not be empty",
+            ),
+            (
+                "agents",
+                {},
+                "Synthetic runtime configuration for tenant='acme:invalid' "
+                "section 'agents' must not be empty",
+            ),
+            (
+                "backend",
+                [],
+                "Synthetic runtime configuration for tenant='acme:invalid' "
+                "section 'backend' must be an object, got list",
+            ),
+            (
+                "synthetic",
+                [],
+                "Synthetic runtime configuration for tenant='acme:invalid' "
+                "section 'synthetic' must be an object, got list",
+            ),
+            (
+                "agents",
+                [],
+                "Synthetic runtime configuration for tenant='acme:invalid' "
+                "section 'agents' must be an object, got list",
+            ),
+        ],
+    )
+    def test_rejects_missing_empty_and_non_object_sections(
+        self,
+        section,
+        replacement,
+        expected,
+    ):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections()
+        if replacement is None:
+            sections.pop(section)
+        else:
+            sections[section] = replacement
+
+        with pytest.raises(ValueError) as error:
+            parse_synthetic_runtime_config(sections, tenant_id="acme:invalid")
+
+        assert str(error.value) == expected
+
+    @pytest.mark.parametrize(
+        ("target", "agent_changes", "detail"),
+        [
+            (
+                "missing_agent",
+                {},
+                "mapping for modality 'VIDEO' targets unknown agent 'missing_agent'",
+            ),
+            (
+                "disabled_video_agent",
+                {},
+                "mapping for modality 'VIDEO' targets disabled agent "
+                "'disabled_video_agent'",
+            ),
+            (
+                "search_agent",
+                {"modalities": ["DOCUMENT"]},
+                "agent 'search_agent' does not declare mapped modality 'VIDEO'",
+            ),
+        ],
+    )
+    def test_mapping_errors_preserve_tenant_modality_and_agent_context(
+        self,
+        target,
+        agent_changes,
+        detail,
+    ):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections()
+        mapping = sections["synthetic"]["optimizer_configs"]["modality"][
+            "agent_mappings"
+        ][0]
+        mapping["agent_name"] = target
+        sections["agents"].get(target, {}).update(agent_changes)
+
+        with pytest.raises(ValueError) as error:
+            parse_synthetic_runtime_config(sections, tenant_id="acme:alpha")
+
+        assert str(error.value) == (
+            f"Invalid synthetic runtime configuration for tenant='acme:alpha': {detail}"
+        )
+
+    def test_loaded_agent_validation_precedes_backend_use(self):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        with pytest.raises(ValueError) as error:
+            parse_synthetic_runtime_config(
+                _synthetic_runtime_sections(),
+                tenant_id="acme:alpha",
+                loaded_agent_names={"document_agent"},
+            )
+
+        assert str(error.value) == (
+            "Invalid synthetic runtime configuration for tenant='acme:alpha': "
+            "enabled agents were not loaded: search_agent"
+        )
+
+    @pytest.mark.asyncio
+    async def test_concurrent_tenant_parses_do_not_share_nested_state(self):
+        from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+
+        sections = _synthetic_runtime_sections(marker="shared")
+        barrier = threading.Barrier(2)
+
+        def parse(tenant_id):
+            barrier.wait(timeout=2)
+            return parse_synthetic_runtime_config(sections, tenant_id=tenant_id)
+
+        alpha, beta = await asyncio.gather(
+            asyncio.to_thread(parse, "acme:alpha"),
+            asyncio.to_thread(parse, "acme:beta"),
+        )
+
+        alpha.backend_config.metadata["marker"] = "alpha-only"
+        alpha.generator_config.field_mappings.topic_fields.append("alpha-only")
+        alpha.agents_config["search_agent"]["url"] = "http://alpha-only.test"
+
+        assert (
+            beta.backend_config.tenant_id,
+            beta.backend_config.metadata,
+            beta.generator_config.tenant_id,
+            beta.generator_config.field_mappings.topic_fields,
+            beta.agents_config["search_agent"]["url"],
+        ) == (
+            "acme:beta",
+            {"marker": "shared"},
+            "acme:beta",
+            ["video_title"],
+            "http://search-shared.test",
+        )
+        assert sections["backend"]["metadata"] == {"marker": "shared"}
+        assert sections["synthetic"]["field_mappings"]["topic_fields"] == [
+            "video_title"
+        ]
+        assert sections["agents"]["search_agent"]["url"] == (
+            "http://search-shared.test"
+        )
+
+
+class TestSyntheticEntityExtractorWiring:
+    @pytest.mark.asyncio
+    async def test_runtime_extractor_dispatches_exact_production_agent_request(self):
+        from cogniverse_runtime.main import _dispatcher_entity_extractor
+
+        calls = []
+        output = {
+            "status": "success",
+            "agent": "entity_extraction_agent",
+            "query": "Marie Curie discovered radium",
+            "entities": [
+                {"text": "Marie Curie", "type": "PERSON", "confidence": 0.99},
+                {"text": "radium", "type": "CONCEPT", "confidence": 0.97},
+            ],
+            "relationships": [],
+        }
+
+        class Dispatcher:
+            async def dispatch(self, **kwargs):
+                calls.append(kwargs)
+                return output
+
+        extractor = _dispatcher_entity_extractor(Dispatcher())
+
+        assert (
+            await extractor("Marie Curie discovered radium", "acme:science") is output
+        )
+        assert calls == [
+            {
+                "agent_name": "entity_extraction_agent",
+                "query": "Marie Curie discovered radium",
+                "context": {"tenant_id": "acme:science"},
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_runtime_extractor_keeps_concurrent_tenants_isolated(self):
+        from cogniverse_runtime.main import _dispatcher_entity_extractor
+
+        entered = asyncio.Event()
+        calls = []
+
+        class Dispatcher:
+            async def dispatch(self, **kwargs):
+                calls.append(kwargs)
+                if len(calls) == 2:
+                    entered.set()
+                await asyncio.wait_for(entered.wait(), timeout=1)
+                return {
+                    "query": kwargs["query"],
+                    "tenant": kwargs["context"]["tenant_id"],
+                }
+
+        extractor = _dispatcher_entity_extractor(Dispatcher())
+        outputs = await asyncio.gather(
+            extractor("Alpha source", "org:alpha"),
+            extractor("Beta source", "org:beta"),
+        )
+
+        assert outputs == [
+            {"query": "Alpha source", "tenant": "org:alpha"},
+            {"query": "Beta source", "tenant": "org:beta"},
+        ]
+        assert calls == [
+            {
+                "agent_name": "entity_extraction_agent",
+                "query": "Alpha source",
+                "context": {"tenant_id": "org:alpha"},
+            },
+            {
+                "agent_name": "entity_extraction_agent",
+                "query": "Beta source",
+                "context": {"tenant_id": "org:beta"},
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_runtime_extractor_preserves_dispatch_failure_context(self):
+        from cogniverse_runtime.main import _dispatcher_entity_extractor
+
+        failure = ConnectionError("dispatcher unavailable")
+
+        class Dispatcher:
+            async def dispatch(self, **kwargs):
+                raise failure
+
+        extractor = _dispatcher_entity_extractor(Dispatcher())
+        with pytest.raises(RuntimeError) as error:
+            await extractor("Alpha source", "org:alpha")
+
+        assert str(error.value) == (
+            "Entity extraction dispatch failed for tenant='org:alpha' "
+            "source_text='Alpha source': dispatcher unavailable"
+        )
+        assert error.value.__cause__ is failure
+
+    @pytest.mark.asyncio
+    async def test_cli_extractor_calls_real_agent_process_contract(self):
+        from cogniverse_agents.entity_extraction_agent import (
+            EntityExtractionInput,
+            EntityExtractionOutput,
+        )
+        from cogniverse_runtime.optimization_cli import _build_cli_entity_extractor
+
+        process_inputs = []
+        built_agents = []
+        telemetry = object()
+        config_manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(
+                inference_service_urls={"gliner": "http://gliner.test:8010"}
+            )
+        )
+        expected = EntityExtractionOutput(
+            query="Marie Curie discovered radium",
+            entities=[
+                {
+                    "text": "Marie Curie",
+                    "type": "PERSON",
+                    "confidence": 0.99,
+                },
+                {"text": "radium", "type": "CONCEPT", "confidence": 0.97},
+            ],
+            relationships=[],
+            entity_count=2,
+            has_entities=True,
+            dominant_types=["PERSON", "CONCEPT"],
+            path_used="gliner",
+        )
+
+        class RecordingAgent:
+            def __init__(self, *, deps):
+                self.deps = deps
+                self.artifact_loads = 0
+                built_agents.append(self)
+
+            def _load_artifact(self):
+                self.artifact_loads += 1
+
+            async def process(self, value):
+                process_inputs.append(value)
+                return expected
+
+        with patch(
+            "cogniverse_agents.entity_extraction_agent.EntityExtractionAgent",
+            RecordingAgent,
+        ):
+            extractor = await _build_cli_entity_extractor(
+                config_manager=config_manager,
+                telemetry_manager=telemetry,
+                tenant_id="acme:science",
+            )
+            result = await extractor("Marie Curie discovered radium", "acme:science")
+
+        assert result is expected
+        assert len(built_agents) == 1
+        agent = built_agents[0]
+        assert agent.deps.gliner_inference_url == "http://gliner.test:8010"
+        assert agent.telemetry_manager is telemetry
+        assert agent._config_manager is config_manager
+        assert agent._artifact_tenant_id == "acme:science"
+        assert agent.artifact_loads == 1
+        assert len(process_inputs) == 1
+        assert isinstance(process_inputs[0], EntityExtractionInput)
+        assert process_inputs[0].model_dump() == {
+            "query": "Marie Curie discovered radium",
+            "tenant_id": "acme:science",
+        }
+
+    @pytest.mark.asyncio
+    async def test_cli_extractor_requires_configured_gliner_endpoint(self):
+        from cogniverse_runtime.optimization_cli import _build_cli_entity_extractor
+
+        config_manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(inference_service_urls={})
+        )
+
+        with pytest.raises(ValueError) as error:
+            await _build_cli_entity_extractor(
+                config_manager=config_manager,
+                telemetry_manager=object(),
+                tenant_id="acme:science",
+            )
+
+        assert str(error.value) == (
+            "GLiNER inference endpoint is required for synthetic entity extraction "
+            "for tenant='acme:science'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cli_extractor_preserves_process_failure_context(self):
+        from cogniverse_runtime.optimization_cli import _build_cli_entity_extractor
+
+        failure = TimeoutError("GLiNER timed out")
+        config_manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(
+                inference_service_urls={"gliner": "http://gliner.test:8010"}
+            )
+        )
+
+        class FailingAgent:
+            def __init__(self, *, deps):
+                pass
+
+            def _load_artifact(self):
+                pass
+
+            async def process(self, value):
+                raise failure
+
+        with patch(
+            "cogniverse_agents.entity_extraction_agent.EntityExtractionAgent",
+            FailingAgent,
+        ):
+            extractor = await _build_cli_entity_extractor(
+                config_manager=config_manager,
+                telemetry_manager=object(),
+                tenant_id="org:alpha",
+            )
+            with pytest.raises(RuntimeError) as error:
+                await extractor("Alpha source", "org:alpha")
+
+        assert str(error.value) == (
+            "Entity extraction agent failed for tenant='org:alpha' "
+            "source_text='Alpha source': GLiNER timed out"
+        )
+        assert error.value.__cause__ is failure
+
+    @pytest.mark.asyncio
+    async def test_cli_profile_labeler_calls_profile_agent_process_contract(self):
+        from cogniverse_agents.profile_selection_agent import (
+            ProfileSelectionInput,
+            ProfileSelectionOutput,
+        )
+        from cogniverse_runtime.optimization_cli import _build_cli_profile_labeler
+
+        process_inputs = []
+        built_agents = []
+        telemetry = object()
+        config_manager = object()
+        expected = ProfileSelectionOutput(
+            query="quantum computing",
+            selected_profile="document_semantic",
+            confidence=0.95,
+            reasoning="The production selector chose document retrieval.",
+            query_intent="research_lookup",
+            modality="document",
+            complexity="medium",
+        )
+
+        class RecordingAgent:
+            def __init__(self, *, deps):
+                self.deps = deps
+                self.artifact_loads = 0
+                built_agents.append(self)
+
+            def _load_artifact(self):
+                self.artifact_loads += 1
+
+            async def process(self, value):
+                process_inputs.append(value)
+                return expected
+
+        with patch(
+            "cogniverse_agents.profile_selection_agent.ProfileSelectionAgent",
+            RecordingAgent,
+        ):
+            labeler = await _build_cli_profile_labeler(
+                config_manager=config_manager,
+                telemetry_manager=telemetry,
+                tenant_id="acme:science",
+            )
+            result = await labeler(
+                "quantum computing",
+                ["audio_semantic", "document_semantic"],
+                "acme:science",
+            )
+
+        assert result is expected
+        assert len(built_agents) == 1
+        agent = built_agents[0]
+        assert agent.deps.available_profiles == []
+        assert agent.telemetry_manager is telemetry
+        assert agent._config_manager is config_manager
+        assert agent._artifact_tenant_id == "acme:science"
+        assert agent.artifact_loads == 1
+        assert len(process_inputs) == 1
+        assert isinstance(process_inputs[0], ProfileSelectionInput)
+        assert process_inputs[0].model_dump() == {
+            "query": "quantum computing",
+            "available_profiles": ["audio_semantic", "document_semantic"],
+            "tenant_id": "acme:science",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -871,7 +1655,6 @@ class TestEntityExtractionOptimization:
     @pytest.mark.asyncio
     async def test_entity_extraction_spans_no_entities(self):
         """Spans with no entities produce no training examples."""
-        # Canonical span whose entity list is empty -> no usable training pair.
         spans_df = _make_spans_df(
             "cogniverse.entity_extraction",
             [
@@ -896,520 +1679,6 @@ class TestEntityExtractionOptimization:
         assert result["status"] == "no_data"
         assert result["spans_found"] == 1
         assert result["examples"] == 0
-
-
-# ---------------------------------------------------------------------------
-# Test: the compile modes bind their LM task-locally
-# ---------------------------------------------------------------------------
-
-
-def _expected_optimization_lm():
-    """``llm_config.resolve("optimization")`` from the active config — the
-    endpoint the simba / profile / entity-extraction compiles run against."""
-    from cogniverse_foundation.config.unified_config import LLMConfig
-    from tests.utils.llm_config import _load_config
-
-    return LLMConfig.from_dict(_load_config()["llm_config"]).resolve("optimization")
-
-
-def _expected_teacher_lm():
-    """``llm_config.resolve_teacher()`` — the bootstrap teacher endpoint."""
-    from cogniverse_foundation.config.unified_config import LLMConfig
-    from tests.utils.llm_config import _load_config
-
-    return LLMConfig.from_dict(_load_config()["llm_config"]).resolve_teacher()
-
-
-async def _foreign_task_owns_dspy(monkeypatch):
-    """Hand DSPy's ambient binding to an async task that has finished by the
-    time the mode under test runs, and return that task's LM.
-
-    Ownership is recorded in module globals and never released, so this is the
-    state any long-lived process is in once something else configured DSPy
-    first (the runtime lifespan, an ingest job, an earlier request)."""
-    import asyncio
-    from importlib import import_module
-
-    import dspy
-
-    # The module, not the ``settings`` singleton the package re-exports —
-    # ambient ownership lives in module-level globals.
-    dspy_settings = import_module("dspy.dsp.utils.settings")
-    monkeypatch.setattr(dspy_settings, "config_owner_async_task", None)
-    monkeypatch.setitem(dspy_settings.main_thread_config, "lm", None)
-
-    owner_lm = dspy.LM(
-        model="openai/ambient-owner",
-        api_base="http://127.0.0.1:29071/v1",
-        api_key="not-required",
-    )
-
-    async def _claim():
-        dspy.configure(lm=owner_lm)
-
-    await asyncio.create_task(_claim())
-    return owner_lm
-
-
-def _ambient_lm():
-    """The process-wide LM binding, read the way ``dspy.configure`` writes it."""
-    from importlib import import_module
-
-    return import_module("dspy.dsp.utils.settings").main_thread_config["lm"]
-
-
-def _record_compile(monkeypatch, seen: Dict[str, Any], key_of):
-    """Capture the LM DSPy resolves inside ``BootstrapFewShot.compile``.
-
-    The compile is the one step that needs a live LM endpoint (one call per
-    trainset row per bootstrap round, plus the teacher's); everything around it
-    — span extraction, the synthetic merge, ``dump_state`` serialization, the
-    ArtifactManager dataset round-trip — runs for real. The student module is
-    returned unchanged so the saved artifact holds real DSPy state.
-
-    ``key_of(trainset)`` names the slot in ``seen`` so concurrent runs can be
-    told apart."""
-    import dspy
-    from dspy.teleprompt import BootstrapFewShot
-
-    def _compile(self, student, *, teacher=None, trainset):
-        seen[key_of(trainset)] = {
-            "student_lm": dspy.settings.lm,
-            "teacher_lm": self.teacher_settings["lm"],
-            "trainset_size": len(trainset),
-            "max_bootstrapped_demos": self.max_bootstrapped_demos,
-        }
-        return student
-
-    monkeypatch.setattr(BootstrapFewShot, "compile", _compile)
-
-
-def _saved_blob(provider, dataset_name: str) -> dict:
-    """The DSPy state persisted under ``dataset_name``, parsed."""
-    created = [c for c in provider.datasets.created if c["name"] == dataset_name]
-    assert len(created) == 1
-    return json.loads(created[0]["data"]["content"].iloc[0])
-
-
-_QUERY_ENHANCEMENT_SPANS = [
-    {
-        "attributes.input.value": "robot arms",
-        "attributes.output.value": json.dumps(
-            {"enhanced_query": "robotic arms assembling cars", "confidence": 0.9}
-        ),
-    },
-    {
-        "attributes.input.value": "solar panels",
-        "attributes.output.value": json.dumps(
-            {"enhanced_query": "photovoltaic panel rooftop install", "confidence": 0.7}
-        ),
-    },
-]
-
-
-class TestCompileModesBindLmTaskLocally:
-    """simba / profile / entity-extraction compile under the resolved
-    ``optimization`` endpoint even when another async task owns DSPy's ambient
-    binding. That binding can only be written by the task that claimed it
-    first, so writing it here aborted the whole mode before the compile."""
-
-    @pytest.mark.asyncio
-    async def test_simba_compile_reaches_a_live_endpoint(self, monkeypatch, tmp_path):
-        """The unstubbed BootstrapFewShot compile, over a real HTTP LM socket,
-        with a foreign async task holding DSPy's ambient binding: the bootstrap
-        call reaches the configured endpoint and the answer it returns is what
-        lands in the saved artifact."""
-        import threading
-        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
-        from cogniverse_runtime.optimization_cli import run_simba_optimization
-        from tests.utils.llm_config import _load_config
-
-        answer = {
-            "enhanced_query": "robotic manipulator arms on an assembly line",
-            "expansion_terms": "manipulator,assembly line,industrial robot",
-            "synonyms": "robot arm,manipulator",
-            "context": "manufacturing,factory automation",
-            "confidence": "0.83",
-            "reasoning": "Broadened the query with manufacturing vocabulary.",
-        }
-        # The served fields come from the signature the module actually runs,
-        # reasoning field included, in the order the adapter expects them.
-        served = "".join(
-            f"[[ ## {name} ## ]]\n{answer[name]}\n\n"
-            for name in QueryEnhancementModule().enhancer.predict.signature.output_fields
-        )
-        received: List[Dict[str, Any]] = []
-
-        class _ChatCompletions(BaseHTTPRequestHandler):
-            def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                received.append({"path": self.path, "body": body})
-                payload = json.dumps(
-                    {
-                        "id": "chatcmpl-stub",
-                        "object": "chat.completion",
-                        "created": 0,
-                        "model": body["model"],
-                        "choices": [
-                            {
-                                "index": 0,
-                                "message": {
-                                    "role": "assistant",
-                                    "content": served + "[[ ## completed ## ]]",
-                                },
-                                "finish_reason": "stop",
-                            }
-                        ],
-                        "usage": {
-                            "prompt_tokens": 1,
-                            "completion_tokens": 1,
-                            "total_tokens": 2,
-                        },
-                    }
-                ).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-
-            def log_message(self, *args):
-                pass
-
-        server = ThreadingHTTPServer(("127.0.0.1", 0), _ChatCompletions)
-        port = server.server_address[1]
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        try:
-            blob = _load_config()
-            base = f"http://127.0.0.1:{port}/v1"
-            # The model ids carry the port so DSPy's response cache cannot
-            # answer this run from an earlier session's entry.
-            blob["llm_config"]["primary"] = {
-                **blob["llm_config"]["primary"],
-                "model": f"openai/stub-student-{port}",
-                "api_base": base,
-                "api_key": "not-required",
-            }
-            blob["llm_config"]["teacher"] = {
-                **blob["llm_config"]["teacher"],
-                "model": f"openai/stub-teacher-{port}",
-                "api_base": base,
-                "api_key": "not-required",
-            }
-            config_path = tmp_path / "config.json"
-            config_path.write_text(json.dumps(blob))
-            monkeypatch.setenv("COGNIVERSE_CONFIG", str(config_path))
-
-            provider = FakeTelemetryProvider(
-                _make_spans_df(
-                    "cogniverse.query_enhancement", _QUERY_ENHANCEMENT_SPANS[:1]
-                )
-            )
-            owner_lm = await _foreign_task_owns_dspy(monkeypatch)
-
-            p1, p2 = _patch_infra(FakeTelemetryManager(provider))
-            with p1, p2:
-                result = await run_simba_optimization(
-                    tenant_id="test:unit", lookback_hours=1
-                )
-        finally:
-            server.shutdown()
-            server.server_close()
-
-        assert result == {
-            "status": "success",
-            "spans_found": 1,
-            "training_examples": 1,
-            "artifact_id": "dataset-1",
-        }
-        # BootstrapFewShot runs the bootstrap on the teacher endpoint.
-        assert [r["path"] for r in received] == ["/v1/chat/completions"]
-        assert received[0]["body"]["model"] == f"stub-teacher-{port}"
-
-        state = _saved_blob(provider, "dspy-model-test:unit-simba_query_enhancement")
-        demos = state["enhancer.predict"]["demos"]
-        assert len(demos) == 1
-        assert demos[0]["query"] == "robot arms"
-        assert demos[0]["enhanced_query"] == answer["enhanced_query"]
-        assert demos[0]["confidence"] == answer["confidence"]
-        assert _ambient_lm() is owner_lm
-
-    @pytest.mark.asyncio
-    async def test_simba_compiles_under_optimization_lm(self, monkeypatch):
-        from cogniverse_runtime.optimization_cli import run_simba_optimization
-
-        provider = FakeTelemetryProvider(
-            _make_spans_df("cogniverse.query_enhancement", _QUERY_ENHANCEMENT_SPANS)
-        )
-        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
-        seen: Dict[str, Any] = {}
-        _record_compile(monkeypatch, seen, lambda trainset: "simba")
-
-        p1, p2 = _patch_infra(FakeTelemetryManager(provider))
-        with p1, p2:
-            result = await run_simba_optimization(
-                tenant_id="test:unit", lookback_hours=1
-            )
-
-        assert result == {
-            "status": "success",
-            "spans_found": 2,
-            "training_examples": 2,
-            "artifact_id": "dataset-1",
-        }
-
-        expected = _expected_optimization_lm()
-        compiled_with = seen["simba"]
-        assert compiled_with["student_lm"].model == expected.model
-        assert compiled_with["student_lm"].kwargs["api_base"] == expected.api_base
-        assert compiled_with["student_lm"] is not owner_lm
-        assert compiled_with["teacher_lm"].model == _expected_teacher_lm().model
-        assert compiled_with["trainset_size"] == 2
-        assert compiled_with["max_bootstrapped_demos"] == 4
-
-        state = _saved_blob(provider, "dspy-model-test:unit-simba_query_enhancement")
-        assert sorted(state) == ["enhancer.predict"]
-        # The binding is contextual, so the artifact carries no LM of its own.
-        assert state["enhancer.predict"]["lm"] is None
-        assert provider.datasets.deleted == [
-            "dspy-model-test:unit-simba_query_enhancement"
-        ]
-        assert _ambient_lm() is owner_lm
-
-    @pytest.mark.asyncio
-    async def test_profile_compiles_under_optimization_lm(self, monkeypatch):
-        from cogniverse_runtime.optimization_cli import run_profile_optimization
-
-        provider = FakeTelemetryProvider(
-            _make_spans_df(
-                "cogniverse.profile_selection",
-                [
-                    {
-                        "attributes.input.value": "show me the factory floor",
-                        "attributes.output.value": json.dumps(
-                            {
-                                "selected_profile": "video_colpali_smol500_mv_frame",
-                                "modality": "video",
-                                "complexity": "simple",
-                                "intent": "video_search",
-                                "confidence": 0.9,
-                            }
-                        ),
-                    }
-                ],
-            )
-        )
-        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
-        seen: Dict[str, Any] = {}
-        _record_compile(monkeypatch, seen, lambda trainset: "profile")
-
-        p1, p2 = _patch_infra(FakeTelemetryManager(provider))
-        with p1, p2:
-            result = await run_profile_optimization(
-                tenant_id="test:unit", lookback_hours=1
-            )
-
-        assert result == {
-            "status": "success",
-            "spans_found": 1,
-            "training_examples": 1,
-            "artifact_id": "dataset-1",
-        }
-
-        expected = _expected_optimization_lm()
-        compiled_with = seen["profile"]
-        assert compiled_with["student_lm"].model == expected.model
-        assert compiled_with["student_lm"].kwargs["api_base"] == expected.api_base
-        assert compiled_with["student_lm"] is not owner_lm
-        assert compiled_with["teacher_lm"].model == _expected_teacher_lm().model
-        assert compiled_with["trainset_size"] == 1
-
-        state = _saved_blob(provider, "dspy-model-test:unit-profile_selection")
-        assert sorted(state) == ["selector.predict"]
-        assert state["selector.predict"]["lm"] is None
-        assert _ambient_lm() is owner_lm
-
-    @pytest.mark.asyncio
-    async def test_entity_extraction_compiles_under_optimization_lm(self, monkeypatch):
-        from cogniverse_runtime.optimization_cli import (
-            run_entity_extraction_optimization,
-        )
-
-        provider = FakeTelemetryProvider(
-            _make_spans_df(
-                "cogniverse.entity_extraction",
-                [
-                    {
-                        "attributes.input.value": "videos of Boston Dynamics robots",
-                        "attributes.output.value": json.dumps(
-                            {
-                                "entities": [
-                                    {
-                                        "text": "Boston Dynamics",
-                                        "type": "ORG",
-                                        "confidence": 0.9,
-                                    }
-                                ]
-                            }
-                        ),
-                    }
-                ],
-            )
-        )
-        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
-        seen: Dict[str, Any] = {}
-        _record_compile(monkeypatch, seen, lambda trainset: "entity_extraction")
-
-        p1, p2 = _patch_infra(FakeTelemetryManager(provider))
-        with p1, p2:
-            result = await run_entity_extraction_optimization(
-                tenant_id="test:unit", lookback_hours=1
-            )
-
-        assert result == {
-            "status": "success",
-            "spans_found": 1,
-            "training_examples": 1,
-            "artifact_id": "dataset-1",
-        }
-
-        expected = _expected_optimization_lm()
-        compiled_with = seen["entity_extraction"]
-        assert compiled_with["student_lm"].model == expected.model
-        assert compiled_with["student_lm"].kwargs["api_base"] == expected.api_base
-        assert compiled_with["student_lm"] is not owner_lm
-        assert compiled_with["teacher_lm"].model == _expected_teacher_lm().model
-        assert compiled_with["trainset_size"] == 1
-
-        state = _saved_blob(provider, "dspy-model-test:unit-entity_extraction")
-        assert sorted(state) == ["extractor.predict"]
-        assert state["extractor.predict"]["lm"] is None
-        assert _ambient_lm() is owner_lm
-
-    @pytest.mark.asyncio
-    async def test_compile_failure_unwinds_the_lm_binding(self, monkeypatch):
-        """A compile that dies against the LM endpoint reports the failure,
-        writes no artifact, and releases the LM it bound — the ambient binding
-        the foreign task owns must come back untouched."""
-        import dspy
-        from dspy.teleprompt import BootstrapFewShot
-
-        from cogniverse_runtime.optimization_cli import run_simba_optimization
-
-        provider = FakeTelemetryProvider(
-            _make_spans_df("cogniverse.query_enhancement", _QUERY_ENHANCEMENT_SPANS)
-        )
-        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
-
-        bound_during_compile = []
-
-        def _dead_endpoint(self, student, *, teacher=None, trainset):
-            bound_during_compile.append(dspy.settings.lm)
-            raise ConnectionError("optimization LM endpoint refused the connection")
-
-        monkeypatch.setattr(BootstrapFewShot, "compile", _dead_endpoint)
-
-        p1, p2 = _patch_infra(FakeTelemetryManager(provider))
-        with p1, p2:
-            result = await run_simba_optimization(
-                tenant_id="test:unit", lookback_hours=1
-            )
-
-        assert result == {
-            "status": "failed",
-            "error": "optimization LM endpoint refused the connection",
-        }
-        assert bound_during_compile[0].model == _expected_optimization_lm().model
-        assert provider.datasets.created == []
-        assert provider.datasets.deleted == []
-        assert _ambient_lm() is owner_lm
-        assert dspy.settings.lm is owner_lm
-
-    @pytest.mark.asyncio
-    async def test_concurrent_simba_runs_keep_their_own_lm_binding(self, monkeypatch):
-        """Two simba runs in flight at once each compile under the LM they
-        built. A process-wide binding would hand both compiles whichever LM
-        was written last (and leave that LM behind for the rest of the
-        process); the task-local one cannot bleed across runs."""
-        import asyncio
-        import itertools
-
-        import dspy
-
-        from cogniverse_runtime.optimization_cli import run_simba_optimization
-
-        both_in_flight = asyncio.Barrier(2)
-
-        class _BarrierTraceStore(FakeTraceStore):
-            """Holds each run inside its span query until both are running."""
-
-            async def get_spans(self, **kwargs):
-                await both_in_flight.wait()
-                return await super().get_spans(**kwargs)
-
-        def _provider() -> FakeTelemetryProvider:
-            spans_df = _make_spans_df(
-                "cogniverse.query_enhancement", _QUERY_ENHANCEMENT_SPANS
-            )
-            provider = FakeTelemetryProvider(spans_df)
-            provider._trace_store = _BarrierTraceStore(spans_df)
-            return provider
-
-        providers = {"test:one": _provider(), "test:two": _provider()}
-
-        class _PerTenantTelemetryManager:
-            def __init__(self):
-                self.config = FakeTelemetryConfig()
-
-            def get_provider(self, tenant_id):
-                return providers[tenant_id]
-
-        tags = itertools.count(1)
-
-        def _tagged_lm(config):
-            return dspy.LM(
-                model=f"openai/tagged-{next(tags)}",
-                api_base=config.api_base,
-                api_key="not-required",
-            )
-
-        monkeypatch.setattr(
-            "cogniverse_foundation.config.llm_factory.create_dspy_lm", _tagged_lm
-        )
-        owner_lm = await _foreign_task_owns_dspy(monkeypatch)
-
-        seen: Dict[str, Any] = {}
-        # Both runs compile the same trainset, so each compile is keyed by the
-        # LM tag it was handed.
-        _record_compile(monkeypatch, seen, lambda trainset: dspy.settings.lm.model)
-
-        p1, p2 = _patch_infra(_PerTenantTelemetryManager())
-        with p1, p2:
-            results = await asyncio.gather(
-                run_simba_optimization(tenant_id="test:one", lookback_hours=1),
-                run_simba_optimization(tenant_id="test:two", lookback_hours=1),
-            )
-
-        def _tag(lm) -> int:
-            return int(lm.model.rsplit("-", 1)[1])
-
-        assert sorted(seen) == ["openai/tagged-1", "openai/tagged-3"]
-        first, second = seen["openai/tagged-1"], seen["openai/tagged-3"]
-        assert first["student_lm"] is not second["student_lm"]
-        # Each run's teacher is the LM it built right after its own student —
-        # a shared binding would cross the pairs.
-        assert _tag(first["teacher_lm"]) == 2
-        assert _tag(second["teacher_lm"]) == 4
-        assert [r["status"] for r in results] == ["success", "success"]
-        assert [c["name"] for c in providers["test:one"].datasets.created] == [
-            "dspy-model-test:one-simba_query_enhancement"
-        ]
-        assert [c["name"] for c in providers["test:two"].datasets.created] == [
-            "dspy-model-test:two-simba_query_enhancement"
-        ]
-        assert _ambient_lm() is owner_lm
 
 
 # ---------------------------------------------------------------------------
@@ -1744,6 +2013,42 @@ class TestSyntheticDataMerge:
 class TestCreateTeleprompter:
     """Verify optimizer selection based on training set size."""
 
+    def test_bootstrap_accepts_only_exact_approved_labels(self):
+        import dspy
+
+        from cogniverse_runtime.optimization_cli import (
+            _approved_example_exact_metric,
+            _create_teleprompter,
+        )
+
+        example = dspy.Example(
+            query="transformer architecture",
+            enhanced_query="transformer architecture attention mechanism",
+            reasoning="Added the reviewed attention term.",
+        ).with_inputs("query")
+
+        assert (
+            _approved_example_exact_metric(
+                example,
+                dspy.Prediction(
+                    enhanced_query="transformer architecture attention mechanism",
+                    reasoning="Added the reviewed attention term.",
+                ),
+            )
+            is True
+        )
+        assert (
+            _approved_example_exact_metric(
+                example,
+                dspy.Prediction(
+                    enhanced_query="Explain transformer architecture",
+                    reasoning="Replaced the approved labels.",
+                ),
+            )
+            is False
+        )
+        assert _create_teleprompter(1).metric is _approved_example_exact_metric
+
     def test_small_trainset_uses_bootstrap(self):
         """< 50 examples should use BootstrapFewShot."""
         from dspy.teleprompt import BootstrapFewShot
@@ -1829,7 +2134,7 @@ def _gateway_spans(rows: list[dict]) -> pd.DataFrame:
     ``output.value`` decision populated from ``rows``. Each row is
     ``{"complexity": ..., "confidence": ..., "status_code": ...}``;
     ``status_code`` defaults to ``OK`` if absent. The DataFrame shape matches
-    what Phoenix's ``get_spans`` returns."""
+    what Phoenix's ``get_all_spans`` returns."""
     records = []
     for r in rows:
         records.append(
@@ -2041,180 +2346,877 @@ class TestSyntheticGeneration:
     """Verify synthetic generation CLI mode."""
 
     @pytest.mark.asyncio
-    async def test_synthetic_no_backend_returns_failed(self, fake_telemetry_manager):
-        """Synthetic generation with no reachable backend reports the failure
-        per optimizer type instead of raising out of the CLI mode."""
+    async def test_rejects_optimizer_without_approved_training_consumer(self):
         from cogniverse_runtime.optimization_cli import run_synthetic_generation
 
-        p1, p2 = _patch_infra(fake_telemetry_manager)
-        with p1, p2:
-            result = await run_synthetic_generation(
-                tenant_id="test:unit",
-                optimizer_types=["simba"],
-                count=5,
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"synthetic optimizer types have no approved training-data "
+                r"consumer: \['workflow'\]"
+            ),
+        ):
+            await run_synthetic_generation(
+                tenant_id="acme:production",
+                optimizer_types=["profile", "workflow"],
             )
 
-        assert result["status"] == "failed"
-        assert list(result["results"]) == ["simba"]
-        assert result["results"]["simba"]["status"] == "failed"
-        assert result["results"]["simba"]["error"] != ""
+    @pytest.mark.parametrize(
+        ("results", "expected_status"),
+        [
+            (
+                {
+                    "profile": {"status": "success"},
+                    "routing": {"status": "success"},
+                },
+                "success",
+            ),
+            (
+                {
+                    "profile": {"status": "success"},
+                    "routing": {"status": "no_data"},
+                },
+                "success",
+            ),
+            (
+                {
+                    "profile": {"status": "no_data"},
+                    "routing": {"status": "no_data"},
+                },
+                "no_data",
+            ),
+            (
+                {
+                    "profile": {"status": "success"},
+                    "routing": {"status": "failed", "error": "backend down"},
+                },
+                "failed",
+            ),
+            (
+                {
+                    "profile": {"status": "no_data"},
+                    "routing": {"status": "error", "error": "invalid result"},
+                },
+                "failed",
+            ),
+        ],
+        ids=[
+            "all-success",
+            "success-and-no-data",
+            "all-no-data",
+            "success-and-failed",
+            "no-data-and-error",
+        ],
+    )
+    def test_aggregate_status_preserves_requested_result_contract(
+        self,
+        results,
+        expected_status,
+    ):
+        from cogniverse_runtime.optimization_cli import _synthetic_aggregate_status
+
+        assert _synthetic_aggregate_status(results) == expected_status
 
     @pytest.mark.asyncio
-    async def test_synthetic_generation_binds_lm_when_another_task_owns_dspy(
-        self, fake_telemetry_manager, monkeypatch
+    @pytest.mark.parametrize("missing_section", ["backend", "synthetic", "agents"])
+    async def test_missing_config_fails_before_backend_access(
+        self,
+        missing_section,
+        fake_telemetry_manager,
     ):
-        """The generators must see the configured LM even when a DIFFERENT
-        async task already owns DSPy's ambient binding — writing that binding
-        (``dspy.configure`` or ``dspy.settings.lm = ...``) raises for every
-        task but the owner, which aborted the whole synthetic run.
+        from cogniverse_runtime.optimization_cli import run_synthetic_generation
 
-        The search backend the generators sample content from needs a Vespa
-        container, which this in-process test has none of, so the registry
-        hands back an inert stand-in; the LM binding under test is read inside
-        ``generate``, where production reads it."""
-        import asyncio
-        from importlib import import_module
+        sections = _synthetic_runtime_sections()
+        sections.pop(missing_section)
+        tenant_config = SimpleNamespace(
+            get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
+            get=lambda key, default=None: sections.get(key, default),
+        )
+        backend_accesses = 0
 
-        import dspy
+        def record_backend_access(*args, **kwargs):
+            nonlocal backend_accesses
+            backend_accesses += 1
+            return object()
 
-        from cogniverse_core.registries.backend_registry import BackendRegistry
+        with (
+            patch(_PATCH_CONFIG),
+            _patch_telemetry(fake_telemetry_manager),
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=tenant_config,
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_core.registries.backend_registry."
+                "BackendRegistry.get_search_backend",
+                side_effect=record_backend_access,
+            ),
+        ):
+            result = await run_synthetic_generation(
+                tenant_id="acme:invalid",
+                optimizer_types=["query_enhancement"],
+                count=1,
+            )
+
+        error = (
+            "Synthetic runtime configuration for tenant='acme:invalid' "
+            f"requires object section '{missing_section}'"
+        )
+        assert result == {
+            "status": "failed",
+            "results": {"query_enhancement": {"status": "failed", "error": error}},
+        }
+        assert backend_accesses == 0
+
+    @pytest.mark.asyncio
+    async def test_routing_generation_receives_production_entity_extractor(
+        self,
+        fake_telemetry_manager,
+    ):
         from cogniverse_runtime.optimization_cli import run_synthetic_generation
         from cogniverse_synthetic.schemas import SyntheticDataResponse
-        from cogniverse_synthetic.service import SyntheticDataService
 
-        # The module, not the ``settings`` singleton the package re-exports —
-        # ambient ownership lives in module-level globals.
-        dspy_settings = import_module("dspy.dsp.utils.settings")
-        monkeypatch.setattr(dspy_settings, "config_owner_async_task", None)
-        monkeypatch.setitem(dspy_settings.main_thread_config, "lm", None)
-
-        owner_lm = dspy.LM(
-            model="openai/ambient-owner",
-            api_base="http://127.0.0.1:29071/v1",
-            api_key="not-required",
+        sections = _synthetic_runtime_sections(marker="routing")
+        tenant_config = SimpleNamespace(
+            get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
+            get=lambda key, default=None: sections.get(key, default),
         )
+        config_manager = object()
+        backend = object()
+        build_calls = []
+        extraction_calls = []
 
-        async def _claim_ambient():
-            dspy.configure(lm=owner_lm)
+        async def extract_entities(source_text, tenant_id):
+            extraction_calls.append((source_text, tenant_id))
+            return {
+                "query": source_text,
+                "entities": [
+                    {"text": "Marie Curie", "type": "PERSON"},
+                    {"text": "radium", "type": "CONCEPT"},
+                ],
+                "relationships": [],
+            }
 
-        await asyncio.create_task(_claim_ambient())
+        async def build_extractor(**kwargs):
+            build_calls.append(kwargs)
+            return extract_entities
 
-        seen: Dict[str, Any] = {}
-
-        async def _record_bound_lm(self, request):
-            seen["lm"] = dspy.settings.lm
-            return SyntheticDataResponse(
-                optimizer=request.optimizer,
-                schema_name="RoutingExampleSchema",
-                count=0,
-                selected_profiles=[],
-                profile_selection_reasoning="",
-                data=[],
-                metadata={},
+        async def route_query(query, tenant_id):
+            raise AssertionError(
+                f"fixture router must not be invoked directly: {query} {tenant_id}"
             )
 
-        monkeypatch.setattr(SyntheticDataService, "generate", _record_bound_lm)
-        monkeypatch.setattr(
-            BackendRegistry,
-            "get_search_backend",
-            lambda *a, **k: object(),
-        )
+        async def build_router(**kwargs):
+            assert kwargs == {
+                "config_manager": config_manager,
+                "telemetry_manager": fake_telemetry_manager,
+                "tenant_id": "acme:science",
+            }
+            return route_query
 
-        p1, p2 = _patch_infra(fake_telemetry_manager)
-        with p1, p2:
+        class RecordingSyntheticService:
+            def __init__(self, **kwargs):
+                assert kwargs["backend"] is backend
+                assert kwargs["entity_extractor"] is extract_entities
+                self.entity_extractor = kwargs["entity_extractor"]
+
+            async def generate(self, request):
+                labelled = await self.entity_extractor(
+                    "Marie Curie discovered radium", request.tenant_id
+                )
+                assert labelled == {
+                    "query": "Marie Curie discovered radium",
+                    "entities": [
+                        {"text": "Marie Curie", "type": "PERSON"},
+                        {"text": "radium", "type": "CONCEPT"},
+                    ],
+                    "relationships": [],
+                }
+                return SyntheticDataResponse(
+                    optimizer=request.optimizer,
+                    schema_name="RoutingExperienceSchema",
+                    count=0,
+                    selected_profiles=["video_fixture"],
+                    profile_selection_reasoning="No source rows in unit fixture",
+                    data=[],
+                    metadata={},
+                )
+
+        with (
+            patch(_PATCH_CONFIG, return_value=config_manager),
+            _patch_telemetry(fake_telemetry_manager),
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=tenant_config,
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_entity_extractor",
+                side_effect=build_extractor,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_routing_decider",
+                side_effect=build_router,
+            ),
+            patch(
+                "cogniverse_core.registries.backend_registry."
+                "BackendRegistry.get_search_backend",
+                return_value=backend,
+            ),
+            patch(
+                "cogniverse_synthetic.service.SyntheticDataService",
+                RecordingSyntheticService,
+            ),
+        ):
             result = await run_synthetic_generation(
-                tenant_id="test:unit",
-                optimizer_types=["simba"],
-                count=5,
+                tenant_id="acme:science",
+                optimizer_types=["routing"],
+                count=1,
             )
 
-        expected = _expected_primary_lm()
-        assert seen["lm"].model == expected.model
-        assert seen["lm"].kwargs["api_base"] == expected.api_base
-        assert seen["lm"] is not owner_lm
-        assert result["results"]["simba"] == {
+        assert result == {
             "status": "no_data",
-            "examples_generated": 0,
+            "results": {"routing": {"status": "no_data", "examples_generated": 0}},
         }
-        # The ambient binding still belongs to the task that claimed it.
-        assert dspy_settings.main_thread_config["lm"] is owner_lm
+        assert build_calls == [
+            {
+                "config_manager": config_manager,
+                "telemetry_manager": fake_telemetry_manager,
+                "tenant_id": "acme:science",
+            }
+        ]
+        assert extraction_calls == [("Marie Curie discovered radium", "acme:science")]
 
     @pytest.mark.asyncio
-    async def test_concurrent_synthetic_runs_keep_their_own_lm_binding(
-        self, fake_telemetry_manager, monkeypatch
+    async def test_entity_agent_failure_does_not_block_independent_optimizer(
+        self,
+        fake_telemetry_manager,
     ):
-        """Two synthetic runs in flight at once each generate under their own
-        LM. A process-wide binding would hand both runs whichever LM was
-        written last; the task-local one cannot bleed across runs.
-
-        The search backend needs a Vespa container this in-process test has
-        none of, so the registry hands back an inert stand-in."""
-        import asyncio
-        import itertools
-
-        import dspy
-
-        from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_runtime.optimization_cli import run_synthetic_generation
         from cogniverse_synthetic.schemas import SyntheticDataResponse
-        from cogniverse_synthetic.service import SyntheticDataService
 
-        tags = itertools.count(1)
-
-        def _tagged_lm(config):
-            return dspy.LM(
-                model=f"openai/tagged-{next(tags)}",
-                api_base=config.api_base,
-                api_key="not-required",
-            )
-
-        monkeypatch.setattr(
-            "cogniverse_foundation.config.llm_factory.create_dspy_lm", _tagged_lm
+        sections = _synthetic_runtime_sections(marker="independent")
+        tenant_config = SimpleNamespace(
+            get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
+            get=lambda key, default=None: sections.get(key, default),
         )
-        monkeypatch.setattr(
-            BackendRegistry, "get_search_backend", lambda *a, **k: object()
-        )
+        config_manager = object()
+        backend = object()
+        generated = []
 
-        both_inside = asyncio.Barrier(2)
-        seen: Dict[str, Any] = {}
+        class RecordingSyntheticService:
+            def __init__(self, **kwargs):
+                assert kwargs["backend"] is backend
+                assert kwargs["entity_extractor"] is None
 
-        async def _record_bound_lm(self, request):
-            seen[request.tenant_id] = dspy.settings.lm
-            # Hold both runs inside generate so their bindings are live at once.
-            await both_inside.wait()
-            return SyntheticDataResponse(
-                optimizer=request.optimizer,
-                schema_name="RoutingExampleSchema",
-                count=0,
-                selected_profiles=[],
-                profile_selection_reasoning="",
-                data=[],
-                metadata={},
+            async def generate(self, request):
+                generated.append(request.optimizer)
+                return SyntheticDataResponse(
+                    optimizer=request.optimizer,
+                    schema_name="ProfileSelectionExampleSchema",
+                    count=0,
+                    selected_profiles=["video_fixture"],
+                    profile_selection_reasoning="No source rows in unit fixture",
+                    data=[],
+                    metadata={},
+                )
+
+        with (
+            patch(_PATCH_CONFIG, return_value=config_manager),
+            _patch_telemetry(fake_telemetry_manager),
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=tenant_config,
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_entity_extractor",
+                side_effect=RuntimeError("GLiNER health check failed"),
+            ),
+            patch(
+                "cogniverse_core.registries.backend_registry."
+                "BackendRegistry.get_search_backend",
+                return_value=backend,
+            ),
+            patch(
+                "cogniverse_synthetic.service.SyntheticDataService",
+                RecordingSyntheticService,
+            ),
+        ):
+            result = await run_synthetic_generation(
+                tenant_id="acme:science",
+                optimizer_types=["entity_extraction", "profile"],
+                count=1,
             )
 
-        monkeypatch.setattr(SyntheticDataService, "generate", _record_bound_lm)
-
-        p1, p2 = _patch_infra(fake_telemetry_manager)
-        with p1, p2:
-            results = await asyncio.gather(
-                run_synthetic_generation(
-                    tenant_id="test:one", optimizer_types=["simba"], count=1
-                ),
-                run_synthetic_generation(
-                    tenant_id="test:two", optimizer_types=["simba"], count=1
-                ),
-            )
-
-        assert sorted(seen) == ["test:one", "test:two"]
-        assert seen["test:one"] is not seen["test:two"]
-        assert {seen["test:one"].model, seen["test:two"].model} == {
-            "openai/tagged-1",
-            "openai/tagged-2",
+        assert result == {
+            "status": "failed",
+            "results": {
+                "entity_extraction": {
+                    "status": "failed",
+                    "error": "GLiNER health check failed",
+                },
+                "profile": {"status": "no_data", "examples_generated": 0},
+            },
         }
-        assert [r["results"]["simba"]["status"] for r in results] == [
-            "no_data",
-            "no_data",
+        assert generated == ["profile"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        (
+            "optimizer_type",
+            "expected_agent_type",
+            "schema_name",
+            "example",
+            "expected_confidence",
+        ),
+        [
+            (
+                "query_enhancement",
+                "query_enhancement",
+                "QueryEnhancementExampleSchema",
+                {
+                    "query": "Find exact PyTorch tutorials",
+                    "enhanced_query": "Find exact PyTorch framework tutorials",
+                    "expansion_terms": ["framework"],
+                    "synonyms": ["machine learning library"],
+                    "context": "PyTorch education",
+                    "reasoning": (
+                        "Added the framework category to focus tutorial retrieval"
+                    ),
+                },
+                0.0,
+            ),
+            (
+                "entity_extraction",
+                "entity_extraction",
+                "EntityExtractionExampleSchema",
+                {
+                    "query": "Marie Curie discovered radium",
+                    "entities": [
+                        {"text": "Marie Curie", "type": "PERSON"},
+                        {"text": "radium", "type": "CONCEPT"},
+                    ],
+                    "entity_types": "PERSON,CONCEPT",
+                    "relationships": [],
+                },
+                0.0,
+            ),
+            (
+                "profile",
+                "profile_selection",
+                "ProfileSelectionExampleSchema",
+                {
+                    "query": "find transformer lectures",
+                    "available_profiles": "video_fixture,document_fixture",
+                    "selected_profile": "video_fixture",
+                    "reasoning": "Video retrieval matches the requested lectures.",
+                    "query_intent": "video_search",
+                    "modality": "video",
+                    "complexity": "medium",
+                },
+                0.0,
+            ),
+        ],
+    )
+    async def test_generated_examples_enter_the_human_approval_queue(
+        self,
+        fake_telemetry_manager,
+        optimizer_type,
+        expected_agent_type,
+        schema_name,
+        example,
+        expected_confidence,
+    ):
+        from cogniverse_core.approval.interfaces import ApprovalStatus
+        from cogniverse_foundation.config.unified_config import (
+            BackendConfig,
+            SyntheticGeneratorConfig,
+        )
+        from cogniverse_runtime.optimization_cli import run_synthetic_generation
+        from cogniverse_synthetic.schemas import SyntheticDataResponse
+
+        sections = _synthetic_runtime_sections(marker="approval")
+        tenant_config = SimpleNamespace(
+            get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
+            get=lambda key, default=None: sections.get(key, default),
+        )
+        system_config = SimpleNamespace(
+            telemetry_url="http://phoenix.test:6006",
+            telemetry_collector_endpoint="phoenix.test:4317",
+            redis_url="redis://redis.test:6379/0",
+        )
+        config_manager = SimpleNamespace(get_system_config=lambda: system_config)
+        saved_batches = []
+        storage_inits = []
+        service_inits = []
+        backend = object()
+
+        async def entity_extractor(source_text, tenant_id):
+            raise AssertionError(
+                f"fixture extractor must not be invoked directly: {source_text} {tenant_id}"
+            )
+
+        async def build_entity_extractor(**kwargs):
+            assert kwargs == {
+                "config_manager": config_manager,
+                "telemetry_manager": fake_telemetry_manager,
+                "tenant_id": "acme:production",
+            }
+            return entity_extractor
+
+        async def profile_labeler(query, profiles, tenant_id):
+            raise AssertionError(
+                f"fixture labeler must not be invoked directly: "
+                f"{query} {profiles} {tenant_id}"
+            )
+
+        async def build_profile_labeler(**kwargs):
+            assert kwargs == {
+                "config_manager": config_manager,
+                "telemetry_manager": fake_telemetry_manager,
+                "tenant_id": "acme:production",
+            }
+            return profile_labeler
+
+        async def query_enhancer(query, tenant_id):
+            raise AssertionError(
+                f"fixture enhancer must not be invoked directly: {query} {tenant_id}"
+            )
+
+        async def build_query_enhancer(**kwargs):
+            assert kwargs == {
+                "config_manager": config_manager,
+                "telemetry_manager": fake_telemetry_manager,
+                "tenant_id": "acme:production",
+            }
+            return query_enhancer
+
+        class RecordingStorage:
+            def __init__(self, **kwargs):
+                storage_inits.append(kwargs)
+
+            async def save_batch(self, batch):
+                saved_batches.append(batch)
+                return batch.batch_id
+
+        class RecordingSyntheticService:
+            def __init__(self, **kwargs):
+                service_inits.append(kwargs)
+
+            async def generate(self, request):
+                assert request.tenant_id == "acme:production"
+                assert request.optimizer == optimizer_type
+                assert request.count == 1
+                return SyntheticDataResponse(
+                    optimizer=request.optimizer,
+                    schema_name=schema_name,
+                    count=1,
+                    selected_profiles=[],
+                    profile_selection_reasoning="Direct unit fixture",
+                    data=[example],
+                    metadata={},
+                )
+
+        with (
+            patch(_PATCH_CONFIG, return_value=config_manager),
+            _patch_telemetry(fake_telemetry_manager),
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=tenant_config,
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_entity_extractor",
+                side_effect=build_entity_extractor,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_profile_labeler",
+                side_effect=build_profile_labeler,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_query_enhancer",
+                side_effect=build_query_enhancer,
+            ),
+            patch(
+                "cogniverse_core.registries.backend_registry."
+                "BackendRegistry.get_search_backend",
+                return_value=backend,
+            ),
+            patch(
+                "cogniverse_synthetic.service.SyntheticDataService",
+                RecordingSyntheticService,
+            ),
+            patch(
+                "cogniverse_agents.approval.approval_storage.ApprovalStorageImpl",
+                RecordingStorage,
+            ),
+        ):
+            result = await run_synthetic_generation(
+                tenant_id="acme:production",
+                optimizer_types=[optimizer_type],
+                count=1,
+            )
+
+        assert result == {
+            "status": "success",
+            "results": {
+                optimizer_type: {
+                    "status": "success",
+                    "examples_generated": 1,
+                    "batch_id": saved_batches[0].batch_id,
+                    "pending_review": 1,
+                }
+            },
+        }
+        assert storage_inits == [
+            {
+                "grpc_endpoint": "http://phoenix.test:4317",
+                "http_endpoint": "http://phoenix.test:6006",
+                "tenant_id": "acme:production",
+                "telemetry_manager": fake_telemetry_manager,
+                "redis_url": "redis://redis.test:6379/0",
+            }
         ]
+        assert len(service_inits) == 1
+        service_init = service_inits[0]
+        assert service_init["backend"] is backend
+        assert isinstance(service_init["backend_config"], BackendConfig)
+        assert (
+            service_init["backend_config"].tenant_id,
+            service_init["backend_config"].url,
+            service_init["backend_config"].metadata,
+            service_init["backend_config"].profiles["video_fixture"].schema_name,
+        ) == (
+            "acme:production",
+            "http://vespa-approval.test",
+            {"marker": "approval"},
+            "video_approval",
+        )
+        assert isinstance(service_init["generator_config"], SyntheticGeneratorConfig)
+        assert service_init["generator_config"].tenant_id == "acme:production"
+        assert set(service_init["generator_config"].optimizer_configs) == set(
+            sections["synthetic"]["optimizer_configs"]
+        )
+        assert (
+            service_init["generator_config"]
+            .optimizer_configs[optimizer_type]
+            .optimizer_type
+            == optimizer_type
+        )
+        assert service_init["agents_config"] == {
+            "search_agent": sections["agents"]["search_agent"]
+        }
+        assert service_init["entity_extractor"] is (
+            entity_extractor if optimizer_type == "entity_extraction" else None
+        )
+        batch = saved_batches[0]
+        assert batch.batch_id.startswith(f"synthetic_{optimizer_type}_")
+        assert batch.context == {
+            "tenant_id": "acme:production",
+            "agent_type": expected_agent_type,
+            "optimizer": optimizer_type,
+            "purpose": "optimizer_training",
+        }
+        assert [
+            (
+                item.item_id,
+                item.data,
+                item.confidence,
+                item.status,
+                item.metadata,
+            )
+            for item in batch.items
+        ] == [
+            (
+                f"{batch.batch_id}_0",
+                example,
+                expected_confidence,
+                ApprovalStatus.PENDING_REVIEW,
+                {
+                    "agent_type": expected_agent_type,
+                    "optimizer_type": optimizer_type,
+                    "synthetic": True,
+                },
+            )
+        ]
+        assert fake_telemetry_manager._provider.datasets.created == []
+
+    @pytest.mark.asyncio
+    async def test_synthetic_generation_does_not_reconfigure_global_dspy(
+        self,
+        fake_telemetry_manager,
+        monkeypatch,
+    ):
+        """Synthetic generation keeps its LM binding local to the async task."""
+        import dspy
+
+        from cogniverse_runtime.optimization_cli import run_synthetic_generation
+
+        def reject_global_configuration(self, **kwargs):
+            raise AssertionError(f"global DSPy configuration attempted: {kwargs}")
+
+        monkeypatch.setattr(
+            type(dspy.settings),
+            "configure",
+            reject_global_configuration,
+        )
+
+        sections = _synthetic_runtime_sections()
+        tenant_config = SimpleNamespace(
+            get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
+            get=lambda key, default=None: sections.get(key, default),
+        )
+        p1, p2 = _patch_infra(fake_telemetry_manager)
+
+        async def profile_labeler(query, profiles, tenant_id):
+            raise AssertionError(
+                f"fixture labeler must not be invoked: {query} {profiles} {tenant_id}"
+            )
+
+        with (
+            p1,
+            p2,
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=tenant_config,
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_profile_labeler",
+                return_value=profile_labeler,
+            ),
+            patch(
+                "cogniverse_core.registries.backend_registry."
+                "BackendRegistry.get_search_backend",
+                side_effect=RuntimeError("synthetic backend unavailable"),
+            ),
+        ):
+            result = await run_synthetic_generation(
+                tenant_id="test:unit",
+                optimizer_types=["profile"],
+                count=5,
+            )
+
+        assert result == {
+            "status": "failed",
+            "results": {
+                "profile": {
+                    "status": "failed",
+                    "error": (
+                        "Synthetic backend access failed for tenant='test:unit' "
+                        "backend='vespa': synthetic backend unavailable"
+                    ),
+                }
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_synthetic_backend_outage_returns_exact_failure(
+        self,
+        fake_telemetry_manager,
+    ):
+        """Synthetic generation reports the backend failure without masking it."""
+        from cogniverse_runtime.optimization_cli import run_synthetic_generation
+
+        sections = _synthetic_runtime_sections()
+        tenant_config = SimpleNamespace(
+            get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
+            get=lambda key, default=None: sections.get(key, default),
+        )
+        p1, p2 = _patch_infra(fake_telemetry_manager)
+
+        async def profile_labeler(query, profiles, tenant_id):
+            raise AssertionError(
+                f"fixture labeler must not be invoked: {query} {profiles} {tenant_id}"
+            )
+
+        with (
+            p1,
+            p2,
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=tenant_config,
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_profile_labeler",
+                return_value=profile_labeler,
+            ),
+            patch(
+                "cogniverse_core.registries.backend_registry."
+                "BackendRegistry.get_search_backend",
+                side_effect=RuntimeError("synthetic backend unavailable"),
+            ),
+        ):
+            result = await run_synthetic_generation(
+                tenant_id="test:unit",
+                optimizer_types=["profile"],
+                count=5,
+            )
+
+        assert result == {
+            "status": "failed",
+            "results": {
+                "profile": {
+                    "status": "failed",
+                    "error": (
+                        "Synthetic backend access failed for tenant='test:unit' "
+                        "backend='vespa': synthetic backend unavailable"
+                    ),
+                }
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_concurrent_synthetic_failures_keep_context_and_result_names(
+        self,
+        fake_telemetry_manager,
+    ):
+        import dspy
+
+        from cogniverse_runtime.optimization_cli import run_synthetic_generation
+
+        class TenantConfig:
+            def __init__(self, tenant_id):
+                self._sections = _synthetic_runtime_sections(
+                    marker=tenant_id.replace(":", "-")
+                )
+                self._llm_config = type(
+                    "LLMConfig",
+                    (),
+                    {"primary": f"endpoint-{tenant_id}"},
+                )()
+
+            def get_llm_config(self):
+                return self._llm_config
+
+            def get(self, key, default=None):
+                return self._sections.get(key, default)
+
+        tenants = ("org:one", "org:two")
+        optimizer_by_tenant = {
+            "org:one": "profile",
+            "org:two": "query_enhancement",
+        }
+        configs = {tenant: TenantConfig(tenant) for tenant in tenants}
+        tenant_lms = {f"endpoint-{tenant}": object() for tenant in tenants}
+        observed = {}
+        observed_configs = {}
+        both_entered = asyncio.Event()
+
+        class RecordingSyntheticService:
+            def __init__(self, **kwargs):
+                tenant = kwargs["backend_config"].tenant_id
+                observed_configs[tenant] = (
+                    kwargs["backend_config"].metadata,
+                    kwargs["generator_config"].field_mappings.to_dict(),
+                    kwargs["agents_config"]["search_agent"]["url"],
+                )
+
+            async def generate(self, request):
+                lm_before_await = dspy.settings.lm
+                observed[request.tenant_id] = [lm_before_await]
+                if len(observed) == len(tenants):
+                    both_entered.set()
+                await asyncio.wait_for(both_entered.wait(), timeout=1)
+                observed[request.tenant_id].append(dspy.settings.lm)
+                raise RuntimeError(f"{request.tenant_id} {request.optimizer} failed")
+
+        with (
+            patch(_PATCH_CONFIG),
+            _patch_telemetry(fake_telemetry_manager),
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                side_effect=lambda tenant_id, **kwargs: configs[tenant_id],
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                side_effect=lambda endpoint: tenant_lms[endpoint],
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_profile_labeler",
+                return_value=lambda *args: None,
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_query_enhancer",
+                return_value=lambda *args: None,
+            ),
+            patch(
+                "cogniverse_core.registries.backend_registry."
+                "BackendRegistry.get_search_backend",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_synthetic.service.SyntheticDataService",
+                RecordingSyntheticService,
+            ),
+        ):
+            results = await asyncio.gather(
+                *(
+                    run_synthetic_generation(
+                        tenant_id=tenant,
+                        optimizer_types=[optimizer_by_tenant[tenant]],
+                        count=1,
+                    )
+                    for tenant in tenants
+                )
+            )
+
+        assert results == [
+            {
+                "status": "failed",
+                "results": {
+                    "profile": {
+                        "status": "failed",
+                        "error": "org:one profile failed",
+                    }
+                },
+            },
+            {
+                "status": "failed",
+                "results": {
+                    "query_enhancement": {
+                        "status": "failed",
+                        "error": "org:two query_enhancement failed",
+                    }
+                },
+            },
+        ]
+        assert observed == {
+            tenant: [tenant_lms[f"endpoint-{tenant}"]] * 2 for tenant in tenants
+        }
+        assert observed_configs == {
+            "org:one": (
+                {"marker": "org-one"},
+                configs["org:one"]._sections["synthetic"]["field_mappings"],
+                "http://search-org-one.test",
+            ),
+            "org:two": (
+                {"marker": "org-two"},
+                configs["org:two"]._sections["synthetic"]["field_mappings"],
+                "http://search-org-two.test",
+            ),
+        }
 
 
 class TestOptimizeAgentPersistence:
@@ -2363,12 +3365,12 @@ class TestOptimizeAgentPersistence:
 
 
 class FailingTraceStore:
-    """Trace store whose get_spans always raises (Phoenix down/slow)."""
+    """Trace store whose get_all_spans always raises (Phoenix down/slow)."""
 
     def __init__(self):
         self.calls = 0
 
-    async def get_spans(self, **kwargs) -> pd.DataFrame:
+    async def get_all_spans(self, **kwargs) -> pd.DataFrame:
         self.calls += 1
         raise TimeoutError("phoenix query timed out")
 
@@ -2421,8 +3423,14 @@ class TestQuerySpansFailureIsNotNoData:
             def __init__(self):
                 self.calls = 0
 
-            async def get_spans(self, **kwargs):
+            async def get_all_spans(self, **kwargs):
                 self.calls += 1
+                assert set(kwargs) == {
+                    "project",
+                    "start_time",
+                    "end_time",
+                    "filters",
+                }
                 if self.calls == 1:
                     raise TimeoutError("first attempt times out")
                 return df
@@ -2446,7 +3454,7 @@ async def _instant_sleep(_seconds):
 
 
 class TestQuerySpansHungPhoenixIsCancelled:
-    """A get_spans call that hangs forever must be cancelled per attempt.
+    """A get_all_spans call that hangs forever must be cancelled per attempt.
 
     A dead Phoenix raises promptly; a hung one never returns — only
     asyncio.wait_for's cancellation bounds the retry budget. The wall-clock
@@ -2466,7 +3474,7 @@ class TestQuerySpansHungPhoenixIsCancelled:
                 self.calls = 0
                 self.cancelled = 0
 
-            async def get_spans(self, **kwargs):
+            async def get_all_spans(self, **kwargs):
                 self.calls += 1
                 try:
                     await _asyncio.Event().wait()
@@ -2540,12 +3548,18 @@ class TestRunFailed:
 
         assert _run_failed({"status": "error"}) is True
 
-    def test_top_level_success_wins_over_nested(self):
+    @pytest.mark.parametrize("nested_status", ["failed", "error"])
+    def test_top_level_success_does_not_mask_nested_failure(self, nested_status):
         from cogniverse_runtime.optimization_cli import _run_failed
 
         assert (
-            _run_failed({"status": "success", "results": {"a": {"status": "failed"}}})
-            is False
+            _run_failed(
+                {
+                    "status": "success",
+                    "results": {"a": {"status": nested_status}},
+                }
+            )
+            is True
         )
 
     def test_batch_shape_nested_failure(self):

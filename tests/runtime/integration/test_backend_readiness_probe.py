@@ -1,10 +1,9 @@
 """Backend-readiness probe and first-install bootstrap in the runtime lifespan.
 
-``_wait_for_backend_ready`` runs at startup inside the async lifespan, so it
-must use async HTTP + ``asyncio.sleep`` — a blocking ``httpx.get`` /
-``time.sleep`` would freeze the event loop for up to five minutes while Vespa
-converges. These tests prove it returns True against a real Vespa and keeps
-the loop responsive while retrying an unreachable backend.
+``_wait_for_backend_startup`` runs inside the async lifespan, so it must use
+async HTTP + ``asyncio.sleep``. These tests prove it distinguishes a deployed
+feed from a fresh config server, detects the fresh state without consuming the
+retry budget, and keeps the event loop responsive while both planes are down.
 
 ``_bootstrap_metadata_schemas`` runs when the startup config read fails. That
 read also fails transiently on a POPULATED backend (slow cold start, degraded
@@ -26,8 +25,9 @@ from types import SimpleNamespace
 import pytest
 
 from cogniverse_runtime.main import (
+    BackendStartupState,
     _bootstrap_metadata_schemas,
-    _wait_for_backend_ready,
+    _wait_for_backend_startup,
     _wait_for_config_server,
 )
 
@@ -108,22 +108,48 @@ def test_wait_for_config_server_false_when_refused():
     )
 
 
-async def test_wait_for_backend_ready_against_real_vespa(vespa_instance):
+async def test_wait_for_backend_startup_against_real_vespa(vespa_instance):
     vespa_base = f"http://localhost:{vespa_instance['http_port']}"
-    ready = await _wait_for_backend_ready(
-        vespa_base, max_attempts=12, retry_interval=2.0, timeout=5.0
+    state = await _wait_for_backend_startup(
+        vespa_base,
+        f"http://localhost:{vespa_instance['config_port']}",
+        max_attempts=12,
+        retry_interval=2.0,
+        timeout=5.0,
     )
-    assert ready is True
+    assert state is BackendStartupState.FEED_READY
 
 
-async def test_wait_for_backend_ready_returns_false_when_unreachable():
-    ready = await _wait_for_backend_ready(
-        "http://127.0.0.1:1", max_attempts=3, retry_interval=0.05, timeout=0.5
+@pytest.mark.no_shared_vespa
+async def test_wait_for_backend_startup_detects_fresh_config_server_immediately():
+    started = asyncio.get_running_loop().time()
+    with _http_stub(404) as config_port:
+        state = await _wait_for_backend_startup(
+            "http://127.0.0.1:1",
+            f"http://127.0.0.1:{config_port}",
+            max_attempts=60,
+            retry_interval=5.0,
+            timeout=0.5,
+        )
+
+    assert state is BackendStartupState.FRESH_INSTALL
+    assert asyncio.get_running_loop().time() - started < 1.0
+
+
+@pytest.mark.no_shared_vespa
+async def test_wait_for_backend_startup_returns_unavailable_when_both_planes_are_down():
+    state = await _wait_for_backend_startup(
+        "http://127.0.0.1:1",
+        "http://127.0.0.1:2",
+        max_attempts=3,
+        retry_interval=0.05,
+        timeout=0.5,
     )
-    assert ready is False
+    assert state is BackendStartupState.UNAVAILABLE
 
 
-async def test_wait_for_backend_ready_does_not_block_event_loop():
+@pytest.mark.no_shared_vespa
+async def test_wait_for_backend_startup_does_not_block_event_loop():
     stop = asyncio.Event()
     ticks = 0
 
@@ -134,13 +160,17 @@ async def test_wait_for_backend_ready_does_not_block_event_loop():
             await asyncio.sleep(0.01)
 
     ticker_task = asyncio.create_task(ticker())
-    ready = await _wait_for_backend_ready(
-        "http://127.0.0.1:1", max_attempts=3, retry_interval=0.05, timeout=0.5
+    state = await _wait_for_backend_startup(
+        "http://127.0.0.1:1",
+        "http://127.0.0.1:2",
+        max_attempts=3,
+        retry_interval=0.05,
+        timeout=0.5,
     )
     stop.set()
     await ticker_task
 
-    assert ready is False
+    assert state is BackendStartupState.UNAVAILABLE
     # A blocking time.sleep across the three retries would freeze the loop so
     # the concurrent ticker never advances; async sleep lets it keep ticking.
     assert ticks >= 5

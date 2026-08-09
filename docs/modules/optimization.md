@@ -91,11 +91,19 @@ gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
   outcome + confidence calibration) via `OnlineEvaluator` and persists the scores as telemetry annotations;
   driven by `automation_rules.online_evaluation` (`OnlineEvaluationConfig` in `routing/config.py`).
 - **Profile Selection / Entity Extraction / SIMBA (query enhancement) Optimization**: each reads its own
-  Phoenix span kind, builds a `dspy.Example` trainset, compiles the agent's DSPy module, and saves it as a
-  `("model", <key>)` blob via `ArtifactManager`.
+  Phoenix span kind through `TraceStore.get_all_spans()` so no fixed result ceiling can discard older examples,
+  merges tenant-approved synthetic examples even when that span window is empty, projects
+  each approved record onto the exact production DSPy signature, compiles the agent's DSPy module, and saves it
+  as a `("model", <key>)` blob via `ArtifactManager`. Bootstrap candidates are accepted only when every output
+  field exactly matches the reviewed label; otherwise the compiled module retains the labeled example instead
+  of replacing it with teacher-generated content.
+- **Monthly Performance Reports**: each tenant's complete bounded-time Phoenix window is read through the same
+  lossless cursor walk before latency and error summaries are written; a tenant read failure is recorded and
+  makes the command fail instead of being reported as an empty history.
 - **Workflow Orchestration Optimization**: extracts `WorkflowExecution` records from `cogniverse.orchestration`
   spans via `OrchestrationEvaluator`, drops demos whose `agent_sequence` references an agent no longer live in
-  `configs/config.json`, and persists execution demos + agent performance profiles via `WorkflowStoreRegistry`.
+  `configs/config.json`, and replaces templates, execution demos, agent performance profiles, and query patterns
+  through one `WorkflowStoreRegistry` operation guarded by a renewable per-tenant Redis lease.
 - **Training-Decision Meta-Models**: `TrainingDecisionModel` (train/skip gate; wired into `QualityMonitor`),
   `TrainingStrategyModel` (PURE_REAL / HYBRID / SYNTHETIC / SKIP selection), and `FusionBenefitModel` — all
   XGBoost classifiers in `routing/xgboost_meta_models.py`, persisted via the same `ArtifactManager`.
@@ -270,7 +278,9 @@ async def run_profile_optimization(
 
     1. Collect (query, available_profiles) -> selected_profile examples from
        cogniverse.profile_selection Phoenix spans; keep only confidence >= 0.5.
-    2. Merge in approved synthetic demos for optimizer type "profile".
+    2. Merge in approved synthetic demos for optimizer type "profile". The
+       consumer projection supplies the signature-required string confidence
+       sentinel and preserves the two exact input fields.
     3. Compile ProfileSelectionModule via BootstrapFewShot (scaled: 8/16/2-round
        once >= 50 examples, else 4/8/1-round).
     4. Save compiled module as artifact ("model", "profile_selection").
@@ -307,9 +317,11 @@ not the SIMBA algorithm.
 
 **Key function:** `run_simba_optimization(tenant_id, lookback_hours=24.0)` — reads
 `cogniverse.query_enhancement` spans, builds `(original_query -> enhanced_query)` examples (skipping
-identity pairs where `enhanced == original`), merges approved synthetic demos for `"query_enhancement"`, compiles via
+identity pairs where `enhanced == original`), merges approved synthetic demos for `"query_enhancement"`,
+converts list-valued expansion terms and synonyms to the signature's comma-separated strings, compiles via
 `_create_teleprompter(len(trainset))`, and saves the artifact as `("model", "simba_query_enhancement")`.
 `QueryEnhancementAgent` reloads it via `am.load_blob("model", "simba_query_enhancement")`.
+Approved data can bootstrap compilation when there are no production spans in the selected window.
 
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
 
@@ -320,8 +332,9 @@ identity pairs where `enhanced == original`), merges approved synthetic demos fo
 **CLI mode:** `--mode entity-extraction`
 
 `run_entity_extraction_optimization(tenant_id, lookback_hours=24.0)` reads `cogniverse.entity_extraction`
-spans, builds `(query -> entities_json)` examples from spans with `entity_count > 0`, merges approved
-synthetic demos for `"entity_extraction"`, compiles `EntityExtractionModule` via
+spans, builds query/entity examples from spans with `entity_count > 0`, merges approved synthetic demos for
+`"entity_extraction"`, and projects approved entities to the production `text|type|confidence` line format
+plus the comma-separated `entity_types` output. It compiles `EntityExtractionModule` via
 `_create_teleprompter(len(trainset))`, and saves the artifact as `("model", "entity_extraction")`.
 `EntityExtractionAgent` reloads it via `am.load_blob("model", "entity_extraction")`.
 
@@ -341,9 +354,16 @@ feeds them through `OrchestrationEvaluator.evaluate_orchestration_spans` (backed
    in the optimization CLI's own pod) to build a set of currently-enabled agent names.
 2. Drops any execution whose `agent_sequence` references an agent not in that live set (stale demos
    from renamed/removed agents can't be replayed).
-3. Persists the surviving executions, agent performance profiles, and query-type patterns via
-   `WorkflowStoreRegistry.get(name="telemetry")` — the same store `WorkflowIntelligence` reads at
-   orchestrator startup.
+3. Replaces the surviving executions, agent performance profiles, query-type patterns, and derived templates via
+   `WorkflowStoreRegistry.get(name="telemetry")` — the same store `WorkflowIntelligence` reads at orchestrator
+   startup. The store acquires a renewable per-tenant Redis lease before reading Phoenix, then owns the complete
+   replacement and its compensation. A second optimizer replica waits outside the storage boundary. If any
+   Phoenix write fails, the lease holder restores the exact prior values on all four channels before releasing
+   the lease and propagating the failure. Serving loads acquire that same lease and return one typed four-channel
+   snapshot. `WorkflowIntelligence` validates and stages the complete snapshot before replacing its in-memory
+   executions, profiles, learned patterns, and templates in one publication step, so a reload removes obsolete
+   entries, never duplicates history, and retains the prior complete snapshot when a Phoenix read fails. Redis is
+   required; there is no process-local fallback.
 
 Raises `RuntimeError` if the live-agents set is empty (refuses to guess whether every demo is stale or
 none are). Returns
@@ -739,9 +759,17 @@ Result dict shape: `{log_retention_days, memory_retention_days, memory_cleanup: 
 ### 18. **`--mode synthetic` (Synthetic Data Generation)**
 
 `run_synthetic_generation(tenant_id, optimizer_types=None, count=50)` generates training data for one or
-more optimizer types (default `["query_enhancement", "profile", "workflow"]`) via `SyntheticDataService`, saving each
-type's output as demonstrations (`ArtifactManager.save_demonstrations(f"synthetic_{opt_type}", demos)`)
-tagged `metadata.approval_status: "pending"` for the approval workflow.
+more optimizer types (default `["query_enhancement", "profile", "workflow"]`) via
+`SyntheticDataService`. Non-empty output is persisted as an `ApprovalBatch` of
+pending `ReviewItem` records through `ApprovalStorageImpl`.
+
+The result retains one entry per requested optimizer. Its aggregate status is
+`failed` when any entry is `failed` or `error`, including a partial run where
+another optimizer succeeded. Otherwise it is `success` when at least one entry
+succeeded, including `success` plus `no_data`, and is `no_data` when every entry
+is `no_data`. The process exits 1 for an aggregate or nested failure and exits 0
+for `success` or `no_data`, so scheduled workflows cannot treat partial failure
+as success.
 
 Generators that wrap DSPy modules run under `llm_config.primary`, bound for the
 duration of each `generate` call with `dspy.context(lm=...)` — task-local, so
@@ -1036,8 +1064,8 @@ The `simba`, `profile`, and `entity-extraction` modes use
 `dspy.teleprompt.BootstrapFewShot` — scaled by a single threshold, not a multi-tier optimizer
 selection:
 
-- < 50 examples → `BootstrapFewShot(max_bootstrapped_demos=4, max_labeled_demos=8, max_rounds=1, max_errors=5)`
-- ≥ 50 examples → `BootstrapFewShot(max_bootstrapped_demos=8, max_labeled_demos=16, max_rounds=2, max_errors=10)`
+- < 50 examples → `BootstrapFewShot(metric=_approved_example_exact_metric, max_bootstrapped_demos=4, max_labeled_demos=8, max_rounds=1, max_errors=5)`
+- ≥ 50 examples → `BootstrapFewShot(metric=_approved_example_exact_metric, max_bootstrapped_demos=8, max_labeled_demos=16, max_rounds=2, max_errors=10)`
 
 All three pass `teacher_settings={"lm": create_dspy_lm(llm_config.resolve_teacher())}`, so the
 bootstrap teacher runs on the centralized `llm_config.teacher` endpoint. The student LM

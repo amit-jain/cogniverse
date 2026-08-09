@@ -1469,6 +1469,8 @@ class AgentDispatcher:
         for key in ("entities", "relationships", "enhanced_query"):
             if key in context and key in input_cls.model_fields:
                 input_kwargs[key] = context[key]
+        if "profiles" in context and "available_profiles" in input_cls.model_fields:
+            input_kwargs["available_profiles"] = context["profiles"]
 
         typed_input = input_cls(**input_kwargs)
         # Bind the tenant-routed LM for the whole call so a direct dispatch of
