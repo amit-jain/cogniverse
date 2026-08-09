@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.unified_config import LLMConfig, LLMEndpointConfig
 
 
 class TestModelPassthrough:
@@ -306,3 +306,34 @@ class TestLLMConfigResolveTeacher:
         teacher = cfg.resolve_teacher()
         teacher.model = "mutated"
         assert cfg.teacher.model == "openai/gpt-teacher"
+
+    def test_absent_teacher_round_trips_without_publishing_a_role(self):
+        cfg = LLMConfig(
+            primary=LLMEndpointConfig(
+                model="openai/google/gemma-4-e4b-it",
+                api_base="http://primary.test/v1",
+            )
+        )
+
+        serialized = cfg.to_dict()
+        restored = LLMConfig.from_dict(serialized)
+
+        assert "teacher" not in serialized
+        assert restored.teacher is None
+        assert restored.to_dict() == serialized
+
+    def test_absent_teacher_fails_explicitly_when_requested(self):
+        cfg = LLMConfig(
+            primary=LLMEndpointConfig(
+                model="openai/google/gemma-4-e4b-it",
+                api_base="http://primary.test/v1",
+            )
+        )
+
+        with pytest.raises(RuntimeError) as error:
+            cfg.resolve_teacher()
+
+        assert str(error.value) == (
+            "LLM teacher endpoint is not configured; teacher-dependent optimization "
+            "requires an explicitly verified teacher endpoint"
+        )

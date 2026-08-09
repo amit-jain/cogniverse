@@ -8,6 +8,7 @@ Hosts ``SystemConfig`` (global deployment-level state) +
 
 import copy
 import logging
+import math
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -17,6 +18,19 @@ from cogniverse_foundation.config.agent_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+PROFILE_SCORING_OPTIMIZERS = frozenset(
+    {
+        "cross_modal",
+        "entity_extraction",
+        "profile",
+        "query_enhancement",
+        "routing",
+        "unified",
+        "workflow",
+    }
+)
+SYNTHETIC_GENERATOR_CONFIG_TYPES = PROFILE_SCORING_OPTIMIZERS | {"modality"}
 
 
 @dataclass
@@ -104,14 +118,15 @@ class LLMConfig:
 
     - primary: Global default for ALL DSPy modules, agents, optimizers.
       Also serves as the student model during optimization.
-    - teacher: Bootstrap-teacher endpoint for DSPy optimization —
-      resolve_teacher() feeds BootstrapFewShot(teacher_settings={"lm": ...}).
+    - teacher: Optional bootstrap-teacher endpoint for DSPy optimization.
+      resolve_teacher() feeds BootstrapFewShot(teacher_settings={"lm": ...})
+      and fails explicitly when no verified teacher was configured.
     - overrides: Per-component partial dicts merged with primary.
       None = use primary unchanged. Only differing fields need to be specified.
     """
 
     primary: LLMEndpointConfig
-    teacher: LLMEndpointConfig
+    teacher: Optional[LLMEndpointConfig] = None
     overrides: Dict[str, Optional[Dict[str, Any]]] = field(default_factory=dict)
 
     def resolve(self, component: str) -> LLMEndpointConfig:
@@ -144,10 +159,15 @@ class LLMConfig:
     def resolve_teacher(self) -> LLMEndpointConfig:
         """Resolve the teacher endpoint for DSPy optimization.
 
-        Mirrors ``resolve()``'s no-override path: an isolated copy with the
-        real api_key preserved. The teacher drives bootstrap demo generation
-        (``BootstrapFewShot(teacher_settings={"lm": ...})``) and annotation.
+        Returns an isolated copy with the real api_key preserved. The teacher
+        drives bootstrap demo generation and annotation, so callers must
+        configure that role explicitly instead of silently using the primary.
         """
+        if self.teacher is None:
+            raise RuntimeError(
+                "LLM teacher endpoint is not configured; teacher-dependent "
+                "optimization requires an explicitly verified teacher endpoint"
+            )
         return copy.deepcopy(self.teacher)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -155,17 +175,24 @@ class LLMConfig:
         overrides_dict: Dict[str, Any] = {}
         for key, val in self.overrides.items():
             overrides_dict[key] = val if val is not None else None
-        return {
+        result = {
             "primary": self.primary.to_dict(),
-            "teacher": self.teacher.to_dict(),
             "overrides": overrides_dict,
         }
+        if self.teacher is not None:
+            result["teacher"] = self.teacher.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LLMConfig":
         """Create from dictionary."""
         primary = LLMEndpointConfig.from_dict(data["primary"])
-        teacher = LLMEndpointConfig.from_dict(data["teacher"])
+        teacher_data = data.get("teacher")
+        teacher = (
+            LLMEndpointConfig.from_dict(teacher_data)
+            if teacher_data is not None
+            else None
+        )
 
         # Store overrides as raw dicts — they are partial and may lack "model"
         overrides: Dict[str, Optional[Dict[str, Any]]] = {}
@@ -756,9 +783,25 @@ class FieldMappingConfig:
     by defining which fields contain topics, descriptions, transcripts, etc.
     """
 
-    topic_fields: List[str] = field(default_factory=lambda: ["video_title", "title"])
+    topic_fields: List[str] = field(
+        default_factory=lambda: [
+            "video_title",
+            "audio_title",
+            "image_title",
+            "document_title",
+            "chunk_name",
+            "title",
+        ]
+    )
     description_fields: List[str] = field(
-        default_factory=lambda: ["segment_description", "description"]
+        default_factory=lambda: [
+            "segment_description",
+            "image_description",
+            "full_text",
+            "source_code",
+            "content",
+            "description",
+        ]
     )
     transcript_fields: List[str] = field(
         default_factory=lambda: ["audio_transcript", "transcript"]
@@ -785,21 +828,30 @@ class FieldMappingConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "FieldMappingConfig":
         """Create from dictionary"""
+        supported_fields = {
+            "topic_fields",
+            "description_fields",
+            "transcript_fields",
+            "entity_fields",
+            "temporal_fields",
+            "metadata_fields",
+        }
+        unsupported = set(data) - supported_fields
+        if unsupported:
+            raise ValueError(
+                "FieldMappingConfig contains unsupported fields: "
+                + ", ".join(sorted(unsupported))
+            )
+        defaults = cls()
         return cls(
-            topic_fields=data.get("topic_fields", ["video_title", "title"]),
+            topic_fields=data.get("topic_fields", defaults.topic_fields),
             description_fields=data.get(
-                "description_fields", ["segment_description", "description"]
+                "description_fields", defaults.description_fields
             ),
-            transcript_fields=data.get(
-                "transcript_fields", ["audio_transcript", "transcript"]
-            ),
-            entity_fields=data.get(
-                "entity_fields", ["video_title", "segment_description"]
-            ),
-            temporal_fields=data.get(
-                "temporal_fields", {"start": "start_time", "end": "end_time"}
-            ),
-            metadata_fields=data.get("metadata_fields", {}),
+            transcript_fields=data.get("transcript_fields", defaults.transcript_fields),
+            entity_fields=data.get("entity_fields", defaults.entity_fields),
+            temporal_fields=data.get("temporal_fields", defaults.temporal_fields),
+            metadata_fields=data.get("metadata_fields", defaults.metadata_fields),
         )
 
 
@@ -846,23 +898,26 @@ class AgentMappingRule:
 
     modality: str
     agent_name: str
-    confidence_threshold: float = 0.7
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
             "modality": self.modality,
             "agent_name": self.agent_name,
-            "confidence_threshold": self.confidence_threshold,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AgentMappingRule":
         """Create from dictionary"""
+        unsupported = set(data) - {"modality", "agent_name"}
+        if unsupported:
+            raise ValueError(
+                "AgentMappingRule contains unsupported fields: "
+                + ", ".join(sorted(unsupported))
+            )
         return cls(
             modality=data["modality"],
             agent_name=data["agent_name"],
-            confidence_threshold=data.get("confidence_threshold", 0.7),
         )
 
 
@@ -878,6 +933,40 @@ class ProfileScoringRule:
     condition: Dict[str, Any]
     score_adjustment: float
     reason: str
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.score_adjustment, bool)
+            or not isinstance(self.score_adjustment, (int, float))
+            or not math.isfinite(self.score_adjustment)
+        ):
+            raise ValueError("score_adjustment must be a finite number")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("profile scoring rule reason must be a non-empty string")
+        if not isinstance(self.condition, dict):
+            raise ValueError("profile scoring rule condition must be a mapping")
+
+        if set(self.condition) == {"profile_name_contains"}:
+            value = self.condition["profile_name_contains"]
+            if not isinstance(value, str) or not value:
+                raise ValueError("profile_name_contains must be a non-empty string")
+            return
+
+        operators = set(self.condition) & {"contains", "equals", "in"}
+        if set(self.condition) != {"field", *operators} or len(operators) != 1:
+            raise ValueError(
+                "profile scoring condition must contain field and exactly one "
+                "of: contains, equals, in"
+            )
+        field_name = self.condition["field"]
+        if not isinstance(field_name, str) or not field_name:
+            raise ValueError("profile scoring condition field must be non-empty")
+        if "in" in operators:
+            choices = self.condition["in"]
+            if not isinstance(choices, list) or not choices:
+                raise ValueError(
+                    "profile scoring condition in must be a non-empty list"
+                )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -902,8 +991,7 @@ class OptimizerGenerationConfig:
     """
     Configuration for generating synthetic data for a specific optimizer module.
 
-    Each optimizer (modality, cross_modal, routing, workflow, unified) can have
-    its own DSPy modules for query generation, profile scoring rules, and agent mappings.
+    Each configured optimizer carries only the values its production path reads.
     """
 
     optimizer_type: str
@@ -912,27 +1000,61 @@ class OptimizerGenerationConfig:
     )  # e.g., {"query_generator": DSPyModuleConfig(...)}
     profile_scoring_rules: List[ProfileScoringRule] = field(default_factory=list)
     agent_mappings: List[AgentMappingRule] = field(default_factory=list)
-    num_examples_target: int = 50
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
-        return {
-            "optimizer_type": self.optimizer_type,
-            "dspy_modules": {
+        """Convert to the canonical per-optimizer configuration shape."""
+        result: Dict[str, Any] = {"optimizer_type": self.optimizer_type}
+        if self.optimizer_type == "modality":
+            result["agent_mappings"] = [
+                mapping.to_dict() for mapping in self.agent_mappings
+            ]
+        elif self.optimizer_type == "routing":
+            result["dspy_modules"] = {
                 key: module.to_dict() for key, module in self.dspy_modules.items()
-            },
-            "profile_scoring_rules": [
+            }
+            result["profile_scoring_rules"] = [
                 rule.to_dict() for rule in self.profile_scoring_rules
-            ],
-            "agent_mappings": [mapping.to_dict() for mapping in self.agent_mappings],
-            "num_examples_target": self.num_examples_target,
-            "metadata": self.metadata,
-        }
+            ]
+        elif self.optimizer_type in PROFILE_SCORING_OPTIMIZERS:
+            result["profile_scoring_rules"] = [
+                rule.to_dict() for rule in self.profile_scoring_rules
+            ]
+        else:
+            raise ValueError(
+                f"unsupported synthetic optimizer config: {self.optimizer_type}"
+            )
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "OptimizerGenerationConfig":
-        """Create from dictionary"""
+        """Create from a strict per-optimizer configuration dictionary."""
+        optimizer_type = data["optimizer_type"]
+        expected_fields = {
+            "modality": {"optimizer_type", "agent_mappings"},
+            "routing": {
+                "optimizer_type",
+                "dspy_modules",
+                "profile_scoring_rules",
+            },
+            "profile": {"optimizer_type", "profile_scoring_rules"},
+            "entity_extraction": {"optimizer_type", "profile_scoring_rules"},
+            "cross_modal": {"optimizer_type", "profile_scoring_rules"},
+            "query_enhancement": {"optimizer_type", "profile_scoring_rules"},
+            "unified": {"optimizer_type", "profile_scoring_rules"},
+            "workflow": {"optimizer_type", "profile_scoring_rules"},
+        }.get(optimizer_type)
+        if expected_fields is None:
+            raise ValueError(
+                f"unsupported synthetic optimizer config: {optimizer_type}"
+            )
+        if set(data) != expected_fields:
+            missing = sorted(expected_fields - data.keys())
+            unknown = sorted(data.keys() - expected_fields)
+            raise ValueError(
+                f"optimizer '{optimizer_type}' has invalid fields: "
+                f"missing={missing} unknown={unknown}"
+            )
+
         dspy_modules = {}
         for key, module_data in data.get("dspy_modules", {}).items():
             dspy_modules[key] = DSPyModuleConfig.from_dict(module_data)
@@ -948,12 +1070,10 @@ class OptimizerGenerationConfig:
         ]
 
         return cls(
-            optimizer_type=data["optimizer_type"],
+            optimizer_type=optimizer_type,
             dspy_modules=dspy_modules,
             profile_scoring_rules=profile_scoring_rules,
             agent_mappings=agent_mappings,
-            num_examples_target=data.get("num_examples_target", 50),
-            metadata=data.get("metadata", {}),
         )
 
 
@@ -973,6 +1093,17 @@ class ApprovalConfig:
     max_regeneration_attempts: int = 2
     reviewer_email: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.confidence_threshold, bool)
+            or not isinstance(self.confidence_threshold, (int, float))
+            or not math.isfinite(self.confidence_threshold)
+            or not 0 <= self.confidence_threshold <= 1
+        ):
+            raise ValueError(
+                "approval confidence_threshold must be a finite number in [0, 1]"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -1010,7 +1141,6 @@ class SyntheticGeneratorConfig:
     - Query template generation per optimizer type
     - Agent mapping rules
     - Profile selection scoring
-    - Sampling configuration
 
     ``tenant_id`` is required; the ``None`` default is only a
     dataclass-ordering placeholder. ``__post_init__`` raises via
@@ -1022,13 +1152,49 @@ class SyntheticGeneratorConfig:
     optimizer_configs: Dict[str, OptimizerGenerationConfig] = field(
         default_factory=dict
     )
-    sampling_config: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         require_tenant_id(self.tenant_id, source="SyntheticGeneratorConfig")
+        configured_types = set(self.optimizer_configs)
+        if configured_types != SYNTHETIC_GENERATOR_CONFIG_TYPES:
+            required = ", ".join(sorted(SYNTHETIC_GENERATOR_CONFIG_TYPES))
+            raise ValueError(f"optimizer_configs must contain exactly: {required}")
+
+        for optimizer_type, config in self.optimizer_configs.items():
+            if not isinstance(config, OptimizerGenerationConfig):
+                raise ValueError(
+                    f"optimizer '{optimizer_type}' must use OptimizerGenerationConfig"
+                )
+            if config.optimizer_type != optimizer_type:
+                raise ValueError(
+                    f"optimizer config key '{optimizer_type}' does not match "
+                    f"optimizer_type '{config.optimizer_type}'"
+                )
+            if (
+                optimizer_type in PROFILE_SCORING_OPTIMIZERS
+                and not config.profile_scoring_rules
+            ):
+                raise ValueError(
+                    f"optimizer '{optimizer_type}' requires profile_scoring_rules"
+                )
+            if optimizer_type == "routing" and not config.dspy_modules:
+                raise ValueError("optimizer 'routing' requires dspy_modules")
+            if optimizer_type == "modality" and not config.agent_mappings:
+                raise ValueError("optimizer 'modality' requires agent_mappings")
+            if optimizer_type == "modality" and (
+                config.dspy_modules or config.profile_scoring_rules
+            ):
+                raise ValueError("optimizer 'modality' only accepts agent_mappings")
+            if optimizer_type == "routing" and config.agent_mappings:
+                raise ValueError("optimizer 'routing' does not accept agent_mappings")
+            if optimizer_type in PROFILE_SCORING_OPTIMIZERS - {"routing"} and (
+                config.dspy_modules or config.agent_mappings
+            ):
+                raise ValueError(
+                    f"optimizer '{optimizer_type}' only accepts profile_scoring_rules"
+                )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -1038,14 +1204,21 @@ class SyntheticGeneratorConfig:
             "optimizer_configs": {
                 key: config.to_dict() for key, config in self.optimizer_configs.items()
             },
-            "sampling_config": self.sampling_config,
-            "metadata": self.metadata,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SyntheticGeneratorConfig":
         """Create from dictionary. Raises if tenant_id is absent."""
         from cogniverse_foundation.common.tenant_utils import require_tenant_id
+
+        allowed_fields = {"tenant_id", "field_mappings", "optimizer_configs"}
+        if set(data) != allowed_fields:
+            missing = sorted(allowed_fields - data.keys())
+            unknown = sorted(data.keys() - allowed_fields)
+            raise ValueError(
+                "SyntheticGeneratorConfig has invalid fields: "
+                f"missing={missing} unknown={unknown}"
+            )
 
         tenant_id = require_tenant_id(
             data.get("tenant_id"), source="SyntheticGeneratorConfig.from_dict"
@@ -1060,8 +1233,6 @@ class SyntheticGeneratorConfig:
             tenant_id=tenant_id,
             field_mappings=field_mappings,
             optimizer_configs=optimizer_configs,
-            sampling_config=data.get("sampling_config", {}),
-            metadata=data.get("metadata", {}),
         )
 
     def get_optimizer_config(

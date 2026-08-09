@@ -6,33 +6,16 @@ Tests the main service orchestrator end-to-end.
 
 import pytest
 
-from cogniverse_foundation.config.unified_config import (
-    DSPyModuleConfig,
-    OptimizerGenerationConfig,
-    SyntheticGeneratorConfig,
-)
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 from cogniverse_synthetic.service import SyntheticDataService
+from tests.utils.synthetic_config import video_synthetic_generator_config
 
 pytestmark = [pytest.mark.unit]
 
 
 def create_test_generator_config():
     """Create test generator configuration with all required optimizer configs"""
-    return SyntheticGeneratorConfig(
-        tenant_id="test:unit",
-        optimizer_configs={
-            "routing": OptimizerGenerationConfig(
-                optimizer_type="routing",
-                dspy_modules={
-                    "query_generator": DSPyModuleConfig(
-                        signature_class="cogniverse_synthetic.dspy_signatures.GenerateEntityQuery",
-                        module_type="Predict",
-                    )
-                },
-            ),
-        },
-    )
+    return video_synthetic_generator_config("test:unit")
 
 
 class TestSyntheticDataService:
