@@ -186,6 +186,7 @@ class TestTriggeredOptimization:
             f"Should distill strategies from Phoenix trigger dataset, got {len(strategies)}"
         )
 
+    @pytest.mark.requires_teacher_model
     @pytest.mark.asyncio
     async def test_run_triggered_optimization_end_to_end(
         self,

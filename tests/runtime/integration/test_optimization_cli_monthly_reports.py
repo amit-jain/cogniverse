@@ -201,7 +201,7 @@ class TestRunMonthlyReportsWritesUsageAndPerformanceFiles:
             )
 
         class _Traces:
-            async def get_spans(self, **kwargs):
+            async def get_all_spans(self, **kwargs):
                 raise ConnectionError("phoenix unreachable")
 
         class _Provider:

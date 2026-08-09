@@ -256,7 +256,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 
 **Startup Sequence:**
 
-1. Wait (up to 5 minutes) for the backend feed endpoint to be reachable before touching config
+1. Poll the Vespa data plane and config server together. A fresh config server with no application package is detected immediately, receives the metadata schemas, and must then expose the feed endpoint; an existing application waits for its feed endpoint to converge. Startup fails if neither plane becomes usable within the retry budget.
 2. Load configuration via `ConfigManager`; wire `BackendRegistry` profile add/remove into a `config_manager` profile-change listener
 3. Initialize `SchemaLoader` for Vespa schemas; wire `admin`/`tenant` routers and `ingestion`/`search`/`knowledge` FastAPI dependency overrides
 4. Initialize `BackendRegistry` (singleton via `get_instance()`) and `AgentRegistry`
@@ -269,15 +269,39 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 11. Configure DSPy LM and the synthetic data service
 12. Start the `GatewayHealthProbe` and the OpenShell mTLS cert rotator (when sandboxing is enabled)
 
+Synthetic startup requires non-empty top-level `backend`, `synthetic`, and
+`agents` objects from the active tenant configuration. A single strict parser
+hydrates `BackendConfig` and `SyntheticGeneratorConfig`, injects the requested
+tenant, selects only agents explicitly marked `enabled: true`, and validates
+every profile modality against an enabled, loaded agent with the declared
+modality and capability. Missing sections, unknown keys, obsolete object shapes,
+unloaded agents, and incomplete mappings fail before any backend lookup. The
+parser retains validated `backend.default_profiles` selections and requires each
+selection to reference a declared profile; profile, selection, and agent objects
+accept only their documented canonical keys, so misspellings cannot be hidden in
+an extras object. The validated enabled-agent object is passed unchanged to
+`SyntheticDataService`;
+there is no embedded mapping, empty-object default, or configuration fallback.
+Routing and entity-extraction example labels use the registered production
+`entity_extraction_agent`: the runtime adapter calls `AgentDispatcher.dispatch`
+with the source text and request tenant, preserving the dispatcher result for
+the synthetic generator. A dispatch error includes the tenant and exact source
+text and stops generation.
+
 ```text
 # From main.py (simplified)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app."""
 
-    # 1. Wait for the backend to be reachable
+    # 1. Distinguish an existing application from a fresh backend
     bootstrap = BootstrapConfig.from_environment()
-    await _wait_for_backend_ready(f"{bootstrap.backend_url}:{bootstrap.backend_port}")
+    state = await _wait_for_backend_startup(vespa_base, config_server_base)
+    if state is BackendStartupState.FRESH_INSTALL:
+        await asyncio.to_thread(_bootstrap_metadata_schemas, bootstrap, application_name)
+        state = await _wait_for_backend_startup(vespa_base, config_server_base)
+    if state is not BackendStartupState.FEED_READY:
+        raise RuntimeError("backend startup did not converge")
 
     # 2. Load configuration
     config_manager = create_default_config_manager()
@@ -311,7 +335,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config_loader.load_backends()
     config_loader.load_agents(agent_registry=agent_registry)
 
-    # ... schema deploy, telemetry, tenant manager, DSPy/synthetic setup ...
+    # Validate every synthetic dependency before touching the backend registry
+    synthetic_config = parse_synthetic_runtime_config(
+        config,
+        tenant_id=SYSTEM_TENANT_ID,
+        loaded_agent_names=set(agent_registry.list_agents()),
+    )
+    synthetic_backend = backend_registry.get_search_backend(
+        name=synthetic_config.backend_config.backend_type,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+    configure_synthetic(
+        backend=synthetic_backend,
+        backend_config=synthetic_config.backend_config,
+        generator_config=synthetic_config.generator_config,
+        agents_config=synthetic_config.agents_config,
+        entity_extractor=_dispatcher_entity_extractor(agents.get_dispatcher()),
+    )
 
     yield
 ```
@@ -1588,6 +1629,37 @@ await probe.stop()
 
 CLI entry point invoked by Argo CronWorkflows for batch per-agent optimization. Reads production spans from Phoenix, builds DSPy training examples, compiles optimized modules, and saves artifacts via `ArtifactManager`.
 
+The `synthetic` mode uses the same strict `backend`/`synthetic`/`agents` parser
+as runtime startup. Invalid configuration is returned for every requested
+optimizer before the CLI constructs an LM, schema loader, backend registry, or
+service. Backend failures include the tenant and hydrated backend type. The
+exact parsed backend, generator, and enabled-agent objects reach
+`SyntheticDataService`, including when separate tenant jobs run concurrently.
+When `routing` or `entity_extraction` is requested, the CLI requires the
+configured `gliner` URL from `SystemConfig.inference_service_urls`, constructs
+`EntityExtractionAgent` with that endpoint, loads the tenant's active artifact,
+and labels each source through `EntityExtractionAgent.process` with a typed
+`EntityExtractionInput`. It does not synthesize labels heuristically. Agent
+startup and processing failures retain the tenant, endpoint or source text, and
+the original exception as their cause.
+
+The mode writes generated examples as pending `ApprovalBatch` records in
+Phoenix, where the dashboard can review them; it does not create a second
+demonstrations dataset. The `simba`, `profile`, and `entity-extraction` modes
+merge synthetic examples from the `approved_synthetic_data` dataset written
+when `HumanApprovalAgent` applies approval. Rows are selected only when their
+persisted status is `approved` and `context.optimizer` matches the running
+optimizer. Every row is first verified against its canonical approval JSON,
+record digest, decision digest, and timezone-aware decision timestamp, even
+when the optimizer or status would later filter it out. Generated list and
+object fields must remain native JSON values; stringified Python containers are
+invalid. The original approval order and generated data fields are retained
+while approval bookkeeping is removed. Regenerated items first use Redis to
+select one canonical replacement, then enter this dataset only after a reviewer
+approves that replacement. A missing dataset means that no synthetic examples
+have been approved yet. Phoenix read failures stop optimization with tenant and
+optimizer context instead of being treated as an empty dataset.
+
 **Modes:** the full `--mode` choice set is `cleanup`, `triggered`, `simba`, `workflow`, `gateway-thresholds`, `online-routing-eval`, `online-eval`, `profile`, `entity-extraction`, `synthetic`, `rollback`, `ab-compare`, `egress-netpol`, `monthly-reports`. `--tenant-id` is required for every mode except `cleanup`, `egress-netpol`, and `monthly-reports`, which run globally.
 
 ```bash
@@ -1608,7 +1680,8 @@ python -m cogniverse_runtime.optimization_cli --mode online-routing-eval \
     --tenant-id acme:production --lookback-hours 24
 # Generate synthetic training examples for the given optimizer types
 python -m cogniverse_runtime.optimization_cli --mode synthetic \
-    --tenant-id acme:production --agents simba,profile,workflow
+    --tenant-id acme:production \
+    --agents query_enhancement,profile,routing,entity_extraction
 # A/B-compare two arms over a Phoenix (query, context) dataset via RLM
 python -m cogniverse_runtime.optimization_cli --mode ab-compare \
     --tenant-id acme:production --queries-dataset golden_eval_v1 \

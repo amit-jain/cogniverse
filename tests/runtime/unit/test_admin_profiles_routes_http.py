@@ -23,12 +23,26 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
+from cogniverse_runtime.admin.profile_models import ProfileCreateRequest
 from cogniverse_runtime.routers import admin
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 _FIXED_CREATED_AT = datetime(2026, 1, 2, 3, 4, 5)
 _STORE_VERSION = 7
+
+
+def test_profile_create_example_uses_deployed_visual_encoder_contract():
+    example = ProfileCreateRequest.model_json_schema()["example"]
+
+    assert example["embedding_model"] == "TomoroAI/tomoro-colqwen3-embed-4b"
+    assert example["schema_config"] == {
+        "schema_name": "video_colpali",
+        "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "num_patches": 1024,
+        "embedding_dim": 320,
+        "binary_dim": 40,
+    }
 
 
 def _profile(name: str, schema: str, embedding_model: str) -> BackendProfileConfig:

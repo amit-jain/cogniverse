@@ -88,3 +88,26 @@ def test_explicit_port_accepts_tcp_range_boundaries(port: int) -> None:
     url = f"http://models.example.test:{port}/v1"
 
     assert parse_inference_service_urls(f'{{"denseon":"{url}"}}') == {"denseon": url}
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_invalid_configuration_before_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import FastAPI
+
+    import cogniverse_runtime.main as runtime_main
+
+    async def fail_if_backend_is_consulted(*args, **kwargs):
+        raise AssertionError("backend startup was consulted")
+
+    monkeypatch.setenv("INFERENCE_SERVICE_URLS", "not-json")
+    monkeypatch.setattr(
+        runtime_main,
+        "_wait_for_backend_startup",
+        fail_if_backend_is_consulted,
+    )
+
+    with pytest.raises(ValueError, match="valid JSON object"):
+        async with runtime_main.lifespan(FastAPI()):
+            pass

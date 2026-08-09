@@ -184,6 +184,7 @@ async def test_resume_skips_already_compiled_agents(
     assert done is not None and done.status == "completed"
 
 
+@pytest.mark.requires_teacher_model
 @pytest.mark.asyncio
 async def test_resume_skips_a_real_dspy_compile(
     multi_agent_trigger_dataset,

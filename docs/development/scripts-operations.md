@@ -583,7 +583,7 @@ def init_telemetry(tenant_id: str) -> None:
 
 - `online-routing-eval` - Scores routing spans against ground truth without retraining anything
 
-- `synthetic` - Generates synthetic training data for one or more optimizer types (`--agents`, default `simba,profile,workflow`)
+- `synthetic` - Generates pending review batches for one or more optimizer types (`--agents`, default `query_enhancement,profile,routing,entity_extraction`)
 
 - `rollback` - Restores a single agent's prompts/demonstrations to a prior version (`--agent`, `--prompts-version`/`--demos-version`)
 
@@ -666,7 +666,7 @@ CronWorkflow schedules are set in `charts/cogniverse/values.yaml` under `argo.op
 - **Daily cleanup** (`0 4 * * *`, 4 AM UTC): `--mode cleanup`
 - **Daily gateway tuning** (`0 4 * * *`, 4 AM UTC): `--mode gateway-thresholds` (48h lookback), then restarts the runtime deployment
 - **Weekly agent optimization** (`0 3 * * 0`, Sunday 3 AM UTC): `gateway-thresholds`, `entity-extraction`, `simba`, `profile` in parallel (48h lookback, 168h for `simba`), then `workflow`, then restarts the runtime deployment
-- **Saturday synthetic generation** (`0 1 * * 6`, 1 AM UTC): `--mode synthetic --agents workflow,profile`
+- **Saturday synthetic generation** (`0 1 * * 6`, 1 AM UTC): `--mode synthetic --agents query_enhancement,profile,routing,entity_extraction`
 - **Daily scheduled distillation** (`0 5 * * *`, 5 AM UTC): runs `cogniverse_runtime.quality_monitor_cli --once`, a separate CLI, not `optimization_cli`
 - **Monthly reports** (`0 5 1 * *`, 1st of month 5 AM UTC): `--mode monthly-reports`, uploaded to MinIO by a follow-up step
 

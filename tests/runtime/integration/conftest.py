@@ -277,9 +277,12 @@ def schema_loader():
 
 
 @pytest.fixture(autouse=True, scope="module")
-def _set_test_backend_env(vespa_instance):
+def _set_test_backend_env(request):
     """Set BACKEND_URL/BACKEND_PORT env vars so create_default_config_manager()
     naturally resolves to the test Vespa container. No mocks needed.
+
+    Modules marked ``no_shared_vespa`` own a different real boundary and retain
+    the root fixture's dead backend sentinel instead of starting Vespa.
 
     Also resets config singletons so they pick up the new env vars
     when a new module starts with a different Vespa container.
@@ -288,6 +291,25 @@ def _set_test_backend_env(vespa_instance):
 
     from cogniverse_foundation.config import utils as config_utils
 
+    selected_module_items = [
+        item
+        for item in request.session.items
+        if item.getparent(pytest.Module) is request.node
+    ]
+    owns_other_boundaries = request.node.get_closest_marker(
+        "no_shared_vespa"
+    ) is not None or (
+        selected_module_items
+        and all(
+            item.get_closest_marker("no_shared_vespa") is not None
+            for item in selected_module_items
+        )
+    )
+    if owns_other_boundaries:
+        yield
+        return
+
+    vespa_instance = request.getfixturevalue("vespa_instance")
     original_url = os.environ.get("BACKEND_URL")
     original_port = os.environ.get("BACKEND_PORT")
 

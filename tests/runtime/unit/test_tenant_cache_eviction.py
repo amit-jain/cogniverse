@@ -188,6 +188,7 @@ class _StubGraphManager:
     def __init__(self, backend=None, tenant_id=None, schema_name=None, **kwargs):
         self.tenant_id = tenant_id
         self.schema_name = schema_name
+        self.gliner_inference_url = kwargs.get("gliner_inference_url")
 
 
 def _graph_factory():
@@ -199,7 +200,10 @@ def _graph_factory():
     )
     config_manager = SimpleNamespace(
         get_system_config=lambda: SimpleNamespace(
-            inference_service_urls={"colbert_pylate": "http://colbert:9000"}
+            inference_service_urls={
+                "colbert_pylate": "http://colbert:9000",
+                "gliner": "http://gliner:8000",
+            }
         )
     )
     with patch("cogniverse_agents.graph.graph_manager.GraphManager", _StubGraphManager):
@@ -208,6 +212,75 @@ def _graph_factory():
 
 
 class TestGraphManagerCache:
+    @pytest.mark.parametrize(
+        "build_factory",
+        [
+            pytest.param(
+                lambda: (
+                    __import__(
+                        "cogniverse_runtime.main",
+                        fromlist=["_build_graph_manager_factory"],
+                    )._build_graph_manager_factory
+                ),
+                id="api-runtime",
+            ),
+        ],
+    )
+    def test_graph_factory_injects_the_validated_gliner_endpoint(self, build_factory):
+        backend = MagicMock()
+        backend.get_tenant_schema_name.return_value = "knowledge_graph_acme_graph"
+        config_manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(
+                inference_service_urls={
+                    "colbert_pylate": "http://colbert.internal:9000",
+                    "gliner": "http://gliner.internal:8000",
+                }
+            )
+        )
+        with patch(
+            "cogniverse_agents.graph.graph_manager.GraphManager", _StubGraphManager
+        ):
+            factory = build_factory()(backend, config_manager)
+            manager = factory("acme:graph")
+
+        assert manager.tenant_id == "acme:graph"
+        assert manager.gliner_inference_url == "http://gliner.internal:8000"
+
+    @pytest.mark.parametrize(
+        "build_factory",
+        [
+            pytest.param(
+                lambda: (
+                    __import__(
+                        "cogniverse_runtime.main",
+                        fromlist=["_build_graph_manager_factory"],
+                    )._build_graph_manager_factory
+                ),
+                id="api-runtime",
+            ),
+        ],
+    )
+    def test_graph_factory_rejects_missing_gliner_before_manager_build(
+        self, build_factory
+    ):
+        backend = MagicMock()
+        config_manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(
+                inference_service_urls={
+                    "colbert_pylate": "http://colbert.internal:9000",
+                }
+            )
+        )
+        manager_type = MagicMock(side_effect=_StubGraphManager)
+        with patch("cogniverse_agents.graph.graph_manager.GraphManager", manager_type):
+            factory = build_factory()(backend, config_manager)
+            with pytest.raises(
+                RuntimeError,
+                match="knowledge_graph requires gliner in INFERENCE_SERVICE_URLS",
+            ):
+                factory("acme:graph")
+        manager_type.assert_not_called()
+
     def test_tenant_delete_evicts_only_that_tenants_graph_manager(self):
         factory = _graph_factory()
         mgr_a = factory("graphevict:a")
@@ -341,7 +414,10 @@ class TestGraphManagerSingleColdBuild:
         backend.schema_registry.deploy_schema.side_effect = _deploy
         config_manager = SimpleNamespace(
             get_system_config=lambda: SimpleNamespace(
-                inference_service_urls={"colbert_pylate": "http://colbert:9000"}
+                inference_service_urls={
+                    "colbert_pylate": "http://colbert:9000",
+                    "gliner": "http://gliner:8000",
+                }
             )
         )
 

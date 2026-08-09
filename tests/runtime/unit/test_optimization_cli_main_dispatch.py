@@ -222,7 +222,12 @@ def test_synthetic_default_optimizers_dispatch(monkeypatch):
     assert rec.calls == 1
     assert rec.kwargs == {
         "tenant_id": "acme:acme",
-        "optimizer_types": ["query_enhancement", "profile", "workflow"],
+        "optimizer_types": [
+            "query_enhancement",
+            "profile",
+            "routing",
+            "entity_extraction",
+        ],
     }
 
 
@@ -237,21 +242,83 @@ def test_synthetic_agents_override_optimizers(monkeypatch):
             "--tenant-id",
             "acme",
             "--agents",
-            "profile, workflow",
+            "profile, routing",
         ],
     )
     assert code == 0
     assert rec.kwargs == {
         "tenant_id": "acme:acme",
-        "optimizer_types": ["profile", "workflow"],
+        "optimizer_types": ["profile", "routing"],
     }
 
 
-def test_synthetic_failure_result_exits_1(monkeypatch):
-    rec = _Recorder(_FAIL)
+@pytest.mark.parametrize(
+    ("result", "expected_code"),
+    [
+        (
+            {
+                "status": "success",
+                "results": {
+                    "profile": {"status": "success"},
+                    "workflow": {"status": "success"},
+                },
+            },
+            0,
+        ),
+        (
+            {
+                "status": "success",
+                "results": {
+                    "profile": {"status": "success"},
+                    "workflow": {"status": "no_data"},
+                },
+            },
+            0,
+        ),
+        (
+            {
+                "status": "no_data",
+                "results": {
+                    "profile": {"status": "no_data"},
+                    "workflow": {"status": "no_data"},
+                },
+            },
+            0,
+        ),
+        (
+            {
+                "status": "success",
+                "results": {
+                    "profile": {"status": "success"},
+                    "workflow": {"status": "failed", "error": "backend down"},
+                },
+            },
+            1,
+        ),
+        (
+            {
+                "status": "success",
+                "results": {
+                    "profile": {"status": "success"},
+                    "workflow": {"status": "error", "error": "invalid result"},
+                },
+            },
+            1,
+        ),
+    ],
+    ids=[
+        "all-success",
+        "success-and-no-data",
+        "all-no-data",
+        "nested-failed",
+        "nested-error",
+    ],
+)
+def test_synthetic_result_controls_process_exit(monkeypatch, result, expected_code):
+    rec = _Recorder(result)
     monkeypatch.setattr(oc, "run_synthetic_generation", rec)
     code = _run_main(monkeypatch, ["--mode", "synthetic", "--tenant-id", "acme"])
-    assert code == 1
+    assert code == expected_code
     assert rec.kwargs["tenant_id"] == "acme:acme"
 
 

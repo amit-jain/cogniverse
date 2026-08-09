@@ -90,7 +90,7 @@ class ProfileCreateRequest(BaseModel):
                 "embedding_type": "multi_vector",
                 "schema_config": {
                     "schema_name": "video_colpali",
-                    "model_name": "ColPali",
+                    "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "num_patches": 1024,
                     "embedding_dim": 320,
                     "binary_dim": 40,
