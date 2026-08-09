@@ -46,6 +46,11 @@ The runtime sits at the top of the package hierarchy, depending on all other mod
 
 ## Package Structure
 
+The runtime entry surfaces are `cogniverse_runtime/main.py`,
+`cogniverse_runtime/agent_dispatcher.py`,
+`cogniverse_runtime/inference_services.py`, and
+`cogniverse_runtime/synthetic_config.py`.
+
 ```text
 cogniverse_runtime/
 ├── main.py                          # FastAPI app entry point + lifespan setup
@@ -64,6 +69,8 @@ cogniverse_runtime/
 ├── sandbox_manager.py               # SandboxManager + policy enforcement
 ├── sandbox_pool.py                  # Pool of warm sandbox instances
 ├── inference_health_check.py        # Startup inference-service probes
+├── inference_services.py            # Validated external inference endpoints
+├── synthetic_config.py              # Synthetic-service runtime configuration
 ├── routers/                         # FastAPI routers (one per API surface)
 │   ├── health.py                    # Health + readiness endpoints
 │   ├── search.py                    # Search API
