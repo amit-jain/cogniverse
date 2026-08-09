@@ -783,6 +783,7 @@
           "binary_dim": 40
         },
         "inference_services": {
+          "embedding": "vllm_colpali",
           "transcription": "vllm_asr"
         }
       },
@@ -822,6 +823,9 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
+        "inference_services": {
+          "embedding": "vllm_colpali"
+        },
         "schema_config": {
           "schema_name": "image_colpali",
           "model_name": "ColPali",

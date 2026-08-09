@@ -5,7 +5,10 @@ Infer correct agents for synthetic examples based on modality and content charac
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
+
+from cogniverse_foundation.config.unified_config import AgentMappingRule
 
 logger = logging.getLogger(__name__)
 
@@ -14,66 +17,159 @@ class AgentInferrer:
     """
     Infer correct agents for routing based on modality and content characteristics.
 
-    Reads agent definitions from config.json — no hardcoded agent names.
+    Reads explicitly injected agent definitions — no hardcoded agent names or
+    filesystem discovery.
     """
 
-    def __init__(self, agents_config: Optional[Dict[str, Any]] = None):
+    CONTENT_MODALITY_KEYWORDS = {
+        "VIDEO": ("video", "tutorial", "walkthrough", "demo"),
+        "DOCUMENT": (
+            "document",
+            "text",
+            "documentation",
+            "guide",
+            "research",
+            "paper",
+            "article",
+        ),
+        "AUDIO": ("audio", "podcast", "recording"),
+        "IMAGE": ("image", "diagram", "chart", "visualization"),
+        "CODE": ("code", "source", "function", "class", "repository"),
+        "WIKI": ("wiki", "knowledge", "page", "encyclopedia"),
+    }
+    REQUIRED_CAPABILITY_BY_MODALITY = {
+        "VIDEO": "video_search",
+        "DOCUMENT": "document_analysis",
+        "IMAGE": "image_search",
+        "AUDIO": "audio_analysis",
+        "CODE": "coding",
+        "WIKI": "document_analysis",
+    }
+    SUPPORTED_MODALITIES = frozenset(REQUIRED_CAPABILITY_BY_MODALITY)
+    WORKFLOW_COMPLEXITIES = frozenset({"simple", "moderate", "complex"})
+    WORKFLOW_TASK_TYPES = frozenset({"search", "summarize", "analyze"})
+
+    def __init__(
+        self,
+        agents_config: Dict[str, Any],
+        agent_mappings: List[AgentMappingRule],
+    ):
         """Initialize agent inferrer from config.
 
         Args:
-            agents_config: agents section from config.json. If None, loads from default config.
+            agents_config: Explicit agents section from the active configuration.
+            agent_mappings: Canonical modality-to-agent mappings.
         """
         if agents_config is None:
-            agents_config = self._load_agents_config()
+            raise ValueError("agents_config is required")
+        if not isinstance(agents_config, dict):
+            raise ValueError("agents_config must be a mapping")
+        if not isinstance(agent_mappings, list) or not agent_mappings:
+            raise ValueError("agent_mappings must be a non-empty list")
 
-        # Build mappings from config
-        self.MODALITY_TO_AGENT = {}
         self.AGENT_CAPABILITIES = {}
-
         for name, cfg in agents_config.items():
-            if not cfg.get("enabled", True):
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("agent names must be non-empty strings")
+            if not isinstance(cfg, dict):
+                raise ValueError(f"agent '{name}' configuration must be a mapping")
+            if cfg.get("enabled") is not True:
                 continue
 
-            modalities = cfg.get("modalities", [])
-            capabilities = cfg.get("capabilities", [])
+            modalities = self._require_string_list(
+                cfg.get("modalities", []),
+                f"agent '{name}' modalities",
+            )
+            capabilities = self._require_string_list(
+                cfg.get("capabilities", []),
+                f"agent '{name}' capabilities",
+            )
 
             self.AGENT_CAPABILITIES[name] = {
                 "modalities": modalities,
                 "capabilities": capabilities,
             }
 
-            for modality in modalities:
-                if modality not in self.MODALITY_TO_AGENT:
-                    self.MODALITY_TO_AGENT[modality] = name
+        if not self.AGENT_CAPABILITIES:
+            raise ValueError("agents configuration has no enabled agents")
 
-        # Role-based agent mappings from config (with fallbacks)
-        self.ROLE_AGENTS = {
-            "summarizer": agents_config.get("summarizer_agent", {}).get(
-                "name", "summarizer_agent"
-            ),
-            "detailed_report": agents_config.get("detailed_report_agent", {}).get(
-                "name", "detailed_report_agent"
-            ),
-        }
-        # Also check if config explicitly provides role mappings
+        self.MODALITY_TO_AGENT = {}
+        for index, mapping in enumerate(agent_mappings):
+            if not isinstance(mapping, AgentMappingRule):
+                raise ValueError(f"agent_mappings[{index}] must be an AgentMappingRule")
+            modality = mapping.modality
+            if modality not in self.SUPPORTED_MODALITIES:
+                supported = ", ".join(sorted(self.SUPPORTED_MODALITIES))
+                raise ValueError(f"mapping modality must be one of: {supported}")
+            agent_name = mapping.agent_name
+            if not isinstance(agent_name, str) or not agent_name.strip():
+                raise ValueError("mapping agent_name must be a non-empty string")
+
+            existing = self.MODALITY_TO_AGENT.get(modality)
+            if existing is not None:
+                if existing == agent_name:
+                    raise ValueError(
+                        f"duplicate agent mapping for modality '{modality}'"
+                    )
+                raise ValueError(
+                    f"conflicting agent mappings for modality '{modality}': "
+                    f"'{existing}' and '{agent_name}'"
+                )
+
+            target_config = agents_config.get(agent_name)
+            if target_config is None:
+                raise ValueError(
+                    f"mapping for modality '{modality}' targets unknown agent "
+                    f"'{agent_name}'"
+                )
+            if not isinstance(target_config, dict):
+                raise ValueError(
+                    f"agent '{agent_name}' configuration must be a mapping"
+                )
+            if target_config.get("enabled") is not True:
+                raise ValueError(
+                    f"mapping for modality '{modality}' targets disabled agent "
+                    f"'{agent_name}'"
+                )
+            target = self.AGENT_CAPABILITIES[agent_name]
+            if modality not in target["modalities"]:
+                raise ValueError(
+                    f"agent '{agent_name}' does not declare mapped modality "
+                    f"'{modality}'"
+                )
+            required_capability = self.REQUIRED_CAPABILITY_BY_MODALITY[modality]
+            if required_capability not in target["capabilities"]:
+                raise ValueError(
+                    f"agent '{agent_name}' does not declare required capability "
+                    f"'{required_capability}' for modality '{modality}'"
+                )
+            self.MODALITY_TO_AGENT[modality] = agent_name
+
+        self.ROLE_AGENTS = {}
         for name, cfg in agents_config.items():
-            for role in cfg.get("roles", []):
+            if cfg.get("enabled") is not True:
+                continue
+            roles = self._require_string_list(
+                cfg.get("roles", []),
+                f"agent '{name}' roles",
+            )
+            for role in roles:
+                existing = self.ROLE_AGENTS.get(role)
+                if existing == name:
+                    raise ValueError(
+                        f"duplicate explicit agent role {role!r} for {name!r}"
+                    )
+                if existing is not None:
+                    raise ValueError(
+                        f"conflicting explicit agent role {role!r}: "
+                        f"{existing!r} and {name!r}"
+                    )
                 self.ROLE_AGENTS[role] = name
-
-        # Content type heuristic — derived from modality mappings, not hardcoded
-        self.CONTENT_TYPE_TO_AGENT = {}
-        video_agent = self.MODALITY_TO_AGENT.get("VIDEO", "search_agent")
-        doc_agent = self.MODALITY_TO_AGENT.get("DOCUMENT", "document_agent")
-        audio_agent = self.MODALITY_TO_AGENT.get("AUDIO", "audio_analysis_agent")
-        image_agent = self.MODALITY_TO_AGENT.get("IMAGE", "image_search_agent")
-        for keyword in ("tutorial", "walkthrough", "demo"):
-            self.CONTENT_TYPE_TO_AGENT[keyword] = video_agent
-        for keyword in ("documentation", "guide", "research", "paper", "article"):
-            self.CONTENT_TYPE_TO_AGENT[keyword] = doc_agent
-        for keyword in ("podcast",):
-            self.CONTENT_TYPE_TO_AGENT[keyword] = audio_agent
-        for keyword in ("diagram", "chart", "visualization"):
-            self.CONTENT_TYPE_TO_AGENT[keyword] = image_agent
+            capabilities = set(self.AGENT_CAPABILITIES[name]["capabilities"])
+            if "summarization" in capabilities:
+                self.ROLE_AGENTS.setdefault("summarizer", name)
+            if "detailed_report" in capabilities:
+                self.ROLE_AGENTS.setdefault("detailed_report", name)
 
         logger.info(
             f"Initialized AgentInferrer with {len(self.AGENT_CAPABILITIES)} agents "
@@ -81,37 +177,72 @@ class AgentInferrer:
         )
 
     @staticmethod
-    def _load_agents_config() -> Dict[str, Any]:
-        """Load agents config from config.json."""
-        import json
-        from pathlib import Path
+    def _require_string_list(value: Any, field_name: str) -> List[str]:
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
+            raise ValueError(f"{field_name} must be a list of non-empty strings")
+        return list(value)
 
-        for search_path in [
-            Path("configs/config.json"),
-            Path("../configs/config.json"),
-            Path("../../configs/config.json"),
-        ]:
-            if search_path.exists():
-                with open(search_path) as f:
-                    return json.load(f).get("agents", {})
-        return {}
+    def require_mappings(self, modalities: set[str]) -> None:
+        """Require explicit mappings for every modality a service may sample."""
+        invalid = sorted(modalities - self.SUPPORTED_MODALITIES)
+        if invalid:
+            raise ValueError("unsupported profile modalities: " + ", ".join(invalid))
+        missing = sorted(modalities - self.MODALITY_TO_AGENT.keys())
+        if missing:
+            raise ValueError(
+                "agent_mappings missing required modalities: " + ", ".join(missing)
+            )
 
     def infer_from_modality(self, modality: str) -> str:
         """
         Infer agent from modality type
 
         Args:
-            modality: Modality string (VIDEO, DOCUMENT, IMAGE, AUDIO)
+            modality: Canonical modality string
 
         Returns:
             Agent name
         """
-        modality_upper = modality.upper()
-        default = self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
-        agent = self.MODALITY_TO_AGENT.get(modality_upper, default)
+        if (
+            not isinstance(modality, str)
+            or not modality
+            or modality != modality.upper()
+        ):
+            raise ValueError(
+                f"modality must be a canonical uppercase value, got {modality!r}"
+            )
+        agent = self.MODALITY_TO_AGENT.get(modality)
+        if agent is None:
+            raise ValueError(f"no configured agent mapping for modality {modality!r}")
 
         logger.debug(f"Inferred agent '{agent}' from modality '{modality}'")
         return agent
+
+    def _require_role(self, role: str) -> str:
+        agent = self.ROLE_AGENTS.get(role)
+        if agent is None:
+            raise ValueError(f"no enabled agent provides role {role!r}")
+        return agent
+
+    @classmethod
+    def _modalities_in(cls, value: str) -> set[str]:
+        words = set(re.sub(r"[^a-z0-9]+", " ", value.lower()).split())
+        return {
+            modality
+            for modality, keywords in cls.CONTENT_MODALITY_KEYWORDS.items()
+            if words.intersection(keywords)
+        }
+
+    @staticmethod
+    def _require_single_modality(modalities: set[str], source: str) -> str:
+        if not modalities:
+            raise ValueError(f"cannot infer modality from {source}")
+        if len(modalities) > 1:
+            joined = ", ".join(sorted(modalities))
+            raise ValueError(f"{source} describes multiple modalities: {joined}")
+        return next(iter(modalities))
 
     def infer_from_characteristics(
         self,
@@ -122,8 +253,6 @@ class AgentInferrer:
         """
         Infer agent from content characteristics
 
-        Uses content type, entities, and relationships to determine best agent.
-
         Args:
             content: Content metadata
             entities: Extracted entities (optional)
@@ -132,35 +261,18 @@ class AgentInferrer:
         Returns:
             Agent name
         """
-        # Check schema_name or embedding_type for modality hint
-        schema_name = content.get("schema_name", "").lower()
-        embedding_type = content.get("embedding_type", "").lower()
-
-        # Infer modality from schema/embedding
-        if "video" in schema_name or "video" in embedding_type:
-            return self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
-        elif "document" in schema_name or "text" in embedding_type:
-            return self.MODALITY_TO_AGENT.get("DOCUMENT", "document_agent")
-        elif "image" in schema_name or "image" in embedding_type:
-            return self.MODALITY_TO_AGENT.get("IMAGE", "image_search_agent")
-        elif "audio" in schema_name or "audio" in embedding_type:
-            return self.MODALITY_TO_AGENT.get("AUDIO", "audio_search_agent")
-
-        # Check description for content type hints
-        description = content.get(
-            "segment_description", content.get("description", "")
-        ).lower()
-        for content_type, agent in self.CONTENT_TYPE_TO_AGENT.items():
-            if content_type in description:
-                logger.debug(
-                    f"Inferred agent '{agent}' from content type '{content_type}'"
-                )
-                return agent
-
-        # Default to first search-capable agent
-        default = self.MODALITY_TO_AGENT.get("VIDEO", "search_agent")
-        logger.debug(f"Using default agent '{default}'")
-        return default
+        profile_type = content.get("profile_type")
+        modality = content.get("modality")
+        if not isinstance(profile_type, str) or not isinstance(modality, str):
+            raise ValueError("content requires profile_type and modality")
+        if not profile_type or profile_type != profile_type.strip().lower():
+            raise ValueError("content profile_type must be canonical lowercase")
+        if modality != profile_type.upper():
+            raise ValueError(
+                f"content modality {modality!r} does not match "
+                f"profile_type {profile_type!r}"
+            )
+        return self.infer_from_modality(modality)
 
     def infer_workflow_sequence(
         self, query_complexity: str, modality: str, task_type: Optional[str] = None
@@ -176,27 +288,39 @@ class AgentInferrer:
         Returns:
             List of agent names in execution order
         """
-        primary_agent = self.infer_from_modality(modality)
+        if query_complexity not in self.WORKFLOW_COMPLEXITIES:
+            allowed = ", ".join(sorted(self.WORKFLOW_COMPLEXITIES))
+            raise ValueError(
+                f"query_complexity must be one of: {allowed}; got {query_complexity!r}"
+            )
+        if task_type is not None and task_type not in self.WORKFLOW_TASK_TYPES:
+            allowed = ", ".join(sorted(self.WORKFLOW_TASK_TYPES))
+            raise ValueError(
+                f"task_type must be one of: {allowed}, or None; got {task_type!r}"
+            )
 
-        summarizer = self.ROLE_AGENTS.get("summarizer", "summarizer_agent")
-        report = self.ROLE_AGENTS.get("detailed_report", "detailed_report_agent")
+        primary_agent = self.infer_from_modality(modality)
 
         if query_complexity == "simple":
             return [primary_agent]
 
         elif query_complexity == "moderate":
             if task_type == "summarize":
-                return [primary_agent, summarizer]
+                return [primary_agent, self._require_role("summarizer")]
             else:
                 return [primary_agent]
 
         else:  # complex
             if task_type == "analyze":
-                return [primary_agent, summarizer, report]
+                return [
+                    primary_agent,
+                    self._require_role("summarizer"),
+                    self._require_role("detailed_report"),
+                ]
             elif task_type == "summarize":
-                return [primary_agent, summarizer]
+                return [primary_agent, self._require_role("summarizer")]
             else:
-                return [primary_agent, report]
+                return [primary_agent, self._require_role("detailed_report")]
 
     def get_agent_for_task(self, task_description: str) -> str:
         """
@@ -210,38 +334,26 @@ class AgentInferrer:
         """
         task_lower = task_description.lower()
 
-        summarizer = self.ROLE_AGENTS.get("summarizer", "summarizer_agent")
-        report = self.ROLE_AGENTS.get("detailed_report", "detailed_report_agent")
-
         # Check for summarization keywords
         if any(
             word in task_lower for word in ["summarize", "summary", "condense", "brief"]
         ):
-            return summarizer
+            return self._require_role("summarizer")
 
         # Check for analysis/reporting keywords
         if any(
             word in task_lower
             for word in ["analyze", "analysis", "report", "detailed", "deep dive"]
         ):
-            return report
+            return self._require_role("detailed_report")
 
         # Check for search keywords
         if any(word in task_lower for word in ["find", "search", "locate", "show"]):
-            # Determine modality from keywords
-            if any(word in task_lower for word in ["video", "tutorial", "demo"]):
-                return self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
-            elif any(word in task_lower for word in ["document", "paper", "article"]):
-                return self.MODALITY_TO_AGENT.get("DOCUMENT", "document_agent")
-            elif any(word in task_lower for word in ["image", "diagram", "chart"]):
-                return self.MODALITY_TO_AGENT.get("IMAGE", "image_search_agent")
-            elif any(word in task_lower for word in ["audio", "podcast", "recording"]):
-                return self.MODALITY_TO_AGENT.get("AUDIO", "audio_search_agent")
-            else:
-                return self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
+            modalities = self._modalities_in(task_lower)
+            modality = self._require_single_modality(modalities, "search task")
+            return self.infer_from_modality(modality)
 
-        # Default
-        return self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")
+        raise ValueError("cannot infer enabled agent from task description")
 
     def get_compatible_agents(self, modality: str) -> List[str]:
         """
@@ -253,17 +365,24 @@ class AgentInferrer:
         Returns:
             List of compatible agent names
         """
+        if (
+            not isinstance(modality, str)
+            or not modality
+            or modality != modality.upper()
+        ):
+            raise ValueError(
+                f"modality must be a canonical uppercase value, got {modality!r}"
+            )
+        if modality not in self.MODALITY_TO_AGENT:
+            raise ValueError(f"no configured agent mapping for modality {modality!r}")
+
         compatible = []
 
         for agent_name, info in self.AGENT_CAPABILITIES.items():
-            if modality.upper() in info["modalities"]:
+            if modality in info["modalities"]:
                 compatible.append(agent_name)
 
-        return (
-            compatible
-            if compatible
-            else [self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")]
-        )
+        return compatible
 
     def validate_agent_sequence(self, agent_sequence: List[str]) -> bool:
         """
@@ -293,8 +412,16 @@ class AgentInferrer:
         has_secondary = any(a in secondary_agents for a in agent_sequence)
         has_search = any(a in search_agents for a in agent_sequence)
 
-        if has_secondary and not has_search:
-            logger.warning("Invalid sequence: secondary agents without search agent")
-            return False
+        if has_secondary:
+            if not has_search:
+                logger.warning(
+                    "Invalid sequence: secondary agents without search agent"
+                )
+                return False
+            if agent_sequence[0] not in search_agents:
+                logger.warning(
+                    "Invalid sequence: a search agent must precede secondary agents"
+                )
+                return False
 
         return True
