@@ -1,14 +1,14 @@
 """Shared DSPy LM fixture for integration tests.
 
-Resolves the test LM endpoint from environment variables so the same
-test suite can run against any OpenAI-compatible LM provider without a
-code change.
+Resolves the test LM endpoint from a complete explicit environment pair or a
+valid application config so the same suite can target any OpenAI-compatible
+provider without silently changing model identity.
 
 Env vars:
 
 - ``TEST_LLM_API_BASE`` — base URL of the LM endpoint.
-  Default ``http://localhost:11434``.
-- ``TEST_LLM_MODEL`` — bare model name. Default ``gemma3:4b``.
+- ``TEST_LLM_MODEL`` — bare model name. It must be set together with
+  ``TEST_LLM_API_BASE``.
 - ``TEST_LLM_PROVIDER`` — litellm provider prefix used when building
   the prefixed model id (``<provider>/<model>``). When unset, defaults
   to ``openai`` if ``TEST_LLM_API_BASE`` ends in ``/v1`` (pure
@@ -19,28 +19,17 @@ Env vars:
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 import dspy
 import httpx
 import pytest
 
-_DEFAULT_BASE_URL = "http://localhost:11434"
-_DEFAULT_MODEL = "gemma3:4b"
 
-
-def _config_llm_defaults() -> tuple[str | None, str | None]:
-    """Return (api_base, bare_model) from ``configs/config.json`` if present.
-
-    Lets the test suite default to whatever LM the deployed app is
-    configured against (production config is currently vLLM at 8101 with
-    gemma-4-e4b-it). Returns (None, None) when the config file cannot be
-    parsed — callers fall back to the historic localhost:11434/gemma3:4b
-    defaults so the env-var-driven path keeps working.
-    """
-    import json
-    from pathlib import Path
-
+def _config_llm_defaults() -> tuple[str, str]:
+    """Return the exact primary LM pair from a valid application config."""
     env_path = os.environ.get("COGNIVERSE_CONFIG")
     src = (
         Path(env_path)
@@ -48,16 +37,56 @@ def _config_llm_defaults() -> tuple[str | None, str | None]:
         else Path(__file__).resolve().parent.parent.parent / "configs" / "config.json"
     )
     if not src.exists():
-        return None, None
+        raise ValueError(f"Test LM config file does not exist: {src}")
     try:
-        primary = json.loads(src.read_text()).get("llm_config", {}).get("primary", {})
-    except (OSError, ValueError):
-        return None, None
-    api_base = primary.get("api_base") or None
-    model = primary.get("model") or None
-    if model and model.startswith("openai/"):
-        model = model[len("openai/") :]
+        config = json.loads(src.read_text())
+    except OSError as exc:
+        raise ValueError(f"Test LM config file could not be read: {src}") from exc
+    except ValueError as exc:
+        raise ValueError(f"Test LM config file is not valid JSON: {src}") from exc
+    primary = (
+        config.get("llm_config", {}).get("primary", {})
+        if isinstance(config, dict)
+        else {}
+    )
+    api_base = primary.get("api_base") if isinstance(primary, dict) else None
+    model = primary.get("model") if isinstance(primary, dict) else None
+    if (
+        not isinstance(api_base, str)
+        or not api_base.strip()
+        or api_base != api_base.strip()
+        or not isinstance(model, str)
+        or not model.strip()
+        or model != model.strip()
+    ):
+        raise ValueError(
+            "Test LM config requires non-empty llm_config.primary.api_base "
+            f"and model: {src}"
+        )
     return api_base, model
+
+
+def _explicit_llm_config() -> tuple[str, str] | None:
+    api_base = os.environ.get("TEST_LLM_API_BASE")
+    model = os.environ.get("TEST_LLM_MODEL")
+    if api_base is None and model is None:
+        return None
+    if (
+        not isinstance(api_base, str)
+        or not api_base.strip()
+        or api_base != api_base.strip()
+        or not isinstance(model, str)
+        or not model.strip()
+        or model != model.strip()
+    ):
+        raise ValueError(
+            "Test LM environment requires both TEST_LLM_API_BASE and TEST_LLM_MODEL"
+        )
+    return api_base, model
+
+
+def _resolved_llm_config() -> tuple[str, str]:
+    return _explicit_llm_config() or _config_llm_defaults()
 
 
 _DEFAULT_LOCAL_PROVIDER = "openai"
@@ -77,11 +106,8 @@ _LITELLM_PROVIDERS = (
 
 
 def resolve_base_url() -> str:
-    env = os.environ.get("TEST_LLM_API_BASE")
-    if env:
-        return env
-    cfg_base, _ = _config_llm_defaults()
-    return cfg_base or _DEFAULT_BASE_URL
+    api_base, _ = _resolved_llm_config()
+    return api_base
 
 
 def resolve_bare_model() -> str:
@@ -93,10 +119,7 @@ def resolve_bare_model() -> str:
     names (``google/gemma-4-e4b-it``, ``meta-llama/Llama-3-8B``) are
     the actual model identifier and must be preserved verbatim.
     """
-    raw = os.environ.get("TEST_LLM_MODEL")
-    if not raw:
-        _, cfg_model = _config_llm_defaults()
-        raw = cfg_model or _DEFAULT_MODEL
+    _, raw = _resolved_llm_config()
     head, _, _ = raw.partition("/")
     if head in _LITELLM_PROVIDERS:
         return raw.split("/", 1)[1]

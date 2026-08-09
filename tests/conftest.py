@@ -1099,6 +1099,72 @@ def _vespa_wait_for_query_ready(data_port: int, timeout: int = 120) -> bool:
     return False
 
 
+def _shared_vespa_application_package(metadata_schemas):
+    """Build the shared test package with room above the host disk watermark."""
+    from vespa.configuration.services import (
+        container,
+        content,
+        disk,
+        document,
+        document_api,
+        document_processing,
+        documents,
+        node,
+        nodes,
+        redundancy,
+        resource_limits,
+        search,
+        services,
+        tuning,
+    )
+    from vespa.package import ApplicationPackage, ServicesConfiguration
+
+    services_vt = services(
+        container(id="cogniverse_container", version="1.0")(
+            search(),
+            document_api(),
+            document_processing(),
+        ),
+        content(id="cogniverse_content", version="1.0")(
+            redundancy("1"),
+            documents(
+                *[
+                    document(type=schema.name, mode=schema.mode)
+                    for schema in metadata_schemas
+                ]
+            ),
+            nodes(node(distribution_key="0", hostalias="node1")),
+            tuning(resource_limits(disk("0.90"))),
+        ),
+        version="1.0",
+    )
+    return ApplicationPackage(
+        name="cogniverse",
+        schema=metadata_schemas,
+        services_config=ServicesConfiguration(
+            application_name="cogniverse",
+            services_config=services_vt,
+        ),
+    )
+
+
+def _shared_vespa_run_args(*, owner_pid: int, docker_platform: str) -> list[str]:
+    """Return the isolated runtime contract for the shared Vespa container."""
+    return [
+        # The owner label lets the next session reap this container
+        # when SIGKILL prevents the fixture's finally block.
+        "--label",
+        f"cogniverse-test-owner-pid={owner_pid}",
+        "--platform",
+        docker_platform,
+        # Losing the shared Vespa mid-session breaks every downstream
+        # test; transient inference sidecars are cheaper to restart.
+        "--oom-score-adj=-1000",
+        "--tmpfs",
+        "/opt/vespa/var/db/vespa/search:rw,size=8g,uid=1000,gid=1000,mode=0755",
+    ]
+
+
 @pytest.fixture(scope="session")
 def shared_vespa():
     """One Vespa container per pytest session, pinned against OOM-kill.
@@ -1155,19 +1221,9 @@ def shared_vespa():
         name_prefix="backend-tests",
         image="vespaengine/vespa:8.668.5",
         container_ports=(8080, 19071),
-        extra_run_args=[
-            # The owner label lets the next session reap this container
-            # when SIGKILL prevents the fixture's finally block.
-            "--label",
-            f"cogniverse-test-owner-pid={os.getpid()}",
-            "--platform",
-            docker_platform,
-            # Losing the shared Vespa mid-session breaks every downstream
-            # test; transient inference sidecars are cheaper to restart.
-            "--oom-score-adj=-1000",
-            "--tmpfs",
-            "/opt/vespa/var/db/vespa/search:rw,size=8g,uid=1000,gid=1000,mode=0755",
-        ],
+        extra_run_args=_shared_vespa_run_args(
+            owner_pid=os.getpid(), docker_platform=docker_platform
+        ),
         max_attempts=5,
     )
 
@@ -1191,8 +1247,6 @@ def shared_vespa():
         BackendRegistry._shared_schema_registry = None
 
         # Deploy ONLY the four metadata schemas. Data schemas are per-test.
-        from vespa.package import ApplicationPackage
-
         from cogniverse_vespa.metadata_schemas import (
             create_adapter_registry_schema,
             create_config_metadata_schema,
@@ -1207,7 +1261,7 @@ def shared_vespa():
             create_config_metadata_schema(),
             create_adapter_registry_schema(),
         ]
-        app_package = ApplicationPackage(name="cogniverse", schema=metadata_schemas)
+        app_package = _shared_vespa_application_package(metadata_schemas)
         schema_mgr = VespaSchemaManager(
             backend_endpoint="http://localhost",
             backend_port=config_port,
