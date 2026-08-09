@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import subprocess
+import sys
+
 import pytest
 
 from cogniverse_runtime.inference_services import parse_inference_service_urls
@@ -111,3 +116,70 @@ async def test_runtime_rejects_invalid_configuration_before_startup(
     with pytest.raises(ValueError, match="valid JSON object"):
         async with runtime_main.lifespan(FastAPI()):
             pass
+
+
+@pytest.mark.asyncio
+async def test_worker_rejects_invalid_configuration_before_redis_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cogniverse_runtime.ingestion_worker import worker
+
+    async def fail_if_redis_is_consulted(url):
+        raise AssertionError(f"Redis was consulted at {url}")
+
+    monkeypatch.setenv("INFERENCE_SERVICE_URLS", "[]")
+    monkeypatch.setenv("REDIS_URL", "redis://redis.test:6379/0")
+    monkeypatch.setattr(worker, "get_redis", fail_if_redis_is_consulted)
+
+    with pytest.raises(ValueError, match="JSON object"):
+        await worker.run(stop=asyncio.Event(), processor=object())
+
+
+def test_worker_process_rejects_invalid_configuration_before_redis() -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "INFERENCE_SERVICE_URLS": "not-json",
+            "REDIS_URL": "redis://127.0.0.1:1/0",
+        }
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "cogniverse_runtime.ingestion_worker.worker"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "INFERENCE_SERVICE_URLS must be a valid JSON object" in combined
+    assert "Connection refused" not in combined
+
+
+def test_model_discovery_rejects_invalid_configuration_before_cluster_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.utils import vllm_sidecar
+
+    def fail_if_cluster_is_consulted(model: str) -> tuple[str, ...]:
+        raise AssertionError(f"cluster discovery was consulted for {model}")
+
+    monkeypatch.setenv("INFERENCE_SERVICE_URLS", '{"denseon":"relative/path"}')
+    monkeypatch.delenv("TEST_LLM_MODEL", raising=False)
+    monkeypatch.delenv("TEST_LLM_API_BASE", raising=False)
+    monkeypatch.setattr(
+        vllm_sidecar,
+        "_discover_e2e_model_urls",
+        fail_if_cluster_is_consulted,
+    )
+    monkeypatch.setattr(
+        vllm_sidecar,
+        "_discover_dev_model_urls",
+        fail_if_cluster_is_consulted,
+    )
+
+    with pytest.raises(ValueError, match="absolute HTTP or HTTPS URL"):
+        vllm_sidecar._configured_model_urls("TomoroAI/tomoro-colqwen3-embed-4b")

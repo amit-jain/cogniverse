@@ -15,6 +15,7 @@ the real server.
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import platform
 import socket
@@ -1008,7 +1009,7 @@ class TestColdBuildOffload:
         monkeypatch.setenv("REDIS_URL", "redis://worker:6379/0")
         monkeypatch.setenv(
             "INFERENCE_SERVICE_URLS",
-            '{"denseon":"http://denseon-at-startup:8000/"}',
+            '{"denseon":"http://denseon-at-startup:8000"}',
         )
         config = worker.WorkerConfig()
         monkeypatch.setenv(
@@ -1019,10 +1020,9 @@ class TestColdBuildOffload:
         seen: dict = {}
         release = threading.Event()
 
-        def _blocking_context(actual_config):
+        def _blocking_context(service_urls):
             seen["thread"] = threading.get_ident()
-            seen["config"] = actual_config
-            seen["urls"] = dict(actual_config.inference_service_urls)
+            seen["urls"] = dict(service_urls)
             seen["released"] = release.wait(timeout=5.0)
             return (object(), object())
 
@@ -1062,7 +1062,18 @@ class TestColdBuildOffload:
             tenant_id="acme:acme",
             sha="sha_offload",
         )
-        task = asyncio.create_task(worker._default_processor(job, config=config))
+
+        async def _noop_marker(pending_job):
+            return None
+
+        task = asyncio.create_task(
+            worker._default_processor(
+                job,
+                service_urls=config.inference_service_urls,
+                mark_graph_pending=_noop_marker,
+                graph_deadline_s=config.graph_deadline_s,
+            )
+        )
         deadline = time.time() + 5.0
         while "thread" not in seen and not task.done() and time.time() < deadline:
             await asyncio.sleep(0.01)
@@ -1070,8 +1081,8 @@ class TestColdBuildOffload:
         result = await asyncio.wait_for(task, timeout=10.0)
 
         assert result["status"] == "success" and result["video_id"] == "v1"
-        assert seen["config"] is config
         assert seen["urls"] == {"denseon": "http://denseon-at-startup:8000"}
+        assert seen["urls"] == config.inference_service_urls
         assert seen["thread"] != loop_thread, "cold build ran ON the event loop"
         assert seen["released"] is True, (
             "loop never serviced the release while the builder blocked — "
@@ -1281,3 +1292,388 @@ class TestMalformedEntrySettlement:
 
         # The inflight marker was released so a resubmit is not blocked.
         assert await idempotency.get_existing_ingest_id(redis, sha) is None
+
+
+class TestGraphStageDurability:
+    @pytest.mark.no_shared_vespa
+    @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf"])
+    def test_graph_deadline_must_be_positive_and_finite(
+        self,
+        value,
+        redis_container,
+        monkeypatch,
+    ):
+        from cogniverse_runtime.ingestion_worker import worker
+
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        monkeypatch.setenv("INGEST_GRAPH_DEADLINE_SECONDS", value)
+
+        with pytest.raises(
+            RuntimeError,
+            match="INGEST_GRAPH_DEADLINE_SECONDS must be positive and finite",
+        ):
+            worker.WorkerConfig()
+
+    @pytest.mark.asyncio
+    @pytest.mark.no_shared_vespa
+    async def test_concurrent_graph_failures_retain_each_jobs_queue_state(
+        self,
+        redis,
+        redis_container,
+        telemetry_manager_without_phoenix,
+        monkeypatch,
+    ):
+        from cogniverse_foundation.telemetry.config import TelemetryLevel
+        from cogniverse_runtime.ingestion_worker import worker
+
+        telemetry_manager_without_phoenix.config.level = TelemetryLevel.BASIC
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        config = worker.WorkerConfig()
+        await queue.ensure_consumer_group(redis, config.consumer_group)
+        jobs = []
+        for suffix in ("alpha", "beta"):
+            tenant = f"acme:{suffix}"
+            sha = f"sha-{suffix}"
+            ingest_id = f"ing-{suffix}"
+            await queue.increment_active(redis, tenant)
+            await idempotency.mark_inflight(redis, sha, ingest_id, ttl_seconds=600)
+            await queue.submit(
+                redis,
+                ingest_id=ingest_id,
+                source_url=f"s3://media/{suffix}.mp4",
+                profile="video",
+                tenant_id=tenant,
+                sha=sha,
+            )
+        jobs = await queue.claim(
+            redis,
+            config.consumer_group,
+            config.consumer_id,
+            block_ms=1000,
+            count=2,
+        )
+        assert {job.ingest_id for job in jobs} == {"ing-alpha", "ing-beta"}
+
+        rendezvous = asyncio.Barrier(2)
+        simultaneous = 0
+        peak_simultaneous = 0
+        counter_lock = asyncio.Lock()
+
+        async def graph_failed(job):
+            nonlocal simultaneous, peak_simultaneous
+            async with counter_lock:
+                simultaneous += 1
+                peak_simultaneous = max(peak_simultaneous, simultaneous)
+            await rendezvous.wait()
+            async with counter_lock:
+                simultaneous -= 1
+            raise worker.GraphStageIncomplete(
+                f"graph boundary unavailable for {job.ingest_id}"
+            )
+
+        await asyncio.gather(
+            *[
+                worker._process_job(redis, job, config, processor=graph_failed)
+                for job in jobs
+            ]
+        )
+
+        assert peak_simultaneous == 2
+        pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+        assert pending["pending"] == 2
+        for job in jobs:
+            events = [
+                event
+                for _, event in await queue.read_status_since(redis, job.ingest_id)
+            ]
+            assert [event["state"] for event in events] == ["running", "retrying"]
+            assert events[-1]["error_type"] == "GraphStageIncomplete"
+            assert await queue.get_active(redis, job.tenant_id) == 1
+            assert (
+                await redis.get(f"{worker.GRAPH_PENDING_KEY_PREFIX}{job.message_id}")
+                == job.ingest_id
+            )
+            assert await idempotency.get_done_ingest_id(redis, job.sha) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.no_shared_vespa
+    async def test_hung_graph_is_cancelled_after_its_deadline(self, monkeypatch):
+        from cogniverse_runtime.ingestion_worker import worker
+
+        class Pipeline:
+            def __init__(self, **kwargs):
+                pass
+
+            async def process_video_async(self, path, source_uri=None):
+                return {
+                    "status": "success",
+                    "video_id": "video-hung-graph",
+                    "results": {
+                        "video_id": "video-hung-graph",
+                        "embeddings": {"documents_fed": 1},
+                    },
+                }
+
+        class Locator:
+            def __init__(self, tenant_id, config):
+                pass
+
+            def localize(self, url):
+                return "/tmp/video-hung-graph.mp4"
+
+        graph_started = asyncio.Event()
+        graph_cancelled = asyncio.Event()
+        marked = []
+
+        async def hung_graph(**kwargs):
+            assert marked == [("0-graph-hung", "ing-graph-hung")]
+            graph_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                graph_cancelled.set()
+
+        async def mark_graph_pending(job):
+            marked.append((job.message_id, job.ingest_id))
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.ingestion.pipeline.VideoIngestionPipeline", Pipeline
+        )
+        monkeypatch.setattr("cogniverse_core.common.media.MediaLocator", Locator)
+        monkeypatch.setattr(
+            "cogniverse_runtime.routers.ingestion._extract_graph_per_segment",
+            hung_graph,
+        )
+        monkeypatch.setattr(
+            worker,
+            "_prepare_job_context",
+            lambda service_urls: (object(), object()),
+        )
+        job = queue.IngestJob(
+            message_id="0-graph-hung",
+            ingest_id="ing-graph-hung",
+            source_url="s3://media/video-hung-graph.mp4",
+            profile="video",
+            tenant_id="acme:hung",
+            sha="sha-graph-hung",
+        )
+
+        with pytest.raises(
+            worker.GraphStageIncomplete,
+            match="graph extraction exceeded the 0.05s deadline",
+        ):
+            await asyncio.wait_for(
+                worker._default_processor(
+                    job,
+                    service_urls=None,
+                    mark_graph_pending=mark_graph_pending,
+                    graph_deadline_s=0.05,
+                ),
+                timeout=1,
+            )
+
+        assert graph_started.is_set()
+        assert graph_cancelled.is_set()
+        assert marked == [("0-graph-hung", "ing-graph-hung")]
+
+    @pytest.mark.asyncio
+    async def test_real_vespa_content_survives_retry_and_completes_with_graph(
+        self,
+        redis,
+        redis_container,
+        vespa_instance,
+        telemetry_manager_without_phoenix,
+        monkeypatch,
+    ):
+        from cogniverse_foundation.telemetry.config import TelemetryLevel
+        from cogniverse_runtime.ingestion_worker import reaper, worker
+        from cogniverse_vespa._vespa_factory import make_vespa_app
+
+        telemetry_manager_without_phoenix.config.level = TelemetryLevel.BASIC
+        monkeypatch.setenv("REDIS_URL", redis_container)
+        config = worker.WorkerConfig()
+        config.reaper_max_deliveries = 0
+        tenant = "test:unit"
+        ingest_id = f"ing-graph-{uuid.uuid4().hex[:8]}"
+        sha = f"sha-{uuid.uuid4().hex[:8]}"
+        doc_id = f"curie-{uuid.uuid4().hex[:8]}_seg_0"
+        schema = "video_colpali_smol500_mv_frame_test_unit"
+        app = make_vespa_app(
+            url="http://localhost",
+            port=vespa_instance["http_port"],
+        )
+        fields = {
+            "video_id": doc_id.removesuffix("_seg_0"),
+            "video_title": "Marie Curie and radium",
+            "source_url": "s3://media/curie-radium.mp4",
+            "creation_timestamp": 1785859200,
+            "segment_id": 0,
+            "start_time": 12.0,
+            "end_time": 18.0,
+            "segment_description": "Marie Curie discovered radium in Paris.",
+            "audio_transcript": "Marie Curie discovered radium.",
+            "entity_ids": [],
+            "relation_ids": [],
+            "claim_ids": [],
+        }
+
+        class Pipeline:
+            feed_count = 0
+
+            def __init__(self, **kwargs):
+                assert kwargs["tenant_id"] == tenant
+
+            async def process_video_async(self, path, source_uri=None):
+                response = await asyncio.to_thread(
+                    app.feed_data_point,
+                    schema=schema,
+                    namespace="content",
+                    data_id=doc_id,
+                    fields=fields,
+                )
+                assert response.is_successful(), response.json
+                Pipeline.feed_count += 1
+                return {
+                    "status": "success",
+                    "video_id": fields["video_id"],
+                    "results": {
+                        "video_id": fields["video_id"],
+                        "embeddings": {"documents_fed": 1},
+                    },
+                }
+
+        class Locator:
+            def __init__(self, tenant_id, config):
+                pass
+
+            def localize(self, url):
+                return "/tmp/curie-radium.mp4"
+
+        graph_attempts = 0
+
+        async def graph_once_unavailable(**kwargs):
+            nonlocal graph_attempts
+            graph_attempts += 1
+            if graph_attempts == 1:
+                raise ConnectionError("knowledge-graph Vespa connection reset")
+            return {"nodes_upserted": 2, "edges_upserted": 1, "graph_failed": 0}
+
+        monkeypatch.setattr(
+            "cogniverse_runtime.ingestion.pipeline.VideoIngestionPipeline", Pipeline
+        )
+        monkeypatch.setattr("cogniverse_core.common.media.MediaLocator", Locator)
+        monkeypatch.setattr(
+            "cogniverse_runtime.routers.ingestion._extract_graph_per_segment",
+            graph_once_unavailable,
+        )
+        monkeypatch.setattr(
+            worker,
+            "_prepare_job_context",
+            lambda service_urls: (object(), object()),
+        )
+
+        await queue.ensure_consumer_group(redis, config.consumer_group)
+        await queue.increment_active(redis, tenant)
+        await idempotency.mark_inflight(redis, sha, ingest_id, ttl_seconds=600)
+        await queue.submit(
+            redis,
+            ingest_id=ingest_id,
+            source_url=fields["source_url"],
+            profile="video_colpali_smol500_mv_frame",
+            tenant_id=tenant,
+            sha=sha,
+        )
+        [job] = await queue.claim(
+            redis,
+            config.consumer_group,
+            config.consumer_id,
+            block_ms=1000,
+        )
+        processor = functools.partial(
+            worker._default_processor,
+            service_urls=None,
+            mark_graph_pending=functools.partial(worker._mark_graph_pending, redis),
+            graph_deadline_s=1,
+        )
+
+        try:
+            await worker._process_job(redis, job, config, processor=processor)
+
+            first_read = await asyncio.to_thread(
+                app.get_data,
+                schema=schema,
+                namespace="content",
+                data_id=doc_id,
+            )
+            assert first_read.status_code == 200
+            assert (
+                first_read.json["fields"]["segment_description"]
+                == fields["segment_description"]
+            )
+            events = [
+                event for _, event in await queue.read_status_since(redis, ingest_id)
+            ]
+            assert [event["state"] for event in events] == ["running", "retrying"]
+            assert not any(event["state"] in {"complete", "failed"} for event in events)
+            pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+            assert pending["pending"] == 1
+            assert await queue.get_active(redis, tenant) == 1
+            assert await idempotency.get_existing_ingest_id(redis, sha) == ingest_id
+            assert (
+                await redis.get(f"{worker.GRAPH_PENDING_KEY_PREFIX}{job.message_id}")
+                == ingest_id
+            )
+
+            recovered = await reaper.run_reaper_once(
+                redis,
+                config,
+                min_idle_ms=0,
+                processor=processor,
+            )
+
+            assert recovered == 1
+            assert Pipeline.feed_count == 2
+            assert graph_attempts == 2
+            final_read = await asyncio.to_thread(
+                app.get_data,
+                schema=schema,
+                namespace="content",
+                data_id=doc_id,
+            )
+            assert final_read.status_code == 200
+            assert final_read.json["fields"] == {
+                key: value
+                for key, value in fields.items()
+                if key not in {"entity_ids", "relation_ids", "claim_ids"}
+            }
+            assert {
+                key
+                for key in ("entity_ids", "relation_ids", "claim_ids")
+                if key in final_read.json["fields"]
+            } == set()
+            events = [
+                event for _, event in await queue.read_status_since(redis, ingest_id)
+            ]
+            assert [event["state"] for event in events] == [
+                "running",
+                "retrying",
+                "running",
+                "complete",
+            ]
+            assert events[-1]["result"]["graph_nodes"] == 2
+            assert events[-1]["result"]["graph_edges"] == 1
+            assert await idempotency.get_done_ingest_id(redis, sha) == ingest_id
+            assert await queue.get_active(redis, tenant) == 0
+            pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
+            assert pending["pending"] == 0
+            assert (
+                await redis.get(f"{worker.GRAPH_PENDING_KEY_PREFIX}{job.message_id}")
+                is None
+            )
+        finally:
+            await asyncio.to_thread(
+                app.delete_data,
+                schema=schema,
+                namespace="content",
+                data_id=doc_id,
+            )

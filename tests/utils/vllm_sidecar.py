@@ -43,6 +43,8 @@ import requests
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
+from cogniverse_runtime.inference_services import parse_inference_service_urls
+
 DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
 # Test-owned Hugging Face cache, deliberately separate from the user's
@@ -116,7 +118,7 @@ def reap_dead_owner_containers(label: str = OWNER_LABEL) -> None:
             continue
         container_id, state, owner_pid = parts
         owner_alive = owner_pid.isdigit() and os.path.exists(f"/proc/{owner_pid}")
-        if state == "running" and owner_alive:
+        if owner_alive and state not in {"exited", "dead"}:
             continue
         subprocess.run(
             ["docker", "rm", "-f", container_id],
@@ -600,14 +602,9 @@ def _configured_model_urls(model: str) -> tuple[str, ...]:
     if env_model == model and env_api_base:
         candidates.append(env_api_base)
 
-    raw_urls = os.environ.get("INFERENCE_SERVICE_URLS")
-    if raw_urls:
-        try:
-            env_urls = json.loads(raw_urls)
-        except ValueError:
-            env_urls = {}
-        if isinstance(env_urls, dict):
-            candidates.extend(url for url in env_urls.values() if isinstance(url, str))
+    env_urls = parse_inference_service_urls(os.environ.get("INFERENCE_SERVICE_URLS"))
+    if env_urls is not None:
+        candidates.extend(env_urls.values())
 
     candidates.extend(_discover_e2e_model_urls(model))
     candidates.extend(_discover_dev_model_urls(model))

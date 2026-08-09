@@ -223,7 +223,7 @@ class TestRunEntrypointWiring:
         monkeypatch.setenv("INGEST_CLAIM_BLOCK_MS", "777")
         monkeypatch.setenv(
             "INFERENCE_SERVICE_URLS",
-            '{"denseon":"http://denseon:8000/"}',
+            '{"denseon":"http://denseon:8000"}',
         )
 
     def _wire(self, monkeypatch, claim_loop):
@@ -311,8 +311,10 @@ class TestRunEntrypointWiring:
         reaper_call = {}
         reaper_started = asyncio.Event()
 
-        async def _default(job, *, config):
-            default_calls.append((job, config))
+        async def _default(job, *, service_urls, mark_graph_pending, graph_deadline_s):
+            default_calls.append(
+                (job, service_urls, mark_graph_pending, graph_deadline_s)
+            )
             return {"status": "success"}
 
         async def _claim_loop(redis, config, stop, *, processor):
@@ -325,7 +327,7 @@ class TestRunEntrypointWiring:
             await processor("reaper-job")
             reaper_started.set()
 
-        worker, recorded, _ = self._wire(monkeypatch, _claim_loop)
+        worker, recorded, fake_redis = self._wire(monkeypatch, _claim_loop)
         monkeypatch.setattr(worker, "_default_processor", _default)
         monkeypatch.setattr(reaper, "reaper_loop", _reaper_loop)
 
@@ -334,10 +336,16 @@ class TestRunEntrypointWiring:
         config = claim_call["config"]
         assert reaper_call["config"] is config
         assert claim_call["processor"] is reaper_call["processor"]
-        assert default_calls == [
-            ("claim-job", config),
-            ("reaper-job", config),
+        expected_urls = {"denseon": "http://denseon:8000"}
+        assert [(job, urls, deadline) for job, urls, _, deadline in default_calls] == [
+            ("claim-job", expected_urls, 1800.0),
+            ("reaper-job", expected_urls, 1800.0),
         ]
+        markers = {marker for _, _, marker, _ in default_calls}
+        assert len(markers) == 1
+        marker = markers.pop()
+        assert marker.func is worker._mark_graph_pending
+        assert marker.args == (fake_redis,)
         assert recorded["closed"] == 1
 
     @pytest.mark.asyncio
@@ -370,10 +378,7 @@ class TestRunEntrypointWiring:
 
         with pytest.raises(
             ValueError,
-            match=(
-                "^INFERENCE_SERVICE_URLS must be a JSON object of "
-                "root HTTP\\(S\\) URLs$"
-            ),
+            match="^INFERENCE_SERVICE_URLS must be a valid JSON object$",
         ):
             await worker.run(stop=asyncio.Event())
 
@@ -404,6 +409,35 @@ class TestRunEntrypointWiring:
         # Caller-supplied stop event → no signal handlers installed.
         assert installed == []
         assert recorded["closed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_run_wires_graph_marker_and_deadline_into_default_processor(
+        self,
+        monkeypatch,
+    ):
+        import asyncio
+        import functools
+
+        self._set_env(monkeypatch)
+        monkeypatch.setenv("INGEST_GRAPH_DEADLINE_SECONDS", "37.5")
+        claim_call = {}
+
+        async def _claim_loop(redis, config, stop, processor=None):
+            claim_call.update(redis=redis, config=config, processor=processor)
+
+        worker, _, fake_redis = self._wire(monkeypatch, _claim_loop)
+
+        await worker.run(stop=asyncio.Event())
+
+        processor = claim_call["processor"]
+        assert isinstance(processor, functools.partial)
+        assert processor.func is worker._default_processor
+        assert processor.keywords["service_urls"] == {"denseon": "http://denseon:8000"}
+        assert processor.keywords["graph_deadline_s"] == 37.5
+        marker = processor.keywords["mark_graph_pending"]
+        assert isinstance(marker, functools.partial)
+        assert marker.func is worker._mark_graph_pending
+        assert marker.args == (fake_redis,)
 
     @pytest.mark.asyncio
     async def test_run_without_redis_url_raises(self, monkeypatch):
@@ -440,6 +474,10 @@ class TestEnsureWorkerDspyLm:
         assert resolves == 1
         assert first is second
         assert first.model == PRIMARY["model"]
+
+
+async def _noop_mark_graph_pending(job):
+    return None
 
 
 async def _foreign_task_owns_dspy(monkeypatch):
@@ -511,7 +549,15 @@ def job_context(monkeypatch, tmp_path):
     def _run_body(body):
         """Install ``body`` as the job's work and return a runner for it."""
 
-        async def _ingest(job, *, local_path, config_manager, schema_loader):
+        async def _ingest(
+            job,
+            *,
+            local_path,
+            config_manager,
+            schema_loader,
+            mark_graph_pending,
+            graph_deadline_s,
+        ):
             return await body()
 
         monkeypatch.setattr(worker, "_ingest_and_extract_graph", _ingest)
@@ -551,7 +597,9 @@ class TestJobLmBinding:
         worker = job_context(_body)
         result = await worker._default_processor(
             MagicMock(tenant_id="acme:prod", source_url="s3://b/v.mp4", profile="p"),
-            config=MagicMock(name="worker_config"),
+            service_urls=None,
+            mark_graph_pending=_noop_mark_graph_pending,
+            graph_deadline_s=1800,
         )
 
         assert result == {"status": "success"}
@@ -590,7 +638,9 @@ class TestJobLmBinding:
         def _job(name):
             return worker._default_processor(
                 MagicMock(tenant_id=name, source_url="s3://b/v.mp4", profile="p"),
-                config=MagicMock(name="worker_config"),
+                service_urls=None,
+                mark_graph_pending=_noop_mark_graph_pending,
+                graph_deadline_s=1800,
             )
 
         results = await asyncio.gather(_job("acme:one"), _job("acme:two"))
@@ -628,7 +678,9 @@ class TestJobLmBinding:
         worker = job_context(_body)
         result = await worker._default_processor(
             MagicMock(tenant_id="acme:prod", source_url="s3://b/v.mp4", profile="p"),
-            config=MagicMock(name="worker_config"),
+            service_urls=None,
+            mark_graph_pending=_noop_mark_graph_pending,
+            graph_deadline_s=1800,
         )
 
         assert result == {"status": "success"}
@@ -655,7 +707,9 @@ class TestJobLmBinding:
                 MagicMock(
                     tenant_id="acme:prod", source_url="s3://b/v.mp4", profile="p"
                 ),
-                config=MagicMock(name="worker_config"),
+                service_urls=None,
+                mark_graph_pending=_noop_mark_graph_pending,
+                graph_deadline_s=1800,
             )
 
         assert seen["lm"].model == PRIMARY["model"]

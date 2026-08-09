@@ -13,11 +13,10 @@ For each claimed job:
   4. On terminal: mark done in idempotency, decrement active counter,
      XACK the queue message.
 
-Errors from any step land as a ``failed`` event with the exception
-message; the message is still ACKed so it doesn't get redelivered.
-Entries orphaned in a dead consumer's PEL (worker SIGKILLed mid-job)
-are recovered by ``reaper.py``, which XAUTOCLAIMs them back to a live
-consumer and re-drives them idempotently.
+Errors before durable content exists land as a terminal ``failed`` event and
+are ACKed. Once content has been fed, a graph-stage error lands as nonterminal
+``retrying`` and remains in the PEL; ``reaper.py`` XAUTOCLAIMs it back to a
+live consumer and re-drives the stable document ids until the graph completes.
 """
 
 from __future__ import annotations
@@ -25,22 +24,26 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
 import signal
 import socket
 import threading
+from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
 from typing import Optional
 
 import redis.asyncio as aioredis
 
-from cogniverse_foundation.config.bootstrap import parse_inference_service_urls
+from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.queue import IngestJob
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 
 logger = logging.getLogger(__name__)
+
+GRAPH_PENDING_KEY_PREFIX = "ingest:graph-pending:"
 
 
 class JobDeadlineExceeded(Exception):
@@ -58,6 +61,27 @@ class IngestPipelineError(RuntimeError):
     raising routes it through the worker's failure path (``state='failed'``,
     no ``mark_done``).
     """
+
+
+class GraphStageIncomplete(RuntimeError):
+    """Content is durable but its graph transaction has not completed.
+
+    This state is retryable and nonterminal: clearing the submit marker or
+    acknowledging the stream entry would strand content without its graph.
+    """
+
+
+async def _mark_graph_pending(redis: aioredis.Redis, job: IngestJob) -> None:
+    """Persist the graph-stage marker before entering its system boundary."""
+    await redis.set(f"{GRAPH_PENDING_KEY_PREFIX}{job.message_id}", job.ingest_id)
+
+
+async def _clear_graph_pending(redis: aioredis.Redis, message_id: str) -> None:
+    await redis.delete(f"{GRAPH_PENDING_KEY_PREFIX}{message_id}")
+
+
+async def _is_graph_pending(redis: aioredis.Redis, message_id: str) -> bool:
+    return bool(await redis.exists(f"{GRAPH_PENDING_KEY_PREFIX}{message_id}"))
 
 
 def _raise_if_pipeline_failed(result: object) -> None:
@@ -78,7 +102,7 @@ class WorkerConfig:
         if not self.redis_url:
             raise RuntimeError("REDIS_URL must be set for the ingestion worker")
         self.inference_service_urls = parse_inference_service_urls(
-            os.environ.get("INFERENCE_SERVICE_URLS", "")
+            os.environ.get("INFERENCE_SERVICE_URLS")
         )
         self.consumer_group = os.environ.get("INGEST_CONSUMER_GROUP", "ingestors")
         self.consumer_id = os.environ.get(
@@ -112,6 +136,13 @@ class WorkerConfig:
         # longest legitimate pipeline (long-video KG extraction runs ~40min
         # here); 0 disables.
         self.job_deadline_s = int(os.environ.get("INGEST_JOB_DEADLINE_SECONDS", "7200"))
+        self.graph_deadline_s = float(
+            os.environ.get("INGEST_GRAPH_DEADLINE_SECONDS", "1800")
+        )
+        if not math.isfinite(self.graph_deadline_s) or self.graph_deadline_s <= 0:
+            raise RuntimeError(
+                "INGEST_GRAPH_DEADLINE_SECONDS must be positive and finite"
+            )
 
 
 def _media_config_from_env() -> "object":
@@ -183,11 +214,17 @@ def _build_worker_graph_factory(graph_backend, config_manager):
                     )
             sys_cfg = config_manager.get_system_config()
             colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
+            gliner_url = sys_cfg.inference_service_urls.get("gliner")
             if not colbert_url:
                 raise RuntimeError(
                     "knowledge_graph requires colbert_pylate in "
                     "INFERENCE_SERVICE_URLS. Available: "
                     f"{sorted(sys_cfg.inference_service_urls)}"
+                )
+            if not gliner_url:
+                raise RuntimeError(
+                    "knowledge_graph requires gliner in INFERENCE_SERVICE_URLS. "
+                    f"Available: {sorted(sys_cfg.inference_service_urls)}"
                 )
             return GraphManager(
                 backend=graph_backend,
@@ -196,6 +233,7 @@ def _build_worker_graph_factory(graph_backend, config_manager):
                     tenant_id, "knowledge_graph"
                 ),
                 colbert_endpoint_url=colbert_url,
+                gliner_inference_url=gliner_url,
             )
 
         if deploy:
@@ -343,7 +381,7 @@ async def _ensure_worker_dspy_lm(config_manager):
     return await asyncio.to_thread(_worker_dspy_lm, config_manager)
 
 
-def _prepare_job_context(config: WorkerConfig):
+def _prepare_job_context(service_urls: dict[str, str] | None):
     """Build the config manager + schema loader and install the per-tenant
     GraphManager factory (mirroring the one main.py installs for the API
     runtime, so the worker behaves identically).
@@ -363,14 +401,14 @@ def _prepare_job_context(config: WorkerConfig):
     # startup and persists to Vespa. The worker is a separate pod whose
     # SystemConfig read can race ahead of that write (or hit a Vespa
     # instance where main.py hasn't run since the deployment was
-    # changed). Mirror the env bridge in memory so the pipeline's
-    # ``service_urls`` lookup sees the same dict an API-side dispatch
-    # would. Local-only; no Vespa persist (main.py remains
-    # authoritative).
-    service_urls = dict(config.inference_service_urls)
-    system_config = config_manager.get_system_config()
-    if system_config.inference_service_urls != service_urls:
-        system_config.inference_service_urls = service_urls
+    # changed). Use the same validated explicit override in memory;
+    # absence leaves persisted discovery unchanged. Local-only; no
+    # Vespa persist (main.py remains authoritative).
+    if service_urls is not None:
+        explicit_urls = dict(service_urls)
+        system_config = config_manager.get_system_config()
+        if system_config.inference_service_urls != explicit_urls:
+            system_config.inference_service_urls = explicit_urls
     schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
     schema_loader = FilesystemSchemaLoader(schemas_dir)
 
@@ -378,7 +416,13 @@ def _prepare_job_context(config: WorkerConfig):
     return config_manager, schema_loader
 
 
-async def _default_processor(job: IngestJob, *, config: WorkerConfig) -> dict:
+async def _default_processor(
+    job: IngestJob,
+    *,
+    service_urls: dict[str, str] | None,
+    mark_graph_pending: Callable[[IngestJob], Awaitable[None]],
+    graph_deadline_s: float,
+) -> dict:
     """Production processor: localise the source, bind the worker's default
     LM for the job, and run the pipeline + per-segment KG extraction under
     that binding.
@@ -400,7 +444,7 @@ async def _default_processor(job: IngestJob, *, config: WorkerConfig) -> dict:
     local_path = await asyncio.to_thread(locator.localize, job.source_url)
 
     config_manager, schema_loader = await asyncio.to_thread(
-        _prepare_job_context, config
+        _prepare_job_context, service_urls
     )
     worker_lm = await _ensure_worker_dspy_lm(config_manager)
     binding = (
@@ -415,6 +459,8 @@ async def _default_processor(job: IngestJob, *, config: WorkerConfig) -> dict:
             local_path=local_path,
             config_manager=config_manager,
             schema_loader=schema_loader,
+            mark_graph_pending=mark_graph_pending,
+            graph_deadline_s=graph_deadline_s,
         )
 
 
@@ -424,6 +470,8 @@ async def _ingest_and_extract_graph(
     local_path,
     config_manager,
     schema_loader,
+    mark_graph_pending: Callable[[IngestJob], Awaitable[None]],
+    graph_deadline_s: float,
 ) -> dict:
     """Run the VideoIngestionPipeline over the localised file, then the
     per-segment KG extraction + back-ref PATCH so the graph state lands
@@ -451,6 +499,19 @@ async def _ingest_and_extract_graph(
     pipeline_envelope = await pipeline.process_video_async(
         Path(local_path), source_uri=job.source_url
     )
+    # The pipeline may already have fed content. Commit the marker before any
+    # transformation or graph work so every later crash is resumable.
+    try:
+        await mark_graph_pending(job)
+    except asyncio.CancelledError as exc:
+        raise GraphStageIncomplete(
+            f"graph marker write was interrupted after content feed for ingest "
+            f"{job.ingest_id}"
+        ) from exc
+    except Exception as exc:
+        raise GraphStageIncomplete(
+            f"graph marker write failed after content feed for ingest {job.ingest_id}"
+        ) from exc
 
     # process_video_async wraps the strategy outputs under
     # envelope["results"] (alongside top-level status/error/timing
@@ -472,34 +533,40 @@ async def _ingest_and_extract_graph(
     processing_results.setdefault("__schema_name__", f"{job.profile}_{safe_tenant}")
     processing_results.setdefault("__video_id__", processing_results.get("video_id"))
 
-    # Run per-segment graph extraction + cross-modal linker + face
-    # pipeline + back-ref PATCH on top of the content ingestion. Graph
-    # path is fail-safe: any internal exception is logged + the content
-    # ingestion's results are returned unchanged so an LM blip doesn't
-    # fail the whole upload.
+    # Stable document ids make graph and back-reference writes safe to retry.
     source_doc_id = processing_results.get("video_id") or job.ingest_id
     try:
-        graph_counts = await _extract_graph_per_segment(
-            processing_results=processing_results,
-            source_doc_id=source_doc_id,
-            tenant_id=job.tenant_id,
-            config_manager=config_manager,
+        graph_counts = await asyncio.wait_for(
+            _extract_graph_per_segment(
+                processing_results=processing_results,
+                source_doc_id=source_doc_id,
+                tenant_id=job.tenant_id,
+                config_manager=config_manager,
+            ),
+            timeout=graph_deadline_s,
         )
-        processing_results["graph_nodes"] = graph_counts.get("nodes_upserted", 0)
-        processing_results["graph_edges"] = graph_counts.get("edges_upserted", 0)
-        processing_results["graph_failed"] = graph_counts.get("graph_failed", 0)
-    except Exception as exc:  # noqa: BLE001 — log + degrade, never fail ingest
-        import logging
+    except TimeoutError:
+        raise GraphStageIncomplete(
+            f"graph extraction exceeded the {graph_deadline_s:g}s deadline "
+            f"for ingest {job.ingest_id}"
+        ) from None
+    except asyncio.CancelledError as exc:
+        raise GraphStageIncomplete(
+            f"graph extraction was interrupted for ingest {job.ingest_id}"
+        ) from exc
+    except Exception as exc:
+        raise GraphStageIncomplete(
+            f"graph extraction failed for ingest {job.ingest_id}"
+        ) from exc
 
-        logging.getLogger(__name__).warning(
-            "per-segment KG extraction failed for ingest=%s: %s — content "
-            "ingestion already succeeded, returning without graph counts",
-            job.ingest_id,
-            exc,
+    processing_results["graph_nodes"] = graph_counts.get("nodes_upserted", 0)
+    processing_results["graph_edges"] = graph_counts.get("edges_upserted", 0)
+    processing_results["graph_failed"] = graph_counts.get("graph_failed", 0)
+    if processing_results["graph_failed"]:
+        raise GraphStageIncomplete(
+            f"graph extraction left {processing_results['graph_failed']} failed "
+            f"writes for ingest {job.ingest_id}"
         )
-        processing_results["graph_nodes"] = 0
-        processing_results["graph_edges"] = 0
-        processing_results["graph_failed"] = 0
 
     # Re-attach graph counts onto the original envelope the caller's
     # _summarise reads from (so /ingestion/{id}/status surfaces them).
@@ -551,9 +618,9 @@ async def _process_job(
     processor,
 ) -> None:
     """Run one job end-to-end and publish events for every state
-    change. ACKs the queue message on terminal state — success or
-    failure — so the PEL doesn't grow unbounded under repeated
-    transient errors. Cleanup steps are each best-effort; a step that
+    change. ACKs terminal success or pre-content failure. A graph-stage
+    failure is nonterminal and retains the PEL entry for an idempotent
+    re-drive. Cleanup steps are each best-effort; a step that
     fails (including the ack) is named on the terminal event's
     ``cleanup_error`` and whatever it left behind is recovered by the
     reaper (``reaper.py``).
@@ -570,6 +637,7 @@ async def _process_job(
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
     success = False
+    retrying = False
     terminal_event: dict
     # The heartbeat starts before ANY other work: telemetry cold init and
     # the running publish can stall, and the claim must never look
@@ -625,6 +693,16 @@ async def _process_job(
                     "result": _summarise(result),
                 }
                 job_span.set_attribute("job.outcome", "success")
+            except GraphStageIncomplete as exc:
+                retrying = True
+                terminal_event = {
+                    "state": "retrying",
+                    "ingest_id": job.ingest_id,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+                job_span.set_attribute("job.outcome", "retrying")
+                job_span.set_attribute("job.error_type", type(exc).__name__)
             except Exception as exc:
                 logger.exception("Ingest job %s failed", job.ingest_id)
                 # Guard str(exc): an exception whose __str__ itself raises would
@@ -647,6 +725,14 @@ async def _process_job(
     finally:
         stop_heartbeat.set()
         await heartbeat
+
+    if retrying:
+        # _default_processor writes this before entering the graph boundary.
+        # Repeating it here makes injected processors obey the same state
+        # machine and closes the exception-to-status-publish crash window.
+        await _mark_graph_pending(redis, job)
+        await queue.publish_status(redis, job.ingest_id, terminal_event)
+        return
 
     # Each cleanup step is independently best-effort: a failure in one must
     # not skip the others (a clear_inflight blip would otherwise leave the
@@ -675,6 +761,10 @@ async def _process_job(
             ),
         )
     await _cleanup_step("clear_inflight", idempotency.clear_inflight(redis, job.sha))
+    await _cleanup_step(
+        "clear_graph_pending",
+        _clear_graph_pending(redis, job.message_id),
+    )
     await _cleanup_step(
         "decrement_active", queue.decrement_active(redis, job.tenant_id)
     )
@@ -781,13 +871,18 @@ async def run(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     config = WorkerConfig()
-    if processor is None:
-        processor = partial(_default_processor, config=config)
     if stop is None:
         stop = asyncio.Event()
         _install_signal_handlers(stop)
 
     redis = await get_redis(config.redis_url)
+    if processor is None:
+        processor = partial(
+            _default_processor,
+            service_urls=config.inference_service_urls,
+            mark_graph_pending=partial(_mark_graph_pending, redis),
+            graph_deadline_s=config.graph_deadline_s,
+        )
     logger.info(
         "Worker %s started: group=%s redis=%s reaper=%s",
         config.consumer_id,
