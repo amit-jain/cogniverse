@@ -1,202 +1,222 @@
-"""
-Synthetic Data Confidence Extractor
-
-Extract confidence scores from DSPy-generated synthetic data.
-Uses retry count and entity validation as confidence signals.
-"""
+"""Extract native confidence from exact canonical synthetic item schemas."""
 
 import logging
+import math
+from dataclasses import dataclass
 from typing import Any, Dict
 
+from pydantic import BaseModel, ValidationError
+
 from cogniverse_core.approval.interfaces import ConfidenceExtractor
+from cogniverse_synthetic.schemas import (
+    EntityExtractionExampleSchema,
+    ProfileSelectionExampleSchema,
+    QueryEnhancementExampleSchema,
+    RoutingExperienceSchema,
+    WorkflowExecutionSchema,
+)
 
 logger = logging.getLogger(__name__)
 
+_ROUTING_OBSERVED_SEMANTICS = {
+    "routing_confidence": "observed_gateway_confidence",
+    "search_quality": "unobserved_zero_sentinel",
+    "agent_success": "unobserved_false_sentinel",
+    "processing_time": "unobserved_zero_sentinel",
+}
+_ROUTING_UNOBSERVED_SEMANTICS = {
+    "routing_confidence": "unobserved_zero_sentinel",
+    "search_quality": "unobserved_zero_sentinel",
+    "agent_success": "unobserved_false_sentinel",
+    "processing_time": "unobserved_zero_sentinel",
+}
+_WORKFLOW_UNOBSERVED_SEMANTICS = {
+    "execution_time": "unobserved_zero_sentinel",
+    "success": "unobserved_false_sentinel",
+    "parallel_efficiency": "unobserved_zero_sentinel",
+    "confidence_score": "unobserved_zero_sentinel",
+}
+_WORKFLOW_OBSERVED_SEMANTICS = {
+    "execution_time": "observed_duration_seconds",
+    "success": "observed_execution_outcome",
+    "parallel_efficiency": "observed_parallel_efficiency",
+    "confidence_score": "observed_confidence_score",
+}
 
-def _read_generation_metadata(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Return the ``_generation_metadata`` dict whether it sits at the top
-    level or nested under the schema's ``metadata`` field (RoutingGenerator
-    stores it as ``metadata={"_generation_metadata": {...}}``)."""
-    top = data.get("_generation_metadata")
-    if isinstance(top, dict):
-        return top
-    nested = data.get("metadata")
-    if isinstance(nested, dict) and isinstance(
-        nested.get("_generation_metadata"), dict
+
+@dataclass(frozen=True)
+class _SchemaSpec:
+    model: type[BaseModel]
+    confidence_field: str | None
+    outcome_contract: str | None = None
+
+    @property
+    def name(self) -> str:
+        return self.model.__name__
+
+    @property
+    def fields(self) -> frozenset[str]:
+        return frozenset(self.model.model_fields)
+
+
+_SCHEMA_SPECS = (
+    _SchemaSpec(ProfileSelectionExampleSchema, None),
+    _SchemaSpec(QueryEnhancementExampleSchema, None),
+    _SchemaSpec(EntityExtractionExampleSchema, None),
+    _SchemaSpec(RoutingExperienceSchema, "routing_confidence", "routing"),
+    _SchemaSpec(WorkflowExecutionSchema, "confidence_score", "workflow"),
+)
+
+
+def _dispatch(data: Any) -> _SchemaSpec:
+    if not isinstance(data, dict):
+        raise ValueError(
+            "confidence item must match exactly one canonical synthetic schema; "
+            f"got {type(data).__name__}"
+        )
+    keys = frozenset(data)
+    matches = [spec for spec in _SCHEMA_SPECS if keys == spec.fields]
+    if len(matches) != 1:
+        rendered_keys = ", ".join(sorted(str(key) for key in keys))
+        raise ValueError(
+            "confidence item must match exactly one canonical synthetic schema; "
+            f"keys: {rendered_keys}"
+        )
+    return matches[0]
+
+
+def _read_outcome_metadata(data: Dict[str, Any], spec: _SchemaSpec) -> bool | None:
+    if spec.outcome_contract is None:
+        return None
+
+    metadata = data.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError(f"{spec.name}.metadata must be a dict")
+    if "_outcome_metadata" not in metadata:
+        raise ValueError(f"{spec.name}.metadata must contain _outcome_metadata")
+    outcome = metadata["_outcome_metadata"]
+    if not isinstance(outcome, dict):
+        raise ValueError(f"{spec.name}.metadata._outcome_metadata must be a dict")
+    if set(outcome) != {"observed", "required_field_semantics"}:
+        raise ValueError(
+            f"{spec.name}.metadata._outcome_metadata must contain exactly: "
+            "observed, required_field_semantics"
+        )
+    observed = outcome["observed"]
+    if not isinstance(observed, bool):
+        raise ValueError(
+            f"{spec.name}.metadata._outcome_metadata.observed must be a bool"
+        )
+    semantics = outcome["required_field_semantics"]
+    if not isinstance(semantics, dict):
+        raise ValueError(
+            f"{spec.name}.metadata._outcome_metadata."
+            "required_field_semantics must be a dict"
+        )
+
+    if spec.outcome_contract == "routing":
+        expected_semantics = (
+            _ROUTING_OBSERVED_SEMANTICS if observed else _ROUTING_UNOBSERVED_SEMANTICS
+        )
+        if semantics != expected_semantics:
+            raise ValueError(
+                "RoutingExperienceSchema.metadata._outcome_metadata."
+                "required_field_semantics must exactly match the routing contract"
+            )
+        if not observed:
+            _require_unobserved_sentinel(data, spec, "routing_confidence", 0.0)
+        _require_unobserved_sentinel(data, spec, "search_quality", 0.0)
+        _require_unobserved_sentinel(data, spec, "agent_success", False)
+        _require_unobserved_sentinel(data, spec, "processing_time", 0.0)
+        return observed
+
+    expected_semantics = (
+        _WORKFLOW_OBSERVED_SEMANTICS if observed else _WORKFLOW_UNOBSERVED_SEMANTICS
+    )
+    state = "observed" if observed else "unobserved"
+    if semantics != expected_semantics:
+        raise ValueError(
+            "WorkflowExecutionSchema.metadata._outcome_metadata."
+            f"required_field_semantics must exactly match the {state} contract"
+        )
+    if not observed:
+        _require_unobserved_sentinel(data, spec, "execution_time", 0.0)
+        _require_unobserved_sentinel(data, spec, "success", False)
+        _require_unobserved_sentinel(data, spec, "parallel_efficiency", 0.0)
+        _require_unobserved_sentinel(data, spec, "confidence_score", 0.0)
+    return observed
+
+
+def _require_unobserved_sentinel(
+    data: Dict[str, Any],
+    spec: _SchemaSpec,
+    field: str,
+    expected: float | bool,
+) -> None:
+    value = data.get(field)
+    if isinstance(expected, bool):
+        valid = value is expected
+    else:
+        valid = isinstance(value, float) and value == expected
+    if not valid:
+        raise ValueError(f"{spec.name}.{field} must match its unobserved sentinel")
+
+
+def _read_native_confidence(data: Dict[str, Any], spec: _SchemaSpec) -> float:
+    field = spec.confidence_field
+    if field is None:
+        return 0.0
+    value = data.get(field)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, float)
+        or not math.isfinite(value)
+        or not 0.0 <= value <= 1.0
     ):
-        return nested["_generation_metadata"]
-    return {}
+        raise ValueError(f"{spec.name}.{field} must be a finite float between 0 and 1")
+    return value
+
+
+def _validate_schema(data: Dict[str, Any], spec: _SchemaSpec) -> None:
+    try:
+        spec.model.model_validate(data)
+    except ValidationError as error:
+        raise ValueError(f"{spec.name} validation failed: {error}") from error
 
 
 class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
-    """
-    Extract confidence from DSPy synthetic data generation
+    """Return native confidence or the explicit human-review sentinel."""
 
-    Confidence signals:
-    - Retry count: Fewer retries = higher confidence
-    - Entity presence: Entities in query = confidence boost
-    - Query length: Reasonable length = confidence boost
-    - Reasoning quality: Present reasoning = confidence boost
-
-    Returns normalized 0-1 score where:
-    - 0.9-1.0: High confidence (first attempt success, entities present)
-    - 0.75-0.9: Medium confidence (1-2 retries)
-    - 0.0-0.75: Low confidence (3+ retries, no entities)
-    """
-
-    def __init__(
+    def _extract_details(
         self,
-        min_query_length: int = 10,
-        max_query_length: int = 200,
-        retry_penalty: float = 0.15,
-    ):
-        """
-        Initialize confidence extractor
-
-        Args:
-            min_query_length: Minimum expected query length
-            max_query_length: Maximum expected query length
-            retry_penalty: Penalty per retry attempt (0-1)
-        """
-        self.min_query_length = min_query_length
-        self.max_query_length = max_query_length
-        self.retry_penalty = retry_penalty
-
-        logger.info(
-            f"Initialized SyntheticDataConfidenceExtractor "
-            f"(retry_penalty: {retry_penalty})"
+        data: Dict[str, Any],
+    ) -> tuple[_SchemaSpec, float, bool | None]:
+        spec = _dispatch(data)
+        observed = _read_outcome_metadata(data, spec)
+        confidence = _read_native_confidence(data, spec)
+        _validate_schema(data, spec)
+        logger.debug(
+            "Extracted %s=%s from %s",
+            spec.confidence_field,
+            confidence,
+            spec.name,
         )
+        return spec, confidence, observed
 
     def extract(self, data: Dict[str, Any]) -> float:
-        """
-        Extract confidence from synthetic data item
-
-        Expected data format:
-        {
-            "query": "find TensorFlow tutorial",
-            "entities": ["TensorFlow", "Tutorial"],
-            "reasoning": "Including TensorFlow as primary entity",
-            "_generation_metadata": {
-                "retry_count": 0,
-                "max_retries": 3,
-                "confidence_signals": {...}
-            }
-        }
-
-        Args:
-            data: Synthetic data item dictionary
-
-        Returns:
-            Confidence score 0-1
-        """
-        confidence = 1.0  # Start with perfect confidence
-
-        # Signal 1: Retry count (most important)
-        metadata = _read_generation_metadata(data)
-        retry_count = metadata.get("retry_count", 0)
-
-        if retry_count > 0:
-            # Penalty for each retry
-            confidence -= retry_count * self.retry_penalty
-            logger.debug(
-                f"Retry penalty: {retry_count} retries -> confidence={confidence:.2f}"
-            )
-
-        # Signal 2: Entity presence in query
-        query = data.get("query", "")
-        entities = data.get("entities", [])
-
-        # Handle entities being a dict (entity_types mapping) or list
-        if isinstance(entities, dict):
-            # Extract entity names from dict values
-            entity_list = []
-            for entity_values in entities.values():
-                if isinstance(entity_values, list):
-                    entity_list.extend(entity_values)
-                elif isinstance(entity_values, str):
-                    entity_list.append(entity_values)
-        else:
-            entity_list = entities if isinstance(entities, list) else []
-
-        if entity_list:
-            # Check if at least one entity appears in query
-            query_lower = query.lower()
-            has_entity = any(
-                str(entity).lower() in query_lower for entity in entity_list
-            )
-
-            if has_entity:
-                # Small boost for entity presence
-                confidence = min(1.0, confidence * 1.05)
-                logger.debug(f"Entity present boost -> confidence={confidence:.2f}")
-            else:
-                # Penalty for missing entities
-                confidence *= 0.7
-                logger.debug(f"Missing entity penalty -> confidence={confidence:.2f}")
-
-        # Signal 3: Query length (reasonable length = good quality)
-        query_len = len(query)
-        if query_len < self.min_query_length:
-            confidence *= 0.8
-            logger.debug(f"Short query penalty -> confidence={confidence:.2f}")
-        elif query_len > self.max_query_length:
-            confidence *= 0.9
-            logger.debug(f"Long query penalty -> confidence={confidence:.2f}")
-
-        # Signal 4: Reasoning presence (indicates LLM thought process)
-        reasoning = data.get("reasoning", "")
-        if reasoning and len(reasoning) > 20:
-            confidence = min(1.0, confidence * 1.02)
-            logger.debug(f"Reasoning present boost -> confidence={confidence:.2f}")
-
-        # Clamp to 0-1
-        confidence = max(0.0, min(1.0, confidence))
-
-        logger.debug(
-            f"Extracted confidence={confidence:.2f} for query: '{query[:50]}...'"
-        )
-
-        return round(confidence, 2)
+        """Return the schema's native confidence after strict validation."""
+        _, confidence, _ = self._extract_details(data)
+        return confidence
 
     def get_confidence_breakdown(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Get detailed confidence breakdown for debugging
-
-        Args:
-            data: Synthetic data item
-
-        Returns:
-            Dictionary with confidence factors
-        """
-        metadata = _read_generation_metadata(data)
-        query = data.get("query", "")
-        entities = data.get("entities", [])
-        reasoning = data.get("reasoning", "")
-
-        # Handle entities being a dict (entity_types mapping) or list
-        if isinstance(entities, dict):
-            entity_list = []
-            for entity_values in entities.values():
-                if isinstance(entity_values, list):
-                    entity_list.extend(entity_values)
-                elif isinstance(entity_values, str):
-                    entity_list.append(entity_values)
-        else:
-            entity_list = entities if isinstance(entities, list) else []
-
-        retry_count = metadata.get("retry_count", 0)
-        has_entity = (
-            any(str(entity).lower() in query.lower() for entity in entity_list)
-            if entity_list
-            else False
-        )
-
+        """Describe the exact schema field and review state used."""
+        spec, confidence, observed = self._extract_details(data)
         return {
-            "final_confidence": self.extract(data),
-            "retry_count": retry_count,
-            "retry_penalty_applied": retry_count * self.retry_penalty,
-            "has_entity": has_entity,
-            "query_length": len(query),
-            "has_reasoning": len(reasoning) > 20,
-            "entities_provided": len(entity_list),
+            "schema": spec.name,
+            "confidence_field": spec.confidence_field,
+            "final_confidence": confidence,
+            "outcome_observed": observed,
+            "requires_human_review": (
+                spec.confidence_field is None or observed is False
+            ),
         }
