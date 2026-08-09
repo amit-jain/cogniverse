@@ -1288,9 +1288,9 @@ training_data = [
     dspy.Example(
         query="Show me videos",
         analysis_result="simple search",
-        available_agents="video_search",
+        available_agents=["video_search"],
         # All output fields
-        recommended_workflow="direct_search",
+        recommended_workflow="raw_results",
         primary_agent="video_search",
         routing_confidence="0.9",
     ).with_inputs("query", "analysis_result", "available_agents"),
@@ -1298,8 +1298,8 @@ training_data = [
     dspy.Example(
         query="Analyze data trends",
         analysis_result="complex analysis",
-        available_agents="detailed_report",
-        recommended_workflow="detailed_analysis",
+        available_agents=["detailed_report"],
+        recommended_workflow="detailed_report",
         primary_agent="detailed_report",
         routing_confidence="0.85",
     ).with_inputs("query", "analysis_result", "available_agents"),
