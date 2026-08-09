@@ -101,7 +101,7 @@ Observability settings (`TelemetryConfig` in `cogniverse_foundation.telemetry.co
 | `OPENINFERENCE_DSPY` | `1` enables OpenInference DSPy instrumentation — LM call spans (full prompt/completion) exported to the `cogniverse-dspy-instrumentation` Phoenix project. Set by the chart on the runtime deployment. |
 | `ITER_RETRIEVAL_MAX_ITER` / `ITER_RETRIEVAL_TOKEN_BUDGET` / `ITER_RETRIEVAL_WALL_CLOCK_MS` | Override `SystemConfig` iterative-retrieval budgets at runtime startup. The chart sets the wall clock from `runtime.iterRetrieval.wallClockMs`. |
 | `BACKEND_URL` / `BACKEND_PORT` | Backend connection info consumed by `BootstrapConfig` to construct the `ConfigStore` itself (see "Bootstrap: Breaking the Chicken-and-Egg Problem" below), and re-applied onto `SystemConfig.backend_url`/`backend_port`. |
-| `INFERENCE_SERVICE_URLS` | JSON object mapping inference-service logical names (e.g. `vllm_colpali`, `vllm_llm_student`, `vllm_asr`) to URLs. Populates `SystemConfig.inference_service_urls`. |
+| `INFERENCE_SERVICE_URLS` | Strict JSON object mapping unique, non-empty inference-service names (e.g. `vllm_colpali`, `vllm_llm_student`, `vllm_asr`) to absolute HTTP(S) URLs without whitespace, credentials, or fragments. Ports, when present, must be in `1..65535`. If absent, persisted `SystemConfig.inference_service_urls` remains unchanged; explicit `{}` clears it. |
 | `REDIS_URL` | Enables the Redis-backed `InboundQueueRegistry` for cross-pod inbound-messaging routing. Empty (default) uses the in-pod registry. Populates `SystemConfig.redis_url`. |
 | `COGNIVERSE_ADAPTER_CACHE` | Local directory the finetuning adapter resolver downloads to. Populates `SystemConfig.adapter_cache_dir`; empty means `resolve_adapter_path` raises rather than falling back to `/tmp`. |
 | `MINIO_ENDPOINT` | MinIO object-store endpoint for `POST /ingestion/upload`. Populates `SystemConfig.minio_endpoint`; empty means the upload route responds 503. |
@@ -679,7 +679,7 @@ with dspy.context(lm=lm):
 ```
 
 - `LLMEndpointConfig`: Dataclass with `model` (required), `api_base`, `api_key`, `temperature` (default `0.1`), `max_tokens` (default `1000`), `adapter_path` (bookkeeping only — LM construction never reads it, vLLM serves adapters server-side by model name), `extra_body` (provider-specific request params, e.g., `{"think": False}` for qwen3), `extra_headers` (static HTTP headers forwarded to litellm as `extra_headers`, used for semantic-router authz), `seed` (vLLM sampling seed, forwarded into `extra_body`), `request_timeout` (default `120.0`), `num_retries` (default `1`). Provider is encoded in the model string using litellm's provider prefix (e.g., `"openai/google/gemma-4-e4b-it"` for vLLM/Ollama via OpenAI-compat wire, `"anthropic/claude-3-5-sonnet-20241022"` for Anthropic SaaS). The chart always emits `openai/` for in-cluster backends; `api_base` selects the actual destination.
-- `LLMConfig`: Holds `primary`, `teacher`, and `overrides` dict. `resolve(component_name)` returns a copy of `primary` with the component's override fields applied on the dataclass (the real `api_key` is preserved — the merge never routes through the masking `to_dict()`). `resolve_teacher()` returns an isolated copy of `teacher`; the DSPy optimizers pass it to `BootstrapFewShot(teacher_settings={"lm": ...})` so bootstrap demo generation runs on the teacher model
+- `LLMConfig`: Holds required `primary`, optional `teacher`, and the `overrides` dict. `resolve(component_name)` returns a copy of `primary` with the component's override fields applied on the dataclass (the real `api_key` is preserved — the merge never routes through the masking `to_dict()`). `resolve_teacher()` returns an isolated copy of `teacher`; if that role is absent it raises instead of using `primary`. Teacher-dependent DSPy optimizers pass the resolved endpoint to `BootstrapFewShot(teacher_settings={"lm": ...})` so bootstrap demo generation runs on the separately verified teacher model.
 - `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM`: Factory that creates a DSPy LM from endpoint config. All DSPy LM creation goes through this factory. When `api_base` is set and `api_key` is `None`, the factory fills the placeholder key `not-required` — the OpenAI client refuses to construct without one, while self-hosted OAI-compat servers (vLLM, Ollama) ignore its value. Endpoints that enforce auth need an explicit `api_key`.
 
 **Chart helpers — prefixed vs. bare model id**
@@ -1152,6 +1152,14 @@ routing), `ProfileScoringRule` (profile-selection scoring),
 `SyntheticGeneratorConfig` (the top-level per-tenant container for all of
 the above).
 
+The deployed `synthetic.optimizer_configs.modality.agent_mappings` must cover
+every configured backend profile type. The canonical routes are `VIDEO` to
+`search_agent`, `DOCUMENT` and `WIKI` to `document_agent`, `IMAGE` to
+`image_search_agent`, `AUDIO` to `audio_analysis_agent`, and `CODE` to
+`coding_agent`. Each target must be enabled and declare both the mapped
+modality and its required capability; startup rejects an incomplete or
+contradictory mapping before it accesses the backend.
+
 ### Core Layer (cogniverse-core)
 
 - `SchemaRegistry` — per-tenant schema deployment bookkeeping, consumes `ConfigManager` under `ConfigScope.SCHEMA`
@@ -1165,4 +1173,3 @@ the above).
 - [Multi-Tenant Architecture](architecture/multi-tenant.md) - Tenant isolation
 - [Agents Module](modules/agents.md) - Agent configuration
 - [Optimization Module](modules/optimization.md) - DSPy optimizer configuration
-

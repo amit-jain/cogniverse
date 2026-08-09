@@ -1,10 +1,11 @@
 {
   "name": "colqwen_chunks",
-  "description": "ColQwen with chunk-based storage and audio transcripts",
+  "description": "Tomoro ColQwen3 with chunk-based storage and audio transcripts",
   "process_type": "video_chunks",
   "schema_name": "video_colqwen_chunks",
-  "embedding_model": "vidore/colqwen-omni-v0.1",
+  "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
   "model_config": {
+    "embedding_dim": 320,
     "segment_duration": 30.0,
     "extract_audio": true,
     "transcribe_audio": true,

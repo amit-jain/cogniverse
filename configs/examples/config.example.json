@@ -83,7 +83,8 @@
         "pdf_processing"
       ],
       "modalities": [
-        "DOCUMENT"
+        "DOCUMENT",
+        "WIKI"
       ]
     },
     "deep_research_agent": {
@@ -106,7 +107,9 @@
         "code_generation",
         "code_search"
       ],
-      "modalities": []
+      "modalities": [
+        "CODE"
+      ]
     },
     "gateway_agent": {
       "url": "http://localhost:8000",
@@ -531,6 +534,193 @@
       "model": "claude-3-5-sonnet-20241022",
       "api_base": null,
       "api_key": null
+    }
+  },
+  "synthetic": {
+    "field_mappings": {
+      "topic_fields": [
+        "video_title",
+        "audio_title",
+        "image_title",
+        "document_title",
+        "chunk_name",
+        "title"
+      ],
+      "description_fields": [
+        "segment_description",
+        "image_description",
+        "full_text",
+        "source_code",
+        "content",
+        "description"
+      ],
+      "transcript_fields": [
+        "audio_transcript",
+        "transcript"
+      ],
+      "entity_fields": [
+        "video_title",
+        "segment_description"
+      ],
+      "temporal_fields": {
+        "start": "start_time",
+        "end": "end_time"
+      },
+      "metadata_fields": {}
+    },
+    "optimizer_configs": {
+      "modality": {
+        "optimizer_type": "modality",
+        "agent_mappings": [
+          {
+            "modality": "VIDEO",
+            "agent_name": "search_agent"
+          },
+          {
+            "modality": "DOCUMENT",
+            "agent_name": "document_agent"
+          },
+          {
+            "modality": "IMAGE",
+            "agent_name": "image_search_agent"
+          },
+          {
+            "modality": "AUDIO",
+            "agent_name": "audio_analysis_agent"
+          },
+          {
+            "modality": "CODE",
+            "agent_name": "coding_agent"
+          },
+          {
+            "modality": "WIKI",
+            "agent_name": "document_agent"
+          }
+        ]
+      },
+      "cross_modal": {
+        "optimizer_type": "cross_modal",
+        "profile_scoring_rules": [
+          {
+            "condition": {"field": "embedding_type", "contains": "multi_vector"},
+            "score_adjustment": 2.0,
+            "reason": "multi-vector fusion capability"
+          },
+          {
+            "condition": {"field": "pipeline_config.transcribe_audio", "equals": true},
+            "score_adjustment": 1.5,
+            "reason": "audio transcription"
+          }
+        ]
+      },
+      "entity_extraction": {
+        "optimizer_type": "entity_extraction",
+        "profile_scoring_rules": [
+          {
+            "condition": {"field": "pipeline_config.generate_descriptions", "equals": true},
+            "score_adjustment": 2.0,
+            "reason": "rich descriptions"
+          },
+          {
+            "condition": {"field": "pipeline_config.transcribe_audio", "equals": true},
+            "score_adjustment": 1.0,
+            "reason": "text content"
+          }
+        ]
+      },
+      "profile": {
+        "optimizer_type": "profile",
+        "profile_scoring_rules": [
+          {
+            "condition": {"profile_name_contains": "colpali"},
+            "score_adjustment": 0.5,
+            "reason": "ColPali model"
+          },
+          {
+            "condition": {"profile_name_contains": "colqwen"},
+            "score_adjustment": 0.5,
+            "reason": "ColQwen model"
+          },
+          {
+            "condition": {"profile_name_contains": "videoprism"},
+            "score_adjustment": 0.5,
+            "reason": "VideoPrism model"
+          }
+        ]
+      },
+      "query_enhancement": {
+        "optimizer_type": "query_enhancement",
+        "profile_scoring_rules": [
+          {
+            "condition": {"field": "pipeline_config.generate_descriptions", "equals": true},
+            "score_adjustment": 2.0,
+            "reason": "rich descriptions"
+          },
+          {
+            "condition": {"field": "pipeline_config.transcribe_audio", "equals": true},
+            "score_adjustment": 1.0,
+            "reason": "text content"
+          }
+        ]
+      },
+      "routing": {
+        "optimizer_type": "routing",
+        "dspy_modules": {
+          "query_generator": {
+            "signature_class": "cogniverse_synthetic.dspy_signatures.GenerateEntityQuery",
+            "module_type": "ChainOfThought",
+            "lm_config": {},
+            "metadata": {}
+          }
+        },
+        "profile_scoring_rules": [
+          {
+            "condition": {"field": "pipeline_config.generate_descriptions", "equals": true},
+            "score_adjustment": 2.0,
+            "reason": "rich descriptions"
+          },
+          {
+            "condition": {"field": "pipeline_config.transcribe_audio", "equals": true},
+            "score_adjustment": 1.0,
+            "reason": "text content"
+          },
+          {
+            "condition": {"profile_name_contains": "colpali"},
+            "score_adjustment": 0.5,
+            "reason": "ColPali model"
+          }
+        ]
+      },
+      "unified": {
+        "optimizer_type": "unified",
+        "profile_scoring_rules": [
+          {
+            "condition": {"field": "embedding_type", "contains": "multi_vector"},
+            "score_adjustment": 2.0,
+            "reason": "multi-vector retrieval"
+          },
+          {
+            "condition": {"field": "pipeline_config.generate_descriptions", "equals": true},
+            "score_adjustment": 1.0,
+            "reason": "rich descriptions"
+          }
+        ]
+      },
+      "workflow": {
+        "optimizer_type": "workflow",
+        "profile_scoring_rules": [
+          {
+            "condition": {"profile_name_contains": "chunk"},
+            "score_adjustment": 1.5,
+            "reason": "temporal chunking"
+          },
+          {
+            "condition": {"profile_name_contains": "frame"},
+            "score_adjustment": 1.0,
+            "reason": "frame-level detail"
+          }
+        ]
+      }
     }
   },
   "backend": {
