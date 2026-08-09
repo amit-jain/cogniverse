@@ -183,13 +183,11 @@ async def test_query_profile_grounds_samples_without_duplicate_kwarg() -> None:
     assert samples[0]["description"] == "bots play soccer"
 
     call = backend.calls[0]
-    assert call["schema"] == "video_frame_acme_media"
-    assert (
-        call["yql"] == "select * from sources video_frame_acme_media where true limit 5"
-    )
+    assert call["schema"] == "video_frame"
+    assert call["yql"] == "select * from sources video_frame where true limit 5"
     assert "yql" not in call["kwargs"], "yql must not be duplicated into kwargs"
     assert call["kwargs"] == {"hits": 5, "tenant_id": "acme:media"}
-    assert backend.schema_resolutions == [("acme:media", "video_frame")]
+    assert backend.schema_resolutions == []
 
 
 async def test_temporal_recent_strategy_builds_exact_cutoff_and_order(
@@ -214,7 +212,7 @@ async def test_temporal_recent_strategy_builds_exact_cutoff_and_order(
     )
 
     assert backend.calls[0]["yql"] == (
-        "select * from sources video_frame_acme_media "
+        "select * from sources video_frame "
         "where creation_timestamp >= 1992224000000 "
         "order by creation_timestamp desc limit 3"
     )
@@ -249,7 +247,7 @@ async def test_entity_rich_uses_only_text_fields_produced_by_profile() -> None:
 
     assert [sample["transcript"] for sample in samples] == ["Curie discovered radium"]
     assert backend.calls[0]["yql"] == (
-        "select * from sources audio_content_acme_media where true "
+        "select * from sources audio_content where true "
         "order by creation_timestamp desc limit 10"
     )
     assert backend.calls[0]["kwargs"] == {"hits": 10, "tenant_id": "acme:media"}
@@ -295,9 +293,9 @@ async def test_entity_rich_pages_past_blank_rows_to_fill_requested_sample() -> N
         {"hits": 10, "tenant_id": "acme:media", "offset": 10},
     ]
     assert [call["yql"] for call in backend.calls] == [
-        "select * from sources audio_content_acme_media where true "
+        "select * from sources audio_content where true "
         "order by creation_timestamp desc limit 10",
-        "select * from sources audio_content_acme_media where true "
+        "select * from sources audio_content where true "
         "order by creation_timestamp desc limit 20 offset 10",
     ]
 
@@ -309,10 +307,7 @@ async def test_entity_rich_rejects_a_repeated_backend_page() -> None:
 
     with pytest.raises(
         RuntimeError,
-        match=(
-            "^Vespa repeated the entity-rich page for "
-            "audio_content_acme_media at offset 10$"
-        ),
+        match=("^Vespa repeated the entity-rich page for audio_content at offset 10$"),
     ):
         await _querier(backend)._query_profile(
             {
@@ -391,7 +386,7 @@ async def test_concurrent_entity_rich_queries_keep_profile_fields_isolated() -> 
             else "video-rich"
         )
         assert [sample["topic"] for sample in samples] == [expected_topic]
-        schema = f"{profile_config['schema_name']}_{tenant_id.replace(':', '_')}"
+        schema = profile_config["schema_name"]
         assert any(
             call["schema"] == schema
             and call["yql"]
@@ -495,7 +490,7 @@ async def test_query_profile_propagates_signature_typeerror() -> None:
 
 async def test_query_profile_propagates_schema_resolution_failure() -> None:
     class _BrokenResolver(_RecordingBackend):
-        def get_tenant_schema_name(self, tenant_id, base_schema_name):
+        def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
             raise RuntimeError("tenant schema registry unavailable")
 
     with pytest.raises(RuntimeError, match="tenant schema registry unavailable"):
@@ -556,14 +551,14 @@ async def test_query_profiles_returns_exact_requested_total() -> None:
 
     assert [sample["topic"] for sample in samples] == ["first"]
     assert len(backend.calls) == 1
-    assert backend.calls[0]["schema"] == "image_acme_media"
+    assert backend.calls[0]["schema"] == "image"
     assert backend.calls[0]["kwargs"]["hits"] == 1
 
 
 async def test_query_profiles_does_not_return_partial_data_after_outage() -> None:
     class _FailsSecondProfile(_RecordingBackend):
         def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
-            if schema == "audio_acme_media":
+            if schema == "audio":
                 raise RuntimeError("audio schema unavailable")
             return super().query_metadata_documents(
                 schema=schema, query=query, yql=yql, **kwargs
@@ -609,7 +604,7 @@ def test_build_yql_rejects_unknown_strategy() -> None:
     backend = _RecordingBackend([])
     with pytest.raises(ValueError, match="Unsupported sampling strategy 'random'"):
         _querier(backend)._build_yql(
-            "image_acme_media",
+            "image",
             sample_size=1,
             strategy="random",
             profile_config={"schema_name": "image", "type": "image"},
@@ -678,20 +673,11 @@ async def test_concurrent_queries_forward_each_request_tenant_without_bleed() ->
         ["tenant result"]
     ] * 8
     assert sorted(call["kwargs"]["tenant_id"] for call in backend.calls) == tenants
-    expected_schemas = sorted(
-        f"image_{tenant_id.replace(':', '_')}" for tenant_id in tenants
-    )
-    assert sorted(call["schema"] for call in backend.calls) == expected_schemas
-    assert (
-        sorted(
-            call["yql"].split(" sources ", 1)[1].split(" where ", 1)[0]
-            for call in backend.calls
-        )
-        == expected_schemas
-    )
-    assert sorted(backend.schema_resolutions) == sorted(
-        (tenant_id, "image") for tenant_id in tenants
-    )
+    assert [call["schema"] for call in backend.calls] == ["image"] * 8
+    assert [
+        call["yql"].split(" sources ", 1)[1].split(" where ", 1)[0]
+        for call in backend.calls
+    ] == ["image"] * 8
 
 
 async def test_query_by_modality_reads_only_matching_tenant_profile() -> None:
@@ -717,7 +703,7 @@ async def test_query_by_modality_reads_only_matching_tenant_profile() -> None:
 
     assert [sample["topic"] for sample in samples] == ["video result"]
     assert len(backend.calls) == 1
-    assert backend.calls[0]["schema"] == "video_segments_acme_media"
+    assert backend.calls[0]["schema"] == "video_segments"
     assert backend.calls[0]["kwargs"]["tenant_id"] == "acme:media"
 
 
