@@ -5,6 +5,7 @@ Uses LLM-based reasoning (SmolLM) to analyze queries and select the most appropr
 backend profile based on query characteristics, modality, and complexity.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,7 @@ from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.approval.training_schema import PROFILE_TRAINING_MODALITIES
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_foundation.telemetry.span_contract import (
     OP_PROFILE_SELECTION,
@@ -332,21 +334,18 @@ class ProfileSelectionAgent(
         query_intent = result.query_intent or "text_search"
         complexity = result.complexity or "medium"
 
-        # Consistency check — the profile name encodes the true modality
-        # (e.g. `video_colpali_...`, `audio_clap_...`). Small local models
-        # frequently get the separate `modality` field wrong even when the
-        # profile is right; honour the profile as the source of truth.
-        profile_modality = selected_profile.split("_", 1)[0] if selected_profile else ""
-        if profile_modality in {"video", "image", "audio", "document", "code"}:
-            if profile_modality != modality:
-                logger.info(
-                    "Overriding LLM modality %r with profile-derived %r",
-                    modality,
-                    profile_modality,
-                )
-            modality = profile_modality
-            if query_intent == "text_search" and profile_modality != "text":
-                query_intent = f"{profile_modality}_search"
+        profile_modality = await asyncio.to_thread(
+            self._configured_profile_modality, selected_profile, input.tenant_id
+        )
+        if profile_modality != modality:
+            logger.info(
+                "Overriding LLM modality %r with profile-derived %r",
+                modality,
+                profile_modality,
+            )
+        modality = profile_modality
+        if query_intent == "text_search" and profile_modality != "text":
+            query_intent = f"{profile_modality}_search"
 
         # Generate alternative profiles (top 3)
         self.emit_progress("alternatives", "Generating alternative profiles...")
@@ -376,6 +375,31 @@ class ProfileSelectionAgent(
         )
 
         return output
+
+    def _configured_profile_modality(
+        self, selected_profile: str, tenant_id: str | None
+    ) -> str:
+        """Return the canonical type declared by the selected live profile."""
+        tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
+        try:
+            config_manager = self._config_manager
+        except AttributeError as exc:
+            raise RuntimeError(
+                "Profile selection requires an injected config manager"
+            ) from exc
+        profile = config_manager.get_backend_profile(selected_profile, tenant_id)
+        if profile is None:
+            raise ValueError(
+                f"Selected profile {selected_profile!r} is not configured for "
+                f"tenant {tenant_id!r}"
+            )
+        modality = profile.type
+        if modality not in PROFILE_TRAINING_MODALITIES:
+            raise ValueError(
+                f"Selected profile {selected_profile!r} has unsupported configured "
+                f"type {modality!r}"
+            )
+        return modality
 
     def _emit_profile_span(
         self,

@@ -104,7 +104,7 @@ class TestImageSearchAgent:
         """Test semantic image search using ColPali"""
         # Mock query encoder
         mock_encoder = MagicMock()
-        mock_embedding = np.random.randn(1024, 128)
+        mock_embedding = np.random.randn(1024, 320)
         mock_encoder.encode.return_value = mock_embedding
         mock_query_encoder.return_value = mock_encoder
 
@@ -156,7 +156,7 @@ class TestImageSearchAgent:
         qt = params["input.query(qt)"]
         assert isinstance(qt, dict)
         assert len(qt) == 1024  # one entry per ColPali patch token
-        assert len(qt["0"]) == 128
+        assert len(qt["0"]) == 320
 
     @pytest.mark.asyncio
     @patch.object(ImageSearchAgent, "query_encoder", new_callable=PropertyMock)
@@ -165,7 +165,7 @@ class TestImageSearchAgent:
         """Test hybrid image search (BM25 + ColPali)"""
         # Mock query encoder
         mock_encoder = MagicMock()
-        mock_embedding = np.random.randn(1024, 128)
+        mock_embedding = np.random.randn(1024, 320)
         mock_encoder.encode.return_value = mock_embedding
         mock_query_encoder.return_value = mock_encoder
 
@@ -338,7 +338,7 @@ class TestImageSearchFilterEscaping:
 
         val = "cat's toy"
         await agent._search_vespa(
-            np.zeros((2, 128), dtype=np.float32),
+            np.zeros((2, 320), dtype=np.float32),
             "",
             "semantic",
             5,
@@ -384,7 +384,7 @@ class TestImageSearchEventLoop:
         results, _ = await asyncio.wait_for(
             asyncio.gather(
                 agent._search_vespa(
-                    np.zeros((2, 128), dtype=np.float32), "q", "semantic", 5, None
+                    np.zeros((2, 320), dtype=np.float32), "q", "semantic", 5, None
                 ),
                 releaser(),
             ),
@@ -402,7 +402,7 @@ async def test_search_images_offloads_blocking_encode():
 
     def blocking_encode(query):
         assert release.wait(timeout=5), "event loop was blocked by query encode"
-        return np.zeros((2, 128), dtype=np.float32)
+        return np.zeros((2, 320), dtype=np.float32)
 
     agent = object.__new__(ImageSearchAgent)
     agent._query_encoder = SimpleNamespace(encode=blocking_encode)
@@ -430,7 +430,7 @@ async def test_find_similar_images_offloads_blocking_image_encode():
 
     def blocking_encode_image(image):
         assert release.wait(timeout=5), "event loop was blocked by image encode"
-        return np.zeros((2, 128), dtype=np.float32)
+        return np.zeros((2, 320), dtype=np.float32)
 
     agent = object.__new__(ImageSearchAgent)
     agent._encode_image = blocking_encode_image

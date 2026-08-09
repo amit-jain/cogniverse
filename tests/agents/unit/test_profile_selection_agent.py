@@ -1,6 +1,9 @@
 """Unit tests for ProfileSelectionAgent"""
 
-from unittest.mock import Mock, patch
+import asyncio
+import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 import dspy
 import pytest
@@ -43,6 +46,10 @@ def profile_agent():
             ],
         )
         agent = ProfileSelectionAgent(deps=deps, port=8011)
+        agent._config_manager = Mock()
+        agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
+            type="video"
+        )
         return agent
 
 
@@ -146,7 +153,9 @@ class TestProfileSelectionAgent:
         )
 
         result = await profile_agent._process_impl(
-            ProfileSelectionInput(query="Show me machine learning videos")
+            ProfileSelectionInput(
+                query="Show me machine learning videos", tenant_id="test_tenant"
+            )
         )
 
         assert isinstance(result, ProfileSelectionOutput)
@@ -156,6 +165,99 @@ class TestProfileSelectionAgent:
         assert result.query_intent == "video_search"
         assert result.modality == "video"
         assert result.complexity == "medium"
+
+    @pytest.mark.parametrize("configured_modality", ["text", "wiki"])
+    @pytest.mark.asyncio
+    async def test_process_uses_selected_live_profile_type(
+        self, profile_agent, configured_modality
+    ):
+        profile_agent._config_manager = Mock()
+        profile_agent._config_manager.get_backend_profile.return_value = (
+            SimpleNamespace(type=configured_modality)
+        )
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_colpali_base",
+                confidence="0.9",
+                reasoning="Selected the configured knowledge profile.",
+                query_intent="text_search",
+                modality="video",
+                complexity="medium",
+            )
+        )
+
+        result = await profile_agent._process_impl(
+            ProfileSelectionInput(query="Find the Curie notes", tenant_id="acme:docs")
+        )
+
+        assert result.modality == configured_modality
+        assert result.query_intent == (
+            "text_search"
+            if configured_modality == "text"
+            else f"{configured_modality}_search"
+        )
+        profile_agent._config_manager.get_backend_profile.assert_called_once_with(
+            "video_colpali_base", "acme:docs"
+        )
+
+    @pytest.mark.asyncio
+    async def test_live_profile_lookup_does_not_block_event_loop(self, profile_agent):
+        profile_agent.call_dspy = AsyncMock(
+            return_value=SimpleNamespace(
+                selected_profile="video_colpali_base",
+                confidence="0.9",
+                reasoning="Selected the configured profile.",
+                query_intent="video_search",
+                modality="video",
+                complexity="medium",
+            )
+        )
+
+        def slow_profile_read(*_args):
+            time.sleep(0.2)
+            return SimpleNamespace(type="video")
+
+        profile_agent._config_manager.get_backend_profile.side_effect = (
+            slow_profile_read
+        )
+        heartbeat_elapsed = None
+        started = time.monotonic()
+
+        async def heartbeat():
+            nonlocal heartbeat_elapsed
+            await asyncio.sleep(0.01)
+            heartbeat_elapsed = time.monotonic() - started
+
+        await asyncio.gather(
+            heartbeat(),
+            profile_agent._process_impl(
+                ProfileSelectionInput(query="Find videos", tenant_id="test_tenant")
+            ),
+        )
+
+        assert heartbeat_elapsed is not None
+        assert heartbeat_elapsed < 0.1
+
+    @pytest.mark.asyncio
+    async def test_live_profile_lookup_failure_propagates(self, profile_agent):
+        profile_agent.call_dspy = AsyncMock(
+            return_value=SimpleNamespace(
+                selected_profile="video_colpali_base",
+                confidence="0.9",
+                reasoning="Selected the configured profile.",
+                query_intent="video_search",
+                modality="video",
+                complexity="medium",
+            )
+        )
+        profile_agent._config_manager.get_backend_profile.side_effect = RuntimeError(
+            "profile store unavailable"
+        )
+
+        with pytest.raises(RuntimeError, match="profile store unavailable"):
+            await profile_agent._process_impl(
+                ProfileSelectionInput(query="Find videos", tenant_id="test_tenant")
+            )
 
     @pytest.mark.asyncio
     async def test_process_label_confidence_maps_to_band(self, profile_agent):
@@ -173,7 +275,7 @@ class TestProfileSelectionAgent:
         )
 
         result = await profile_agent._process_impl(
-            ProfileSelectionInput(query="Show me videos")
+            ProfileSelectionInput(query="Show me videos", tenant_id="test_tenant")
         )
 
         assert result.confidence == 0.9
@@ -196,7 +298,7 @@ class TestProfileSelectionAgent:
         )
 
         result = await profile_agent._process_impl(
-            ProfileSelectionInput(query="Show me videos")
+            ProfileSelectionInput(query="Show me videos", tenant_id="test_tenant")
         )
 
         assert result.confidence == 0.5  # parse_confidence(None) default
@@ -235,6 +337,7 @@ class TestProfileSelectionAgent:
             ProfileSelectionInput(
                 query="test query",
                 available_profiles=["custom_profile_1", "custom_profile_2"],
+                tenant_id="test_tenant",
             )
         )
 
@@ -255,7 +358,9 @@ class TestProfileSelectionAgent:
             )
         )
 
-        result = await profile_agent._process_impl(ProfileSelectionInput(query="test"))
+        result = await profile_agent._process_impl(
+            ProfileSelectionInput(query="test", tenant_id="test_tenant")
+        )
 
         assert result.confidence == 0.5  # Default fallback
 
@@ -552,12 +657,17 @@ class TestProfileMembershipGuard:
                 complexity="medium",
             )
         )
+        agent._config_manager = Mock()
+        agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
+            type="video"
+        )
         agent._generate_alternatives = lambda *a, **k: []
 
         out = await agent._process_impl(
             ProfileSelectionInput(
                 query="cat videos",
                 available_profiles=["video_colpali_base", "text_bge_base"],
+                tenant_id="test_tenant",
             )
         )
 
@@ -583,12 +693,17 @@ class TestProfileMembershipGuard:
                 complexity="medium",
             )
         )
+        agent._config_manager = Mock()
+        agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
+            type="text"
+        )
         agent._generate_alternatives = lambda *a, **k: []
 
         out = await agent._process_impl(
             ProfileSelectionInput(
                 query="define ml",
                 available_profiles=["video_colpali_base", "text_bge_base"],
+                tenant_id="test_tenant",
             )
         )
 

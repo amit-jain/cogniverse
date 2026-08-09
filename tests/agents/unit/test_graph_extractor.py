@@ -1,7 +1,10 @@
 """Unit tests for the knowledge graph extractor — code + docs extraction."""
 
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -239,20 +242,126 @@ def _doc_anchor():
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestDocExtractor:
-    def test_fallback_extracts_capitalized_phrases(self):
-        """When GLiNER is unavailable, the fallback grabs capitalized concepts."""
-        extractor = DocExtractor()
-        extractor._gliner_failed = True
-        result = extractor.extract_from_text(
-            "The ColPali model uses late interaction over patch embeddings. "
-            "It works with Vespa for video retrieval.",
-            tenant_id="t1",
-            source_doc_id="doc1.md",
-            segment_anchor=_doc_anchor(),
+    def test_explicit_gliner_endpoint_is_used_without_global_discovery(
+        self, monkeypatch
+    ):
+        import cogniverse_core.common.models as model_helpers
+
+        model = SimpleNamespace(predict_entities=lambda *args, **kwargs: [])
+        calls = []
+
+        def load_model(model_name, *, logger, inference_url):
+            calls.append((model_name, inference_url))
+            return model
+
+        extractor = DocExtractor(
+            gliner_inference_url="http://worker-gliner.internal:8000"
         )
-        names = {n.name for n in result.nodes}
-        assert "ColPali" in names
-        assert "Vespa" in names
+        monkeypatch.setattr(model_helpers, "get_or_load_gliner", load_model)
+        monkeypatch.setattr(
+            extractor,
+            "_discover_gliner_url",
+            lambda: pytest.fail("global configuration discovery was called"),
+        )
+
+        assert extractor._get_gliner() is model
+        assert calls == [
+            (
+                "urchade/gliner_large-v2.1",
+                "http://worker-gliner.internal:8000",
+            )
+        ]
+
+    def test_gliner_url_uses_only_validated_system_configuration(self, monkeypatch):
+        import cogniverse_agents.graph.doc_extractor as doc_extractor_module
+
+        manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(
+                inference_service_urls={"gliner": "https://models.example.test/gliner"}
+            )
+        )
+        monkeypatch.setattr(
+            doc_extractor_module, "get_config_manager_singleton", lambda: manager
+        )
+        monkeypatch.setenv("INFERENCE_SERVICE_URLS", "not-json")
+        monkeypatch.setenv("GLINER_INFERENCE_URL", "http://obsolete.example.test")
+
+        assert DocExtractor._discover_gliner_url() == (
+            "https://models.example.test/gliner"
+        )
+
+    def test_absent_system_gliner_url_does_not_read_obsolete_environment(
+        self, monkeypatch
+    ):
+        import cogniverse_agents.graph.doc_extractor as doc_extractor_module
+
+        manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(inference_service_urls={})
+        )
+        monkeypatch.setattr(
+            doc_extractor_module, "get_config_manager_singleton", lambda: manager
+        )
+        monkeypatch.setenv("GLINER_INFERENCE_URL", "http://obsolete.example.test")
+
+        assert DocExtractor._discover_gliner_url() is None
+
+    def test_system_configuration_failure_raises_with_context(self, monkeypatch):
+        import cogniverse_agents.graph.doc_extractor as doc_extractor_module
+
+        class FailingManager:
+            @staticmethod
+            def get_system_config():
+                raise ConnectionError("configuration Vespa refused the request")
+
+        monkeypatch.setattr(
+            doc_extractor_module,
+            "get_config_manager_singleton",
+            lambda: FailingManager(),
+        )
+
+        with pytest.raises(
+            RuntimeError, match="failed to resolve GLiNER inference service URL"
+        ) as exc_info:
+            DocExtractor._discover_gliner_url()
+
+        assert isinstance(exc_info.value.__cause__, ConnectionError)
+        assert str(exc_info.value.__cause__) == (
+            "configuration Vespa refused the request"
+        )
+
+    def test_concurrent_gliner_url_discovery_never_crosses_config_sources(
+        self, monkeypatch
+    ):
+        import cogniverse_agents.graph.doc_extractor as doc_extractor_module
+
+        manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(
+                inference_service_urls={"gliner": "http://gliner.internal:8000"}
+            )
+        )
+        monkeypatch.setattr(
+            doc_extractor_module, "get_config_manager_singleton", lambda: manager
+        )
+        monkeypatch.setenv("GLINER_INFERENCE_URL", "http://obsolete.example.test")
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            urls = list(
+                executor.map(lambda _: DocExtractor._discover_gliner_url(), range(32))
+            )
+
+        assert urls == ["http://gliner.internal:8000"] * 32
+
+    def test_missing_gliner_raises_instead_of_fabricating_regex_entities(self):
+        extractor = DocExtractor()
+        extractor._get_gliner = lambda: None
+
+        with pytest.raises(RuntimeError, match="GLiNER model is unavailable"):
+            extractor.extract_from_text(
+                "The ColPali model uses late interaction over patch embeddings.",
+                tenant_id="t1",
+                source_doc_id="doc1.md",
+                segment_anchor=_doc_anchor(),
+            )
 
     def test_chunks_long_text(self):
         extractor = DocExtractor()
@@ -267,7 +376,9 @@ class TestDocExtractor:
         This test guards against accidental reintroduction.
         """
         extractor = DocExtractor()
-        extractor._gliner_failed = True
+        extractor._get_gliner = lambda: SimpleNamespace(
+            predict_entities=lambda *args, **kwargs: []
+        )
         result = extractor.extract_from_text(
             "The ColPali model beats Vespa's default ranker on video queries.",
             tenant_id="t1",
@@ -275,21 +386,65 @@ class TestDocExtractor:
             segment_anchor=_doc_anchor(),
         )
         assert result.edges == []
-        assert len(result.nodes) >= 2
+        assert result.nodes == []
 
-    def test_fallback_nodes_carry_concept_label(self):
-        """Fallback path defaults the GLiNER label to "Concept" so the
-        cross-modal linker's type gate has a non-empty label to filter on."""
+    def test_empty_gliner_result_remains_empty(self):
         extractor = DocExtractor()
-        extractor._gliner_failed = True
+        extractor._get_gliner = lambda: SimpleNamespace(
+            predict_entities=lambda *args, **kwargs: []
+        )
         result = extractor.extract_from_text(
             "ColPali uses Vespa.",
             tenant_id="t1",
             source_doc_id="doc1.md",
             segment_anchor=_doc_anchor(),
         )
-        labels = {n.label for n in result.nodes}
-        assert labels == {"Concept"}
+        assert result.nodes == []
+
+    def test_chunk_prediction_failure_raises_with_chunk_context(self):
+        extractor = DocExtractor()
+        extractor._get_gliner = lambda: SimpleNamespace(
+            predict_entities=lambda *args, **kwargs: (_ for _ in ()).throw(
+                ConnectionError("sidecar disconnected")
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="GLiNER prediction failed for chunk 1"):
+            extractor.extract_from_text(
+                "Marie Curie discovered radium.",
+                tenant_id="t1",
+                source_doc_id="doc1.md",
+                segment_anchor=_doc_anchor(),
+            )
+
+    def test_concurrent_cold_load_builds_gliner_once(self, monkeypatch):
+        import cogniverse_core.common.models as model_helpers
+
+        extractor = DocExtractor()
+        model = SimpleNamespace(predict_entities=lambda *args, **kwargs: [])
+        load_count = 0
+        count_lock = threading.Lock()
+        release = threading.Barrier(8)
+
+        def load_model(*args, **kwargs):
+            nonlocal load_count
+            with count_lock:
+                load_count += 1
+            return model
+
+        monkeypatch.setattr(model_helpers, "get_or_load_gliner", load_model)
+        monkeypatch.setattr(extractor, "_discover_gliner_url", lambda: None)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            loaded = list(
+                executor.map(
+                    lambda _: (release.wait(), extractor._get_gliner())[1],
+                    range(8),
+                )
+            )
+
+        assert loaded == [model] * 8
+        assert load_count == 1
 
     def test_returns_none_for_unsupported_extension(self):
         with tempfile.TemporaryDirectory() as tmpdir:

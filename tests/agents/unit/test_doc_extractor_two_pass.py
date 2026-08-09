@@ -182,21 +182,27 @@ class _PartialGliner:
         return [{"text": "Alpha", "label": "Concept", "score": 0.9}]
 
 
-def test_total_gliner_outage_raises_not_regex_noise():
-    """A configured GLiNER failing on EVERY chunk is a sidecar outage — extract
-    must raise, not silently return a regex-only knowledge graph reported as a
-    successful ingest."""
+def test_total_gliner_outage_raises_with_first_chunk_context():
+    """The first failed GLiNER chunk aborts extraction with its source context."""
     ext = DocExtractor()
     ext._gliner = _OutageGliner()
-    with pytest.raises(RuntimeError, match="failed on all"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"^GLiNER prediction failed for chunk 1 of source 'doc1'$",
+    ) as caught:
         ext.extract_entities_from_text(_two_chunk_text(), "t:t", "doc1", _anchor())
+    assert isinstance(caught.value.__cause__, ConnectionError)
+    assert str(caught.value.__cause__) == "gliner sidecar down"
 
 
-def test_partial_gliner_failure_is_best_effort():
-    """A GLiNER failure on SOME chunks falls back to regex for those and keeps
-    the GLiNER entities for the rest — no raise (not a total outage)."""
+def test_partial_gliner_failure_raises_with_failed_chunk_context():
+    """A later failed chunk cannot return a partial successful knowledge graph."""
     ext = DocExtractor()
     ext._gliner = _PartialGliner()
-    ents = ext.extract_entities_from_text(_two_chunk_text(), "t:t", "doc1", _anchor())
-    names = {n.name for n in ents.nodes}
-    assert "Alpha" in names  # GLiNER succeeded on the Alpha chunk and was kept
+    with pytest.raises(
+        RuntimeError,
+        match=r"^GLiNER prediction failed for chunk 2 of source 'doc1'$",
+    ) as caught:
+        ext.extract_entities_from_text(_two_chunk_text(), "t:t", "doc1", _anchor())
+    assert isinstance(caught.value.__cause__, ConnectionError)
+    assert str(caught.value.__cause__) == "transient gliner error"
