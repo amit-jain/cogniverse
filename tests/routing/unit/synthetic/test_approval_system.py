@@ -4,12 +4,17 @@ Tests for Human-in-the-Loop Approval System
 Tests approval interfaces, agents, confidence extraction, and feedback handling.
 """
 
+import asyncio
+import threading
+import time
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
 import pytest
 
 from cogniverse_agents.approval import (
     ApprovalBatch,
     ApprovalStatus,
-    HumanApprovalAgent,
     ReviewDecision,
     ReviewItem,
 )
@@ -17,8 +22,39 @@ from cogniverse_synthetic.approval import (
     SyntheticDataConfidenceExtractor,
     SyntheticDataFeedbackHandler,
 )
+from cogniverse_synthetic.dspy_modules import (
+    ValidatedEntityQueryGenerator,
+    ValidatedSyntheticExampleRegenerator,
+)
+from cogniverse_synthetic.schemas import (
+    EntityExtractionExampleSchema,
+    ProfileSelectionExampleSchema,
+    QueryEnhancementExampleSchema,
+    RoutingExperienceSchema,
+    WorkflowExecutionSchema,
+)
 
 pytestmark = [pytest.mark.unit]
+
+
+class _BoundTestQueryGenerator(ValidatedEntityQueryGenerator):
+    def __init__(self, forward):
+        super().__init__(max_retries=3)
+        self.lm = SimpleNamespace(model="test-lm")
+        self._test_forward = forward
+
+    def forward(self, **kwargs):
+        return self._test_forward(**kwargs)
+
+
+class _BoundTestRegenerator(ValidatedSyntheticExampleRegenerator):
+    def __init__(self, forward):
+        super().__init__(max_retries=3)
+        self.lm = SimpleNamespace(model="test-lm")
+        self._test_forward = forward
+
+    def forward(self, **kwargs):
+        return self._test_forward(**kwargs)
 
 
 class TestApprovalInterfaces:
@@ -81,272 +117,860 @@ class TestApprovalInterfaces:
         assert len(batch.pending_review) == 2
         assert len(batch.approved) == 0
         assert len(batch.rejected) == 0
-        assert batch.approval_rate == pytest.approx(1 / 3)  # 1 auto-approved out of 3
+        assert batch.approval_rate == pytest.approx(1 / 3)
 
 
 class TestConfidenceExtractor:
-    """Test SyntheticDataConfidenceExtractor"""
-
-    def test_high_confidence_no_retries(self):
-        """Test high confidence for first-attempt success"""
-        extractor = SyntheticDataConfidenceExtractor()
-
-        data = {
-            "query": "find TensorFlow tutorial",
-            "entities": ["TensorFlow"],
-            "reasoning": "Including TensorFlow as primary entity",
-            "_generation_metadata": {"retry_count": 0, "max_retries": 3},
+    @staticmethod
+    def _routing_record():
+        return {
+            "query": "find TensorFlow tutorials",
+            "entities": [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
+            "relationships": [],
+            "enhanced_query": "find TensorFlow(TECHNOLOGY) tutorials",
+            "chosen_agent": "video_search_agent",
+            "routing_confidence": 0.84,
+            "search_quality": 0.0,
+            "agent_success": False,
+            "user_satisfaction": None,
+            "processing_time": 0.0,
+            "reward": None,
+            "timestamp": datetime(2026, 8, 5, 1, 2, 3, tzinfo=timezone.utc),
+            "metadata": {
+                "_outcome_metadata": {
+                    "observed": True,
+                    "required_field_semantics": {
+                        "routing_confidence": "observed_gateway_confidence",
+                        "search_quality": "unobserved_zero_sentinel",
+                        "agent_success": "unobserved_false_sentinel",
+                        "processing_time": "unobserved_zero_sentinel",
+                    },
+                }
+            },
         }
 
-        confidence = extractor.extract(data)
-
-        # Should have high confidence (0.9-1.0) for first attempt with entities
-        assert confidence >= 0.9
-        assert confidence <= 1.0
-
-    def test_low_confidence_many_retries(self):
-        """Test low confidence for many retries"""
-        extractor = SyntheticDataConfidenceExtractor()
-
-        data = {
-            "query": "find tutorial",
-            "entities": ["TensorFlow"],
-            "reasoning": "",
-            "_generation_metadata": {"retry_count": 3, "max_retries": 3},
+    @staticmethod
+    def _workflow_record(*, observed):
+        if observed:
+            outcome_values = {
+                "execution_time": 6.25,
+                "success": True,
+                "parallel_efficiency": 0.8,
+                "confidence_score": 0.91,
+            }
+            semantics = {
+                "execution_time": "observed_duration_seconds",
+                "success": "observed_execution_outcome",
+                "parallel_efficiency": "observed_parallel_efficiency",
+                "confidence_score": "observed_confidence_score",
+            }
+        else:
+            outcome_values = {
+                "execution_time": 0.0,
+                "success": False,
+                "parallel_efficiency": 0.0,
+                "confidence_score": 0.0,
+            }
+            semantics = {
+                "execution_time": "unobserved_zero_sentinel",
+                "success": "unobserved_false_sentinel",
+                "parallel_efficiency": "unobserved_zero_sentinel",
+                "confidence_score": "unobserved_zero_sentinel",
+            }
+        return {
+            "workflow_id": "workflow-17",
+            "query": "summarize the radium video",
+            "query_type": "VIDEO",
+            **outcome_values,
+            "agent_sequence": ["video_search_agent", "summarizer_agent"],
+            "task_count": 2,
+            "user_satisfaction": None,
+            "error_details": None,
+            "timestamp": datetime(2026, 8, 5, 2, 3, 4, tzinfo=timezone.utc),
+            "metadata": {
+                "_outcome_metadata": {
+                    "observed": observed,
+                    "required_field_semantics": semantics,
+                }
+            },
         }
 
-        confidence = extractor.extract(data)
-
-        # Should have low confidence due to max retries
-        assert confidence < 0.7
-
-    def test_confidence_with_missing_entities(self):
-        """Test confidence penalty for missing entities"""
-        extractor = SyntheticDataConfidenceExtractor()
-
-        data = {
-            "query": "find tutorial",  # Missing TensorFlow
-            "entities": ["TensorFlow"],
-            "reasoning": "Including TensorFlow",
-            "_generation_metadata": {"retry_count": 0, "max_retries": 3},
-        }
-
-        confidence = extractor.extract(data)
-
-        # Should have reduced confidence due to missing entity
-        assert confidence < 0.8
-
-    def test_confidence_breakdown(self):
-        """Test detailed confidence breakdown"""
-        extractor = SyntheticDataConfidenceExtractor()
-
-        data = {
-            "query": "find TensorFlow tutorial",
-            "entities": ["TensorFlow"],
-            "reasoning": "Including TensorFlow as primary entity",
-            "_generation_metadata": {"retry_count": 1, "max_retries": 3},
-        }
-
-        breakdown = extractor.get_confidence_breakdown(data)
-
-        assert "final_confidence" in breakdown
-        assert "retry_count" in breakdown
-        assert "has_entity" in breakdown
-        assert breakdown["retry_count"] == 1
-        assert breakdown["has_entity"] is True
-
-    def test_nested_generation_metadata_applies_retry_penalty(self):
-        """RoutingGenerator stores _generation_metadata nested under the
-        schema's ``metadata`` field. The retry penalty must apply there too —
-        otherwise a 3-retry fallback scores high and is wrongly auto-approved."""
-        extractor = SyntheticDataConfidenceExtractor()
-        nested = {
-            "query": "find TensorFlow tutorial",
-            "entities": ["TensorFlow"],
-            "metadata": {"_generation_metadata": {"retry_count": 3, "max_retries": 3}},
-        }
-        top_level = {
-            "query": "find TensorFlow tutorial",
-            "entities": ["TensorFlow"],
-            "_generation_metadata": {"retry_count": 3, "max_retries": 3},
-        }
-
-        # Both shapes read the same retry_count, so they score identically and
-        # land below the 0.7 auto-approve threshold.
-        assert extractor.extract(nested) == 0.58
-        assert extractor.extract(nested) == extractor.extract(top_level)
-        assert extractor.extract(nested) < 0.7
-
-    def test_nested_generation_metadata_breakdown_reads_retry_count(self):
-        extractor = SyntheticDataConfidenceExtractor()
-        data = {
-            "query": "find TensorFlow tutorial",
-            "entities": ["TensorFlow"],
-            "metadata": {"_generation_metadata": {"retry_count": 3, "max_retries": 3}},
-        }
-        assert extractor.get_confidence_breakdown(data)["retry_count"] == 3
-
-
-class TestHumanApprovalAgent:
-    """Test HumanApprovalAgent"""
-
-    def test_agent_initialization(self):
-        """Test initializing approval agent"""
-        extractor = SyntheticDataConfidenceExtractor()
-        agent = HumanApprovalAgent(
-            confidence_extractor=extractor, confidence_threshold=0.85, storage=None
-        )
-
-        assert agent.confidence_extractor is not None
-        assert agent.threshold == 0.85
-
-    def test_approval_stats(self):
-        """Test get_approval_stats"""
-        extractor = SyntheticDataConfidenceExtractor()
-        agent = HumanApprovalAgent(
-            confidence_extractor=extractor, confidence_threshold=0.85, storage=None
-        )
-
-        items = [
-            ReviewItem(
-                item_id="test_001",
-                data={"query": "query1"},
-                confidence=0.95,
-                status=ApprovalStatus.AUTO_APPROVED,
+    @pytest.mark.parametrize(
+        ("record", "confidence", "breakdown"),
+        [
+            pytest.param(
+                {
+                    "query": "find radium footage",
+                    "available_profiles": "video_colpali,video_colqwen",
+                    "selected_profile": "video_colqwen",
+                    "reasoning": "The query requires temporal video context.",
+                    "query_intent": "video_search",
+                    "modality": "video",
+                    "complexity": "medium",
+                },
+                0.0,
+                {
+                    "schema": "ProfileSelectionExampleSchema",
+                    "confidence_field": None,
+                    "final_confidence": 0.0,
+                    "outcome_observed": None,
+                    "requires_human_review": True,
+                },
+                id="profile-unobserved-confidence",
             ),
-            ReviewItem(
-                item_id="test_002",
-                data={"query": "query2"},
-                confidence=0.7,
-                status=ApprovalStatus.PENDING_REVIEW,
+            pytest.param(
+                {
+                    "query": "radium discovery",
+                    "enhanced_query": "radium discovery Marie Curie",
+                    "expansion_terms": ["Marie Curie"],
+                    "synonyms": ["radium isolation"],
+                    "context": "science history",
+                    "reasoning": "The person name disambiguates the discovery.",
+                },
+                0.0,
+                {
+                    "schema": "QueryEnhancementExampleSchema",
+                    "confidence_field": None,
+                    "final_confidence": 0.0,
+                    "outcome_observed": None,
+                    "requires_human_review": True,
+                },
+                id="enhancement-unobserved-confidence",
             ),
-        ]
+        ],
+    )
+    def test_schema_confidence_is_returned_exactly(self, record, confidence, breakdown):
+        extractor = SyntheticDataConfidenceExtractor()
 
-        batch = ApprovalBatch(batch_id="batch_001", items=items, context={})
+        assert extractor.extract(record) == confidence
+        assert extractor.get_confidence_breakdown(record) == breakdown
 
-        stats = agent.get_approval_stats(batch)
+    def test_routing_preserves_observed_confidence_with_unobserved_outcomes(self):
+        extractor = SyntheticDataConfidenceExtractor()
+        record = self._routing_record()
 
-        assert stats["total_items"] == 2
-        assert stats["auto_approved"] == 1
-        assert stats["pending_review"] == 1
-        assert stats["overall_approval_rate"] == 0.5
-        assert "avg_confidence" in stats
+        assert RoutingExperienceSchema.model_validate(record)
+        assert extractor.extract(record) == 0.84
+        assert extractor.get_confidence_breakdown(record) == {
+            "schema": "RoutingExperienceSchema",
+            "confidence_field": "routing_confidence",
+            "final_confidence": 0.84,
+            "outcome_observed": True,
+            "requires_human_review": False,
+        }
 
-    @pytest.mark.asyncio
-    async def test_from_approval_config_threshold_drives_auto_approval(self):
-        """The auto-approval threshold comes from ApprovalConfig and actually
-        gates auto-approval: an item at confidence 0.75 auto-approves under a
-        0.70 threshold but needs review under 0.80."""
-        from cogniverse_foundation.config.unified_config import ApprovalConfig
+    def test_routing_unobserved_confidence_requires_human_review(self):
+        extractor = SyntheticDataConfidenceExtractor()
+        record = self._routing_record()
+        record["routing_confidence"] = 0.0
+        record["metadata"]["_outcome_metadata"] = {
+            "observed": False,
+            "required_field_semantics": {
+                "routing_confidence": "unobserved_zero_sentinel",
+                "search_quality": "unobserved_zero_sentinel",
+                "agent_success": "unobserved_false_sentinel",
+                "processing_time": "unobserved_zero_sentinel",
+            },
+        }
 
-        class _FixedConfidence:
-            def extract(self, data):
-                return 0.75
+        assert extractor.extract(record) == 0.0
+        assert extractor.get_confidence_breakdown(record) == {
+            "schema": "RoutingExperienceSchema",
+            "confidence_field": "routing_confidence",
+            "final_confidence": 0.0,
+            "outcome_observed": False,
+            "requires_human_review": True,
+        }
 
-        items = [{"query": "q"}]
+    @pytest.mark.parametrize("observed", [True, False])
+    def test_workflow_observation_state_has_exact_review_outcome(self, observed):
+        extractor = SyntheticDataConfidenceExtractor()
+        record = self._workflow_record(observed=observed)
+        expected_confidence = 0.91 if observed else 0.0
 
-        agent_low = HumanApprovalAgent.from_approval_config(
-            ApprovalConfig(confidence_threshold=0.70),
-            confidence_extractor=_FixedConfidence(),
-        )
-        assert agent_low.threshold == 0.70
-        batch_low = await agent_low.process_batch(items, "b_low", {})
-        assert len(batch_low.auto_approved) == 1
-        assert len(batch_low.pending_review) == 0
+        assert WorkflowExecutionSchema.model_validate(record)
+        assert extractor.extract(record) == expected_confidence
+        assert extractor.get_confidence_breakdown(record) == {
+            "schema": "WorkflowExecutionSchema",
+            "confidence_field": "confidence_score",
+            "final_confidence": expected_confidence,
+            "outcome_observed": observed,
+            "requires_human_review": not observed,
+        }
 
-        agent_high = HumanApprovalAgent.from_approval_config(
-            ApprovalConfig(confidence_threshold=0.80),
-            confidence_extractor=_FixedConfidence(),
-        )
-        assert agent_high.threshold == 0.80
-        batch_high = await agent_high.process_batch(items, "b_high", {})
-        assert len(batch_high.auto_approved) == 0
-        assert len(batch_high.pending_review) == 1
+    @pytest.mark.parametrize(
+        ("mutate", "message"),
+        [
+            pytest.param(
+                lambda record: record["metadata"].pop("_outcome_metadata"),
+                "RoutingExperienceSchema.metadata must contain _outcome_metadata",
+                id="missing-outcome",
+            ),
+            pytest.param(
+                lambda record: record["metadata"]["_outcome_metadata"].update(
+                    {"observed": False}
+                ),
+                (
+                    "RoutingExperienceSchema.metadata._outcome_metadata."
+                    "required_field_semantics must exactly match the routing contract"
+                ),
+                id="routing-observation-semantics-mismatch",
+            ),
+            pytest.param(
+                lambda record: record.update({"search_quality": 0.5}),
+                "RoutingExperienceSchema.search_quality must match its unobserved sentinel",
+                id="non-sentinel-outcome",
+            ),
+            pytest.param(
+                lambda record: record.update({"routing_confidence": 1}),
+                "RoutingExperienceSchema.routing_confidence must be a finite float between 0 and 1",
+                id="coercible-integer-confidence",
+            ),
+            pytest.param(
+                lambda record: record.update({"obsolete_score": 0.99}),
+                (
+                    "confidence item must match exactly one canonical synthetic "
+                    "schema; keys: agent_success, chosen_agent, enhanced_query, "
+                    "entities, metadata, obsolete_score, processing_time, query, "
+                    "relationships, reward, routing_confidence, search_quality, "
+                    "timestamp, user_satisfaction"
+                ),
+                id="extra-field",
+            ),
+        ],
+    )
+    def test_malformed_canonical_record_is_rejected_exactly(self, mutate, message):
+        extractor = SyntheticDataConfidenceExtractor()
+        record = self._routing_record()
+        mutate(record)
 
-    @pytest.mark.asyncio
-    async def test_submit_for_review_classifies_and_persists_prebuilt_batch(self):
-        """submit_for_review re-classifies a caller-built batch against the
-        threshold (>= auto-approve, else pending) using each item's own
-        confidence, and persists it so the dashboard surfaces it. This is the
-        path the finetuning synthetic-data flow uses."""
+        for consumer in (extractor.extract, extractor.get_confidence_breakdown):
+            with pytest.raises(ValueError) as error:
+                consumer(record)
+            assert str(error.value) == message
 
-        class _Extractor:
-            def extract(self, data):  # unused: submit_for_review uses item.confidence
-                return 0.0
-
-        class _FakeStorage:
-            def __init__(self):
-                self.saved = []
-
-            async def save_batch(self, batch):
-                self.saved.append(batch.batch_id)
-                return batch.batch_id
-
-        storage = _FakeStorage()
-        agent = HumanApprovalAgent(
-            confidence_extractor=_Extractor(),
-            confidence_threshold=0.85,
-            storage=storage,
-        )
-        batch = ApprovalBatch(
-            batch_id="synthetic_b1",
-            items=[
-                ReviewItem(item_id="i_hi", data={}, confidence=0.9),
-                ReviewItem(item_id="i_lo", data={}, confidence=0.8),
+    def test_entity_extraction_schema_uses_explicit_review_confidence(self):
+        extractor = SyntheticDataConfidenceExtractor()
+        record = {
+            "query": "Marie Curie isolated radium",
+            "entities": [
+                {"text": "Marie Curie", "type": "PERSON"},
+                {"text": "radium", "type": "CONCEPT"},
             ],
-            context={},
-        )
+            "entity_types": "PERSON,CONCEPT",
+            "relationships": [],
+        }
 
-        result = await agent.submit_for_review(batch)
-
-        assert result is batch
-        assert [i.item_id for i in batch.auto_approved] == ["i_hi"]
-        assert [i.item_id for i in batch.pending_review] == ["i_lo"]
-        assert batch.approved_count == 1
-        assert storage.saved == ["synthetic_b1"]
+        assert EntityExtractionExampleSchema.model_validate(record)
+        assert extractor.extract(record) == 0.0
+        assert extractor.get_confidence_breakdown(record) == {
+            "schema": "EntityExtractionExampleSchema",
+            "confidence_field": None,
+            "final_confidence": 0.0,
+            "outcome_observed": None,
+            "requires_human_review": True,
+        }
 
 
 class TestFeedbackHandler:
-    """Test SyntheticDataFeedbackHandler"""
+    """Regeneration uses one schema-aware generator with strict boundaries."""
 
-    def test_feedback_handler_initialization(self):
-        """Test initializing feedback handler"""
-        handler = SyntheticDataFeedbackHandler(max_regeneration_attempts=2)
+    @staticmethod
+    def _handler(forward, *, attempts=2, timeout=0.5):
+        return SyntheticDataFeedbackHandler(
+            generator=_BoundTestRegenerator(forward),
+            max_regeneration_attempts=attempts,
+            generation_timeout_seconds=timeout,
+        )
 
+    def test_feedback_handler_requires_bound_generator_and_finite_deadline(self):
+        generator = _BoundTestRegenerator(
+            lambda **kwargs: pytest.fail(f"unexpected generation call: {kwargs}")
+        )
+        handler = SyntheticDataFeedbackHandler(
+            generator=generator,
+            max_regeneration_attempts=2,
+            generation_timeout_seconds=7.5,
+        )
+
+        assert handler.generator is generator
         assert handler.max_attempts == 2
-        assert handler.generator is not None
+        assert handler.generation_timeout_seconds == 7.5
+
+        for invalid in (True, False, 0, -1, float("inf"), "7.5", None):
+            with pytest.raises(
+                ValueError,
+                match="^generation_timeout_seconds must be finite and positive$",
+            ):
+                SyntheticDataFeedbackHandler(
+                    generator=generator,
+                    generation_timeout_seconds=invalid,
+                )
+
+    def test_regenerator_serializes_exact_context_for_dspy(self):
+        calls = []
+
+        def regenerate(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                updates_json=(
+                    '{"enhanced_query":"exact PyTorch deployment tutorial",'
+                    '"reasoning":"The rewrite names deployment."}'
+                ),
+                reasoning="Applied the exact reviewer instruction.",
+            )
+
+        generator = ValidatedSyntheticExampleRegenerator(max_retries=1)
+        generator.lm = SimpleNamespace(model="test-lm")
+        generator.regenerate = regenerate
+        result = generator.forward(
+            schema_name="QueryEnhancementExampleSchema",
+            source_context={"query": "PyTorch tutorial"},
+            reviewer_instruction="Name deployment explicitly.",
+            corrections={"enhanced_query": "exact PyTorch deployment tutorial"},
+            schema_contract={"required": ["query", "enhanced_query"]},
+        )
+
+        assert calls == [
+            {
+                "schema_name": "QueryEnhancementExampleSchema",
+                "source_context_json": '{"query":"PyTorch tutorial"}',
+                "reviewer_instruction": "Name deployment explicitly.",
+                "corrections_json": (
+                    '{"enhanced_query":"exact PyTorch deployment tutorial"}'
+                ),
+                "schema_contract_json": ('{"required":["query","enhanced_query"]}'),
+            }
+        ]
+        assert result.updates == {
+            "enhanced_query": "exact PyTorch deployment tutorial",
+            "reasoning": "The rewrite names deployment.",
+        }
+        assert result.reasoning == "Applied the exact reviewer instruction."
+        assert result._retry_count == 0
+        assert result._max_retries == 1
+
+    @pytest.mark.parametrize(
+        ("schema", "original", "updates", "corrections", "expected"),
+        [
+            pytest.param(
+                EntityExtractionExampleSchema,
+                {
+                    "query": "TensorFlow was created by Google Brain",
+                    "entities": [
+                        {"text": "TensorFlow", "type": "TECHNOLOGY"},
+                        {"text": "Google Brain", "type": "ORG"},
+                    ],
+                    "entity_types": "TECHNOLOGY,ORG",
+                    "relationships": [],
+                },
+                {
+                    "query": "PyTorch was created by Meta AI",
+                    "entities": [
+                        {"text": "PyTorch", "type": "TECHNOLOGY"},
+                        {"text": "Meta AI", "type": "ORG"},
+                    ],
+                },
+                {
+                    "entities": [
+                        {"text": "PyTorch", "type": "TECHNOLOGY"},
+                        {"text": "Meta AI", "type": "ORG"},
+                    ]
+                },
+                {
+                    "query": "PyTorch was created by Meta AI",
+                    "entities": [
+                        {"text": "PyTorch", "type": "TECHNOLOGY"},
+                        {"text": "Meta AI", "type": "ORG"},
+                    ],
+                    "entity_types": "TECHNOLOGY,ORG",
+                    "relationships": [],
+                },
+                id="entity",
+            ),
+            pytest.param(
+                RoutingExperienceSchema,
+                {
+                    "query": "find TensorFlow tutorial",
+                    "entities": [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
+                    "relationships": [],
+                    "enhanced_query": "find TensorFlow(TECHNOLOGY) tutorial",
+                    "chosen_agent": "video_search_agent",
+                    "routing_confidence": 0.84,
+                    "search_quality": 0.7,
+                    "agent_success": True,
+                    "user_satisfaction": 0.9,
+                    "processing_time": 1.25,
+                    "reward": 0.8,
+                    "metadata": {"source": "reviewed trace"},
+                },
+                {
+                    "query": "find exact PyTorch tutorial",
+                    "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
+                    "chosen_agent": "document_agent",
+                },
+                {
+                    "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
+                    "chosen_agent": "document_agent",
+                },
+                {
+                    "query": "find exact PyTorch tutorial",
+                    "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
+                    "relationships": [],
+                    "enhanced_query": "find exact PyTorch(TECHNOLOGY) tutorial",
+                    "chosen_agent": "document_agent",
+                    "routing_confidence": 0.0,
+                    "search_quality": 0.0,
+                    "agent_success": False,
+                    "user_satisfaction": None,
+                    "processing_time": 0.0,
+                    "reward": None,
+                    "metadata": {
+                        "source": "reviewed trace",
+                        "_outcome_metadata": {
+                            "observed": False,
+                            "required_field_semantics": {
+                                "routing_confidence": "unobserved_zero_sentinel",
+                                "search_quality": "unobserved_zero_sentinel",
+                                "agent_success": "unobserved_false_sentinel",
+                                "processing_time": "unobserved_zero_sentinel",
+                            },
+                        },
+                        "_generation_metadata": {
+                            "retry_count": 0,
+                            "max_retries": 3,
+                            "regeneration_attempt": 1,
+                            "max_regeneration_attempts": 2,
+                            "regeneration": True,
+                            "original_query": "find TensorFlow tutorial",
+                            "human_feedback": "Apply the reviewed correction exactly.",
+                            "corrections_applied": {
+                                "entities": [{"text": "PyTorch", "type": "TECHNOLOGY"}],
+                                "chosen_agent": "document_agent",
+                            },
+                            "reasoning": "Applied the reviewer instruction.",
+                        },
+                    },
+                },
+                id="routing",
+            ),
+            pytest.param(
+                ProfileSelectionExampleSchema,
+                {
+                    "query": "find transformer clips",
+                    "available_profiles": "video_colpali,video_colqwen",
+                    "selected_profile": "video_colpali",
+                    "reasoning": "Still frames were preferred.",
+                    "query_intent": "video_search",
+                    "modality": "video",
+                    "complexity": "medium",
+                },
+                {
+                    "selected_profile": "video_colqwen",
+                    "reasoning": "Temporal chunks answer the clip request.",
+                },
+                {"selected_profile": "video_colqwen"},
+                {
+                    "query": "find transformer clips",
+                    "available_profiles": "video_colpali,video_colqwen",
+                    "selected_profile": "video_colqwen",
+                    "reasoning": "Temporal chunks answer the clip request.",
+                    "query_intent": "video_search",
+                    "modality": "video",
+                    "complexity": "medium",
+                },
+                id="profile",
+            ),
+            pytest.param(
+                QueryEnhancementExampleSchema,
+                {
+                    "query": "PyTorch tutorial",
+                    "enhanced_query": "PyTorch beginner tutorial",
+                    "expansion_terms": ["beginner"],
+                    "synonyms": ["guide"],
+                    "context": "machine learning",
+                    "reasoning": "Beginner narrows the request.",
+                },
+                {
+                    "enhanced_query": "PyTorch deployment tutorial",
+                    "expansion_terms": ["deployment"],
+                    "reasoning": "Deployment is the requested focus.",
+                },
+                {"enhanced_query": "PyTorch deployment tutorial"},
+                {
+                    "query": "PyTorch tutorial",
+                    "enhanced_query": "PyTorch deployment tutorial",
+                    "expansion_terms": ["deployment"],
+                    "synonyms": ["guide"],
+                    "context": "machine learning",
+                    "reasoning": "Deployment is the requested focus.",
+                },
+                id="query-enhancement",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_regeneration_passes_instruction_and_source_to_actual_generator(
+        self, schema, original, updates, corrections, expected
+    ):
+        calls = []
+
+        def regenerate(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                updates=updates,
+                reasoning="Applied the reviewer instruction.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+        item = ReviewItem(item_id="reviewed_item", data=original, confidence=0.4)
+        decision = ReviewDecision(
+            item_id=item.item_id,
+            approved=False,
+            feedback="Apply the reviewed correction exactly.",
+            corrections=corrections,
+        )
+        regenerated = await self._handler(regenerate).process_rejection(item, decision)
+
+        assert len(calls) == 1
+        assert calls[0]["schema_name"] == schema.__name__
+        assert calls[0]["source_context"] == original
+        assert calls[0]["reviewer_instruction"] == decision.feedback
+        assert calls[0]["corrections"] == corrections
+        assert calls[0]["schema_contract"] == schema.model_json_schema()
+        assert regenerated.data == expected
+        assert regenerated.item_id == "reviewed_item_regen_0"
+        assert regenerated.confidence == 0.0
+        assert regenerated.status is ApprovalStatus.REGENERATED
+        assert regenerated.metadata == {
+            "original_item_id": "reviewed_item",
+            "regeneration_attempt": 1,
+            "feedback": decision.feedback,
+            "generation": {
+                "retry_count": 0,
+                "max_retries": 3,
+                "reasoning": "Applied the reviewer instruction.",
+            },
+        }
+
+    @pytest.mark.parametrize(
+        ("data", "schema_name"),
+        [
+            pytest.param(
+                {
+                    "query": "TensorFlow tutorial",
+                    "entities": [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
+                    "entity_types": "TECHNOLOGY",
+                    "relationships": [],
+                },
+                "EntityExtractionExampleSchema",
+                id="entity",
+            ),
+            pytest.param(
+                {
+                    "query": "TensorFlow tutorial",
+                    "entities": [{"text": "TensorFlow", "type": "TECHNOLOGY"}],
+                    "relationships": [],
+                    "enhanced_query": "TensorFlow(TECHNOLOGY) tutorial",
+                    "chosen_agent": "search_agent",
+                    "routing_confidence": 0.8,
+                    "search_quality": 0.0,
+                    "agent_success": False,
+                    "processing_time": 0.0,
+                },
+                "RoutingExperienceSchema",
+                id="routing",
+            ),
+            pytest.param(
+                {
+                    "query": "transformer clips",
+                    "available_profiles": "video_colpali,video_colqwen",
+                    "selected_profile": "video_colpali",
+                    "reasoning": "Frames match.",
+                    "query_intent": "video_search",
+                    "modality": "video",
+                    "complexity": "simple",
+                },
+                "ProfileSelectionExampleSchema",
+                id="profile",
+            ),
+            pytest.param(
+                {
+                    "query": "PyTorch tutorial",
+                    "enhanced_query": "PyTorch beginner tutorial",
+                    "expansion_terms": ["beginner"],
+                    "synonyms": ["guide"],
+                    "context": "machine learning",
+                    "reasoning": "Beginner narrows the query.",
+                },
+                "QueryEnhancementExampleSchema",
+                id="query-enhancement",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_regeneration_rejects_unchanged_outputs_for_every_live_schema(
+        self, data, schema_name
+    ):
+        query = data["query"]
+
+        def generator(**_):
+            return SimpleNamespace(
+                updates={"query": query},
+                reasoning="Returned the source unchanged.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+        item = ReviewItem(item_id="unchanged", data=data, confidence=0.4)
+        decision = ReviewDecision(
+            item_id=item.item_id,
+            approved=False,
+            feedback="Make a material correction.",
+        )
+
+        with pytest.raises(RuntimeError) as error:
+            await self._handler(generator).process_rejection(item, decision)
+
+        assert str(error.value) == (
+            "Failed to regenerate unchanged after 2 regeneration attempts"
+        )
+        assert isinstance(error.value.__cause__, ValueError)
+        assert str(error.value.__cause__) == (
+            f"item=unchanged schema={schema_name} "
+            "regeneration did not change any training value"
+        )
 
     @pytest.mark.asyncio
-    async def test_process_rejection_regenerates(self, reset_dspy_lm):
-        """Test that rejection triggers regeneration"""
-        handler = SyntheticDataFeedbackHandler(max_regeneration_attempts=2)
+    async def test_regeneration_rejects_generator_that_ignores_exact_correction(self):
+        original = {
+            "query": "transformer clips",
+            "available_profiles": "video_colpali,video_colqwen",
+            "selected_profile": "video_colpali",
+            "reasoning": "Frames match.",
+            "query_intent": "video_search",
+            "modality": "video",
+            "complexity": "simple",
+        }
 
-        item = ReviewItem(
-            item_id="test_001",
-            data={
-                "query": "find tutorial",
-                "entities": ["TensorFlow"],
-                "entity_types": ["TECHNOLOGY"],
-                "topics": "machine learning",
-                "_generation_metadata": {"retry_count": 3, "max_retries": 3},
-            },
-            confidence=0.5,
-        )
+        def generator(**_):
+            return SimpleNamespace(
+                updates={"reasoning": "Changed only the explanation."},
+                reasoning="Ignored the selected-profile correction.",
+                _retry_count=0,
+                _max_retries=3,
+            )
 
         decision = ReviewDecision(
-            item_id="test_001",
+            item_id="ignored",
             approved=False,
-            feedback="Query doesn't include TensorFlow",
-            corrections={"entities": ["TensorFlow", "Tutorial"]},
+            feedback="Use the temporal profile.",
+            corrections={"selected_profile": "video_colqwen"},
         )
 
-        regenerated = await handler.process_rejection(item, decision)
+        with pytest.raises(RuntimeError) as error:
+            await self._handler(generator, attempts=1).process_rejection(
+                ReviewItem(item_id="ignored", data=original, confidence=0.4),
+                decision,
+            )
 
-        # Should successfully regenerate
-        assert regenerated is not None
-        assert regenerated.item_id.startswith("test_001_regen")
-        assert regenerated.status == ApprovalStatus.REGENERATED
-        assert "original_item_id" in regenerated.metadata
+        assert isinstance(error.value.__cause__, ValueError)
+        assert str(error.value.__cause__) == (
+            "item=ignored schema=ProfileSelectionExampleSchema regenerated data "
+            "does not apply correction selected_profile='video_colqwen'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_prompt_only_topics_guide_routing_without_becoming_schema_data(self):
+        original = {
+            "query": "find Curie footage",
+            "entities": [{"text": "Curie", "type": "PERSON"}],
+            "relationships": [],
+            "enhanced_query": "find Curie(PERSON) footage",
+            "chosen_agent": "search_agent",
+            "routing_confidence": 0.8,
+            "search_quality": 0.0,
+            "agent_success": False,
+            "processing_time": 0.0,
+            "metadata": {
+                "_outcome_metadata": {
+                    "observed": True,
+                    "required_field_semantics": {
+                        "routing_confidence": "observed_gateway_confidence",
+                        "search_quality": "unobserved_zero_sentinel",
+                        "agent_success": "unobserved_false_sentinel",
+                        "processing_time": "unobserved_zero_sentinel",
+                    },
+                }
+            },
+        }
+        topics = ["radioactivity research"]
+
+        def regenerate(**_):
+            return SimpleNamespace(
+                updates={
+                    "query": "find Marie Curie radioactivity research",
+                    "entities": [{"text": "Marie Curie", "type": "PERSON"}],
+                    "topics": topics,
+                },
+                reasoning="Used the prompt-only topic to produce a schema query.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+        regenerated = await self._handler(regenerate).process_rejection(
+            ReviewItem(item_id="topic_guidance", data=original, confidence=0.4),
+            ReviewDecision(
+                item_id="topic_guidance",
+                approved=False,
+                feedback="Use the exact scientist and research topic.",
+                corrections={
+                    "entities": [{"text": "Marie Curie", "type": "PERSON"}],
+                    "topics": topics,
+                },
+            ),
+        )
+
+        assert regenerated.data["query"] == ("find Marie Curie radioactivity research")
+        assert regenerated.data["enhanced_query"] == (
+            "find Marie Curie(PERSON) radioactivity research"
+        )
+        assert "topics" not in regenerated.data
+
+    @pytest.mark.asyncio
+    async def test_hung_regenerator_is_bounded_by_configured_deadline(self):
+        release = threading.Event()
+
+        def hang(**_):
+            release.wait(timeout=2)
+            raise AssertionError("hung generator continued past its deadline")
+
+        item = ReviewItem(
+            item_id="hung_profile",
+            data={
+                "query": "find transformer clips",
+                "available_profiles": "video_colpali,video_colqwen",
+                "selected_profile": "video_colpali",
+                "reasoning": "Frames match.",
+                "query_intent": "video_search",
+                "modality": "video",
+                "complexity": "simple",
+            },
+            confidence=0.4,
+        )
+        started = time.monotonic()
+        try:
+            with pytest.raises(RuntimeError) as error:
+                await self._handler(hang, attempts=1, timeout=0.05).process_rejection(
+                    item,
+                    ReviewDecision(
+                        item_id=item.item_id,
+                        approved=False,
+                        feedback="Use temporal chunks.",
+                    ),
+                )
+        finally:
+            release.set()
+
+        assert time.monotonic() - started < 0.5
+        assert isinstance(error.value.__cause__, TimeoutError)
+        assert str(error.value.__cause__) == (
+            "synthetic feedback regeneration timed out after 0.05 seconds for "
+            "item=hung_profile schema=ProfileSelectionExampleSchema attempt=1/1"
+        )
+        assert item.status is ApprovalStatus.PENDING_REVIEW
+
+    @pytest.mark.asyncio
+    async def test_concurrent_regenerations_keep_source_and_feedback_isolated(self):
+        barrier = threading.Barrier(2)
+        calls = []
+
+        def regenerate(**kwargs):
+            calls.append(kwargs)
+            barrier.wait(timeout=1)
+            source_query = kwargs["source_context"]["query"]
+            framework = source_query.split()[0]
+            return SimpleNamespace(
+                updates={"query": f"{framework} exact tutorial"},
+                reasoning=f"Applied {framework} instruction.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+        handler = self._handler(regenerate)
+
+        def item(framework):
+            return ReviewItem(
+                item_id=framework.lower(),
+                data={
+                    "query": f"{framework} tutorial",
+                    "entities": [{"text": framework, "type": "TECHNOLOGY"}],
+                    "entity_types": "TECHNOLOGY",
+                    "relationships": [],
+                },
+                confidence=0.4,
+            )
+
+        def decision(framework):
+            return ReviewDecision(
+                item_id=framework.lower(),
+                approved=False,
+                feedback=f"Make only {framework} exact.",
+            )
+
+        pytorch, tensorflow = await asyncio.gather(
+            handler.process_rejection(item("PyTorch"), decision("PyTorch")),
+            handler.process_rejection(item("TensorFlow"), decision("TensorFlow")),
+        )
+
+        assert pytorch.data["query"] == "PyTorch exact tutorial"
+        assert tensorflow.data["query"] == "TensorFlow exact tutorial"
+        assert {
+            (call["source_context"]["query"], call["reviewer_instruction"])
+            for call in calls
+        } == {
+            ("PyTorch tutorial", "Make only PyTorch exact."),
+            ("TensorFlow tutorial", "Make only TensorFlow exact."),
+        }
+
+    @pytest.mark.asyncio
+    async def test_workflow_corrections_remain_explicit_observed_values(self):
+        calls = []
+        original = {
+            "workflow_id": "workflow-17",
+            "query": "summarize a video and write a report",
+            "query_type": "VIDEO",
+            "execution_time": 8.5,
+            "success": False,
+            "agent_sequence": ["video_search_agent", "summarizer"],
+            "task_count": 2,
+            "parallel_efficiency": 0.25,
+            "confidence_score": 0.45,
+            "error_details": "report generation was omitted",
+            "metadata": {"run_id": "run-17"},
+        }
+        corrections = {
+            "execution_time": 5.25,
+            "success": True,
+            "task_count": 3,
+            "confidence_score": 0.91,
+            "error_details": None,
+        }
+        result = await self._handler(
+            lambda **kwargs: calls.append(kwargs)
+        ).process_rejection(
+            ReviewItem(item_id="workflow", data=original, confidence=0.4),
+            ReviewDecision(
+                item_id="workflow",
+                approved=False,
+                feedback="Apply the measured run.",
+                corrections=corrections,
+            ),
+        )
+
+        assert result.data == original | corrections
+        assert calls == []
 
 
 class TestApprovalConfig:
@@ -396,147 +1020,25 @@ class TestApprovalConfig:
         assert config_dict["confidence_threshold"] == 0.92
         assert config_dict["reviewer_email"] == "test@example.com"
 
+    @pytest.mark.parametrize(
+        "value",
+        [True, False, "0.8", float("nan"), float("inf"), -0.01, 1.01],
+    )
+    def test_approval_config_rejects_invalid_confidence_threshold(self, value):
+        from cogniverse_foundation.config.unified_config import ApprovalConfig
 
-class TestApprovalStorageContract:
-    """The ApprovalStorage ABC must declare the contract its callers use.
-
-    human_approval_agent calls update_item(item, batch_id=...); the ABC
-    previously declared update_item(item) only, so a faithful subclass would
-    break those call sites.
-    """
-
-    def test_update_item_abc_declares_batch_id(self):
-        import inspect
-
-        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
-        from cogniverse_core.approval.interfaces import ApprovalStorage
-
-        abc_params = inspect.signature(ApprovalStorage.update_item).parameters
-        impl_params = inspect.signature(ApprovalStorageImpl.update_item).parameters
-
-        assert "batch_id" in abc_params
-        assert "batch_id" in impl_params
-
-
-class TestApprovalStorageEventLoop:
-    """Telemetry-indexing delays must not block the event loop.
-
-    get_batch / get_pending_batches / get_item_span_id paused with a blocking
-    time.sleep inside async methods, freezing every other coroutine on the
-    worker for the full indexing-lag window. They must await asyncio.sleep.
-    """
-
-    @pytest.mark.asyncio
-    async def test_get_pending_batches_yields_during_indexing_delay(self):
-        import asyncio
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
-        import pandas as pd
-
-        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
-
-        storage = object.__new__(ApprovalStorageImpl)
-        storage.full_project_name = "cogniverse-acme:acme-synthetic_data"
-        storage.tenant_id = "acme:acme"
-        storage.project_name = "synthetic_data"
-        storage.provider = SimpleNamespace(
-            traces=SimpleNamespace(get_spans=AsyncMock(return_value=pd.DataFrame()))
-        )
-
-        ticks = 0
-
-        async def ticker():
-            nonlocal ticks
-            for _ in range(100):
-                await asyncio.sleep(0.01)
-                ticks += 1
-
-        task = asyncio.create_task(ticker())
-        # Awaits the 0.5s indexing delay, then returns [] on the empty frame.
-        result = await storage.get_pending_batches()
-        task.cancel()
-
-        assert result == []
-        # A blocking time.sleep(0.5) would freeze the loop so the ticker could
-        # not advance; awaiting asyncio.sleep lets it tick many times.
-        assert ticks >= 5
-
-    @pytest.mark.asyncio
-    async def test_get_pending_batches_reuses_spans_single_fetch(self):
-        """get_pending_batches must reconstruct every batch from one project
-        span fetch, not re-query the whole project per batch (N+1)."""
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
-        import pandas as pd
-
-        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
-
-        spans = pd.DataFrame(
-            [
-                {
-                    "name": "approval_batch",
-                    "attributes.batch_id": "b1",
-                    "attributes.pending_review": 2,
-                    "context.span_id": "s1",
-                    "parent_id": None,
-                },
-                {
-                    "name": "approval_batch",
-                    "attributes.batch_id": "b2",
-                    "attributes.pending_review": 1,
-                    "context.span_id": "s2",
-                    "parent_id": None,
-                },
-            ]
-        )
-        get_spans = AsyncMock(return_value=spans)
-        storage = object.__new__(ApprovalStorageImpl)
-        storage.full_project_name = "cogniverse-acme:acme-synthetic_data"
-        storage.tenant_id = "acme:acme"
-        storage.project_name = "synthetic_data"
-        storage.provider = SimpleNamespace(
-            traces=SimpleNamespace(get_spans=get_spans),
-            annotations=SimpleNamespace(
-                get_annotations=AsyncMock(return_value=pd.DataFrame())
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"approval confidence_threshold must be a finite number in \[0, 1\]"
             ),
-        )
+        ):
+            ApprovalConfig(confidence_threshold=value)
 
-        batches = await storage.get_pending_batches()
-
-        assert {b.batch_id for b in batches} == {"b1", "b2"}
-        # One fetch total — not 1 + N (the per-batch get_batch re-fetch).
-        assert get_spans.call_count == 1
-
-
-class TestPendingBatchesBackendFailurePropagates:
-    """A telemetry-backend failure must raise, not read as an empty queue.
-
-    get_pending_batches previously flattened every exception to [] — a
-    Phoenix outage made the human approval queue silently show nothing
-    pending.
-    """
-
-    @pytest.mark.asyncio
-    async def test_get_pending_batches_raises_on_backend_failure(self):
-        from unittest.mock import AsyncMock, MagicMock
-
-        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
-
-        manager = MagicMock()
-        provider = MagicMock()
-        provider.traces.get_spans = AsyncMock(
-            side_effect=TimeoutError("phoenix query timed out")
-        )
-        manager.get_provider.return_value = provider
-        manager.config.get_project_name.return_value = "cogniverse-acme:prod"
-
-        storage = ApprovalStorageImpl(
-            grpc_endpoint="http://phoenix:4317",
-            http_endpoint="http://phoenix:6006",
-            tenant_id="acme:prod",
-            telemetry_manager=manager,
-        )
-        with pytest.raises(TimeoutError, match="phoenix query timed out"):
-            await storage.get_pending_batches()
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"approval confidence_threshold must be a finite number in \[0, 1\]"
+            ),
+        ):
+            ApprovalConfig.from_dict({"confidence_threshold": value})

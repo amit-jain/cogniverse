@@ -8,9 +8,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 from cogniverse_foundation.config.unified_config import (
     DSPyModuleConfig,
     OptimizerGenerationConfig,
+)
+from cogniverse_synthetic.approval.confidence_extractor import (
+    SyntheticDataConfidenceExtractor,
 )
 from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
 from cogniverse_synthetic.generators.routing import RoutingGenerator
@@ -468,6 +472,71 @@ async def test_generation_rejects_repeated_canonical_routing_label() -> None:
         "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
     )
+
+
+async def test_generation_preserves_actual_gateway_routing_decision() -> None:
+    class _SourceQueryGenerator:
+        max_retries = 3
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(
+                query="find TensorFlow video",
+                reasoning="Used the exact source entity and modality.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    class _VideoEntityModel:
+        def predict_entities(self, query, labels, threshold):
+            return [{"text": "video", "label": "video_content", "score": 0.91}]
+
+    gateway = GatewayAgent(deps=GatewayDeps())
+    gateway._gliner_model = _VideoEntityModel()
+    gateway_calls = []
+    gateway_outputs = []
+
+    async def route_with_gateway(query: str, tenant_id: str):
+        gateway_calls.append((query, tenant_id))
+        output = await gateway.process(GatewayInput(query=query, tenant_id=tenant_id))
+        gateway_outputs.append(output)
+        return output
+
+    generator = RoutingGenerator(
+        entity_extractor=_extract_entities,
+        routing_decider=route_with_gateway,
+        pattern_extractor=PatternExtractor(),
+        optimizer_config=_routing_generator().optimizer_config,
+    )
+    generator.query_generator = _SourceQueryGenerator()
+
+    examples = await generator.generate(
+        sampled_content=[{"topic": "TensorFlow video"}],
+        target_count=1,
+        tenant_id="acme:routing",
+    )
+
+    assert gateway_calls == [("find TensorFlow video", "acme:routing")]
+    assert examples[0].chosen_agent == "search_agent"
+    for example in examples:
+        assert example.routing_confidence == gateway_outputs[0].confidence
+        assert example.metadata["_outcome_metadata"] == {
+            "observed": True,
+            "required_field_semantics": {
+                "routing_confidence": "observed_gateway_confidence",
+                "search_quality": "unobserved_zero_sentinel",
+                "agent_success": "unobserved_false_sentinel",
+                "processing_time": "unobserved_zero_sentinel",
+            },
+        }
+        assert SyntheticDataConfidenceExtractor().get_confidence_breakdown(
+            example.model_dump()
+        ) == {
+            "schema": "RoutingExperienceSchema",
+            "confidence_field": "routing_confidence",
+            "final_confidence": gateway_outputs[0].confidence,
+            "outcome_observed": True,
+            "requires_human_review": False,
+        }
 
 
 @pytest.mark.parametrize(
