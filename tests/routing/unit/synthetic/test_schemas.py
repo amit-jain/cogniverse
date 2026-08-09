@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from cogniverse_synthetic.schemas import (
+    EntityExtractionExampleSchema,
     ProfileSelectionExampleSchema,
     RoutingExperienceSchema,
     SyntheticDataRequest,
@@ -16,6 +17,86 @@ from cogniverse_synthetic.schemas import (
 pytestmark = [pytest.mark.unit]
 
 
+@pytest.mark.parametrize(
+    ("schema", "payload"),
+    [
+        (
+            EntityExtractionExampleSchema,
+            {
+                "query": "Marie Curie discovered radium",
+                "entities": [
+                    {"text": "Marie Curie", "type": "PERSON"},
+                    {"text": "radium", "type": "SUBSTANCE"},
+                ],
+                "entity_types": "PERSON,SUBSTANCE",
+                "relationships": [
+                    {
+                        "source": "Marie Curie",
+                        "target": "radium",
+                        "type": "discovered",
+                    }
+                ],
+            },
+        ),
+        (
+            RoutingExperienceSchema,
+            {
+                "query": "find the product launch recording",
+                "entities": [],
+                "relationships": [],
+                "enhanced_query": "find the exact product launch recording",
+                "chosen_agent": "search_agent",
+                "routing_confidence": 0.9,
+                "search_quality": 0.0,
+                "agent_success": False,
+            },
+        ),
+        (
+            WorkflowExecutionSchema,
+            {
+                "workflow_id": "workflow-1",
+                "query": "summarize the product launch recording",
+                "query_type": "VIDEO",
+                "execution_time": 0.0,
+                "success": False,
+                "agent_sequence": ["search_agent", "summarizer_agent"],
+                "task_count": 2,
+                "parallel_efficiency": 0.0,
+                "confidence_score": 0.0,
+            },
+        ),
+        (
+            SyntheticDataResponse,
+            {
+                "optimizer": "routing",
+                "schema_name": "RoutingExperienceSchema",
+                "count": 1,
+                "selected_profiles": ["video_colpali_smol500_mv_frame"],
+                "profile_selection_reasoning": "The profile serves video content.",
+                "data": [],
+                "metadata": {"backend_type": "vespa"},
+            },
+        ),
+    ],
+    ids=["entity-extraction", "routing", "workflow", "response"],
+)
+def test_public_synthetic_schemas_reject_unknown_fields(schema, payload) -> None:
+    with pytest.raises(ValidationError) as captured:
+        schema.model_validate({**payload, "legacy_payload": "discard me"})
+
+    assert captured.value.errors(
+        include_url=False,
+        include_context=False,
+    ) == [
+        {
+            "type": "extra_forbidden",
+            "loc": ("legacy_payload",),
+            "msg": "Extra inputs are not permitted",
+            "input": "discard me",
+        }
+    ]
+
+
 class TestProfileSelectionExampleSchema:
     """Test ProfileSelectionExampleSchema validation and serialization"""
 
@@ -24,7 +105,6 @@ class TestProfileSelectionExampleSchema:
             query="find a clip about machine learning",
             available_profiles="video_colpali_smol500_mv_frame,video_colqwen_omni_mv_chunk_30s",
             selected_profile="video_colqwen_omni_mv_chunk_30s",
-            confidence=0.85,
             reasoning="Chunk-based profile fits clip-style queries",
             query_intent="video_search",
             modality="video",
@@ -33,38 +113,17 @@ class TestProfileSelectionExampleSchema:
 
         assert example.query == "find a clip about machine learning"
         assert example.selected_profile == "video_colqwen_omni_mv_chunk_30s"
-        assert 0.0 <= example.confidence <= 1.0
         assert example.modality == "video"
+        assert "confidence" not in example.model_dump()
 
-    def test_confidence_bounds(self):
-        # 0.0 and 1.0 are valid bounds.
-        ProfileSelectionExampleSchema(
-            query="q",
-            available_profiles="a,b",
-            selected_profile="a",
-            confidence=0.0,
-            reasoning="r",
-            query_intent="text_search",
-            modality="text",
-            complexity="simple",
-        )
-        ProfileSelectionExampleSchema(
-            query="q",
-            available_profiles="a,b",
-            selected_profile="a",
-            confidence=1.0,
-            reasoning="r",
-            query_intent="text_search",
-            modality="text",
-            complexity="simple",
-        )
-
-        with pytest.raises(ValidationError):
+    @pytest.mark.parametrize("confidence", [0.0, 0.85, 1.0])
+    def test_rejects_unobserved_confidence_target(self, confidence):
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             ProfileSelectionExampleSchema(
                 query="q",
                 available_profiles="a,b",
                 selected_profile="a",
-                confidence=1.5,
+                confidence=confidence,
                 reasoning="r",
                 query_intent="text_search",
                 modality="text",
@@ -76,7 +135,6 @@ class TestProfileSelectionExampleSchema:
             query="q",
             available_profiles="a,b",
             selected_profile="a",
-            confidence=0.7,
             reasoning="r",
             query_intent="video_search",
             modality="video",
@@ -86,7 +144,8 @@ class TestProfileSelectionExampleSchema:
         assert data["query"] == "q"
         assert data["selected_profile"] == "a"
         rebuilt = ProfileSelectionExampleSchema(**data)
-        assert rebuilt.confidence == example.confidence
+        assert rebuilt == example
+        assert "confidence" not in data
 
 
 class TestRoutingExperienceSchema:
@@ -99,7 +158,7 @@ class TestRoutingExperienceSchema:
             entities=[{"text": "TensorFlow", "type": "TECHNOLOGY"}],
             relationships=[],
             enhanced_query="find TensorFlow(TECHNOLOGY) tutorials",
-            chosen_agent="video_search_agent",
+            chosen_agent="search_agent",
             routing_confidence=0.85,
             search_quality=0.78,
             agent_success=True,
@@ -107,6 +166,7 @@ class TestRoutingExperienceSchema:
 
         assert experience.query == "find TensorFlow tutorials"
         assert len(experience.entities) == 1
+        assert experience.chosen_agent == "search_agent"
         assert experience.routing_confidence == 0.85
 
     def test_routing_experience_with_satisfaction(self):
@@ -127,7 +187,6 @@ class TestRoutingExperienceSchema:
 
     def test_routing_confidence_bounds(self):
         """Test confidence and quality value bounds"""
-        # Valid values at boundaries
         RoutingExperienceSchema(
             query="test",
             entities=[],
@@ -150,7 +209,6 @@ class TestRoutingExperienceSchema:
             agent_success=True,
         )
 
-        # Invalid values
         with pytest.raises(ValidationError):
             RoutingExperienceSchema(
                 query="test",
@@ -191,19 +249,37 @@ class TestWorkflowExecutionSchema:
             query_type="VIDEO",
             execution_time=3.5,
             success=True,
-            agent_sequence=["video_search_agent", "summarizer", "detailed_report"],
+            agent_sequence=[
+                "search_agent",
+                "summarizer_agent",
+                "detailed_report_agent",
+            ],
             task_count=3,
             parallel_efficiency=0.85,
             confidence_score=0.88,
         )
 
         assert workflow.workflow_id == "test_001"
-        assert len(workflow.agent_sequence) == 3
+        assert workflow.agent_sequence == [
+            "search_agent",
+            "summarizer_agent",
+            "detailed_report_agent",
+        ]
         assert workflow.task_count == 3
+
+    def test_schema_examples_use_canonical_agent_ids(self):
+        routing_example = RoutingExperienceSchema.model_json_schema()["example"]
+        workflow_example = WorkflowExecutionSchema.model_json_schema()["example"]
+
+        assert routing_example["chosen_agent"] == "search_agent"
+        assert workflow_example["agent_sequence"] == [
+            "search_agent",
+            "summarizer_agent",
+            "detailed_report_agent",
+        ]
 
     def test_workflow_execution_time_validation(self):
         """Test execution time must be non-negative"""
-        # Valid
         WorkflowExecutionSchema(
             workflow_id="test",
             query="test",
@@ -216,7 +292,6 @@ class TestWorkflowExecutionSchema:
             confidence_score=0.9,
         )
 
-        # Invalid
         with pytest.raises(ValidationError):
             WorkflowExecutionSchema(
                 workflow_id="test",
@@ -232,7 +307,6 @@ class TestWorkflowExecutionSchema:
 
     def test_workflow_task_count_validation(self):
         """Test task count must be at least 1"""
-        # Valid
         WorkflowExecutionSchema(
             workflow_id="test",
             query="test",
@@ -245,7 +319,6 @@ class TestWorkflowExecutionSchema:
             confidence_score=0.9,
         )
 
-        # Invalid
         with pytest.raises(ValidationError):
             WorkflowExecutionSchema(
                 workflow_id="test",
@@ -288,7 +361,7 @@ class TestSyntheticDataRequest:
             optimizer="profile",
             count=100,
             vespa_sample_size=200,
-            strategies=["diverse"],
+            strategy="diverse",
             max_profiles=3,
         )
 
@@ -297,11 +370,9 @@ class TestSyntheticDataRequest:
 
     def test_request_count_validation(self):
         """Test count bounds validation"""
-        # Valid
         SyntheticDataRequest(tenant_id="test:unit", optimizer="profile", count=1)
         SyntheticDataRequest(tenant_id="test:unit", optimizer="profile", count=10000)
 
-        # Invalid
         with pytest.raises(ValidationError):
             SyntheticDataRequest(tenant_id="test:unit", optimizer="profile", count=0)
 
@@ -317,9 +388,20 @@ class TestSyntheticDataRequest:
         )
 
         assert request.vespa_sample_size == 200
-        assert request.strategies == ["diverse"]
+        assert request.strategy is None
         assert request.max_profiles == 3
         assert request.tenant_id == "test:unit"
+
+    def test_request_rejects_explicit_null_strategy(self):
+        with pytest.raises(ValidationError, match="strategy"):
+            SyntheticDataRequest.model_validate(
+                {
+                    "tenant_id": "test:unit",
+                    "optimizer": "profile",
+                    "count": 1,
+                    "strategy": None,
+                }
+            )
 
     def test_request_rejects_missing_tenant_id(self):
         """SyntheticDataRequest must raise on missing tenant_id."""
@@ -327,6 +409,80 @@ class TestSyntheticDataRequest:
 
         with pytest.raises(pydantic.ValidationError):
             SyntheticDataRequest(optimizer="profile", count=1)
+
+    @pytest.mark.parametrize(
+        "tenant_id",
+        ["", " ", "acme:production:extra", "acme-production"],
+    )
+    def test_request_rejects_invalid_tenant_id(self, tenant_id):
+        with pytest.raises(ValidationError):
+            SyntheticDataRequest(
+                tenant_id=tenant_id,
+                optimizer="profile",
+                count=1,
+            )
+
+    def test_request_canonicalizes_simple_tenant_id(self):
+        request = SyntheticDataRequest(
+            tenant_id="acme",
+            optimizer="profile",
+            count=1,
+        )
+
+        assert request.tenant_id == "acme:acme"
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [
+            "",
+            "unknown",
+        ],
+    )
+    def test_request_rejects_noncanonical_sampling_strategy(self, strategy):
+        with pytest.raises(ValidationError):
+            SyntheticDataRequest(
+                tenant_id="test:unit",
+                optimizer="profile",
+                count=1,
+                strategy=strategy,
+            )
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [["diverse"], {"name": "diverse"}],
+        ids=["list", "object"],
+    )
+    def test_request_rejects_non_string_sampling_strategy(self, strategy):
+        with pytest.raises(ValidationError) as captured:
+            SyntheticDataRequest(
+                tenant_id="test:unit",
+                optimizer="profile",
+                count=1,
+                strategy=strategy,
+            )
+
+        assert captured.value.errors(
+            include_url=False,
+            include_context=False,
+        ) == [
+            {
+                "type": "value_error",
+                "loc": ("strategy",),
+                "msg": "Value error, strategy must be a string",
+                "input": strategy,
+            }
+        ]
+
+    def test_request_rejects_obsolete_strategy_list(self):
+        with pytest.raises(ValidationError, match="strategies"):
+            SyntheticDataRequest.model_validate(
+                {
+                    "tenant_id": "test:unit",
+                    "optimizer": "profile",
+                    "count": 1,
+                    "strategies": ["diverse", "temporal_recent"],
+                }
+            )
 
 
 class TestSyntheticDataResponse:
@@ -348,6 +504,15 @@ class TestSyntheticDataResponse:
         assert response.schema_name == "ProfileSelectionExampleSchema"
         assert len(response.selected_profiles) == 2
         assert response.metadata["generation_time_ms"] == 1250
+
+    def test_schema_example_names_backend_query_strategy_metadata(self):
+        metadata = SyntheticDataResponse.model_json_schema()["example"]["metadata"]
+
+        assert metadata == {
+            "backend_type": "vespa",
+            "backend_query_strategy": "diverse",
+            "generation_time_ms": 1250,
+        }
 
 
 if __name__ == "__main__":
