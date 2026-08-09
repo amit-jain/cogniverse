@@ -93,8 +93,18 @@ class TripletExtractor:
             f"strategy={strategy}, min={min_triplets}"
         )
 
-        # 1. Query search spans
-        spans_df = await self.provider._trace_store.get_spans(project=project)
+        try:
+            spans_df = await self.provider.traces.get_all_spans(project=project)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to query search spans from project {project}"
+            ) from exc
+
+        if not isinstance(spans_df, pd.DataFrame):
+            raise TypeError(
+                f"Search span query for project {project} returned "
+                f"{type(spans_df).__name__}, expected pandas.DataFrame"
+            )
 
         if spans_df.empty:
             logger.warning(f"No spans found in project {project}")
@@ -103,31 +113,50 @@ class TripletExtractor:
         # Filter for search spans
         search_spans = self._filter_search_spans(spans_df, modality)
         logger.info(f"Found {len(search_spans)} search spans")
+        if search_spans.empty:
+            return []
 
         # 2. Query annotations for clicks/relevance
-        annotations_df = await self.provider._annotation_store.get_annotations(
-            spans_df=search_spans,
-            project=project,
-            annotation_names=[RESULT_CLICK, RESULT_RELEVANCE],
-        )
+        try:
+            annotations_df = await self.provider.annotations.get_annotations(
+                spans_df=search_spans,
+                project=project,
+                annotation_names=[RESULT_CLICK, RESULT_RELEVANCE],
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to query result annotations from project {project}"
+            ) from exc
 
         logger.info(f"Found {len(annotations_df)} annotations")
+        if annotations_df.empty:
+            return []
 
         # Phoenix returns the annotations frame indexed by span_id, with the
         # annotation name in an 'annotation_name' column. Normalize to the
         # (span_id column, name column) shape the extraction below reads —
         # otherwise every span lookup raised KeyError('span_id') and the
         # extractor yielded zero triplets.
-        if annotations_df is not None and not annotations_df.empty:
-            if (
-                annotations_df.index.name == "span_id"
-                and "span_id" not in annotations_df.columns
-            ):
-                annotations_df = annotations_df.reset_index()
-            if "annotation_name" in annotations_df.columns:
-                annotations_df = annotations_df.rename(
-                    columns={"annotation_name": "name"}
-                )
+        if not isinstance(annotations_df, pd.DataFrame):
+            raise TypeError(
+                f"Annotation query for project {project} returned "
+                f"{type(annotations_df).__name__}, expected pandas.DataFrame"
+            )
+        if (
+            annotations_df.index.name == "span_id"
+            and "span_id" not in annotations_df.columns
+        ):
+            annotations_df = annotations_df.reset_index()
+        if "annotation_name" in annotations_df.columns:
+            annotations_df = annotations_df.rename(columns={"annotation_name": "name"})
+        required = {"span_id", "name", "result.score"}
+        missing = sorted(required - set(annotations_df.columns))
+        if missing:
+            raise ValueError(
+                f"Annotation frame for project {project} is missing columns: {missing}"
+            )
+        annotations_df = annotations_df.copy()
+        annotations_df["span_id"] = annotations_df["span_id"].map(str)
 
         # 3. Extract triplets
         triplets = []
@@ -174,64 +203,69 @@ class TripletExtractor:
         modality: str,
     ) -> List[Triplet]:
         """Extract triplets from a single search span."""
-        try:
-            # Read the canonical anchor (query) and candidates (results) that
-            # every search producer writes via record_span_io.
-            span_io = read_span_io(span)
-            query = span_io["input"]
-            if not query:
-                return []
+        span_id_value = span.get("span_id", span.get("context.span_id"))
+        if span_id_value is None or not str(span_id_value).strip():
+            raise ValueError("Search span is missing a non-empty span ID")
+        span_id = str(span_id_value)
 
-            results = span_io["output"] or []
-            if not results:
-                return []
+        span_io = read_span_io(span)
+        query = span_io["input"]
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError(f"Search span {span_id} has no non-empty query")
+        query = query.strip()
 
-            # Get annotations for this span
-            span_id = span.get("span_id", span.get("context.span_id", ""))
-            span_annotations = annotations_df[annotations_df["span_id"] == span_id]
-
-            # Identify clicked/relevant results (positives)
-            clicked_ids = self._get_clicked_results(span_annotations)
-
-            if not clicked_ids:
-                # No positive examples - skip
-                return []
-
-            # Mine hard negatives
-            hard_negatives = self._mine_hard_negatives(results, clicked_ids, strategy)
-
-            if not hard_negatives:
-                # No negatives - skip
-                return []
-
-            # Create triplets
-            triplets = []
-            for positive_id in clicked_ids:
-                for negative_id in hard_negatives:
-                    # Get content for positive and negative
-                    positive_content = self._get_result_content(results, positive_id)
-                    negative_content = self._get_result_content(results, negative_id)
-
-                    if positive_content and negative_content:
-                        triplets.append(
-                            Triplet(
-                                anchor=query,
-                                positive=positive_content,
-                                negative=negative_content,
-                                modality=modality,
-                                metadata={
-                                    "span_id": span_id,
-                                    "timestamp": span.get("start_time"),
-                                    "strategy": strategy,
-                                },
-                            )
-                        )
-
-            return triplets
-
-        except Exception as e:
-            logger.warning(f"Failed to extract triplets from span: {e}")
+        results = span_io["output"]
+        if results in (None, []):
             return []
+        if not isinstance(results, list) or not all(
+            isinstance(result, dict) for result in results
+        ):
+            raise ValueError(f"Search span {span_id} output must be a list of objects")
+
+        result_ids = [self._result_id(result) for result in results]
+        if any(result_id is None for result_id in result_ids):
+            raise ValueError(f"Search span {span_id} contains a result without an ID")
+        if len(set(result_ids)) != len(result_ids):
+            raise ValueError(f"Search span {span_id} contains duplicate result IDs")
+
+        span_annotations = annotations_df[annotations_df["span_id"] == span_id]
+        clicked_ids = self._get_clicked_results(span_annotations)
+        if not clicked_ids:
+            return []
+
+        unknown_clicked = clicked_ids - set(result_ids)
+        if unknown_clicked:
+            raise ValueError(
+                f"Search span {span_id} annotations reference unknown result IDs: "
+                f"{sorted(unknown_clicked)}"
+            )
+
+        hard_negatives = self._mine_hard_negatives(results, clicked_ids, strategy)
+        if not hard_negatives:
+            return []
+
+        triplets = []
+        for positive_id in sorted(clicked_ids):
+            for negative_id in hard_negatives:
+                triplets.append(
+                    Triplet(
+                        anchor=query,
+                        positive=self._get_result_content(
+                            results, positive_id, span_id=span_id
+                        ),
+                        negative=self._get_result_content(
+                            results, negative_id, span_id=span_id
+                        ),
+                        modality=modality,
+                        metadata={
+                            "span_id": span_id,
+                            "timestamp": span.get("start_time"),
+                            "strategy": strategy,
+                        },
+                    )
+                )
+
+        return triplets
 
     @staticmethod
     def _annotation_result_id(annotation: pd.Series) -> Optional[str]:
@@ -241,10 +275,14 @@ class TripletExtractor:
         """
         val = annotation.get(f"metadata.{RESULT_ID_META_KEY}")
         if val is not None and not (isinstance(val, float) and pd.isna(val)):
-            return str(val)
+            canonical = str(val).strip()
+            return canonical or None
         meta = annotation.get("metadata")
-        if isinstance(meta, dict) and meta.get(RESULT_ID_META_KEY):
-            return str(meta[RESULT_ID_META_KEY])
+        if isinstance(meta, dict) and RESULT_ID_META_KEY in meta:
+            value = meta[RESULT_ID_META_KEY]
+            if value is not None:
+                canonical = str(value).strip()
+                return canonical or None
         return None
 
     def _get_clicked_results(self, annotations: pd.DataFrame) -> Set[str]:
@@ -254,20 +292,29 @@ class TripletExtractor:
         for _, annotation in annotations.iterrows():
             # Check annotation type
             ann_name = annotation.get("name", "")
+            if ann_name not in {RESULT_CLICK, RESULT_RELEVANCE}:
+                raise ValueError(f"Unsupported result annotation name: {ann_name!r}")
+
+            result_id = self._annotation_result_id(annotation)
+            if result_id is None:
+                raise ValueError(
+                    f"{ann_name} annotation is missing metadata.{RESULT_ID_META_KEY}"
+                )
 
             if ann_name == RESULT_CLICK:
                 # Direct click annotation
-                result_id = self._annotation_result_id(annotation)
-                if result_id:
-                    clicked.add(result_id)
+                clicked.add(result_id)
 
             elif ann_name == RESULT_RELEVANCE:
                 # Relevance score annotation
-                score = annotation.get("result.score", 0.0)
+                score = annotation.get("result.score")
+                if isinstance(score, bool) or not isinstance(score, (int, float)):
+                    raise ValueError(
+                        f"{ann_name} annotation for result {result_id} has an "
+                        "invalid numeric score"
+                    )
                 if score >= RELEVANCE_POSITIVE_THRESHOLD:
-                    result_id = self._annotation_result_id(annotation)
-                    if result_id:
-                        clicked.add(result_id)
+                    clicked.add(result_id)
 
         return clicked
 
@@ -282,7 +329,8 @@ class TripletExtractor:
         for key in ("document_id", "video_id", "source_id", "id"):
             val = result.get(key)
             if val is not None:
-                return val
+                canonical = str(val).strip()
+                return canonical or None
         return None
 
     def _mine_hard_negatives(
@@ -332,20 +380,24 @@ class TripletExtractor:
         else:
             raise ValueError(f"Unknown strategy: {strategy}")
 
-    def _get_result_content(self, results: List[Dict], result_id: str) -> Optional[str]:
+    def _get_result_content(
+        self, results: List[Dict], result_id: str, *, span_id: str
+    ) -> str:
         """Extract content from result by ID."""
         for result in results:
             if self._result_id(result) == result_id:
                 # Try different content fields
                 content_fields = ["content", "text", "description", "title"]
                 for field in content_fields:
-                    if field in result:
-                        return result[field]
+                    value = result.get(field)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+                raise ValueError(
+                    f"Search span {span_id} result {result_id} has no non-empty "
+                    "textual content"
+                )
 
-                # Fallback: return ID if no content found
-                return result_id
-
-        return None
+        raise ValueError(f"Search span {span_id} has no result {result_id}")
 
 
 class TripletDataset:

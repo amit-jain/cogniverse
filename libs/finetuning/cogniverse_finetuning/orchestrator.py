@@ -11,20 +11,31 @@ Combines all components into a high-level API:
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
 from opentelemetry.trace import Status, StatusCode
 
+from cogniverse_agents.approval.approval_storage import (
+    validate_approved_dataset_record,
+)
+from cogniverse_core.approval.interfaces import approved_synthetic_dataset_name
+from cogniverse_core.approval.training_schema import (
+    APPROVED_SYNTHETIC_AGENT_TYPES,
+    APPROVED_SYNTHETIC_OUTPUT_FIELDS,
+    validate_approved_training_values,
+)
 from cogniverse_finetuning.dataset.embedding_extractor import TripletExtractor
 from cogniverse_finetuning.dataset.formatters import InstructionFormatter
 from cogniverse_finetuning.dataset.method_selector import TrainingMethodSelector
 from cogniverse_finetuning.dataset.preference_extractor import PreferencePairExtractor
 from cogniverse_finetuning.dataset.synthetic_reader import (
-    format_synthetic_sft,
     load_approved_synthetic_examples,
+    synthetic_examples_to_instruction,
 )
 from cogniverse_finetuning.dataset.trace_converter import (
     TraceToInstructionConverter,
@@ -32,7 +43,7 @@ from cogniverse_finetuning.dataset.trace_converter import (
 )
 from cogniverse_finetuning.evaluation.adapter_evaluator import (
     AdapterEvaluator,
-    example_identity,
+    training_example_identity,
 )
 from cogniverse_finetuning.training.backend import (
     LocalTrainingBackend,
@@ -40,13 +51,226 @@ from cogniverse_finetuning.training.backend import (
     TrainingBackend,
     TrainingJobConfig,
 )
-from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.providers.base import (
     DatasetNotFoundError,
     TelemetryProvider,
 )
 
 logger = logging.getLogger(__name__)
+
+_APPROVED_AGENT_OUTPUT_FIELDS = APPROVED_SYNTHETIC_OUTPUT_FIELDS
+_APPROVED_AGENT_TYPES = APPROVED_SYNTHETIC_AGENT_TYPES
+_FINALIZATION_TIMEOUT_S = 300.0
+
+
+async def _run_required_blocking(operation, *, context: str):
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(operation), timeout=_FINALIZATION_TIMEOUT_S
+        )
+    except TimeoutError as error:
+        raise TimeoutError(
+            f"{context} timed out after {_FINALIZATION_TIMEOUT_S:g} seconds"
+        ) from error
+    except Exception as error:
+        raise RuntimeError(f"{context} failed") from error
+
+
+def _validated_list(
+    record: Dict[str, Any],
+    *,
+    field: str,
+    position: int,
+) -> List[Any]:
+    value = record.get(field)
+    if not isinstance(value, list):
+        raise ValueError(
+            f"approved entity_extraction record at position {position} {field} "
+            "must be a list"
+        )
+    return value
+
+
+def _validate_entity_record(record: Dict[str, Any], position: int) -> None:
+    query = record.get("query")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError(
+            f"approved entity_extraction record at position {position} requires "
+            "a non-empty query string"
+        )
+
+    entities = _validated_list(
+        record,
+        field="entities",
+        position=position,
+    )
+    for entity_position, entity in enumerate(entities):
+        if (
+            not isinstance(entity, dict)
+            or set(entity) != {"text", "type"}
+            or not all(
+                isinstance(entity[key], str) and entity[key].strip()
+                for key in ("text", "type")
+            )
+        ):
+            raise ValueError(
+                f"approved entity_extraction record at position {position} entity "
+                f"at position {entity_position} requires exactly non-empty text "
+                "and type strings"
+            )
+
+    entity_types = record.get("entity_types")
+    if not isinstance(entity_types, str):
+        raise ValueError(
+            f"approved entity_extraction record at position {position} requires "
+            "an entity_types string"
+        )
+
+    relationships = _validated_list(
+        record,
+        field="relationships",
+        position=position,
+    )
+    for relationship_position, relationship in enumerate(relationships):
+        if (
+            not isinstance(relationship, dict)
+            or set(relationship) != {"source", "target", "type"}
+            or not all(
+                isinstance(relationship[key], str) and relationship[key].strip()
+                for key in ("source", "target", "type")
+            )
+        ):
+            raise ValueError(
+                f"approved entity_extraction record at position {position} "
+                f"relationship at position {relationship_position} requires exactly "
+                "non-empty source, target, and type strings"
+            )
+
+
+def _validate_approved_record(record: Dict[str, Any], position: int) -> str:
+    if record.get("status") != "approved":
+        raise ValueError(
+            f"approved dataset record at position {position} requires status 'approved'"
+        )
+
+    agent_type = record.get("metadata.agent_type")
+    if not isinstance(agent_type, str) or not agent_type.strip():
+        raise ValueError(
+            f"approved record at position {position} requires a non-empty "
+            "metadata.agent_type string"
+        )
+    if agent_type not in _APPROVED_AGENT_TYPES:
+        raise ValueError(
+            f"approved dataset record at position {position} has unsupported "
+            f"agent_type {agent_type!r}"
+        )
+
+    validate_approved_training_values(
+        record,
+        agent_type,
+        context=f"approved {agent_type} record at position {position}",
+    )
+
+    if agent_type == "entity_extraction":
+        _validate_entity_record(record, position)
+        return agent_type
+
+    query = record.get("query")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError(
+            f"approved {agent_type} record at position {position} requires a "
+            "non-empty query string"
+        )
+    output_field = _APPROVED_AGENT_OUTPUT_FIELDS[agent_type]
+    output = record.get(output_field)
+    if not isinstance(output, str) or not output.strip():
+        raise ValueError(
+            f"approved {agent_type} record at position {position} requires a "
+            f"non-empty {output_field} string"
+        )
+    return agent_type
+
+
+async def _load_approved_synthetic_examples(
+    telemetry_provider: TelemetryProvider,
+    *,
+    tenant_id: str,
+    agent_type: Optional[str],
+) -> List[Dict[str, Any]]:
+    if agent_type is None:
+        return []
+    dataset_name = approved_synthetic_dataset_name(tenant_id)
+    context = f"tenant={tenant_id} agent_type={agent_type} dataset={dataset_name}"
+    try:
+        df = await telemetry_provider.datasets.get_dataset(name=dataset_name)
+    except DatasetNotFoundError:
+        return []
+    except Exception as error:
+        raise RuntimeError(
+            f"Failed to load approved synthetic dataset for {context}"
+        ) from error
+
+    if df is None:
+        error = TypeError(
+            "approved synthetic dataset provider returned None; expected "
+            "pandas DataFrame"
+        )
+        raise RuntimeError(
+            f"Approved synthetic dataset provider returned no frame for {context}"
+        ) from error
+    if not isinstance(df, pd.DataFrame):
+        error = TypeError(
+            "approved synthetic dataset provider must return a pandas "
+            f"DataFrame, got {type(df).__name__}"
+        )
+        raise RuntimeError(
+            f"Malformed approved synthetic dataset for {context}"
+        ) from error
+    if df.empty:
+        return []
+
+    try:
+        if "input" not in df.columns:
+            raise ValueError(
+                "non-empty approved synthetic dataset must contain an input column"
+            )
+        records = df["input"].tolist()
+        invalid_positions = [
+            position
+            for position, record in enumerate(records)
+            if not isinstance(record, dict)
+        ]
+        if invalid_positions:
+            raise ValueError(
+                "approved synthetic dataset input records must be "
+                f"dictionaries: positions={invalid_positions}"
+            )
+
+        matching_records = []
+        for position, record in enumerate(records):
+            canonical_record = validate_approved_dataset_record(
+                record,
+                tenant_id=tenant_id,
+                dataset_name=dataset_name,
+                position=position,
+            )
+            record_agent_type = _validate_approved_record(
+                canonical_record,
+                position,
+            )
+            if record_agent_type == agent_type:
+                matching_records.append(canonical_record)
+
+        if not matching_records:
+            return []
+        return load_approved_synthetic_examples(
+            pd.DataFrame({"input": matching_records}), agent_type
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"Malformed approved synthetic dataset for {context}"
+        ) from error
 
 
 def validate_sft_dataset(dataset: List[Dict]) -> None:
@@ -257,6 +481,7 @@ class FinetuningOrchestrator:
     def __init__(
         self,
         telemetry_provider: TelemetryProvider,
+        telemetry_manager: TelemetryManager,
         synthetic_service: Optional[any] = None,
         approval_agent: Optional[any] = None,
         registry: Optional[any] = None,
@@ -266,16 +491,37 @@ class FinetuningOrchestrator:
 
         Args:
             telemetry_provider: TelemetryProvider for querying spans/annotations
+            telemetry_manager: Manager that exports durable experiment records
             synthetic_service: Optional SyntheticDataService for data generation
             approval_agent: Optional HumanApprovalAgent for human approval
             registry: Optional AdapterRegistry for adapter registration
         """
         self.provider = telemetry_provider
+        self.telemetry_manager = telemetry_manager
         self.synthetic_service = synthetic_service
         self.approval_agent = approval_agent
         self.registry = registry
+        self._registry_init_lock = threading.Lock()
 
-    async def _upload_adapter_to_storage(
+    def _get_registry(self, config: "OrchestrationConfig"):
+        if self.registry is not None:
+            return self.registry
+
+        with self._registry_init_lock:
+            if self.registry is not None:
+                return self.registry
+            try:
+                from cogniverse_finetuning.registry import AdapterRegistry
+
+                self.registry = AdapterRegistry()
+            except Exception as error:
+                raise RuntimeError(
+                    f"Failed to initialize adapter registry for tenant "
+                    f"{config.tenant_id}"
+                ) from error
+            return self.registry
+
+    def _upload_adapter_to_storage(
         self,
         config: "OrchestrationConfig",
         result: "OrchestrationResult",
@@ -288,19 +534,11 @@ class FinetuningOrchestrator:
             result: Training result with adapter_path
 
         Returns:
-            Final storage URI, or None if upload is not configured.
-
-        Raises:
-            Any storage/backend exception raised by the configured adapter
-            upload implementation.
+            Final storage URI or None if upload is not configured
         """
         if not config.adapter_storage_uri:
             return None
 
-        from cogniverse_finetuning.registry import upload_adapter
-
-        # Build destination URI with adapter-specific path
-        # e.g., hf://myorg/adapters -> hf://myorg/adapters/sft_routing_v1.0.0
         name_parts = [result.training_method]
         if config.agent_type:
             name_parts.append(config.agent_type)
@@ -308,22 +546,35 @@ class FinetuningOrchestrator:
             name_parts.append(config.modality)
         name_parts.append(f"v{config.adapter_version}")
         adapter_name = "_".join(name_parts)
-
         base_uri = config.adapter_storage_uri.rstrip("/")
         destination_uri = f"{base_uri}/{adapter_name}"
 
-        logger.info(f"Uploading adapter to storage: {destination_uri}")
-        final_uri = await asyncio.to_thread(
-            upload_adapter,
-            result.adapter_path,
-            destination_uri,
-            token=config.hf_token,
-        )
-        logger.info(f"Adapter uploaded successfully: {final_uri}")
+        try:
+            from cogniverse_finetuning.registry import upload_adapter
 
+            # Build destination URI with adapter-specific path
+            # e.g., hf://myorg/adapters -> hf://myorg/adapters/sft_routing_v1.0.0
+            logger.info(f"Uploading adapter to storage: {destination_uri}")
+            final_uri = upload_adapter(
+                result.adapter_path, destination_uri, token=config.hf_token
+            )
+
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to upload adapter for tenant {config.tenant_id} "
+                f"to {destination_uri}"
+            ) from e
+
+        if not isinstance(final_uri, str) or not final_uri.strip():
+            raise RuntimeError(
+                f"Adapter upload returned an empty URI for tenant "
+                f"{config.tenant_id} at {destination_uri}"
+            )
+
+        logger.info(f"Adapter uploaded successfully: {final_uri}")
         return final_uri
 
-    async def _register_adapter(
+    def _register_adapter(
         self,
         config: "OrchestrationConfig",
         result: "OrchestrationResult",
@@ -345,27 +596,14 @@ class FinetuningOrchestrator:
         if not config.enable_registry:
             return None
 
-        if self.registry is None:
-            try:
-                from cogniverse_finetuning.registry import AdapterRegistry
-
-                self.registry = AdapterRegistry()
-            except Exception as e:
-                logger.error(f"Failed to initialize registry: {e}")
-                raise RuntimeError("Failed to initialize registry") from e
+        registry = self._get_registry(config)
 
         try:
-            # Upload to storage first so a configured storage failure is not
-            # masked by a later registry write.
-            adapter_uri = await self._upload_adapter_to_storage(config, result)
-        except Exception as e:
-            logger.error(f"Failed to upload adapter to storage: {e}")
-            raise
+            # Upload to storage if configured
+            adapter_uri = self._upload_adapter_to_storage(config, result)
+            if adapter_uri:
+                result.adapter_uri = adapter_uri
 
-        if adapter_uri:
-            result.adapter_uri = adapter_uri
-
-        try:
             # Generate adapter name from config
             name_parts = [result.training_method]
             if config.agent_type:
@@ -374,7 +612,7 @@ class FinetuningOrchestrator:
                 name_parts.append(config.modality)
             adapter_name = "_".join(name_parts)
 
-            adapter_id = self.registry.register_adapter(
+            adapter_id = registry.register_adapter(
                 tenant_id=config.tenant_id,
                 name=adapter_name,
                 version=config.adapter_version,
@@ -395,12 +633,19 @@ class FinetuningOrchestrator:
                 experiment_run_id=run_id,
             )
 
+            if not isinstance(adapter_id, str) or not adapter_id.strip():
+                raise RuntimeError(
+                    f"Adapter registry returned an empty adapter ID for tenant "
+                    f"{config.tenant_id}"
+                )
+
             logger.info(f"Registered adapter in registry: {adapter_id}")
             return adapter_id
 
         except Exception as e:
-            logger.error(f"Failed to register adapter: {e}")
-            raise RuntimeError("Failed to register adapter in registry") from e
+            raise RuntimeError(
+                f"Failed to register adapter for tenant {config.tenant_id}"
+            ) from e
 
     def _log_experiment_to_phoenix(
         self,
@@ -469,13 +714,12 @@ class FinetuningOrchestrator:
             "output.adapter_path": result.adapter_path,
         }
 
-        # Create experiment span in Phoenix. TelemetryProvider exposes no
-        # ``tracer``; spans are emitted through the per-tenant TelemetryManager.
-        with get_telemetry_manager().span(
+        with self.telemetry_manager.span(
             f"experiment.{config.agent_type or config.modality}.{result.training_method}",
             tenant_id=config.tenant_id,
             project_name="experiments",
             attributes=experiment_span_attributes,
+            require_export=True,
         ) as span:
             span.set_status(Status(StatusCode.OK))
 
@@ -486,6 +730,7 @@ class FinetuningOrchestrator:
         config: OrchestrationConfig,
         adapter_path: str,
         evaluation_result: Any,  # ComparisonResult
+        run_id: str,
     ) -> None:
         """
         Log adapter evaluation to Phoenix as EVALUATION span.
@@ -498,6 +743,7 @@ class FinetuningOrchestrator:
         eval_span_attributes = {
             "openinference.span.kind": "EVALUATION",
             "operation.name": "adapter_evaluation",
+            "experiment.run_id": run_id,
             "evaluation.adapter_path": adapter_path,
             "evaluation.agent_type": config.agent_type or config.modality,
             "evaluation.test_size": config.test_set_size,
@@ -522,17 +768,62 @@ class FinetuningOrchestrator:
             "improvement.p_value": evaluation_result.p_value,
         }
 
-        # Create evaluation span in Phoenix (via the per-tenant TelemetryManager;
-        # TelemetryProvider has no ``tracer``).
-        with get_telemetry_manager().span(
+        with self.telemetry_manager.span(
             f"evaluation.{config.agent_type or config.modality}",
             tenant_id=config.tenant_id,
             project_name="experiments",
             attributes=eval_span_attributes,
+            require_export=True,
         ) as span:
             span.set_status(Status(StatusCode.OK))
 
         logger.info("Evaluation logged to Phoenix")
+
+    async def _finalize_training_result(
+        self,
+        *,
+        config: OrchestrationConfig,
+        result: "OrchestrationResult",
+        analysis: Any,
+        approved_batch: Any,
+        formatted_dataset: List[Dict],
+        evaluation_result: Optional[Any] = None,
+    ) -> "OrchestrationResult":
+        run_id = f"run_{datetime.now(timezone.utc).isoformat()}"
+        run_context = f"tenant={config.tenant_id} run={run_id}"
+
+        if evaluation_result is not None:
+            await _run_required_blocking(
+                partial(
+                    self._log_evaluation_to_phoenix,
+                    config=config,
+                    adapter_path=result.adapter_path,
+                    evaluation_result=evaluation_result,
+                    run_id=run_id,
+                ),
+                context=f"Required evaluation export for {run_context}",
+            )
+            result.evaluation_result = evaluation_result
+
+        await _run_required_blocking(
+            partial(
+                self._log_experiment_to_phoenix,
+                config=config,
+                result=result,
+                analysis=analysis,
+                approved_batch=approved_batch,
+                formatted_dataset=formatted_dataset,
+                run_id=run_id,
+            ),
+            context=f"Required experiment export for {run_context}",
+        )
+
+        adapter_id = await _run_required_blocking(
+            partial(self._register_adapter, config, result, run_id),
+            context=f"Adapter publication for {run_context}",
+        )
+        result.adapter_id = adapter_id
+        return result
 
     def _create_backend(self, config: OrchestrationConfig) -> TrainingBackend:
         """Create training backend based on config."""
@@ -556,20 +847,12 @@ class FinetuningOrchestrator:
     async def _load_approved_synthetic(
         self, config: OrchestrationConfig
     ) -> List[Dict[str, Any]]:
-        """Approved synthetic examples for this agent from the
-        ``approved_synthetic_data`` dataset.
-
-        Missing datasets are treated as empty on the first run. Other failures
-        propagate so callers can see real telemetry outages.
-        """
-        try:
-            df = await self.provider.datasets.get_dataset(
-                name="approved_synthetic_data"
-            )
-        except DatasetNotFoundError:
-            logger.info("No approved synthetic dataset yet")
-            return []
-        return load_approved_synthetic_examples(df, config.agent_type)
+        """Load this tenant's approved synthetic examples."""
+        return await _load_approved_synthetic_examples(
+            self.provider,
+            tenant_id=config.tenant_id,
+            agent_type=config.agent_type,
+        )
 
     async def run(self, config: OrchestrationConfig) -> OrchestrationResult:
         """
@@ -638,6 +921,19 @@ class FinetuningOrchestrator:
             approved_synthetic=approved_synthetic,
         )
 
+        if approved_batch is not None and not approved_batch.pending_review:
+            approved_synthetic = await self._load_approved_synthetic(config)
+            analysis, _ = await selector.analyze_and_prepare(
+                provider=self.provider,
+                project=config.project,
+                agent_type=config.agent_type,
+                tenant_id=config.tenant_id,
+                min_sft_examples=config.min_sft_examples,
+                min_dpo_pairs=config.min_dpo_pairs,
+                generate_synthetic=False,
+                approved_synthetic=approved_synthetic,
+            )
+
         logger.info(
             f"Data analysis: method={analysis.recommended_method}, "
             f"approved={analysis.approved_count}, "
@@ -652,7 +948,11 @@ class FinetuningOrchestrator:
         if analysis.recommended_method == "dpo":
             # DPO: Extract preference pairs
             extractor = PreferencePairExtractor(self.provider)
-            dataset_obj = await extractor.extract(config.project, config.agent_type)
+            dataset_obj = await extractor.extract(
+                config.project,
+                config.agent_type,
+                min_pairs=config.min_dpo_pairs,
+            )
             pairs = dataset_obj.pairs
 
             logger.info(f"Extracted {len(pairs)} preference pairs for DPO")
@@ -694,7 +994,7 @@ class FinetuningOrchestrator:
                 ),
             )
 
-            # Evaluate adapter automatically
+            evaluation_result = None
             if config.evaluate_after_training:
                 logger.info("Running post-training evaluation...")
                 evaluator = AdapterEvaluator(
@@ -708,54 +1008,45 @@ class FinetuningOrchestrator:
                         adapter_path=result.adapter_path,
                         project=config.project,
                         test_size=config.test_set_size,
-                    )
-
-                    # Log to Phoenix
-                    self._log_evaluation_to_phoenix(
-                        config=config,
-                        adapter_path=result.adapter_path,
-                        evaluation_result=evaluation_result,
-                    )
-
-                    orchestration_result.evaluation_result = evaluation_result
-
-                    logger.info(
-                        f"Evaluation complete: accuracy improvement={evaluation_result.accuracy_improvement:.2%}"
+                        exclude_identities={
+                            training_example_identity(
+                                config.agent_type,
+                                pair.prompt,
+                                response,
+                            )
+                            for pair in pairs
+                            for response in (pair.chosen, pair.rejected)
+                        },
                     )
 
                 except Exception as e:
                     logger.error(f"Evaluation failed: {e}", exc_info=True)
-                    # Continue without evaluation
+                    raise
 
-            # Log experiment to Phoenix
-            run_id = f"run_{datetime.now(timezone.utc).isoformat()}"
-            self._log_experiment_to_phoenix(
+            return await self._finalize_training_result(
                 config=config,
                 result=orchestration_result,
                 analysis=analysis,
                 approved_batch=approved_batch,
                 formatted_dataset=formatted_dataset,
-                run_id=run_id,
+                evaluation_result=evaluation_result,
             )
-
-            # Register adapter in registry
-            adapter_id = await self._register_adapter(
-                config, orchestration_result, run_id
-            )
-            orchestration_result.adapter_id = adapter_id
-
-            return orchestration_result
 
         elif analysis.recommended_method == "sft":
             # SFT: Extract instruction examples. When approved synthetic covers
             # the threshold, tolerate zero real annotations (they get folded in).
-            converter = TraceToInstructionConverter(self.provider)
-            dataset_obj = await converter.convert(
-                config.project,
-                config.agent_type,
-                min_annotations=0 if approved_synthetic else 20,
-            )
-            examples = dataset_obj.examples
+            if analysis.total_spans == 0:
+                examples = []
+            else:
+                converter = TraceToInstructionConverter(self.provider)
+                dataset_obj = await converter.convert(
+                    config.project,
+                    config.agent_type,
+                    min_annotations=(
+                        0 if approved_synthetic else config.min_sft_examples
+                    ),
+                )
+                examples = dataset_obj.examples
 
             logger.info(f"Extracted {len(examples)} examples for SFT")
 
@@ -763,8 +1054,11 @@ class FinetuningOrchestrator:
             formatted_dataset = InstructionFormatter.format_alpaca_text(examples)
 
             # Fold in approved synthetic examples as identically-shaped SFT records.
-            synthetic_records = format_synthetic_sft(
+            synthetic_examples = synthetic_examples_to_instruction(
                 approved_synthetic, config.agent_type
+            )
+            synthetic_records = InstructionFormatter.format_alpaca_text(
+                synthetic_examples
             )
             formatted_dataset = formatted_dataset + synthetic_records
             logger.info(
@@ -802,12 +1096,10 @@ class FinetuningOrchestrator:
                 base_model=config.base_model,
                 lora_config={"use_lora": config.use_lora},
                 used_synthetic=bool(synthetic_records),
-                synthetic_approval_count=(
-                    approved_batch.approved_count if approved_batch else None
-                ),
+                synthetic_approval_count=len(synthetic_records),
             )
 
-            # Evaluate adapter automatically
+            evaluation_result = None
             if config.evaluate_after_training:
                 logger.info("Running post-training evaluation...")
                 evaluator = AdapterEvaluator(
@@ -822,57 +1114,45 @@ class FinetuningOrchestrator:
                         project=config.project,
                         test_size=config.test_set_size,
                         exclude_identities={
-                            example_identity(ex.instruction, ex.input, ex.output)
-                            for ex in examples
+                            training_example_identity(
+                                config.agent_type,
+                                ex.input,
+                                ex.output,
+                            )
+                            for ex in [*examples, *synthetic_examples]
                         },
-                    )
-
-                    # Log to Phoenix
-                    self._log_evaluation_to_phoenix(
-                        config=config,
-                        adapter_path=result.adapter_path,
-                        evaluation_result=evaluation_result,
-                    )
-
-                    orchestration_result.evaluation_result = evaluation_result
-
-                    logger.info(
-                        f"Evaluation complete: accuracy improvement={evaluation_result.accuracy_improvement:.2%}"
                     )
 
                 except Exception as e:
                     logger.error(f"Evaluation failed: {e}", exc_info=True)
-                    # Continue without evaluation
+                    raise
 
-            # Log experiment to Phoenix
-            run_id = f"run_{datetime.now(timezone.utc).isoformat()}"
-            self._log_experiment_to_phoenix(
+            return await self._finalize_training_result(
                 config=config,
                 result=orchestration_result,
                 analysis=analysis,
                 approved_batch=approved_batch,
                 formatted_dataset=formatted_dataset,
-                run_id=run_id,
+                evaluation_result=evaluation_result,
             )
-
-            # Register adapter in registry
-            adapter_id = await self._register_adapter(
-                config, orchestration_result, run_id
-            )
-            orchestration_result.adapter_id = adapter_id
-
-            return orchestration_result
 
         else:
             # Synthetic was generated but is awaiting approval — a recoverable
             # pending state, not a failure. Only a genuine lack of any data
             # (no synthetic generated) is a hard error.
-            if approved_batch is not None:
+            if approved_batch is not None and approved_batch.pending_review:
                 raise SyntheticApprovalPending(
                     batch_id=approved_batch.batch_id,
                     approved_count=approved_batch.approved_count,
                     pending_count=len(approved_batch.pending_review),
                     agent_type=config.agent_type,
+                )
+            if approved_batch is not None:
+                raise ValueError(
+                    f"Synthetic batch {approved_batch.batch_id} supplied "
+                    f"{approved_batch.approved_count} approved examples and no "
+                    "pending review, but the training thresholds remain unmet. "
+                    f"Analysis: {analysis}"
                 )
             raise ValueError(
                 f"Insufficient data and no synthetic data was generated. "
@@ -958,7 +1238,7 @@ class FinetuningOrchestrator:
             used_synthetic=False,
         )
 
-        # 5. Evaluate adapter
+        evaluation_result = None
         if config.evaluate_after_training:
             logger.info("Running post-training evaluation...")
             evaluator = AdapterEvaluator(
@@ -972,40 +1252,29 @@ class FinetuningOrchestrator:
                     adapter_path=result.adapter_path,
                     project=config.project,
                     test_size=config.test_set_size,
-                )
-
-                self._log_evaluation_to_phoenix(
-                    config=config,
-                    adapter_path=result.adapter_path,
-                    evaluation_result=evaluation_result,
-                )
-
-                orchestration_result.evaluation_result = evaluation_result
-
-                logger.info(
-                    f"Evaluation complete: accuracy improvement="
-                    f"{evaluation_result.accuracy_improvement:.2%}"
+                    exclude_identities={
+                        training_example_identity(
+                            config.agent_type,
+                            turn.query,
+                            turn.response,
+                        )
+                        for trajectory in trajectories
+                        for turn in trajectory.turns
+                    },
                 )
 
             except Exception as e:
                 logger.error(f"Evaluation failed: {e}", exc_info=True)
+                raise
 
-        # 6. Log experiment to Phoenix
-        run_id = f"run_{datetime.now(timezone.utc).isoformat()}"
-        self._log_experiment_to_phoenix(
+        return await self._finalize_training_result(
             config=config,
             result=orchestration_result,
             analysis=None,
             approved_batch=None,
             formatted_dataset=formatted_dataset,
-            run_id=run_id,
+            evaluation_result=evaluation_result,
         )
-
-        # 7. Register adapter in registry
-        adapter_id = await self._register_adapter(config, orchestration_result, run_id)
-        orchestration_result.adapter_id = adapter_id
-
-        return orchestration_result
 
     async def _run_embedding_finetuning(
         self, config: OrchestrationConfig
@@ -1027,9 +1296,9 @@ class FinetuningOrchestrator:
         logger.info(f"Extracted {len(triplets)} triplets")
 
         if len(triplets) < config.min_triplets:
-            logger.warning(
-                f"Insufficient triplets: {len(triplets)} < {config.min_triplets}. "
-                "Proceeding with available data, but results may be suboptimal."
+            raise ValueError(
+                f"Insufficient embedding triplets: required "
+                f"{config.min_triplets}, received {len(triplets)}"
             )
 
         # 2. Format triplets for training (convert to dicts with anchor/positive/negative)
@@ -1077,27 +1346,19 @@ class FinetuningOrchestrator:
             used_synthetic=False,  # Embedding doesn't use synthetic yet
         )
 
-        # Log experiment to Phoenix
-        run_id = f"run_{datetime.now(timezone.utc).isoformat()}"
-        self._log_experiment_to_phoenix(
+        return await self._finalize_training_result(
             config=config,
             result=orchestration_result,
-            analysis=None,  # No analysis for embedding yet
+            analysis=None,
             approved_batch=None,
             formatted_dataset=formatted_dataset,
-            run_id=run_id,
         )
-
-        # Register adapter in registry
-        adapter_id = await self._register_adapter(config, orchestration_result, run_id)
-        orchestration_result.adapter_id = adapter_id
-
-        return orchestration_result
 
 
 # High-level convenience function
 async def finetune(
     telemetry_provider: TelemetryProvider,
+    telemetry_manager: TelemetryManager,
     tenant_id: str,
     project: str,
     model_type: Literal["llm", "embedding"],
@@ -1123,6 +1384,9 @@ async def finetune(
     # Synthetic and approval
     synthetic_service: Optional[any] = None,
     approval_agent: Optional[any] = None,
+    # Held-out evaluation
+    evaluate_after_training: bool = True,
+    test_set_size: int = 50,
     # Output
     output_dir: str = "outputs/adapters",
 ) -> OrchestrationResult:
@@ -1140,6 +1404,7 @@ async def finetune(
 
     Args:
         telemetry_provider: TelemetryProvider instance
+        telemetry_manager: Manager used for durable experiment exports
         tenant_id: Tenant ID
         project: Project name
         model_type: "llm" or "embedding"
@@ -1154,6 +1419,8 @@ async def finetune(
         system_prompt: System prompt prepended to each ChatML conversation
         synthetic_service: Optional SyntheticDataService
         approval_agent: Optional HumanApprovalAgent
+        evaluate_after_training: Evaluate on held-out telemetry after training
+        test_set_size: Maximum held-out examples to evaluate
 
     Returns:
         OrchestrationResult
@@ -1162,6 +1429,7 @@ async def finetune(
         >>> provider = manager.get_provider("tenant1", "cogniverse-tenant1")
         >>> result = await finetune(
         ...     telemetry_provider=provider,
+        ...     telemetry_manager=manager,
         ...     tenant_id="tenant1",
         ...     project="cogniverse-tenant1",
         ...     model_type="llm",
@@ -1172,6 +1440,7 @@ async def finetune(
     Example (Multi-Turn Conversation Fine-Tuning):
         >>> result = await finetune(
         ...     telemetry_provider=provider,
+        ...     telemetry_manager=manager,
         ...     tenant_id="tenant1",
         ...     project="cogniverse-tenant1",
         ...     model_type="llm",
@@ -1202,12 +1471,15 @@ async def finetune(
         multi_turn=multi_turn,
         min_turns_per_session=min_turns_per_session,
         system_prompt=system_prompt,
+        evaluate_after_training=evaluate_after_training,
+        test_set_size=test_set_size,
         output_dir=output_dir,
     )
 
     # Create orchestrator
     orchestrator = FinetuningOrchestrator(
         telemetry_provider=telemetry_provider,
+        telemetry_manager=telemetry_manager,
         synthetic_service=synthetic_service,
         approval_agent=approval_agent,
     )
@@ -1235,6 +1507,7 @@ async def analyze_dataset_status(
     Args:
         telemetry_provider: Phoenix provider
         project: Project name
+        tenant_id: Canonical tenant ID used for the approved dataset
         agent_type: Agent type (for LLM fine-tuning)
         modality: Modality (for embedding fine-tuning)
         min_sft_examples: Minimum examples for SFT
@@ -1245,7 +1518,7 @@ async def analyze_dataset_status(
 
     Example:
         >>> status = await analyze_dataset_status(
-        ...     provider, "cogniverse-tenant1", agent_type="routing"
+        ...     provider, "cogniverse-tenant1", "tenant1", agent_type="routing"
         ... )
         >>> print(f"Approved: {status['approved_count']}/{status['sft_target']}")
         >>> print(f"Method: {status['recommended_method']}")
@@ -1258,6 +1531,12 @@ async def analyze_dataset_status(
         approval_agent=None,
     )
 
+    approved_synthetic = await _load_approved_synthetic_examples(
+        telemetry_provider,
+        tenant_id=tenant_id,
+        agent_type=agent_type,
+    )
+
     # Analyze data
     analysis, _ = await selector.analyze_and_prepare(
         provider=telemetry_provider,
@@ -1267,6 +1546,7 @@ async def analyze_dataset_status(
         min_sft_examples=min_sft_examples,
         min_dpo_pairs=min_dpo_pairs,
         generate_synthetic=False,  # Just analyze, don't generate
+        approved_synthetic=approved_synthetic,
     )
 
     # Calculate progress percentages
@@ -1345,7 +1625,7 @@ async def list_experiments(
         >>> print(experiments[["run_id", "method", "train_loss"]])
     """
     # Query spans with EXPERIMENT kind
-    spans_df = await telemetry_provider.traces.get_spans(project=project)
+    spans_df = await telemetry_provider.traces.get_all_spans(project=project)
 
     if spans_df.empty:
         return pd.DataFrame()
@@ -1440,7 +1720,7 @@ async def get_experiment_details(
         >>> print(f"Train loss: {details['metrics.train_loss']}")
     """
     # Query all spans
-    spans_df = await telemetry_provider.traces.get_spans(project=project)
+    spans_df = await telemetry_provider.traces.get_all_spans(project=project)
 
     if spans_df.empty:
         raise ValueError(f"Experiment not found: {run_id}")

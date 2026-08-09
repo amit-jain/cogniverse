@@ -21,6 +21,7 @@ Quick Start:
     >>> # Local training
     >>> result = await finetune(
     ...     telemetry_provider=provider,
+    ...     telemetry_manager=manager,
     ...     tenant_id="tenant1",
     ...     project="cogniverse-tenant1",
     ...     model_type="llm",
@@ -32,6 +33,7 @@ Quick Start:
     >>> # Or remote GPU training
     >>> result = await finetune(
     ...     telemetry_provider=provider,
+    ...     telemetry_manager=manager,
     ...     tenant_id="tenant1",
     ...     project="cogniverse-tenant1",
     ...     model_type="llm",
