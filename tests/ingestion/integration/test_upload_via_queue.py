@@ -578,17 +578,14 @@ async def real_stack(
             # for its deploy-gate; point them at the real test containers.
             redis_url=redis_container,
             minio_endpoint=minio_container["endpoint"],
-            # Profiles route VideoPrism inference through the sidecar via
-            # ``inference_services.embedding=videoprism_jax`` on the profile
-            # (see configs/config.json). The factory pulls the URL out of
-            # this dict at embedding-generator build time, so the worker's
-            # RemoteVideoPrismLoader hits the sidecar instead of trying to
-            # load the JAX/flax stack in-process.
+            # The embedding factory and the worker's GraphManager factory
+            # both resolve endpoints from this dict (videoprism_jax at
+            # embedding-generator build time; gliner/colbert_pylate at graph
+            # extraction). Seed every marker-resolved endpoint so KG-enabled
+            # profiles reach the real sidecars.
             inference_service_urls={
-                "videoprism_jax": resolved_inference_endpoints[
-                    "videoprism_jax"
-                ].base_url,
-                "vllm_asr": resolved_inference_endpoints["vllm_asr"].base_url,
+                service: endpoint.base_url
+                for service, endpoint in resolved_inference_endpoints.items()
             },
         )
     )
