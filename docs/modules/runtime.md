@@ -48,7 +48,8 @@ The runtime sits at the top of the package hierarchy, depending on all other mod
 
 The runtime entry surfaces are `cogniverse_runtime/main.py`,
 `cogniverse_runtime/agent_dispatcher.py`,
-`cogniverse_runtime/inference_services.py`, and
+`cogniverse_runtime/inference_services.py`,
+`cogniverse_runtime/startup_wait.py`, and
 `cogniverse_runtime/synthetic_config.py`.
 
 ```text
@@ -70,6 +71,7 @@ cogniverse_runtime/
 ├── sandbox_pool.py                  # Pool of warm sandbox instances
 ├── inference_health_check.py        # Startup inference-service probes
 ├── inference_services.py            # Validated external inference endpoints
+├── startup_wait.py                  # Dependency-readiness command
 ├── synthetic_config.py              # Synthetic-service runtime configuration
 ├── routers/                         # FastAPI routers (one per API surface)
 │   ├── health.py                    # Health + readiness endpoints
@@ -1151,6 +1153,15 @@ export RUNTIME_SERVICE_ACCOUNT="default"                 # service account for j
 export JOB_WORKFLOW_TEMPLATE="tenant-cron-job"           # WorkflowTemplate name for tenant cron jobs
 export OPTIMIZATION_WORKFLOW_TEMPLATE="optimization-job" # WorkflowTemplate name for optimization runs
 ```
+
+Deployment commands can be gated with
+`python -m cogniverse_runtime.startup_wait`. `--http URL` requires HTTP 200,
+`--http-status URL 200,404` accepts exactly the listed statuses, and
+`--tcp HOST:PORT` requires a successful socket connection. Options may be repeated;
+all dependencies share the `--timeout-seconds` deadline. Invalid URLs, ports,
+status lists, or a missing child command fail during argument parsing. After
+every dependency is ready, the wrapper replaces itself with the command after
+`--`; a timeout exits nonzero without starting that command.
 
 Workflow settings are read once at startup via `get_workflow_settings()` (returns a cached `WorkflowSettings` dataclass). The tenant router uses these to submit cron and optimization jobs via Argo `workflowTemplateRef`; no pod spec or image is owned by the runtime.
 
