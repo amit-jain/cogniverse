@@ -226,3 +226,53 @@ def test_distillation_teacher_is_not_resident_on_the_unified_host():
     # 27B AWQ-INT4 weights alone claim ~14.5 GiB of the 96 GiB pool, which
     # does not fit alongside the serving set within the budget above.
     assert "vllm_llm_teacher" not in utilizations
+
+
+def _pylate_request_limits() -> dict[str, dict[str, str]]:
+    limits = {}
+    for document in _render():
+        if document.get("kind") != "Deployment":
+            continue
+        component = document["metadata"]["labels"].get(
+            "app.kubernetes.io/component", ""
+        )
+        if not component.startswith("inference-"):
+            continue
+        container = document["spec"]["template"]["spec"]["containers"][0]
+        env = {e["name"]: e.get("value") for e in container.get("env", [])}
+        keys = {"MAX_INPUT_ITEMS", "MAX_INPUT_CHARS", "ENCODE_BATCH_SIZE"}
+        if keys <= env.keys():
+            limits[component.removeprefix("inference-")] = {
+                k: env[k] for k in sorted(keys)
+            }
+    return limits
+
+
+def test_pylate_pods_carry_request_bounds():
+    limits = _pylate_request_limits()
+
+    # colbert_pylate sets them in values; code_colbert_pylate omits the block
+    # and takes the template defaults. Both must arrive identical.
+    assert limits == {
+        "colbert_pylate": {
+            "ENCODE_BATCH_SIZE": "32",
+            "MAX_INPUT_CHARS": "2000000",
+            "MAX_INPUT_ITEMS": "256",
+        },
+        "code_colbert_pylate": {
+            "ENCODE_BATCH_SIZE": "32",
+            "MAX_INPUT_CHARS": "2000000",
+            "MAX_INPUT_ITEMS": "256",
+        },
+    }
+
+
+def test_request_bounds_render_as_plain_integers():
+    """YAML reads a large plain integer as a float, which renders as 2e+06.
+
+    The server parses these with int(), so a float-formatted value crashes
+    the pod at startup rather than at deploy time.
+    """
+    for service, bounds in _pylate_request_limits().items():
+        for name, value in bounds.items():
+            assert str(int(value)) == value, f"{service}.{name} is not an integer"
