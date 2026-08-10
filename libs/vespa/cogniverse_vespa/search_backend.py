@@ -1263,9 +1263,12 @@ class VespaSearchBackend(SearchBackend):
         )
         logger.info(f"[{correlation_id}] Ranking profile: '{ranking_profile}'")
 
-        # Initialize query params
+        # Initialize query params. The default query profile caps hits at
+        # 400, so raise the native limits per request to honor any top_k.
         query_params = {
             "hits": limit,
+            "maxHits": limit,
+            "maxOffset": limit,
             "ranking": ranking_profile,
         }
 

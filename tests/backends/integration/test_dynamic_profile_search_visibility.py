@@ -256,6 +256,41 @@ def test_register_profile_then_ingest_and_search_returns_the_document(
         "registered profile — exactly the bug the fix targets."
     )
 
+    # --- Same search with top_k above the default 400-hit cap -------
+    # Vespa's default query profile rejects hits > 400 as an illegal
+    # query unless maxHits/maxOffset are raised per request; the built
+    # query must honor any requested top_k against the real backend.
+    large_results = search_backend.search(
+        query_dict={
+            "query": unique_token,
+            "type": "document",
+            "profile": profile_name,
+            "strategy": "semantic_search",
+            "tenant_id": tenant_id,
+            "top_k": 1000,
+            "query_embeddings": np.asarray(vector, dtype=np.float32),
+        }
+    )
+    large_hit_ids: list[str] = []
+    for r in large_results:
+        rid = getattr(r, "id", None) or getattr(r, "document_id", None)
+        if rid is None and hasattr(r, "document") and r.document is not None:
+            rid = getattr(r.document, "id", None)
+        if rid is None and isinstance(r, dict):
+            rid = (
+                r.get("id")
+                or r.get("document_id")
+                or ((r.get("document") or {}).get("id"))
+            )
+        if rid:
+            large_hit_ids.append(str(rid))
+    assert doc_id in large_hit_ids, (
+        f"top_k=1000 search returned {len(large_results)} hits without the "
+        f"ingested document id {doc_id!r}. Hit ids: {large_hit_ids!r}. "
+        "Vespa rejects hits above the default 400 cap unless the query "
+        "raises maxHits/maxOffset per request."
+    )
+
 
 @pytest.mark.integration
 def test_profile_registered_via_config_manager_appears_in_live_backend(
