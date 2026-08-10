@@ -33,6 +33,18 @@ logging.basicConfig(
 _MUTABLE_REVISIONS = frozenset({"latest", "main", "master"})
 _DEVICES = frozenset({"cpu", "cuda", "mps"})
 
+# Peak device memory for an encode follows the request, so the request has to
+# be bounded. The canonical client chunks at 32 texts per call
+# (RemoteColBERT.encode), so 256 accepts eight times its chunk while still
+# rejecting a payload that could exhaust the pool. The character ceiling
+# covers the other shape: few items, each enormous.
+_DEFAULT_MAX_INPUT_ITEMS = 256
+_DEFAULT_MAX_INPUT_CHARS = 2_000_000
+# Matches sentence-transformers' own default, so this pins current behaviour
+# rather than changing it, and makes the working set a configured property
+# instead of a library default.
+_DEFAULT_ENCODE_BATCH_SIZE = 32
+
 
 class PoolingRequest(BaseModel):
     input: list[str] = Field(..., description="Texts to encode.")
@@ -103,7 +115,14 @@ class _ModelHolder:
             return self._model
 
 
-def build_app(model_name: str, model_revision: str, device: str) -> FastAPI:
+def build_app(
+    model_name: str,
+    model_revision: str,
+    device: str,
+    max_input_items: int = _DEFAULT_MAX_INPUT_ITEMS,
+    max_input_chars: int = _DEFAULT_MAX_INPUT_CHARS,
+    encode_batch_size: int = _DEFAULT_ENCODE_BATCH_SIZE,
+) -> FastAPI:
     """Build the served app for one pinned model, revision, and device."""
 
     if not model_name or model_name != model_name.strip():
@@ -116,6 +135,13 @@ def build_app(model_name: str, model_revision: str, device: str) -> FastAPI:
         raise ValueError("MODEL_REVISION must identify an immutable artifact")
     if device not in _DEVICES:
         raise ValueError(f"DEVICE must be one of {sorted(_DEVICES)}, got {device!r}")
+    for label, bound in (
+        ("MAX_INPUT_ITEMS", max_input_items),
+        ("MAX_INPUT_CHARS", max_input_chars),
+        ("ENCODE_BATCH_SIZE", encode_batch_size),
+    ):
+        if not isinstance(bound, int) or isinstance(bound, bool) or bound < 1:
+            raise ValueError(f"{label} must be a positive integer, got {bound!r}")
 
     holder = _ModelHolder(model_name, model_revision, device)
     app = FastAPI(title="cogniverse-pylate", version="1.0")
@@ -153,6 +179,26 @@ def build_app(model_name: str, model_revision: str, device: str) -> FastAPI:
             raise HTTPException(
                 status_code=400, detail="`input` must be a non-empty list"
             )
+        # Reject before loading or encoding. Truncating to the limit would
+        # return embeddings for a subset under a success status, which the
+        # caller cannot distinguish from a complete result.
+        if len(request.input) > max_input_items:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"pylate: `input` holds {len(request.input)} texts, "
+                    f"limit is {max_input_items}"
+                ),
+            )
+        total_chars = sum(len(text) for text in request.input)
+        if total_chars > max_input_chars:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"pylate: `input` holds {total_chars} characters, "
+                    f"limit is {max_input_chars}"
+                ),
+            )
         if request.model is not None and request.model != model_name:
             raise HTTPException(
                 status_code=400,
@@ -164,6 +210,7 @@ def build_app(model_name: str, model_revision: str, device: str) -> FastAPI:
                 request.input,
                 is_query=request.is_query,
                 show_progress_bar=False,
+                batch_size=encode_batch_size,
             )
         except Exception as exc:
             logger.exception(
@@ -199,6 +246,9 @@ def _main() -> None:
         os.environ["MODEL_NAME"],
         os.environ["MODEL_REVISION"],
         os.environ.get("DEVICE", "cpu"),
+        int(os.environ.get("MAX_INPUT_ITEMS", _DEFAULT_MAX_INPUT_ITEMS)),
+        int(os.environ.get("MAX_INPUT_CHARS", _DEFAULT_MAX_INPUT_CHARS)),
+        int(os.environ.get("ENCODE_BATCH_SIZE", _DEFAULT_ENCODE_BATCH_SIZE)),
     )
     uvicorn.run(
         app,

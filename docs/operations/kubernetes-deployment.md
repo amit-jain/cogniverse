@@ -631,7 +631,23 @@ no fraction knob, and the served `encode` call passes no `batch_size` while
 the request model accepts an unbounded `input` list, so peak allocation
 scales with the caller's payload rather than with a configured ceiling.
 
-Their declared bound is therefore the pod memory limit (4Gi each), reserved
+Because peak allocation follows the request, the request is bounded. Each
+pylate pod carries `MAX_INPUT_ITEMS`, `MAX_INPUT_CHARS` and
+`ENCODE_BATCH_SIZE`, set per service under `inference.<svc>.requestLimits`
+and defaulted by the chart:
+
+| Bound | Default | Basis |
+|---|---|---|
+| `maxInputItems` | 256 | eight times the 32-text chunk the canonical client sends |
+| `maxInputChars` | 2000000 | covers the few-items-but-enormous payload shape |
+| `encodeBatchSize` | 32 | sentence-transformers' own default, pinned explicitly |
+
+Over-limit requests are rejected with `413` naming the limit and the received
+size, before the model loads or encodes. They are never truncated to fit: a
+truncated encode would return embeddings for a subset under a success status,
+which the caller cannot distinguish from a complete result.
+
+The declared memory bound remains the pod memory limit (4Gi each), reserved
 in the budget above. Note that a Kubernetes memory limit constrains the
 container's cgroup; pool allocations made through the amdgpu driver are not
 necessarily charged there, so treat that limit as a budgeting declaration
@@ -670,6 +686,16 @@ values, check in this order and stop at the first failure:
    pacing on timeouts instead of on readiness.
 6. **The host stays responsive** during a full sweep — no
    `svm_range_restore` workers saturating CPU.
+7. **The pylate request bounds hold in practice.** Rendering proves the pods
+   carry the limits; only a run shows what they peak at. With ingest running,
+   watch each pylate pod against its 4Gi limit and watch `mem_info_gtt_used`
+   while it encodes. Failure signal: pool usage climbing with ingest batch
+   size, which means the request bounds are not translating into a memory
+   ceiling and the per-process fraction below is needed.
+8. **Whether `set_per_process_memory_fraction` is warranted.** Read
+   `torch.cuda.get_device_properties(0).total_memory` from inside a pylate
+   pod. That value is the denominator any fraction would use, and it decides
+   whether the knob can express a 4Gi ceiling at all.
 
 ### Model startup pacing
 

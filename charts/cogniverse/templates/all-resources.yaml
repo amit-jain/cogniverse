@@ -1910,6 +1910,16 @@ spec:
           value: "0.0.0.0"
         - name: PORT
           value: {{ $cfg.service.port | quote }}
+        # Peak device memory for an encode follows the request, so the pod's
+        # share of the pool is only bounded once the request is.
+        # ``int`` because YAML reads a large plain integer as a float, which
+        # renders as 2e+06 and fails the server's int() parse at startup.
+        - name: MAX_INPUT_ITEMS
+          value: {{ dig "requestLimits" "maxInputItems" 256 $cfg | int | quote }}
+        - name: MAX_INPUT_CHARS
+          value: {{ dig "requestLimits" "maxInputChars" 2000000 $cfg | int | quote }}
+        - name: ENCODE_BATCH_SIZE
+          value: {{ dig "requestLimits" "encodeBatchSize" 32 $cfg | int | quote }}
         - name: HF_HOME
           value: /root/.cache/huggingface
         {{- if $cfg.hfTokenSecret }}

@@ -968,6 +968,16 @@ inference:
     model: lightonai/LateOn
     modelRevision: c01907b70557ee5c7753680d4819a5cce1674b83
     type: multi_vector
+    # The pylate server allocates through PyTorch, which has no equivalent of
+    # vLLM's --gpu-memory-utilization, so peak device memory is set by the
+    # request unless the request is bounded. maxInputItems is eight times the
+    # 32-text chunk the canonical client sends; maxInputChars covers the
+    # few-but-enormous shape; encodeBatchSize pins the working set that
+    # sentence-transformers would otherwise pick by default.
+    requestLimits:
+      maxInputItems: 256
+      maxInputChars: 2000000
+      encodeBatchSize: 32
     device: cpu                    # cpu | cuda | rocm | mps
     gpuCount: 1
     nodeSelector: {}

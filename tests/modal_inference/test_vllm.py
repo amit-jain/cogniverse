@@ -275,6 +275,10 @@ def test_startup_timeout_terminates_unreachable_process_before_retry():
             ):
                 await process.ensure_started()
             assert launches[0].poll() is not None
+            # The 0.1s budget exists to force the timeout above. The relaunch
+            # has to spawn an interpreter and bind a socket, which does not
+            # fit that budget on a loaded host, so give the retry a real one.
+            process.startup_timeout = 30
             await process.ensure_started()
         finally:
             await process.close()
