@@ -825,6 +825,45 @@ def _vespa_source_urls(http_port: int, base_schema_name: str, tenant_id: str) ->
     }
 
 
+def _vespa_graph_documents(
+    http_port: int,
+    tenant_id: str,
+    expected_nodes: int,
+    expected_edges: int,
+    wait_seconds: int = 60,
+) -> tuple:
+    """Return the persisted knowledge-graph (node_docs, edge_docs) for the
+    tenant. Polls until the counts reach the expected pair — feed acks
+    before docs are queryable on a fresh container — then returns whatever
+    is visible so the caller's equality asserts report the true state."""
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    canonical_suffix = canonical_tenant_id(tenant_id).replace(":", "_")
+    schema_name = f"knowledge_graph_{canonical_suffix}"
+    yql = f"select * from {schema_name} where true"
+    deadline = time.time() + wait_seconds
+    nodes: list = []
+    edges: list = []
+    while time.time() < deadline:
+        try:
+            r = requests.get(
+                f"http://localhost:{http_port}/search/",
+                params={"yql": yql, "hits": 400},
+                timeout=15,
+            )
+            if r.ok:
+                children = r.json().get("root", {}).get("children", []) or []
+                fields = [c.get("fields") or {} for c in children]
+                nodes = [f for f in fields if f.get("doc_type") == "node"]
+                edges = [f for f in fields if f.get("doc_type") == "edge"]
+                if len(nodes) == expected_nodes and len(edges) == expected_edges:
+                    return nodes, edges
+        except requests.RequestException:
+            pass
+        time.sleep(2)
+    return nodes, edges
+
+
 # This class stands up its own Vespa, Redis, and MinIO containers. VideoPrism
 # comes from the collection-owned exact inference resolver.
 @pytest.mark.integration
@@ -891,8 +930,38 @@ class TestUploadRealStack:
         assert body["video_id"] == content_digest
         assert body["chunks_created"] == EXPECTED_CHUNKS
         assert body["documents_fed"] == EXPECTED_CHUNKS
-        assert body["graph_nodes"] == 0
-        assert body["graph_edges"] == 0
+        # This profile enables KG extraction and the video's spoken content
+        # names real-world entities, so zero nodes means the graph stage
+        # silently no-opped. Edge counts depend on LM-extracted claims, so
+        # edges are held to the persisted-store round-trip only.
+        assert body["graph_nodes"] != 0
+        graph_node_docs, graph_edge_docs = _vespa_graph_documents(
+            real_stack["vespa_http_port"],
+            TENANT_ID,
+            expected_nodes=body["graph_nodes"],
+            expected_edges=body["graph_edges"],
+        )
+        assert len(graph_node_docs) == body["graph_nodes"], (
+            f"response reports {body['graph_nodes']} graph nodes but the "
+            f"tenant's knowledge_graph schema holds {len(graph_node_docs)}"
+        )
+        assert len(graph_edge_docs) == body["graph_edges"], (
+            f"response reports {body['graph_edges']} graph edges but the "
+            f"tenant's knowledge_graph schema holds {len(graph_edge_docs)}"
+        )
+        graph_node_ids = {n["doc_id"] for n in graph_node_docs}
+        for edge in graph_edge_docs:
+            assert edge["source_node_id"] in graph_node_ids, (
+                f"edge {edge.get('doc_id')!r} references unpersisted source "
+                f"node {edge['source_node_id']!r}"
+            )
+            assert edge["target_node_id"] in graph_node_ids, (
+                f"edge {edge.get('doc_id')!r} references unpersisted target "
+                f"node {edge['target_node_id']!r}"
+            )
+        assert {d.get("tenant_id") for d in graph_node_docs + graph_edge_docs} == {
+            canonical_tenant
+        }
         ingest_id = body["ingest_id"]
         assert re.fullmatch(r"ingest_[0-9a-f]{32}", ingest_id)
         sha = body["sha"]
