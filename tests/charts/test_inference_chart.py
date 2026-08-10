@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from cogniverse_cli.modal_inference_config import INFERENCE_SERVICE_SPECS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
@@ -633,3 +634,123 @@ def test_tunableop_requires_both_rocm_device_and_toggle():
         _inference_deployments(_render("runtime.tunableOp=true")), "denseon"
     )
     assert not (set(toggle_no_rocm) & _TUNABLEOP_VARS)
+
+
+# Chart-served vLLM services whose artifact is pinned in INFERENCE_SERVICE_SPECS.
+# Helm cannot read the Python spec map, so values.yaml holds a second copy of
+# each model id and sha; test_chart_model_pins_match_inference_service_specs
+# fails as soon as the two copies disagree.
+REVISION_PINNED_SERVICES = ("vllm_colpali", "vllm_llm_student", "denseon", "vllm_asr")
+
+
+def test_chart_model_pins_match_inference_service_specs():
+    """Both copies of every pinned model id and revision agree."""
+    values = yaml.safe_load((CHART_PATH / "values.yaml").read_text())["inference"]
+    assert {
+        name: (values[name]["model"], values[name]["revision"])
+        for name in REVISION_PINNED_SERVICES
+    } == {
+        name: (
+            INFERENCE_SERVICE_SPECS[name].model_id,
+            INFERENCE_SERVICE_SPECS[name].model_revision,
+        )
+        for name in REVISION_PINNED_SERVICES
+    }
+
+
+def test_vllm_token_embed_serve_args_pin_the_revision():
+    """vllm_colpali serves the pinned ColQwen3 artifact, so /v1/models reports
+    the revision the identity gate demands."""
+    docs = _render("inference.vllm_colpali.enabled=true")
+    c = _inference_deployments(docs)["vllm_colpali"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    assert c["args"][:8] == [
+        "serve",
+        "TomoroAI/tomoro-colqwen3-embed-4b",
+        "--revision",
+        "bf790bd8780b098b86453444632a184bb770be1a",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+    ]
+
+
+def test_vllm_chat_serve_args_pin_the_revision():
+    """vllm_llm_student serves the pinned Gemma artifact."""
+    docs = _render("inference.vllm_llm_student.enabled=true")
+    c = _inference_deployments(docs)["vllm_llm_student"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    assert c["args"][:8] == [
+        "serve",
+        "google/gemma-4-e4b-it",
+        "--revision",
+        "ee0ef6023621cff504d758262d4e04895a5af4a2",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+    ]
+
+
+def test_vllm_embed_serve_args_pin_the_revision():
+    """denseon serves the pinned DenseOn artifact; the revision precedes the
+    engine's own conversion flags."""
+    c = _inference_deployments(_render())["denseon"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    assert c["args"] == [
+        "serve",
+        "lightonai/DenseOn",
+        "--revision",
+        "cb9947ebccb33862d24e3c7ca2edb25e51acd887",
+        "--convert",
+        "embed",
+        "--dtype",
+        "float32",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+    ]
+
+
+def test_vllm_transcription_serve_script_pins_the_revision():
+    """The transcription engine renders a shell script rather than an argv
+    list; the pinned whisper revision lands on the exec'd serve line."""
+    docs = _render("inference.vllm_asr.enabled=true")
+    c = _inference_deployments(docs)["vllm_asr"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    assert (
+        "exec vllm serve 'openai/whisper-large-v3-turbo' \\\n"
+        "  --host 0.0.0.0 --port 8000 \\\n"
+        "  --revision '41f01f3fe87f28c78e2fbf8b568835947dd65ed9' \\\n"
+    ) in "".join(c["args"])
+
+
+def test_service_without_a_pinned_revision_renders_no_revision_flag():
+    """vllm_llm_teacher has no entry in the spec map and no pin in values, so
+    the serve args carry no revision rather than an empty one."""
+    docs = _render("inference.vllm_llm_teacher.enabled=true")
+    c = _inference_deployments(docs)["vllm_llm_teacher"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    assert "vllm_llm_teacher" not in INFERENCE_SERVICE_SPECS
+    assert "--revision" not in c["args"]
+    assert c["args"][:2] == ["serve", "cyankiwi/Qwen3.6-27B-AWQ-INT4"]
+
+
+def test_cpu_overlay_swaps_whisper_without_inheriting_the_turbo_revision():
+    """The CPU overlay serves whisper-tiny, whose repo has no such sha, so it
+    carries the swapped model and no revision at all."""
+    docs = _render("inference.vllm_asr.enabled=true", values="values.cpu.yaml")
+    c = _inference_deployments(docs)["vllm_asr"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    script = "".join(c["args"])
+    assert "exec vllm serve 'openai/whisper-tiny' \\\n" in script
+    assert "--revision" not in script
+    assert "41f01f3fe87f28c78e2fbf8b568835947dd65ed9" not in script

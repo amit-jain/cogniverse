@@ -1619,6 +1619,9 @@ spec:
             pip install --no-cache-dir --quiet soundfile librosa || exit 1
             exec vllm serve {{ $cfg.model | squote }} \
               --host 0.0.0.0 --port 8000 \
+              {{- if $cfg.revision }}
+              --revision {{ $cfg.revision | squote }} \
+              {{- end }}
               {{- range $cfg.extraArgs }}
               {{ . | squote }} \
               {{- end }}
@@ -1699,6 +1702,10 @@ spec:
         args:
           - "serve"
           - {{ $cfg.model | quote }}
+          {{- if $cfg.revision }}
+          - "--revision"
+          - {{ $cfg.revision | quote }}
+          {{- end }}
           - "--host"
           - "0.0.0.0"
           - "--port"
@@ -1753,6 +1760,10 @@ spec:
         args:
           - "serve"
           - {{ $cfg.model | quote }}
+          {{- if $cfg.revision }}
+          - "--revision"
+          - {{ $cfg.revision | quote }}
+          {{- end }}
           - "--host"
           - "0.0.0.0"
           - "--port"
@@ -1867,6 +1878,10 @@ spec:
         args:
           - "serve"
           - {{ $cfg.model | quote }}
+          {{- if $cfg.revision }}
+          - "--revision"
+          - {{ $cfg.revision | quote }}
+          {{- end }}
           - "--convert"
           - "embed"
           - "--dtype"
