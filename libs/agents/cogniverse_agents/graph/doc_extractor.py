@@ -224,10 +224,13 @@ class DocExtractor:
     def _get_gliner(self):
         """Lazily load the GLiNER model, caching the instance.
 
-        Uses the explicitly injected GLiNER inference service URL so the
-        runtime image doesn't need the heavy local gliner+torch stack. The
-        canonical server is ``cogniverse_cli.modal_inference.servers.gliner``.
-        A caller that injects ``None`` explicitly selects in-process loading.
+        Uses the explicitly injected GLiNER inference service URL when one
+        was provided; otherwise resolves it from validated system
+        configuration (``_discover_gliner_url``) so the slim runtime image
+        routes through the GLiNER inference service instead of the heavy
+        local gliner+torch stack. The canonical server is
+        ``cogniverse_cli.modal_inference.servers.gliner``. Only when no URL
+        is configured anywhere does the model load in-process.
         """
         if self._gliner is not None:
             return self._gliner
@@ -240,11 +243,14 @@ class DocExtractor:
                 raise RuntimeError("GLiNER model is unavailable after a failed load")
             from cogniverse_core.common.models import get_or_load_gliner
 
+            inference_url = self._gliner_inference_url
+            if inference_url is None:
+                inference_url = self._discover_gliner_url()
             try:
                 model = get_or_load_gliner(
                     "urchade/gliner_large-v2.1",
                     logger=logger,
-                    inference_url=self._gliner_inference_url,
+                    inference_url=inference_url,
                 )
             except Exception as exc:
                 self._gliner_failed = True
