@@ -6,24 +6,28 @@ e2e coverage work end-to-end:
   - unique_id() produces the expected shape,
   - the session-scoped Phoenix client is constructed once and reused,
   - the wait_for_span helper polls and times out cleanly on a nonexistent
-    span (the deterministic-timeout contract for Phoenix span tests).
+    span (the deterministic-timeout contract every later phase relies on).
 
-Tests that use these helpers depend on the behavior asserted here.
+All later phase tests assume these helpers behave as asserted here, so a
+failure here is a load-bearing failure for the whole e2e knowledge-system
+work.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import subprocess
 import time
 import warnings
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 import tests.e2e.conftest as e2e_conftest
 from tests.e2e.conftest import (
     _TEST_TENANT_PREFIXES,
-    _clear_thread_event_loop,
     unique_id,
     wait_for_span,
 )
@@ -46,9 +50,10 @@ _NEW_PREFIXES = (
     "smk2_",
 )
 
-# Tenant prefixes used by the graph, isolation, schema, API, search, and
-# ingestion tests. The registry assertion catches accidental removals.
-_STANDARD_PREFIXES = (
+# The pre-existing prefixes the conftest had before this change. Recorded
+# here so the registry assertion catches any accidental removal of an
+# existing prefix during merges.
+_LEGACY_PREFIXES = (
     "graph_e2e_",
     "iso_",
     "mix_",
@@ -65,35 +70,543 @@ _STANDARD_PREFIXES = (
 )
 
 
+def test_event_loop_reset_does_not_warn_when_no_loop_is_attached():
+    previous_policy = asyncio.get_event_loop_policy()
+    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+
+    try:
+        reset = e2e_conftest._reset_event_loop_state_before_each_test.__wrapped__()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            next(reset)
+        reset.close()
+    finally:
+        asyncio.set_event_loop_policy(previous_policy)
+
+
+def test_event_loop_reset_detaches_without_deprecated_lookup():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            e2e_conftest._clear_thread_event_loop()
+        assert not loop.is_closed()
+        with pytest.raises(RuntimeError, match="There is no current event loop"):
+            asyncio.get_event_loop_policy().get_event_loop()
+    finally:
+        loop.close()
+
+
 class TestSharedClusterOwnership:
     @pytest.fixture(scope="class", autouse=True)
     def e2e_stack(self):
         """Do not start a real cluster while testing the stack fixture itself."""
         yield
 
-    def test_clear_thread_event_loop_does_not_use_deprecated_lookup(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", DeprecationWarning)
-                _clear_thread_event_loop()
-            with pytest.raises(RuntimeError, match="There is no current event loop"):
-                asyncio.get_event_loop_policy().get_event_loop()
-        finally:
-            loop.close()
+    def test_tracked_video_content_identity_matches_fixture_bytes(self):
+        assert e2e_conftest._content_sha256(e2e_conftest.SAMPLE_VIDEO_PATH) == (
+            e2e_conftest.SAMPLE_VIDEO_CONTENT_ID
+        )
 
-    def _start_stack(self, monkeypatch, *, cluster_states, force_fresh):
+    def test_unrelated_search_hit_does_not_satisfy_sample_precheck(self):
+        search_body = {
+            "query": e2e_conftest.SAMPLE_VIDEO_CONTENT_ID,
+            "profile": "video_colpali_smol500_mv_frame",
+            "strategy": "default",
+            "results_count": 1,
+            "results": [
+                {
+                    "document_id": "unrelated_video_seg_0",
+                    "source_id": "unrelated_video",
+                    "metadata": {
+                        "video_id": "unrelated_video",
+                        "source_url": (
+                            "s3://cogniverse-media/flywheel_org:production/"
+                            "unrelated_video.mp4"
+                        ),
+                    },
+                }
+            ],
+        }
+
+        matches = e2e_conftest._matching_sample_results(
+            search_body,
+            content_id=e2e_conftest.SAMPLE_VIDEO_CONTENT_ID,
+            tenant_id=e2e_conftest.TENANT_ID,
+            profile="video_colpali_smol500_mv_frame",
+            suffix=".mp4",
+        )
+
+        assert matches == []
+
+    def test_exact_search_hit_proves_tenant_profile_and_persisted_identity(self):
+        content_id = e2e_conftest.SAMPLE_VIDEO_CONTENT_ID
+        source_url = f"s3://cogniverse-media/{e2e_conftest.TENANT_ID}/{content_id}.mp4"
+        expected = {
+            "document_id": f"{content_id}_seg_0",
+            "source_id": content_id,
+            "metadata": {
+                "video_id": content_id,
+                "source_url": source_url,
+            },
+        }
+        search_body = {
+            "query": content_id,
+            "profile": "video_colpali_smol500_mv_frame",
+            "strategy": "default",
+            "results_count": 2,
+            "results": [
+                expected,
+                {
+                    "document_id": "unrelated_video_seg_0",
+                    "source_id": "unrelated_video",
+                    "metadata": {
+                        "video_id": "unrelated_video",
+                        "source_url": (
+                            "s3://cogniverse-media/flywheel_org:production/"
+                            "unrelated_video.mp4"
+                        ),
+                    },
+                },
+            ],
+        }
+
+        matches = e2e_conftest._matching_sample_results(
+            search_body,
+            content_id=content_id,
+            tenant_id=e2e_conftest.TENANT_ID,
+            profile="video_colpali_smol500_mv_frame",
+            suffix=".mp4",
+        )
+
+        assert matches == [expected]
+
+    def test_completed_ingestion_result_requires_exact_identity_and_counts(self):
+        content_id = e2e_conftest.SAMPLE_VIDEO_CONTENT_ID
+        source_url = f"s3://cogniverse-media/{e2e_conftest.TENANT_ID}/{content_id}.mp4"
+        result = {
+            "video_id": content_id,
+            "source_url": source_url,
+            "chunks": 3,
+            "documents_fed": 3,
+        }
+
+        assert (
+            e2e_conftest._validate_sample_ingestion_result(
+                result,
+                content_id=content_id,
+                tenant_id=e2e_conftest.TENANT_ID,
+                suffix=".mp4",
+            )
+            == 3
+        )
+
+        for field, invalid in (
+            ("video_id", "other-video"),
+            ("source_url", "s3://cogniverse-media/other:tenant/file.mp4"),
+            ("chunks", 0),
+            ("documents_fed", 0),
+            ("documents_fed", 2),
+        ):
+            broken = {**result, field: invalid}
+            with pytest.raises(AssertionError):
+                e2e_conftest._validate_sample_ingestion_result(
+                    broken,
+                    content_id=content_id,
+                    tenant_id=e2e_conftest.TENANT_ID,
+                    suffix=".mp4",
+                )
+
+    def test_synthetic_fixture_profiles_have_two_exact_modalities(self):
+        config = json.loads(
+            (e2e_conftest.DATA_ROOT.parent / "configs" / "config.json").read_text()
+        )
+
+        profiles = e2e_conftest._synthetic_fixture_profiles(config)
+
+        assert profiles == [
+            "video_colpali_smol500_mv_frame",
+            "image_colpali_mv",
+        ]
+        configured = config["backend"]["profiles"]
+        assert [configured[name]["type"] for name in profiles] == ["video", "image"]
+
+    def test_sample_frame_is_real_content_from_tracked_video(self):
+        frame_path = e2e_conftest._sample_frame_path()
+
+        assert frame_path == (
+            e2e_conftest.E2E_ARTIFACT_DIR
+            / f"{e2e_conftest.SAMPLE_VIDEO_CONTENT_ID}_frame_0000.jpg"
+        )
+        assert frame_path.stat().st_size > 10_000
+        with Image.open(frame_path) as image:
+            assert image.format == "JPEG"
+            assert image.size == (640, 480)
+
+    @staticmethod
+    def _deployment_input_tree(tmp_path):
+        for directory in ("libs", "configs", "charts", "deploy", "scripts"):
+            (tmp_path / directory).mkdir()
+        helper = tmp_path / "tests" / "e2e" / "deployment" / "conftest.py"
+        helper.parent.mkdir(parents=True)
+        helper.write_text("DEPLOYMENT_HELPER = 'first'\n")
+        for file_name in ("pyproject.toml", "uv.lock", ".dockerignore"):
+            (tmp_path / file_name).write_text(f"initial {file_name}\n")
+        return tmp_path
+
+    @staticmethod
+    def _fingerprint(repo_root, deployment_identity=None):
+        return e2e_conftest._e2e_deploy_fingerprint(
+            repo_root,
+            deployment_identity=deployment_identity
+            or {
+                "backend": "rocm",
+                "values": ["values.k3s.yaml", "values.rocm.yaml"],
+                "set": {"devMode.enabled": "false"},
+            },
+        )
+
+    def test_same_path_untracked_build_input_content_changes_fingerprint(
+        self, tmp_path
+    ):
+        repo_root = self._deployment_input_tree(tmp_path)
+        source = repo_root / "libs" / "runtime" / "new_module.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("value = 'first'\n")
+        first = self._fingerprint(repo_root)
+
+        source.write_text("value = 'other'\n")
+
+        assert self._fingerprint(repo_root) != first
+
+    def test_uv_lock_content_changes_fingerprint(self, tmp_path):
+        repo_root = self._deployment_input_tree(tmp_path)
+        first = self._fingerprint(repo_root)
+
+        (repo_root / "uv.lock").write_text("updated dependency graph\n")
+
+        assert self._fingerprint(repo_root) != first
+
+    def test_deploy_recipe_content_changes_fingerprint(self, tmp_path):
+        repo_root = self._deployment_input_tree(tmp_path)
+        recipe = repo_root / "deploy" / "gliner" / "Dockerfile"
+        recipe.parent.mkdir()
+        recipe.write_text("FROM python:3.12-slim\n")
+        first = self._fingerprint(repo_root)
+
+        recipe.write_text("FROM python:3.13-slim\n")
+
+        assert self._fingerprint(repo_root) != first
+
+    def test_generated_runtime_artifacts_do_not_change_fingerprint(self, tmp_path):
+        repo_root = self._deployment_input_tree(tmp_path)
+        cache = repo_root / "libs" / "runtime" / "__pycache__" / "module.pyc"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"first generated bytecode")
+        first = self._fingerprint(repo_root)
+
+        cache.write_bytes(b"different generated bytecode")
+
+        assert self._fingerprint(repo_root) == first
+
+    def test_deployment_helper_content_changes_fingerprint(self, tmp_path):
+        repo_root = self._deployment_input_tree(tmp_path)
+        helper = repo_root / "tests" / "e2e" / "deployment" / "conftest.py"
+        first = self._fingerprint(repo_root)
+
+        helper.write_text("DEPLOYMENT_HELPER = 'second'\n")
+
+        assert self._fingerprint(repo_root) != first
+
+    def test_effective_backend_overlay_and_overrides_change_fingerprint(self, tmp_path):
+        repo_root = self._deployment_input_tree(tmp_path)
+        rocm = {
+            "backend": "rocm",
+            "values": ["values.k3s.yaml", "values.rocm.yaml"],
+            "set": {
+                "devMode.enabled": "false",
+                "inference.vllm_llm_teacher.enabled": "false",
+            },
+        }
+        cuda = {
+            "backend": "cuda",
+            "values": ["values.k3s.yaml", "values.cuda.yaml"],
+            "set": {
+                "devMode.enabled": "false",
+                "inference.vllm_llm_teacher.enabled": "false",
+            },
+        }
+        changed_override = {
+            **rocm,
+            "set": {
+                **rocm["set"],
+                "inference.vllm_asr.livenessProbe.failureThreshold": "60",
+            },
+        }
+
+        rocm_fingerprint = self._fingerprint(repo_root, rocm)
+
+        assert self._fingerprint(repo_root, cuda) != rocm_fingerprint
+        assert self._fingerprint(repo_root, changed_override) != rocm_fingerprint
+
+    def test_required_model_probe_checks_exact_tomoro_and_backend_asr(
+        self, monkeypatch
+    ):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        probes: list[tuple[str, str, float]] = []
+        monkeypatch.setattr(
+            sidecar_module,
+            "serves_exact_model",
+            lambda url, model, timeout: probes.append((url, model, timeout)) or True,
+        )
+
+        assert e2e_conftest._required_e2e_models_ready("rocm") == (True, "")
+        assert probes == [
+            (
+                "http://127.0.0.1:33901",
+                "TomoroAI/tomoro-colqwen3-embed-4b",
+                5.0,
+            ),
+            (
+                "http://127.0.0.1:33905",
+                "openai/whisper-large-v3-turbo",
+                5.0,
+            ),
+        ]
+
+    def test_required_model_probe_rejects_wrong_asr_identity(self, monkeypatch):
+        import tests.utils.vllm_sidecar as sidecar_module
+
+        monkeypatch.setattr(
+            sidecar_module,
+            "serves_exact_model",
+            lambda url, model, timeout: model == "TomoroAI/tomoro-colqwen3-embed-4b",
+        )
+
+        assert e2e_conftest._required_e2e_models_ready("cpu") == (
+            False,
+            "openai/whisper-tiny is not served exactly at "
+            "http://127.0.0.1:33905/v1/models",
+        )
+
+    def test_running_cluster_is_not_reused_with_a_wrong_required_model(
+        self, monkeypatch
+    ):
+        import cogniverse_cli.cluster as cluster_cli
+
+        monkeypatch.setattr(
+            cluster_cli,
+            "list_cluster_states",
+            lambda: [
+                {
+                    "name": "cogniverse-e2e",
+                    "servers_running": 1,
+                    "servers_count": 1,
+                }
+            ],
+        )
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: subprocess.CompletedProcess(args, 0),
+        )
+        monkeypatch.setattr(
+            e2e_conftest, "_read_e2e_fingerprint", lambda: "current-build"
+        )
+        monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_required_e2e_models_ready",
+            lambda: (
+                False,
+                "openai/whisper-large-v3-turbo is not served exactly at "
+                "http://127.0.0.1:33905/v1/models",
+            ),
+        )
+
+        assert e2e_conftest._e2e_cluster_state("current-build") == (
+            "unhealthy",
+            "openai/whisper-large-v3-turbo is not served exactly at "
+            "http://127.0.0.1:33905/v1/models",
+        )
+
+    def test_started_cluster_waits_for_cluster_runtime_models_and_stamp(
+        self, monkeypatch
+    ):
+        states = iter(
+            [
+                ("stopped", ""),
+                ("unhealthy", "the cogniverse namespace is unreachable"),
+                ("unhealthy", "required model is still loading"),
+                ("reusable", ""),
+            ]
+        )
+        sleeps: list[float] = []
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_cluster_state",
+            lambda fingerprint: next(states),
+        )
+        monkeypatch.setattr(e2e_conftest._time, "sleep", sleeps.append)
+
+        assert e2e_conftest._wait_for_e2e_reuse_convergence(
+            "current-build", timeout_s=60, poll_interval_s=2
+        ) == ("reusable", "")
+        assert sleeps == [2, 2, 2]
+
+    def test_started_cluster_convergence_has_a_hard_deadline(self, monkeypatch):
+        times = iter([10.0, 11.0, 13.0])
+        sleeps: list[float] = []
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_cluster_state",
+            lambda fingerprint: ("unhealthy", "required model is still loading"),
+        )
+        monkeypatch.setattr(e2e_conftest._time, "monotonic", lambda: next(times))
+        monkeypatch.setattr(e2e_conftest._time, "sleep", sleeps.append)
+
+        assert e2e_conftest._wait_for_e2e_reuse_convergence(
+            "current-build", timeout_s=2, poll_interval_s=0.5
+        ) == (
+            "unhealthy",
+            "cluster did not converge within 2s; last state was unhealthy: "
+            "required model is still loading",
+        )
+        assert sleeps == [0.5]
+
+    def test_started_cluster_does_not_treat_transient_absence_as_converged(
+        self, monkeypatch
+    ):
+        states = iter(
+            [
+                ("absent", ""),
+                ("stopped", ""),
+                ("reusable", ""),
+            ]
+        )
+        sleeps: list[float] = []
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_e2e_cluster_state",
+            lambda fingerprint: next(states),
+        )
+        monkeypatch.setattr(e2e_conftest._time, "sleep", sleeps.append)
+
+        assert e2e_conftest._wait_for_e2e_reuse_convergence(
+            "current-build", timeout_s=60, poll_interval_s=2
+        ) == ("reusable", "")
+        assert sleeps == [2, 2]
+
+    def test_fingerprint_stamp_render_failure_reports_command_and_stderr(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args, 17, stdout="", stderr="render denied"
+            ),
+        )
+        monkeypatch.setattr(
+            e2e_conftest.subprocess,
+            "run",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("apply was attempted after render failure")
+            ),
+        )
+
+        with pytest.raises(RuntimeError) as raised:
+            e2e_conftest._stamp_e2e_fingerprint("build-abc")
+
+        assert str(raised.value) == (
+            "kubectl command failed with exit 17: kubectl --context "
+            "k3d-cogniverse-e2e -n cogniverse create configmap "
+            "e2e-build-fingerprint --from-literal=fingerprint=build-abc "
+            "--dry-run=client -o yaml\nstderr: render denied"
+        )
+
+    def test_fingerprint_stamp_apply_failure_reports_command_and_stderr(
+        self, monkeypatch
+    ):
+        manifest = "apiVersion: v1\nkind: ConfigMap\n"
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args, 0, stdout=manifest, stderr=""
+            ),
+        )
+
+        def fail_apply(command, **kwargs):
+            assert kwargs["input"] == manifest
+            return subprocess.CompletedProcess(
+                command, 23, stdout="", stderr="apply denied"
+            )
+
+        monkeypatch.setattr(e2e_conftest.subprocess, "run", fail_apply)
+
+        with pytest.raises(RuntimeError) as raised:
+            e2e_conftest._stamp_e2e_fingerprint("build-abc")
+
+        assert str(raised.value) == (
+            "kubectl command failed with exit 23: kubectl --context "
+            "k3d-cogniverse-e2e apply -f -\nstderr: apply denied"
+        )
+
+    def test_fingerprint_stamp_applies_rendered_manifest_once(self, monkeypatch):
+        manifest = "apiVersion: v1\nkind: ConfigMap\n"
+        applied: list[tuple[list[str], dict]] = []
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_kubectl_e2e",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args, 0, stdout=manifest, stderr=""
+            ),
+        )
+
+        def apply(command, **kwargs):
+            applied.append((command, kwargs))
+            return subprocess.CompletedProcess(
+                command, 0, stdout="configured\n", stderr=""
+            )
+
+        monkeypatch.setattr(e2e_conftest.subprocess, "run", apply)
+
+        e2e_conftest._stamp_e2e_fingerprint("build-abc")
+
+        assert len(applied) == 1
+        assert applied[0][0] == [
+            "kubectl",
+            "--context",
+            "k3d-cogniverse-e2e",
+            "apply",
+            "-f",
+            "-",
+        ]
+        assert applied[0][1]["input"] == manifest
+
+    def _start_stack(
+        self,
+        monkeypatch,
+        *,
+        cluster_states,
+        force_fresh,
+        fingerprints=("current-build", "current-build"),
+    ):
         import cogniverse_cli.cluster as cluster_cli
 
         from tests.e2e.deployment import conftest as deployment_conftest
 
         calls = {
+            "fingerprint": [],
             "start": [],
             "stop_dev": [],
             "create": [],
             "deploy": [],
             "healthy": [],
+            "models": [],
             "stamp": [],
             "delete": [],
         }
@@ -101,8 +614,11 @@ class TestSharedClusterOwnership:
             monkeypatch.setenv("E2E_FRESH", "1")
         else:
             monkeypatch.delenv("E2E_FRESH", raising=False)
+        fingerprint_values = iter(fingerprints)
         monkeypatch.setattr(
-            e2e_conftest, "_e2e_deploy_fingerprint", lambda: "current-build"
+            e2e_conftest,
+            "_e2e_deploy_fingerprint",
+            lambda: calls["fingerprint"].append(None) or next(fingerprint_values),
         )
         monkeypatch.setattr(cluster_cli, "list_cluster_states", lambda: cluster_states)
         monkeypatch.setattr(
@@ -114,6 +630,11 @@ class TestSharedClusterOwnership:
             lambda *args, **kwargs: type("Result", (), {"returncode": 0})(),
         )
         monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
+        monkeypatch.setattr(
+            e2e_conftest,
+            "_required_e2e_models_ready",
+            lambda: calls["models"].append(None) or (True, ""),
+        )
         monkeypatch.setattr(
             e2e_conftest, "_read_e2e_fingerprint", lambda: "current-build"
         )
@@ -157,6 +678,7 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ingest_sample_frame", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
         monkeypatch.setattr(
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
@@ -188,13 +710,9 @@ class TestSharedClusterOwnership:
                         "33746:2746",
                         "33901:29001",
                         "33902:29002",
-                        "33903:29003",
                         "33904:29004",
                         "33905:29005",
                         "33906:29006",
-                        "33907:29007",
-                        "33908:29008",
-                        "33909:29009",
                         "33910:29010",
                         "33911:29011",
                     ],
@@ -219,8 +737,25 @@ class TestSharedClusterOwnership:
             )
         ]
         assert calls["healthy"] == [None]
+        assert calls["models"] == [None]
+        assert calls["fingerprint"] == [None, None]
         assert calls["stamp"] == ["current-build"]
         stack.close()
+
+    def test_deploy_rejects_working_tree_changes_during_image_build(self, monkeypatch):
+        with pytest.raises(BaseException) as raised:
+            self._start_stack(
+                monkeypatch,
+                cluster_states=[],
+                force_fresh=False,
+                fingerprints=("before-build", "after-build"),
+            )
+
+        assert str(raised.value) == (
+            "working-tree deployment inputs changed while the e2e stack was "
+            "being built: started with 'before-build', finished with "
+            "'after-build'; rerun against a stable tree"
+        )
 
     def test_reusable_shared_cluster_has_no_lifecycle_mutations(self, monkeypatch):
         stack, calls = self._start_stack(
@@ -298,6 +833,9 @@ class TestSharedClusterOwnership:
             e2e_conftest, "_e2e_deploy_fingerprint", lambda: "current-build"
         )
         monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: runtime_ready)
+        monkeypatch.setattr(
+            e2e_conftest, "_required_e2e_models_ready", lambda: (True, "")
+        )
         monkeypatch.setattr(
             e2e_conftest,
             "_read_e2e_fingerprint",
@@ -397,6 +935,9 @@ class TestSharedClusterOwnership:
         )
         monkeypatch.setattr(e2e_conftest, "runtime_available", lambda: True)
         monkeypatch.setattr(
+            e2e_conftest, "_required_e2e_models_ready", lambda: (True, "")
+        )
+        monkeypatch.setattr(
             e2e_conftest, "_read_e2e_fingerprint", lambda: "current-build"
         )
         monkeypatch.setattr(
@@ -427,6 +968,7 @@ class TestSharedClusterOwnership:
         monkeypatch.setattr(e2e_conftest, "_suspend_cronworkflows_for_session", list)
         monkeypatch.setattr(e2e_conftest, "_bootstrap_tenant_and_schemas", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ingest_sample_video", lambda: None)
+        monkeypatch.setattr(e2e_conftest, "_ingest_sample_frame", lambda: None)
         monkeypatch.setattr(e2e_conftest, "_ensure_sandbox_gateway", lambda: None)
         monkeypatch.setattr(
             e2e_conftest, "_restore_cronworkflows", lambda cron_restore: None
@@ -498,8 +1040,8 @@ def test_conftest_helpers_self_check(phoenix_client_session):
         f"unique_id hex suffix malformed: {hex_part!r}"
     )
 
-    # 2) _TEST_TENANT_PREFIXES is exactly standard + new (order preserved).
-    expected_prefixes = _STANDARD_PREFIXES + _NEW_PREFIXES
+    # 2) _TEST_TENANT_PREFIXES is exactly legacy + new (order preserved).
+    expected_prefixes = _LEGACY_PREFIXES + _NEW_PREFIXES
     assert _TEST_TENANT_PREFIXES == expected_prefixes, (
         f"_TEST_TENANT_PREFIXES drift: got {_TEST_TENANT_PREFIXES!r}, "
         f"expected {expected_prefixes!r}"
@@ -518,10 +1060,10 @@ def test_conftest_helpers_self_check(phoenix_client_session):
     # 4) wait_for_span polling contract: when no span matches, the helper
     # MUST poll until the deadline and then return None — never raise on
     # a missing span and never short-circuit before the deadline. This is
-    # what each span-producing test relies on when it asserts a positive
-    # match within a known window. We test the negative path here because
-    # it's deterministic; the positive path is exercised by tests that
-    # drive a real span (e.g. RLM telemetry, sandbox.exec).
+    # what every later phase relies on when it asserts a positive match
+    # within a known window. We test the negative path here because it's
+    # deterministic; the positive path is exercised by every later
+    # test that drives a real span (e.g. RLM telemetry, sandbox.exec).
     bogus_project = f"cogniverse-{unique_id('know_selfcheck_bogus')}"
     started = time.monotonic()
     found = wait_for_span(

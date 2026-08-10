@@ -152,13 +152,22 @@ def _ensure_annotation_crons_applied() -> None:
         ]
     if runtime_image and ":" in runtime_image:
         repository, tag = runtime_image.rsplit(":", 1)
+        backend = next(
+            (
+                candidate
+                for candidate in ("cpu", "cuda", "rocm")
+                if repository.endswith(f"-{candidate}")
+            ),
+            None,
+        )
+        assert backend is not None, f"cannot identify runtime backend from {repository}"
         helm_args += [
             "--set",
-            "runtime.imagesByBackend=null",
+            f"runtime.backend={backend}",
             "--set",
-            f"runtime.image.repository={repository}",
+            f"runtime.imagesByBackend.{backend}.repository={repository}",
             "--set",
-            f"runtime.image.tag={tag}",
+            f"runtime.imagesByBackend.{backend}.tag={tag}",
         ]
     rendered = subprocess.run(
         helm_args,

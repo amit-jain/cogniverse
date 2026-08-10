@@ -2,7 +2,7 @@
 COMPREHENSIVE END-TO-END TEST for Ensemble Search with REAL Profiles.
 
 This test validates the ensemble search pipeline with:
-1. REAL existing profiles with DIFFERENT models (ColPali, VideoPrism, ColQwen)
+1. REAL existing profiles with production Tomoro and VideoPrism models
 2. Each profile has its own schema with different embedding dimensions
 3. Real Vespa deployment and real searches
 4. Real parallel execution and RRF fusion
@@ -11,6 +11,7 @@ This test validates the ensemble search pipeline with:
 Uses REAL profiles from the system, not artificial test profiles.
 """
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -42,11 +43,31 @@ REAL_PROFILES = {
         "binary_dim": 96,
     },
     "video_colqwen_omni_mv_chunk_30s": {
-        "model": "vidore/colqwen2-v0.1",
-        "embedding_dim": 128,  # binarized from 1024
-        "binary_dim": 16,
+        "model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "embedding_dim": 320,
+        "binary_dim": 40,
     },
 }
+
+
+def test_visual_profiles_use_the_deployed_encoder_contract():
+    profile_file = Path("configs/profiles/colqwen_chunks_profile.json")
+    standalone_profile = json.loads(profile_file.read_text())
+
+    assert REAL_PROFILES["video_colpali_smol500_mv_frame"] == {
+        "model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "embedding_dim": 320,
+        "binary_dim": 40,
+    }
+    assert REAL_PROFILES["video_colqwen_omni_mv_chunk_30s"] == {
+        "model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "embedding_dim": 320,
+        "binary_dim": 40,
+    }
+    assert standalone_profile["embedding_model"] == (
+        "TomoroAI/tomoro-colqwen3-embed-4b"
+    )
+    assert standalone_profile["model_config"]["embedding_dim"] == 320
 
 
 @pytest.fixture(scope="module")
@@ -103,8 +124,7 @@ def comprehensive_ensemble_setup():
         }
 
     except Exception as e:
-        logger.error(f"❌ Failed to setup comprehensive ensemble test: {e}")
-        pytest.skip(f"Failed to setup: {e}")
+        raise RuntimeError("Failed to set up the real ensemble boundary") from e
 
     finally:
         logger.info("🧹 Tearing down comprehensive ensemble test...")
@@ -132,7 +152,7 @@ def _create_test_documents_with_embeddings():
             "id": f"test_video_{i}",
             "title": f"Test Video {i}",
             "description": f"Test description for video {i}",
-            "embeddings": np.random.rand(128).tolist(),
+            "embeddings": np.random.default_rng(i).random(320).tolist(),
         }
         docs.append(doc)
 
@@ -155,7 +175,7 @@ class TestComprehensiveEnsembleSearch:
         Real profiles:
         - video_colpali_smol500_mv_frame: 320-dim → 40 bytes
         - video_videoprism_base_mv_chunk_30s: 768-dim → 96 bytes
-        - video_colqwen_omni_mv_chunk_30s: 128-dim (binarized from 1024) → 16 bytes
+        - video_colqwen_omni_mv_chunk_30s: 320-dim → 40 bytes
 
         Validates:
         - Different profiles with different schemas work together

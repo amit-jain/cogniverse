@@ -5,15 +5,19 @@ for both API (httpx) and dashboard (Playwright) E2E tests.
 
 Test artifact paths (real data used for ingestion tests):
 - Video: tests/system/resources/videos/v_-D1gdv_gQyw.mp4
+- Ingested corpus: tests/system/resources/videos/v_-6dz6tBH77I.mp4 (sha-pinned
+  session fixture, plus its first frame ingested as image content)
 - Image: first frame extracted from that tracked video
 - Audio: ten seconds extracted from that tracked video's real audio stream
 - PDF: repository evaluation-dataset content written as a deterministic PDF
 - Document: data/testset/dataset_summary.md (real markdown about the evaluation set)
 """
 
+import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 import time as _time
@@ -133,6 +137,16 @@ PHOENIX_URL = "http://localhost:33006"  # phoenix.service.nodePort
 TENANT_ID = "flywheel_org:production"
 
 DATA_ROOT = Path(__file__).parent.parent.parent / "data"
+SAMPLE_VIDEO_PATH = (
+    Path(__file__).parent.parent
+    / "system"
+    / "resources"
+    / "videos"
+    / "v_-6dz6tBH77I.mp4"
+)
+SAMPLE_VIDEO_CONTENT_ID = (
+    "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691"
+)
 E2E_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "cogniverse_e2e_artifacts"
 
 
@@ -580,6 +594,25 @@ def restart_runtime(timeout_s: int = 60) -> bool:
     return False
 
 
+def _synthetic_fixture_profiles(config: dict) -> list[str]:
+    active_profile = config.get(
+        "active_video_profile", "video_colpali_smol500_mv_frame"
+    )
+    profiles = [active_profile, "image_colpali_mv"]
+    configured_profiles = config.get("backend", {}).get("profiles", {})
+    missing = [name for name in profiles if name not in configured_profiles]
+    if missing:
+        raise AssertionError(
+            f"Synthetic E2E fixture profiles are not configured: {missing}"
+        )
+    modalities = [configured_profiles[name].get("type") for name in profiles]
+    if modalities != ["video", "image"]:
+        raise AssertionError(
+            f"Synthetic E2E fixtures require video and image profiles, got {modalities}"
+        )
+    return profiles
+
+
 def _bootstrap_tenant_and_schemas() -> None:
     """Create the E2E tenant and deploy schemas if not already done.
 
@@ -591,14 +624,15 @@ def _bootstrap_tenant_and_schemas() -> None:
         return
 
     config = json.loads(config_path.read_text())
-    active_profile = config.get(
-        "active_video_profile", "video_colpali_smol500_mv_frame"
-    )
     all_profiles = config.get("backend", {}).get("profiles", {})
-    profile_names = (
-        active_profile,
-        "document_text_semantic",
-        "document_visual_colpali",
+    profile_names = tuple(
+        dict.fromkeys(
+            (
+                *_synthetic_fixture_profiles(config),
+                "document_text_semantic",
+                "document_visual_colpali",
+            )
+        )
     )
 
     # Step 1: Create tenant (409 = already exists)
@@ -667,85 +701,285 @@ def _bootstrap_tenant_and_schemas() -> None:
             print(f"Profile registration failed: {exc}")
 
 
-def _ingest_sample_video() -> None:
-    """Ingest a sample video so search tests have data to query.
+def _content_sha256(path: Path) -> str:
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
-    Uses the runtime's POST /ingestion/upload endpoint with the tracked
-    real video. Idempotent — re-ingesting the same video is harmless.
-    """
-    video_path = (
-        DATA_ROOT.parent
-        / "tests"
-        / "system"
-        / "resources"
-        / "videos"
-        / "v_-D1gdv_gQyw.mp4"
+
+def _sample_frame_path() -> Path:
+    """Materialize the first real video frame as the image-modality fixture."""
+    destination = E2E_ARTIFACT_DIR / f"{SAMPLE_VIDEO_CONTENT_ID}_frame_0000.jpg"
+    if destination.exists() and destination.stat().st_size > 0:
+        return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import av
+
+        with av.open(str(SAMPLE_VIDEO_PATH)) as container:
+            stream = container.streams.video[0]
+            frame = next(container.decode(stream))
+            frame.to_image().save(destination, format="JPEG", quality=95)
+    except (ImportError, IndexError, OSError, StopIteration) as exc:
+        pytest.fail(f"Could not extract tracked sample video frame: {exc}")
+    if not destination.exists() or destination.stat().st_size == 0:
+        pytest.fail(f"Tracked sample video frame was not created: {destination}")
+    return destination
+
+
+def _source_url_matches(
+    source_url: object,
+    *,
+    content_id: str,
+    tenant_id: str,
+    suffix: str,
+) -> bool:
+    if not isinstance(source_url, str) or not source_url.startswith("s3://"):
+        return False
+    return source_url.rsplit("/", 2)[-2:] == [tenant_id, f"{content_id}{suffix}"]
+
+
+def _matching_sample_results(
+    search_body: dict,
+    *,
+    content_id: str,
+    tenant_id: str,
+    profile: str,
+    suffix: str,
+) -> list[dict]:
+    """Return only hits that prove the exact tenant-scoped fixture identity."""
+    assert search_body.get("query") == content_id, search_body
+    assert search_body.get("profile") == profile, search_body
+    assert search_body.get("strategy") == "default", search_body
+    results = search_body.get("results")
+    assert isinstance(results, list), search_body
+    assert search_body.get("results_count") == len(results), search_body
+
+    expected_document_prefix = f"{content_id}_seg_"
+    matches = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        metadata = result.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        if (
+            result.get("source_id") == content_id
+            and metadata.get("video_id") == content_id
+            and isinstance(result.get("document_id"), str)
+            and result["document_id"].startswith(expected_document_prefix)
+            and _source_url_matches(
+                metadata.get("source_url"),
+                content_id=content_id,
+                tenant_id=tenant_id,
+                suffix=suffix,
+            )
+        ):
+            matches.append(result)
+    return matches
+
+
+def _validate_sample_ingestion_result(
+    result: dict,
+    *,
+    content_id: str,
+    tenant_id: str,
+    suffix: str,
+) -> int:
+    """Validate the terminal worker result and return its persisted count."""
+    assert result.get("video_id") == content_id, result
+    assert _source_url_matches(
+        result.get("source_url"),
+        content_id=content_id,
+        tenant_id=tenant_id,
+        suffix=suffix,
+    ), result
+    chunks = result.get("chunks")
+    documents_fed = result.get("documents_fed")
+    assert type(chunks) is int and chunks > 0, result
+    assert type(documents_fed) is int and documents_fed > 0, result
+    assert chunks == documents_fed, result
+    return documents_fed
+
+
+def _search_sample_content(
+    *, content_id: str, tenant_id: str, profile: str, suffix: str
+) -> list[dict] | None:
+    try:
+        response = httpx.post(
+            f"{RUNTIME}/search/",
+            json={
+                "query": content_id,
+                "profile": profile,
+                "strategy": "default",
+                "top_k": 1000,
+                "tenant_id": tenant_id,
+            },
+            timeout=60,
+        )
+    except (httpx.HTTPError, OSError):
+        return None
+    if response.status_code != 200:
+        return None
+    return _matching_sample_results(
+        response.json(),
+        content_id=content_id,
+        tenant_id=tenant_id,
+        profile=profile,
+        suffix=suffix,
     )
-    if not video_path.exists():
-        raise FileNotFoundError(f"Tracked E2E source video is missing: {video_path}")
+
+
+def _ensure_sample_content_ingested(
+    path: Path,
+    *,
+    profile: str,
+    media_type: str,
+) -> str:
+    if not path.exists():
+        pytest.fail(f"Tracked sample content not found: {path}")
+
+    content_id = _content_sha256(path)
+    existing_matches = _search_sample_content(
+        content_id=content_id,
+        tenant_id=TENANT_ID,
+        profile=profile,
+        suffix=path.suffix,
+    )
+    if existing_matches:
+        print(
+            f"Exact {content_id} fixture already has {len(existing_matches)} "
+            f"documents in {profile} for {TENANT_ID}; skipping ingest"
+        )
+        return content_id
+
+    try:
+        with path.open("rb") as source:
+            response = httpx.post(
+                f"{RUNTIME}/ingestion/upload",
+                files={"file": (path.name, source, media_type)},
+                data={
+                    "profile": profile,
+                    "backend": "vespa",
+                    "tenant_id": TENANT_ID,
+                },
+                timeout=60,
+            )
+    except (httpx.HTTPError, OSError) as exc:
+        pytest.fail(f"Sample content upload failed for {path}: {exc}")
+    if response.status_code != 200:
+        pytest.fail(
+            f"Sample content upload returned {response.status_code} for "
+            f"{path}: {response.text[:500]}"
+        )
+
+    submission = response.json()
+    assert submission.get("filename") == path.name, submission
+    assert _source_url_matches(
+        submission.get("source_url"),
+        content_id=content_id,
+        tenant_id=TENANT_ID,
+        suffix=path.suffix,
+    ), submission
+    ingest_id = submission.get("ingest_id")
+    if not isinstance(ingest_id, str) or not re.fullmatch(
+        r"ingest_[0-9a-f]{32}", ingest_id
+    ):
+        pytest.fail(f"Sample content upload returned invalid ingest_id: {submission}")
+
+    deadline = _time.monotonic() + 2400
+    latest: dict = {}
+    documents_fed = 0
+    while _time.monotonic() < deadline:
+        try:
+            status_response = httpx.get(
+                f"{RUNTIME}/ingestion/{ingest_id}/status", timeout=10
+            )
+        except httpx.HTTPError as exc:
+            pytest.fail(f"Ingestion status request failed for {ingest_id}: {exc}")
+        if status_response.status_code != 200:
+            pytest.fail(
+                f"Ingestion status returned {status_response.status_code} for "
+                f"{ingest_id}: {status_response.text[:500]}"
+            )
+        snapshot = status_response.json()
+        if snapshot.get("ingest_id") != ingest_id:
+            pytest.fail(
+                f"Ingestion status identity mismatch for {ingest_id}: {snapshot}"
+            )
+        latest = snapshot.get("latest", {})
+        if snapshot.get("state") == "complete":
+            documents_fed = _validate_sample_ingestion_result(
+                latest.get("result", {}),
+                content_id=content_id,
+                tenant_id=TENANT_ID,
+                suffix=path.suffix,
+            )
+            break
+        if snapshot.get("state") == "failed":
+            pytest.fail(f"Sample content ingestion failed: {latest}")
+        _time.sleep(5)
+    else:
+        pytest.fail(
+            f"Sample content ingestion {ingest_id} did not complete within "
+            f"2400s: {latest}"
+        )
+
+    search_deadline = _time.monotonic() + 120
+    matches: list[dict] = []
+    while _time.monotonic() < search_deadline:
+        matches = (
+            _search_sample_content(
+                content_id=content_id,
+                tenant_id=TENANT_ID,
+                profile=profile,
+                suffix=path.suffix,
+            )
+            or []
+        )
+        if len(matches) == documents_fed:
+            print(
+                f"Sample {content_id} persisted {documents_fed} exact documents "
+                f"in {profile} for {TENANT_ID}"
+            )
+            return content_id
+        _time.sleep(2)
+
+    pytest.fail(
+        f"Sample {content_id} reported {documents_fed} documents_fed but search "
+        f"found {len(matches)} exact persisted documents in {profile} for {TENANT_ID}"
+    )
+
+
+def _ingest_sample_video() -> None:
+    """Ensure the exact tracked ActivityNet video is persisted for E2E tests."""
+    actual_content_id = _content_sha256(SAMPLE_VIDEO_PATH)
+    if actual_content_id != SAMPLE_VIDEO_CONTENT_ID:
+        pytest.fail(
+            f"Tracked sample video content changed: expected "
+            f"{SAMPLE_VIDEO_CONTENT_ID}, got {actual_content_id}"
+        )
 
     config_path = DATA_ROOT.parent / "configs" / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
     active_profile = config.get(
         "active_video_profile", "video_colpali_smol500_mv_frame"
     )
+    persisted_content_id = _ensure_sample_content_ingested(
+        SAMPLE_VIDEO_PATH,
+        profile=active_profile,
+        media_type="video/mp4",
+    )
+    assert persisted_content_id == SAMPLE_VIDEO_CONTENT_ID
 
-    # Skip re-ingest when search already finds this video for the tenant —
-    # ColPali serialises through one pod queue, and a redundant ingest
-    # blocks every other inference request behind it.
-    try:
-        probe = httpx.post(
-            f"{RUNTIME}/search/",
-            json={
-                "query": video_path.stem,
-                "profile": active_profile,
-                "top_k": 1,
-                "tenant_id": TENANT_ID,
-            },
-            timeout=20,
-        )
-        if probe.status_code == 200 and probe.json().get("results_count", 0) > 0:
-            print(
-                f"Sample video already in Vespa for tenant {TENANT_ID}; skipping ingest"
-            )
-            return
-    except (httpx.HTTPError, OSError):
-        pass
 
-    try:
-        with open(video_path, "rb") as f:
-            resp = httpx.post(
-                f"{RUNTIME}/ingestion/upload",
-                # The route validates wait_timeout as ge=10, le=900; anything
-                # above that is rejected 422 before ingestion starts, so this
-                # asks for the documented maximum rather than a value the API
-                # cannot accept.
-                params={"wait": "true", "wait_timeout": "900"},
-                files={"file": (video_path.name, f, "video/mp4")},
-                data={
-                    "profile": active_profile,
-                    "backend": "vespa",
-                    "tenant_id": TENANT_ID,
-                },
-                timeout=1800,
-            )
-        if resp.status_code == 200:
-            data = resp.json()
-            assert data["state"] == "complete", data
-            assert data["status"] == "success", data
-            fed = data.get("documents_fed", 0)
-            chunks = data.get("chunks_created", 0)
-            print(f"Sample video ingested: {chunks} chunks, {fed} documents fed")
-            if chunks == 0 or fed == 0:
-                pytest.fail(
-                    f"sample ingestion produced chunks={chunks}, documents_fed={fed}"
-                )
-        else:
-            pytest.fail(
-                f"sample ingestion returned HTTP {resp.status_code}: {resp.text[:500]}"
-            )
-    except (httpx.HTTPError, OSError) as exc:
-        pytest.fail(f"sample ingestion boundary failed: {type(exc).__name__}: {exc}")
+def _ingest_sample_frame() -> str:
+    """Ensure a real frame from the tracked video is persisted as image content."""
+    return _ensure_sample_content_ingested(
+        _sample_frame_path(),
+        profile="image_colpali_mv",
+        media_type="image/jpeg",
+    )
 
 
 E2E_CLUSTER_NAME = "cogniverse-e2e"
@@ -777,6 +1011,21 @@ E2E_HOST_PORTS = {
     33910: 29010,
     33911: 29011,
 }
+
+_E2E_TOMORO_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
+_E2E_ASR_MODELS = {
+    "cpu": "openai/whisper-tiny",
+    "cuda": "openai/whisper-large-v3-turbo",
+    "rocm": "openai/whisper-large-v3-turbo",
+}
+
+
+def _e2e_deployment_overrides() -> dict[str, str]:
+    overrides = {"inference.vllm_llm_teacher.enabled": "false"}
+    for service in ("vllm_colpali", "vllm_asr", "vllm_llm_student"):
+        overrides[f"inference.{service}.livenessProbe.initialDelaySeconds"] = "1200"
+        overrides[f"inference.{service}.livenessProbe.failureThreshold"] = "60"
+    return overrides
 
 
 def _port_bound(port: int) -> bool:
@@ -830,50 +1079,214 @@ def _stop_dev_cluster_and_free_ports() -> None:
 
 
 _E2E_FINGERPRINT_CM = "e2e-build-fingerprint"
+_E2E_DEPLOY_INPUTS = (
+    "libs",
+    "configs",
+    "charts",
+    "deploy",
+    "scripts",
+    "pyproject.toml",
+    "uv.lock",
+    ".dockerignore",
+    "tests/e2e/deployment/conftest.py",
+)
+_E2E_FINGERPRINT_EXCLUDED_DIRECTORIES = frozenset(
+    {
+        "__pycache__",
+        ".eggs",
+        ".hypothesis",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "build",
+        "dist",
+        "htmlcov",
+        "node_modules",
+        "venv",
+    }
+)
+_E2E_FINGERPRINT_EXCLUDED_FILES = frozenset({".coverage", ".DS_Store"})
+_E2E_FINGERPRINT_EXCLUDED_SUFFIXES = (".log", ".pyc", ".pyo", ".swp", ".swo")
 
 
-def _e2e_deploy_fingerprint() -> str:
-    """Content hash of everything baked into the e2e images / affecting the
-    deploy: the committed CONTENT of ``libs``/``configs``/``charts`` +
-    packaging, plus any uncommitted changes to them.
-
-    Keyed on the git TREE object of each path (``HEAD:libs`` …), not the
-    commit SHA — so a commit that touches only ``tests/`` (or anything else)
-    does NOT flip the fingerprint, while any change to the deployed content
-    does. That is what lets assertion iteration reuse the warm cluster; a
-    change to deployed code forces a rebuild."""
-    import hashlib
-
-    repo_root = Path(__file__).resolve().parents[2]
-
-    def _git(*args: str) -> str:
-        return subprocess.run(
-            ["git", "-C", str(repo_root), *args],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        ).stdout
-
-    paths = ["libs", "configs", "charts", "pyproject.toml"]
-    material_parts = [
-        # Tree/blob object of each deployed path at HEAD — changes iff that
-        # path's committed content changes, independent of the commit SHA.
-        _git("rev-parse", f"HEAD:{p}").strip()
-        for p in paths
-    ]
-    material_parts.append(_git("diff", "HEAD", "--", *paths))
-    material_parts.append(
-        _git("status", "--porcelain", "--untracked-files=all", "--", *paths)
+def _fingerprint_path_is_generated(relative_path: Path) -> bool:
+    return any(
+        part in _E2E_FINGERPRINT_EXCLUDED_DIRECTORIES or part.endswith(".egg-info")
+        for part in relative_path.parts
+    ) or (
+        relative_path.name in _E2E_FINGERPRINT_EXCLUDED_FILES
+        or relative_path.name.endswith(_E2E_FINGERPRINT_EXCLUDED_SUFFIXES)
+        or relative_path.name.endswith("~")
     )
-    return hashlib.sha256("\n".join(material_parts).encode()).hexdigest()[:16]
+
+
+def _add_fingerprint_entry(
+    digest,
+    *,
+    relative_path: Path,
+    kind: str,
+    mode: int,
+    content: bytes = b"",
+) -> None:
+    for value in (
+        relative_path.as_posix().encode(),
+        kind.encode(),
+        oct(mode).encode(),
+        content,
+    ):
+        digest.update(len(value).to_bytes(8, "big"))
+        digest.update(value)
+
+
+def _effective_e2e_deployment_identity(repo_root: Path) -> dict:
+    from tests.e2e.deployment.conftest import deployment_helm_inputs
+
+    inputs = deployment_helm_inputs(
+        repo_root,
+        extra_set=_e2e_deployment_overrides(),
+    )
+    return {
+        "backend": inputs["backend"],
+        "image_version": inputs["image_version"],
+        "values": [os.path.relpath(path, repo_root) for path in inputs["helm_values"]],
+        "set": inputs["helm_set_overrides"],
+    }
+
+
+def _e2e_deploy_fingerprint(
+    repo_root: Path | None = None,
+    *,
+    deployment_identity: dict | None = None,
+) -> str:
+    """Hash the working-tree bytes and modes that determine the e2e deploy.
+
+    Direct filesystem hashing includes tracked, modified, and untracked build
+    inputs uniformly. Only generated caches and local runtime artifacts are
+    excluded, so editing an untracked file at the same path still invalidates
+    a warm cluster.
+    """
+    repo_root = repo_root or Path(__file__).resolve().parents[2]
+    digest = hashlib.sha256()
+    identity = deployment_identity or _effective_e2e_deployment_identity(repo_root)
+    _add_fingerprint_entry(
+        digest,
+        relative_path=Path("<effective-deployment>"),
+        kind="json",
+        mode=0,
+        content=json.dumps(identity, sort_keys=True, separators=(",", ":")).encode(),
+    )
+
+    for input_name in _E2E_DEPLOY_INPUTS:
+        input_path = repo_root / input_name
+        if not input_path.exists() and not input_path.is_symlink():
+            _add_fingerprint_entry(
+                digest,
+                relative_path=Path(input_name),
+                kind="missing",
+                mode=0,
+            )
+            continue
+        if input_path.is_symlink():
+            _add_fingerprint_entry(
+                digest,
+                relative_path=Path(input_name),
+                kind="symlink",
+                mode=input_path.lstat().st_mode & 0o7777,
+                content=os.readlink(input_path).encode(),
+            )
+            continue
+        if input_path.is_file():
+            _add_fingerprint_entry(
+                digest,
+                relative_path=Path(input_name),
+                kind="file",
+                mode=input_path.stat().st_mode & 0o7777,
+                content=input_path.read_bytes(),
+            )
+            continue
+
+        _add_fingerprint_entry(
+            digest,
+            relative_path=Path(input_name),
+            kind="directory",
+            mode=input_path.stat().st_mode & 0o7777,
+        )
+        for directory, child_directories, file_names in os.walk(input_path):
+            directory_path = Path(directory)
+            retained_directories: list[str] = []
+            for child_name in sorted(child_directories):
+                child_path = directory_path / child_name
+                relative_path = child_path.relative_to(repo_root)
+                if _fingerprint_path_is_generated(relative_path):
+                    continue
+                if child_path.is_symlink():
+                    _add_fingerprint_entry(
+                        digest,
+                        relative_path=relative_path,
+                        kind="symlink",
+                        mode=child_path.lstat().st_mode & 0o7777,
+                        content=os.readlink(child_path).encode(),
+                    )
+                    continue
+                retained_directories.append(child_name)
+                _add_fingerprint_entry(
+                    digest,
+                    relative_path=relative_path,
+                    kind="directory",
+                    mode=child_path.stat().st_mode & 0o7777,
+                )
+            child_directories[:] = retained_directories
+
+            for file_name in sorted(file_names):
+                file_path = directory_path / file_name
+                relative_path = file_path.relative_to(repo_root)
+                if _fingerprint_path_is_generated(relative_path):
+                    continue
+                if file_path.is_symlink():
+                    kind = "symlink"
+                    content = os.readlink(file_path).encode()
+                    mode = file_path.lstat().st_mode & 0o7777
+                elif file_path.is_file():
+                    kind = "file"
+                    content = file_path.read_bytes()
+                    mode = file_path.stat().st_mode & 0o7777
+                else:
+                    kind = "special"
+                    content = b""
+                    mode = file_path.lstat().st_mode & 0o7777
+                _add_fingerprint_entry(
+                    digest,
+                    relative_path=relative_path,
+                    kind=kind,
+                    mode=mode,
+                    content=content,
+                )
+
+    return digest.hexdigest()[:16]
+
+
+def _kubectl_e2e_command(*args: str) -> list[str]:
+    return ["kubectl", "--context", f"k3d-{E2E_CLUSTER_NAME}", *args]
 
 
 def _kubectl_e2e(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["kubectl", "--context", f"k3d-{E2E_CLUSTER_NAME}", *args],
+        _kubectl_e2e_command(*args),
         capture_output=True,
         text=True,
         timeout=timeout,
+    )
+
+
+def _require_kubectl_success(
+    result: subprocess.CompletedProcess, command: list[str]
+) -> None:
+    if result.returncode == 0:
+        return
+    raise RuntimeError(
+        f"kubectl command failed with exit {result.returncode}: "
+        f"{shlex.join(command)}\nstderr: {(result.stderr or '').strip()}"
     )
 
 
@@ -891,7 +1304,7 @@ def _read_e2e_fingerprint() -> str:
 
 
 def _stamp_e2e_fingerprint(fingerprint: str) -> None:
-    rendered = _kubectl_e2e(
+    render_args = (
         "-n",
         "cogniverse",
         "create",
@@ -902,13 +1315,42 @@ def _stamp_e2e_fingerprint(fingerprint: str) -> None:
         "-o",
         "yaml",
     )
-    subprocess.run(
-        ["kubectl", "--context", f"k3d-{E2E_CLUSTER_NAME}", "apply", "-f", "-"],
+    rendered = _kubectl_e2e(*render_args)
+    _require_kubectl_success(rendered, _kubectl_e2e_command(*render_args))
+
+    apply_command = _kubectl_e2e_command("apply", "-f", "-")
+    applied = subprocess.run(
+        apply_command,
         input=rendered.stdout,
         capture_output=True,
         text=True,
         timeout=30,
     )
+    _require_kubectl_success(applied, apply_command)
+
+
+def _required_e2e_models_ready(backend: str | None = None) -> tuple[bool, str]:
+    from cogniverse_cli.images import detect_torch_backend
+
+    from tests.utils.vllm_sidecar import serves_exact_model
+
+    resolved_backend = backend or detect_torch_backend()
+    required_models: list[tuple[str, str]] = []
+    if resolved_backend in {"cuda", "rocm"}:
+        required_models.append(("http://127.0.0.1:33901", _E2E_TOMORO_MODEL))
+    required_models.append(
+        (
+            "http://127.0.0.1:33905",
+            _E2E_ASR_MODELS.get(
+                resolved_backend,
+                "openai/whisper-large-v3-turbo",
+            ),
+        )
+    )
+    for url, model in required_models:
+        if not serves_exact_model(url, model, timeout=5.0):
+            return False, f"{model} is not served exactly at {url}/v1/models"
+    return True, ""
 
 
 def _e2e_cluster_state(fingerprint: str) -> tuple[str, str]:
@@ -942,15 +1384,40 @@ def _e2e_cluster_state(fingerprint: str) -> tuple[str, str]:
         != 0
     ):
         return "unhealthy", "the cogniverse namespace is unreachable"
-    if not runtime_available():
-        return "unhealthy", f"runtime readiness failed at {RUNTIME}"
     deployed_fingerprint = _read_e2e_fingerprint()
     if deployed_fingerprint != fingerprint:
         return (
             "stale",
             f"found {deployed_fingerprint or '<missing>'!r}, expected {fingerprint!r}",
         )
+    if not runtime_available():
+        return "unhealthy", f"runtime readiness failed at {RUNTIME}"
+    models_ready, model_detail = _required_e2e_models_ready()
+    if not models_ready:
+        return "unhealthy", model_detail
     return "reusable", ""
+
+
+def _wait_for_e2e_reuse_convergence(
+    fingerprint: str,
+    *,
+    timeout_s: float = 2400,
+    poll_interval_s: float = 5,
+) -> tuple[str, str]:
+    deadline = _time.monotonic() + timeout_s
+    state = "unhealthy"
+    detail = "cluster did not report state"
+    while True:
+        state, detail = _e2e_cluster_state(fingerprint)
+        if state in {"reusable", "stale"}:
+            return state, detail
+        if _time.monotonic() >= deadline:
+            return (
+                "unhealthy",
+                f"cluster did not converge within {timeout_s:g}s; last state was "
+                f"{state}: {detail or '<no detail>'}",
+            )
+        _time.sleep(poll_interval_s)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -1015,7 +1482,7 @@ def e2e_stack(request, resolved_inference_endpoints):
     if cluster_state == "stopped":
         _stop_dev_cluster_and_free_ports()
         start_cluster(E2E_CLUSTER_NAME)
-        cluster_state, state_detail = _e2e_cluster_state(fingerprint)
+        cluster_state, state_detail = _wait_for_e2e_reuse_convergence(fingerprint)
     if cluster_state == "unhealthy":
         pytest.fail(
             f"Existing shared e2e cluster {E2E_CLUSTER_NAME!r} is unhealthy "
@@ -1055,12 +1522,11 @@ def e2e_stack(request, resolved_inference_endpoints):
         #    load under memory contention. Only LIVENESS matters — readiness
         #    never kills, it just gates the Available condition the wait below
         #    keys off, so it is left shipped-default.
-        gpu_vllm = ("vllm_colpali", "vllm_asr", "vllm_llm_student")
-        extra_set = {"inference.vllm_llm_teacher.enabled": "false"}
-        for svc in gpu_vllm:
-            extra_set[f"inference.{svc}.livenessProbe.initialDelaySeconds"] = "1200"
-            extra_set[f"inference.{svc}.livenessProbe.failureThreshold"] = "60"
-        deploy_stack(E2E_CLUSTER_NAME, "cogniverse", extra_set=extra_set)
+        deploy_stack(
+            E2E_CLUSTER_NAME,
+            "cogniverse",
+            extra_set=_e2e_deployment_overrides(),
+        )
         if not _ensure_stack_running():
             pytest.fail("e2e stack did not become healthy after deploy")
 
@@ -1094,6 +1560,19 @@ def e2e_stack(request, resolved_inference_endpoints):
                 "e2e stack deployments not all available within 40m: "
                 f"{(wait.stdout or '')[-600:]} {(wait.stderr or '')[-300:]}"
             )
+        models_ready, model_detail = _required_e2e_models_ready()
+        if not models_ready:
+            pytest.fail(
+                "e2e stack required model identity did not converge after deploy: "
+                f"{model_detail}"
+            )
+        finished_fingerprint = _e2e_deploy_fingerprint()
+        if finished_fingerprint != fingerprint:
+            pytest.fail(
+                "working-tree deployment inputs changed while the e2e stack was "
+                f"being built: started with {fingerprint!r}, finished with "
+                f"{finished_fingerprint!r}; rerun against a stable tree"
+            )
         # Stamp the deployed content so the next session can reuse this
         # cluster iff the deployed code is still identical.
         _stamp_e2e_fingerprint(fingerprint)
@@ -1102,6 +1581,7 @@ def e2e_stack(request, resolved_inference_endpoints):
         cron_restore = _suspend_cronworkflows_for_session()
         _bootstrap_tenant_and_schemas()
         _ingest_sample_video()
+        _ingest_sample_frame()
         # The chart's ``model-pulling`` post-install hook owns engine-gated,
         # readiness-waiting, retrying Ollama model provisioning.
         _ensure_sandbox_gateway()

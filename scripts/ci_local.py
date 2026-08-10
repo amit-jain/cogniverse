@@ -98,7 +98,7 @@ def build_argv(sel: dict) -> list[str]:
     argv = ["uv", "run", "python", "-m", "pytest", *sel["paths"]]
     if sel["marker"]:
         argv += ["-m", sel["marker"]]
-    argv += ["-q", "-p", "no:cacheprovider", "--tb=short"]
+    argv += ["-v", "-p", "no:cacheprovider", "--tb=long"]
     return argv
 
 

@@ -629,3 +629,42 @@ class TestSyntheticGenerationPersistence:
             f"selected_profile {inp['selected_profile']!r} not in "
             f"available_profiles {available}"
         )
+
+        controlled_optimizer = "missing_optimizer"
+        mixed_result = _kubectl_exec(
+            "env",
+            f"COGNIVERSE_CONFIG={config_path}",
+            "python3",
+            "-m",
+            "cogniverse_runtime.optimization_cli",
+            "--mode",
+            "synthetic",
+            "--tenant-id",
+            TENANT_ID,
+            "--agents",
+            f"profile,{controlled_optimizer}",
+            timeout=900,
+        )
+        assert mixed_result.returncode == 1, (
+            "synthetic CLI must exit 1 when one requested optimizer fails\n"
+            f"stdout:\n{mixed_result.stdout[-3000:]}\n"
+            f"stderr:\n{mixed_result.stderr[-3000:]}"
+        )
+        try:
+            mixed_payload = json.loads(mixed_result.stdout)
+        except json.JSONDecodeError as exc:
+            pytest.fail(
+                f"synthetic CLI did not emit one JSON result: {exc}\n"
+                f"stdout:\n{mixed_result.stdout[-3000:]}"
+            )
+        assert mixed_payload["status"] == "failed"
+        assert set(mixed_payload["results"]) == {"profile", controlled_optimizer}
+        assert mixed_payload["results"]["profile"]["status"] == "success"
+        assert mixed_payload["results"][controlled_optimizer] == {
+            "status": "failed",
+            "error": (
+                "Unknown optimizer: 'missing_optimizer'. Available: "
+                "entity_extraction, query_enhancement, routing, workflow, "
+                "profile, unified, cross_modal"
+            ),
+        }

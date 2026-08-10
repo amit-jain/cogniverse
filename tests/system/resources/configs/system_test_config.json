@@ -46,7 +46,7 @@
         "model_loader": "colpali",
         "schema_config": {
           "schema_name": "video_colpali_smol500_mv_frame",
-          "model_name": "ColPali",
+          "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
           "num_patches": 1024,
           "embedding_dim": 320,
           "binary_dim": 40
@@ -65,7 +65,7 @@
         "model_loader": "colpali",
         "schema_config": {
           "schema_name": "video_colpali_smol500_mv_frame",
-          "model_name": "ColPali",
+          "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
           "num_patches": 1024,
           "embedding_dim": 320,
           "binary_dim": 40
@@ -84,7 +84,7 @@
         "model_loader": "colpali",
         "schema_config": {
           "schema_name": "video_colpali_smol500_mv_frame",
-          "model_name": "ColPali",
+          "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
           "num_patches": 1024,
           "embedding_dim": 320,
           "binary_dim": 40
