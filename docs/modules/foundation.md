@@ -209,12 +209,6 @@ other URLs get no headers.
 The runtime API and ingestion worker parse `INFERENCE_SERVICE_URLS` with
 `cogniverse_runtime.inference_services.parse_inference_service_urls`.
 
-### Argo Workflows HTTP Client
-
-`build_argo_async_client()` returns an `httpx.AsyncClient` with
-`verify=False` and `DEFAULT_ARGO_TIMEOUT`; the tenant router uses it for
-Argo submissions.
-
 **API Reference:**
 
 | Method | Description |
