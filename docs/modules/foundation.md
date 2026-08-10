@@ -201,9 +201,10 @@ config_manager.set_agent_config(
 
 ### Inference endpoint credentials
 
-`inference_headers(base_url)` returns immutable headers for a canonical
-HTTP(S) root URL. `*.modal.run` endpoints require HTTPS and
-`COGNIVERSE_INFERENCE_API_KEY`; other URLs get no headers.
+cogniverse_foundation.config.inference_auth.inference_headers(base_url)
+returns immutable headers for a canonical HTTP(S) root URL.
+`*.modal.run` endpoints require HTTPS and `COGNIVERSE_INFERENCE_API_KEY`;
+other URLs get no headers.
 
 The runtime API and ingestion worker parse `INFERENCE_SERVICE_URLS` with
 `cogniverse_runtime.inference_services.parse_inference_service_urls`.
@@ -1009,6 +1010,21 @@ config_manager.set_agent_config(
     agent_config=agent_config
 )
 ```
+
+### Argo Workflows HTTP Client
+
+`build_argo_async_client()` returns an `httpx.AsyncClient` with
+`verify=False` and `DEFAULT_ARGO_TIMEOUT`.
+
+```python
+from cogniverse_foundation.common.argo_client import build_argo_async_client
+
+client = build_argo_async_client()
+client = build_argo_async_client(30.0)
+```
+
+The tenant job-scheduling route and optimization submissions use it for Argo
+calls.
 
 ### Tenant-Specific Profile Overrides
 
