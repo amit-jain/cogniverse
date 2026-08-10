@@ -73,7 +73,8 @@ class GraphManager:
                 /pooling request and validated against the service's
                 pinned model.
             gliner_inference_url: Explicit remote GLiNER endpoint. ``None``
-                selects the in-process model for environments that install it.
+                defers to system-configuration discovery, which selects the
+                in-process model only when no endpoint is configured.
         """
         if not colbert_endpoint_url:
             raise ValueError(
