@@ -620,6 +620,57 @@ The 27B distillation teacher does not fit alongside the serving set and is
 not resident by default on this overlay. Enable it for a distillation run,
 scaling down the serving models the run does not need.
 
+#### Pods that allocate without a fraction
+
+`--gpu-memory-utilization` is a vLLM flag. The pylate services
+(`colbert_pylate`, `code_colbert_pylate`) serve through
+`libs/cli/cogniverse_cli/modal_inference/servers/pylate.py`, which is plain
+PyTorch: the chart passes them `DEVICE=cuda` (torch's namespace, HIP on
+ROCm), and allocation is whatever the caching allocator grows to. There is
+no fraction knob, and the served `encode` call passes no `batch_size` while
+the request model accepts an unbounded `input` list, so peak allocation
+scales with the caller's payload rather than with a configured ceiling.
+
+Their declared bound is therefore the pod memory limit (4Gi each), reserved
+in the budget above. Note that a Kubernetes memory limit constrains the
+container's cgroup; pool allocations made through the amdgpu driver are not
+necessarily charged there, so treat that limit as a budgeting declaration
+rather than an enforced ceiling.
+
+A pod reaches the pool exactly when the chart mounts `/dev/kfd` and
+`/dev/dri` into it. The budget test uses that as its marker, so any service
+rendered with GPU access is picked up automatically, and it fails when such
+a pod declares neither a fraction nor a memory limit. `gliner` renders
+without those mounts and is CPU-only.
+
+### First-deploy validation
+
+Nothing above is confirmed by rendering alone. On the first deploy of these
+values, check in this order and stop at the first failure:
+
+1. **`vllm_colpali` boots at 0.18.** Highest risk: the prior 0.45 was chosen
+   because vLLM's startup free-memory guard rejects this multimodal model
+   when the fraction is too low for its transient startup profile. Failure
+   signal: the pod never reaches ready and its log carries a vLLM
+   memory-profiling error rather than a served-model line. Remedy is to
+   raise this one fraction until it boots, then re-check the budget total.
+2. **`vllm_llm_student` loads at 0.22.** Its ~16 GiB weight figure is
+   inferred, not measured. Failure signal: an out-of-memory abort during
+   weight load, or a KV-cache-too-small startup error.
+3. **`vllm_asr` loads at 0.04** and serves a transcription.
+4. **Residency stays under the ceiling.** Read
+   `/sys/class/drm/card1/device/mem_info_gtt_used` with all models ready and
+   again under sweep traffic. Expect it below the 51.84 GiB cap; sustained
+   readings above it mean a fraction is under-declared relative to what the
+   model actually takes.
+5. **The startup chain completes inside its deadlines.** Each gated pod
+   should leave Init when its predecessor turns ready, not when its pacing
+   deadline elapses. Failure signal: a pod's `startup-gate` log ends with
+   the deadline line rather than the serving line, which means the chain is
+   pacing on timeouts instead of on readiness.
+6. **The host stays responsive** during a full sweep — no
+   `svm_range_restore` workers saturating CPU.
+
 ### Model startup pacing
 
 Every inference pod is created at once, so by default every model
