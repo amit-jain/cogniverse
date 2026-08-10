@@ -147,6 +147,36 @@ async def _wait_for_terminal(
     return None
 
 
+async def _restore_status_trail(
+    redis: aioredis.Redis,
+    ingest_id: str,
+    *,
+    state: str,
+    source_url: str,
+    profile: str,
+    tenant_id: str,
+) -> None:
+    """Keep a deduped ingest_id pollable.
+
+    The done marker outlives the status stream by days, so a resubmit inside
+    that window resolves to an ingest_id whose stream Redis already reclaimed
+    and every read of it 404s. Seed one snapshot carrying the run's state when
+    the stream is gone; a surviving stream keeps its real history.
+    """
+    await queue.publish_status_if_absent(
+        redis,
+        ingest_id,
+        {
+            "state": state,
+            "ingest_id": ingest_id,
+            "source_url": source_url,
+            "profile": profile,
+            "tenant_id": tenant_id,
+            "existing": True,
+        },
+    )
+
+
 async def enqueue_ingestion(
     redis: aioredis.Redis,
     *,
@@ -169,10 +199,20 @@ async def enqueue_ingestion(
     else:
         existing_id = await idempotency.get_existing_ingest_id(redis, sha)
         if existing_id and await _existing_run_is_real(redis, sha):
+            done_id = await idempotency.get_done_ingest_id(redis, sha)
+            state = "complete" if done_id == existing_id else "in_flight"
+            await _restore_status_trail(
+                redis,
+                existing_id,
+                state=state,
+                source_url=source_url,
+                profile=profile,
+                tenant_id=tenant_id,
+            )
             return EnqueueResult(
                 ingest_id=existing_id,
                 sha=sha,
-                state="in_flight",
+                state=state,
                 existing=True,
             )
         if existing_id:
