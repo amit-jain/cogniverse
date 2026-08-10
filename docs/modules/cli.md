@@ -37,7 +37,7 @@ Key responsibilities:
 graph TD
     Root["<span style='color:#000'><b>cogniverse_cli/</b></span>"]
 
-    Root --> Main["<span style='color:#000'><b>main.py</b><br/>Click entry point (up/down/status/logs/...)</span>"]
+    Root --> Main["<span style='color:#000'><b>main.py</b><br/>Click entry point for stack, client, and inference commands</span>"]
     Root --> Cluster["<span style='color:#000'>cluster.py<br/>k3d lifecycle, prerequisites</span>"]
     Root --> Config["<span style='color:#000'>config.py<br/>Chart/workflow/config path resolution</span>"]
     Root --> Deploy["<span style='color:#000'>deploy.py<br/>helm install/uninstall</span>"]
