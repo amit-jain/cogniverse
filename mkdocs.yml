@@ -99,6 +99,8 @@ plugins:
   - git-revision-date-localized:
       enable_creation_date: true
       type: timeago
+      exclude:
+        - plan/*
   - tags
 
 # Markdown Extensions

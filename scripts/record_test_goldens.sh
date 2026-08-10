@@ -56,7 +56,7 @@ for block in "${BLOCKS[@]}"; do
     echo "================================================================"
     echo "Recording goldens: $block ($path)"
     echo "================================================================"
-    uv run pytest "$path" -v --tb=short --log-cli-level=ERROR
+    uv run pytest "$path" -v --tb=long --log-cli-level=ERROR
 done
 
 echo

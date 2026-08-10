@@ -55,7 +55,7 @@ uv run pytest tests/ \
     --cov-report=term-missing \
     --cov-report=html \
     --cov-report=json \
-    --tb=short \
+    --tb=long \
     --durations=10
 
 # Capture exit code
@@ -130,7 +130,7 @@ if [ "$1" == "--benchmark" ]; then
     uv run pytest tests/ \
         -v \
         -m "benchmark" \
-        --tb=short \
+        --tb=long \
         --durations=10
 fi
 

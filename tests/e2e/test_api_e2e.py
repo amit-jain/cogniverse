@@ -22,6 +22,7 @@ Architecture note (A2A gateway):
 """
 
 import json
+import re
 import time
 import uuid
 from pathlib import Path
@@ -31,11 +32,28 @@ import pytest
 
 from tests.e2e.conftest import (
     RUNTIME,
+    SAMPLE_VIDEO_CONTENT_ID,
     TENANT_ID,
+    _content_sha256,
+    _matching_sample_results,
+    _sample_frame_path,
     unique_id,
 )
 
 PROFILE = "video_colpali_smol500_mv_frame"
+IMAGE_PROFILE = "image_colpali_mv"
+CANONICAL_WORKFLOW_AGENTS = {
+    "search_agent",
+    "text_analysis_agent",
+    "image_search_agent",
+    "summarizer_agent",
+    "detailed_report_agent",
+}
+PRIMARY_AGENT_BY_QUERY_TYPE = {
+    "VIDEO": "search_agent",
+    "DOCUMENT": "text_analysis_agent",
+    "IMAGE": "image_search_agent",
+}
 
 
 @pytest.mark.e2e
@@ -685,6 +703,27 @@ class TestAgentOperations:
 class TestSyntheticDataAPI:
     """Synthetic data generation endpoints."""
 
+    @staticmethod
+    def _exact_video_fixture_results(client: httpx.Client) -> list[dict]:
+        response = client.post(
+            "/search/",
+            json={
+                "query": SAMPLE_VIDEO_CONTENT_ID,
+                "profile": PROFILE,
+                "strategy": "default",
+                "top_k": 1000,
+                "tenant_id": TENANT_ID,
+            },
+        )
+        assert response.status_code == 200, response.text
+        return _matching_sample_results(
+            response.json(),
+            content_id=SAMPLE_VIDEO_CONTENT_ID,
+            tenant_id=TENANT_ID,
+            profile=PROFILE,
+            suffix=".mp4",
+        )
+
     def test_synthetic_health(self):
         """GET /synthetic/health returns healthy status."""
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
@@ -692,10 +731,15 @@ class TestSyntheticDataAPI:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "healthy"
-        assert data["service"] == "synthetic-data-generation"
-        assert "generators" in data
-        assert "optimizers" in data
+        assert set(data) == {"status", "service", "generators", "optimizers"}
+        assert data == {
+            "status": "healthy",
+            "service": "synthetic-data-generation",
+            "generators": data["generators"],
+            "optimizers": 7,
+        }
+        assert isinstance(data["generators"], int)
+        assert 0 <= data["generators"] <= 7
 
     def test_list_optimizers(self):
         """GET /synthetic/optimizers returns optimizer registry."""
@@ -704,21 +748,56 @@ class TestSyntheticDataAPI:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert isinstance(data, dict)
-        assert len(data) >= 1, f"Should have at least 1 optimizer, got: {data}"
+        assert data == {
+            "entity_extraction": (
+                "Entity extraction. Learns to extract typed entities (and "
+                "relationships) from query text."
+            ),
+            "query_enhancement": (
+                "Query enhancement. Learns to broaden a user query with expansion "
+                "terms and synonyms drawn from related content."
+            ),
+            "routing": (
+                "Advanced routing with entity extraction. Learns to route queries "
+                "based on extracted entities, relationships, and semantic "
+                "understanding."
+            ),
+            "workflow": (
+                "Workflow execution pattern optimization. Learns optimal agent "
+                "sequences and parallel execution strategies for complex multi-step "
+                "tasks."
+            ),
+            "profile": (
+                "ProfileSelectionAgent optimization. Learns which Vespa backend "
+                "profile best matches a query's modality, complexity, and intent."
+            ),
+            "unified": (
+                "Unified routing and orchestration optimization. Combines routing "
+                "decisions with workflow planning for end-to-end optimization."
+            ),
+            "cross_modal": (
+                "Cross-modal fusion optimization. Generates queries that span video "
+                "+ audio + text modalities so retrieval profiles with multi-vector "
+                "fusion get exercised together."
+            ),
+        }
 
     def test_get_optimizer_detail(self):
         """GET /synthetic/optimizers/{name} returns optimizer info."""
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
-            list_resp = client.get("/synthetic/optimizers")
-            optimizers = list_resp.json()
-            first_optimizer = next(iter(optimizers))
-
-            resp = client.get(f"/synthetic/optimizers/{first_optimizer}")
+            resp = client.get("/synthetic/optimizers/profile")
 
         assert resp.status_code == 200
         data = resp.json()
-        assert isinstance(data, dict)
+        assert data["name"] == "profile"
+        assert data["schema"] == "ProfileSelectionExampleSchema"
+        assert data["generator"] == "ProfileGenerator"
+        assert data["backend_strategy"] == "diverse"
+        assert data["requires_agent_mapping"] is False
+        assert data["defaults"] == {
+            "sample_size": 200,
+            "generation_count": 100,
+        }
 
     def test_get_nonexistent_optimizer_returns_404(self):
         """GET /synthetic/optimizers/{name} returns 404 for unknown."""
@@ -726,56 +805,226 @@ class TestSyntheticDataAPI:
             resp = client.get("/synthetic/optimizers/nonexistent_xyz")
         assert resp.status_code == 404
 
+    def test_profile_generation_uses_ingested_tenant_content(self):
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            resp = client.post(
+                "/synthetic/generate",
+                json={
+                    "optimizer": "profile",
+                    "count": 2,
+                    "vespa_sample_size": 2,
+                    "strategy": "diverse",
+                    "max_profiles": 1,
+                    "tenant_id": TENANT_ID,
+                },
+            )
+
+        assert resp.status_code == 200, f"Profile generation failed: {resp.text}"
+        data = resp.json()
+        assert set(data) == {
+            "optimizer",
+            "schema_name",
+            "count",
+            "selected_profiles",
+            "profile_selection_reasoning",
+            "data",
+            "metadata",
+        }
+        assert data["optimizer"] == "profile"
+        assert data["schema_name"] == "ProfileSelectionExampleSchema"
+        assert data["count"] == 2
+        assert data["selected_profiles"] == [PROFILE]
+        assert data["metadata"] == {
+            "backend_query_strategy": "diverse",
+            "sampled_content_count": 2,
+            "target_count": 2,
+            "vespa_sample_size": 2,
+        }
+        profile_fields = {
+            "query",
+            "available_profiles",
+            "selected_profile",
+            "confidence",
+            "reasoning",
+            "query_intent",
+            "modality",
+            "complexity",
+        }
+        assert all(set(example) == profile_fields for example in data["data"])
+        assert {example["query"] for example in data["data"]} == {
+            f"find a video frame showing {SAMPLE_VIDEO_CONTENT_ID}"
+        }
+        assert {example["available_profiles"] for example in data["data"]} == {PROFILE}
+        assert {example["selected_profile"] for example in data["data"]} == {PROFILE}
+        assert {example["modality"] for example in data["data"]} == {"video"}
+        assert {example["complexity"] for example in data["data"]} == {"complex"}
+        assert {example["query_intent"] for example in data["data"]} == {"video_search"}
+
     def test_generate_synthetic_data(self):
         """POST /synthetic/generate creates real synthetic training examples."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            fixture_results = self._exact_video_fixture_results(client)
+            source_texts = {
+                result["metadata"]["description"]
+                for result in fixture_results
+                if isinstance(result["metadata"].get("description"), str)
+                and result["metadata"]["description"].strip()
+            }
+            assert len(source_texts) == len(fixture_results)
+            expected_extractions = []
+            for source_text in sorted(source_texts):
+                extraction_response = client.post(
+                    "/agents/entity_extraction_agent/process",
+                    json={
+                        "agent_name": "entity_extraction_agent",
+                        "query": source_text,
+                        "context": {"tenant_id": TENANT_ID},
+                    },
+                )
+                assert extraction_response.status_code == 200, extraction_response.text
+                extraction = extraction_response.json()
+                assert extraction["query"] == source_text
+                assert extraction["path_used"] == "fast"
+                assert all(
+                    entity["text"] in source_text for entity in extraction["entities"]
+                )
+                expected_extractions.append(
+                    {
+                        "entities": [
+                            {"text": entity["text"], "type": entity["type"]}
+                            for entity in extraction["entities"]
+                        ],
+                        "relationships": [
+                            {
+                                "source": relationship["subject"],
+                                "target": relationship["object"],
+                                "type": relationship["relation"],
+                            }
+                            for relationship in extraction["relationships"]
+                        ],
+                    }
+                )
+            assert all(item["entities"] for item in expected_extractions)
+
             resp = client.post(
                 "/synthetic/generate",
                 json={
                     "optimizer": "routing",
                     "count": 5,
-                    "vespa_sample_size": 10,
-                    "strategies": ["diverse"],
-                    "max_profiles": 2,
+                    "vespa_sample_size": 1,
+                    "strategy": "entity_rich",
+                    "max_profiles": 1,
                     "tenant_id": TENANT_ID,
                 },
             )
 
         assert resp.status_code == 200, f"Synthetic generation failed: {resp.text}"
         data = resp.json()
+        assert set(data) == {
+            "optimizer",
+            "schema_name",
+            "count",
+            "selected_profiles",
+            "profile_selection_reasoning",
+            "data",
+            "metadata",
+        }
         assert data["optimizer"] == "routing"
-        assert data["count"] >= 1, (
-            f"Should generate at least 1 example, got {data['count']}"
-        )
-        assert isinstance(data["data"], list)
-        assert len(data["data"]) >= 1
-
-        # Verify each example has the expected routing structure
-        example = data["data"][0]
-        assert "query" in example, (
-            f"Synthetic example missing query: {list(example.keys())}"
-        )
-        assert "chosen_agent" in example, (
-            f"Synthetic example missing chosen_agent: {list(example.keys())}"
-        )
-        assert "routing_confidence" in example, (
-            f"Synthetic example missing routing_confidence: {list(example.keys())}"
-        )
-
-        # Verify profile selection reasoning
-        assert "selected_profiles" in data
-        assert isinstance(data["selected_profiles"], list)
+        assert data["schema_name"] == "RoutingExperienceSchema"
+        assert data["count"] == 5
+        assert len(data["data"]) == 5
+        assert data["selected_profiles"] == [PROFILE]
+        assert data["metadata"] == {
+            "backend_query_strategy": "entity_rich",
+            "sampled_content_count": 1,
+            "target_count": 5,
+            "vespa_sample_size": 1,
+        }
+        fixture_corpus = " ".join(
+            str(value)
+            for result in fixture_results
+            for value in result["metadata"].values()
+            if isinstance(value, str)
+        ).casefold()
+        routing_fields = {
+            "query",
+            "entities",
+            "relationships",
+            "enhanced_query",
+            "chosen_agent",
+            "routing_confidence",
+            "search_quality",
+            "agent_success",
+            "user_satisfaction",
+            "processing_time",
+            "reward",
+            "timestamp",
+            "metadata",
+        }
+        for example in data["data"]:
+            assert set(example) == routing_fields
+            assert example["chosen_agent"] == "search_agent"
+            assert {
+                "entities": example["entities"],
+                "relationships": example["relationships"],
+            } in expected_extractions
+            assert all(
+                set(entity) == {"text", "type"} for entity in example["entities"]
+            )
+            assert len(example["entities"]) == len(
+                {
+                    (entity["text"].casefold(), entity["type"])
+                    for entity in example["entities"]
+                }
+            )
+            assert all(
+                entity["text"].casefold() in fixture_corpus
+                for entity in example["entities"]
+            )
+            entity_words = [
+                word
+                for entity in example["entities"]
+                for word in re.findall(r"\w+", entity["text"])
+                if len(word) > 3
+            ] or [entity["text"] for entity in example["entities"]]
+            assert any(
+                re.search(
+                    rf"(?<!\w){re.escape(word)}(?!\w)",
+                    example["query"],
+                    flags=re.IGNORECASE,
+                )
+                for word in entity_words
+            )
+            assert all(
+                f"{entity['text']}({entity['type']})".casefold()
+                in example["enhanced_query"].casefold()
+                for entity in example["entities"]
+            )
+            generation_metadata = example["metadata"]["_generation_metadata"]
+            assert set(generation_metadata) == {
+                "retry_count",
+                "max_retries",
+                "reasoning",
+            }
+            assert type(generation_metadata["retry_count"]) is int
+            assert generation_metadata["retry_count"] in {0, 1, 2}
+            assert type(generation_metadata["max_retries"]) is int
+            assert generation_metadata["max_retries"] == 3
+            assert 20 <= len(generation_metadata["reasoning"]) <= 2_000
+            assert "available_profiles" not in example
+            assert "workflow_id" not in example
 
     def test_generate_synthetic_data_cross_modal(self):
         """POST /synthetic/generate with cross_modal optimizer."""
+        image_content_id = _content_sha256(_sample_frame_path())
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/synthetic/generate",
                 json={
                     "optimizer": "cross_modal",
-                    "count": 3,
-                    "vespa_sample_size": 10,
-                    "strategies": ["diverse"],
+                    "count": 2,
+                    "vespa_sample_size": 2,
+                    "strategy": "multi_modal_sequences",
                     "max_profiles": 2,
                     "tenant_id": TENANT_ID,
                 },
@@ -783,10 +1032,191 @@ class TestSyntheticDataAPI:
 
         assert resp.status_code == 200, f"Cross-modal generation failed: {resp.text}"
         data = resp.json()
+        assert set(data) == {
+            "optimizer",
+            "schema_name",
+            "count",
+            "selected_profiles",
+            "profile_selection_reasoning",
+            "data",
+            "metadata",
+        }
         assert data["optimizer"] == "cross_modal"
-        assert data["count"] >= 1
-        assert isinstance(data["data"], list)
-        assert len(data["data"]) >= 1
+        assert data["schema_name"] == "ProfileSelectionExampleSchema"
+        assert data["count"] == 2
+        assert len(data["data"]) == 2
+        assert data["selected_profiles"] == [PROFILE, IMAGE_PROFILE]
+        assert data["metadata"] == {
+            "backend_query_strategy": "multi_modal_sequences",
+            "sampled_content_count": 2,
+            "target_count": 2,
+            "vespa_sample_size": 2,
+        }
+        expected_queries = {
+            (
+                f"find {SAMPLE_VIDEO_CONTENT_ID} in video content together with "
+                f"{image_content_id} in image content"
+            ),
+            (
+                f"find {image_content_id} in image content together with "
+                f"{SAMPLE_VIDEO_CONTENT_ID} in video content"
+            ),
+        }
+        profile_fields = {
+            "query",
+            "available_profiles",
+            "selected_profile",
+            "confidence",
+            "reasoning",
+            "query_intent",
+            "modality",
+            "complexity",
+        }
+        for example in data["data"]:
+            assert set(example) == profile_fields
+            assert example["query"] in expected_queries
+            available_profiles = example["available_profiles"].split(",")
+            assert available_profiles == [PROFILE, IMAGE_PROFILE]
+            assert (
+                example["selected_profile"]
+                == {
+                    "video+image": PROFILE,
+                    "image+video": IMAGE_PROFILE,
+                }[example["modality"]]
+            )
+            assert example["query_intent"] == "cross_modal_search"
+            assert example["complexity"] == "complex"
+            assert "chosen_agent" not in example
+            assert "workflow_id" not in example
+        assert {example["query"] for example in data["data"]} == expected_queries
+        assert {example["modality"] for example in data["data"]} == {
+            "video+image",
+            "image+video",
+        }
+
+    def test_generate_workflow_ids_are_unique_and_schema_specific(self):
+        image_content_id = _content_sha256(_sample_frame_path())
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            agents_response = client.get("/agents/")
+            resp = client.post(
+                "/synthetic/generate",
+                json={
+                    "optimizer": "workflow",
+                    "count": 4,
+                    "vespa_sample_size": 2,
+                    "strategy": "multi_modal_sequences",
+                    "max_profiles": 2,
+                    "tenant_id": TENANT_ID,
+                },
+            )
+
+        assert agents_response.status_code == 200, agents_response.text
+        registered_agents = set(agents_response.json()["agents"])
+        assert CANONICAL_WORKFLOW_AGENTS <= registered_agents
+        assert resp.status_code == 200, f"Workflow generation failed: {resp.text}"
+        data = resp.json()
+        assert set(data) == {
+            "optimizer",
+            "schema_name",
+            "count",
+            "selected_profiles",
+            "profile_selection_reasoning",
+            "data",
+            "metadata",
+        }
+        assert data["optimizer"] == "workflow"
+        assert data["schema_name"] == "WorkflowExecutionSchema"
+        assert data["count"] == 4
+        assert len(data["data"]) == 4
+        assert data["selected_profiles"] == [PROFILE, IMAGE_PROFILE]
+        assert data["metadata"] == {
+            "backend_query_strategy": "multi_modal_sequences",
+            "sampled_content_count": 2,
+            "target_count": 4,
+            "vespa_sample_size": 2,
+        }
+        workflow_ids = [example["workflow_id"] for example in data["data"]]
+        assert len(set(workflow_ids)) == 4
+        assert all(
+            len(workflow_id) == 51
+            and workflow_id.startswith("synthetic_workflow_")
+            and workflow_id.removeprefix("synthetic_workflow_").isalnum()
+            for workflow_id in workflow_ids
+        )
+        workflow_fields = {
+            "workflow_id",
+            "query",
+            "query_type",
+            "execution_time",
+            "success",
+            "agent_sequence",
+            "task_count",
+            "parallel_efficiency",
+            "confidence_score",
+            "user_satisfaction",
+            "error_details",
+            "timestamp",
+            "metadata",
+        }
+        for example in data["data"]:
+            assert set(example) == workflow_fields
+            assert example["task_count"] == len(example["agent_sequence"])
+            assert set(example["agent_sequence"]) <= CANONICAL_WORKFLOW_AGENTS
+            assert (
+                example["agent_sequence"][0]
+                == PRIMARY_AGENT_BY_QUERY_TYPE[example["query_type"]]
+            )
+            assert any(
+                content_id in example["query"]
+                for content_id in {
+                    SAMPLE_VIDEO_CONTENT_ID,
+                    image_content_id,
+                }
+            )
+            assert "selected_profile" not in example
+            assert "chosen_agent" not in example
+
+    def test_generate_rejects_unknown_optimizer_and_strategy(self):
+        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+            optimizer_resp = client.post(
+                "/synthetic/generate",
+                json={
+                    "optimizer": "missing_optimizer",
+                    "count": 1,
+                    "tenant_id": TENANT_ID,
+                },
+            )
+            strategy_resp = client.post(
+                "/synthetic/generate",
+                json={
+                    "optimizer": "profile",
+                    "count": 1,
+                    "strategy": "tenant_ambiguous_wildcard",
+                    "tenant_id": TENANT_ID,
+                },
+            )
+            plural_strategy_resp = client.post(
+                "/synthetic/generate",
+                json={
+                    "optimizer": "profile",
+                    "count": 1,
+                    "strategies": ["diverse"],
+                    "tenant_id": TENANT_ID,
+                },
+            )
+
+        assert optimizer_resp.status_code == 400
+        assert optimizer_resp.json()["detail"].startswith(
+            "Unknown optimizer: 'missing_optimizer'. Available:"
+        )
+        assert strategy_resp.status_code == 422
+        strategy_error = strategy_resp.json()["detail"][0]
+        assert strategy_error["loc"] == ["body", "strategy"]
+        assert "Unsupported sampling strategy" in strategy_error["msg"]
+        assert plural_strategy_resp.status_code == 422
+        plural_error = plural_strategy_resp.json()["detail"][0]
+        assert plural_error["loc"] == ["body", "strategies"]
+        assert plural_error["type"] == "extra_forbidden"
 
 
 @pytest.mark.e2e

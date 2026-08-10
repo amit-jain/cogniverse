@@ -35,6 +35,39 @@ def _load(name: str):
 vb = _load("version_bump")
 
 
+def test_ci_local_builds_verbose_long_traceback_command():
+    ci_local = _load("ci_local")
+
+    assert ci_local.build_argv({"paths": ["tests/runtime/unit"], "marker": "unit"}) == [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "pytest",
+        "tests/runtime/unit",
+        "-m",
+        "unit",
+        "-v",
+        "-p",
+        "no:cacheprovider",
+        "--tb=long",
+    ]
+
+
+def test_test_runner_commands_never_request_short_tracebacks():
+    offenders = []
+    for path in sorted(_SCRIPTS.iterdir()):
+        if path.suffix not in {".py", ".sh"}:
+            continue
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if line.lstrip().startswith("#"):
+                continue
+            if "--tb=short" in line:
+                offenders.append(f"{path.name}:{line_number}")
+
+    assert offenders == []
+
+
 class TestVersionBump:
     def test_parse_valid(self):
         assert vb.parse_version("1.2.3") == (1, 2, 3, "")
