@@ -130,6 +130,23 @@ The chart installs `WorkflowTemplate` and `CronWorkflow` resources automatically
 - `{release}-job-runner` — runs `cogniverse_runtime.job_executor` for tenant-scheduled jobs created via `POST /admin/tenant/{id}/jobs` (`charts/cogniverse/templates/job-workflow-template.yaml`; see [Tenant Scheduled Jobs](#tenant-scheduled-jobs))
 - `{release}-optimization-runner` — runs `optimization_cli --mode <mode>` for scheduled and on-demand optimization (`charts/cogniverse/templates/optimization-workflow-template.yaml`)
 
+Every chart-managed runtime-image workflow that invokes `optimization_cli` or
+`quality_monitor_cli` waits up to 1,200 seconds for both Vespa planes. The
+container plane must return HTTP 200 from `/ApplicationStatus`; the feed plane
+must return HTTP 200 or 404 from
+`/document/v1/config_metadata/config_metadata/docid/probe`. The missing probe
+document's 404 response proves that the document route is serving requests.
+Every other status is retried within the same deadline. Once both probes pass,
+the wrapper replaces itself with the requested CLI; a timeout fails the
+workflow without starting it. This also covers a cron firing while Helm is
+still bringing Vespa up.
+
+Runtime-derived pods—including scheduled jobs, optimization and backup
+workflows, HF-cache population, and model-warm init containers—use only
+`runtime.imagesByBackend[runtime.backend]`. Helm rendering fails when the
+backend or its image entry is absent; there is no implicit CUDA backend or
+`runtime.image` fallback.
+
 Standalone workflow files for ad-hoc use live in `workflows/`:
 
 ```bash
@@ -427,7 +444,7 @@ argo cron suspend cogniverse-daily-gateway -n cogniverse
 
 ### Synthetic Data Generation (`{release}-synthetic-generation`, default Saturday 1 AM UTC)
 
-Chart `CronWorkflow` (`argo.optimization.syntheticGeneration`, schedule `0 1 * * 6`) running `optimization_cli --mode synthetic --tenant-id default --agents workflow,profile`. Generates training examples via `SyntheticDataService` and saves them as demonstrations through `ArtifactManager` for the next optimization run to merge in. Restricted to the `workflow,profile` generators because `routing` needs `optimizer_configs['routing'].query_templates` (not populated by the chart) and `simba` is an agent-optimization mode, not a synthetic generator.
+Chart `CronWorkflow` (`argo.optimization.syntheticGeneration`, schedule `0 1 * * 6`) runs `optimization_cli --mode synthetic --tenant-id default --agents query_enhancement,profile,routing,entity_extraction`. These are the optimizer outputs with active training-data consumers. `SyntheticDataService` generates tenant-grounded examples and writes pending approval batches to Phoenix; approved rows later enter the tenant-qualified training dataset consumed by the matching optimizer.
 
 ```bash
 kubectl get cronworkflow cogniverse-synthetic-generation -n cogniverse

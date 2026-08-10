@@ -7,7 +7,7 @@
 3. [DeepSynthesisWorkflow Loop](#deepsynthesisworkflow-loop)
 4. [Sandbox Boot Policy Decision](#sandbox-boot-policy-decision)
 5. [Optimizer Canary FSM](#optimizer-canary-fsm)
-6. [Daily-Cleanup Workflow + Monthly-Reports Upload](#daily-cleanup-workflow--monthly-reports-upload)
+6. [Daily-Cleanup Workflow + Monthly-Reports Upload](#daily-cleanup-workflow-monthly-reports-upload)
 
 ---
 

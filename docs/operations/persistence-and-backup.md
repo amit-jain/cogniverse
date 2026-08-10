@@ -60,7 +60,7 @@ Each stateful component has its own `<name>.persistence` block in
 |---|---|---|---|
 | Vespa | `vespa.persistence` | 100 Gi | Document store + config server — holds every schema (video/image/document/audio embeddings, `agent_memories`, knowledge graph, provenance, tenant/org metadata, adapter registry) **and** per-tenant config overrides written through `ConfigStore` (schema `config_metadata`; scopes `backend`, `gateway_agent`, `telemetry` all land here — `ConfigManager` methods default to `service="backend"`). One tar backs up all of it. `hostStorage.enabled=true` overrides to hostPath bind-mount. |
 | Phoenix | `phoenix.persistence` | 50 Gi | sqlite traces. Distroless container — backed up in `mode: volume-mount` (tar of the mounted volume; `.db` files are staged through SQLite's online-backup API first so the tar isn't a torn read), not `kubectl exec` + tar. |
-| MinIO | `minio.persistence` | 100 Gi | Default backup destination on dev. See [MinIO durability](#minio-durability) below. |
+| MinIO | `minio.persistence` | 100 Gi | Default backup destination on dev. See [MinIO durability](#minio-durability-load-bearing-for-dev) below. |
 | HF model cache (per pod) | `hfCache.persistence` | 50 Gi each | Off by default (`enabled: false`). When enabled, one PVC per inference svc + runtime + ingestor, pre-warmed via init container. |
 | Redis | `redis.persistence` | 10 Gi | Job queue + status-stream state (AOF on). Lose it = re-ingest in-flight jobs. |
 | LLM (builtin) | `llm.ollama.persistence` (`llm.engine: ollama`) or `llm.vllm.persistence` (`llm.engine: vllm`) | 100 Gi | Model files for the in-cluster LLM. Only the PVC matching the selected `llm.engine` renders. |
@@ -132,11 +132,10 @@ mount, since the distroless Phoenix image has no `tar`/shell) nightly —
 only override `services` to change which pods are covered or add more.
 
 To point at an in-cluster MinIO Deployment whose secret was renamed,
-set `hostStorage.backup.existingSecret` directly (a sibling of `bucket`
-and `schedule`, not under `s3:`) instead of the full `s3` block. The
-CronWorkflow template resolves the credentials secret in this order:
-`s3.existingSecret` → `existingSecret` → the chart's own
-`<release>-minio` secret.
+set `hostStorage.backup.s3.existingSecret`. The CronWorkflow uses that
+secret when configured and otherwise uses the chart's own
+`<release>-minio` secret. The top-level
+`hostStorage.backup.existingSecret` key is invalid.
 
 The chart's own local-dev overlay, `charts/cogniverse/values.k3s.yaml`
 (what `cogniverse up` deploys with on k3d), already sets
@@ -144,7 +143,7 @@ The chart's own local-dev overlay, `charts/cogniverse/values.k3s.yaml`
 does **not** set `minio.persistence.hostPath`, so on that overlay today
 MinIO falls back to a `local-path` PVC and the nightly backups do
 **not** survive `k3d cluster delete` — add the `minio.persistence.hostPath`
-override from [MinIO durability](#minio-durability) on top of it (e.g.
+override from [MinIO durability](#minio-durability-load-bearing-for-dev) on top of it (e.g.
 via `--set minio.persistence.hostPath=/host-data/minio`) to close that
 gap.
 

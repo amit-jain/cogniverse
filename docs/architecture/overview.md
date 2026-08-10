@@ -185,13 +185,13 @@ flowchart TB
         vespa["<span style='color:#000'><b>vespa</b><br/>Schema Manager · Backends</span>"]
         finetuning["<span style='color:#000'><b>finetuning</b><br/>SFT · DPO · LoRA</span>"]
         telemetry["<span style='color:#000'><b>telemetry-phoenix</b><br/>Phoenix Provider</span>"]
+        synthetic["<span style='color:#000'><b>synthetic</b><br/>Data Generation</span>"]
     end
 
     subgraph Core["<span style='color:#000'><b>Core Layer</b></span>"]
         direction LR
         core["<span style='color:#000'><b>core</b><br/>Base Classes · Registries</span>"]
         evaluation["<span style='color:#000'><b>evaluation</b><br/>Experiments · Metrics</span>"]
-        synthetic["<span style='color:#000'><b>synthetic</b><br/>Data Generation</span>"]
     end
 
     subgraph Foundation["<span style='color:#000'><b>Foundation Layer</b></span>"]
@@ -212,6 +212,8 @@ flowchart TB
     finetuning --> synthetic
     telemetry --> core
     telemetry --> evaluation
+    synthetic --> core
+    synthetic --> foundation
 
     core --> evaluation
     core --> foundation
@@ -232,10 +234,10 @@ flowchart TB
     style vespa fill:#ffb74d,stroke:#ef6c00,color:#000
     style finetuning fill:#ffb74d,stroke:#ef6c00,color:#000
     style telemetry fill:#ffb74d,stroke:#ef6c00,color:#000
+    style synthetic fill:#ffb74d,stroke:#ef6c00,color:#000
 
     style evaluation fill:#ba68c8,stroke:#7b1fa2,color:#000
     style core fill:#ba68c8,stroke:#7b1fa2,color:#000
-    style synthetic fill:#ba68c8,stroke:#7b1fa2,color:#000
 
     style foundation fill:#81c784,stroke:#388e3c,color:#000
     style sdk fill:#81c784,stroke:#388e3c,color:#000
@@ -252,7 +254,7 @@ flowchart TB
 | **Implementation** | **cogniverse_telemetry_phoenix** | Phoenix-specific telemetry provider (plugin architecture) | • `provider.py` — Phoenix telemetry provider implementation<br>• `evaluation/` — Evaluation, analytics, and monitoring providers | core, evaluation |
 | **Implementation** | **cogniverse_agents** | Agent implementations, routing logic, and strategy learning | • `routing/` — Routing agent, strategies, evaluators<br>• `search/` — Search service, base classes, rerankers<br>• `orchestrator/` — Multi-agent orchestrator<br>• `tools/` — Agent tools and A2A protocol<br>• `memory_aware_mixin.py` — `MemoryAwareMixin` with `get_strategies()`<br>• `optimizer/strategy_learner.py` — `StrategyLearner` (pattern + LLM distillation)<br>• `wiki/` — `WikiManager` (Topic + Session pages in Vespa), `WikiPage`, `WikiIndex` | sdk, core, synthetic |
 | **Implementation** | **cogniverse_vespa** | Backend integration and tenant management | • `config/` — Configuration store and profile mapping<br>• `registry/` — Backend registry for Vespa<br>• Core modules: `vespa_schema_manager.py`, `search_backend.py`, `ingestion_client.py` | sdk, core |
-| **Core** | **cogniverse_synthetic** | Synthetic data generation for optimizer training | • `service.py` — Main SyntheticDataService<br>• `generators/` — Optimizer-specific generators (GEPA, MIPRO, etc.)<br>• `profile_selector.py` — LLM-based profile selection<br>• `backend_querier.py` — Backend content sampling | sdk |
+| **Implementation** | **cogniverse_synthetic** | Synthetic data generation for optimizer training | • `service.py` — Main SyntheticDataService<br>• `generators/` — Optimizer-specific generators (GEPA, MIPRO, etc.)<br>• `profile_selector.py` — LLM-based profile selection<br>• `backend_querier.py` — Backend content sampling | sdk, foundation, core |
 | **Implementation** | **cogniverse_finetuning** | LLM fine-tuning infrastructure | • `training/` — SFT, DPO training loops<br>• `dataset/` — Trace-to-trajectory conversion<br>• `registry/` — Adapter storage and versioning<br>• `orchestrator.py` — End-to-end finetuning orchestrator | sdk, core, foundation, agents, synthetic |
 | **Application** | **cogniverse_runtime** | Production runtime, APIs, and operational CLIs | • `routers/` — FastAPI route handlers (search, ingestion, admin, wiki, including `POST /admin/messaging/invite`)<br>• `ingestion/` — Video processing pipeline and processors<br>• `admin/` — Organization/tenant models and `TenantManager`<br>• `optimization_cli.py` — Argo-triggered optimization (`--mode triggered`)<br>• `quality_monitor_cli.py` — Continuous evaluation sidecar | sdk, core (optional: vespa, agents) |
 | **Application** | **cogniverse_messaging** | Telegram messaging gateway | • `gateway.py` — `MessagingGateway` (polling/webhook)<br>• `auth.py` — `InviteTokenManager`, `UserTenantMapper`<br>• `command_router.py` — Parses `/search`, `/summarize`, `/report`, `/research`, `/code`, `/wiki` (save/search/topic/index), plain text, media<br>• `conversation.py` — Conversation history via Mem0<br>• `runtime_client.py` — Async client for runtime API dispatch | core, sdk (HTTP-only to runtime; no declared workspace dependency) |

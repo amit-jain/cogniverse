@@ -111,7 +111,7 @@ This document describes the 14 ranking strategies available on the ColPali/ColQw
 
 ## Schema Family Coverage
 
-The 14 strategy names above are not implemented identically by every schema — each family's `rank_profiles` are generated independently, so coverage and naming diverge. `RankingStrategyExtractor` (see [Strategy Extraction & Runtime Resolution](#strategy-extraction--runtime-resolution)) reads whatever profiles the deployed schema actually declares, so unlisted strategies simply are not selectable for that schema.
+The 14 strategy names above are not implemented identically by every schema — each family's `rank_profiles` are generated independently, so coverage and naming diverge. `RankingStrategyExtractor` (see [Strategy Extraction & Runtime Resolution](#strategy-extraction-runtime-resolution)) reads whatever profiles the deployed schema actually declares, so unlisted strategies simply are not selectable for that schema.
 
 | Schema family | Example profiles (`backend.profiles`) | Strategy set |
 |---|---|---|
