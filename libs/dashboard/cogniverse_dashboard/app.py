@@ -324,6 +324,7 @@ st.session_state["backend_url"] = _system_config.backend_url
 st.session_state["backend_port"] = str(_system_config.backend_port)
 st.session_state["runtime_url"] = RUNTIME_URL
 st.session_state["phoenix_url"] = _system_config.telemetry_url
+st.session_state["redis_url"] = os.environ.get("REDIS_URL")
 
 # Sidebar configuration
 with st.sidebar:

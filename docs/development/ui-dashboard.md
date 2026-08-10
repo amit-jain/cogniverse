@@ -589,7 +589,7 @@ request_payload = {
     "optimizer": "profile",
     "count": 100,
     "vespa_sample_size": 200,
-    "strategies": ["diverse"],
+    "strategy": "diverse",
     "max_profiles": 3,
     "tenant_id": "default"
 }
