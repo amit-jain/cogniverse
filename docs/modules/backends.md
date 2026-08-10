@@ -135,9 +135,6 @@ Cogniverse uses a **profile-based backend configuration system** with multi-tena
 ```python
 from cogniverse_foundation.config.utils import ConfigUtils, create_default_config_manager
 
-# The production factory requires BACKEND_URL in the process environment.
-# BACKEND_PORT is optional and defaults to 8080. The backend type still comes
-# from configs/config.json.
 config_manager = create_default_config_manager()
 config_utils = ConfigUtils(tenant_id="acme", config_manager=config_manager)
 backend_config = config_utils.get("backend")  # Auto-discovered and merged
