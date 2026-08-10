@@ -582,6 +582,44 @@ the NVIDIA device plugin. Apply the `nvidia.com/gpu.present=true`
 label on the node and set GPU resource requests on the relevant pods
 in `values.cuda.yaml`.
 
+### Unified-pool memory budget
+
+On an APU host the GPU pool is carved out of system RAM rather than being
+separate memory. On the ROCm reference host:
+
+| Measurement | Source | Value |
+|---|---|---|
+| System RAM | `/proc/meminfo` `MemTotal` | 123.46 GiB |
+| GPU pool | `mem_info_gtt_total` | 96 GiB |
+| Dedicated VRAM carve-out | `mem_info_vram_total` | 2 GiB |
+
+Each vLLM service's `--gpu-memory-utilization` is a fraction of the 96 GiB
+pool, and every GiB it claims is a GiB the desktop, the CPU-side cluster
+services and the test containers no longer have. The fractions must sum to
+well under 1.0. Summing them to ~1.0 leaves the host with no eviction
+headroom: allocation pressure then drives `svm_range_restore` churn that
+starves the compositor.
+
+The budget after reserving for the non-GPU workloads — cluster services
+(25.4 GiB of memory requests), desktop and daemons, the e2e suite's own
+containers, the pylate pods that allocate from the pool without declaring a
+fraction, and page-cache slack — leaves 57.06 GiB, so the enabled fractions
+are capped at **0.59** (56.64 GiB).
+
+Size each fraction from need, not from habit: the weights at their served
+precision plus a KV allowance for the configured `--max-model-len` x
+`--max-num-seqs`. A fraction above that need does not make the model faster,
+it only denies the memory to everything else.
+
+`tests/charts/test_gpu_memory_budget.py` renders the overlay, sums the
+enabled fractions and fails when they exceed the cap. It also fails if a
+service's rendered form escapes its parser, so a service cannot drop out of
+the budget silently.
+
+The 27B distillation teacher does not fit alongside the serving set and is
+not resident by default on this overlay. Enable it for a distillation run,
+scaling down the serving models the run does not need.
+
 ### Model startup pacing
 
 Every inference pod is created at once, so by default every model
