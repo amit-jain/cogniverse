@@ -62,8 +62,10 @@ from cogniverse_foundation.config.utils import get_config  # Lazy import
 
 **External Dependencies**:
 
-- `pyvespa>=0.59.0`: Official Vespa Python client
-- `numpy>=1.24.0`: Array operations
+- `pyvespa==1.1.2`: Official Vespa Python client
+- `numpy==2.4.4`: Array operations
+- `pydantic==2.12.5`: Configuration models
+- `requests==2.33.1`: Document API and deployment requests
 
 ---
 
@@ -97,11 +99,11 @@ libs/vespa/cogniverse_vespa/
 
 **Key Files**:
 
-- `vespa_schema_manager.py`: 1099 lines - Core tenant management
-- `json_schema_parser.py`: 189 lines - Schema parsing
-- `ingestion_client.py`: 597 lines - PyVespa wrapper for ingestion
-- `search_backend.py`: 1740 lines - Search backend with connection pooling
-- `backend.py`: 1598 lines - Unified backend abstraction
+- `vespa_schema_manager.py`: Core tenant management
+- `json_schema_parser.py`: Schema parsing
+- `ingestion_client.py`: PyVespa wrapper for ingestion
+- `search_backend.py`: Search backend with connection pooling
+- `backend.py`: Unified backend abstraction
 
 **Note**: Schema templates are JSON files located in `configs/schemas/` at project root
 
@@ -131,19 +133,25 @@ Cogniverse uses a **profile-based backend configuration system** with multi-tena
 4. `../../configs/config.json` (two levels up)
 
 ```python
-# Automatic discovery - no environment variables needed!
 from cogniverse_foundation.config.utils import ConfigUtils, create_default_config_manager
 
+# The production factory requires BACKEND_URL in the process environment.
+# BACKEND_PORT is optional and defaults to 8080. The backend type still comes
+# from configs/config.json.
 config_manager = create_default_config_manager()
 config_utils = ConfigUtils(tenant_id="acme", config_manager=config_manager)
 backend_config = config_utils.get("backend")  # Auto-discovered and merged
 ```
 
+The production factory requires `BACKEND_URL` in the process environment.
+`BACKEND_PORT` is optional and defaults to `8080`. The backend type still
+comes from `configs/config.json`.
+
 #### Auto-Discovery Flow
 
 ```mermaid
 flowchart TD
-    Start["<span style='color:#000'>SystemConfig initialized<br/>tenant_id: acme</span>"] --> CheckEnv{"<span style='color:#000'>COGNIVERSE_CONFIG<br/>env var set?</span>"}
+    Start["<span style='color:#000'>ConfigUtils initialized<br/>tenant_id: acme</span>"] --> CheckEnv{"<span style='color:#000'>COGNIVERSE_CONFIG<br/>env var set?</span>"}
 
     CheckEnv -->|Yes| LoadEnv["<span style='color:#000'>Load from env var path</span>"]
     CheckEnv -->|No| Check1["<span style='color:#000'>Check: configs/config.json</span>"]
@@ -158,13 +166,13 @@ flowchart TD
 
     Check3 --> Exists3{"<span style='color:#000'>File exists?</span>"}
     Exists3 -->|Yes| Load3["<span style='color:#000'>Load ../../configs/config.json</span>"]
-    Exists3 -->|No| UseDefaults["<span style='color:#000'>Use hardcoded defaults</span>"]
+    Exists3 -->|No| UseDefaults["<span style='color:#000'>Use empty JSON base</span>"]
 
     LoadEnv --> Parse["<span style='color:#000'>Parse JSON</span>"]
     Load1 --> Parse
     Load2 --> Parse
     Load3 --> Parse
-    UseDefaults --> Merge
+    UseDefaults --> GetTenantOverride
 
     Parse --> SystemBase["<span style='color:#000'>System Base Config</span>"]
     SystemBase --> GetTenantOverride["<span style='color:#000'>Check for tenant override<br/>ConfigScope.BACKEND<br/>tenant_id: acme</span>"]
@@ -272,8 +280,8 @@ profile = BackendProfileConfig(
     embedding_type="multi_vector",
     schema_config={
         "num_patches": 1024,
-        "embedding_dim": 128,
-        "binary_dim": 16
+        "embedding_dim": 320,
+        "binary_dim": 40
     }
 )
 ```
@@ -612,12 +620,12 @@ operations:
 | `feed(document, schema_name)` | Feed a single document |
 | `ingest_stream(documents, schema_name)` | Stream ingestion for large datasets |
 | `update_document(document_id, document, schema_name)` | Partial or full document update; raises on backend failure or id mismatch (False means the write was rejected, never that the backend was unreachable) |
-| `delete_document(document_id, schema_name)` | Delete a single document |
-| `get_document(document_id, schema_name)` / `batch_get_documents(document_ids)` | Point lookups that reconstruct stored Vespa tensors through `Document.add_embedding`, so `Document.get_embedding(name)` returns the embedding data rather than a storage envelope |
-| `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package |
-| `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False` — a masked outage reads as "schema missing" and lets the deploy route redeploy over live data |
+| `delete_document(document_id, schema_name)` | Delete a single document. A genuine 404 is an idempotent success; connection failures and every other rejected status raise with the document route. |
+| `get_document(document_id, schema_name)` / `batch_get_documents(document_ids, schema_name)` | Point lookups that reconstruct stored Vespa tensors through `Document.add_embedding`, so `Document.get_embedding(name)` returns the embedding data rather than a storage envelope. When a shared search backend handles a batch read, the unified backend resolves the matching Document v1 namespace and passes both schema and namespace explicitly. |
+| `deploy_schemas(schema_definitions, allow_schema_removal=False)` | Low-level deploy of one or more schema definitions in a single Vespa application package. Registry or config-server enumeration failures abort before the package is sent. |
+| `delete_schema(schema_name, tenant_id=None)` / `schema_exists(schema_name, tenant_id=None)` | Schema lifecycle. Tenant deletion uses the canonical tenant suffix only. Registry tombstone failures surface after Vespa removal so a retry can finish durable cleanup. `schema_exists` (and `validate_schema`) raise on an enumeration/registry outage rather than returning `False`. |
 | `get_tenant_schema_name(tenant_id, base_schema_name)` | Delegates to `self.schema_manager` |
-| `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend) |
+| `create_metadata_document` / `get_metadata_document` / `query_metadata_documents` / `delete_metadata_document` | Organization/tenant/config metadata CRUD; writes raise on a backend outage (a bool False is a rejected write, not an unreachable backend). Passing `tenant_id` to `query_metadata_documents` resolves the base schema to the canonical tenant schema and rewrites a direct YQL source only when it names that base schema exactly. |
 | `add_profile(profile_name, profile_config)` / `remove_profile(profile_name)` | Runtime profile management |
 | `health_check()` / `close()` | Lifecycle management |
 
