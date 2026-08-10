@@ -756,6 +756,7 @@ def _matching_sample_results(
     assert search_body.get("results_count") == len(results), search_body
 
     expected_document_prefix = f"{content_id}_seg_"
+    identity_field = "image_id" if profile.startswith("image_") else "video_id"
     matches = []
     for result in results:
         if not isinstance(result, dict):
@@ -765,7 +766,7 @@ def _matching_sample_results(
             continue
         if (
             result.get("source_id") == content_id
-            and metadata.get("video_id") == content_id
+            and metadata.get(identity_field) == content_id
             and isinstance(result.get("document_id"), str)
             and result["document_id"].startswith(expected_document_prefix)
             and _source_url_matches(
