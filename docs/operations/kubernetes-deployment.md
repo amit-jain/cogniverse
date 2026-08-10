@@ -582,6 +582,51 @@ the NVIDIA device plugin. Apply the `nvidia.com/gpu.present=true`
 label on the node and set GPU resource requests on the relevant pods
 in `values.cuda.yaml`.
 
+### Model startup pacing
+
+Every inference pod is created at once, so by default every model
+reserves its share of the GPU pool simultaneously. Where the GPU pool
+is carved out of system RAM, the enabled models'
+`--gpu-memory-utilization` fractions can sum past 1.0 and that
+simultaneous reservation drives the kernel into an eviction/restore
+cycle that starves the rest of the host.
+
+`inferenceStartup.sequence` is an ordered list of `inference` keys. The
+pod at position N runs a `startup-gate` init container that waits for
+position N-1 to answer `/health` before the model process starts, so
+GPU memory is reserved one model at a time:
+
+```yaml
+inferenceStartup:
+  sequence:
+    - vllm_llm_teacher
+    - vllm_colpali
+    - vllm_llm_student
+  perLinkTimeoutSeconds: 600
+  progressAllowanceSeconds: 900
+```
+
+- Position 0 and any key absent from the list load immediately. An
+  empty list disables pacing, which is the right setting for a
+  discrete-GPU host with headroom.
+- Order the list by descending `--gpu-memory-utilization` so the
+  largest allocation lands against an unfragmented pool.
+- The gate is skipped when the named predecessor is disabled, so its
+  successor starts rather than waiting on a Service that will never
+  have an endpoint.
+- Waiting happens in an init container, so readiness and liveness —
+  both measured from the main container's start — are unaffected, and
+  a waiting pod never reports unhealthy.
+- Weight downloads run in the `model-warm` init container ahead of the
+  gate; they touch network and disk rather than the GPU, so they still
+  run concurrently across pods.
+- Position N gives up after `N x perLinkTimeoutSeconds`. The deadline
+  scales with position because all init containers start together, so a
+  flat deadline would release the whole tail of the chain at once. A
+  gated pod's rollout progress deadline is extended past its own wait
+  budget so a deliberately waiting pod is not reported as a stalled
+  rollout.
+
 ### Local Access Setup
 
 For domain-based access (optional):

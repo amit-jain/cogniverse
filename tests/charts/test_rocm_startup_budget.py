@@ -57,6 +57,8 @@ def test_tomoro_rocm_startup_profiles_one_sequence():
     assert container["args"] == [
         "serve",
         "TomoroAI/tomoro-colqwen3-embed-4b",
+        "--revision",
+        "bf790bd8780b098b86453444632a184bb770be1a",
         "--host",
         "0.0.0.0",
         "--port",
@@ -95,6 +97,8 @@ def test_whisper_rocm_startup_caps_sequences_and_batched_tokens():
         "0.0.0.0",
         "--port",
         "8000",
+        "--revision",
+        "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
         "--runner",
         "generate",
         "--max-model-len",
