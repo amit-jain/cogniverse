@@ -6,6 +6,20 @@ _vllmRocmImage: &vllmRocmImage
     tag: v0.23.0
     pullPolicy: IfNotPresent
 
+# This host shares one memory pool between CPU and GPU, and the enabled
+# models' --gpu-memory-utilization fractions sum past 1.0, so nothing here
+# survives all of them reserving at once. Ordered by descending reservation:
+# the largest allocation lands first, against an unfragmented pool.
+inferenceStartup:
+  sequence:
+    - vllm_llm_teacher
+    - vllm_colpali
+    - vllm_llm_student
+    - vllm_asr
+    - denseon
+    - colbert_pylate
+    - code_colbert_pylate
+
 inference:
   vllm_colpali:
     enabled: true

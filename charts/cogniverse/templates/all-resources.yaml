@@ -1338,6 +1338,32 @@ spec:
 {{- if $cfg.imagesByDevice }}{{ $imageByDev = $cfg.imagesByDevice }}{{ end }}
 {{- $imageOverride := index $imageByDev $device }}
 {{- $resolvedImage := default $imageDefault $imageOverride }}
+{{- /*
+     Startup pacing. ``inferenceStartup.sequence`` is an ordered list of
+     inference keys; a pod at position N holds its model load until the pod
+     at N-1 answers /health, so GPU memory is reserved one model at a time
+     instead of by every pod at once. Position 0 and any key absent from the
+     list are ungated. The gate is skipped when the predecessor is disabled,
+     which would otherwise wait on a Service that never gets an endpoint.
+*/ -}}
+{{- $startup := $.Values.inferenceStartup | default dict }}
+{{- $sequence := $startup.sequence | default (list) }}
+{{- $seqIndex := -1 }}
+{{- range $i, $svc := $sequence }}
+{{- if eq $svc $name }}{{ $seqIndex = $i }}{{ end }}
+{{- end }}
+{{- $predecessor := "" }}
+{{- if gt $seqIndex 0 }}{{ $predecessor = index $sequence (sub $seqIndex 1) }}{{ end }}
+{{- $predecessorCfg := dict }}
+{{- if $predecessor }}{{ $predecessorCfg = (index $.Values.inference $predecessor) | default dict }}{{ end }}
+{{- $gateOn := and (ne $predecessor "") $predecessorCfg.enabled }}
+{{- /*
+     Each pod's gate deadline is its own clock: every init container starts
+     when the release is applied, so a flat deadline would release the whole
+     tail of the chain at the same instant. Scaling by position keeps the
+     starts staggered even when every predecessor fails to answer.
+*/ -}}
+{{- $gateTimeout := mul $seqIndex (int ($startup.perLinkTimeoutSeconds | default 600)) }}
 ---
 # Inference Deployment: {{ $name }} (engine={{ $engine }} device={{ $device }})
 apiVersion: apps/v1
@@ -1349,6 +1375,12 @@ metadata:
     app.kubernetes.io/component: inference-{{ $name }}
 spec:
   replicas: {{ $cfg.replicaCount }}
+  {{- if $gateOn }}
+  # A gated pod spends its wait in Init, which counts against the rollout
+  # progress deadline. Extend it past this pod's own gate deadline so a
+  # deliberately waiting pod is not reported as a stalled rollout.
+  progressDeadlineSeconds: {{ add $gateTimeout (int ($startup.progressAllowanceSeconds | default 900)) }}
+  {{- end }}
   # Inference sidecars hold multi-Gi model weights and run as a single
   # replica on memory-constrained k3d nodes (typically 49Gi total). A
   # rolling update needs both old and new pods up at once, which can't
@@ -1397,6 +1429,14 @@ spec:
       # shm_open: Function not implemented.
       hostIPC: true
       {{- end }}
+      {{- $runtimeBackendInf := default "cuda" $.Values.runtime.backend }}
+      {{- $warmImage := $.Values.runtime.image }}
+      {{- if $.Values.runtime.imagesByBackend }}
+      {{- $warmImage = (index $.Values.runtime.imagesByBackend $runtimeBackendInf) | default $.Values.runtime.image }}
+      {{- end }}
+      {{- if or $persistenceOn $gateOn }}
+      initContainers:
+      {{- end }}
       {{- if $persistenceOn }}
       # Pre-warm the model-cache PVC. Single init container does both
       # paths: try MinIO tarball mirror first (fast, air-gap friendly,
@@ -1404,12 +1444,8 @@ spec:
       # snapshot_download. The runtime image is used because it ships
       # boto3 + huggingface_hub + tar — required for both paths and
       # already pulled on every cluster (the runtime pod uses it).
-      {{- $runtimeBackendInf := default "cuda" $.Values.runtime.backend }}
-      {{- $warmImage := $.Values.runtime.image }}
-      {{- if $.Values.runtime.imagesByBackend }}
-      {{- $warmImage = (index $.Values.runtime.imagesByBackend $runtimeBackendInf) | default $.Values.runtime.image }}
-      {{- end }}
-      initContainers:
+      # Ordered ahead of any startup gate: weight downloads touch network
+      # and disk, not the GPU, so they run concurrently across pods.
       - name: model-warm
         image: "{{ $warmImage.repository }}:{{ $warmImage.tag }}"
         imagePullPolicy: {{ $warmImage.pullPolicy }}
@@ -1506,6 +1542,59 @@ spec:
           requests:
             cpu: "500m"
             memory: "512Mi"
+      {{- end }}
+      {{- if $gateOn }}
+      # Hold this model's load until {{ $predecessor }} is serving. An init
+      # container is the only phase that runs before the model process
+      # starts; probes on the main container cannot help, because the
+      # allocation this paces begins the moment that process starts.
+      # Waiting here leaves readiness and liveness untouched — both are
+      # measured from the main container's start, so the pod keeps its full
+      # cold-start grace and never reports unhealthy while it waits.
+      - name: startup-gate
+        image: "{{ $warmImage.repository }}:{{ $warmImage.tag }}"
+        imagePullPolicy: {{ $warmImage.pullPolicy }}
+        env:
+        - name: GATE_URL
+          value: "http://{{ $fullName }}-{{ $predecessor | kebabcase }}:{{ $predecessorCfg.service.port }}/health"
+        - name: GATE_DEADLINE_SECONDS
+          value: {{ $gateTimeout | quote }}
+        command: ["sh", "-c"]
+        args:
+        - |
+          set -eu
+          python - <<'PY'
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          url = os.environ["GATE_URL"]
+          deadline = time.monotonic() + float(os.environ["GATE_DEADLINE_SECONDS"])
+          while True:
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      if response.status == 200:
+                          print(f"{url} is serving; starting model load", flush=True)
+                          break
+              except (urllib.error.URLError, OSError) as exc:
+                  print(f"waiting on {url}: {exc}", flush=True)
+              if time.monotonic() >= deadline:
+                  # Pacing deadline, not a dependency assertion: these models
+                  # are independent services and the order exists only to
+                  # spread GPU reservation. Starting on deadline keeps one
+                  # wedged model from stranding every model behind it.
+                  print(f"{url} did not answer before the pacing deadline", flush=True)
+                  break
+              time.sleep(5)
+          PY
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
       {{- end }}
       containers:
       {{- if eq $engine "fastapi" }}
