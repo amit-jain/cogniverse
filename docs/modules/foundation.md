@@ -137,6 +137,7 @@ flowchart TB
     style AgentConfigFile fill:#ffb74d,stroke:#ef6c00,color:#000
     style LlmFactory fill:#ffb74d,stroke:#ef6c00,color:#000
     style InferenceAuth fill:#ffb74d,stroke:#ef6c00,color:#000
+    style ArgoClientFile fill:#ffb74d,stroke:#ef6c00,color:#000
     style SemanticRouterFile fill:#ffb74d,stroke:#ef6c00,color:#000
     style Utils fill:#ffb74d,stroke:#ef6c00,color:#000
     style ApiMixin fill:#ffb74d,stroke:#ef6c00,color:#000
@@ -181,7 +182,7 @@ flowchart TB
   of being treated as an empty configuration.
 - Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore)
 
-```text
+```python
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Initialize config manager
@@ -200,19 +201,18 @@ config_manager.set_agent_config(
 
 ### Inference endpoint credentials
 
-`cogniverse_foundation.config.inference_auth.inference_headers(base_url)` is
-the shared client-side credential boundary for remote inference. A
-`*.modal.run` endpoint must be an HTTPS root URL and requires the
-`COGNIVERSE_INFERENCE_API_KEY` environment variable; the function returns an
-immutable `Authorization: Bearer ...` mapping. Cluster-local and loopback URLs
-receive no Modal credential. The key stays in the process environment and is
-never written into persisted `SystemConfig` data. The environment read is
-centralized in the bootstrap configuration boundary and each client snapshots
-the resulting immutable mapping when it is constructed.
+`inference_headers(base_url)` returns immutable headers for a canonical
+HTTP(S) root URL. `*.modal.run` endpoints require HTTPS and
+`COGNIVERSE_INFERENCE_API_KEY`; other URLs get no headers.
 
-The API runtime and ingestion worker parse `INFERENCE_SERVICE_URLS` with
-`cogniverse_runtime.inference_services.parse_inference_service_urls`, documented
-in the runtime module guide.
+The runtime API and ingestion worker parse `INFERENCE_SERVICE_URLS` with
+`cogniverse_runtime.inference_services.parse_inference_service_urls`.
+
+### Argo Workflows HTTP Client
+
+`build_argo_async_client()` returns an `httpx.AsyncClient` with
+`verify=False` and `DEFAULT_ARGO_TIMEOUT`; the tenant router uses it for
+Argo submissions.
 
 **API Reference:**
 
@@ -307,6 +307,44 @@ backend_config = BackendConfig(
 )
 ```
 
+**FieldMappingConfig** - Canonical content fields used by synthetic generation:
+
+```python
+from cogniverse_foundation.config.unified_config import FieldMappingConfig
+
+field_mappings = FieldMappingConfig()
+assert field_mappings.topic_fields == [
+    "video_title",
+    "audio_title",
+    "image_title",
+    "document_title",
+    "chunk_name",
+    "title",
+]
+assert field_mappings.description_fields == [
+    "segment_description",
+    "image_description",
+    "full_text",
+    "source_code",
+    "content",
+    "description",
+]
+assert field_mappings.transcript_fields == ["audio_transcript", "transcript"]
+assert field_mappings.entity_fields == ["video_title", "segment_description"]
+assert field_mappings.temporal_fields == {
+    "start": "start_time",
+    "end": "end_time",
+}
+assert field_mappings.metadata_fields == {}
+```
+
+Override these mappings only when a deployed schema uses different canonical
+fields. The defaults preserve titles, descriptive text, transcripts, entity
+sources, temporal bounds, and metadata for the configured video, audio, image,
+document, code, and wiki schemas.
+`FieldMappingConfig.from_dict({})` hydrates these same defaults; unknown keys
+raise instead of being ignored.
+
 **RoutingConfigUnified** - Routing agent settings:
 ```python
 from cogniverse_foundation.config.unified_config import RoutingConfigUnified
@@ -388,7 +426,7 @@ llm_config = LLMConfig(
 resolved = llm_config.resolve("summarizer_agent")
 ```
 
-`primary` is the global default for all DSPy modules and also the student model during optimization. `teacher` is the bootstrap-teacher endpoint for DSPy optimization: `resolve_teacher()` returns an isolated copy that the optimizers hand to `BootstrapFewShot(teacher_settings={"lm": ...})`, so demo generation runs on the teacher model instead of the student teaching itself. `overrides` holds per-component partial dicts — only differing fields need to be specified; `resolve(component)` merges them field-by-field onto a copy of `primary` (never through `to_dict()`, which masks `api_key` — the resolved endpoint keeps the real key).
+`primary` is the global default for all DSPy modules and also the student model during optimization. `teacher` is optional for non-optimization processes, but every teacher-dependent optimization must configure it explicitly: `resolve_teacher()` returns an isolated copy for `BootstrapFewShot(teacher_settings={"lm": ...})` and raises when the role is absent instead of falling back to `primary`. `overrides` holds per-component partial dicts — only differing fields need to be specified; `resolve(component)` merges them field-by-field onto a copy of `primary` (never through `to_dict()`, which masks `api_key` — the resolved endpoint keeps the real key).
 
 `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM` (`cogniverse_foundation.config.llm_factory`) is the single chokepoint every `dspy.LM()` construction in the codebase goes through. It wires `api_base`/`api_key`/`temperature`/`max_tokens`/`timeout`/`num_retries` onto the LM, merges `seed` into `extra_body`, forwards `extra_headers`, and substitutes a placeholder `api_key` when `api_base` is set but no key is configured (self-hosted OAI-compat servers ignore it). Raises `ValueError` if `config.model` is empty.
 
@@ -435,7 +473,7 @@ Configurations are organized by scope for isolation:
 | `SCHEMA` | Deployed Vespa schema tracking (used by `cogniverse_core.registries.schema_registry`) | schema_name, deployment status |
 | `BACKEND` | Backend profiles | embedding_model, schema_name, pipeline_config |
 
-```text
+```python
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 # Get arbitrary config value by scope
@@ -495,7 +533,7 @@ flowchart TB
 
 **Configuration Resolution Example:**
 
-```text
+```python
 from cogniverse_foundation.config.unified_config import BackendConfig, BackendProfileConfig
 
 # System default (hardcoded)
@@ -546,7 +584,7 @@ class to expose `self.agent_config` (an `AgentConfig`) plus
 `update_module_config()` / `update_optimizer_config()` methods (provided by
 `DynamicDSPyMixin` in `cogniverse_core`).
 
-```text
+```python
 class MyAgent(DynamicDSPyMixin, ConfigAPIMixin):
     def __init__(self, tenant_id, config_manager):
         self.initialize_dynamic_dspy(agent_config)
@@ -624,7 +662,7 @@ that should share a session, or by nesting `span()` calls inside one
 
 Creating spans with tenant isolation:
 
-```text
+```python
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 telemetry = get_telemetry_manager()
@@ -652,7 +690,7 @@ async def process(query: str):
 
 Track multi-turn conversations across requests:
 
-```text
+```python
 async def handle_request(query: str, session_id: str):
     # At API entry point - establish session context
     with telemetry.session_span(
@@ -678,7 +716,7 @@ with telemetry.session_span("session.start", tenant_id="acme", session_id="sessi
 
 Register projects with custom endpoints (useful for tests):
 
-```text
+```python
 # Register with default config
 telemetry.register_project(
     tenant_id="acme",
@@ -735,7 +773,7 @@ codebase are thin subclasses of this base:
 
 ### Defining a new registry
 
-```text
+```python
 from cogniverse_foundation.registry import EntryPointRegistry
 from my_pkg.interfaces import MyStore
 
@@ -776,7 +814,7 @@ modules) in memory; without a bound, a multi-tenant server accumulates one
 instance per tenant indefinitely. `EntryPointRegistry` itself uses a
 `TenantLRUCache` for its per-instance plugin cache.
 
-```text
+```python
 from cogniverse_foundation.caching import TenantLRUCache
 
 def close_client(tenant_id: str, client) -> None:
@@ -813,7 +851,7 @@ LRU pressure. Registration holds only a weak reference (a `weakref.WeakSet`),
 so a cache owned by a discarded consumer drops out on garbage collection
 rather than leaking through the registry.
 
-```text
+```python
 from cogniverse_foundation.caching import (
     TenantLRUCache,
     register_tenant_cache,
@@ -972,26 +1010,9 @@ config_manager.set_agent_config(
 )
 ```
 
-### Argo Workflows HTTP Client
-
-`argo-server` runs in secure mode behind a self-signed in-cluster certificate,
-so a default-verifying client fails every request before it reaches the API.
-Build Argo clients through the shared factory rather than constructing `httpx`
-clients inline, so that TLS posture is decided in one place:
-
-```text
-from cogniverse_foundation.common.argo_client import build_argo_async_client
-
-client = build_argo_async_client()          # DEFAULT_ARGO_TIMEOUT (10s)
-client = build_argo_async_client(30.0)      # longer budget for submissions
-```
-
-Used by the tenant job-scheduling routes and the quality-monitor optimization
-submissions — the two paths that post CronWorkflows and Workflows to Argo.
-
 ### Tenant-Specific Profile Overrides
 
-```text
+```python
 from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 
 # Start with system profile, customize for tenant
@@ -1008,7 +1029,7 @@ config_manager.update_backend_profile(
 
 ### Telemetry with Phoenix
 
-```text
+```python
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
@@ -1046,7 +1067,7 @@ async def process_query(query: str, tenant_id: str):
 
 ### Querying Telemetry Data
 
-```text
+```python
 from datetime import datetime, timezone
 
 async def query_and_annotate():
