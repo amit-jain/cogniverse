@@ -33,11 +33,15 @@ RESERVED_GIB = {
     "cluster services": 25.4,
     "desktop and daemons": 10.0,
     "test containers": 12.0,
+    # Pool-allocating pods that declare no fraction, reserved at their
+    # memory limits (2 x 4Gi). See test_pool_pods_declare_a_fraction_or_limit.
     "pylate pods": 8.0,
-    "gliner": 3.0,
+    # CPU-only, but reserved at its limit rather than its request because the
+    # limit is what it may actually take.
+    "gliner": 8.0,
     "page cache slack": 8.0,
 }
-MAX_UTILIZATION_SUM = 0.59
+MAX_UTILIZATION_SUM = 0.54
 
 pytestmark = pytest.mark.skipif(
     shutil.which("helm") is None,
@@ -45,30 +49,30 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _rocm_utilizations() -> dict[str, float]:
-    result = subprocess.run(
-        [
-            "helm",
-            "template",
-            "cogniverse",
-            str(CHART_PATH),
-            "-f",
-            str(CHART_PATH / "values.rocm.yaml"),
-            "--set",
-            "runtime.qualityMonitor.tenantId=test-tenant",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def _render(*extra: str) -> list[dict]:
+    command = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "-f",
+        str(CHART_PATH / "values.rocm.yaml"),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+    ]
+    command.extend(extra)
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
     assert result.returncode == 0, (
         f"helm template failed (exit {result.returncode}):\n{result.stderr}"
     )
+    return [d for d in yaml.safe_load_all(result.stdout) if d]
 
+
+def _rocm_utilizations() -> dict[str, float]:
     utilizations = {}
     declared = 0
-    for document in yaml.safe_load_all(result.stdout):
-        if document is None or document.get("kind") != "Deployment":
+    for document in _render():
+        if document.get("kind") != "Deployment":
             continue
         component = document["metadata"]["labels"].get(
             "app.kubernetes.io/component", ""
@@ -103,11 +107,11 @@ def _rocm_utilizations() -> dict[str, float]:
 def test_reserved_ram_leaves_the_expected_pool_share_for_models():
     reserved = sum(RESERVED_GIB.values())
 
-    assert reserved == 66.4
-    assert round(SYSTEM_RAM_GIB - reserved, 2) == 57.06
+    assert reserved == 71.4
+    assert round(SYSTEM_RAM_GIB - reserved, 2) == 52.06
     # The ceiling has to be buyable out of what is left after the reservations
     # above, not merely out of the nominal pool.
-    assert MAX_UTILIZATION_SUM * POOL_GIB == 56.64
+    assert MAX_UTILIZATION_SUM * POOL_GIB == 51.84
     assert MAX_UTILIZATION_SUM * POOL_GIB <= SYSTEM_RAM_GIB - reserved
 
 
@@ -126,7 +130,94 @@ def test_enabled_rocm_models_fit_the_unified_pool_budget():
     assert total <= MAX_UTILIZATION_SUM
     assert round(total * POOL_GIB, 2) == 47.04
     # Named headroom: what the budget still has after every model reserves.
-    assert round((MAX_UTILIZATION_SUM - total) * POOL_GIB, 2) == 9.6
+    assert round((MAX_UTILIZATION_SUM - total) * POOL_GIB, 2) == 4.8
+
+
+def _pool_pods(*extra: str) -> dict[str, dict]:
+    """Inference pods that can allocate from the unified pool.
+
+    A pod reaches the pool exactly when the chart gives it the ROCm device
+    nodes, so the /dev/kfd + /dev/dri mounts are the structural marker. Any
+    future service rendered with them is picked up here without the test
+    having to name it.
+    """
+    pods = {}
+    for document in _render(*extra):
+        if document.get("kind") != "Deployment":
+            continue
+        component = document["metadata"]["labels"].get(
+            "app.kubernetes.io/component", ""
+        )
+        if not component.startswith("inference-"):
+            continue
+        spec = document["spec"]["template"]["spec"]
+        volumes = {v["name"] for v in spec.get("volumes", [])}
+        if not {"kfd", "dri"} <= volumes:
+            continue
+        container = spec["containers"][0]
+        blob = (
+            " ".join(container.get("args") or [])
+            + " "
+            + " ".join(container.get("command") or [])
+        )
+        blob = re.sub(r"[\\'\"]", " ", blob)
+        match = re.search(r"--gpu-memory-utilization\s+([0-9.]+)", blob)
+        limit = container.get("resources", {}).get("limits", {}).get("memory")
+        pods[component.removeprefix("inference-")] = {
+            "fraction": float(match.group(1)) if match else None,
+            "limit_gib": float(limit.removesuffix("Gi")) if limit else None,
+        }
+    return pods
+
+
+def test_pool_pods_declare_a_fraction_or_limit():
+    pods = _pool_pods()
+
+    assert pods == {
+        "vllm_colpali": {"fraction": 0.18, "limit_gib": 20.0},
+        "vllm_llm_student": {"fraction": 0.22, "limit_gib": 32.0},
+        "vllm_asr": {"fraction": 0.04, "limit_gib": 8.0},
+        "denseon": {"fraction": 0.05, "limit_gib": 4.0},
+        # PyTorch services: the caching allocator has no fraction knob, so
+        # their declared bound is the memory limit, reserved above.
+        "colbert_pylate": {"fraction": None, "limit_gib": 4.0},
+        "code_colbert_pylate": {"fraction": None, "limit_gib": 4.0},
+    }
+
+    unbounded = {
+        name
+        for name, pod in pods.items()
+        if pod["fraction"] is None and pod["limit_gib"] is None
+    }
+    assert unbounded == set()
+
+
+def test_fraction_free_pool_pods_are_reserved_at_their_limits():
+    pods = _pool_pods()
+
+    limit_bounded = sorted(
+        name for name, pod in pods.items() if pod["fraction"] is None
+    )
+
+    assert limit_bounded == ["code_colbert_pylate", "colbert_pylate"]
+    assert sum(pods[name]["limit_gib"] for name in limit_bounded) == 8.0
+    # The reserve above must cover them, or they are consuming pool the
+    # budget already promised to something else.
+    assert RESERVED_GIB["pylate pods"] == 8.0
+
+
+def test_budget_guard_rejects_an_unbounded_pool_pod():
+    """A pool pod with neither a fraction nor a limit must be caught."""
+    pods = _pool_pods("--set", "inference.colbert_pylate.resources.limits.memory=null")
+
+    assert pods["colbert_pylate"] == {"fraction": None, "limit_gib": None}
+
+    unbounded = {
+        name
+        for name, pod in pods.items()
+        if pod["fraction"] is None and pod["limit_gib"] is None
+    }
+    assert unbounded == {"colbert_pylate"}
 
 
 def test_distillation_teacher_is_not_resident_on_the_unified_host():
