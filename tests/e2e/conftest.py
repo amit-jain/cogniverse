@@ -867,6 +867,11 @@ def _ensure_sample_content_ingested(
                     "backend": "vespa",
                     "tenant_id": TENANT_ID,
                 },
+                # The search above proved these documents are absent, so this
+                # call needs real work done. A done marker outliving the
+                # documents it describes (Vespa redeployed, Redis kept) would
+                # otherwise satisfy the submit without re-ingesting anything.
+                params={"force": "true"},
                 timeout=60,
             )
     except (httpx.HTTPError, OSError) as exc:
@@ -879,6 +884,7 @@ def _ensure_sample_content_ingested(
 
     submission = response.json()
     assert submission.get("filename") == path.name, submission
+    assert submission.get("existing") is False, submission
     assert _source_url_matches(
         submission.get("source_url"),
         content_id=content_id,
