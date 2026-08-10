@@ -334,7 +334,7 @@ Profiles are defined in `config.json`:
       },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
-        "description": "ColQwen3 visual retrieval using TomoroAI/tomoro-colqwen3-embed-4b for 320-dimensional per-patch embeddings",
+        "description": "ColQwen3 visual document retrieval served by the Cogniverse ColPali service. 320-dim per-patch multi-vector embeddings.",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "embedding_type": "multi_vector",
         "schema_config": {

@@ -8,7 +8,7 @@
 4. [Phoenix Project Isolation](#phoenix-project-isolation)
 5. [Memory Isolation](#memory-isolation)
 6. [Deployment Patterns](#deployment-patterns)
-   - [Federation: Org Trunk + Tenant Overlay](#federation-org-trunk--tenant-overlay)
+   - [Federation: Org Trunk + Tenant Overlay](#federation-org-trunk-tenant-overlay)
    - [Cross-Tenant Comparison Flow](#cross-tenant-comparison-flow)
 
 ---

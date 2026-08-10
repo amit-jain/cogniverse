@@ -579,6 +579,7 @@ provider = manager.get_provider("tenant1", "cogniverse-tenant1")
 # Fine-tune routing agent
 result = await finetune(
     telemetry_provider=provider,
+    telemetry_manager=manager,
     tenant_id="tenant1",
     project="cogniverse-tenant1",
     model_type="llm",

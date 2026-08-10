@@ -183,18 +183,17 @@ For each file the extractor walks the AST and emits:
 
 All code edges are `EXTRACTED` — these are structural facts, not LLM guesses.
 
-### Doc extractor (GLiNER + regex fallback)
+### Doc extractor (GLiNER)
 
 Supported extensions: `.md`, `.txt`, `.rst`, `.html`, `.htm`, `.pdf`.
 
 - **Primary path:** GLiNER (`urchade/gliner_large-v2.1`) predicts entities with labels: Person, Organization, Location, Date, Substance, Award, Field, Event, Concept, Technology, Product, Algorithm, Model, Framework, Language
-- **Fallback path:** regex for capitalized multi-word phrases when GLiNER is not configured, returns nothing for a chunk, or fails on *some* (not all) chunks (stripping leading articles like "The"). A **total GLiNER outage** — configured but failing on every chunk — instead raises, so the ingest surfaces the outage rather than returning a regex-only knowledge graph
+- **Failure contract:** model-load and per-chunk prediction failures raise with source and chunk context. A valid empty GLiNER prediction remains empty; the extractor never fabricates regex entities
 - Text is chunked into paragraph-aware blocks of ~2000 chars before extraction
 
 | Node type | Source |
 |---|---|
 | Named entities | GLiNER prediction |
-| Capitalized concepts | Regex fallback |
 
 Co-occurrence `mentioned_with` edges have been removed from the codebase —
 edges are now produced only by `ClaimExtractor` (real SPO relations, see the
@@ -451,6 +450,6 @@ flowchart TD
 
 **`tree-sitter parser for X unavailable`** — only Python, JavaScript, TypeScript, and Go parsers are bundled. Other code files are silently skipped by the code extractor but still get content-indexed.
 
-**`GLiNER load failed, falling back to no-op`** — GLiNER download failed or the model cache is corrupt. The doc extractor falls back to a regex-based capitalized phrase extractor, which is weaker but still produces nodes. Fix: ensure the HF cache at `/home/cogniverse/.cache/huggingface` is mounted in the runtime pod, or delete it to force a fresh download.
+**`GLiNER model failed to load`** — the configured sidecar is unavailable, the local download failed, or the model cache is corrupt. Extraction stops rather than writing guessed nodes. Check the configured inference URL and ensure the HF cache at `/home/cogniverse/.cache/huggingface` is mounted in the runtime pod.
 
-**Entity extracted with the wrong name (e.g. "The ColPali" instead of "ColPali")** — the regex fallback strips leading articles but isn't perfect. Install GLiNER properly for high-quality extraction.
+**`GLiNER prediction failed for chunk ...`** — the real extractor failed for the named source chunk. Restore the sidecar/model and retry ingestion; no partial regex graph is written.

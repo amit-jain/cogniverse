@@ -611,26 +611,43 @@ assert len(results) >= 0
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_synthetic.generators.routing import RoutingGenerator
-from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
+from cogniverse_synthetic.utils import PatternExtractor
+from cogniverse_foundation.config.unified_config import (
+    DSPyModuleConfig,
+    OptimizerGenerationConfig,
+)
 
 # RoutingGenerator requires OptimizerGenerationConfig as REQUIRED parameter
 # Configuration is REQUIRED - no fallbacks or defaults
 # Create minimal config for testing (production would load from configs/config.json)
 optimizer_config = OptimizerGenerationConfig(
     optimizer_type="routing",
-    dspy_modules={},  # Empty for basic generation
+    dspy_modules={
+        "query_generator": DSPyModuleConfig(
+            signature_class="cogniverse_synthetic.dspy_signatures.GenerateEntityQuery"
+        )
+    },
     profile_scoring_rules=[],
     agent_mappings=[],
-    num_examples_target=10
 )
-# Pass optimizer_config to constructor - raises ValueError if None
-generator = RoutingGenerator(optimizer_config=optimizer_config)
+# Production entity and routing callbacks are required; the generator never
+# substitutes a local heuristic for either label.
+generator = RoutingGenerator(
+    entity_extractor=production_entity_extractor,
+    routing_decider=production_routing_decider,
+    pattern_extractor=PatternExtractor(),
+    optimizer_config=optimizer_config,
+)
 
 sampled_content = [
     {"video_id": "v1", "title": "Cooking tutorial", "description": "Learn to cook"},
     {"video_id": "v2", "title": "Science lecture", "description": "Physics explained"}
 ]
-synthetic_data = await generator.generate(sampled_content=sampled_content, target_count=10)
+synthetic_data = await generator.generate(
+    sampled_content=sampled_content,
+    target_count=2,
+    tenant_id=tenant_id,
+)
 
 # Test orchestrator with synthetic queries
 orchestrator = OrchestratorAgent(

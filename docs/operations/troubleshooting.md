@@ -125,14 +125,12 @@ Fetching 5 files: 100%|██████████| 5/5 [00:00<00:00, 80000.0
 Large models (1B+ parameters) can cause threading issues or memory exhaustion in test environment.
 
 **Solution:**
-Use smaller, stable models for testing:
+Use the provisioned production encoder endpoint; do not load a different model in
+the test process:
 
 ```python
-# ❌ Bad: heavier ColQwen variant in unit tests
-model_name = "vidore/colqwen-omni-v0.1"  # multi-GB, slow on CPU
-
-# ✅ Good: default ColPali model for fast feedback
-model_name = "TomoroAI/tomoro-colqwen3-embed-4b"  # ~2GB, stable on CPU
+# The integration fixture verifies this exact identity through /v1/models.
+model_name = "TomoroAI/tomoro-colqwen3-embed-4b"
 ```
 
 **Default Models:**
@@ -141,7 +139,7 @@ model_name = "TomoroAI/tomoro-colqwen3-embed-4b"  # ~2GB, stable on CPU
 
 - VideoPrism: `google/videoprism-base`
 
-- ColQwen: `vidore/colqwen-omni-v0.1`
+- ColQwen: `TomoroAI/tomoro-colqwen3-embed-4b`
 
 **Prevention:**
 
@@ -251,13 +249,13 @@ First-time model downloads from HuggingFace can be large (several GB).
 
 2. **Check disk space**: Models cache in `~/.cache/huggingface/`
 
-3. **Use smaller models**: prefer `TomoroAI/tomoro-colqwen3-embed-4b` over the heavier ColQwen variants when iterating
+3. **Reuse the verified inference service**: the test fixture discovers the
+   exact deployed endpoint and starts the same model only when none is available
 
 **Model Sizes:**
 
-- `TomoroAI/tomoro-colqwen3-embed-4b` (ColPali default): ~2GB
-
-- `vidore/colqwen-omni-v0.1` (ColQwen default): ~6GB
+- `TomoroAI/tomoro-colqwen3-embed-4b` (shared visual encoder): ~8GB of
+  bfloat16 weights plus runtime/KV-cache overhead
 
 - `google/videoprism-base`: ~3GB
 

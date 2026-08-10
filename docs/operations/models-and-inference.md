@@ -294,7 +294,7 @@ reshape), matching DenseOn's dense-retrieval semantics.
 | Field | Value |
 |---|---|
 | Chart key | `inference.vllm_asr` |
-| Model | `openai/whisper-large-v3-turbo` |
+| Model | `openai/whisper-large-v3-turbo` on ROCm/CUDA; `openai/whisper-tiny` in the CPU overlay |
 | Image | `vllm/vllm-openai-cpu:v0.23.0` / `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | Engine | `vllm_transcription` |
 | NodePort | 29005 |
@@ -494,6 +494,27 @@ runtime feeds into directly. The inference services produce the
 embeddings; Vespa stores and ranks them. See
 [architecture/multi-tenant.md](../architecture/multi-tenant.md) for
 the schema lifecycle.
+
+---
+
+## Reusing k3d inference services in tests
+
+The local k3d overlay publishes Tomoro and ASR on their canonical NodePorts,
+29001 and 29005. The shared e2e cluster maps those ports to host ports 33901
+and 33905 so it can coexist with the development cluster. Integration fixtures
+inspect the live workload and Service objects, resolve the load balancer's
+published host port, and accept an endpoint only when its OpenAI
+`GET /v1/models` response lists the requested model identifier exactly. A
+reachable endpoint serving another model is rejected; the fixture then checks
+the next configured cluster or starts its own exact-model sidecar.
+
+Warm e2e reuse is tied to both working-tree deployment content and the exact
+effective deployment inputs: detected backend, selected device overlay,
+git-derived image tags, Helm overrides, and the deployment helper itself. A
+stopped shared cluster is started and polled for Kubernetes access, runtime
+readiness, exact Tomoro/ASR identities, and the matching fingerprint. That
+poll has a 40-minute hard deadline so a failed model start cannot hang the test
+session indefinitely.
 
 ---
 

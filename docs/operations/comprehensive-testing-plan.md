@@ -667,20 +667,57 @@ for i, result in enumerate(results[:3], 1):
 **Test SyntheticDataService:**
 ```python
 from cogniverse_synthetic.service import SyntheticDataService
-from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
+from cogniverse_foundation.config.unified_config import (
+    AgentMappingRule,
+    BackendConfig,
+    BackendProfileConfig,
+    OptimizerGenerationConfig,
+    SyntheticGeneratorConfig,
+)
+from cogniverse_vespa import VespaBackend
 
 # Initialize service with backend and config
+profile_name = "video_colpali_smol500_mv_frame"
 backend_config = BackendConfig(
     tenant_id="your_org:production",
     url="http://localhost",
-    port=8080
+    port=8080,
+    profiles={
+        profile_name: BackendProfileConfig(
+            profile_name=profile_name,
+            type="video",
+            schema_name=profile_name,
+            embedding_type="multi_vector",
+            pipeline_config={"extract_keyframes": True},
+        )
+    },
 )
-generator_config = SyntheticGeneratorConfig(tenant_id="your_org:production")
+generator_config = SyntheticGeneratorConfig(
+    tenant_id="your_org:production",
+    optimizer_configs={
+        "modality": OptimizerGenerationConfig(
+            optimizer_type="modality",
+            agent_mappings=[
+                AgentMappingRule(
+                    modality="VIDEO",
+                    agent_name="search_agent",
+                )
+            ],
+        )
+    },
+)
+backend = VespaBackend(
+    backend_config=backend_config,
+    schema_loader=schema_loader,
+    config_manager=config_manager,
+)
+backend.initialize({"tenant_id": "your_org:production"})
 
 service = SyntheticDataService(
-    backend=backend,  # Backend instance
+    backend=backend,
     backend_config=backend_config,
-    generator_config=generator_config
+    generator_config=generator_config,
+    agents_config=agents_config,
 )
 
 print(f"Service initialized")
@@ -706,7 +743,7 @@ request = SyntheticDataRequest(
     optimizer="routing",
     count=10,
     vespa_sample_size=50,
-    strategies=["diverse"],
+    strategy="diverse",
     max_profiles=2,
     tenant_id="your_org:production"
 )
@@ -1143,27 +1180,15 @@ print(f"  Reasoning: {decision.reasoning}")
 
 **Test synthetic data generation:**
 ```python
-# Synthetic data service is typically used programmatically, not via REST API
-from cogniverse_synthetic.service import SyntheticDataService
+# Reuse the live service initialized in Layer 6.1.
 from cogniverse_synthetic.schemas import SyntheticDataRequest
-from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
-
-# Initialize service
-backend_config = BackendConfig(tenant_id="your_org:production", url="http://localhost", port=8080)
-generator_config = SyntheticGeneratorConfig(tenant_id="your_org:production")
-
-service = SyntheticDataService(
-    backend=None,  # Or pass actual backend instance
-    backend_config=backend_config,
-    generator_config=generator_config
-)
 
 # Create request ("routing" is a registered optimizer name)
 request = SyntheticDataRequest(
     optimizer="routing",
     count=10,
     vespa_sample_size=50,
-    strategies=["diverse"],
+    strategy="diverse",
     max_profiles=2,
     tenant_id="your_org:production"
 )

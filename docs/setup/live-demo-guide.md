@@ -92,7 +92,7 @@ All commands below assume the stack is running via `cogniverse up` (k3d) and use
 
 Tenant management is not a separate service in the k3d stack — it's
 served by the Runtime itself at `$RUNTIME_URL/admin/tenants` (see
-[Bootstrap](#3-bootstrap-tenant--schema-setup) below). A standalone
+[Bootstrap](#3-bootstrap-tenant-schema-setup) below). A standalone
 `tenant_manager.py` process (default port 9000) is also available for
 lightweight local bootstrap without the full Runtime image; see Path B.
 
@@ -213,15 +213,15 @@ curl -X POST http://localhost:9000/admin/tenants \
 
 | Profile | Model | Embedding Dims | Strategy | Chunk Size |
 |---------|-------|---------------|----------|------------|
-| `video_colpali_smol500_mv_frame` | ColPali | 320d (multi-vector, 1024 patches) | Frame-based | per-frame |
-| `video_colqwen_omni_mv_chunk_30s` | ColQwen Omni | 320d (multi-vector, 1024 patches) | Chunk-based | 30s |
+| `video_colpali_smol500_mv_frame` | Tomoro ColQwen3 | 320d (multi-vector, 1024 patches) | Frame-based | per-frame |
+| `video_colqwen_omni_mv_chunk_30s` | Tomoro ColQwen3 | 320d (multi-vector, 1024 patches) | Chunk-based | 30s |
 | `video_videoprism_base_mv_chunk_30s` | VideoPrism Base | 768d (multi-vector, 4096 patches) | Chunk-based | 30s |
 | `video_videoprism_large_mv_chunk_30s` | VideoPrism Large | 1024d (multi-vector, 2048 patches) | Chunk-based | 30s |
 | `video_videoprism_lvt_base_sv_chunk_6s` | VideoPrism LVT Base | 768d (single-vector) | Temporal | 6s |
 | `video_videoprism_lvt_large_sv_chunk_6s` | VideoPrism LVT Large | 1024d (single-vector) | Temporal | 6s |
 
 **Key distinctions:**
-- **ColPali/ColQwen** — multi-vector patch embeddings (1024 patches per frame/chunk), matched via MaxSim
+- **Tomoro ColQwen3** — multi-vector patch embeddings (1024 patches per frame/chunk), matched via MaxSim
 - **VideoPrism (`_mv_` profiles)** — multi-vector patch embeddings per chunk, matched via MaxSim
 - **VideoPrism LVT** — single global embedding per chunk, matched via cosine similarity
 - **LVT (Learned Video Tokenizer)** — temporal models with 6s chunks for fine-grained temporal search
@@ -260,7 +260,7 @@ Each profile defines its own keyframe extraction strategy, embedding model, and 
 
 ### Ingestion Commands
 
-`--tenant-id` is required — there is no default tenant; register one first via [Bootstrap](#3-bootstrap-tenant--schema-setup).
+`--tenant-id` is required — there is no default tenant; register one first via [Bootstrap](#3-bootstrap-tenant-schema-setup).
 
 ```bash
 # Single profile — quick test
@@ -605,7 +605,7 @@ Key endpoint groups (Runtime on host port 28000, container port 8000):
 | **Search** | `/search` | `POST /search/` — execute query; `GET /search/strategies` — list strategies |
 | **Ingestion** | `/ingestion` | `POST /ingestion/start` — launch job; `GET /ingestion/status/{job_id}` — poll status |
 | **Admin** | `/admin` | `GET /admin/system/stats`; `POST /admin/profiles`; `GET /admin/profiles`; `POST /admin/profiles/{name}/deploy` |
-| **Tenants** | `/admin` | `POST /admin/tenants`; `GET /admin/tenants/{id}`; `POST /admin/organizations`; `GET /admin/organizations/{org_id}/tenants` (see [Bootstrap](#3-bootstrap-tenant--schema-setup)) |
+| **Tenants** | `/admin` | `POST /admin/tenants`; `GET /admin/tenants/{id}`; `POST /admin/organizations`; `GET /admin/organizations/{org_id}/tenants` (see [Bootstrap](#3-bootstrap-tenant-schema-setup)) |
 | **Knowledge agents** | `/admin` | `POST /admin/tenants/{tenant_id}/knowledge/audit/explain`, `.../kg/traverse`, `.../summarize`, and 6 more — one per [knowledge & audit agent](#full-agent-roster) |
 | **Tenant extensibility** | `/admin/tenant` | `PUT /admin/tenant/{id}/instructions`; `POST /admin/tenant/{id}/memories`; `POST /admin/tenant/{id}/optimize` |
 | **Debug** | `/admin/debug` | `POST /admin/debug/memsnap`; `POST /admin/debug/memreset` |

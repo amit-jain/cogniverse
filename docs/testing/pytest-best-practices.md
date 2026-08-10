@@ -150,6 +150,7 @@ markers =
     benchmark: Performance benchmarking tests
     ingestion: Tests for ingestion pipeline
     requires_vespa: Tests that require Vespa backend to be running
+    no_shared_vespa: Integration modules that own a non-Vespa boundary
     requires_docker: Tests that require Docker
     requires_gpu: Tests that require GPU availability
     requires_whisper: Tests that require Whisper models
@@ -727,23 +728,27 @@ def cleanup_dspy_state():
 ### Test Config Isolation (`cogniverse_test_config`)
 
 `tests/conftest.py` ships a session-scoped `autouse=True` fixture
-named `cogniverse_test_config`. Its job is to keep integration tests
-off the production `configs/config.json` LLM endpoints — production
-points at vLLM-served `openai/google/gemma-4-e4b-it` on
-`http://localhost:29010/v1`, which doesn't exist on local dev or CI machines.
+named `cogniverse_test_config`. It isolates configuration mutations from the
+tracked `configs/config.json`; it does not change model identity or silently
+substitute a smaller model.
 
 What it does:
 
-1. Clones `configs/config.json` into a tmpdir.
-2. Rewrites `llm_config.primary` and `llm_config.teacher` to whatever
-   the test machine actually serves (defaults to local Ollama
-   `qwen2.5:7b` on `http://localhost:11434`).
-3. Sets `COGNIVERSE_CONFIG=<tmpdir>/config.json` for the session.
+1. Clones `configs/config.json` unchanged into a tmpdir and links its sibling
+   `schemas/` directory so relative schema discovery still works.
+2. Sets `COGNIVERSE_CONFIG=<tmpdir>/config.json` for the session.
+3. Tests that request `ensure_host_ollama` then require the production Gemma
+   primary model and, when marked, the distinct teacher model. The provisioner
+   checks explicit endpoints, `INFERENCE_SERVICE_URLS`, the shared e2e cluster,
+   and the development cluster in that order, accepting a URL only when
+   `/v1/models` lists the exact model. Only then does it start an identical
+   session-owned vLLM sidecar and publish the verified endpoints in a second
+   temporary config.
 
 Override via env vars **before pytest starts**:
 
 ```bash
-TEST_LLM_MODEL=meta-llama/Llama-3.1-8B-Instruct \
+TEST_LLM_MODEL=google/gemma-4-e4b-it \
 TEST_LLM_API_BASE=http://my-vllm:8000/v1 \
 uv run pytest
 ```
@@ -855,7 +860,7 @@ def debug_logging():
     TOKENIZERS_PARALLELISM: false
     OMP_NUM_THREADS: 1
   run: |
-    timeout 7200 uv run pytest --tb=short
+    timeout 7200 uv run pytest -v --tb=long
 ```
 
 ### Docker Testing
@@ -974,6 +979,13 @@ Key details:
 - **Leftover cleanup**: Kills only its own process's leftover `phoenix_test_pid<pid>_*`
   containers from a prior crashed run — never touches another concurrent sweep's containers
 - **Scope**: Module-scoped — one Phoenix instance per test module
+
+Test containers carry `cogniverse-test-owner-pid=<pytest pid>`. Before a
+sidecar spawn, the shared reaper removes containers whose owner process is gone
+and already-exited containers. A live owner's `created`, `restarting`, `paused`,
+or `running` container is preserved: `docker create` and `docker start` are
+separate operations, so treating the short `created` interval as abandoned can
+kill another concurrent test's service before it starts.
 
 Companion fixtures also defined in `tests/conftest.py`:
 

@@ -60,7 +60,7 @@ scripts/install_with_gpu.sh
 The wrapper exists because `uv sync` alone installs the default PyPI torch
 wheel, which on Linux/x86_64 is the CUDA build (`torch==2.8.0+cu128`) — wrong
 on AMD or CPU-only hosts and ~700 MB of useless NVIDIA libraries on machines
-without an NVIDIA GPU. See ["PyTorch backend selection"](#pytorch-backend-selection)
+without an NVIDIA GPU. See ["PyTorch backend selection"](#2a-pytorch-backend-selection)
 below for the full story.
 
 **Workspace contents** (installed in editable mode, all 13 packages —
@@ -445,9 +445,10 @@ BACKEND_PORT=8080
 # Phoenix OTLP endpoint (gRPC)
 TELEMETRY_OTLP_ENDPOINT=localhost:4317
 
-# Test LM endpoint (any OpenAI-compatible server)
-TEST_LLM_API_BASE=http://localhost:11434
-TEST_LLM_MODEL=gemma3:4b
+# Optional pre-existing test LM endpoint; tests accept it only when /v1/models
+# advertises the exact production primary model, otherwise they provision one
+TEST_LLM_API_BASE=http://localhost:29110/v1
+TEST_LLM_MODEL=google/gemma-4-e4b-it
 
 # JAX (for VideoPrism)
 JAX_PLATFORM_NAME=cpu

@@ -311,10 +311,9 @@ flowchart TD
     VAL -- "Yes" --> OUT["<span style='color:#000'>Valid Query<br/>+ Metadata</span>"]
     VAL -- "No" --> RC{"<span style='color:#000'>Retries<br/>< max_retries?</span>"}
     RC -- "Yes" --> COT
-    RC -- "No" --> FB["<span style='color:#000'>Template fallback:<br/>'find {topic} about<br/>{entity}'</span>"]
+    RC -- "No" --> ERR["<span style='color:#000'>Raise with<br/>entity context</span>"]
 
     OUT --> META["<span style='color:#000'>Metadata:<br/>_retry_count<br/>_max_retries</span>"]
-    FB --> META2["<span style='color:#000'>Metadata:<br/>_fallback_used=True</span>"]
 
     style IN fill:#90caf9,stroke:#1565c0,color:#000
     style COT fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -322,33 +321,23 @@ flowchart TD
     style VAL fill:#ffcc80,stroke:#ef6c00,color:#000
     style OUT fill:#a5d6a7,stroke:#388e3c,color:#000
     style RC fill:#ffcc80,stroke:#ef6c00,color:#000
-    style FB fill:#ffcccc,stroke:#c62828,color:#000
+    style ERR fill:#ffcccc,stroke:#c62828,color:#000
     style META fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style META2 fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 **Key design decisions:**
-- **Deterministic fallback, not an exception** — `ValidatedEntityQueryGenerator.forward` retries up to `max_retries` (default: 3) attempts; if none produce a query containing an entity word, it emits a template query (`"find {topic} about {entity}"`) built directly from the input topics/entities, tags the result `_fallback_used=True`, and returns it rather than raising. Downstream confidence scoring still penalizes it via the retry-count signal (see below)
-- **Validation is case-insensitive** — at least one entity must appear in the generated query text
-- **Retry count is metadata** — stored on the prediction for downstream confidence scoring
+- **Invalid generation raises** — `ValidatedEntityQueryGenerator.forward` retries up to the explicitly configured `max_retries` attempts. If none contains every supplied entity as a complete span, it raises with the attempted entities instead of manufacturing training data
+- **Validation is exact and case-insensitive** — every entity must appear unmodified in the generated query text
+- **Retry count is provenance** — stored on the prediction to explain generation attempts; it is not converted into a confidence score
 
 ### Confidence Scoring
 
-Each generated example receives a confidence score from 4 independent signals:
-
-| Signal | Weight | Logic |
-|---|---|---|
-| **Retry Count** | Dominant | −0.15 per retry attempt (penalty stacks) |
-| **Entity Presence** | Multiplicative | ×1.05 boost if entity found; ×0.7 penalty if expected but missing |
-| **Query Length** | Multiplicative | ×0.8 if < 10 chars (too short); ×0.9 if > 200 chars (too long) |
-| **Reasoning Quality** | Minor boost | ×1.02 if reasoning text > 20 characters |
-
-**Resulting confidence bands:**
-- **0.9–1.0**: High confidence (first attempt, entities present, good length)
-- **0.75–0.9**: Medium confidence (1–2 retries)
-- **< 0.75**: Low confidence (3+ retries, missing entities)
-
-The final score is clamped to [0.0, 1.0].
+`SyntheticDataConfidenceExtractor` first requires one exact canonical synthetic
+schema. It returns a native finite confidence only for an observed production
+routing or workflow outcome. Profile-selection, query-enhancement,
+entity-extraction, generated routing, and unobserved workflow records receive
+the explicit `0.0` human-review sentinel. Query length, entity presence,
+reasoning text, and retry count never manufacture confidence.
 
 ---
 
@@ -392,17 +381,22 @@ flowchart LR
 
 When a human rejects an example, the `FeedbackHandler`:
 
-1. Extracts the original generation parameters (topics, entities)
-2. Applies corrections from the reviewer (e.g., corrected entities, refined topics)
-3. Regenerates using the DSPy module with corrections applied
+1. Validates the complete original record against its advertised synthetic schema
+2. Passes that source record, the freeform review instruction, exact structured
+   corrections, and the Pydantic JSON Schema to the configured DSPy regenerator
+3. Runs the LM outside the event-loop thread with the primary model's configured
+   request deadline
 4. Creates a new review item with ID `{original_id}_regen_{attempt}`
-5. Sets initial confidence to 0.8 and stores generation metadata:
+5. Sets confidence to `0.0`, rejects unchanged or invalid output, and stores
+   generation metadata:
    - `regeneration: True`
    - `original_query` for comparison
    - `human_feedback` text
    - `corrections_applied` dictionary
 
-Maximum 2 regeneration attempts per item. If all fail, the item is dropped (returns `None`) rather than producing low-quality data.
+The default maximum is two regeneration attempts per item. Exhausted, timed-out,
+or invalid generation raises a contextual `RuntimeError`; the original remains
+pending and no replacement is persisted.
 
 ---
 
@@ -472,7 +466,8 @@ Two independent mechanisms feed a teacher LM into `BootstrapFewShot`:
   populates `optimization_settings["teacher_settings"]` for `_optimize_agent`'s own
   `BootstrapFewShot` call. `resolve_teacher()` returns an isolated copy of the centralized
   `teacher` endpoint, so every scheduled Argo compile bootstraps demonstrations from that
-  endpoint.
+  endpoint. The role is optional for processes that do not optimize, but these modes require
+  it: `resolve_teacher()` raises when it is absent and never substitutes the primary model.
 - **Per-agent config, via `OptimizerConfig.teacher_settings`.** Default `{}`, forwarded
   verbatim into the DSPy optimizer constructor by `DynamicDSPyMixin.create_optimizer`
   (`**config.teacher_settings`). An operator sets it per agent — e.g.
@@ -928,8 +923,8 @@ Agents retrieve strategies at inference time via `MemoryAwareMixin.get_strategie
 
 | Technique | Category | Role in System |
 |---|---|---|
-| **DSPy ChainOfThought** | Prompt engineering | Entity-query generation with retry + deterministic template fallback |
-| **Confidence Scoring (4 signals)** | Data quality | Retry count + entity presence + length + reasoning quality |
+| **DSPy ChainOfThought** | Prompt engineering | Entity-query generation with retry validation and explicit failure |
+| **Observed confidence contract** | Data quality | Strict schema validation plus native routing/workflow confidence; unobserved generated records use the `0.0` review sentinel |
 | **HITL Approval** | Data curation | Confidence-based auto-approval with rejection/regeneration cycle |
 | **BootstrapFewShot** | Few-shot learning | Batch CLI's default optimizer for all agent types; `simba`/`profile`/`entity-extraction` scale by trainset size (<50 vs >=50 examples), `triggered` uses fixed settings |
 | **DSPyOptimizerRegistry** | Optimizer selection | Per-agent `OptimizerConfig.optimizer_type`: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 wired; GEPA/SIMBA reserved (unmapped) |

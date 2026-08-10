@@ -206,6 +206,29 @@ session created it; ordinary sessions always leave the shared cluster warm.
 There is no idle reaper: only the person or automation that knows the whole
 campaign is complete can safely decide when to stop the shared cluster.
 
+The shared fixture seeds synthetic-generation checks with two real modalities:
+the tracked `tests/system/resources/videos/v_-6dz6tBH77I.mp4` bytes and a JPEG
+decoded from that video's first frame. It deploys the canonical video and image
+profiles, then verifies the exact SHA-256 content ID, tenant-scoped MinIO URI,
+profile, positive `documents_fed`/chunk counts, and the matching documents
+persisted in Vespa. An unrelated approximate-nearest-neighbor hit never counts
+as an existing fixture.
+
+Synthetic generation requests use the singular `strategy` field. The endpoint
+checks require exact nonzero samples from those persisted fixtures; profile and
+workflow examples must remain grounded in their content IDs, routing must use
+registered canonical agent IDs, and cross-modal examples must combine the real
+video and image modalities. Run that boundary directly with full output:
+
+```bash
+uv run pytest tests/e2e/test_api_e2e.py::TestSyntheticDataAPI \
+  --tb=long -v > /tmp/cogniverse_synthetic_e2e.log 2>&1
+```
+
+Leave the cluster warm when more campaign checks remain. Use the explicit
+`cogniverse stop --name cogniverse-e2e` command above only after the complete
+integration and end-to-end run has finished.
+
 ### Test Markers
 
 Static markers are registered in the root `pytest.ini` (`--strict-markers`
@@ -231,6 +254,9 @@ rejects any unregistered marker) plus a per-package override in
   data generation, distillation); opt-in only, 5-10+ minutes
 - `browser` — Playwright-driven browser e2e tests
 - `telemetry` — requires the telemetry/Phoenix provider
+- `no_shared_vespa` — runtime integration module owns another real boundary;
+  its module fixture leaves the dead backend sentinel in place and does not
+  start the shared Vespa container
 - `requires_vespa`, `requires_docker`, `requires_gpu`, `requires_ollama`,
   `requires_gliner`, `requires_models`, `requires_cv2`, `requires_ffmpeg` —
   infrastructure/model dependencies
@@ -707,6 +733,29 @@ endpoint from, in order:
 4. Otherwise, the fixture skips the test with a message explaining how to
    configure an endpoint.
 
+Hermetic session configs publish only roles whose exact model endpoint was
+provisioned and verified. A primary-only fixture removes any ``teacher`` entry
+in the source config instead of exposing an endpoint that the fixture did not
+check. Tests marked ``requires_teacher_model`` provision and verify the distinct
+teacher sidecar before adding that role. Accordingly, ``LLMConfig.teacher`` is
+optional; teacher-dependent code must call ``resolve_teacher()``, which fails
+explicitly when the role was not configured. It never falls back to the primary.
+Real optimizer integration tests that reach ``resolve_teacher()`` carry this
+marker so collection records the teacher role before the session config is
+materialized.
+
+When ``ensure_host_ollama`` must launch a local exact-model fallback, it labels
+the container with a unique pytest-session owner, allocates a session-specific
+container name and loopback port, and records the immutable Docker container ID.
+Parallel worktrees therefore never share a local model process or port. Session
+teardown is serialized with provisioning and removes that ID only while the
+current name still resolves to the same ID and owner label. A configured
+endpoint, an unlabelled existing container, or a container owned by another live
+session is never removed. A stopped, unowned container using either retired
+fixed name is rejected without starting or deleting it. The same guarded cleanup
+runs when startup fails, including after the primary starts but the teacher does
+not, so fixture failures do not leave session-owned model containers behind.
+
 Examples:
 
 ```bash
@@ -873,7 +922,7 @@ integration-tests:
       JAX_PLATFORM_NAME=cpu uv run python -m pytest \
         tests/module/integration/ \
         -m ci_fast \
-        -v --tb=short \
+        -v --tb=long \
         --cov=libs/module/cogniverse_module
 ```
 
