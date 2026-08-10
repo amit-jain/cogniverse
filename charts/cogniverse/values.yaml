@@ -837,6 +837,20 @@ llm:
 # a JSON map of {key → url} for every enabled service. Profiles route per
 # request by looking up their ``inference_service`` in that map.
 
+# On a unified-memory host the GPU pool is carved out of system RAM, so each
+# model's ``--gpu-memory-utilization`` is a claim against the same RAM the
+# desktop, the CPU-side services and the test containers need. The enabled
+# fractions must therefore sum to well under 1.0, not merely to 1.0.
+#
+# Sizing a fraction: it is a reservation ceiling, so cover the weights at
+# their served precision plus a KV allowance for the configured
+# ``--max-model-len`` x ``--max-num-seqs``, and no more. A fraction well above
+# that need does not make the model faster, it just denies the memory to
+# everything else.
+#
+# ``tests/charts/test_gpu_memory_budget.py`` holds the ceiling for the ROCm
+# overlay and fails when the enabled fractions exceed it.
+
 # Paces model load across inference pods. Every pod is created at once, so by
 # default every model reserves its share of the GPU pool at the same instant.
 # On a host where the GPU pool is carved out of system RAM, that simultaneous

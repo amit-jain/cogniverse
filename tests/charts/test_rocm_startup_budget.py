@@ -76,7 +76,7 @@ def test_tomoro_rocm_startup_profiles_one_sequence():
         "--mm-processor-kwargs",
         '{"max_pixels":1048576}',
         "--gpu-memory-utilization",
-        "0.45",
+        "0.18",
         "--max-num-seqs",
         "1",
     ]
@@ -104,7 +104,7 @@ def test_whisper_rocm_startup_caps_sequences_and_batched_tokens():
         "--max-model-len",
         "448",
         "--gpu-memory-utilization",
-        "0.16",
+        "0.04",
         "--max-num-seqs",
         "1",
         "--max-num-batched-tokens",

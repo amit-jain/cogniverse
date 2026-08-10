@@ -74,8 +74,10 @@ def test_rocm_chain_gates_each_model_on_its_predecessor():
         if _gate(deployment) is not None
     }
 
+    # The sequence still names vllm_llm_teacher at position 0, but it is not
+    # resident on this host, so the chain re-forms behind vllm_colpali and the
+    # remaining positions keep their budgets.
     assert chain == {
-        "vllm_colpali": ("http://cogniverse-vllm-llm-teacher:8000/health", "600"),
         "vllm_llm_student": ("http://cogniverse-vllm-colpali:8000/health", "1200"),
         "vllm_asr": ("http://cogniverse-vllm-llm-student:8000/health", "1800"),
         "denseon": ("http://cogniverse-vllm-asr:8000/health", "2400"),
@@ -89,7 +91,7 @@ def test_chain_head_and_non_sequenced_services_start_immediately():
 
     ungated = {name for name, d in deployments.items() if _gate(d) is None}
 
-    assert ungated == {"vllm_llm_teacher", "gliner"}
+    assert ungated == {"vllm_colpali", "gliner"}
 
 
 def test_gated_deployments_extend_the_rollout_progress_deadline():
@@ -101,9 +103,8 @@ def test_gated_deployments_extend_the_rollout_progress_deadline():
     }
 
     assert deadlines == {
-        "vllm_llm_teacher": None,
         "gliner": None,
-        "vllm_colpali": 1500,
+        "vllm_colpali": None,
         "vllm_llm_student": 2100,
         "vllm_asr": 2700,
         "denseon": 3300,
@@ -120,14 +121,14 @@ def test_weight_download_runs_before_the_gate_so_only_gpu_load_serializes():
         "hfCache.persistence.enabled=true",
     )
 
+    student = deployments["vllm_llm_student"]["spec"]["template"]["spec"]
     colpali = deployments["vllm_colpali"]["spec"]["template"]["spec"]
-    teacher = deployments["vllm_llm_teacher"]["spec"]["template"]["spec"]
 
-    assert [c["name"] for c in colpali["initContainers"]] == [
+    assert [c["name"] for c in student["initContainers"]] == [
         "model-warm",
         "startup-gate",
     ]
-    assert [c["name"] for c in teacher["initContainers"]] == ["model-warm"]
+    assert [c["name"] for c in colpali["initContainers"]] == ["model-warm"]
 
 
 def test_gating_leaves_the_readiness_contract_untouched():
@@ -146,7 +147,6 @@ def test_gating_leaves_the_readiness_contract_untouched():
     }
 
     assert probes == {
-        "vllm_llm_teacher": (0, 900),
         "vllm_colpali": (0, 600),
         "vllm_llm_student": (0, 600),
         "vllm_asr": (0, 600),
@@ -192,7 +192,7 @@ def test_default_values_pace_nothing():
 
 
 def test_gate_polls_until_the_predecessor_answers_then_stops_waiting():
-    gate = _gate(_inference_deployments()["vllm_colpali"])
+    gate = _gate(_inference_deployments()["vllm_llm_student"])
 
     assert gate["command"] == ["sh", "-c"]
     script = gate["args"][0]
