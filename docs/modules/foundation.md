@@ -69,7 +69,7 @@ flowchart TB
         SemanticRouterFile["<span style='color:#000'>semantic_router.py<br/>apply_semantic_routing, create_routed_lm</span>"]
         Utils["<span style='color:#000'>utils.py<br/>ConfigUtils, create_default_config_manager</span>"]
         ApiMixin["<span style='color:#000'>api_mixin.py<br/>ConfigAPIMixin (FastAPI endpoints)</span>"]
-        Bootstrap["<span style='color:#000'>bootstrap.py<br/>BootstrapConfig, parse_inference_service_urls</span>"]
+        Bootstrap["<span style='color:#000'>bootstrap.py<br/>BootstrapConfig</span>"]
         VespaStore["<span style='color:#000'>VespaConfigStore<br/>(in cogniverse_vespa)</span>"]
     end
 
@@ -210,12 +210,9 @@ never written into persisted `SystemConfig` data. The environment read is
 centralized in the bootstrap configuration boundary and each client snapshots
 the resulting immutable mapping when it is constructed.
 
-`parse_inference_service_urls(raw)` is the shared startup parser for the API
-runtime and ingestion worker. It accepts only a duplicate-free JSON object of
-non-empty service names to root HTTP(S) URLs, rejects credentials and URL
-suffixes, removes a single trailing slash, and returns `{}` for an absent
-environment value. Malformed input raises `ValueError` without echoing endpoint
-contents.
+The API runtime and ingestion worker parse `INFERENCE_SERVICE_URLS` with
+`cogniverse_runtime.inference_services.parse_inference_service_urls`, documented
+in the runtime module guide.
 
 **API Reference:**
 
