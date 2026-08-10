@@ -256,13 +256,14 @@ class VespaTestManager:
             # both lookups empty, and the pipeline refuses to build. The
             # requires_inference marker publishes the resolved endpoints in the
             # environment; carry them through.
-            from cogniverse_foundation.config.bootstrap import (
+            from cogniverse_foundation.config.unified_config import SystemConfig
+            from cogniverse_runtime.inference_services import (
                 parse_inference_service_urls,
             )
-            from cogniverse_foundation.config.unified_config import SystemConfig
 
-            inference_service_urls = parse_inference_service_urls(
-                os.environ.get("INFERENCE_SERVICE_URLS", "")
+            inference_service_urls = (
+                parse_inference_service_urls(os.environ.get("INFERENCE_SERVICE_URLS"))
+                or {}
             )
             config_manager.set_system_config(
                 SystemConfig(
