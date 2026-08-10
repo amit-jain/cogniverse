@@ -372,6 +372,60 @@ def k3d_cluster():
     }
 
 
+def deployment_helm_inputs(
+    project_root,
+    *,
+    extra_set: dict[str, str] | None = None,
+) -> dict:
+    """Resolve the exact backend, overlays, image tags, and Helm overrides."""
+    from cogniverse_cli.config import get_device_values_file
+    from cogniverse_cli.images import (
+        detect_torch_backend,
+        dev_image_set_values,
+        dev_version,
+    )
+
+    chart_path = project_root / "charts" / "cogniverse"
+    values_file = chart_path / "values.k3s.yaml"
+    assert chart_path.exists(), f"Chart not found: {chart_path}"
+    assert values_file.exists(), f"Values not found: {values_file}"
+
+    backend = detect_torch_backend()
+    device_values_file = get_device_values_file(backend, project_root=project_root)
+    image_version = dev_version(project_root)
+    helm_values = [values_file]
+    if device_values_file:
+        helm_values.append(device_values_file)
+    helm_set_overrides = {
+        "argo-workflows.crds.install": "false",
+        "runtime.backend": backend,
+        "dashboard.backend": backend,
+        "devMode.enabled": "false",
+        "runtime.sandbox.enabled": "false",
+    }
+    helm_set_overrides.update(
+        # Same overlays helm is about to apply: the tag overrides are emitted
+        # per ENABLED sidecar, so computing them from chart defaults while
+        # helm enables more (the device overlay turns on code_colbert_pylate)
+        # leaves those deployments on the static placeholder tag that was
+        # never built — ErrImageNeverPull on a Never-pull cluster.
+        dev_image_set_values(
+            project_root,
+            torch_backend=backend,
+            values_files=helm_values,
+            version=image_version,
+        )
+    )
+    if extra_set:
+        helm_set_overrides.update(extra_set)
+    return {
+        "backend": backend,
+        "image_version": image_version,
+        "helm_values": helm_values,
+        "helm_set_overrides": helm_set_overrides,
+    }
+
+
 def deploy_stack(
     cluster_name: str,
     namespace: str,
@@ -387,28 +441,19 @@ def deploy_stack(
 
     project_root = Path(__file__).parent.parent.parent.parent
     chart_path = project_root / "charts" / "cogniverse"
-    values_file = chart_path / "values.k3s.yaml"
-
-    assert chart_path.exists(), f"Chart not found: {chart_path}"
-    assert values_file.exists(), f"Values not found: {values_file}"
-
-    from cogniverse_cli.config import get_device_values_file
+    deployment_inputs = deployment_helm_inputs(project_root, extra_set=extra_set)
     from cogniverse_cli.images import (
         build_images,
-        detect_torch_backend,
-        dev_image_set_values,
-        dev_version,
         import_images,
         prune_superseded_images,
     )
 
-    backend = detect_torch_backend()
-    device_values_file = get_device_values_file(backend, project_root=project_root)
+    backend = deployment_inputs["backend"]
     # One git-derived version for the built tags AND the helm overrides —
     # without the override the chart falls back to its static ``0.1.0-dev``
     # placeholder and every first-party pod dies with ErrImageNeverPull
     # (pullPolicy=Never can only see the imported, git-tagged images).
-    image_version = dev_version(project_root)
+    image_version = deployment_inputs["image_version"]
 
     # Build the canonical image set the chart's k3s values enable —
     # runtime + dashboard for the host's torch backend, plus the
@@ -508,31 +553,8 @@ def deploy_stack(
     # has no /cogniverse-src bind-mount or openshell-mtls secret.
     from cogniverse_cli.deploy import helm_install
 
-    helm_values = [values_file]
-    if device_values_file:
-        helm_values.append(device_values_file)
-    helm_set_overrides = {
-        "argo-workflows.crds.install": "false",
-        "runtime.backend": backend,
-        "dashboard.backend": backend,
-        "devMode.enabled": "false",
-        "runtime.sandbox.enabled": "false",
-    }
-    helm_set_overrides.update(
-        # Same overlays helm is about to apply: the tag overrides are emitted
-        # per ENABLED sidecar, so computing them from chart defaults while
-        # helm enables more (the device overlay turns on code_colbert_pylate)
-        # leaves those deployments on the static placeholder tag that was
-        # never built — ErrImageNeverPull on a Never-pull cluster.
-        dev_image_set_values(
-            project_root,
-            torch_backend=backend,
-            values_files=helm_values,
-            version=image_version,
-        )
-    )
-    if extra_set:
-        helm_set_overrides.update(extra_set)
+    helm_values = deployment_inputs["helm_values"]
+    helm_set_overrides = deployment_inputs["helm_set_overrides"]
 
     # Every sidecar helm is about to enable must be pinned to a tag that was
     # actually built and imported. Anything left on the chart's static
