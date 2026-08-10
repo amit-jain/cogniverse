@@ -550,6 +550,14 @@ async def real_stack(
     config_blob = json.loads(src_config_path.read_text())
     config_blob["backend"]["port"] = vespa_backend["http_port"]
     config_blob["backend"]["url"] = "http://localhost"
+    # The worker resolves llm_config.primary from this config for KG
+    # entity/claim extraction; the repo blob's api_base names an endpoint
+    # this stack does not own. ensure_llm probes the configured endpoints
+    # for the exact model and provisions the test sidecar when none is
+    # live, so the seeded endpoint is serving at seed time.
+    from tests.utils.hermetic_llm import MODEL, ensure_llm
+
+    config_blob["llm_config"]["primary"]["api_base"] = ensure_llm(model=MODEL)
     test_config_dir = Path(tempfile.mkdtemp(prefix="upload-queue-config-"))
     (test_config_dir / "schemas").mkdir(parents=True, exist_ok=True)
     # ConfigUtils' tenant-merge needs the schemas dir at the same level
