@@ -7,11 +7,13 @@ and other AI outputs requiring human review.
 """
 
 import asyncio
+import json
 import logging
 from typing import Dict
 
 import pandas as pd
 import streamlit as st
+from pydantic import BaseModel, ValidationError
 
 # Import approval system components
 from cogniverse_agents.approval import (
@@ -20,12 +22,198 @@ from cogniverse_agents.approval import (
     HumanApprovalAgent,
     ReviewDecision,
 )
+from cogniverse_core.approval.training_schema import (
+    validate_approved_training_values,
+)
 from cogniverse_synthetic.approval import (
     SyntheticDataConfidenceExtractor,
     SyntheticDataFeedbackHandler,
 )
+from cogniverse_synthetic.dspy_modules import ValidatedSyntheticExampleRegenerator
+from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_SCHEMA
+from cogniverse_synthetic.schemas import (
+    EntityExtractionExampleSchema,
+    ProfileSelectionExampleSchema,
+    QueryEnhancementExampleSchema,
+    RoutingExperienceSchema,
+    WorkflowExecutionSchema,
+)
 
 logger = logging.getLogger(__name__)
+
+_APPROVAL_DECISION_TIMEOUT_SECONDS = 900.0
+
+
+_SCHEMA_CORRECTION_FIELDS: dict[type[BaseModel], tuple[str, ...]] = {
+    ProfileSelectionExampleSchema: tuple(ProfileSelectionExampleSchema.model_fields),
+    QueryEnhancementExampleSchema: tuple(QueryEnhancementExampleSchema.model_fields),
+    EntityExtractionExampleSchema: ("entities", "relationships"),
+    RoutingExperienceSchema: ("entities", "relationships", "chosen_agent"),
+    WorkflowExecutionSchema: tuple(WorkflowExecutionSchema.model_fields),
+}
+
+
+def _schema_for_item_data(data: dict) -> type[BaseModel]:
+    if "workflow_id" in data:
+        return WorkflowExecutionSchema
+    if "available_profiles" in data or "selected_profile" in data:
+        return ProfileSelectionExampleSchema
+    if "chosen_agent" in data:
+        return RoutingExperienceSchema
+    if "entities" in data or "entity_types" in data or "relationships" in data:
+        return EntityExtractionExampleSchema
+    if "enhanced_query" in data:
+        return QueryEnhancementExampleSchema
+    raise ValueError("item data does not match an advertised synthetic example schema")
+
+
+def _review_reasoning(data: dict) -> str:
+    schema = _schema_for_item_data(data)
+    if schema in {ProfileSelectionExampleSchema, QueryEnhancementExampleSchema}:
+        reasoning = data.get("reasoning", "")
+    else:
+        metadata = data.get("metadata", {})
+        generation_metadata = metadata.get("_generation_metadata", {})
+        reasoning = generation_metadata.get("reasoning", "")
+    return reasoning if isinstance(reasoning, str) else ""
+
+
+def _validate_schema_record(schema: type[BaseModel], data: dict) -> None:
+    unknown_fields = sorted(set(data) - set(schema.model_fields))
+    if unknown_fields:
+        raise ValueError(
+            f"{schema.__name__} unsupported item fields: " + ", ".join(unknown_fields)
+        )
+    try:
+        schema.model_validate(data)
+    except ValidationError as exc:
+        raise ValueError(f"invalid {schema.__name__} record: {exc}") from exc
+
+
+def _canonical_entities(value) -> list[dict[str, str]]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("entities must be a non-empty list of entity objects")
+
+    entities = []
+    for index, entity in enumerate(value):
+        if not isinstance(entity, dict) or set(entity) != {"text", "type"}:
+            raise ValueError(
+                f"entities[{index}] must contain only text and type strings"
+            )
+        text = entity["text"]
+        entity_type = entity["type"]
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or not isinstance(entity_type, str)
+            or not entity_type.strip()
+        ):
+            raise ValueError(
+                f"entities[{index}] must contain only text and type strings"
+            )
+        entities.append({"text": text.strip(), "type": entity_type.strip()})
+    return entities
+
+
+def _canonical_relationships(
+    value,
+    *,
+    entity_texts: list[str],
+) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        raise ValueError("relationships must be a list of relationship objects")
+
+    relationships = []
+    for index, relationship in enumerate(value):
+        if not isinstance(relationship, dict) or set(relationship) != {
+            "source",
+            "target",
+            "type",
+        }:
+            raise ValueError(
+                f"relationships[{index}] must contain only source, target, "
+                "and type strings"
+            )
+        canonical = {}
+        for field in ("source", "target", "type"):
+            field_value = relationship[field]
+            if not isinstance(field_value, str) or not field_value.strip():
+                raise ValueError(
+                    f"relationships[{index}] must contain only source, target, "
+                    "and type strings"
+                )
+            canonical[field] = field_value.strip()
+        for endpoint in ("source", "target"):
+            if canonical[endpoint] not in entity_texts:
+                raise ValueError(
+                    f"relationships[{index}].{endpoint} {canonical[endpoint]!r} "
+                    f"is not one of the corrected entity texts {entity_texts!r}"
+                )
+        relationships.append(canonical)
+    return relationships
+
+
+def _parse_schema_corrections(item_data: dict, raw_value: str) -> dict:
+    schema = _schema_for_item_data(item_data)
+    _validate_schema_record(schema, item_data)
+    try:
+        corrections = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{schema.__name__} corrections must be valid JSON") from exc
+    if not isinstance(corrections, dict) or not corrections:
+        raise ValueError(
+            f"{schema.__name__} corrections must be a non-empty JSON object"
+        )
+
+    allowed_fields = _SCHEMA_CORRECTION_FIELDS[schema]
+    unsupported_fields = sorted(set(corrections) - set(allowed_fields))
+    if unsupported_fields:
+        raise ValueError(
+            f"{schema.__name__} unsupported correction fields: "
+            + ", ".join(unsupported_fields)
+        )
+
+    candidate = item_data | corrections
+    if schema in {EntityExtractionExampleSchema, RoutingExperienceSchema}:
+        entities = _canonical_entities(candidate["entities"])
+        relationships = _canonical_relationships(
+            candidate.get("relationships", []),
+            entity_texts=[entity["text"] for entity in entities],
+        )
+        candidate["entities"] = entities
+        candidate["relationships"] = relationships
+        if "entities" in corrections:
+            corrections["entities"] = entities
+        if "relationships" in corrections:
+            corrections["relationships"] = relationships
+
+    _validate_schema_record(schema, candidate)
+    agent_type = APPROVED_TRAINING_AGENT_BY_SCHEMA.get(schema)
+    if agent_type is not None:
+        validate_approved_training_values(
+            candidate,
+            agent_type,
+            context=f"{schema.__name__} corrected record",
+        )
+    return corrections
+
+
+def _schema_correction_template(item_data: dict) -> tuple[str, dict]:
+    schema = _schema_for_item_data(item_data)
+    _validate_schema_record(schema, item_data)
+    template = {
+        field: item_data[field]
+        for field in _SCHEMA_CORRECTION_FIELDS[schema]
+        if field in item_data
+    }
+    if schema in {EntityExtractionExampleSchema, RoutingExperienceSchema}:
+        template["entities"] = [
+            {"text": entity.get("text"), "type": entity.get("type")}
+            for entity in item_data.get("entities", [])
+            if isinstance(entity, dict)
+        ]
+        template["relationships"] = item_data.get("relationships", [])
+    return schema.__name__, template
 
 
 def render_approval_queue_tab():
@@ -35,9 +223,7 @@ def render_approval_queue_tab():
         "Review and approve AI-generated outputs. Auto-approved items shown for reference."
     )
 
-    # Initialize approval agent if not in session state
-    if "approval_agent" not in st.session_state:
-        _initialize_approval_agent()
+    _ensure_approval_agent_for_current_tenant()
 
     # Create sub-tabs
     approval_tabs = st.tabs(
@@ -57,7 +243,61 @@ def render_approval_queue_tab():
         _render_statistics_tab()
 
 
-def _initialize_approval_agent():
+def _clear_tenant_approval_state() -> None:
+    keys = {
+        "approval_agent",
+        "approval_storage",
+        "approval_agent_tenant_id",
+        "pending_items",
+        "approved_items",
+        "rejected_items",
+        "last_generated_batch",
+        "synthetic_data_result",
+    }
+    keys.update(
+        key for key in list(st.session_state) if str(key).startswith("rejecting_")
+    )
+    for key in keys:
+        st.session_state.pop(key, None)
+
+
+def _ensure_approval_agent_for_current_tenant():
+    tenant_id = st.session_state.get("current_tenant")
+    configured_tenant = st.session_state.get("approval_agent_tenant_id")
+    agent = st.session_state.get("approval_agent")
+    if tenant_id and configured_tenant == tenant_id and agent is not None:
+        return agent
+
+    _clear_tenant_approval_state()
+    if not tenant_id:
+        st.error("Select an active tenant before initializing the approval agent.")
+        return None
+    return _initialize_approval_agent(tenant_id)
+
+
+def _build_feedback_handler(config_manager, tenant_id: str):
+    """Build an isolated regeneration handler from the tenant's primary LM."""
+    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.utils import get_config
+
+    primary = (
+        get_config(
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+        )
+        .get_llm_config()
+        .primary
+    )
+    lm = create_dspy_lm(primary)
+    generator = ValidatedSyntheticExampleRegenerator(max_retries=3)
+    generator.lm = lm
+    return SyntheticDataFeedbackHandler(
+        generator=generator,
+        generation_timeout_seconds=primary.request_timeout,
+    )
+
+
+def _initialize_approval_agent(tenant_id: str):
     """Initialize approval agent with synthetic data configuration"""
     try:
         from cogniverse_foundation.config.unified_config import ApprovalConfig
@@ -65,18 +305,22 @@ def _initialize_approval_agent():
 
         # ApprovalStorageImpl needs the telemetry endpoints + tenant to scope
         # its spans; resolve them from SystemConfig (same source app.py uses).
-        sys_cfg = create_default_config_manager().get_system_config()
+        config_manager = create_default_config_manager()
+        sys_cfg = config_manager.get_system_config()
         http_endpoint = sys_cfg.telemetry_url
         grpc = sys_cfg.telemetry_collector_endpoint
         grpc_endpoint = grpc if grpc.startswith("http") else f"http://{grpc}"
-        tenant_id = st.session_state.get("current_tenant") or "default"
+        redis_url = st.session_state.get("redis_url")
+        if not redis_url:
+            raise ValueError("REDIS_URL is required for approval item replacement")
 
         confidence_extractor = SyntheticDataConfidenceExtractor()
-        feedback_handler = SyntheticDataFeedbackHandler()
+        feedback_handler = _build_feedback_handler(config_manager, tenant_id)
         storage = ApprovalStorageImpl(
             grpc_endpoint=grpc_endpoint,
             http_endpoint=http_endpoint,
             tenant_id=tenant_id,
+            redis_url=redis_url,
         )
 
         # Auto-approval threshold comes from ApprovalConfig (typed single
@@ -91,10 +335,14 @@ def _initialize_approval_agent():
 
         st.session_state.approval_agent = agent
         st.session_state.approval_storage = storage
+        st.session_state.approval_agent_tenant_id = tenant_id
         logger.info("Initialized approval agent (tenant: %s)", tenant_id)
+        return agent
     except Exception as e:
+        _clear_tenant_approval_state()
         st.error(f"Failed to initialize approval agent: {e}")
         logger.error(f"Approval agent initialization failed: {e}")
+        return None
 
 
 def _render_pending_review_tab():
@@ -136,7 +384,9 @@ def _render_review_item(item, idx: int):
     data = item.data
     query = data.get("query", "N/A")
     entities = data.get("entities", [])
-    reasoning = data.get("reasoning", "")
+    metadata = data.get("metadata", {})
+    generation_metadata = metadata.get("_generation_metadata", {})
+    reasoning = _review_reasoning(data)
 
     col1, col2 = st.columns([2, 1])
 
@@ -148,14 +398,13 @@ def _render_review_item(item, idx: int):
 
     with col2:
         st.metric("Confidence", f"{item.confidence:.2f}")
-        metadata = data.get("_generation_metadata", {})
-        retry_count = metadata.get("retry_count", 0)
+        retry_count = generation_metadata.get("retry_count", 0)
         st.metric("Retry Count", retry_count)
 
     # Generation metadata
-    if metadata:
+    if generation_metadata:
         with st.expander("Generation Metadata"):
-            st.json(metadata)
+            st.json(generation_metadata)
 
     # Approval controls
     st.markdown("---")
@@ -181,64 +430,76 @@ def _render_review_item(item, idx: int):
             placeholder="e.g., Query doesn't match entities, Grammar issues, ...",
         )
 
-        col1, col2 = st.columns(2)
+        try:
+            schema_name, correction_template = _schema_correction_template(data)
+        except ValueError as exc:
+            st.error(str(exc))
+            return
 
-        with col1:
-            # Corrections
-            st.markdown("**Corrections (optional):**")
-            corrected_entities = st.text_input(
-                "Corrected Entities (comma-separated)",
-                key=f"corrected_entities_{idx}",
-                value=", ".join([str(e) for e in entities]),
-            )
+        corrected_fields = st.text_area(
+            f"{schema_name} Corrections (JSON)",
+            key=f"schema_corrections_{idx}",
+            value=json.dumps(correction_template, indent=2, default=str),
+            help="Submit only fields defined by this synthetic example schema.",
+        )
 
-        with col2:
-            st.markdown("&nbsp;")  # Spacer
-            if st.button(
-                "Submit Rejection", key=f"submit_reject_{idx}", type="primary"
-            ):
-                corrections = {}
-                if corrected_entities:
-                    corrections["entities"] = [
-                        e.strip() for e in corrected_entities.split(",")
-                    ]
-
+        if st.button("Submit Rejection", key=f"submit_reject_{idx}", type="primary"):
+            try:
+                corrections = _parse_schema_corrections(data, corrected_fields)
                 _handle_rejection(item, idx, feedback, corrections)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
                 st.session_state[f"rejecting_{idx}"] = False
 
 
-def _persist_decision(decision: ReviewDecision, item) -> None:
-    """Persist a review decision via the approval storage (sync wrapper).
+def _apply_persisted_decision(
+    agent,
+    decision: ReviewDecision,
+    item,
+    *,
+    timeout_seconds: float = _APPROVAL_DECISION_TIMEOUT_SECONDS,
+):
+    batch_id = item.metadata.get("approval_batch_id")
+    if not isinstance(batch_id, str) or not batch_id:
+        raise RuntimeError(f"approval batch ID missing for item {item.item_id}")
 
-    Marks the item approved/rejected in the annotation store AND, on
-    approval, appends it to the ``approved_synthetic_data`` training dataset
-    so the finetuning orchestrator picks it up on its next run.
+    async def apply_with_deadline():
+        task = asyncio.create_task(agent.apply_decision(batch_id, decision))
+        done, _ = await asyncio.wait({task}, timeout=timeout_seconds)
+        if task not in done:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise TimeoutError(
+                "approval decision timed out after "
+                f"{timeout_seconds:g} seconds: batch={batch_id} "
+                f"item={decision.item_id}"
+            )
+        return task.result()
 
-    The pending queue is reconstructed from each item's
-    ``item_status_update`` / ``human_approval`` annotations, so the durable
-    status flip is ``update_item``. ``record_decision`` only writes a
-    diagnostic ``approval_decision`` span that nothing reads back for
-    status, so calling it alone left the item pending: it reappeared on the
-    next refresh and a re-approval duplicated the training append.
+    return asyncio.run(apply_with_deadline())
 
-    On approval the training append runs BEFORE the status is flipped, so an
-    append failure raises with the item still pending and retryable instead
-    of marking it approved with its training row missing.
-    """
-    storage = st.session_state.get("approval_storage")
-    if storage is None:
-        raise RuntimeError("approval storage not initialized")
 
-    async def _persist() -> None:
-        if decision.approved:
-            item.status = ApprovalStatus.APPROVED
-            await storage.append_to_training_dataset("approved_synthetic_data", [item])
-        else:
-            item.status = ApprovalStatus.REJECTED
-        await storage.update_item(item)
-        await storage.record_decision(decision, item)
+def _require_decision_result(item, expected_status: ApprovalStatus):
+    actual_status = getattr(item, "status", None)
+    if actual_status is not expected_status:
+        actual_value = (
+            actual_status.value
+            if isinstance(actual_status, ApprovalStatus)
+            else repr(actual_status)
+        )
+        raise RuntimeError(
+            f"decision persistence returned {actual_value}; "
+            f"expected {expected_status.value}"
+        )
+    return item
 
-    asyncio.run(_persist())
+
+def _persist_decision(decision: ReviewDecision, item):
+    agent = st.session_state.get("approval_agent")
+    if agent is None:
+        raise RuntimeError("approval agent not initialized")
+    return _apply_persisted_decision(agent, decision, item)
 
 
 def _handle_approval(item, idx: int):
@@ -251,9 +512,9 @@ def _handle_approval(item, idx: int):
         )
 
         # Persist the decision before mutating local state.
-        _persist_decision(decision, item)
-        item.status = ApprovalStatus.APPROVED
-        item.reviewed_at = pd.Timestamp.now()
+        approved_item = _require_decision_result(
+            _persist_decision(decision, item), ApprovalStatus.APPROVED
+        )
 
         st.success(f"✅ Approved: {item.item_id}")
 
@@ -264,7 +525,7 @@ def _handle_approval(item, idx: int):
 
         # Add to approved
         approved_items = st.session_state.get("approved_items", [])
-        approved_items.append(item)
+        approved_items.append(approved_item)
         st.session_state.approved_items = approved_items
 
         st.rerun()
@@ -285,16 +546,16 @@ def _handle_rejection(item, idx: int, feedback: str, corrections: Dict):
             reviewer=st.session_state.get("user_email", "unknown"),
         )
 
-        # Persist the decision before mutating local state.
-        _persist_decision(decision, item)
+        regenerated = _require_decision_result(
+            _persist_decision(decision, item), ApprovalStatus.REGENERATED
+        )
         item.status = ApprovalStatus.REJECTED
-        item.reviewed_at = pd.Timestamp.now()
+        item.reviewed_at = decision.timestamp
 
-        st.warning(f"❌ Rejected: {item.item_id}")
+        st.warning(f"❌ Rejected: {item.item_id}; regenerated as {regenerated.item_id}")
 
-        # Remove from pending
         pending_items = st.session_state.get("pending_items", [])
-        pending_items.pop(idx)
+        pending_items[idx] = regenerated
         st.session_state.pending_items = pending_items
 
         # Add to rejected
@@ -356,7 +617,35 @@ def _render_rejected_items_tab():
             st.markdown(f"**Corrections:** {decision.corrections}")
 
             if st.button("🔄 Regenerate", key=f"regen_{idx}"):
-                st.info("Regeneration triggered (would use FeedbackHandler)")
+                _handle_regeneration(item, decision)
+
+
+def _handle_regeneration(item, decision: ReviewDecision) -> None:
+    try:
+        regenerated = _require_decision_result(
+            _persist_decision(decision, item), ApprovalStatus.REGENERATED
+        )
+        pending_items = list(st.session_state.get("pending_items", []))
+        replacement_indexes = [
+            index
+            for index, pending in enumerate(pending_items)
+            if pending.item_id == regenerated.item_id
+            or pending.metadata.get("original_item_id") == item.item_id
+        ]
+        if len(replacement_indexes) > 1:
+            raise RuntimeError(
+                f"multiple pending replacements found for item {item.item_id}"
+            )
+        if replacement_indexes:
+            pending_items[replacement_indexes[0]] = regenerated
+        else:
+            pending_items.append(regenerated)
+        st.session_state.pending_items = pending_items
+        st.success(f"Regenerated {item.item_id} as {regenerated.item_id}")
+        st.rerun()
+    except Exception as exc:
+        st.error(f"Failed to regenerate item: {exc}")
+        logger.exception("Rejected item regeneration failed")
 
 
 def _render_statistics_tab():
@@ -412,21 +701,13 @@ def _load_pending_items():
     """Load pending items from the persisted approval store."""
     try:
         agent = st.session_state.get("approval_agent")
-        if agent is not None:
-            tenant_id = st.session_state.get("current_tenant")
-            context_filter = {"tenant_id": tenant_id} if tenant_id else None
-            items = asyncio.run(agent.get_pending_items(context_filter))
-            st.session_state.pending_items = items
-            st.success(f"Loaded {len(items)} pending items")
-            return
-
-        if "last_generated_batch" in st.session_state:
-            batch = st.session_state.last_generated_batch
-            st.session_state.pending_items = batch.pending_review
-            st.session_state.approved_items = batch.auto_approved
-            st.success(f"Loaded {len(batch.pending_review)} pending items")
-        else:
-            st.info("No pending items. Generate synthetic data first.")
+        if agent is None:
+            raise RuntimeError("approval agent not initialized")
+        tenant_id = st.session_state.get("current_tenant")
+        context_filter = {"tenant_id": tenant_id} if tenant_id else None
+        items = asyncio.run(agent.get_pending_items(context_filter))
+        st.session_state.pending_items = items
+        st.success(f"Loaded {len(items)} pending items")
 
     except Exception as e:
         st.error(f"Failed to load pending items: {e}")

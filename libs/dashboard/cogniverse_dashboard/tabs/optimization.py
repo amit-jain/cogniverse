@@ -5,7 +5,7 @@ Enhanced Optimization Tab for Phoenix Dashboard
 Comprehensive optimization framework including:
 - Search result annotation (thumbs up/down, star ratings)
 - Golden dataset builder from Phoenix annotations
-- Synthetic data generation for all optimizers
+- Synthetic data generation for approved training consumers
 - Routing optimization (GRPO/GEPA)
 - DSPy module optimization (teacher-student distillation)
 - Reranking optimization from user feedback
@@ -13,10 +13,12 @@ Comprehensive optimization framework including:
 - Unified metrics dashboard
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict
+from uuid import uuid4
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -25,7 +27,16 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 
+from cogniverse_dashboard.tabs.approval_queue import (
+    _apply_persisted_decision,
+    _ensure_approval_agent_for_current_tenant,
+    _parse_schema_corrections,
+    _require_decision_result,
+    _review_reasoning,
+    _schema_correction_template,
+)
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
+from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
 
 def _filter_search_spans(spans_df: pd.DataFrame) -> pd.DataFrame:
@@ -576,7 +587,8 @@ def _render_synthetic_data_tab():
     with col1:
         optimizer = st.selectbox(
             "Optimizer Type",
-            ["profile", "routing", "workflow", "unified"],
+            list(APPROVED_TRAINING_AGENT_BY_OPTIMIZER),
+            index=1,
             help="Which optimizer to generate data for",
         )
     with col2:
@@ -605,20 +617,25 @@ def _render_synthetic_data_tab():
                 "Low-confidence items require your review."
             )
 
-    # Show confidence threshold slider when enabled
+    confidence_threshold = None
     if enable_approval:
+        approval_agent = _ensure_approval_agent_for_current_tenant()
+        if approval_agent is None:
+            return
+        confidence_threshold = getattr(approval_agent, "threshold", None)
+        if not isinstance(confidence_threshold, (int, float)) or isinstance(
+            confidence_threshold, bool
+        ):
+            st.error("Approval agent has no configured confidence threshold.")
+            return
         st.markdown("**Confidence Settings:**")
         col1, col2 = st.columns(2)
 
         with col1:
-            confidence_threshold = st.slider(
+            st.metric(
                 "Auto-Approval Threshold",
-                0.0,
-                1.0,
-                0.85,
-                0.05,
-                help="Items with confidence ≥ this value are automatically approved",
-                key="confidence_threshold_slider",
+                f"{confidence_threshold:.2f}",
+                help="Loaded from the approval agent configuration",
             )
 
         with col2:
@@ -637,21 +654,24 @@ def _render_synthetic_data_tab():
     with st.expander("⚙️ Advanced Options"):
         col1, col2 = st.columns(2)
         with col1:
-            strategies = st.multiselect(
-                "Sampling Strategies",
+            strategy = st.selectbox(
+                "Sampling Strategy",
                 [
                     "diverse",
                     "temporal_recent",
                     "entity_rich",
                     "multi_modal_sequences",
                 ],
-                default=["diverse"],
                 help="How to sample content from Vespa",
             )
         with col2:
             max_profiles = st.slider("Max Profiles", 1, 10, 3)
-            # Tenant comes from the gate-validated session state
-            tenant_id = st.session_state["current_tenant"]
+            from cogniverse_core.common.tenant_utils import require_tenant_id
+
+            tenant_id = require_tenant_id(
+                st.session_state["current_tenant"],
+                source="optimization synthetic data",
+            )
             st.text(f"Tenant: {tenant_id}")
 
     # Generate synthetic data
@@ -674,7 +694,7 @@ def _render_synthetic_data_tab():
                     "optimizer": optimizer,
                     "count": count,
                     "vespa_sample_size": vespa_sample_size,
-                    "strategies": strategies,
+                    "strategy": strategy,
                     "max_profiles": max_profiles,
                     "tenant_id": tenant_id,
                 }
@@ -692,7 +712,7 @@ def _render_synthetic_data_tab():
 
                     # Process through approval if enabled
                     if enable_approval:
-                        _process_approval_workflow(result, confidence_threshold)
+                        _process_approval_workflow(result, tenant_id)
                     else:
                         st.success(
                             f"✅ Generated {result['count']} examples using {len(result['selected_profiles'])} profiles"
@@ -785,10 +805,10 @@ def _render_synthetic_data_tab():
         4. Load the synthetic data for training
 
         **Optimizer Tabs:**
+        - `query_enhancement` → Query Enhancement Optimization
         - `profile` → Profile Selection Tab
         - `routing` → Routing Optimization Tab
-        - `workflow` → DSPy Optimization Tab
-        - `unified` → Multiple tabs (Routing + DSPy)
+        - `entity_extraction` → Entity Extraction Optimization
         """)
 
     # Show optimizer info
@@ -796,6 +816,11 @@ def _render_synthetic_data_tab():
     st.subheader("ℹ️ Optimizer Information")
 
     optimizer_info = {
+        "query_enhancement": {
+            "description": "Production-grounded query expansion",
+            "schema": "QueryEnhancementExampleSchema",
+            "features": "Generates exact enhanced-query supervision",
+        },
         "profile": {
             "description": "Profile selection per query (modality + complexity + intent)",
             "schema": "ProfileSelectionExampleSchema",
@@ -806,15 +831,10 @@ def _render_synthetic_data_tab():
             "schema": "RoutingExperienceSchema",
             "features": "Generates queries with entities and relationships",
         },
-        "workflow": {
-            "description": "Multi-agent workflow orchestration",
-            "schema": "WorkflowExecutionSchema",
-            "features": "Creates multi-step workflow patterns",
-        },
-        "unified": {
-            "description": "Combined routing and workflow planning",
-            "schema": "Mixed schemas",
-            "features": "Generates diverse examples for multiple optimizers",
+        "entity_extraction": {
+            "description": "Typed entity and relationship extraction",
+            "schema": "EntityExtractionExampleSchema",
+            "features": "Generates exact entity and relationship supervision",
         },
     }
 
@@ -1866,8 +1886,9 @@ def _render_inline_review_item(item, idx: int):
     data = item.data
     query = data.get("query", "N/A")
     entities = data.get("entities", [])
-    reasoning = data.get("reasoning", "")
-    metadata = data.get("_generation_metadata", {})
+    metadata = data.get("metadata", {})
+    generation_metadata = metadata.get("_generation_metadata", {})
+    reasoning = _review_reasoning(data)
 
     # Display item data in columns
     col1, col2 = st.columns([3, 1])
@@ -1889,7 +1910,7 @@ def _render_inline_review_item(item, idx: int):
 
     with col2:
         st.metric("Confidence", f"{item.confidence:.2f}")
-        st.metric("Retries", metadata.get("retry_count", 0))
+        st.metric("Retries", generation_metadata.get("retry_count", 0))
 
         # Quality indicators
         if item.confidence >= 0.75:
@@ -1900,9 +1921,9 @@ def _render_inline_review_item(item, idx: int):
             st.error("🔴 Very Low")
 
     # Generation metadata toggle
-    if metadata:
+    if generation_metadata:
         with st.expander("🔧 Generation Details"):
-            st.json(metadata)
+            st.json(generation_metadata)
 
     # Approval controls
     st.markdown("---")
@@ -1935,24 +1956,18 @@ def _render_inline_review_item(item, idx: int):
             help="Provide specific feedback to help improve future generations",
         )
 
-        st.markdown("**Corrections (optional):**")
-        col1, col2 = st.columns(2)
+        try:
+            schema_name, correction_template = _schema_correction_template(data)
+        except ValueError as exc:
+            st.error(str(exc))
+            return
 
-        with col1:
-            corrected_entities = st.text_input(
-                "Corrected Entities (comma-separated)",
-                key=f"inline_entities_{idx}",
-                value=", ".join([str(e) for e in entities]),
-                help="Update the entities that should be included",
-            )
-
-        with col2:
-            corrected_topics = st.text_input(
-                "Corrected Topics (comma-separated)",
-                key=f"inline_topics_{idx}",
-                value=data.get("topics", ""),
-                help="Update the topics for better context",
-            )
+        corrected_fields = st.text_area(
+            f"{schema_name} Corrections (JSON)",
+            key=f"inline_schema_corrections_{idx}",
+            value=json.dumps(correction_template, indent=2, default=str),
+            help="Submit only fields defined by this synthetic example schema.",
+        )
 
         col1, col2, col3 = st.columns([1, 1, 2])
 
@@ -1963,17 +1978,13 @@ def _render_inline_review_item(item, idx: int):
                 type="primary",
                 use_container_width=True,
             ):
-                corrections = {}
-                if corrected_entities:
-                    corrections["entities"] = [
-                        e.strip() for e in corrected_entities.split(",")
-                    ]
-                if corrected_topics:
-                    corrections["topics"] = corrected_topics.strip()
-
-                _handle_inline_rejection(item, idx, feedback, corrections)
-                st.session_state[f"inline_rejecting_{idx}"] = False
-                st.rerun()
+                try:
+                    corrections = _parse_schema_corrections(data, corrected_fields)
+                    _handle_inline_rejection(item, idx, feedback, corrections)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state[f"inline_rejecting_{idx}"] = False
 
         with col2:
             if st.button(
@@ -1983,32 +1994,49 @@ def _render_inline_review_item(item, idx: int):
                 st.rerun()
 
 
+def _generated_batch_item_index(batch, item) -> int:
+    if batch is None:
+        raise RuntimeError("last generated batch not initialized")
+    item_indexes = [
+        item_index
+        for item_index, batch_item in enumerate(batch.items)
+        if batch_item.item_id == item.item_id
+    ]
+    if len(item_indexes) != 1:
+        raise RuntimeError(
+            f"last generated batch contains {len(item_indexes)} items "
+            f"with ID {item.item_id}"
+        )
+    return item_indexes[0]
+
+
 def _handle_inline_approval(item, idx: int):
     """Handle inline approval"""
-    from cogniverse_agents.approval import ApprovalStatus
+    from cogniverse_agents.approval import ApprovalStatus, ReviewDecision
 
     try:
-        # Update item status
-        item.status = ApprovalStatus.APPROVED
-        import pandas as pd
-
-        item.reviewed_at = pd.Timestamp.now()
+        agent = st.session_state.get("approval_agent")
+        if agent is None:
+            raise RuntimeError("approval agent not initialized")
+        batch = st.session_state.get("last_generated_batch")
+        batch_item_index = _generated_batch_item_index(batch, item)
+        decision = ReviewDecision(
+            item_id=item.item_id,
+            approved=True,
+            reviewer=st.session_state.get("user_email", "unknown"),
+        )
+        approved_item = _require_decision_result(
+            _apply_persisted_decision(agent, decision, item),
+            ApprovalStatus.APPROVED,
+        )
 
         st.success(f"✅ Approved: {item.data.get('query', item.item_id)[:50]}...")
 
-        # Update batch and session state
-        batch = st.session_state.get("last_generated_batch")
-        if batch:
-            # Move from pending to approved
-            approved_items = st.session_state.get("approved_items", [])
-            approved_items.append(item)
-            st.session_state.approved_items = approved_items
-
-            # Update pending items
-            pending_items = [
-                i for i in batch.pending_review if i.item_id != item.item_id
-            ]
-            st.session_state.pending_items = pending_items
+        batch.items[batch_item_index] = approved_item
+        approved_items = st.session_state.get("approved_items", [])
+        approved_items.append(approved_item)
+        st.session_state.approved_items = approved_items
+        st.session_state.pending_items = batch.pending_review
 
         st.rerun()
 
@@ -2022,6 +2050,11 @@ def _handle_inline_rejection(item, idx: int, feedback: str, corrections: Dict):
     from cogniverse_agents.approval import ApprovalStatus, ReviewDecision
 
     try:
+        agent = st.session_state.get("approval_agent")
+        if agent is None:
+            raise RuntimeError("approval agent not initialized")
+        batch = st.session_state.get("last_generated_batch")
+        batch_item_index = _generated_batch_item_index(batch, item)
         decision = ReviewDecision(
             item_id=item.item_id,
             approved=False,
@@ -2029,30 +2062,23 @@ def _handle_inline_rejection(item, idx: int, feedback: str, corrections: Dict):
             corrections=corrections,
             reviewer=st.session_state.get("user_email", "unknown"),
         )
+        regenerated = _require_decision_result(
+            _apply_persisted_decision(agent, decision, item),
+            ApprovalStatus.REGENERATED,
+        )
 
-        # Update item status
         item.status = ApprovalStatus.REJECTED
-        import pandas as pd
-
-        item.reviewed_at = pd.Timestamp.now()
+        item.reviewed_at = decision.timestamp
 
         st.warning(f"❌ Rejected: {item.data.get('query', item.item_id)[:50]}...")
         if feedback:
             st.info(f"📝 Feedback: {feedback}")
 
-        # Update batch and session state
-        batch = st.session_state.get("last_generated_batch")
-        if batch:
-            # Move from pending to rejected
-            rejected_items = st.session_state.get("rejected_items", [])
-            rejected_items.append((item, decision))
-            st.session_state.rejected_items = rejected_items
-
-            # Update pending items
-            pending_items = [
-                i for i in batch.pending_review if i.item_id != item.item_id
-            ]
-            st.session_state.pending_items = pending_items
+        batch.items[batch_item_index] = regenerated
+        rejected_items = st.session_state.get("rejected_items", [])
+        rejected_items.append((item, decision))
+        st.session_state.rejected_items = rejected_items
+        st.session_state.pending_items = batch.pending_review
 
         st.rerun()
 
@@ -2061,70 +2087,74 @@ def _handle_inline_rejection(item, idx: int, feedback: str, corrections: Dict):
         logger.exception("Inline rejection failed")
 
 
-def _process_approval_workflow(result: Dict, confidence_threshold: float):
+def _submit_persisted_batch(agent, batch):
+    return asyncio.run(agent.submit_for_review(batch))
+
+
+def _new_approval_batch_id(optimizer: str) -> str:
+    return f"synthetic_{optimizer}_{uuid4().hex}"
+
+
+def _process_approval_workflow(result: Dict, tenant_id: str):
     """
     Process synthetic data through human approval workflow
 
     Args:
         result: Synthetic data generation result
-        confidence_threshold: Confidence threshold for auto-approval
+        tenant_id: Tenant from the submitted request
     """
     try:
-        from cogniverse_agents.approval import HumanApprovalAgent
-        from cogniverse_synthetic.approval import (
-            SyntheticDataConfidenceExtractor,
-            SyntheticDataFeedbackHandler,
-        )
+        from cogniverse_synthetic.approval import SyntheticDataConfidenceExtractor
 
-        # Initialize approval agent
+        agent = st.session_state.get("approval_agent")
+        if agent is None:
+            raise RuntimeError("approval agent not initialized")
         confidence_extractor = SyntheticDataConfidenceExtractor()
-        feedback_handler = SyntheticDataFeedbackHandler()
 
-        agent = HumanApprovalAgent(
-            confidence_extractor=confidence_extractor,
-            feedback_handler=feedback_handler,
-            confidence_threshold=confidence_threshold,
-            storage=None,  # Using session state instead of Phoenix for demo
-        )
+        optimizer = result["optimizer"]
+        agent_type = APPROVED_TRAINING_AGENT_BY_OPTIMIZER.get(optimizer)
+        if agent_type is None:
+            raise ValueError(
+                f"optimizer {optimizer!r} has no finetuning training-data consumer"
+            )
 
-        # Process batch through approval agent
-        batch_id = f"synthetic_{result['optimizer']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        batch_id = _new_approval_batch_id(optimizer)
 
-        # Create mock batch (in production, would call agent.process_batch() asynchronously)
         from cogniverse_agents.approval import ApprovalBatch, ApprovalStatus, ReviewItem
 
         review_items = []
         for i, item_data in enumerate(result["data"]):
+            detected_schema, _ = _schema_correction_template(item_data)
+            if detected_schema != result["schema_name"]:
+                raise ValueError(
+                    f"synthetic result schema {result['schema_name']!r} does not "
+                    f"match item schema {detected_schema!r}"
+                )
             confidence = confidence_extractor.extract(item_data)
-            status = (
-                ApprovalStatus.AUTO_APPROVED
-                if confidence >= confidence_threshold
-                else ApprovalStatus.PENDING_REVIEW
-            )
-
             review_item = ReviewItem(
                 item_id=f"{batch_id}_{i}",
                 data=item_data,
                 confidence=confidence,
-                status=status,
+                metadata={
+                    "approval_batch_id": batch_id,
+                    "agent_type": agent_type,
+                },
+                status=ApprovalStatus.PENDING_REVIEW,
             )
             review_items.append(review_item)
 
-        # The generator result records the tenant it ran for; if an
-        # older record is missing it, fall back to the currently
-        # selected dashboard tenant rather than a silent "default".
-        batch_tenant = result.get("tenant_id", st.session_state["current_tenant"])
         batch = ApprovalBatch(
             batch_id=batch_id,
             items=review_items,
             context={
-                "optimizer": result["optimizer"],
-                "tenant_id": batch_tenant,
+                "optimizer": optimizer,
+                "agent_type": agent_type,
+                "tenant_id": tenant_id,
                 "profiles": result["selected_profiles"],
             },
         )
+        batch = _submit_persisted_batch(agent, batch)
 
-        # Store in session state for approval queue tab
         st.session_state["last_generated_batch"] = batch
         st.session_state["pending_items"] = batch.pending_review
         st.session_state["approved_items"] = batch.auto_approved

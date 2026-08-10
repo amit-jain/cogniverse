@@ -327,7 +327,10 @@ render_profile_metrics_tab()
 
 - Golden Dataset — golden dataset builder from Phoenix annotations
 
-- Synthetic Data — synthetic data generation for optimizers
+- Synthetic Data — synthetic data generation for optimizers. Generated review batches are
+  validated against their advertised schema and submitted to the persisted approval agent
+  before they are published to Streamlit session state. Inline review uses the same persisted
+  decision and schema-specific correction paths as the Approval Queue tab.
 
 - Module Optimization — optimize routing/workflow/unified DSPy modules via Argo Workflows, with automatic optimizer selection (GEPA/Bootstrap/SIMBA/MIPRO) based on training data size
 
@@ -353,9 +356,67 @@ render_enhanced_optimization_tab()
 
 - View pending approval requests (items below the auto-approval confidence threshold), grouped in "Pending Review", "Approved Items", "Rejected Items", and "Statistics" sub-tabs
 
-- Approve, or reject with free-text feedback and optional entity corrections
+- Approve, or reject with free-text feedback and a schema-specific JSON correction object.
+  Unsupported schemas, obsolete fields, unknown fields, and invalid field types are rejected
+  before the persisted decision path runs.
 
-- Decisions flip the item's status annotation via `ApprovalStorage.update_item()` (removing the item from the pending queue), append approved items to the `approved_synthetic_data` training dataset, and record an `approval_decision` telemetry span via `ApprovalStorage.record_decision()`
+  | Synthetic example schema | Accepted correction fields |
+  | --- | --- |
+  | `ProfileSelectionExampleSchema` | `query`, `available_profiles`, `selected_profile`, `reasoning`, `query_intent`, `modality`, `complexity` |
+  | `QueryEnhancementExampleSchema` | `query`, `enhanced_query`, `expansion_terms`, `synonyms`, `context`, `reasoning` |
+  | `EntityExtractionExampleSchema` | `entities`, `relationships` |
+  | `RoutingExperienceSchema` | `entities`, `relationships`, `chosen_agent` |
+  | `WorkflowExecutionSchema` | `workflow_id`, `query`, `query_type`, `execution_time`, `success`, `agent_sequence`, `task_count`, `parallel_efficiency`, `confidence_score`, `user_satisfaction`, `error_details`, `timestamp`, `metadata` |
+
+  Entity objects contain exactly non-empty `text` and `type` strings. Relationship objects
+  contain exactly non-empty `source`, `target`, and `type` strings, and both endpoints must
+  name an entity in the corrected entity list. Query regeneration derives `entity_types` and
+  routing query fields, so the dashboard does not submit those as entity/routing corrections.
+
+- Approval and rejection both call `HumanApprovalAgent.apply_decision()` with the item's
+  owning batch ID. The UI changes local status only after the decision has persisted. Approval
+  therefore updates the Phoenix item status and approved training dataset; rejection waits for
+  the canonical Redis-selected replacement to be exported and queryable in Phoenix. The
+  rejected-item **Regenerate** action replays the persisted rejection through that same method,
+  retrieves the canonical replacement, and inserts or replaces exactly one pending item. It
+  does not run a session-only regeneration path. Decision calls have a 900-second upper bound;
+  timeout or persistence errors leave the current pending and rejected lists unchanged.
+
+- Profile-selection and query-enhancement records display their schema's top-level `reasoning`
+  value in both the Approval Queue and inline Optimization views. Entity-extraction and routing
+  records continue to display `metadata._generation_metadata.reasoning` when generation
+  metadata is present. The dashboard renders those values without rewriting them.
+
+- Refresh loads only `HumanApprovalAgent.get_pending_items()` from persisted approval batches.
+  There is no session-only batch fallback: a missing approval agent or persistence failure is
+  shown as an error and leaves the item pending, so a reload cannot resurrect a completed item
+  or hide an unpersisted decision.
+
+- `app.py` reads `REDIS_URL` at startup and injects it into Streamlit session state. The tab
+  does not read environment variables directly and does not initialize approval storage when
+  the injected value is absent.
+
+- The approval agent is bound to the active tenant. Switching tenants clears the previous
+  tenant's agent, storage, generated batch, and status lists before constructing new Phoenix
+  and Redis clients. The optimization tab performs this tenant check before reading the
+  approval threshold or submitting generated items.
+
+- Agent initialization resolves `llm_config.primary` through the active tenant's
+  `ConfigUtils`, constructs the LM through `create_dspy_lm()`, and binds that LM to a new
+  `ValidatedSyntheticExampleRegenerator` before creating approval storage or the approval
+  agent. The feedback handler uses `llm_config.primary.request_timeout` as the per-call
+  regeneration deadline.
+  Each tenant initialization owns its LM and generator. There is no implicit generator or
+  global DSPy fallback. Missing or invalid primary-LM configuration clears approval session
+  state and prevents storage and agent construction.
+
+- Routing, entity-extraction, profile-selection, and query-enhancement rejections regenerate
+  through that bound LM from the complete source record and reviewer instruction. Structured
+  corrections must be copied exactly and the result must materially change a training value.
+  Query-changing routing regeneration resets the gateway-derived confidence to its
+  unobserved zero sentinel and records canonical generation metadata. LM failure or timeout
+  propagates before `replace_item()` runs, leaving the original item pending with no
+  persisted replacement.
 
 - Per-status confidence-score statistics (mean confidence by status)
 
@@ -553,6 +614,9 @@ affect dashboard startup are:
 ```bash
 # Required — backend (Vespa) connection used to bootstrap ConfigManager
 export BACKEND_URL="http://localhost"
+
+# Required for approval-item replacement
+export REDIS_URL="redis://localhost:6379/0"
 
 # Optional
 export BACKEND_PORT="8080"               # default: 8080
@@ -754,7 +818,7 @@ workload deployments (ingestor, runtime, optimization workflows):
 ```bash
 helm upgrade --install cogniverse ./charts/cogniverse \
   --set dashboard.backend=cpu \
-  --set dashboard.image.tag=0.1.0-dev
+  --set dashboard.imagesByBackend.cpu.tag=0.1.0-dev
 ```
 
 ---
@@ -792,4 +856,4 @@ uv run pytest tests/dashboard/unit/ --cov=cogniverse_dashboard --cov-report=html
 
 ---
 
-**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, optimization, HITL workflows, configuration, memory, and backend profile management. Phoenix data backup/restore is handled by the `scripts/manage_phoenix_data.py` CLI. Tabs communicate with the unified Runtime over A2A streaming (search, summarization) and plain REST (chat, ingestion, agent status, admin operations); the dashboard never instantiates agents directly.
+**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, optimization, HITL workflows, configuration, memory, and backend profile management. Phoenix data backup/restore is handled by the `scripts/manage_phoenix_data.py` CLI. Search, summarization, chat, ingestion, agent-status, and administrative tabs use the unified Runtime. The approval tab initializes its tenant-scoped `HumanApprovalAgent` with Phoenix and Redis persistence, and the optimization tab reuses that agent for synthetic review batches and decisions.

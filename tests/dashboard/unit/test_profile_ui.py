@@ -539,3 +539,15 @@ def test_create_form_offers_only_valid_embedding_types(monkeypatch):
     assert set(options) <= set(ProfileValidator.VALID_EMBEDDING_TYPES), (
         f"form offers embedding types outside VALID_EMBEDDING_TYPES: {options}"
     )
+
+    schema_value = None
+    for call in st_mock.text_area.call_args_list:
+        label = call.args[0] if call.args else call.kwargs.get("label")
+        if label == "Schema Config (JSON)":
+            schema_value = call.kwargs["value"]
+    assert json.loads(schema_value) == {
+        "schema_name": "video_colpali",
+        "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "embedding_dim": 320,
+        "binary_dim": 40,
+    }

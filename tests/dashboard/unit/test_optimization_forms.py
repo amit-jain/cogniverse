@@ -11,11 +11,24 @@ renders back.
 from __future__ import annotations
 
 import textwrap
+from copy import deepcopy
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
 from streamlit.testing.v1 import AppTest
+
+
+class _SessionState(dict):
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError as exc:
+            raise AttributeError(key) from exc
+
+    def __setattr__(self, key, value):
+        self[key] = value
 
 
 @pytest.fixture(autouse=True)
@@ -134,8 +147,46 @@ def _synthetic_data_app(tmp_path: Path) -> AppTest:
         """
         import streamlit as st
 
-        st.session_state["current_tenant"] = "acme"
+        st.session_state["current_tenant"] = "acme:acme"
         st.session_state["runtime_url"] = "http://runtime.test:8000"
+
+        class _ApprovalAgent:
+            threshold = 0.85
+
+            async def submit_for_review(self, batch):
+                from cogniverse_agents.approval import ApprovalStatus
+
+                for item in batch.items:
+                    item.status = (
+                        ApprovalStatus.AUTO_APPROVED
+                        if item.confidence >= self.threshold
+                        else ApprovalStatus.PENDING_REVIEW
+                    )
+                st.session_state["_submitted_batch"] = {
+                    "batch_id": batch.batch_id,
+                    "context": batch.context,
+                    "items": [
+                        {
+                            "item_id": item.item_id,
+                            "status": item.status.value,
+                            "metadata": item.metadata,
+                        }
+                        for item in batch.items
+                    ],
+                }
+                return batch
+
+            def get_approval_stats(self, batch):
+                return {
+                    "auto_approved": len(batch.auto_approved),
+                    "pending_review": len(batch.pending_review),
+                    "avg_confidence": sum(
+                        item.confidence for item in batch.items
+                    ) / len(batch.items),
+                }
+
+        st.session_state["approval_agent"] = _ApprovalAgent()
+        st.session_state["approval_agent_tenant_id"] = "acme:acme"
 
         import requests
 
@@ -146,19 +197,24 @@ def _synthetic_data_app(tmp_path: Path) -> AppTest:
             "profile_selection_reasoning": "Two profiles cover the sampled content",
             "schema_name": "ProfileSelectionExampleSchema",
             "metadata": {"generation_time_ms": 1234},
-            "tenant_id": "acme",
             "data": [
                 {
                     "query": "find TensorFlow tutorial videos",
-                    "entities": ["TensorFlow"],
-                    "reasoning": "TensorFlow is the primary entity to include",
-                    "_generation_metadata": {"retry_count": 0},
+                    "available_profiles": "video_colpali,frame_based_colpali",
+                    "selected_profile": "video_colpali",
+                    "reasoning": "Video retrieval matches the requested tutorial.",
+                    "query_intent": "video_search",
+                    "modality": "video",
+                    "complexity": "medium",
                 },
                 {
                     "query": "cat video",
-                    "entities": ["dog"],
-                    "reasoning": "",
-                    "_generation_metadata": {"retry_count": 2},
+                    "available_profiles": "video_colpali,frame_based_colpali",
+                    "selected_profile": "frame_based_colpali",
+                    "reasoning": "Frame retrieval matches the short visual query.",
+                    "query_intent": "video_search",
+                    "modality": "video",
+                    "complexity": "simple",
                 },
             ],
         }
@@ -170,8 +226,11 @@ def _synthetic_data_app(tmp_path: Path) -> AppTest:
                 return _RESULT
 
         def _fake_post(url, json=None, timeout=None):
+            from cogniverse_synthetic.schemas import SyntheticDataRequest
+
+            validated = SyntheticDataRequest.model_validate(json)
             st.session_state.setdefault("_post_calls", []).append(
-                (url, json, timeout)
+                (url, validated.model_dump(), timeout)
             )
             return _Response()
 
@@ -192,6 +251,12 @@ def test_synthetic_generation_posts_exact_payload_and_splits_approval(
 ) -> None:
     at = _synthetic_data_app(tmp_path)
     at.run()
+    assert at.selectbox[0].options == [
+        "query_enhancement",
+        "profile",
+        "routing",
+        "entity_extraction",
+    ]
     at.button[0].click().run()
 
     assert at.exception == []
@@ -202,31 +267,58 @@ def test_synthetic_generation_posts_exact_payload_and_splits_approval(
                 "optimizer": "profile",
                 "count": 100,
                 "vespa_sample_size": 200,
-                "strategies": ["diverse"],
+                "strategy": "diverse",
                 "max_profiles": 3,
-                "tenant_id": "acme",
+                "tenant_id": "acme:acme",
             },
             300,
         )
     ]
 
-    # Confidence extraction is deterministic: the clean item scores 1.0
-    # (auto-approved at the default 0.85 threshold), the retried item with a
-    # missing entity and a short query scores 0.39 (pending review).
     batch = at.session_state["last_generated_batch"]
-    assert [item.confidence for item in batch.items] == [1.0, 0.39]
+    assert [item.confidence for item in batch.items] == [0.0, 0.0]
     assert [item.status.value for item in batch.items] == [
-        "auto_approved",
+        "pending_review",
         "pending_review",
     ]
-    assert [item.data["query"] for item in batch.pending_review] == ["cat video"]
+    assert [item.data["query"] for item in batch.pending_review] == [
+        "find TensorFlow tutorial videos",
+        "cat video",
+    ]
+    assert at.session_state["_submitted_batch"] == {
+        "batch_id": batch.batch_id,
+        "context": {
+            "optimizer": "profile",
+            "agent_type": "profile_selection",
+            "tenant_id": "acme:acme",
+            "profiles": ["video_colpali", "frame_based_colpali"],
+        },
+        "items": [
+            {
+                "item_id": f"{batch.batch_id}_0",
+                "status": "pending_review",
+                "metadata": {
+                    "approval_batch_id": batch.batch_id,
+                    "agent_type": "profile_selection",
+                },
+            },
+            {
+                "item_id": f"{batch.batch_id}_1",
+                "status": "pending_review",
+                "metadata": {
+                    "approval_batch_id": batch.batch_id,
+                    "agent_type": "profile_selection",
+                },
+            },
+        ],
+    }
 
     successes = [s.value for s in at.success]
-    assert "Generated 2 examples: 1 auto-approved, 1 awaiting review" in successes
+    assert "Generated 2 examples: 0 auto-approved, 2 awaiting review" in successes
     infos = [i.value for i in at.info]
     assert "**Profile Selection**: Two profiles cover the sampled content" in infos
     assert (
-        "**1 items need your review**. "
+        "**2 items need your review**. "
         "Navigate to the **Approval Queue** tab to review them." in infos
     )
 
@@ -234,9 +326,10 @@ def test_synthetic_generation_posts_exact_payload_and_splits_approval(
     assert metrics["Schema"] == "ProfileSelectionExampleSchema"
     assert metrics["Generation Time"] == "1234ms"
     assert metrics["Profiles Used"] == "2"
-    assert metrics["Auto-Approved"] == "1"
-    assert metrics["Pending Review"] == "1"
-    assert metrics["Avg Confidence"] == f"{(1.0 + 0.39) / 2:.2f}"
+    assert metrics["Auto-Approved"] == "0"
+    assert metrics["Pending Review"] == "2"
+    assert metrics["Avg Confidence"] == "0.00"
+    assert metrics["Retries"] == "0"
 
     code_blocks = [c.value for c in at.code]
     assert "video_colpali" in code_blocks
@@ -384,4 +477,475 @@ def test_create_dataset_from_upload_threads_tenant() -> None:
         csv_path="/tmp/q.csv",
         dataset_name="uploaded",
         description="Uploaded via optimization dashboard",
+    )
+
+
+def test_inline_approval_persists_exact_decision_before_session_mutation(
+    monkeypatch,
+) -> None:
+    from cogniverse_agents.approval import (
+        ApprovalBatch,
+        ApprovalStatus,
+        ReviewItem,
+    )
+    from cogniverse_dashboard.tabs import optimization
+
+    item = ReviewItem(
+        item_id="item-1",
+        data={"query": "find Curie"},
+        confidence=0.4,
+        metadata={"approval_batch_id": "batch-17"},
+    )
+    batch = ApprovalBatch(batch_id="batch-17", items=[item])
+    persisted = deepcopy(item)
+    persisted.status = ApprovalStatus.APPROVED
+    agent = MagicMock()
+    agent.apply_decision = AsyncMock(return_value=persisted)
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState(
+        approval_agent=agent,
+        last_generated_batch=batch,
+        pending_items=[item],
+        approved_items=[],
+        user_email="reviewer@example.test",
+    )
+    monkeypatch.setattr(optimization, "st", fake_st)
+
+    optimization._handle_inline_approval(item, 0)
+
+    agent.apply_decision.assert_awaited_once()
+    batch_id, decision = agent.apply_decision.await_args.args
+    assert batch_id == "batch-17"
+    assert (
+        decision.item_id,
+        decision.approved,
+        decision.feedback,
+        decision.corrections,
+        decision.reviewer,
+    ) == ("item-1", True, None, {}, "reviewer@example.test")
+    assert item.status is ApprovalStatus.PENDING_REVIEW
+    assert batch.items == [persisted]
+    assert batch.items[0] is persisted
+    assert fake_st.session_state["pending_items"] == []
+    assert fake_st.session_state["approved_items"] == [persisted]
+    assert fake_st.session_state["approved_items"][0] is persisted
+    fake_st.rerun.assert_called_once_with()
+
+
+def test_inline_rejection_persists_exact_canonical_corrections(monkeypatch) -> None:
+    from cogniverse_agents.approval import (
+        ApprovalBatch,
+        ApprovalStatus,
+        ReviewItem,
+    )
+    from cogniverse_dashboard.tabs import optimization
+
+    item = ReviewItem(
+        item_id="item-1",
+        data={
+            "query": "PyTorch was created by Meta AI",
+            "entities": [
+                {"text": "PyTorch", "type": "PRODUCT"},
+                {"text": "Meta AI", "type": "ORG"},
+            ],
+            "entity_types": "PRODUCT,ORG",
+            "relationships": [
+                {"source": "Meta AI", "target": "PyTorch", "type": "created"}
+            ],
+        },
+        confidence=0.4,
+        metadata={"approval_batch_id": "batch-17"},
+    )
+    batch = ApprovalBatch(batch_id="batch-17", items=[item])
+    regenerated = ReviewItem(
+        item_id="item-1_regen_0",
+        data={"query": "JAX was created by Google"},
+        confidence=0.8,
+        status=ApprovalStatus.REGENERATED,
+    )
+    agent = MagicMock()
+    agent.apply_decision = AsyncMock(return_value=regenerated)
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState(
+        approval_agent=agent,
+        last_generated_batch=batch,
+        pending_items=[item],
+        rejected_items=[],
+        user_email="reviewer@example.test",
+    )
+    monkeypatch.setattr(optimization, "st", fake_st)
+    corrections = {
+        "entities": [
+            {"text": "JAX", "type": "PRODUCT"},
+            {"text": "Google", "type": "ORG"},
+        ],
+        "relationships": [{"source": "Google", "target": "JAX", "type": "created"}],
+    }
+
+    optimization._handle_inline_rejection(
+        item,
+        0,
+        "Use the corrected product and organization.",
+        corrections,
+    )
+
+    agent.apply_decision.assert_awaited_once()
+    batch_id, decision = agent.apply_decision.await_args.args
+    assert batch_id == "batch-17"
+    assert (
+        decision.item_id,
+        decision.approved,
+        decision.feedback,
+        decision.corrections,
+        decision.reviewer,
+    ) == (
+        "item-1",
+        False,
+        "Use the corrected product and organization.",
+        corrections,
+        "reviewer@example.test",
+    )
+    assert item.status is ApprovalStatus.REJECTED
+    assert batch.items == [regenerated]
+    assert batch.items[0] is regenerated
+    assert fake_st.session_state["pending_items"] == [regenerated]
+    assert fake_st.session_state["pending_items"][0] is regenerated
+    assert fake_st.session_state["rejected_items"] == [(item, decision)]
+    fake_st.rerun.assert_called_once_with()
+
+
+def test_inline_approval_rejects_non_approved_persistence_result(monkeypatch) -> None:
+    from cogniverse_agents.approval import ApprovalBatch, ApprovalStatus, ReviewItem
+    from cogniverse_dashboard.tabs import optimization
+
+    item = ReviewItem(
+        item_id="item-1",
+        data={"query": "find Curie"},
+        confidence=0.4,
+        metadata={"approval_batch_id": "batch-17"},
+    )
+    batch = ApprovalBatch(batch_id="batch-17", items=[item])
+    agent = MagicMock()
+    agent.apply_decision = AsyncMock(return_value=item)
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState(
+        approval_agent=agent,
+        last_generated_batch=batch,
+        pending_items=[item],
+        approved_items=[],
+    )
+    monkeypatch.setattr(optimization, "st", fake_st)
+
+    optimization._handle_inline_approval(item, 0)
+
+    agent.apply_decision.assert_awaited_once()
+    assert item.status is ApprovalStatus.PENDING_REVIEW
+    assert batch.items == [item]
+    assert fake_st.session_state["pending_items"] == [item]
+    assert fake_st.session_state["approved_items"] == []
+    fake_st.error.assert_called_once_with(
+        "Failed to approve item: decision persistence returned pending_review; "
+        "expected approved"
+    )
+    fake_st.rerun.assert_not_called()
+
+
+def test_inline_approval_failure_leaves_session_and_item_pending(monkeypatch) -> None:
+    from cogniverse_agents.approval import ApprovalBatch, ApprovalStatus, ReviewItem
+    from cogniverse_dashboard.tabs import optimization
+
+    item = ReviewItem(
+        item_id="item-1",
+        data={"query": "find Curie"},
+        confidence=0.4,
+        metadata={"approval_batch_id": "batch-17"},
+    )
+    batch = ApprovalBatch(batch_id="batch-17", items=[item])
+    agent = MagicMock()
+    agent.apply_decision = AsyncMock(side_effect=TimeoutError("Phoenix timed out"))
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState(
+        approval_agent=agent,
+        last_generated_batch=batch,
+        pending_items=[item],
+        approved_items=[],
+    )
+    monkeypatch.setattr(optimization, "st", fake_st)
+
+    optimization._handle_inline_approval(item, 0)
+
+    agent.apply_decision.assert_awaited_once()
+    assert item.status is ApprovalStatus.PENDING_REVIEW
+    assert fake_st.session_state["pending_items"] == [item]
+    assert fake_st.session_state["approved_items"] == []
+    fake_st.error.assert_called_once_with("Failed to approve item: Phoenix timed out")
+    fake_st.rerun.assert_not_called()
+
+
+def test_synthetic_batch_persistence_failure_does_not_publish_session_batch(
+    monkeypatch,
+) -> None:
+    from cogniverse_dashboard.tabs import optimization
+
+    agent = MagicMock()
+    agent.submit_for_review = AsyncMock(side_effect=TimeoutError("Phoenix timed out"))
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState(
+        approval_agent=agent,
+        current_tenant="acme",
+    )
+    monkeypatch.setattr(optimization, "st", fake_st)
+    result = {
+        "optimizer": "profile",
+        "schema_name": "ProfileSelectionExampleSchema",
+        "selected_profiles": ["video_colpali"],
+        "data": [
+            {
+                "query": "find transformer lectures",
+                "available_profiles": "video_colpali,text_bm25",
+                "selected_profile": "video_colpali",
+                "reasoning": "Video retrieval matches the requested lectures.",
+                "query_intent": "video_search",
+                "modality": "video",
+                "complexity": "medium",
+            }
+        ],
+    }
+
+    optimization._process_approval_workflow(result, tenant_id="acme")
+
+    agent.submit_for_review.assert_awaited_once()
+    assert "last_generated_batch" not in fake_st.session_state
+    assert "pending_items" not in fake_st.session_state
+    assert "approved_items" not in fake_st.session_state
+    fake_st.error.assert_called_once_with(
+        "❌ Approval workflow failed: Phoenix timed out"
+    )
+
+
+@pytest.mark.parametrize(
+    ("optimizer", "schema_name", "item_data", "agent_type"),
+    [
+        (
+            "query_enhancement",
+            "QueryEnhancementExampleSchema",
+            {
+                "query": "find transformer lectures",
+                "enhanced_query": "find transformer video lectures",
+                "expansion_terms": ["video"],
+                "synonyms": ["presentation"],
+                "context": "video_colpali",
+                "reasoning": "The production enhancer grounded the extra term.",
+            },
+            "query_enhancement",
+        ),
+        (
+            "profile",
+            "ProfileSelectionExampleSchema",
+            {
+                "query": "find transformer lectures",
+                "available_profiles": "video_colpali,text_bm25",
+                "selected_profile": "video_colpali",
+                "reasoning": "Video retrieval matches the requested lectures.",
+                "query_intent": "video_search",
+                "modality": "video",
+                "complexity": "medium",
+            },
+            "profile_selection",
+        ),
+        (
+            "routing",
+            "RoutingExperienceSchema",
+            {
+                "query": "find Marie Curie biographies",
+                "entities": [{"text": "Marie Curie", "type": "PERSON"}],
+                "relationships": [],
+                "enhanced_query": "find Marie Curie(PERSON) biographies",
+                "chosen_agent": "document_agent",
+                "routing_confidence": 0.84,
+                "search_quality": 0.0,
+                "agent_success": False,
+                "user_satisfaction": None,
+                "processing_time": 0.0,
+                "reward": None,
+                "timestamp": "2026-08-05T00:00:00+00:00",
+                "metadata": {
+                    "_outcome_metadata": {
+                        "observed": True,
+                        "required_field_semantics": {
+                            "routing_confidence": "observed_gateway_confidence",
+                            "search_quality": "unobserved_zero_sentinel",
+                            "agent_success": "unobserved_false_sentinel",
+                            "processing_time": "unobserved_zero_sentinel",
+                        },
+                    }
+                },
+            },
+            "routing",
+        ),
+        (
+            "entity_extraction",
+            "EntityExtractionExampleSchema",
+            {
+                "query": "Marie Curie discovered radium",
+                "entities": [
+                    {"text": "Marie Curie", "type": "PERSON"},
+                    {"text": "radium", "type": "CONCEPT"},
+                ],
+                "entity_types": "PERSON,CONCEPT",
+                "relationships": [
+                    {
+                        "source": "Marie Curie",
+                        "target": "radium",
+                        "type": "discovered",
+                    }
+                ],
+            },
+            "entity_extraction",
+        ),
+    ],
+)
+def test_synthetic_batch_maps_optimizer_to_exact_training_consumer(
+    monkeypatch,
+    optimizer,
+    schema_name,
+    item_data,
+    agent_type,
+) -> None:
+    from contextlib import nullcontext
+
+    from cogniverse_agents.approval import ApprovalStatus
+    from cogniverse_dashboard.tabs import optimization
+
+    submitted = []
+
+    class PersistedAgent:
+        async def submit_for_review(self, batch):
+            submitted.append(batch)
+            for item in batch.items:
+                item.status = ApprovalStatus.PENDING_REVIEW
+            return batch
+
+        def get_approval_stats(self, batch):
+            return {
+                "auto_approved": 0,
+                "pending_review": len(batch.items),
+                "avg_confidence": batch.items[0].confidence,
+            }
+
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState(approval_agent=PersistedAgent())
+    fake_st.columns.return_value = [nullcontext(), nullcontext(), nullcontext()]
+    monkeypatch.setattr(optimization, "st", fake_st)
+
+    optimization._process_approval_workflow(
+        {
+            "optimizer": optimizer,
+            "schema_name": schema_name,
+            "selected_profiles": ["video_colpali"],
+            "data": [item_data],
+        },
+        tenant_id="acme:training",
+    )
+
+    assert len(submitted) == 1
+    batch = submitted[0]
+    assert batch.context == {
+        "optimizer": optimizer,
+        "agent_type": agent_type,
+        "tenant_id": "acme:training",
+        "profiles": ["video_colpali"],
+    }
+    assert len(batch.items) == 1
+    assert batch.items[0].metadata == {
+        "approval_batch_id": batch.batch_id,
+        "agent_type": agent_type,
+    }
+    assert fake_st.session_state["pending_items"] == batch.items
+    fake_st.error.assert_not_called()
+
+
+def test_synthetic_batch_rejects_optimizer_without_training_consumer(
+    monkeypatch,
+) -> None:
+    from cogniverse_dashboard.tabs import optimization
+
+    agent = MagicMock()
+    agent.submit_for_review = AsyncMock()
+    fake_st = MagicMock()
+    fake_st.session_state = _SessionState(approval_agent=agent)
+    monkeypatch.setattr(optimization, "st", fake_st)
+
+    optimization._process_approval_workflow(
+        {
+            "optimizer": "workflow",
+            "schema_name": "WorkflowExecutionSchema",
+            "selected_profiles": [],
+            "data": [],
+        },
+        tenant_id="acme:training",
+    )
+
+    agent.submit_for_review.assert_not_awaited()
+    assert "last_generated_batch" not in fake_st.session_state
+    fake_st.error.assert_called_once_with(
+        "❌ Approval workflow failed: optimizer 'workflow' has no finetuning "
+        "training-data consumer"
+    )
+
+
+def test_concurrent_batch_submissions_keep_exact_batch_identity() -> None:
+    import asyncio
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from cogniverse_agents.approval import ApprovalBatch
+    from cogniverse_dashboard.tabs import optimization
+
+    barrier = threading.Barrier(2)
+
+    class PersistedAgent:
+        async def submit_for_review(self, batch):
+            await asyncio.to_thread(barrier.wait)
+            return batch
+
+    batches = [
+        ApprovalBatch(batch_id="batch-a", items=[], context={"tenant_id": "acme:a"}),
+        ApprovalBatch(batch_id="batch-b", items=[], context={"tenant_id": "acme:b"}),
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        persisted = list(
+            pool.map(
+                lambda batch: optimization._submit_persisted_batch(
+                    PersistedAgent(), batch
+                ),
+                batches,
+            )
+        )
+
+    assert [(batch.batch_id, batch.context["tenant_id"]) for batch in persisted] == [
+        ("batch-a", "acme:a"),
+        ("batch-b", "acme:b"),
+    ]
+
+
+def test_concurrent_generated_batch_ids_are_unique_and_canonical() -> None:
+    import re
+    from concurrent.futures import ThreadPoolExecutor
+
+    from cogniverse_dashboard.tabs import optimization
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        batch_ids = list(
+            pool.map(
+                lambda _: optimization._new_approval_batch_id("profile"), range(64)
+            )
+        )
+
+    assert len(batch_ids) == 64
+    assert len(set(batch_ids)) == 64
+    assert all(
+        re.fullmatch(r"synthetic_profile_[0-9a-f]{32}", batch_id)
+        for batch_id in batch_ids
     )
