@@ -18,6 +18,7 @@ import pytest
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+from cogniverse_synthetic.utils import partition_profiles_by_sampleability
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIGS = [
@@ -51,10 +52,12 @@ def test_config_passes_system_tenant_startup_parse(path: Path):
     }
     assert mappings == EXPECTED_AGENT_MAPPINGS
 
-    profile_modalities = {
-        profile.type.upper() for profile in parsed.backend_config.profiles.values()
-    }
-    assert profile_modalities == set(EXPECTED_AGENT_MAPPINGS)
+    sampleable, internal = partition_profiles_by_sampleability(
+        parsed.backend_config.profiles
+    )
+    assert internal == {}
+    sampleable_modalities = {profile.type.upper() for profile in sampleable.values()}
+    assert sampleable_modalities == set(EXPECTED_AGENT_MAPPINGS)
 
     for modality, agent_name in EXPECTED_AGENT_MAPPINGS.items():
         agent = parsed.agents_config[agent_name]
