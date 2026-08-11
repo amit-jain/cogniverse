@@ -23,7 +23,7 @@ Cogniverse is structured as a **UV workspace monorepo** with a layered architect
 - **Modular Design**: Clear separation of concerns across Foundation, Core, Implementation, and Application layers
 - **Dependency Management**: Explicit package boundaries with workspace-based dependency resolution
 - **Independent Testing**: Test packages in isolation or together for unit and integration testing
-- **Selective Deployment**: Deploy only what's needed (e.g., runtime without dashboard, agents without synthetic)
+- **Selective Deployment**: Deploy only what's needed (e.g., runtime without dashboard, Vespa without agents)
 - **Faster Iteration**: Work on specific packages without full system overhead
 - **Multi-Modal Support**: Unified document model across video, audio, images, documents, text, and dataframes
 
@@ -725,7 +725,8 @@ flowchart TD
     runtime --> core
     runtime --> synthetic
     runtime -.-> vespa
-    runtime -.-> agents
+    runtime --> agents
+    runtime --> phoenix
     dashboard --> sdk
     dashboard --> core
     dashboard --> agents
@@ -759,10 +760,10 @@ flowchart TD
 - **Telemetry-Phoenix is a Plugin**: Depends on Core + Evaluation, auto-discovered via entry points
 - **Synthetic depends on SDK + Foundation + Core**: consumed by agents (Implementation) and finetuning (Application) layers
 - **Implementation Layer depends on Core**: Agents and Vespa build on Core
-- **Application Layer depends on lower layers**: Runtime depends on SDK + Core + Synthetic (with optional Vespa/Agents); Dashboard depends on SDK + Core + Agents + Evaluation + Vespa + Telemetry-Phoenix; Finetuning depends on SDK + Core + Foundation + Agents + Synthetic
+- **Application Layer depends on lower layers**: Runtime depends on SDK + Core + Agents + Synthetic + Telemetry-Phoenix (with optional Vespa); Dashboard depends on SDK + Core + Agents + Evaluation + Vespa + Telemetry-Phoenix; Finetuning depends on SDK + Core + Foundation + Agents + Synthetic
 - **Messaging and CLI have no internal workspace dependencies**: `cogniverse-messaging` and `cogniverse-cli` declare zero `cogniverse-*` packages in `pyproject.toml` — they talk to `cogniverse-runtime` only over HTTP, not via direct import
 - **No Circular Dependencies**: Clean layered hierarchy with dependencies flowing upward
-- **Optional Dependencies**: Runtime can work without agents/vespa (runtime -.-> vespa/agents shows optional)
+- **Optional Dependencies**: Runtime can work without Vespa; agents is required because mounted routers import it when the application starts
 - **Workspace References**: Packages reference each other via `{ workspace = true }`
 
 ### Workspace Dependency Declaration

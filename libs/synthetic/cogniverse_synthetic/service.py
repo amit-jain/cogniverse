@@ -38,7 +38,12 @@ from cogniverse_synthetic.registry import (
     validate_optimizer_exists,
 )
 from cogniverse_synthetic.schemas import SyntheticDataRequest, SyntheticDataResponse
-from cogniverse_synthetic.utils import AgentInferrer, PatternExtractor
+from cogniverse_synthetic.utils import (
+    AgentInferrer,
+    PatternExtractor,
+    partition_profiles_by_sampleability,
+    profile_modality,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,18 +134,24 @@ class SyntheticDataService:
             agents_config=agents_config,
             agent_mappings=modality_config.agent_mappings,
         )
-        required_modalities = set()
-        for profile_name, profile in self.backend_config.profiles.items():
-            profile_config = profile.to_dict()
-            modality = profile_config.get("type")
-            if modality is None or modality == "":
-                continue
-            if not isinstance(modality, str) or not modality.strip():
-                raise ValueError(
-                    f"Backend profile '{profile_name}' requires a non-empty string type"
+        self._sampleable_profiles, internal_profiles = (
+            partition_profiles_by_sampleability(self.backend_config.profiles)
+        )
+        if internal_profiles:
+            logger.warning(
+                "Synthetic skips internal backend profiles: %s",
+                ", ".join(sorted(internal_profiles)),
+            )
+        self.agent_inferrer.require_mappings(
+            {
+                modality
+                for modality in (
+                    profile_modality(profile)
+                    for profile in self._sampleable_profiles.values()
                 )
-            required_modalities.add(modality.upper())
-        self.agent_inferrer.require_mappings(required_modalities)
+                if modality is not None
+            }
+        )
 
         field_mappings = self.generator_config.field_mappings
 
@@ -374,13 +385,13 @@ class SyntheticDataService:
         self,
         tenant_id: str,
     ) -> Dict[str, Dict[str, Any]]:
-        if not self.backend_config.profiles:
+        if not self._sampleable_profiles:
             raise ValueError(
                 "Synthetic generation requires configured backend profiles"
             )
         configured_profiles = {
             name: profile.to_dict()
-            for name, profile in self.backend_config.profiles.items()
+            for name, profile in self._sampleable_profiles.items()
         }
 
         for profile_name, profile_config in configured_profiles.items():

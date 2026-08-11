@@ -425,3 +425,42 @@ class AgentInferrer:
                 return False
 
         return True
+
+
+def profile_modality(profile: Any) -> Optional[str]:
+    """Canonical uppercase modality a backend profile declares, if any."""
+    modality = getattr(profile, "type", None)
+    if modality is None and hasattr(profile, "to_dict"):
+        modality = profile.to_dict().get("type")
+    if modality is None or modality == "":
+        return None
+    if not isinstance(modality, str) or not modality.strip():
+        raise ValueError("Backend profile requires a non-empty string type")
+    return modality.upper()
+
+
+def partition_profiles_by_sampleability(
+    profiles: Dict[str, Any],
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Split backend profiles into synthetic-sampleable and internal ones.
+
+    A profile declaring a modality outside the configured agent mappings backs
+    an internal store the runtime registers alongside content profiles (agent
+    memory). Synthetic neither routes queries for it nor samples its rows. A
+    profile declaring no modality stays sampleable so the downstream profile
+    validation still reaches it.
+    """
+    sampleable: Dict[str, Any] = {}
+    internal: Dict[str, Any] = {}
+    for profile_name, profile in profiles.items():
+        try:
+            modality = profile_modality(profile)
+        except ValueError as exc:
+            raise ValueError(
+                f"Backend profile '{profile_name}' requires a non-empty string type"
+            ) from exc
+        if modality is not None and modality not in AgentInferrer.SUPPORTED_MODALITIES:
+            internal[profile_name] = profile
+        else:
+            sampleable[profile_name] = profile
+    return sampleable, internal

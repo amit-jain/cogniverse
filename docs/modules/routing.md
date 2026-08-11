@@ -388,10 +388,6 @@ module also defines:
   (`_analyze_query_characteristics`) — no LLM call
 - **`DSPyAdvancedRoutingModule`**: LLM-based routing over `AdvancedRoutingSignature` for more nuanced decisions
 
-The advanced router and the orchestrator's iterative reformulation loop invoke
-`ComposableQueryAnalysisModule` through DSPy's callable interface. This keeps
-module callbacks, usage tracking, and call history active for live requests.
-
 Both routing modules accept `available_agents` only as `list[str]` (or `None`
 when the caller has no registry). An explicit list must contain at least one
 non-empty agent name with no surrounding whitespace; CSV strings and other

@@ -960,7 +960,7 @@ def register_routing_adapter(
 `AdapterStorage` defines `upload(local_path, destination_uri)`,
 `download(source_uri, local_path)`, and `exists(uri)`. Implementations are
 `LocalStorage`, `HuggingFaceStorage(token=None)`, `S3Storage` (configured via
-an explicit `S3StorageConfig`), and `ModalVolumeStorage`.
+`S3StorageConfig`), and `ModalVolumeStorage`.
 
 ```text
 get_storage_backend(uri: str, **kwargs) -> AdapterStorage
@@ -971,9 +971,9 @@ adapter_exists(uri: str) -> bool
 ```
 
 The adapter storage factory implements plain paths/`file://`, `hf://`,
-`s3://`, and `modal://`; other schemes raise `ValueError`. The S3 bucket comes
-from each `s3://bucket/...` URI, and only `get_storage_backend()` plus the
-convenience helpers resolve environment variables for connection settings.
+`s3://`, and `modal://`. `get_storage_backend()` resolves S3 and Modal
+settings from `kwargs` and environment variables; other schemes raise
+`ValueError`.
 
 When PEFT LoRA is active, `save_pretrained` uses safe serialization by default:
 
@@ -1004,8 +1004,8 @@ resolve_adapter_path(adapter_uri, cache_dir) -> str
 
 Only genuine absence returns `None` or an empty list; registry failures
 propagate. `resolve_adapter_path` returns plain paths and `file://` paths
-directly and downloads `hf://`, `s3://`, and `modal://` URIs under the
-required `cache_dir`; other schemes raise `ValueError`.
+directly, and downloads `hf://`, `s3://`, and `modal://` URIs under
+`cache_dir`. `gs://` raises `ValueError`.
 
 vLLM is an external runtime dependency, not a dependency of this package. Its
 LoRA call shape is illustrated here rather than presented as an in-package

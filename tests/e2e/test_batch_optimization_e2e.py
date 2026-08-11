@@ -27,11 +27,11 @@ import pytest
 pytestmark = pytest.mark.slow
 
 from tests.e2e.conftest import (
+    KUBECTL_CONTEXT,
     PHOENIX_URL,
     TENANT_ID,
 )
 
-KUBECTL_CONTEXT = "k3d-cogniverse"
 NAMESPACE = "cogniverse"
 DEPLOYMENT = "deploy/cogniverse-runtime"
 CONTAINER = "runtime"
