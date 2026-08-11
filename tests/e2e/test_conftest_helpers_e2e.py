@@ -84,6 +84,64 @@ def test_event_loop_reset_does_not_warn_when_no_loop_is_attached():
         asyncio.set_event_loop_policy(previous_policy)
 
 
+def _drive_reset_fixture() -> None:
+    """Run the autouse reset fixture's setup phase on this thread."""
+    reset = e2e_conftest._reset_event_loop_state_before_each_test.__wrapped__()
+    next(reset)
+    reset.close()
+
+
+class TestEventLoopStateReset:
+    """Pure asyncio-state contract; needs no cluster."""
+
+    @pytest.fixture(scope="class", autouse=True)
+    def e2e_stack(self):
+        yield
+
+    def test_reset_clears_stale_running_loop_thread_local(self):
+        """A leaked *running-loop* thread-local must be cleared by the reset.
+
+        ``asyncio.set_event_loop(None)`` only clears the policy current-loop slot
+        read by ``get_event_loop()``. ``Runner.run()`` instead checks
+        ``events._get_running_loop()``, a separate thread-local. A leaker that
+        leaves that set makes every later pytest-asyncio test die with
+        ``RuntimeError: Runner.run() cannot be called from a running event loop``
+        before its body runs.
+        """
+        stale = asyncio.new_event_loop()
+        stale.close()
+        asyncio.events._set_running_loop(stale)
+        try:
+            assert asyncio.events._get_running_loop() is stale
+
+            _drive_reset_fixture()
+
+            assert asyncio.events._get_running_loop() is None, (
+                "reset must detach a stale running-loop thread-local; "
+                "pytest-asyncio Runner.run() reads exactly this slot"
+            )
+
+            with asyncio.Runner() as runner:
+                assert runner.run(asyncio.sleep(0, result="ran")) == "ran"
+        finally:
+            asyncio.events._set_running_loop(None)
+
+    def test_reset_leaves_a_genuinely_running_loop_attached(self):
+        """Only *stale* running-loop state is cleared, never a live loop."""
+        observed: dict = {}
+
+        async def _body():
+            live = asyncio.get_running_loop()
+            _drive_reset_fixture()
+            observed["still_running"] = asyncio.events._get_running_loop() is live
+
+        asyncio.run(_body())
+
+        assert observed["still_running"] is True, (
+            "reset must not detach a loop that is genuinely running"
+        )
+
+
 def test_event_loop_reset_detaches_without_deprecated_lookup():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
