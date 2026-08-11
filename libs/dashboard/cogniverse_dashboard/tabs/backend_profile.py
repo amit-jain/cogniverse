@@ -428,16 +428,23 @@ def render_profile_manager(manager, tenant_id: str, profile_name: str):
         st.error(f"Failed to load profile: {e}")
         return
 
+    if profile is None:
+        st.info(f"No backend profile named `{profile_name}` found.")
+        return
+
+    profile_data = profile.to_dict()
+    profile_data.setdefault("profile_name", profile_name)
+
     # Display profile summary
     st.markdown(f"### Profile: `{profile_name}`")
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Type", profile.get("type", "N/A"))
+        st.metric("Type", profile_data.get("type", "N/A"))
     with col2:
-        st.metric("Embedding Type", profile.get("embedding_type", "N/A"))
+        st.metric("Embedding Type", profile_data.get("embedding_type", "N/A"))
     with col3:
-        st.metric("Schema", profile.get("schema_name", "N/A"))
+        st.metric("Schema", profile_data.get("schema_name", "N/A"))
     with col4:
         # Check schema deployment status via API — cached briefly so a slow
         # or down runtime (10s timeout) doesn't stall every rerun.
@@ -461,17 +468,17 @@ def render_profile_manager(manager, tenant_id: str, profile_name: str):
                 help="Click 'Deploy Schema' tab to deploy",
             )
 
-    if profile.get("description"):
-        st.info(f"**Description:** {profile['description']}")
+    if profile_data.get("description"):
+        st.info(f"**Description:** {profile_data['description']}")
 
     # Tabs for different operations
     tab1, tab2, tab3 = st.tabs(["📝 Edit", "🚀 Deploy Schema", "🗑️ Delete"])
 
     with tab1:
-        render_edit_profile_form(manager, tenant_id, profile_name, profile)
+        render_edit_profile_form(manager, tenant_id, profile_name, profile_data)
 
     with tab2:
-        render_deploy_schema_section(manager, tenant_id, profile_name, profile)
+        render_deploy_schema_section(manager, tenant_id, profile_name, profile_data)
 
     with tab3:
         render_delete_profile_section(manager, tenant_id, profile_name)
