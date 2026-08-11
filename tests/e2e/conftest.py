@@ -983,6 +983,7 @@ def _ingest_sample_frame() -> str:
 
 
 E2E_CLUSTER_NAME = "cogniverse-e2e"
+KUBECTL_CONTEXT = f"k3d-{E2E_CLUSTER_NAME}"
 DEV_CLUSTER_NAME = "cogniverse"
 
 # Host-side loadbalancer ports of the e2e cluster. The right-hand side is
@@ -1267,7 +1268,7 @@ def _e2e_deploy_fingerprint(
 
 
 def _kubectl_e2e_command(*args: str) -> list[str]:
-    return ["kubectl", "--context", f"k3d-{E2E_CLUSTER_NAME}", *args]
+    return ["kubectl", "--context", KUBECTL_CONTEXT, *args]
 
 
 def _kubectl_e2e(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
