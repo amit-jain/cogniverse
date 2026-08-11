@@ -30,11 +30,13 @@ PROFILE_CONFIGS = {
         "pipeline_config": {},
     },
 }
-SAMPLED_CONTENT = [{"title": "quantum computing applications"}]
+SAMPLED_CONTENT = [
+    {"title": "quantum computing applications", "schema_name": "document_pages"}
+]
 
 
 async def _select_document(query: str, profiles: list[str], tenant_id: str):
-    assert query == "quantum computing applications"
+    assert query == "find quantum computing applications in document content"
     assert profiles == ["audio_semantic", "document_semantic"]
     assert tenant_id == "test:unit"
     return {
@@ -54,7 +56,10 @@ class TestProfileGenerator:
     async def test_default_request_count_uses_one_hundred_unique_source_queries(self):
         target_count = get_optimizer_config("profile").default_generation_count
         sampled_content = [
-            {"title": f"canonical source query {index:03d}"}
+            {
+                "title": f"canonical source query {index:03d}",
+                "schema_name": "document_pages",
+            }
             for index in range(target_count + 5)
         ]
         observed_queries = []
@@ -78,7 +83,8 @@ class TestProfileGenerator:
         )
 
         expected_queries = [
-            f"canonical source query {index:03d}" for index in range(target_count)
+            f"find canonical source query {index:03d} in document content"
+            for index in range(target_count)
         ]
         assert [example.query for example in examples] == expected_queries
         assert observed_queries == expected_queries
@@ -174,7 +180,7 @@ class TestProfileGenerator:
         )
 
         assert examples[0].model_dump() == {
-            "query": "quantum computing applications",
+            "query": "find quantum computing applications in document content",
             "available_profiles": "audio_semantic,document_semantic",
             "selected_profile": "document_semantic",
             "modality": "document",
@@ -206,7 +212,12 @@ class TestProfileGenerator:
             }
 
         examples = await ProfileGenerator(profile_labeler=select_wiki).generate(
-            sampled_content=SAMPLED_CONTENT,
+            sampled_content=[
+                {
+                    "title": "quantum computing applications",
+                    "schema_name": "wiki_pages",
+                }
+            ],
             target_count=1,
             profile_configs=profile_configs,
             tenant_id="test:unit",
@@ -267,13 +278,17 @@ class TestProfileGenerator:
         generator = ProfileGenerator(profile_labeler=label_by_tenant)
         audio_examples, document_examples = await asyncio.gather(
             generator.generate(
-                sampled_content=[{"title": "shared topic"}],
+                sampled_content=[
+                    {"title": "shared topic", "schema_name": "document_pages"}
+                ],
                 target_count=1,
                 profile_configs=PROFILE_CONFIGS,
                 tenant_id="tenant:audio",
             ),
             generator.generate(
-                sampled_content=[{"title": "shared topic"}],
+                sampled_content=[
+                    {"title": "shared topic", "schema_name": "document_pages"}
+                ],
                 target_count=1,
                 profile_configs=PROFILE_CONFIGS,
                 tenant_id="tenant:document",
@@ -296,7 +311,8 @@ class TestProfileGenerator:
             RuntimeError,
             match=(
                 "Profile selection failed for tenant='test:unit' "
-                "query='quantum computing applications': selector unavailable"
+                "query='find quantum computing applications in document "
+                "content': selector unavailable"
             ),
         ):
             await generator.generate(
@@ -443,3 +459,76 @@ class TestProfileGenerator:
                 profile_configs=PROFILE_CONFIGS,
                 tenant_id="test:unit",
             )
+
+
+VIDEO_PROFILE_CONFIGS = {
+    "video_frames_mv": {
+        "type": "video",
+        "schema_name": "video_frames",
+        "embedding_type": "multi_vector",
+        "pipeline_config": {"extract_keyframes": True, "generate_descriptions": True},
+    }
+}
+FRAME_DESCRIPTION_A = (
+    "This video frame captures an outdoor rodeo arena with metal bleachers today"
+)
+FRAME_DESCRIPTION_B = (
+    "This video frame captures an indoor stage with red curtains and lights"
+)
+SAME_VIDEO_FRAMES = [
+    {
+        "topic": "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691",
+        "description": FRAME_DESCRIPTION_A,
+        "schema_name": "video_frames",
+    },
+    {
+        "topic": "dd95bb382700f5aa2f17a1d6a8163ffd6ce4057b3c108e077ed34efb08e67691",
+        "description": FRAME_DESCRIPTION_B,
+        "schema_name": "video_frames",
+    },
+]
+
+
+class TestFrameLevelGrounding:
+    """Frames of one video are distinct grounded sources, not one topic."""
+
+    @pytest.mark.asyncio
+    async def test_frames_of_one_video_yield_one_templated_example_each(self):
+        observed = []
+
+        async def label_video(query, profiles, tenant_id):
+            observed.append(query)
+            return {
+                "query": query,
+                "selected_profile": "video_frames_mv",
+                "reasoning": "The production selector chose keyframe retrieval.",
+                "query_intent": "video_search",
+                "modality": "video",
+                "complexity": "complex",
+            }
+
+        examples = await ProfileGenerator(profile_labeler=label_video).generate(
+            sampled_content=SAME_VIDEO_FRAMES,
+            target_count=2,
+            profile_configs=VIDEO_PROFILE_CONFIGS,
+            tenant_id="flywheel_org:production",
+        )
+
+        expected_queries = [
+            f"find a video frame showing {FRAME_DESCRIPTION_A}",
+            f"find a video frame showing {FRAME_DESCRIPTION_B}",
+        ]
+        assert [example.query for example in examples] == expected_queries
+        assert observed == expected_queries
+        assert len(examples) == 2
+        assert [example.selected_profile for example in examples] == [
+            "video_frames_mv",
+            "video_frames_mv",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_shared_description_prefix_does_not_collapse_distinct_frames(self):
+        generator = ProfileGenerator(profile_labeler=_select_document)
+        topics = generator._extract_topics(SAME_VIDEO_FRAMES)
+
+        assert topics == [FRAME_DESCRIPTION_A, FRAME_DESCRIPTION_B]
