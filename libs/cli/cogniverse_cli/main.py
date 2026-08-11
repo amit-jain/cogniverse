@@ -52,6 +52,7 @@ from cogniverse_cli.images import (
     import_images,
     prune_superseded_images,
     pull_and_import_third_party,
+    verify_local_images_cover_deploy,
 )
 
 console = Console()
@@ -367,6 +368,9 @@ def up(
             console.print(f"[yellow]Image prune skipped: {exc}[/yellow]")
         dev_image_overrides = dev_image_set_values(
             project_root, values_files=values_files, version=image_version
+        )
+        verify_local_images_cover_deploy(
+            build_root, values_files, built_tags=tags, version=image_version
         )
 
     # 6. Detect LLM mode and build Helm set_values overrides. The dev-image

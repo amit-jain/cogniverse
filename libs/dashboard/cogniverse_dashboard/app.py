@@ -484,52 +484,10 @@ agent_config = get_agent_config()
 # Agent connectivity validation
 @st.cache_data(ttl=30)  # Cache for 30 seconds
 def check_agent_connectivity():
-    """Check agent availability via the unified runtime health endpoint.
+    """Check agent availability via the unified runtime agent registry."""
+    from cogniverse_dashboard.agent_status import probe_agents
 
-    All agents are served by the unified runtime at RUNTIME_URL.
-    We check the runtime health and agent registry instead of
-    individual agent URLs (which no longer exist).
-    """
-    import httpx
-
-    runtime_url = agent_config["runtime_url"]
-    agents = agent_config["agents"]
-    results = {}
-
-    # First check if runtime is reachable
-    try:
-        resp = httpx.get(f"{runtime_url}/health", timeout=5.0)
-        if resp.status_code != 200:
-            return {"error": f"Runtime not reachable (HTTP {resp.status_code})"}
-    except (httpx.HTTPError, OSError) as e:
-        return {"error": f"Runtime not reachable: {e}"}
-
-    # Check each agent via the registry
-    for agent_name in agents:
-        display_name = agent_name.replace("_", " ").title()
-        try:
-            resp = httpx.get(
-                f"{runtime_url}/agents/{agent_name}/health",
-                timeout=5.0,
-            )
-            if resp.status_code == 200:
-                results[display_name] = {
-                    "status": "online",
-                    "url": f"{runtime_url}/agents/{agent_name}",
-                }
-            else:
-                results[display_name] = {
-                    "status": "online",  # Agent exists in registry, just no dedicated health
-                    "url": f"{runtime_url}/agents/{agent_name}",
-                }
-        except (httpx.HTTPError, OSError):
-            results[display_name] = {
-                "status": "offline",
-                "url": f"{runtime_url}/agents/{agent_name}",
-                "message": "Connection failed",
-            }
-
-    return results
+    return probe_agents(agent_config["runtime_url"], agent_config["agents"])
 
 
 def show_agent_status():

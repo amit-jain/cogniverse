@@ -52,6 +52,12 @@ SIDECAR_BUILDS = {
 }
 # The PyLate image bakes the host-matching torch wheel, like runtime/dashboard.
 _TORCH_BACKEND_SIDECARS = frozenset({"colbert_pylate", "code_colbert_pylate"})
+# Every locally-built image keyed by the inference service that runs it.
+# GLiNER is enabled by the chart defaults; the rest are opt-in.
+LOCAL_IMAGE_BUILDS = {
+    "gliner": (GLINER_REPO, "deploy/gliner/Dockerfile", "."),
+    **SIDECAR_BUILDS,
+}
 # colpali, whisper, and the DenseOn dense embedder are served by vLLM, not
 # built here:
 # TomoroAI/tomoro-colqwen3-embed-4b via inference.vllm_colpali (vllm/vllm-openai-cpu)
@@ -153,10 +159,9 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return base
 
 
-def enabled_sidecars(project_root: Path, values_files: list[Path] | None) -> list[str]:
-    """Sidecar services whose ``inference.<svc>.enabled`` resolves true after
-    merging the chart defaults with the deploy overlays helm will apply, in
-    ``SIDECAR_BUILDS`` order."""
+def _merged_inference(project_root: Path, values_files: list[Path] | None) -> dict:
+    """``inference`` block after merging the chart defaults with the deploy
+    overlays helm will apply, in the order helm applies them."""
     merged: dict = (
         yaml.safe_load(
             (project_root / "charts" / "cogniverse" / "values.yaml").read_text()
@@ -166,13 +171,81 @@ def enabled_sidecars(project_root: Path, values_files: list[Path] | None) -> lis
     for values_file in values_files or []:
         overlay = yaml.safe_load(Path(values_file).read_text()) or {}
         _deep_merge(merged, overlay)
-    inference = merged.get("inference") or {}
+    return merged.get("inference") or {}
+
+
+def enabled_sidecars(project_root: Path, values_files: list[Path] | None) -> list[str]:
+    """Sidecar services whose ``inference.<svc>.enabled`` resolves true after
+    merging the chart defaults with the deploy overlays helm will apply, in
+    ``SIDECAR_BUILDS`` order."""
+    inference = _merged_inference(project_root, values_files)
     return [
         svc
         for svc in SIDECAR_BUILDS
         if isinstance(inference.get(svc), dict)
         and inference[svc].get("enabled") is True
     ]
+
+
+def first_party_services(
+    project_root: Path, values_files: list[Path] | None
+) -> dict[str, str]:
+    """Enabled inference services whose resolved chart image is a first-party
+    ``cogniverse/`` repository, mapped to that repository.
+
+    No registry serves these, so each one the deploy renders must be built and
+    imported or its pod never starts (``ErrImageNeverPull`` under
+    ``pullPolicy: Never``, ``ErrImagePull`` otherwise). Derived from the same
+    values helm receives, so enabling a service in values is the only step
+    needed to bring its image into the build.
+    """
+    inference = _merged_inference(project_root, values_files)
+    required: dict[str, str] = {}
+    for svc, cfg in inference.items():
+        if not isinstance(cfg, dict) or cfg.get("enabled") is not True:
+            continue
+        # Chart image-resolution order: imagesByDevice[device] -> image.
+        device = cfg.get("device")
+        by_device = cfg.get("imagesByDevice") or {}
+        image = by_device.get(device) if device and device in by_device else None
+        if not isinstance(image, dict):
+            image = cfg.get("image")
+        if not isinstance(image, dict):
+            continue
+        repo = image.get("repository")
+        if isinstance(repo, str) and repo.startswith("cogniverse/"):
+            required[svc] = repo
+    return required
+
+
+def verify_local_images_cover_deploy(
+    project_root: Path,
+    values_files: list[Path] | None,
+    *,
+    built_tags: list[str],
+    version: str,
+) -> None:
+    """Raise unless every first-party image the deploy renders was built.
+
+    The build set and the helm overlays are two inputs that must agree; when
+    they diverge (a caller builds from chart defaults while helm applies an
+    overlay that enables more) the pod fails at image pull, minutes later and
+    far from the cause. Call this with the values files helm receives, before
+    installing.
+    """
+    tag = _docker_tag(version)
+    have = set(built_tags)
+    missing = {
+        svc: f"{repo}:{tag}"
+        for svc, repo in first_party_services(project_root, values_files).items()
+        if f"{repo}:{tag}" not in have
+    }
+    if missing:
+        detail = ", ".join(f"{svc} -> {ref}" for svc, ref in sorted(missing.items()))
+        raise RuntimeError(
+            "Deploy enables first-party images that were not built: "
+            f"{detail}. Build with the same values files helm receives."
+        )
 
 
 def build_images(
@@ -186,15 +259,26 @@ def build_images(
     ``version`` to override (tests, no git checkout).
 
     Builds the runtime + dashboard variants matching ``torch_backend``
-    (auto-detected when None) plus the backend-agnostic GLiNER sidecar. The
-    optional embedder sidecars (videoprism / clap-embed / face-embed / pylate)
-    build only when their ``inference.<svc>.enabled`` resolves true across
-    ``values_files`` (the same overlays ``cogniverse up`` hands helm), so a
-    default build stays fast while flipping a sidecar on "just works". The
-    PyLate image is shared by colbert_pylate and code_colbert_pylate and
-    builds once. ColPali, Whisper, and DenseOn are served by vLLM and pulled
-    directly by k3d.
+    (auto-detected when None) plus the backend-agnostic GLiNER sidecar. Each
+    optional embedder sidecar in ``SIDECAR_BUILDS`` is built only when its
+    ``inference.<svc>.enabled`` resolves true across ``values_files``, so
+    passing the overlays helm receives is what brings an enabled sidecar into
+    the build; omitting them builds the chart-default set only. The PyLate
+    image is shared by colbert_pylate and code_colbert_pylate and builds once.
+    ColPali, Whisper, and DenseOn are served by vLLM and pulled directly.
+
+    Raises when those values enable a first-party (``cogniverse/*``) service
+    that has no ``LOCAL_IMAGE_BUILDS`` spec, rather than leaving its pod to
+    fail at image pull.
     """
+    unbuildable = sorted(
+        set(first_party_services(project_root, values_files)) - set(LOCAL_IMAGE_BUILDS)
+    )
+    if unbuildable:
+        raise RuntimeError(
+            f"No image build is defined for enabled services: {unbuildable}. "
+            "Add a LOCAL_IMAGE_BUILDS entry (repository, dockerfile, context)."
+        )
     version = version or dev_version(project_root)
     backend = torch_backend or detect_torch_backend()
 
@@ -222,14 +306,22 @@ def build_images(
         # GLiNER takes no TORCH_BACKEND arg and uses the repository-root
         # context for its canonical CLI modal-inference server.
         (
-            _dev_tag(GLINER_REPO, version),
-            "deploy/gliner/Dockerfile",
-            ".",
+            _dev_tag(LOCAL_IMAGE_BUILDS["gliner"][0], version),
+            LOCAL_IMAGE_BUILDS["gliner"][1],
+            LOCAL_IMAGE_BUILDS["gliner"][2],
             [],
         ),
     ]
-    for svc in enabled_sidecars(project_root, values_files):
-        repo, dockerfile, context = SIDECAR_BUILDS[svc]
+    # Union of the enabled sidecars and every first-party image the rendered
+    # chart references, so a service reaches the build through either seam.
+    to_build = list(enabled_sidecars(project_root, values_files))
+    to_build += [
+        svc
+        for svc in first_party_services(project_root, values_files)
+        if svc not in to_build and svc != "gliner"
+    ]
+    for svc in to_build:
+        repo, dockerfile, context = LOCAL_IMAGE_BUILDS[svc]
         sidecar_args = (
             ["--build-arg", f"TORCH_BACKEND={backend}"]
             if svc in _TORCH_BACKEND_SIDECARS
