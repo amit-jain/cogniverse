@@ -25,6 +25,7 @@ from a2a.types import Message, Task, TaskState, TaskStatus, TaskStatusUpdateEven
 from a2a.utils import get_message_text, new_agent_text_message
 
 from cogniverse_agents._coercion import coerce_bool, coerce_int
+from cogniverse_core.agents.base import leaf_exceptions
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
@@ -75,10 +76,7 @@ def _unwrap_exc(exc: BaseException) -> str:
     """Flatten an ExceptionGroup (anyio/asyncio TaskGroup) to the real leaf
     failures. ``str(group)`` is only 'unhandled errors in a TaskGroup (N
     sub-exceptions)', which hides what actually broke."""
-    sub = getattr(exc, "exceptions", None)
-    if sub:
-        return "; ".join(_unwrap_exc(e) for e in sub)
-    return f"{type(exc).__name__}: {exc}"
+    return "; ".join(f"{type(e).__name__}: {e}" for e in leaf_exceptions(exc))
 
 
 # All agents support streaming via emit_progress() and call_dspy()
@@ -305,9 +303,15 @@ class CogniverseAgentExecutor(AgentExecutor):
 
             async for event in _iterate_with_ctx():
                 event_type = event.get("type", "")
+                # An error event is terminal: the dispatch name replaces the
+                # class name the base layer recorded, and final=True closes
+                # the SSE stream with the failure instead of dangling until
+                # the queue tears down.
+                if event_type == "error":
+                    event["agent"] = agent_name
                 event_text = json.dumps(event, default=str)
 
-                is_final = event_type == "final"
+                is_final = event_type in ("final", "error")
                 state = TaskState.input_required if is_final else TaskState.working
 
                 a2a_event = TaskStatusUpdateEvent(
@@ -322,13 +326,25 @@ class CogniverseAgentExecutor(AgentExecutor):
                 await event_queue.enqueue_event(a2a_event)
 
         except Exception as e:
-            detail = _unwrap_exc(e)
             logger.error(
-                f"A2A streaming failed for agent '{agent_name}': {detail}",
+                f"A2A streaming failed for agent '{agent_name}': {_unwrap_exc(e)}",
                 exc_info=True,
             )
+            leaves = leaf_exceptions(e)
+            leaf_names: list = []
+            for leaf in leaves:
+                if type(leaf).__name__ not in leaf_names:
+                    leaf_names.append(type(leaf).__name__)
             error_text = json.dumps(
-                {"type": "error", "message": detail, "agent": agent_name}
+                {
+                    "type": "error",
+                    "agent": agent_name,
+                    "error_type": type(leaves[0]).__name__,
+                    "message": (
+                        f"Agent '{agent_name}' streaming failed with "
+                        f"{'; '.join(leaf_names)}. See runtime logs for detail."
+                    ),
+                }
             )
             error_event = TaskStatusUpdateEvent(
                 task_id=task_id,
