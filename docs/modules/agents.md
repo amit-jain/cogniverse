@@ -3475,8 +3475,16 @@ All streaming events are plain dicts with a `type` field:
 {"type": "token", "field": "reasoning", "text": "The query..."}
 {"type": "task_complete", "task": "entity_extraction", "success": True}
 {"type": "final", "data": {"results": [...], "total": 10}}
-{"type": "error", "message": "Search backend unavailable"}
+{"type": "error", "agent": "SearchAgent", "error_type": "VespaSearchDegraded",
+ "message": "SearchAgent streaming failed with VespaSearchDegraded. See server logs for detail."}
 ```
+
+An unhandled exception in `_process_impl` yields the error event above as the
+terminal event: `agent` is the agent class (the A2A executor replaces it with
+the dispatch name), `error_type` is the leaf exception type — ExceptionGroups
+from TaskGroups are flattened to their leaves — and the exception text stays
+server-side (logged with the full traceback), since it can carry credentialed
+backend URLs.
 
 ---
 

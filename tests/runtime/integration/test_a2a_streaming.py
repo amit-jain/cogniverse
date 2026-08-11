@@ -1014,3 +1014,99 @@ class TestA2AStreamingFullStack:
         assert "key_points" in final_data
         assert isinstance(final_data["key_points"], list)
         assert "confidence_score" in final_data
+
+
+@pytest.mark.integration
+@skip_if_no_lm
+class TestA2AStreamingErrorContract:
+    """Streaming terminal-event contract: real final on success, typed error
+    on failure — never a bare ExceptionGroup wrapper string."""
+
+    def test_summarizer_token_streams_under_lenient_json_adapter(
+        self, config_manager, dspy_lm
+    ):
+        """The runtime configures LenientJSONAdapter globally (main.py); the
+        cache-busted brief-summary call must stream tokens and end in a final
+        event, not an error (dspy's StreamListener keys adapter support by
+        exact class name and rejects unregistered subclasses)."""
+        import dspy
+
+        from cogniverse_agents.summarizer_agent import (
+            SummarizerAgent,
+            SummarizerDeps,
+            SummarizerInput,
+        )
+        from cogniverse_foundation.dspy import LenientJSONAdapter
+
+        agent = SummarizerAgent(
+            deps=SummarizerDeps(tenant_id="test:unit"),
+            config_manager=config_manager,
+        )
+        marker = uuid.uuid4().hex[:8]
+        previous = dspy.settings.adapter
+        dspy.configure(adapter=LenientJSONAdapter())
+        try:
+            events = _collect_stream_events(
+                agent,
+                SummarizerInput(
+                    query=f"What does case {marker} say about video search?",
+                    search_results=[
+                        {
+                            "id": marker,
+                            "title": f"Case {marker}: video search overview",
+                            "score": 0.9,
+                            "content_type": "video",
+                            "description": (
+                                "ColPali multi-vector retrieval over keyframes"
+                            ),
+                        }
+                    ],
+                    summary_type="brief",
+                    include_visual_analysis=False,
+                ),
+            )
+        finally:
+            dspy.configure(adapter=previous)
+
+        _assert_no_errors(events, "SummarizerAgent (LenientJSONAdapter)")
+        types = [e.get("type") for e in events]
+        assert types[-1] == "final", (
+            f"Terminal event must be 'final' under LenientJSONAdapter, "
+            f"got {types}: {events[-1]}"
+        )
+        token_events = [e for e in events if e.get("phase") == "token"]
+        assert token_events, (
+            "Cache-busted brief summary must stream tokens through the "
+            f"LenientJSONAdapter listener, got only: {types}"
+        )
+        final_data = _get_final(events, "SummarizerAgent (LenientJSONAdapter)")
+        assert len(final_data["summary"]) > 20, (
+            f"Summary too short for real LLM output: '{final_data['summary']}'"
+        )
+
+    def test_stream_error_event_names_agent_and_exception(
+        self, streaming_a2a_client, monkeypatch
+    ):
+        """An exception inside the agent surfaces as a terminal error event
+        naming the leaf exception type and the agent — the ExceptionGroup
+        wrapper string never reaches the client, and the SSE envelope marks
+        the event final."""
+        from cogniverse_agents.summarizer_agent import SummarizerAgent
+
+        async def _boom(self, request):
+            raise ExceptionGroup("wrapped", [ValueError("injected failure")])
+
+        monkeypatch.setattr(SummarizerAgent, "_thinking_phase", _boom)
+
+        raw_events = _send_a2a_stream(streaming_a2a_client, "summarize anything at all")
+        parsed = _parse_agent_events(raw_events)
+        assert parsed[-1] == {
+            "type": "error",
+            "agent": "summarizer_agent",
+            "error_type": "ValueError",
+            "message": (
+                "SummarizerAgent streaming failed with ValueError. "
+                "See server logs for detail."
+            ),
+        }
+        assert raw_events[-1]["result"]["final"] is True

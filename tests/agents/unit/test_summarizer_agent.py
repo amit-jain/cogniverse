@@ -853,8 +853,17 @@ class TestEmitProgressStreaming:
 
         # _stream_with_progress catches the exception and yields error event
         error_events = [e for e in events if e["type"] == "error"]
-        assert len(error_events) == 1
-        assert "LM not configured" in error_events[0]["message"]
+        assert error_events == [
+            {
+                "type": "error",
+                "agent": "SummarizerAgent",
+                "error_type": "RuntimeError",
+                "message": (
+                    "SummarizerAgent streaming failed with RuntimeError. "
+                    "See server logs for detail."
+                ),
+            }
+        ]
 
         final_events = [e for e in events if e["type"] == "final"]
         assert len(final_events) == 0
@@ -1016,8 +1025,15 @@ class TestEmitProgressGenericAgents:
 
         assert len(events) == 2
         assert events[0]["type"] == "status"
-        assert events[1]["type"] == "error"
-        assert "Backend connection failed" in events[1]["message"]
+        assert events[1] == {
+            "type": "error",
+            "agent": "FailingAgent",
+            "error_type": "RuntimeError",
+            "message": (
+                "FailingAgent streaming failed with RuntimeError. "
+                "See server logs for detail."
+            ),
+        }
 
     @pytest.mark.asyncio
     async def test_progress_queue_cleaned_up_after_streaming(self):

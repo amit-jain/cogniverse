@@ -110,6 +110,17 @@ _PROGRESS_QUEUE: contextvars.ContextVar[Optional[asyncio.Queue]] = (
 )
 
 
+def leaf_exceptions(exc: BaseException) -> list[BaseException]:
+    """Flatten an ExceptionGroup to its leaf exceptions; a plain exception
+    returns itself. ``str()`` on a TaskGroup ExceptionGroup is only the
+    wrapper text ("unhandled errors in a TaskGroup"), which hides what
+    actually broke."""
+    sub = getattr(exc, "exceptions", None)
+    if sub:
+        return [leaf for e in sub for leaf in leaf_exceptions(e)]
+    return [exc]
+
+
 class ConversationTurn(BaseModel):
     """A single turn in a multi-turn conversation.
 
@@ -521,11 +532,23 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
             if _PROGRESS_QUEUE.get() is not None:
                 import dspy
 
+                listener = dspy.streaming.StreamListener(output_field)
+                # StreamListener keys adapter support by exact class name and
+                # rejects subclasses (e.g. LenientJSONAdapter); register the
+                # ambient adapter under its nearest supported ancestor's
+                # field markers.
+                adapter = dspy.settings.adapter
+                if adapter is not None:
+                    adapter_name = type(adapter).__name__
+                    if adapter_name not in listener.adapter_identifiers:
+                        for ancestor in type(adapter).__mro__[1:]:
+                            spec = listener.adapter_identifiers.get(ancestor.__name__)
+                            if spec is not None:
+                                listener.adapter_identifiers[adapter_name] = spec
+                                break
                 streaming_fn = dspy.streamify(
                     call_module,
-                    stream_listeners=[
-                        dspy.streaming.StreamListener(output_field),
-                    ],
+                    stream_listeners=[listener],
                     include_final_prediction_in_output_stream=True,
                 )
                 accumulated = ""
@@ -695,9 +718,29 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                 yield event
 
             if error_holder:
+                exc = error_holder[0]
+                leaves = leaf_exceptions(exc)
+                leaf_names: list = []
+                for leaf in leaves:
+                    if type(leaf).__name__ not in leaf_names:
+                        leaf_names.append(type(leaf).__name__)
+                agent_cls = type(self).__name__
+                logger.error(
+                    "%s streaming failed with %s",
+                    agent_cls,
+                    "; ".join(f"{type(le).__name__}: {le}" for le in leaves),
+                    exc_info=exc,
+                )
+                # Exception text stays server-side: it can carry credentialed
+                # backend URLs. The client gets the leaf type(s) and agent.
                 yield {
                     "type": "error",
-                    "message": str(error_holder[0]),
+                    "agent": agent_cls,
+                    "error_type": type(leaves[0]).__name__,
+                    "message": (
+                        f"{agent_cls} streaming failed with "
+                        f"{'; '.join(leaf_names)}. See server logs for detail."
+                    ),
                 }
             elif result_holder:
                 payload = result_holder[0].model_dump()
