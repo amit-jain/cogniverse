@@ -25,6 +25,9 @@ from typing import List, Mapping, Optional, Union
 import numpy as np
 
 from cogniverse_foundation.config.inference_auth import inference_headers
+from cogniverse_foundation.config.inference_service import (
+    require_in_process_backend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,8 @@ class LocalSentenceTransformerEmbedder(SemanticEmbedder):
     """In-process SentenceTransformer wrapper (fallback when no remote URL)."""
 
     def __init__(self, model_name: str):
+        require_in_process_backend("denseon", module="sentence_transformers")
+
         from sentence_transformers import SentenceTransformer
 
         logger.info("Loading local semantic model: %s", model_name)
