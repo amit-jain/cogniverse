@@ -34,7 +34,7 @@ path). The chart renders one Deployment + Service per enabled service.
 | Field | Value |
 |---|---|
 | Chart key | `inference.vllm_llm_student` |
-| Model | `google/gemma-4-e4b-it` |
+| Model | `google/gemma-4-e4b-it`, pinned revision `ee0ef602…` passed to `vllm serve --revision` |
 | Image (CPU / CUDA) | `vllm/vllm-openai-cpu:v0.23.0` / `vllm/vllm-openai:v0.23.0` (official) |
 | Image (ROCm) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | NodePort | 29010 |
@@ -202,7 +202,7 @@ chart key.
 | Field | Value |
 |---|---|
 | Chart key | `inference.vllm_colpali` |
-| Model | `TomoroAI/tomoro-colqwen3-embed-4b` |
+| Model | `TomoroAI/tomoro-colqwen3-embed-4b`, pinned revision `bf790bd8…` passed to `vllm serve --revision` |
 | Image (base `values.yaml`, no device overlay) | `vllm/vllm-openai-cpu:v0.23.0` (official), `engine: vllm_token_embed`, `enabled: false` |
 | Image (k3d local dev, `values.k3s.yaml`) | No override: inherits the disabled official CPU vLLM definition from `values.yaml` |
 | Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:v0.23.0` (official), `engine: vllm_token_embed` |
@@ -274,7 +274,7 @@ text plus `is_query`; no prefixes or token IDs are built client-side.
 | Field | Value |
 |---|---|
 | Chart key | `inference.denseon` |
-| Model | `lightonai/DenseOn` (ModernBERT-base, 768-dim, CLS pooling, 512 ctx) |
+| Model | `lightonai/DenseOn` (ModernBERT-base, 768-dim, CLS pooling, 512 ctx), pinned revision `cb9947eb…` passed to `vllm serve --revision` |
 | Image | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` (official) |
 | Engine | `vllm_embed` |
 | Endpoint | `POST /v1/embeddings` (OpenAI-compatible, single dense vector) |
@@ -294,7 +294,7 @@ reshape), matching DenseOn's dense-retrieval semantics.
 | Field | Value |
 |---|---|
 | Chart key | `inference.vllm_asr` |
-| Model | `openai/whisper-large-v3-turbo` on ROCm/CUDA; `openai/whisper-tiny` in the CPU overlay |
+| Model | `openai/whisper-large-v3-turbo` on ROCm/CUDA, pinned revision `41f01f3f…` passed to `vllm serve --revision`; `openai/whisper-tiny` unpinned in the CPU overlay |
 | Image | `vllm/vllm-openai-cpu:v0.23.0` / `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | Engine | `vllm_transcription` |
 | NodePort | 29005 |

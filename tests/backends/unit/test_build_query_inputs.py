@@ -122,6 +122,28 @@ def test_strategy_timeout_forwarded_to_query(backend: VespaSearchBackend) -> Non
     assert params["timeout"] == "2.0s"
 
 
+def test_top_k_above_default_hit_cap_raises_native_limits(
+    backend: VespaSearchBackend,
+) -> None:
+    """The default query profile caps hits at 400; every built query must
+    raise maxHits/maxOffset to the requested limit or Vespa rejects any
+    top_k > 400 as an illegal query."""
+    rank_config = {"needs_text_query": True}
+    params = backend._build_query(
+        query_text="needle",
+        query_embeddings=None,
+        rank_config=rank_config,
+        ranking_profile="bm25_only",
+        schema_name="video_frame",
+        limit=1000,
+        filters={},
+        correlation_id="t",
+    )
+    assert params["hits"] == 1000
+    assert params["maxHits"] == 1000
+    assert params["maxOffset"] == 1000
+
+
 def test_no_timeout_key_when_strategy_omits_it(backend: VespaSearchBackend) -> None:
     rank_config = {"needs_text_query": True}
     params = backend._build_query(

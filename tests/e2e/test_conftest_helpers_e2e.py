@@ -182,6 +182,126 @@ class TestSharedClusterOwnership:
 
         assert matches == [expected]
 
+    def test_image_profile_hit_matches_on_image_id_identity(self):
+        content_id = "1334" + "a" * 60
+        source_url = f"s3://cogniverse-ingest/{e2e_conftest.TENANT_ID}/{content_id}.jpg"
+        expected = {
+            "document_id": f"{content_id}_seg_0",
+            "source_id": content_id,
+            "metadata": {"image_id": content_id, "source_url": source_url},
+        }
+        search_body = {
+            "query": content_id,
+            "profile": "image_colpali_mv",
+            "strategy": "default",
+            "results_count": 1,
+            "results": [expected],
+        }
+
+        matches = e2e_conftest._matching_sample_results(
+            search_body,
+            content_id=content_id,
+            tenant_id=e2e_conftest.TENANT_ID,
+            profile="image_colpali_mv",
+            suffix=".jpg",
+        )
+
+        assert matches == [expected]
+
+    def test_image_hit_without_image_id_is_not_persistence_proof(self):
+        # The pre-fix persisted shape: source_url present, identity fields
+        # absent. Such a hit must not count as an exact persisted document.
+        content_id = "1334" + "a" * 60
+        source_url = f"s3://cogniverse-ingest/{e2e_conftest.TENANT_ID}/{content_id}.jpg"
+        search_body = {
+            "query": content_id,
+            "profile": "image_colpali_mv",
+            "strategy": "default",
+            "results_count": 1,
+            "results": [
+                {
+                    "document_id": f"{content_id}_seg_0",
+                    "source_id": content_id,
+                    "metadata": {"source_url": source_url},
+                }
+            ],
+        }
+
+        matches = e2e_conftest._matching_sample_results(
+            search_body,
+            content_id=content_id,
+            tenant_id=e2e_conftest.TENANT_ID,
+            profile="image_colpali_mv",
+            suffix=".jpg",
+        )
+
+        assert matches == []
+
+    def test_search_api_transport_failure_surfaces_error_not_empty(self, monkeypatch):
+        def _post(*args, **kwargs):
+            raise e2e_conftest.httpx.ConnectError("nope")
+
+        monkeypatch.setattr(e2e_conftest.httpx, "post", _post)
+        matches, error = e2e_conftest._search_sample_content(
+            content_id=e2e_conftest.SAMPLE_VIDEO_CONTENT_ID,
+            tenant_id=e2e_conftest.TENANT_ID,
+            profile="video_colpali_smol500_mv_frame",
+            suffix=".mp4",
+        )
+        assert matches is None
+        assert error == "search request failed: ConnectError('nope')"
+
+    def test_search_api_non_200_surfaces_status_and_body(self, monkeypatch):
+        class _Resp:
+            status_code = 500
+            text = '{"detail":"Illegal query"}'
+
+        monkeypatch.setattr(e2e_conftest.httpx, "post", lambda *a, **k: _Resp())
+        matches, error = e2e_conftest._search_sample_content(
+            content_id=e2e_conftest.SAMPLE_VIDEO_CONTENT_ID,
+            tenant_id=e2e_conftest.TENANT_ID,
+            profile="video_colpali_smol500_mv_frame",
+            suffix=".mp4",
+        )
+        assert matches is None
+        assert error == 'search returned 500: {"detail":"Illegal query"}'
+
+    def test_search_success_returns_matches_and_no_error(self, monkeypatch):
+        content_id = e2e_conftest.SAMPLE_VIDEO_CONTENT_ID
+        source_url = f"s3://cogniverse-media/{e2e_conftest.TENANT_ID}/{content_id}.mp4"
+        expected = {
+            "document_id": f"{content_id}_seg_0",
+            "source_id": content_id,
+            "metadata": {
+                "video_id": content_id,
+                "source_url": source_url,
+            },
+        }
+        body = {
+            "query": content_id,
+            "profile": "video_colpali_smol500_mv_frame",
+            "strategy": "default",
+            "results_count": 1,
+            "results": [expected],
+        }
+
+        class _Resp:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return body
+
+        monkeypatch.setattr(e2e_conftest.httpx, "post", lambda *a, **k: _Resp())
+        matches, error = e2e_conftest._search_sample_content(
+            content_id=content_id,
+            tenant_id=e2e_conftest.TENANT_ID,
+            profile="video_colpali_smol500_mv_frame",
+            suffix=".mp4",
+        )
+        assert matches == [expected]
+        assert error is None
+
     def test_completed_ingestion_result_requires_exact_identity_and_counts(self):
         content_id = e2e_conftest.SAMPLE_VIDEO_CONTENT_ID
         source_url = f"s3://cogniverse-media/{e2e_conftest.TENANT_ID}/{content_id}.mp4"

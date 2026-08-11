@@ -446,6 +446,107 @@ class TestDocExtractor:
         assert loaded == [model] * 8
         assert load_count == 1
 
+    def test_bare_construction_routes_through_configured_inference_service(
+        self, monkeypatch
+    ):
+        """A DocExtractor built without an explicit URL discovers the GLiNER
+        inference service from system configuration and routes every
+        prediction through it — never an in-process model load."""
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        import cogniverse_agents.graph.doc_extractor as doc_extractor_module
+
+        seen = {}
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                seen["path"] = self.path
+                seen["payload"] = json.loads(body)
+                response = json.dumps(
+                    {
+                        "entities": [
+                            {
+                                "text": "Marie Curie",
+                                "label": "Person",
+                                "score": 0.93,
+                                "start": 0,
+                                "end": 11,
+                            },
+                            {
+                                "text": "radium",
+                                "label": "Substance",
+                                "score": 0.88,
+                                "start": 23,
+                                "end": 29,
+                            },
+                        ],
+                        "model": "urchade/gliner_large-v2.1",
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+
+        manager = SimpleNamespace(
+            get_system_config=lambda: SimpleNamespace(
+                inference_service_urls={"gliner": url}
+            )
+        )
+        monkeypatch.setattr(
+            doc_extractor_module, "get_config_manager_singleton", lambda: manager
+        )
+
+        extractor = DocExtractor()
+        try:
+            ents = extractor.extract_entities_from_text(
+                "Marie Curie discovered radium",
+                tenant_id="t1",
+                source_doc_id="doc1.md",
+                segment_anchor=_doc_anchor(),
+            )
+        finally:
+            server.shutdown()
+
+        assert seen["path"] == "/predict_entities"
+        assert seen["payload"] == {
+            "text": "Marie Curie discovered radium",
+            "labels": [
+                "Person",
+                "Organization",
+                "Location",
+                "Date",
+                "Substance",
+                "Award",
+                "Field",
+                "Event",
+                "Concept",
+                "Technology",
+                "Product",
+                "Algorithm",
+                "Model",
+                "Framework",
+                "Language",
+            ],
+            "threshold": 0.3,
+            "model": "urchade/gliner_large-v2.1",
+        }
+        assert [(n.name, n.label) for n in ents.nodes] == [
+            ("Marie Curie", "Person"),
+            ("radium", "Substance"),
+        ]
+        assert ents.per_chunk_entity_names == [["Marie Curie", "radium"]]
+
     def test_returns_none_for_unsupported_extension(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             f = Path(tmpdir) / "sample.py"

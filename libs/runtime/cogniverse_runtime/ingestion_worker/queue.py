@@ -411,6 +411,38 @@ async def publish_status(redis: aioredis.Redis, ingest_id: str, event: dict) -> 
     return msg_id
 
 
+# EXISTS and XADD run in one script so N concurrent restores of the same
+# reclaimed stream append exactly one event; a check-then-publish pair would
+# let every racing caller past the empty check and stack duplicate snapshots.
+_PUBLISH_IF_ABSENT_LUA = """
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return 0
+end
+redis.call('XADD', KEYS[1], 'MAXLEN', ARGV[2], '*', 'data', ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+return 1
+"""
+
+
+async def publish_status_if_absent(
+    redis: aioredis.Redis, ingest_id: str, event: dict
+) -> bool:
+    """Seed a status stream that no longer exists; leave a live one untouched.
+
+    Returns True when the event was written. Callers use this to make an
+    ingest_id pollable again without writing over surviving real history.
+    """
+    written = await redis.eval(
+        _PUBLISH_IF_ABSENT_LUA,
+        1,
+        _status_stream_key(ingest_id),
+        json.dumps(event),
+        STATUS_STREAM_MAXLEN,
+        STATUS_STREAM_TTL_SECONDS,
+    )
+    return bool(written)
+
+
 async def read_status_since(
     redis: aioredis.Redis,
     ingest_id: str,

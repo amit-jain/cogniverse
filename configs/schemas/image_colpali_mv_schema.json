@@ -298,6 +298,11 @@
     "created_at_format": "epoch",
     "embeddings": {
       "embedding": "embedding"
+    },
+    "metadata_fields": {
+      "video_id": "image_id",
+      "video_title": "image_title",
+      "description": "image_description"
     }
   }
 }

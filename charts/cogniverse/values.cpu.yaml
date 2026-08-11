@@ -14,6 +14,10 @@ inference:
   vllm_asr:
     device: cpu
     model: openai/whisper-tiny
+    # Clears the base chart's whisper-large-v3-turbo pin: that sha does not
+    # exist in this repo, and serving an unpinned dev model is the trade this
+    # overlay already makes.
+    revision: null
     kvCacheGiB: 1
     image:
       repository: vllm/vllm-openai-cpu

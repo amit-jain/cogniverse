@@ -2786,13 +2786,14 @@ class MemoryAwareMixin:
 
 **Location**: `libs/agents/cogniverse_agents/graph/doc_extractor.py`
 
-`DocExtractor` receives its remote GLiNER endpoint explicitly from
-`GraphManager`; it does not reopen global configuration while a job is running.
-The API and ingestion-worker graph factories take the already validated
-`SystemConfig.inference_service_urls["gliner"]` value and inject it alongside
-the ColBERT endpoint. Both production factories reject a missing endpoint
-before building a manager. Direct construction may explicitly pass `None` to
-select the in-process model in an environment that installs it. No extractor
+`DocExtractor` uses an explicitly injected remote GLiNER endpoint when one is
+provided: `GraphManager` injects the already validated
+`SystemConfig.inference_service_urls["gliner"]` value alongside the ColBERT
+endpoint, and both production graph factories reject a missing endpoint before
+building a manager. Built without an explicit URL, the extractor resolves the
+endpoint from validated system configuration at first model load; only when no
+endpoint is configured anywhere does it load the model in-process, which
+requires an environment that installs the local gliner stack. No extractor
 parses environment JSON or recognizes a separate `GLINER_INFERENCE_URL` value.
 Entity extraction is all-or-error for each source: if GLiNER fails on any
 chunk, the call raises with the one-based chunk number and source document ID,
