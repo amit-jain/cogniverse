@@ -293,11 +293,15 @@ every profile modality against an enabled, loaded agent with the declared
 modality and capability. Missing sections, unknown keys, obsolete object shapes,
 unloaded agents, and incomplete mappings fail before any backend lookup. The
 parser retains validated `backend.default_profiles` selections and requires each
-selection to reference a declared profile; profile, selection, and agent objects
-accept only their documented canonical keys, so misspellings cannot be hidden in
-an extras object. The validated enabled-agent object is passed unchanged to
-`SyntheticDataService`;
-there is no embedded mapping, empty-object default, or configuration fallback.
+selection to reference a declared profile. Selection and agent objects accept
+only their documented canonical keys, so misspellings cannot be hidden in an
+extras object. Profile objects require `type` and `schema_name` and type-check
+every canonical key they declare; any further key passes through to
+`BackendProfileConfig.extra_config`, which is how runtime-registered profiles
+such as `agent_memories` carry the `encoder` and `strategy` values the Vespa
+search backend reads back by name. The validated enabled-agent object is passed
+unchanged to `SyntheticDataService`; there is no embedded mapping, empty-object
+default, or configuration fallback.
 Routing and entity-extraction example labels use the registered production
 `entity_extraction_agent`: the runtime adapter calls `AgentDispatcher.dispatch`
 with the source text and request tenant, preserving the dispatcher result for
