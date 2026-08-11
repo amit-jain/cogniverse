@@ -28,6 +28,25 @@ from cogniverse_foundation.caching import TenantLRUCache
 logger = logging.getLogger(__name__)
 
 
+def build_memory_profile(base_schema_name: str, embedding_dims: int) -> Dict[str, Any]:
+    """Backend profile registered for the agent-memory schema.
+
+    Shape matches ``BackendProfileConfig.to_dict()`` so it survives the
+    round-trip through ConfigStore unchanged.
+    """
+    return {
+        "type": "memory",
+        "model": "lightonai/DenseOn",
+        "embedding_model": "lightonai/DenseOn",
+        "embedding_dims": embedding_dims,
+        "encoder": "denseon",
+        "strategy": "semantic_search",
+        "schema_name": base_schema_name,
+        "embedding_type": "dense",
+        "schema_config": {"embedding_dims": embedding_dims},
+    }
+
+
 # Max number of distinct tenants whose Mem0 instances are kept warm in
 # this process. Each instance carries a Vespa client and an LLM config,
 # so an unbounded dict leaks ~50-200MB per tenant across long-running
@@ -326,20 +345,7 @@ class Mem0MemoryManager:
             profiles = {}
 
         if base_schema_name not in profiles:
-            # Minimal profile for agent_memories. Shape must match
-            # `BackendProfileConfig.to_dict()` (see unified_config.py:429) so
-            # it survives round-trip through ConfigStore unchanged.
-            memory_profile = {
-                "type": "memory",
-                "model": "lightonai/DenseOn",
-                "embedding_model": "lightonai/DenseOn",
-                "embedding_dims": 768,
-                "encoder": "denseon",
-                "strategy": "semantic_search",
-                "schema_name": base_schema_name,
-                "embedding_type": "dense",
-                "schema_config": {"embedding_dims": 768},
-            }
+            memory_profile = build_memory_profile(base_schema_name, embedding_dims)
             profiles[base_schema_name] = memory_profile
 
             # Persist the profile through ConfigManager so the shared search

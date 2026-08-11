@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import math
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -14,23 +15,22 @@ from cogniverse_foundation.config.unified_config import (
     SyntheticGeneratorConfig,
 )
 
+logger = logging.getLogger(__name__)
+
 _MISSING = object()
-_PROFILE_KEYS = {
-    "description",
-    "embedding_model",
-    "embedding_type",
-    "inference_config",
-    "inference_services",
-    "model_config",
-    "model_loader",
-    "model_specific",
-    "pipeline_config",
-    "process_type",
-    "schema_config",
-    "schema_name",
-    "semantic_model",
-    "strategies",
-    "type",
+_PROFILE_REQUIRED_FIELDS = ("type", "schema_name")
+_PROFILE_TYPED_FIELDS: dict[str, type] = {
+    "description": str,
+    "embedding_model": str,
+    "embedding_type": str,
+    "model_loader": str,
+    "model_specific": dict,
+    "pipeline_config": dict,
+    "process_type": str,
+    "schema_config": dict,
+    "schema_name": str,
+    "strategies": dict,
+    "type": str,
 }
 _AGENT_KEYS = {"capabilities", "enabled", "modalities", "timeout", "url"}
 
@@ -140,12 +140,21 @@ def _validate_backend(
             f"backend.profiles.{profile_name}",
             nonempty=True,
         )
-        _require_keys(
-            profile,
-            required={"type", "schema_name"},
-            optional=_PROFILE_KEYS - {"type", "schema_name"},
-            source=f"backend.profiles.{profile_name}",
-        )
+        for field_name in _PROFILE_REQUIRED_FIELDS:
+            if field_name not in profile:
+                raise ValueError(
+                    f"backend.profiles.{profile_name} is missing required "
+                    f"key {field_name!r}"
+                )
+        for field_name, expected_type in _PROFILE_TYPED_FIELDS.items():
+            field_value = profile.get(field_name, _MISSING)
+            if field_value is _MISSING or field_value is None:
+                continue
+            if not isinstance(field_value, expected_type):
+                raise ValueError(
+                    f"backend.profiles.{profile_name}.{field_name} must be "
+                    f"{expected_type.__name__}, got {type(field_value).__name__}"
+                )
         _require_string(profile.get("type"), f"backend.profiles.{profile_name}.type")
         _require_string(
             profile.get("schema_name"),
@@ -424,7 +433,11 @@ def parse_synthetic_runtime_config(
         )
         generator_config = _validate_synthetic(synthetic_raw, tenant_id)
 
-        from cogniverse_synthetic.utils import AgentInferrer
+        from cogniverse_synthetic.utils import (
+            AgentInferrer,
+            partition_profiles_by_sampleability,
+            profile_modality,
+        )
 
         modality_config = generator_config.get_optimizer_config("modality")
         if modality_config is None:
@@ -433,10 +446,28 @@ def parse_synthetic_runtime_config(
             agents_config=agents_raw,
             agent_mappings=modality_config.agent_mappings,
         )
-        profile_modalities = {
-            profile.type.upper() for profile in backend_config.profiles.values()
-        }
-        inferrer.require_mappings(profile_modalities)
+        sampleable, internal = partition_profiles_by_sampleability(
+            backend_config.profiles
+        )
+        if not sampleable:
+            raise ValueError(
+                "no backend profile has a synthetic-sampleable modality, got "
+                + str(sorted({p.type for p in backend_config.profiles.values()}))
+            )
+        if internal:
+            logger.warning(
+                "Synthetic skips internal backend profiles: %s",
+                ", ".join(sorted(internal)),
+            )
+        inferrer.require_mappings(
+            {
+                modality
+                for modality in (
+                    profile_modality(profile) for profile in sampleable.values()
+                )
+                if modality is not None
+            }
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(
             f"Invalid synthetic runtime configuration for tenant={tenant_id!r}: {exc}"
