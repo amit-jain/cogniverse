@@ -32,10 +32,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _render(*set_args: str, values: str | None = None) -> list[dict]:
+def _render(*set_args: str, values: str | tuple[str, ...] | None = None) -> list[dict]:
     cmd = ["helm", "template", "cogniverse", str(CHART_PATH)]
-    if values is not None:
-        cmd.extend(["-f", str(CHART_PATH / values)])
+    for values_file in (values,) if isinstance(values, str) else (values or ()):
+        cmd.extend(["-f", str(CHART_PATH / values_file)])
     # The chart fail-fasts if qualityMonitor.tenantId is empty; supply a
     # placeholder so inference wiring is the only variable under test.
     cmd.extend(["--set", "runtime.qualityMonitor.tenantId=test-tenant"])
@@ -757,3 +757,50 @@ def test_cpu_overlay_swaps_whisper_without_inheriting_the_turbo_revision():
     assert "exec vllm serve 'openai/whisper-tiny' \\\n" in script
     assert "--revision" not in script
     assert "41f01f3fe87f28c78e2fbf8b568835947dd65ed9" not in script
+def _runtime_container(docs: list[dict]) -> dict:
+    for doc in docs:
+        if doc.get("kind") != "Deployment":
+            continue
+        if doc["metadata"]["labels"].get("app.kubernetes.io/component") == "runtime":
+            return doc["spec"]["template"]["spec"]["containers"][0]
+    raise AssertionError("no runtime Deployment rendered")
+
+
+def _env(container: dict, name: str) -> str:
+    for entry in container["env"]:
+        if entry["name"] == name:
+            return entry["value"]
+    raise AssertionError(f"{name} not in rendered runtime env")
+
+
+def test_k3s_rocm_runtime_receives_the_clap_embed_url():
+    """audio_analysis_agent encodes its query with CLAP. The runtime image
+    carries no torch, so the acoustic path works only through the sidecar,
+    and the sidecar URL reaches the runtime only when clap_embed is enabled."""
+    docs = _render(values=("values.k3s.yaml", "values.rocm.yaml"))
+    urls = json.loads(_env(_runtime_container(docs), "INFERENCE_SERVICE_URLS"))
+
+    assert urls["clap_embed"] == "http://cogniverse-clap-embed:8000"
+
+
+def test_k3s_rocm_clap_embed_pod_is_cpu_only():
+    """clap_embed must not draw on the GPU pool the vLLM pods share — its
+    fractions are budgeted exactly and an unbudgeted GPU claim freezes the host."""
+    docs = _render(values=("values.k3s.yaml", "values.rocm.yaml"))
+    container = _inference_deployments(docs)["clap_embed"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+
+    resources = container["resources"]
+    assert resources == {
+        "limits": {"cpu": "2", "memory": "6Gi"},
+        "requests": {"cpu": "500m", "memory": "2Gi"},
+    }
+    assert {e["name"]: e["value"] for e in container["env"]} == {
+        "CLAP_EMBED_MODEL": "laion/clap-htsat-unfused",
+        "CLAP_EMBED_SAMPLE_RATE": "48000",
+        "HF_HOME": "/root/.cache/huggingface",
+        "HOST": "0.0.0.0",
+        "PORT": "8000",
+    }
+    assert "--gpu-memory-utilization" not in container.get("args", [])

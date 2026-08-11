@@ -19,7 +19,12 @@ import pytest
 import requests
 
 from cogniverse_agents.wiki.wiki_manager import WikiManager
-from cogniverse_agents.wiki.wiki_schema import WikiPage, generate_slug
+from cogniverse_agents.wiki.wiki_schema import (
+    InvalidWikiTitleError,
+    WikiPage,
+    entity_titles,
+    generate_slug,
+)
 from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
 
 # ---------------------------------------------------------------------------
@@ -662,3 +667,74 @@ class TestWikiVespaIntegration:
         assert content_a in content, f"lost content_a; final content: {content!r}"
         assert content_b in content, f"lost content_b; final content: {content!r}"
         assert int(fields["update_count"]) == 2
+
+
+@pytest.mark.integration
+class TestExtractionRecordRoundTrip:
+    """EntityExtractionAgent emits ``Entity.model_dump()`` records, and the
+    dispatcher's auto-file hook feeds them straight through. Nothing pinned
+    the record shape, so every entity-bearing turn died in slug generation.
+    """
+
+    def test_extraction_records_persist_under_their_text_slugs(self, wiki_manager):
+        manager, port = wiki_manager
+
+        records = [
+            {"text": "Barack Obama", "type": "PERSON", "confidence": 0.9},
+            {"text": "Café au Lait", "type": "CONCEPT", "confidence": 0.7},
+        ]
+        titles = entity_titles(records)
+        assert titles == ["Barack Obama", "Café au Lait"]
+
+        manager.save_session(
+            query="Show me videos about Barack Obama",
+            response="Here are the videos.",
+            entities=titles,
+            agent_name="search_agent",
+        )
+
+        safe = TENANT_ID.replace(":", "_")
+        assert [generate_slug(t) for t in titles] == ["barack_obama", "cafe_au_lait"]
+
+        persisted = {}
+        for title in titles:
+            doc_id = f"wiki_topic_{safe}_{generate_slug(title)}"
+            doc = _get_vespa_doc(port, doc_id)
+            assert doc is not None, f"topic page {doc_id} not persisted"
+            persisted[doc_id] = doc["fields"]["title"]
+
+        assert persisted == {
+            f"wiki_topic_{safe}_barack_obama": "Barack Obama",
+            f"wiki_topic_{safe}_cafe_au_lait": "Café au Lait",
+        }
+
+    def test_record_shaped_entities_persist_nothing_and_name_the_shape(
+        self, wiki_manager
+    ):
+        """Unprojected records must be rejected before the first feed — a
+        mid-list failure would leave earlier topic pages behind."""
+        manager, port = wiki_manager
+
+        safe = TENANT_ID.replace(":", "_")
+        records = [
+            {"text": "Torn Write Alpha", "type": "CONCEPT"},
+            {"text": "Torn Write Beta", "type": "CONCEPT"},
+        ]
+
+        with pytest.raises(InvalidWikiTitleError) as excinfo:
+            manager.save_session(
+                query="q",
+                response="r",
+                entities=records,
+                agent_name="search_agent",
+            )
+
+        assert str(excinfo.value) == (
+            "save_session entities[0] must be a str, got dict with keys "
+            "['text', 'type']"
+        )
+        for slug in ("torn_write_alpha", "torn_write_beta"):
+            doc_id = f"wiki_topic_{safe}_{slug}"
+            assert _get_vespa_doc(port, doc_id, retries=1) is None, (
+                f"{doc_id} was persisted despite the rejected payload"
+            )
