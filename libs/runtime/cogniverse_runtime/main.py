@@ -695,13 +695,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     logger.info("Default asyncio executor capped at 16 workers")
 
-    # Wire Phoenix endpoints into the admin router from the environment here at
-    # the entrypoint, so its request handlers read config, not os.environ.
-    admin.set_phoenix_endpoints(
-        os.environ.get("PHOENIX_HTTP_ENDPOINT", "http://localhost:6006"),
-        os.environ.get("PHOENIX_GRPC_ENDPOINT", "localhost:4317"),
-    )
-
     logger.info("Starting Cogniverse Runtime...")
 
     # 1. Resolve fresh-install versus existing data-plane readiness before
@@ -1050,6 +1043,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         config_manager.set_system_config(system_config)
         BackendRegistry.get_instance()._backend_instances.clear()
         logger.info("SystemConfig stored with deployment env var overrides")
+
+    # Wire Phoenix endpoints after config resolution so the admin router
+    # follows the same single source of truth as the rest of telemetry config.
+    admin.set_phoenix_endpoints(
+        system_config.telemetry_url,
+        system_config.telemetry_collector_endpoint,
+    )
 
     # 7b. Propagate telemetry OTLP endpoint to the TelemetryManager singleton
     # (created during load_backends/load_agents above, before env overrides)
