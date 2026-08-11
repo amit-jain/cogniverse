@@ -1364,15 +1364,14 @@ async def test_live_backend_samples_a_deployed_configured_profile_schema():
         )
     )
 
-    concrete_schema = f"{schema_name}_acme_media"
     assert response.selected_profiles == [profile_name]
     assert response.metadata["sampled_content_count"] == 1
     assert response.data[0]["modality"] == "video"
     assert backend.schema_checks == [(tenant_id, schema_name)]
     assert backend.query_calls == [
         {
-            "schema": concrete_schema,
-            "yql": f"select * from sources {concrete_schema} where true limit 1",
+            "schema": schema_name,
+            "yql": f"select * from sources {schema_name} where true limit 1",
             "tenant_id": tenant_id,
         }
     ]
@@ -1415,19 +1414,19 @@ async def test_generation_uses_only_each_tenants_deployed_profiles_concurrently(
         assert response.data[0]["modality"] == expected_modality
         assert response.data[0]["query_intent"] == f"{expected_modality}_search"
         assert f"grounded content for {tenant}" in response.data[0]["query"]
-        assert any(
-            call
-            == {
-                "schema": f"{expected_schema}_{tenant.replace(':', '_')}",
-                "yql": (
-                    "select * from sources "
-                    f"{expected_schema}_{tenant.replace(':', '_')} "
-                    "where true limit 1"
-                ),
+    expected_query_calls = []
+    for tenant in tenants:
+        expected_schema = next(iter(deployed[tenant]))
+        expected_query_calls.append(
+            {
+                "schema": expected_schema,
+                "yql": f"select * from sources {expected_schema} where true limit 1",
                 "tenant_id": tenant,
             }
-            for call in backend.query_calls
         )
+    assert sorted(backend.query_calls, key=lambda call: call["tenant_id"]) == sorted(
+        expected_query_calls, key=lambda call: call["tenant_id"]
+    )
 
     assert sorted(backend.schema_checks) == sorted(
         (tenant, schema) for tenant in tenants for schema in ("schema_a", "schema_b")
