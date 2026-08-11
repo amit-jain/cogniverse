@@ -70,6 +70,16 @@ def _kubectl_context_literals() -> list[tuple[Path, int, str]]:
                     "KUBECTL" in name and "CONTEXT" in name for name in target_names
                 ):
                     continue
+                if path.name != "conftest.py":
+                    violations.append(
+                        (
+                            path,
+                            node.lineno,
+                            "defines its own kubectl context; import it from "
+                            "tests.e2e.conftest",
+                        )
+                    )
+                    continue
                 literal = _constant_string(node.value)
                 if literal is not None and literal.startswith("k3d-"):
                     violations.append(

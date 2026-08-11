@@ -22,11 +22,10 @@ from cogniverse_cli.streaming import (
     stream_coding_response,
 )
 
-from tests.e2e.conftest import E2E_CLUSTER_NAME, RUNTIME, TENANT_ID
+from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
 
 SEARCH_AGENT_URL = f"{RUNTIME}/agents/search_agent/process"
 CODING_AGENT_URL = f"{RUNTIME}/agents/coding_agent/process"
-KUBECTL_CONTEXT = f"k3d-{E2E_CLUSTER_NAME}"
 
 
 def _run_prerequisite_command(

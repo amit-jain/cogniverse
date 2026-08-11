@@ -41,14 +41,13 @@ import time
 import httpx
 import pytest
 
-from tests.e2e.conftest import E2E_CLUSTER_NAME, RUNTIME, TENANT_ID
+from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
 
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.requires_optimizer_data,
 ]
 
-KUBECTL_CONTEXT = f"k3d-{E2E_CLUSTER_NAME}"
 NAMESPACE = "cogniverse"
 RUNTIME_DEPLOYMENT = "deploy/cogniverse-runtime"
 RUNTIME_CONTAINER = "runtime"
