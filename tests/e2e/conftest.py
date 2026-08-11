@@ -1543,7 +1543,7 @@ def e2e_stack(request, resolved_inference_endpoints):
             [
                 "kubectl",
                 "--context",
-                f"k3d-{E2E_CLUSTER_NAME}",
+                KUBECTL_CONTEXT,
                 "wait",
                 "--for=condition=available",
                 "deployment",
