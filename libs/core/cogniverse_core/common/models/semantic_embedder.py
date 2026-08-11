@@ -41,6 +41,90 @@ _DEFAULT_REMOTE_MODEL = "lightonai/DenseOn"
 # client-side or every stored memory vector silently drifts.
 _DENSEON_QUERY_PROMPT = "query: "
 _DENSEON_DOCUMENT_PROMPT = "document: "
+_DENSEON_MODEL_NAME = _DEFAULT_REMOTE_MODEL
+
+_DENSEON_TOKENIZER = None
+_DENSEON_TOKENIZER_LOCK = threading.Lock()
+
+
+def _load_denseon_tokenizer():
+    """Resolve the cached DenseOn tokenizer without any network access."""
+    global _DENSEON_TOKENIZER
+
+    if _DENSEON_TOKENIZER is not None:
+        return _DENSEON_TOKENIZER
+
+    with _DENSEON_TOKENIZER_LOCK:
+        if _DENSEON_TOKENIZER is not None:
+            return _DENSEON_TOKENIZER
+
+        from huggingface_hub import snapshot_download
+        from transformers import AutoTokenizer
+
+        snapshot_path = snapshot_download(
+            _DENSEON_MODEL_NAME,
+            local_files_only=True,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(snapshot_path, local_files_only=True)
+        model_max_length = getattr(tokenizer, "model_max_length", None)
+        if not isinstance(model_max_length, int) or model_max_length <= 0:
+            raise RuntimeError(
+                "DenseOn tokenizer must expose a positive model_max_length"
+            )
+        _DENSEON_TOKENIZER = tokenizer
+        return tokenizer
+
+
+def _denseon_token_count(tokenizer, text: str) -> int:
+    return len(tokenizer(text, add_special_tokens=True, truncation=False).input_ids)
+
+
+def _truncate_denseon_input(
+    text: str,
+) -> tuple[str, tuple[int, int, int, int, int] | None]:
+    tokenizer = _load_denseon_tokenizer()
+    limit = tokenizer.model_max_length
+    original_tokens = _denseon_token_count(tokenizer, text)
+    if original_tokens <= limit:
+        return text, None
+
+    lo = 0
+    hi = len(text)
+    best = 0
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = text[:mid]
+        candidate_tokens = _denseon_token_count(tokenizer, candidate)
+        if candidate_tokens <= limit:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+
+    truncated = text[:best]
+    truncated_tokens = _denseon_token_count(tokenizer, truncated)
+    return truncated, (
+        len(text),
+        original_tokens,
+        len(truncated),
+        truncated_tokens,
+        limit,
+    )
+
+
+def _is_denseon_input_overflow_response(response) -> bool:
+    if response.status_code != 400:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return False
+    return error.get("param") == "input_tokens" and error.get("code") == 400
 
 
 def _canonical_bearer_headers(
@@ -166,6 +250,27 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
     def _close(self) -> None:
         self._session.close()
 
+    def _post_embeddings(self, inputs: list[str]):
+        import requests
+
+        url = f"{self._base_url}/v1/embeddings"
+        try:
+            return self._session.post(
+                url,
+                json={"model": self._model, "input": inputs},
+                headers=self._headers or None,
+                timeout=self._timeout,
+            )
+        except requests.Timeout as exc:
+            raise type(exc)(
+                f"{self._model} request to {url} timed out after "
+                f"{self._timeout} seconds: {exc}"
+            ) from exc
+        except requests.ConnectionError as exc:
+            raise requests.ConnectionError(
+                f"{self._model} request to {url} failed: {exc}"
+            ) from exc
+
     def encode(
         self,
         texts: TextsT,
@@ -193,26 +298,35 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
         # the stored/queried vectors match the historical DenseOn embeddings.
         prompt = self._query_prompt if is_query else self._document_prompt
         prefixed = [f"{prompt}{text}" for text in items]
-
-        import requests
-
         url = f"{self._base_url}/v1/embeddings"
-        try:
-            resp = self._session.post(
-                url,
-                json={"model": self._model, "input": prefixed},
-                headers=self._headers or None,
-                timeout=self._timeout,
-            )
-        except requests.Timeout as exc:
-            raise type(exc)(
-                f"{self._model} request to {url} timed out after "
-                f"{self._timeout} seconds: {exc}"
-            ) from exc
-        except requests.ConnectionError as exc:
-            raise requests.ConnectionError(
-                f"{self._model} request to {url} failed: {exc}"
-            ) from exc
+
+        resp = self._post_embeddings(prefixed)
+        if self._model == _DENSEON_MODEL_NAME and _is_denseon_input_overflow_response(
+            resp
+        ):
+            truncated_inputs: list[str] = []
+            truncation_logs: list[tuple[int, int, int, int, int]] = []
+            for text in prefixed:
+                truncated_text, log_data = _truncate_denseon_input(text)
+                truncated_inputs.append(truncated_text)
+                if log_data is not None:
+                    truncation_logs.append(log_data)
+            for (
+                original_chars,
+                original_tokens,
+                truncated_chars,
+                truncated_tokens,
+                limit,
+            ) in truncation_logs:
+                logger.warning(
+                    "DenseOn input truncated from %d chars (%d tokens) to %d chars (%d tokens) for %d-token window",
+                    original_chars,
+                    original_tokens,
+                    truncated_chars,
+                    truncated_tokens,
+                    limit,
+                )
+            resp = self._post_embeddings(truncated_inputs)
         resp.raise_for_status()
         payload = resp.json()
 
