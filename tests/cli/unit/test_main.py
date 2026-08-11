@@ -464,6 +464,7 @@ class TestUpImagePrune:
         }
         no_return = (
             "import_images",
+            "verify_local_images_cover_deploy",
             "helm_install",
             "pull_and_import_third_party",
             "subprocess.run",
@@ -1085,6 +1086,7 @@ class TestUpImageSource:
         ("cogniverse_cli.main.import_images", {}),
         ("cogniverse_cli.main.dev_version", {"return_value": "0.1.dev1"}),
         ("cogniverse_cli.main.dev_image_set_values", {"return_value": {}}),
+        ("cogniverse_cli.main.verify_local_images_cover_deploy", {}),
     ]
 
     def _invoke(self, args, workspace_ok=True):

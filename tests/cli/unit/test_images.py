@@ -969,3 +969,173 @@ class TestDeviceOverlaySidecarTags:
 
         assert "inference.colbert_pylate.image.tag" in overrides
         assert "inference.code_colbert_pylate.image.tag" not in overrides
+
+
+class TestFirstPartyImageCoverage:
+    """A first-party image (a ``cogniverse/*`` repository) exists in no
+    registry, so a chart-enabled service that the build never produced leaves
+    its pod stuck on ErrImageNeverPull. These tests derive the required set
+    from the chart the deploy actually renders, so enabling ANY future sidecar
+    in values is covered without editing a list here.
+    """
+
+    REPO_ROOT = Path(__file__).resolve().parents[3]
+
+    def _chart(self, name: str) -> Path:
+        path = self.REPO_ROOT / "charts" / "cogniverse" / name
+        assert path.exists(), f"missing chart values file: {path}"
+        return path
+
+    @pytest.mark.parametrize(
+        "overlays",
+        [
+            (),
+            ("values.k3s.yaml",),
+            ("values.k3s.yaml", "values.rocm.yaml"),
+            ("values.k3s.yaml", "values.cpu.yaml"),
+            ("values.k3s.yaml", "values.cuda.yaml"),
+        ],
+    )
+    def test_every_chart_enabled_first_party_service_is_buildable(
+        self, overlays: tuple[str, ...]
+    ) -> None:
+        """Every enabled ``cogniverse/*`` inference service the deploy renders
+        must have a build spec whose Dockerfile exists on disk."""
+        from cogniverse_cli.images import LOCAL_IMAGE_BUILDS, first_party_services
+
+        required = first_party_services(
+            self.REPO_ROOT, [self._chart(name) for name in overlays]
+        )
+
+        missing = sorted(set(required) - set(LOCAL_IMAGE_BUILDS))
+        assert missing == [], (
+            f"chart enables first-party images with no build spec: {missing}"
+        )
+        for svc, repo in required.items():
+            spec_repo, dockerfile, _ = LOCAL_IMAGE_BUILDS[svc]
+            assert spec_repo == repo, f"{svc}: chart repo {repo} != build {spec_repo}"
+            assert (self.REPO_ROOT / dockerfile).exists(), f"{svc}: {dockerfile}"
+
+    def test_first_party_services_ignores_registry_backed_services(self) -> None:
+        """vLLM-served services are pulled from a registry, never built."""
+        from cogniverse_cli.images import first_party_services
+
+        required = first_party_services(
+            self.REPO_ROOT, [self._chart("values.k3s.yaml")]
+        )
+
+        assert "denseon" not in required
+        assert "vllm_asr" not in required
+
+    @patch("subprocess.run")
+    def test_verification_fails_when_build_skipped_a_deploy_overlay(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """The reported failure, stated generically: images built from chart
+        defaults do not satisfy a deploy whose overlay enables another
+        first-party service. Verification must raise and name it."""
+        from cogniverse_cli.images import (
+            build_images,
+            verify_local_images_cover_deploy,
+        )
+
+        _completed(mock_run)
+        root = _make_project_root(tmp_path)
+        overlay = tmp_path / "overlay.yaml"
+        overlay.write_text(
+            yaml.safe_dump(
+                {
+                    "inference": {
+                        "future_embed": {
+                            "enabled": True,
+                            "image": {
+                                "repository": "cogniverse/future-embed",
+                                "pullPolicy": "Never",
+                            },
+                        }
+                    }
+                }
+            )
+        )
+
+        built = build_images(root, torch_backend="cpu", version=DEV_VERSION)
+
+        with pytest.raises(RuntimeError) as excinfo:
+            verify_local_images_cover_deploy(
+                root, [overlay], built_tags=built, version=DEV_VERSION
+            )
+        assert "future_embed" in str(excinfo.value)
+        assert "cogniverse/future-embed" in str(excinfo.value)
+
+    @patch("subprocess.run")
+    def test_verification_passes_when_build_used_the_deploy_overlays(
+        self, mock_run: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same overlay, built with the overlay: nothing is missing."""
+        from cogniverse_cli.images import (
+            LOCAL_IMAGE_BUILDS,
+            build_images,
+            verify_local_images_cover_deploy,
+        )
+
+        _completed(mock_run)
+        monkeypatch.setitem(
+            LOCAL_IMAGE_BUILDS,
+            "future_embed",
+            ("cogniverse/future-embed", "deploy/gliner/Dockerfile", "."),
+        )
+        root = _make_project_root(tmp_path)
+        overlay = tmp_path / "overlay.yaml"
+        overlay.write_text(
+            yaml.safe_dump(
+                {
+                    "inference": {
+                        "future_embed": {
+                            "enabled": True,
+                            "image": {
+                                "repository": "cogniverse/future-embed",
+                                "pullPolicy": "Never",
+                            },
+                        }
+                    }
+                }
+            )
+        )
+
+        built = build_images(
+            root, torch_backend="cpu", values_files=[overlay], version=DEV_VERSION
+        )
+
+        assert f"cogniverse/future-embed:{DEV_TAG}" in built
+        verify_local_images_cover_deploy(
+            root, [overlay], built_tags=built, version=DEV_VERSION
+        )
+
+    @patch("subprocess.run")
+    def test_build_raises_for_an_enabled_service_with_no_build_spec(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """Enabling a first-party service nobody taught the builder about is a
+        drift error at build time, not an ErrImageNeverPull at deploy time."""
+        from cogniverse_cli.images import build_images
+
+        _completed(mock_run)
+        root = _make_project_root(tmp_path)
+        overlay = tmp_path / "overlay.yaml"
+        overlay.write_text(
+            yaml.safe_dump(
+                {
+                    "inference": {
+                        "unknown_embed": {
+                            "enabled": True,
+                            "image": {"repository": "cogniverse/unknown-embed"},
+                        }
+                    }
+                }
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="unknown_embed"):
+            build_images(
+                root, torch_backend="cpu", values_files=[overlay], version=DEV_VERSION
+            )

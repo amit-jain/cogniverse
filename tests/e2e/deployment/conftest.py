@@ -448,6 +448,7 @@ def deploy_stack(
         build_images,
         import_images,
         prune_superseded_images,
+        verify_local_images_cover_deploy,
     )
 
     backend = deployment_inputs["backend"]
@@ -457,18 +458,23 @@ def deploy_stack(
     # (pullPolicy=Never can only see the imported, git-tagged images).
     image_version = deployment_inputs["image_version"]
 
-    # Build the canonical image set the chart's k3s values enable —
-    # runtime + dashboard for the host's torch backend, plus the
-    # locally-built inference sidecars (pylate / colpali). vLLM-served
-    # ASR (inference.vllm_asr) pulls vllm/vllm-openai-cpu directly from
-    # docker hub at pod-start, so no local build is needed for it.
-    # build_images() owns the docker-build invocations + the matching
-    # --build-arg TORCH_BACKEND wiring; import_images() lifts them into
-    # the k3d cluster so pods with pullPolicy=Never can find them.
+    # Build from the same overlays helm receives: the enabled set is derived
+    # from those values, so building without them misses every sidecar an
+    # overlay turns on. verify_local_images_cover_deploy fails here rather
+    # than leaving the pod on ErrImageNeverPull.
     built_tags = build_images(
-        project_root, torch_backend=backend, version=image_version
+        project_root,
+        torch_backend=backend,
+        values_files=deployment_inputs["helm_values"],
+        version=image_version,
     )
     import_images(cluster_name, built_tags)
+    verify_local_images_cover_deploy(
+        project_root,
+        deployment_inputs["helm_values"],
+        built_tags=built_tags,
+        version=image_version,
+    )
 
     # Reclaim superseded generations (host + k3d node containerd) like
     # ``cogniverse up`` does — keeps the current build + one prior and drops
