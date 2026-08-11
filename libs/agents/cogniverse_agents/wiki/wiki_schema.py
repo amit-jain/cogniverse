@@ -7,7 +7,45 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Iterable, List, Optional
+
+
+class InvalidWikiTitleError(TypeError):
+    """A value used as a wiki title was not a string."""
+
+
+def _shape(value: Any) -> str:
+    if isinstance(value, dict):
+        return f"dict with keys {sorted(value)!r}"
+    return type(value).__name__
+
+
+def require_wiki_title(value: Any, what: str) -> str:
+    """Return ``value`` as a wiki title, or raise naming the offending shape."""
+    if not isinstance(value, str):
+        raise InvalidWikiTitleError(f"{what} must be a str, got {_shape(value)}")
+    return value
+
+
+def entity_titles(entities: Iterable[Any]) -> List[str]:
+    """Project entity references to wiki titles.
+
+    ``EntityExtractionAgent`` emits ``Entity.model_dump()`` records keyed on
+    ``text``; other producers pass the title directly. Any other shape raises
+    so the mismatch surfaces at the seam instead of inside slug generation.
+    """
+    titles: List[str] = []
+    for index, entity in enumerate(entities or []):
+        if isinstance(entity, str):
+            titles.append(entity)
+        elif isinstance(entity, dict) and isinstance(entity.get("text"), str):
+            titles.append(entity["text"])
+        else:
+            raise InvalidWikiTitleError(
+                f"entities[{index}] must be a wiki title str or an entity "
+                f"record with a 'text' str, got {_shape(entity)}"
+            )
+    return titles
 
 
 def generate_slug(title: str) -> str:
@@ -23,7 +61,7 @@ def generate_slug(title: str) -> str:
     """
     # Decompose unicode (e.g. é → e + combining accent) then encode to ASCII,
     # dropping any code-points that cannot be represented.
-    normalized = unicodedata.normalize("NFD", title)
+    normalized = unicodedata.normalize("NFD", require_wiki_title(title, "wiki title"))
     ascii_bytes = normalized.encode("ascii", errors="ignore")
     ascii_str = ascii_bytes.decode("ascii")
 

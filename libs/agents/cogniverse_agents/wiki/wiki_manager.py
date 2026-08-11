@@ -10,7 +10,12 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from cogniverse_agents.inference.rlm_inference import RLMInference, route_rlm_endpoint
-from cogniverse_agents.wiki.wiki_schema import WikiIndex, WikiPage, generate_slug
+from cogniverse_agents.wiki.wiki_schema import (
+    WikiIndex,
+    WikiPage,
+    generate_slug,
+    require_wiki_title,
+)
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_vespa._yql import yql_quote
 
@@ -122,6 +127,11 @@ class WikiManager:
         Returns the saved session WikiPage.
         """
         sources = sources or []
+
+        # Validate every title before the first feed: a bad shape found
+        # mid-list would leave the earlier topic pages persisted.
+        for index, entity in enumerate(entities):
+            require_wiki_title(entity, f"save_session entities[{index}]")
 
         # Upsert a topic page for every entity, concurrently — each entity's
         # GET/merge/feed is an independent round-trip, so latency does not
