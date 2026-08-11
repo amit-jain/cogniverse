@@ -20,11 +20,10 @@ import time
 import httpx
 import pytest
 
-from tests.e2e.conftest import TENANT_ID
+from tests.e2e.conftest import KUBECTL_CONTEXT, TENANT_ID
 
 pytestmark = pytest.mark.slow
 
-KUBECTL_CONTEXT = "k3d-cogniverse"
 NAMESPACE = "cogniverse"
 RUNTIME = "http://localhost:33000"
 
