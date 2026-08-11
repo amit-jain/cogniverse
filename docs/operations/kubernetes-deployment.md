@@ -582,6 +582,166 @@ the NVIDIA device plugin. Apply the `nvidia.com/gpu.present=true`
 label on the node and set GPU resource requests on the relevant pods
 in `values.cuda.yaml`.
 
+### Unified-pool memory budget
+
+On an APU host the GPU pool is carved out of system RAM rather than being
+separate memory. On the ROCm reference host:
+
+| Measurement | Source | Value |
+|---|---|---|
+| System RAM | `/proc/meminfo` `MemTotal` | 123.46 GiB |
+| GPU pool | `mem_info_gtt_total` | 96 GiB |
+| Dedicated VRAM carve-out | `mem_info_vram_total` | 2 GiB |
+
+Each vLLM service's `--gpu-memory-utilization` is a fraction of the 96 GiB
+pool, and every GiB it claims is a GiB the desktop, the CPU-side cluster
+services and the test containers no longer have. The fractions must sum to
+well under 1.0. Summing them to ~1.0 leaves the host with no eviction
+headroom: allocation pressure then drives `svm_range_restore` churn that
+starves the compositor.
+
+The budget after reserving for the non-GPU workloads — cluster services
+(25.4 GiB of memory requests), desktop and daemons, the e2e suite's own
+containers, the pylate pods that allocate from the pool without declaring a
+fraction, and page-cache slack — leaves 57.06 GiB, so the enabled fractions
+are capped at **0.59** (56.64 GiB).
+
+Size each fraction from need, not from habit: the weights at their served
+precision plus a KV allowance for the configured `--max-model-len` x
+`--max-num-seqs`. A fraction above that need does not make the model faster,
+it only denies the memory to everything else.
+
+`tests/charts/test_gpu_memory_budget.py` renders the overlay, sums the
+enabled fractions and fails when they exceed the cap. It also fails if a
+service's rendered form escapes its parser, so a service cannot drop out of
+the budget silently.
+
+The 27B distillation teacher does not fit alongside the serving set and is
+not resident by default on this overlay. Enable it for a distillation run,
+scaling down the serving models the run does not need.
+
+#### Pods that allocate without a fraction
+
+`--gpu-memory-utilization` is a vLLM flag. The pylate services
+(`colbert_pylate`, `code_colbert_pylate`) serve through
+`libs/cli/cogniverse_cli/modal_inference/servers/pylate.py`, which is plain
+PyTorch: the chart passes them `DEVICE=cuda` (torch's namespace, HIP on
+ROCm), and allocation is whatever the caching allocator grows to. There is
+no fraction knob, and the served `encode` call passes no `batch_size` while
+the request model accepts an unbounded `input` list, so peak allocation
+scales with the caller's payload rather than with a configured ceiling.
+
+Because peak allocation follows the request, the request is bounded. Each
+pylate pod carries `MAX_INPUT_ITEMS`, `MAX_INPUT_CHARS` and
+`ENCODE_BATCH_SIZE`, set per service under `inference.<svc>.requestLimits`
+and defaulted by the chart:
+
+| Bound | Default | Basis |
+|---|---|---|
+| `maxInputItems` | 256 | eight times the 32-text chunk the canonical client sends |
+| `maxInputChars` | 2000000 | covers the few-items-but-enormous payload shape |
+| `encodeBatchSize` | 32 | sentence-transformers' own default, pinned explicitly |
+
+Over-limit requests are rejected with `413` naming the limit and the received
+size, before the model loads or encodes. They are never truncated to fit: a
+truncated encode would return embeddings for a subset under a success status,
+which the caller cannot distinguish from a complete result.
+
+The declared memory bound remains the pod memory limit (4Gi each), reserved
+in the budget above. Note that a Kubernetes memory limit constrains the
+container's cgroup; pool allocations made through the amdgpu driver are not
+necessarily charged there, so treat that limit as a budgeting declaration
+rather than an enforced ceiling.
+
+A pod reaches the pool exactly when the chart mounts `/dev/kfd` and
+`/dev/dri` into it. The budget test uses that as its marker, so any service
+rendered with GPU access is picked up automatically, and it fails when such
+a pod declares neither a fraction nor a memory limit. `gliner` renders
+without those mounts and is CPU-only.
+
+### First-deploy validation
+
+Nothing above is confirmed by rendering alone. On the first deploy of these
+values, check in this order and stop at the first failure:
+
+1. **`vllm_colpali` boots at 0.18.** Highest risk: the prior 0.45 was chosen
+   because vLLM's startup free-memory guard rejects this multimodal model
+   when the fraction is too low for its transient startup profile. Failure
+   signal: the pod never reaches ready and its log carries a vLLM
+   memory-profiling error rather than a served-model line. Remedy is to
+   raise this one fraction until it boots, then re-check the budget total.
+2. **`vllm_llm_student` loads at 0.22.** Its ~16 GiB weight figure is
+   inferred, not measured. Failure signal: an out-of-memory abort during
+   weight load, or a KV-cache-too-small startup error.
+3. **`vllm_asr` loads at 0.04** and serves a transcription.
+4. **Residency stays under the ceiling.** Read
+   `/sys/class/drm/card1/device/mem_info_gtt_used` with all models ready and
+   again under sweep traffic. Expect it below the 51.84 GiB cap; sustained
+   readings above it mean a fraction is under-declared relative to what the
+   model actually takes.
+5. **The startup chain completes inside its deadlines.** Each gated pod
+   should leave Init when its predecessor turns ready, not when its pacing
+   deadline elapses. Failure signal: a pod's `startup-gate` log ends with
+   the deadline line rather than the serving line, which means the chain is
+   pacing on timeouts instead of on readiness.
+6. **The host stays responsive** during a full sweep — no
+   `svm_range_restore` workers saturating CPU.
+7. **The pylate request bounds hold in practice.** Rendering proves the pods
+   carry the limits; only a run shows what they peak at. With ingest running,
+   watch each pylate pod against its 4Gi limit and watch `mem_info_gtt_used`
+   while it encodes. Failure signal: pool usage climbing with ingest batch
+   size, which means the request bounds are not translating into a memory
+   ceiling and the per-process fraction below is needed.
+8. **Whether `set_per_process_memory_fraction` is warranted.** Read
+   `torch.cuda.get_device_properties(0).total_memory` from inside a pylate
+   pod. That value is the denominator any fraction would use, and it decides
+   whether the knob can express a 4Gi ceiling at all.
+
+### Model startup pacing
+
+Every inference pod is created at once, so by default every model
+reserves its share of the GPU pool simultaneously. Where the GPU pool
+is carved out of system RAM, the enabled models'
+`--gpu-memory-utilization` fractions can sum past 1.0 and that
+simultaneous reservation drives the kernel into an eviction/restore
+cycle that starves the rest of the host.
+
+`inferenceStartup.sequence` is an ordered list of `inference` keys. The
+pod at position N runs a `startup-gate` init container that waits for
+position N-1 to answer `/health` before the model process starts, so
+GPU memory is reserved one model at a time:
+
+```yaml
+inferenceStartup:
+  sequence:
+    - vllm_llm_teacher
+    - vllm_colpali
+    - vllm_llm_student
+  perLinkTimeoutSeconds: 600
+  progressAllowanceSeconds: 900
+```
+
+- Position 0 and any key absent from the list load immediately. An
+  empty list disables pacing, which is the right setting for a
+  discrete-GPU host with headroom.
+- Order the list by descending `--gpu-memory-utilization` so the
+  largest allocation lands against an unfragmented pool.
+- The gate is skipped when the named predecessor is disabled, so its
+  successor starts rather than waiting on a Service that will never
+  have an endpoint.
+- Waiting happens in an init container, so readiness and liveness —
+  both measured from the main container's start — are unaffected, and
+  a waiting pod never reports unhealthy.
+- Weight downloads run in the `model-warm` init container ahead of the
+  gate; they touch network and disk rather than the GPU, so they still
+  run concurrently across pods.
+- Position N gives up after `N x perLinkTimeoutSeconds`. The deadline
+  scales with position because all init containers start together, so a
+  flat deadline would release the whole tail of the chain at once. A
+  gated pod's rollout progress deadline is extended past its own wait
+  budget so a deliberately waiting pod is not reported as a stalled
+  rollout.
+
 ### Local Access Setup
 
 For domain-based access (optional):

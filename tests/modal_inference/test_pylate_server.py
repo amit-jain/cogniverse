@@ -86,8 +86,8 @@ class _MatrixModel:
     def __init__(self):
         self.calls = []
 
-    def encode(self, texts, is_query=False, show_progress_bar=None):
-        self.calls.append((tuple(texts), is_query, show_progress_bar))
+    def encode(self, texts, is_query=False, show_progress_bar=None, batch_size=32):
+        self.calls.append((tuple(texts), is_query, show_progress_bar, batch_size))
         matrices = []
         for index in range(len(texts)):
             rows = 32 if is_query else 3 + index
@@ -134,7 +134,7 @@ def test_pooling_returns_per_token_matrices_in_input_order(monkeypatch):
             {"object": "pooling", "index": 1, "data": [[0.75] * 4] * 4},
         ],
     }
-    assert model.calls == [(("alpha", "beta"), False, False)]
+    assert model.calls == [(("alpha", "beta"), False, False, 32)]
     assert loads == [(SPEC.model_id, SPEC.model_revision, "cpu")]
 
 
@@ -155,7 +155,7 @@ def test_pooling_forwards_query_direction_to_the_encoder(monkeypatch):
     assert payload["data"] == [
         {"object": "pooling", "index": 0, "data": [[0.5] * 4] * 32}
     ]
-    assert model.calls == [(("what is a vector database",), True, False)]
+    assert model.calls == [(("what is a vector database",), True, False, 32)]
 
 
 def test_health_reports_pinned_identity(monkeypatch):
@@ -313,7 +313,7 @@ def test_pooling_load_failure_has_service_model_and_cause(monkeypatch):
 
 def test_inference_failure_has_service_model_and_cause(monkeypatch):
     class _FailedModel:
-        def encode(self, texts, is_query=False, show_progress_bar=None):
+        def encode(self, texts, is_query=False, show_progress_bar=None, batch_size=32):
             raise RuntimeError("tensor allocation failed")
 
     app, _, _ = _app_with_model(monkeypatch, model=_FailedModel())
@@ -398,8 +398,8 @@ def test_remote_colbert_loader_round_trips_via_live_pylate_server(monkeypatch):
     assert documents == [[[-0.25] * 4] * 3, [[0.75] * 4] * 4]
     assert queries == [[[0.5] * 4] * 32]
     assert model.calls == [
-        (("alpha", "beta"), False, False),
-        (("what is a vector database",), True, False),
+        (("alpha", "beta"), False, False, 32),
+        (("what is a vector database",), True, False, 32),
     ]
 
 
@@ -438,7 +438,7 @@ def test_remote_colbert_loader_reaches_authenticated_modal_route(monkeypatch):
             wrapper._close()
 
     assert queries == [[[0.5] * 4] * 32]
-    assert model.calls == [(("alpha",), True, False)]
+    assert model.calls == [(("alpha",), True, False, 32)]
 
 
 def test_remote_colbert_loader_names_model_and_endpoint_on_dead_port():
@@ -521,4 +521,108 @@ def test_modal_wrapper_requires_bearer_and_serves_exact_pooling(monkeypatch):
         "model": SPEC.model_id,
         "data": [{"object": "pooling", "index": 0, "data": [[0.5] * 4] * 32}],
     }
-    assert model.calls == [(("alpha",), True, False)]
+    assert model.calls == [(("alpha",), True, False, 32)]
+
+
+def test_oversized_input_list_is_rejected_before_model_load(monkeypatch):
+    app, model, loads = _app_with_model(monkeypatch)
+
+    response = asyncio.run(
+        _request(
+            app,
+            "POST",
+            "/pooling",
+            json={"input": ["t"] * 257, "is_query": False},
+        )
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "detail": "pylate: `input` holds 257 texts, limit is 256"
+    }
+    assert model.calls == []
+    assert loads == []
+
+
+def test_input_list_at_the_limit_is_encoded(monkeypatch):
+    app, model, _ = _app_with_model(monkeypatch)
+
+    response = asyncio.run(
+        _request(
+            app,
+            "POST",
+            "/pooling",
+            json={"input": ["t"] * 256, "is_query": False},
+        )
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["data"]) == 256
+    assert len(model.calls) == 1
+
+
+def test_oversized_input_characters_are_rejected_before_model_load(monkeypatch):
+    app, model, loads = _app_with_model(monkeypatch)
+
+    response = asyncio.run(
+        _request(
+            app,
+            "POST",
+            "/pooling",
+            json={"input": ["x" * 1_000_001, "y" * 1_000_000], "is_query": False},
+        )
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "detail": "pylate: `input` holds 2000001 characters, limit is 2000000"
+    }
+    assert model.calls == []
+    assert loads == []
+
+
+def test_encode_receives_the_configured_batch_size(monkeypatch):
+    app, model, _ = _app_with_model(monkeypatch)
+
+    asyncio.run(
+        _request(app, "POST", "/pooling", json={"input": ["a", "b"], "is_query": True})
+    )
+
+    assert model.calls == [(("a", "b"), True, False, 32)]
+
+
+def test_bounds_are_configurable_per_service(monkeypatch):
+    model = _MatrixModel()
+    monkeypatch.setattr(pylate_server, "_load_colbert", lambda *args: model)
+    app = pylate_server.build_app(
+        SPEC.model_id,
+        SPEC.model_revision,
+        "cpu",
+        max_input_items=2,
+        max_input_chars=10,
+        encode_batch_size=1,
+    )
+
+    rejected = asyncio.run(
+        _request(app, "POST", "/pooling", json={"input": ["a", "b", "c"]})
+    )
+    assert rejected.status_code == 413
+    assert rejected.json() == {"detail": "pylate: `input` holds 3 texts, limit is 2"}
+
+    accepted = asyncio.run(_request(app, "POST", "/pooling", json={"input": ["a"]}))
+    assert accepted.status_code == 200
+    assert model.calls == [(("a",), False, False, 1)]
+
+
+@pytest.mark.parametrize(
+    "bounds, match",
+    [
+        ({"max_input_items": 0}, "MAX_INPUT_ITEMS must be a positive integer"),
+        ({"max_input_chars": -1}, "MAX_INPUT_CHARS must be a positive integer"),
+        ({"encode_batch_size": 0}, "ENCODE_BATCH_SIZE must be a positive integer"),
+        ({"max_input_items": True}, "MAX_INPUT_ITEMS must be a positive integer"),
+    ],
+)
+def test_build_app_rejects_unusable_bounds(bounds, match):
+    with pytest.raises(ValueError, match=match):
+        pylate_server.build_app(SPEC.model_id, SPEC.model_revision, "cpu", **bounds)

@@ -6,6 +6,20 @@ _vllmRocmImage: &vllmRocmImage
     tag: v0.23.0
     pullPolicy: IfNotPresent
 
+# This host shares one memory pool between CPU and GPU, and the enabled
+# models' --gpu-memory-utilization fractions sum past 1.0, so nothing here
+# survives all of them reserving at once. Ordered by descending reservation:
+# the largest allocation lands first, against an unfragmented pool.
+inferenceStartup:
+  sequence:
+    - vllm_llm_teacher
+    - vllm_colpali
+    - vllm_llm_student
+    - vllm_asr
+    - denseon
+    - colbert_pylate
+    - code_colbert_pylate
+
 inference:
   vllm_colpali:
     enabled: true
@@ -34,8 +48,11 @@ inference:
       # vLLM still applies its initial free-memory guard when an explicit
       # cache size is present, although the fraction no longer sizes the
       # cache. Keep the guard below the steady-state free-memory floor.
+      # 0.18 = 17.3 GiB of the 96 GiB pool: 8 GiB of bf16 weights for a 4B
+      # model, the 1 GiB cache pinned above, and the vision encoder's
+      # activation workspace at 1024 visual patches.
       - "--gpu-memory-utilization"
-      - "0.45"
+      - "0.18"
       - "--max-num-seqs"
       - "1"
     kvCacheGiB: null
@@ -57,8 +74,11 @@ inference:
       - "generate"
       - "--max-model-len"
       - "448"
+      # 0.04 = 3.84 GiB: 1.6 GiB of bf16 weights for whisper-large-v3-turbo
+      # (809M) plus the encoder's mel workspace. The KV cache is negligible
+      # at a 448-token context and one sequence.
       - "--gpu-memory-utilization"
-      - "0.16"
+      - "0.04"
       - "--max-num-seqs"
       - "1"
       - "--max-num-batched-tokens"
@@ -98,8 +118,12 @@ inference:
       - "--max-model-len"
       - "16384"
       - "--enforce-eager"
+      # 0.22 = 21.1 GiB: ~16 GiB of weights plus a KV pool sized for the
+      # max-num-seqs 8 x 16384-token working set below, with activation
+      # headroom. The previous 0.30 reserved a KV pool roughly five times
+      # the configured concurrency could consume.
       - "--gpu-memory-utilization"
-      - "0.30"
+      - "0.22"
       - "--max-num-seqs"
       - "8"
       - "--limit-mm-per-prompt"
@@ -112,8 +136,12 @@ inference:
         cpu: "4"
         memory: "32Gi"
 
+  # Qwen3.6-27B at AWQ-INT4 needs ~14.5 GiB of weights before any KV cache.
+  # Added to the serving set it puts the pool past the budget above, so it is
+  # not resident on this host. Enable it for a distillation run, which scales
+  # the serving models it does not need down first.
   vllm_llm_teacher:
-    enabled: true
+    enabled: false
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
@@ -121,8 +149,12 @@ inference:
       - "--max-model-len"
       - "4096"
       - "--enforce-eager"
+      # 0.17 = 16.3 GiB, sized for the INT4 weights plus a 4096-token cache
+      # at low concurrency. Only applies while the service is enabled.
       - "--gpu-memory-utilization"
-      - "0.55"
+      - "0.17"
+      - "--max-num-seqs"
+      - "1"
       - "--limit-mm-per-prompt"
       - '{"image":0,"video":0}'
     resources:

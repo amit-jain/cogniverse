@@ -257,6 +257,9 @@ def test_default_colbert_pylate_serves_lateon_via_pylate():
         "DEVICE": "cpu",
         "HOST": "0.0.0.0",
         "PORT": "8000",
+        "MAX_INPUT_ITEMS": "256",
+        "MAX_INPUT_CHARS": "2000000",
+        "ENCODE_BATCH_SIZE": "32",
         "HF_HOME": "/root/.cache/huggingface",
     }
     assert container["ports"] == [{"name": "http", "containerPort": 8000}]
