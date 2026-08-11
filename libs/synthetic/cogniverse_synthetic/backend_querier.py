@@ -23,6 +23,8 @@ from cogniverse_sdk.interfaces.backend import Backend
 
 logger = logging.getLogger(__name__)
 
+DIVERSE_CANDIDATE_MULTIPLIER = 5
+
 
 class BackendQuerier:
     """
@@ -142,7 +144,12 @@ class BackendQuerier:
         # double-apply the tenant suffix.
         schema_name = base_schema_name
 
-        query_size = max(sample_size, 10) if entity_fields is not None else sample_size
+        if entity_fields is not None:
+            query_size = max(sample_size, 10)
+        elif strategy == "diverse":
+            query_size = sample_size * DIVERSE_CANDIDATE_MULTIPLIER
+        else:
+            query_size = sample_size
         logger.debug(
             "Querying base schema %s for tenant %s with strategy '%s'",
             schema_name,
@@ -196,6 +203,8 @@ class BackendQuerier:
                     break
                 offset += query_size
 
+            if strategy == "diverse":
+                results = self._spread_across_sources(results, sample_size)
             results = results[:sample_size]
             samples = self._extract_fields_from_results(results, profile_config)
             logger.info(f"Retrieved {len(samples)} samples from {schema_name}")
@@ -268,6 +277,39 @@ class BackendQuerier:
             raise ValueError(
                 f"Unsupported sampling strategy '{strategy}'. Allowed: {allowed}"
             )
+
+    def _source_key(self, document: Dict[str, Any]) -> str:
+        for field_name in self.field_mappings.topic_fields:
+            value = document.get(field_name)
+            if isinstance(value, str) and value.strip():
+                return value
+        for field_name in ("video_id", "source_id"):
+            value = document.get(field_name)
+            if isinstance(value, str) and value.strip():
+                return value
+        return ""
+
+    def _spread_across_sources(
+        self, documents: List[Dict[str, Any]], sample_size: int
+    ) -> List[Dict[str, Any]]:
+        """Round-robin across distinct sources so one source cannot fill the sample.
+
+        A flat scan returns adjacent segments of a single source, which collapse
+        to one grounded topic downstream.
+        """
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for document in documents:
+            grouped.setdefault(self._source_key(document), []).append(document)
+
+        spread: List[Dict[str, Any]] = []
+        while len(spread) < sample_size and any(grouped.values()):
+            for queue in grouped.values():
+                if not queue:
+                    continue
+                spread.append(queue.pop(0))
+                if len(spread) == sample_size:
+                    break
+        return spread
 
     def _entity_rich_fields(self, profile_config: Dict[str, Any]) -> List[str]:
         pipeline_config = profile_config.get("pipeline_config") or {}

@@ -293,6 +293,14 @@ modality, and complexity. The generator validates those categorical fields
 centrally and requires the returned modality to equal the selected profile's
 configured type; it never infers a training label from a profile name or
 substitutes video traits. An empty profile universe is invalid.
+Each grounded query is built from a single sampled document. The topic is that
+document's own `description` or `transcript` when present, falling back to
+`topic`, `title`, then `video_title`, truncated to 20 words, and rendered
+through the query template for the source profile's type (a video source yields
+`find a video frame showing {topic}`). Distinct segments of one source are
+therefore distinct grounded examples. A sampled document carrying a
+`schema_name` selects its own profile's template; without one, generation
+requires exactly one configured profile.
 Profile-selection examples omit `confidence` because it is not a training
 target. The approval extractor therefore assigns `0.0` and requires human
 review.
@@ -671,7 +679,9 @@ schema resolution, or profile read fails the request instead of returning an
 incomplete dataset. Synchronous backend clients run outside the event-loop
 thread. `temporal_recent` filters to the last 90 days and sorts
 the epoch-millisecond `creation_timestamp` descending, so the newest matching
-document is first.
+document is first. `diverse` requests five times the sample count and
+round-robins the results across distinct sources, so adjacent segments of one
+source cannot fill the sample.
 
 For `entity_rich`, the backend query remains schema-safe and the returned
 documents are filtered by text fields that the selected profile's pipeline
