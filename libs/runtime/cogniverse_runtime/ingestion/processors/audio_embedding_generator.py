@@ -16,6 +16,9 @@ import numpy as np
 
 from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
 from cogniverse_foundation.config.inference_auth import inference_headers
+from cogniverse_foundation.config.inference_service import (
+    require_in_process_backend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +136,7 @@ class AudioEmbeddingGenerator:
     def clap_model(self):
         """Lazy load CLAP model"""
         if self._clap_model is None:
+            require_in_process_backend("clap_embed", module="torch")
             with self._clap_model_lock:
                 if self._clap_model is None:
                     logger.info(f"Loading CLAP model: {self._clap_model_name}")
@@ -206,6 +210,8 @@ class AudioEmbeddingGenerator:
                 sample_rate=sample_rate,
             )
 
+        processor = self.clap_processor
+
         try:
             # Load audio if path provided
             if audio_path is not None:
@@ -215,8 +221,7 @@ class AudioEmbeddingGenerator:
                     str(audio_path), sr=sample_rate, mono=True
                 )
 
-            # Process with CLAP
-            inputs = self.clap_processor(
+            inputs = processor(
                 audios=audio_array,
                 sampling_rate=sample_rate,
                 return_tensors="pt",
