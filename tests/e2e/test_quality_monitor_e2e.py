@@ -99,7 +99,9 @@ def require_kubectl_cluster() -> None:
         ],
         timeout=15,
     )
-    controller_command = argo_workflow_controller_probe_command(namespace=ARGO_NAMESPACE)
+    controller_command = argo_workflow_controller_probe_command(
+        namespace=ARGO_NAMESPACE
+    )
     controller = _run_kubectl(controller_command, timeout=15)
     if not controller.stdout.strip():
         pytest.fail(
@@ -275,15 +277,11 @@ class TestArgoWorkflows:
         has_rbac = any("workflow-submitter" in r for r in roles)
 
         # Check if Argo controller is running (not just stale CronWorkflows)
-        argo_pods = _kubectl(
-            "get",
-            "pods",
-            "-l",
-            "app=workflow-controller",
-            "-o",
-            "jsonpath={.items[*].metadata.name}",
+        controller = _run_kubectl(
+            argo_workflow_controller_probe_command(),
+            timeout=15,
         )
-        argo_active = bool(argo_pods.strip())
+        argo_active = bool(controller.stdout.strip())
 
         if argo_active:
             assert has_rbac, "Argo is active but workflow-submitter Role is missing"
