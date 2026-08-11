@@ -1168,7 +1168,7 @@ class TestUnconfiguredInferenceServiceContract:
         with pytest.raises(InferenceServiceUnavailableError) as excinfo:
             import asyncio as _asyncio
 
-            _asyncio.get_event_loop().run_until_complete(
+            _asyncio.run(
                 dispatcher._execute_audio_search_task(
                     "listen to podcasts about deep learning run 4", "acme:prod", 3
                 )
