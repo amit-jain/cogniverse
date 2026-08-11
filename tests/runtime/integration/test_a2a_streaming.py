@@ -466,7 +466,7 @@ class TestOrchestratorAgentStreaming:
     """
 
     def test_stream_phases_and_plan_output(
-        self, config_manager, streaming_registry, dspy_lm_planning
+        self, config_manager, streaming_registry, dspy_lm_planning, real_telemetry
     ):
         from cogniverse_agents.orchestrator_agent import (
             OrchestratorAgent,
@@ -479,6 +479,10 @@ class TestOrchestratorAgentStreaming:
             registry=streaming_registry,
             config_manager=config_manager,
         )
+        # AgentDispatcher injects these after construction; the orchestration
+        # outcome span raises without a telemetry manager.
+        agent.telemetry_manager = real_telemetry
+        agent._artifact_tenant_id = STREAM_TENANT
 
         events = _collect_stream_events(
             agent,
@@ -629,14 +633,22 @@ class TestEntityExtractionAgentStreaming:
 class TestProfileSelectionAgentStreaming:
     """ProfileSelectionAgent streaming against the configured LM."""
 
-    def test_stream_phases_and_selected_profile(self, dspy_lm):
+    def test_stream_phases_and_selected_profile(self, dspy_lm, config_manager):
         from cogniverse_agents.profile_selection_agent import (
             ProfileSelectionAgent,
             ProfileSelectionDeps,
             ProfileSelectionInput,
         )
 
-        agent = ProfileSelectionAgent(deps=ProfileSelectionDeps())
+        # Offer only profiles configured for STREAM_TENANT: the agent resolves
+        # the selected profile's modality through the config manager and
+        # rejects unconfigured profiles.
+        agent = ProfileSelectionAgent(
+            deps=ProfileSelectionDeps(
+                available_profiles=["video_colpali_smol500_mv_frame"]
+            )
+        )
+        agent._config_manager = config_manager
 
         events = _collect_stream_events(
             agent,
