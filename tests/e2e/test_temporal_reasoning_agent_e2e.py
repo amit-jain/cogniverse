@@ -66,7 +66,7 @@ def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 120.0) -
     )
 
 
-VESPA_HTTP_PORT = 8080
+VESPA_HTTP_PORT = 33080
 VESPA_CONFIG_PORT = 33071
 DENSEON_URL = "http://localhost:33906"
 # TemporalReasoningAgent reads via FederationService.federated_get_all

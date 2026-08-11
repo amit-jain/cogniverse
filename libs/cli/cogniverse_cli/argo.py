@@ -9,6 +9,8 @@ from pathlib import Path
 import yaml
 
 ARGO_VERSION = "v3.5.0"
+ARGO_NAMESPACE = "argo"
+ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR = "app=workflow-controller"
 ARGO_INSTALL_URL = (
     f"https://github.com/argoproj/argo-workflows/releases/download/"
     f"{ARGO_VERSION}/install.yaml"
@@ -40,7 +42,7 @@ def _run_kubectl(
         ) from None
 
 
-def install_argo_controller(namespace: str = "argo") -> None:
+def install_argo_controller(namespace: str = ARGO_NAMESPACE) -> None:
     """Install Argo Workflows controller.
 
     Creates the namespace if it does not already exist, applies the

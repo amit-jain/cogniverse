@@ -509,7 +509,7 @@ def deploy_stack(
     from cogniverse_cli.argo import install_argo_controller
 
     try:
-        install_argo_controller(namespace="argo")
+        install_argo_controller()
     except Exception as e:
         pytest.fail(f"Argo controller install failed: {e}")
 
