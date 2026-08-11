@@ -83,7 +83,8 @@
         "pdf_processing"
       ],
       "modalities": [
-        "DOCUMENT"
+        "DOCUMENT",
+        "WIKI"
       ]
     },
     "deep_research_agent": {
@@ -106,7 +107,9 @@
         "code_generation",
         "code_search"
       ],
-      "modalities": []
+      "modalities": [
+        "CODE"
+      ]
     },
     "gateway_agent": {
       "url": "{{ include "cogniverse.runtimeUrl" . }}",
