@@ -14,6 +14,9 @@ from pydantic import BaseModel, Field, field_validator
 
 from cogniverse_agents.search.vespa_query import VespaSearchDegraded
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.inference_service import (
+    InferenceServiceUnavailableError,
+)
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.messaging import (
@@ -551,6 +554,11 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
         # Vespa soft-timeout (HTTP 200 + root.errors): the backend is up but
         # degraded — 503 tells the caller to retry, instead of an opaque 500.
         raise HTTPException(status_code=503, detail=str(e))
+    except InferenceServiceUnavailableError as e:
+        # The sidecar backing this capability isn't provisioned in this
+        # deployment. 503 names the service to configure instead of the
+        # opaque 500 the caller used to get.
+        raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         detail = str(e)
         if "not found" in detail:
@@ -558,6 +566,22 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
         elif "no supported execution path" in detail:
             raise HTTPException(status_code=501, detail=detail)
         raise HTTPException(status_code=400, detail=detail)
+    except Exception as e:
+        # Everything unmapped reached the caller as a bodyless plain-text
+        # 500. Log the traceback server-side and return a JSON body naming
+        # the agent, the error type and the request id; the exception text
+        # can carry backend URLs with credentials, so it stays out.
+        request_id = dispatch_context["request_id"]
+        logger.exception(
+            "Agent '%s' dispatch failed (request_id=%s)", agent_name, request_id
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Agent '{agent_name}' failed with {type(e).__name__} "
+                f"(request_id={request_id}). See runtime logs for detail."
+            ),
+        )
 
 
 # --------------------------------------------------------------------------- #
