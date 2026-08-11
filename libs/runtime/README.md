@@ -34,10 +34,10 @@ Core Layer
 └── cogniverse-evaluation
 
 Implementation Layer
-├── cogniverse-telemetry-phoenix
-├── cogniverse-agents ← cogniverse-runtime depends on this (optional extra)
+├── cogniverse-telemetry-phoenix ← required by admin and operational CLIs
+├── cogniverse-agents ← required by mounted routers
 ├── cogniverse-vespa ← cogniverse-runtime depends on this (optional extra)
-├── cogniverse-synthetic ← pulled in transitively via the `agents` extra
+├── cogniverse-synthetic ← required by synthetic generation
 └── cogniverse-finetuning
 
 Application Layer
@@ -54,8 +54,9 @@ Application Layer
 - `cogniverse-core` (required) - Registries, memory, tenant utilities
 - `cogniverse-foundation` (transitive, via `cogniverse-core`) - Base configuration and telemetry
 - `cogniverse-vespa` (optional extra `[vespa]`) - Vespa backend operations
-- `cogniverse-agents` (optional extra `[agents]`) - Routing, search, ingestion agents
-- `cogniverse-synthetic` (transitive, via the `agents` extra) - Synthetic data generation; the `/synthetic/*` routes are always mounted (`main.py` imports the router unconditionally) so a deployment needs the `agents` extra installed for them to work
+- `cogniverse-agents` (required) - Routing, search, and ingestion agents used by mounted routers
+- `cogniverse-synthetic` (required) - Synthetic data generation
+- `cogniverse-telemetry-phoenix` (required) - Phoenix provider used by admin canary actions and the optimization and quality-monitor CLIs
 
 **External Dependencies:**
 - `fastapi>=0.104.0` - Web framework
@@ -119,7 +120,7 @@ curl -X POST http://localhost:8000/agents/gateway_agent/process \
 
 ### 4. Synthetic Data Generation
 
-Generate training data for optimizers (`optimizer` must be one of `profile`, `routing`, `workflow`, `unified`):
+Generate training data for optimizers (`optimizer` must be one of `query_enhancement`, `entity_extraction`, `profile`, `routing`, `workflow`, `unified`, `cross_modal`):
 
 ```bash
 # POST /synthetic/generate
@@ -149,12 +150,12 @@ uv pip install -e libs/runtime
 ### Production
 
 ```bash
-pip install cogniverse-runtime[vespa,agents]
+pip install cogniverse-runtime[vespa]
 
 # Installs:
 # - cogniverse-sdk, cogniverse-core (required; cogniverse-foundation transitively)
 # - cogniverse-vespa (via the `vespa` extra)
-# - cogniverse-agents, and cogniverse-synthetic transitively (via the `agents` extra)
+# - cogniverse-agents, cogniverse-synthetic, and cogniverse-telemetry-phoenix (required)
 # - fastapi, uvicorn, pydantic
 ```
 
@@ -259,7 +260,7 @@ There is no standalone `/route` endpoint — query routing is performed by dispa
 
 **POST /synthetic/generate**
 - Generate training data for one optimizer per call
-- `optimizer` must be one of `profile`, `routing`, `workflow`, `unified`; `count` and `tenant_id` are required
+- `optimizer` must be one of `query_enhancement`, `entity_extraction`, `profile`, `routing`, `workflow`, `unified`, `cross_modal`; `count` and `tenant_id` are required
 
 **GET /synthetic/optimizers**
 - List available optimizers
@@ -645,7 +646,8 @@ MIT License - See [LICENSE](../../LICENSE) for details.
 ## Related Packages
 
 - **cogniverse-core**: Registries, memory, tenant utilities (required dependency)
-- **cogniverse-agents**: Agent implementations (optional `agents` extra)
+- **cogniverse-agents**: Agent implementations (required dependency)
 - **cogniverse-vespa**: Vespa backend (optional `vespa` extra)
-- **cogniverse-synthetic**: Synthetic data generation (transitive, via the `agents` extra)
+- **cogniverse-synthetic**: Synthetic data generation (required dependency)
+- **cogniverse-telemetry-phoenix**: Phoenix telemetry and evaluation provider (required dependency)
 - **cogniverse-dashboard**: Streamlit UI (companion application)

@@ -21,6 +21,8 @@ import time
 import httpx
 import pytest
 
+from tests.e2e.conftest import KUBECTL_CONTEXT
+
 
 def _probe_existing_runtime() -> httpx.Response | None:
     """Return the default-stack response when a runtime is already reachable.
@@ -77,7 +79,7 @@ def refresh_workload_pods_if_devmode(
 
     def _kc(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["kubectl", "--context=k3d-cogniverse", *args],
+            ["kubectl", "--context", KUBECTL_CONTEXT, *args],
             capture_output=True,
             text=True,
             timeout=timeout,

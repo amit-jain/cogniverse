@@ -882,6 +882,14 @@ The `tenant_id` on every memory, pin, endorse, promote, and restore route below 
 
 **POST /admin/sessions/{session_id}/close** — Fan-out session close: sweeps `drop_session(session_id)` across every warm (in-process-cached) `Mem0MemoryManager` instance, since a session may have written memories under more than one tenant. Tenants already evicted from the warm cache are skipped (best-effort, not a guaranteed sweep — use the per-tenant DELETE endpoint above for a guaranteed one).
 
+For every memory-aware dispatch, the runtime initializes the agent's
+request-local session scope before invoking it and clears the scope afterward.
+This includes requests without a `session_id`, which explicitly clear any
+stale value before the agent runs. If a present `set_session_id` hook fails
+during setup or cleanup, dispatch raises with the agent and session context;
+the request never continues with an unverified session scope. Agents without
+that capability continue without session-memory wiring.
+
 **Endpoint guards**
 
 - `/ingestion/upload`, `/ingestion/start`, and every `/graph/*` endpoint require the `tenant_id` to have a `tenant_metadata` document; missing tenant returns 404 (`Tenant '...' not registered`). Pre-fix the runtime auto-deployed schemas for any unknown tenant id, accumulating schema-only orphans. Create the tenant via `POST /admin/tenants` before sending traffic.
@@ -1301,6 +1309,10 @@ flowchart TB
 - `cogniverse-vespa`: Vespa backend operations
 
 - `cogniverse-foundation`: Configuration and telemetry
+
+- `cogniverse-synthetic`: Synthetic data generation
+
+- `cogniverse-telemetry-phoenix`: Phoenix provider for admin canary routes and the optimization and quality-monitor CLIs
 
 **Dependents:**
 

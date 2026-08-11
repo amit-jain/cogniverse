@@ -20,11 +20,10 @@ import subprocess
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, TENANT_ID
+from tests.e2e.conftest import KUBECTL_CONTEXT, RUNTIME, TENANT_ID
 
 PHOENIX = "http://localhost:33006"
 VESPA = "http://localhost:33080"
-KUBECTL_CONTEXT = "k3d-cogniverse"
 NAMESPACE = "cogniverse"
 
 
