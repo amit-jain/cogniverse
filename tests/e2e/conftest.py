@@ -27,6 +27,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+from cogniverse_cli.argo import (
+    ARGO_NAMESPACE,
+    ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
+)
 
 # Deployment-lifecycle tests bring up their own port-forward-based cluster
 # and are exercised via a dedicated ``pytest tests/e2e/deployment/`` run —
@@ -47,6 +51,58 @@ def _modal_inference_deselections(config, items):
         for item in items
         if any(item.iter_markers(name="requires_modal_inference"))
     ]
+
+
+def _telegram_real_flow_deselections(items):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_TEST_CHAT_ID")
+    if token and chat_id:
+        return [], None
+    deselected = [
+        item
+        for item in items
+        if any(item.iter_markers(name="requires_telegram_bot"))
+    ]
+    if not deselected:
+        return [], None
+    missing = []
+    if not token:
+        missing.append("TELEGRAM_BOT_TOKEN")
+    if not chat_id:
+        missing.append("TELEGRAM_TEST_CHAT_ID")
+    return deselected, "missing " + " and ".join(missing)
+
+
+def argo_workflow_controller_probe_command(
+    namespace: str = ARGO_NAMESPACE,
+) -> list[str]:
+    return [
+        "kubectl",
+        "--context",
+        KUBECTL_CONTEXT,
+        "-n",
+        namespace,
+        "get",
+        "pods",
+        "-l",
+        ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
+        "--field-selector=status.phase=Running",
+        "-o",
+        "name",
+    ]
+
+
+def argo_workflow_controller_probe_failure_message(
+    *,
+    command: list[str],
+    namespace: str = ARGO_NAMESPACE,
+) -> str:
+    return (
+        "Argo workflow controller unavailable after E2E stack setup; "
+        f"command={' '.join(command)!r}; context={KUBECTL_CONTEXT!r}; "
+        f"namespace={namespace!r}; "
+        f"selector={ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR!r}"
+    )
 
 
 def _require_modal_inference_endpoints(items, endpoints) -> None:
@@ -88,6 +144,7 @@ def pytest_collection_modifyitems(config, items):
         skip_substrings.append("test_router_optimization_e2e")
 
     modal_deselections = _modal_inference_deselections(config, items)
+    telegram_deselections, telegram_reason = _telegram_real_flow_deselections(items)
     if skip_substrings or modal_deselections:
         keep = []
         deselected = []
@@ -110,6 +167,17 @@ def pytest_collection_modifyitems(config, items):
                 )
             config.hook.pytest_deselected(items=deselected)
             items[:] = keep
+
+    if telegram_deselections:
+        reporter = config.pluginmanager.get_plugin("terminalreporter")
+        if reporter is not None:
+            reporter.write_line(
+                f"e2e conftest deselected ({telegram_reason}): "
+                + ", ".join(sorted({item.nodeid for item in telegram_deselections})),
+                yellow=True,
+            )
+        config.hook.pytest_deselected(items=telegram_deselections)
+        items[:] = [item for item in items if item not in telegram_deselections]
 
     def _priority(item):
         path = str(item.fspath)
@@ -2977,6 +3045,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "requires_modal_inference(service): require a live Modal provider",
+    )
+    config.addinivalue_line(
+        "markers",
+        "requires_telegram_bot: require a configured Telegram bot token and chat id",
     )
     _report_collector = E2EReportCollector()
     _report_collector.install_hook()

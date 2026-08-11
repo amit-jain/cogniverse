@@ -45,6 +45,9 @@ from tests.e2e.conftest import run_async, unique_id
 # vLLM port-forward fixture (mirrors test_rlm_telemetry_e2e.py:38-94 pattern)
 # ---------------------------------------------------------------------------
 
+VESPA_HTTP_PORT = 33080
+VESPA_CONFIG_PORT = 33071
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -194,21 +197,21 @@ class TestDeepSynthesisOverHundredDocuments:
         Mem0MemoryManager._instances.clear()
         tenant_id = unique_id("rlm_deep") + ":t1"
         cm = ConfigManager(
-            store=VespaConfigStore(backend_url="http://localhost", backend_port=8080)
+            store=VespaConfigStore(backend_url="http://localhost", backend_port=VESPA_HTTP_PORT)
         )
         # In-memory only: cm.set_system_config would persist a denseon-only
         # localhost URL map into config_metadata and starve the in-cluster
         # ingestor (which reads inference_service_urls from the same store).
         cm._system_config_cache = SystemConfig(  # noqa: SLF001
             backend_url="http://localhost",
-            backend_port=8080,
+            backend_port=VESPA_HTTP_PORT,
             inference_service_urls={"denseon": "http://localhost:33906"},
         )
         mm = Mem0MemoryManager(tenant_id=tenant_id)
         mm.initialize(
             backend_host="http://localhost",
-            backend_port=8080,
-            backend_config_port=19071,
+            backend_port=VESPA_HTTP_PORT,
+            backend_config_port=VESPA_CONFIG_PORT,
             base_schema_name="agent_memories",
             llm_model="google/gemma-4-e4b-it",
             embedding_model="lightonai/DenseOn",

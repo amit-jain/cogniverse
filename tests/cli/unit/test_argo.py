@@ -14,6 +14,13 @@ from cogniverse_cli.argo import (
     filter_workflow_templates,
     install_argo_controller,
 )
+from tests.e2e.conftest import (
+    ARGO_NAMESPACE,
+    ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
+    KUBECTL_CONTEXT,
+    argo_workflow_controller_probe_command,
+    argo_workflow_controller_probe_failure_message,
+)
 
 
 class TestFilterWorkflowTemplates:
@@ -130,6 +137,33 @@ class TestArgoTimeouts:
             with pytest.raises(SystemExit) as se:
                 install_argo_controller("argo")
         assert "timed out" in str(se.value)
+
+
+class TestArgoProbeContract:
+    """The readiness probe must target the authoritative Argo namespace and label."""
+
+    def test_controller_probe_targets_argo_namespace_and_real_label(self) -> None:
+        command = argo_workflow_controller_probe_command()
+
+        assert command == [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "-n",
+            ARGO_NAMESPACE,
+            "get",
+            "pods",
+            "-l",
+            ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR,
+            "--field-selector=status.phase=Running",
+            "-o",
+            "name",
+        ]
+
+        message = argo_workflow_controller_probe_failure_message(command=command)
+        assert f"namespace={ARGO_NAMESPACE!r}" in message
+        assert f"selector={ARGO_WORKFLOW_CONTROLLER_LABEL_SELECTOR!r}" in message
+        assert "command='kubectl --context" in message
 
 
 class TestInstallArgoController:

@@ -20,7 +20,13 @@ import time
 import httpx
 import pytest
 
-from tests.e2e.conftest import KUBECTL_CONTEXT, TENANT_ID
+from tests.e2e.conftest import (
+    ARGO_NAMESPACE,
+    KUBECTL_CONTEXT,
+    TENANT_ID,
+    argo_workflow_controller_probe_command,
+    argo_workflow_controller_probe_failure_message,
+)
 
 pytestmark = pytest.mark.slow
 
@@ -79,27 +85,15 @@ def require_argo_workflows() -> None:
         ],
         timeout=15,
     )
-    controller_command = [
-        "kubectl",
-        "--context",
-        KUBECTL_CONTEXT,
-        "-n",
-        NAMESPACE,
-        "get",
-        "pods",
-        "-l",
-        "app.kubernetes.io/component=workflow-controller",
-        "--field-selector=status.phase=Running",
-        "-o",
-        "name",
-    ]
+    controller_command = argo_workflow_controller_probe_command(namespace=ARGO_NAMESPACE)
     controller = _run_stack_command(controller_command, timeout=15)
     if not controller.stdout.strip():
         pytest.fail(
-            f"Argo workflow controller unavailable after E2E stack setup; "
-            f"command={' '.join(controller_command)!r}; "
-            f"context={KUBECTL_CONTEXT!r}; namespace={NAMESPACE!r}; "
-            f"stdout={controller.stdout!r}; stderr={controller.stderr!r}",
+            argo_workflow_controller_probe_failure_message(
+                command=controller_command,
+                namespace=ARGO_NAMESPACE,
+            )
+            + f"; stdout={controller.stdout!r}; stderr={controller.stderr!r}",
             pytrace=False,
         )
 

@@ -16,6 +16,8 @@ import pytest
 
 from tests.e2e.conftest import RUNTIME, TENANT_ID
 
+pytestmark = [pytest.mark.e2e, pytest.mark.requires_telegram_bot]
+
 
 def _assert_runtime_ready() -> None:
     try:
@@ -107,10 +109,16 @@ TEST_CHAT_ID = int(os.environ.get("TELEGRAM_TEST_CHAT_ID", "0"))
 
 
 def _assert_bot_ready() -> None:
-    assert BOT_TOKEN, "TELEGRAM_BOT_TOKEN must be set for Telegram E2E tests"
-    assert TEST_CHAT_ID != 0, (
-        "TELEGRAM_TEST_CHAT_ID must identify the real Telegram E2E chat"
-    )
+    if not BOT_TOKEN:
+        pytest.fail(
+            "TELEGRAM_BOT_TOKEN must be set for Telegram E2E tests",
+            pytrace=False,
+        )
+    if TEST_CHAT_ID == 0:
+        pytest.fail(
+            "TELEGRAM_TEST_CHAT_ID must identify the real Telegram E2E chat",
+            pytrace=False,
+        )
     try:
         # trust_env=False bypasses any implicit HTTP proxy picked up from the
         # dev machine (k3d / Docker Desktop / VPN). Telegram's public API is
