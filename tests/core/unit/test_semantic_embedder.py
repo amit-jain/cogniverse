@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import MagicMock, patch
 
@@ -75,6 +76,42 @@ def _openai_embed_response(vectors: list[list[float]]):
     return mock_response
 
 
+def _repeat_to_length(fragment: str, length: int) -> str:
+    repeated = fragment * (length // len(fragment) + 1)
+    return repeated[:length]
+
+
+@lru_cache(maxsize=1)
+def _denseon_tokenizer():
+    from huggingface_hub import snapshot_download
+    from transformers import AutoTokenizer
+
+    snapshot = snapshot_download("lightonai/DenseOn", local_files_only=True)
+    return AutoTokenizer.from_pretrained(snapshot, local_files_only=True)
+
+
+def _truncate_to_denseon_budget(text: str) -> str:
+    tokenizer = _denseon_tokenizer()
+    max_length = tokenizer.model_max_length
+    token_count = len(tokenizer(text, add_special_tokens=True).input_ids)
+    if token_count <= max_length:
+        return text
+
+    lo = 0
+    hi = len(text)
+    best = 0
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = text[:mid]
+        candidate_count = len(tokenizer(candidate, add_special_tokens=True).input_ids)
+        if candidate_count <= max_length:
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return text[:best]
+
+
 @pytest.mark.unit
 @pytest.mark.ci_fast
 def test_remote_encode_hits_v1_embeddings():
@@ -97,6 +134,68 @@ def test_remote_encode_hits_v1_embeddings():
 
     assert result.shape == (2, 3)
     assert result.dtype == np.float32
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.parametrize(
+    ("label", "content"),
+    [
+        (
+            "code-punctuation",
+            _repeat_to_length(
+                "def solve(x): return x + 1  # []{}()<>:=,.;!?/\\\\|`~\n",
+                2048,
+            ),
+        ),
+        (
+            "cjk",
+            _repeat_to_length("中文測試漢字かなカナ、。！？；：『』「」", 2048),
+        ),
+    ],
+)
+def test_remote_encode_truncates_token_dense_inputs_to_denseon_budget(
+    label, content, denseon_overflow_server, caplog
+):
+    import logging
+
+    base_url, handler = denseon_overflow_server
+    embedder = RemoteOpenAIEmbedder(base_url, "lightonai/DenseOn")
+    prefixed = f"document: {content}"
+    expected = _truncate_to_denseon_budget(prefixed)
+    tokenizer = _denseon_tokenizer()
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="cogniverse_core.common.models.semantic_embedder",
+    ):
+        vector = embedder.encode(content)
+
+    assert label in {"code-punctuation", "cjk"}
+    assert handler.received_inputs == [[prefixed], [expected]]
+    assert handler.received_statuses == [400, 200]
+    assert len(expected) < len(prefixed)
+    assert (
+        sum(
+            1
+            for record in caplog.records
+            if "DenseOn input truncated" in record.message
+        )
+        == 1
+    )
+    warning = next(
+        record
+        for record in caplog.records
+        if record.message.startswith("DenseOn input truncated")
+    )
+    assert warning.args == (
+        len(prefixed),
+        len(tokenizer(prefixed, add_special_tokens=True).input_ids),
+        len(expected),
+        len(tokenizer(expected, add_special_tokens=True).input_ids),
+        tokenizer.model_max_length,
+    )
+    np.testing.assert_allclose(vector, [0.6, 0.8], rtol=1e-6)
 
 
 def test_authenticated_remote_encode_sends_exact_bearer_header(echo_embed_server):
@@ -473,6 +572,66 @@ class _EchoEmbeddingHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
+class _DenseOnOverflowHandler(BaseHTTPRequestHandler):
+    """DenseOn stub that rejects over-budget inputs and accepts retries."""
+
+    received_inputs: list[list[str]] = []
+    received_statuses: list[int] = []
+
+    def log_message(self, *args):  # silence stderr noise
+        pass
+
+    def do_POST(self):
+        tokenizer = _denseon_tokenizer()
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        inputs = body.get("input", [])
+        type(self).received_inputs.append(list(inputs))
+        first_input = inputs[0] if inputs else ""
+        token_count = len(tokenizer(first_input, add_special_tokens=True).input_ids)
+        if token_count > tokenizer.model_max_length:
+            payload = {
+                "error": {
+                    "message": (
+                        "This model's maximum context length is 512 tokens. "
+                        f"However, you requested 0 output tokens and your prompt "
+                        f"contains at least {token_count} input tokens, for a "
+                        f"total of at least {token_count} tokens. Please reduce "
+                        "the length of the input prompt or the number of "
+                        "requested output tokens. (parameter=input_tokens, "
+                        f"value={token_count})"
+                    ),
+                    "type": "BadRequestError",
+                    "param": "input_tokens",
+                    "code": 400,
+                }
+            }
+            data = json.dumps(payload).encode()
+            type(self).received_statuses.append(400)
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        data = json.dumps(
+            {
+                "data": [
+                    {"embedding": [3.0, 4.0], "index": i, "object": "embedding"}
+                    for i in range(len(inputs))
+                ],
+                "model": body.get("model", ""),
+            }
+        ).encode()
+        type(self).received_statuses.append(200)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
 @pytest.fixture
 def echo_embed_server():
     _EchoEmbeddingHandler.received_inputs = []
@@ -483,6 +642,21 @@ def echo_embed_server():
     host, port = server.server_address
     try:
         yield f"http://{host}:{port}", _EchoEmbeddingHandler
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.fixture
+def denseon_overflow_server():
+    _DenseOnOverflowHandler.received_inputs = []
+    _DenseOnOverflowHandler.received_statuses = []
+    server = HTTPServer(("127.0.0.1", 0), _DenseOnOverflowHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        yield f"http://{host}:{port}", _DenseOnOverflowHandler
     finally:
         server.shutdown()
         thread.join(timeout=5)
