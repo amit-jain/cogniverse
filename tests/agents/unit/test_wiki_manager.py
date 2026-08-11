@@ -648,6 +648,28 @@ class TestEmbeddingPromptPrefix:
         assert kwargs.get("is_query") is False
         assert len(vec) == 768
 
+    def test_store_forwards_full_text_to_embedder(self):
+        import numpy as np
+
+        mgr = self._make_manager()
+        embedder = MagicMock()
+        embedder.encode.return_value = np.array([1.0, 2.0], dtype=np.float32)
+
+        long_text = ("def solve(x): return x + 1  # []{}()<>:=,.;!?/\\\\|`~\n" * 40)[
+            :2048
+        ]
+        with patch(
+            "cogniverse_core.common.models.semantic_embedder.get_semantic_embedder",
+            return_value=embedder,
+        ):
+            vec = mgr._generate_embedding(long_text)
+
+        embedder.encode.assert_called_once()
+        args, kwargs = embedder.encode.call_args
+        assert args[0] == long_text
+        assert kwargs == {"is_query": False}
+        assert vec == [1.0, 2.0]
+
     def test_embedder_outage_raises_instead_of_zero_vector(self):
         """A dead embedder must raise, not return a zero vector — persisting a
         zero embedding poisons the stored page's hybrid ranking permanently."""

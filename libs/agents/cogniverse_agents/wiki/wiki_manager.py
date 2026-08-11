@@ -666,6 +666,9 @@ class WikiManager:
 
         try:
             embedder = get_semantic_embedder()
+            # The shared DenseOn embedder enforces the real token window and
+            # retries with a token-aware truncation only when the sidecar
+            # rejects an oversized request.
             vec = embedder.encode(text, is_query=is_query)
             return vec.tolist() if hasattr(vec, "tolist") else list(vec)
         except Exception as exc:
