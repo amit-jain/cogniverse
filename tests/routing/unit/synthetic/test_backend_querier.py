@@ -184,9 +184,9 @@ async def test_query_profile_grounds_samples_without_duplicate_kwarg() -> None:
 
     call = backend.calls[0]
     assert call["schema"] == "video_frame"
-    assert call["yql"] == "select * from sources video_frame where true limit 5"
+    assert call["yql"] == "select * from sources video_frame where true limit 25"
     assert "yql" not in call["kwargs"], "yql must not be duplicated into kwargs"
-    assert call["kwargs"] == {"hits": 5, "tenant_id": "acme:media"}
+    assert call["kwargs"] == {"hits": 25, "tenant_id": "acme:media"}
     assert backend.schema_resolutions == []
 
 
@@ -552,7 +552,7 @@ async def test_query_profiles_returns_exact_requested_total() -> None:
     assert [sample["topic"] for sample in samples] == ["first"]
     assert len(backend.calls) == 1
     assert backend.calls[0]["schema"] == "image"
-    assert backend.calls[0]["kwargs"]["hits"] == 1
+    assert backend.calls[0]["kwargs"]["hits"] == 5
 
 
 async def test_query_profiles_does_not_return_partial_data_after_outage() -> None:
@@ -749,3 +749,74 @@ async def test_query_by_modality_rejects_missing_profile_before_backend_branch()
 
     assert backend.schema_resolutions == []
     assert backend.calls == []
+
+
+class _PagingBackend:
+    """Returns a fixed corpus, honouring the querier's hits/offset paging."""
+
+    def __init__(self, docs: list[dict]) -> None:
+        self.docs = docs
+        self.calls: list[dict] = []
+
+    def get_tenant_schema_name(self, tenant_id, base_schema_name):
+        return f"{base_schema_name}_{tenant_id.replace(':', '_')}"
+
+    def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
+        self.calls.append({"schema": schema, "yql": yql, "kwargs": kwargs})
+        offset = kwargs.get("offset", 0)
+        return self.docs[offset : offset + kwargs["hits"]]
+
+
+_VIDEO_PROFILE = {
+    "profile_name": "video_frames_mv",
+    "schema_name": "video_frames",
+    "type": "video",
+    "embedding_type": "multi_vector",
+    "pipeline_config": {"extract_keyframes": True, "generate_descriptions": True},
+}
+_TWO_VIDEO_CORPUS = [
+    {"video_title": "video_a", "segment_description": "frame a1", "video_id": "a"},
+    {"video_title": "video_a", "segment_description": "frame a2", "video_id": "a"},
+    {"video_title": "video_a", "segment_description": "frame a3", "video_id": "a"},
+    {"video_title": "video_b", "segment_description": "frame b1", "video_id": "b"},
+    {"video_title": "video_b", "segment_description": "frame b2", "video_id": "b"},
+    {"video_title": "video_b", "segment_description": "frame b3", "video_id": "b"},
+]
+
+
+def test_diverse_spreads_samples_across_distinct_sources() -> None:
+    backend = _PagingBackend(_TWO_VIDEO_CORPUS)
+    querier = _querier(backend)
+
+    samples = asyncio.run(
+        querier._query_profile(
+            _VIDEO_PROFILE, 2, "diverse", tenant_id="flywheel_org:production"
+        )
+    )
+
+    assert [sample["topic"] for sample in samples] == ["video_a", "video_b"]
+    assert [sample["description"] for sample in samples] == ["frame a1", "frame b1"]
+
+
+def test_diverse_and_multi_modal_sequences_do_not_share_one_query() -> None:
+    emitted = {}
+    sampled = {}
+    for strategy in ("diverse", "multi_modal_sequences"):
+        backend = _PagingBackend(_TWO_VIDEO_CORPUS)
+        querier = _querier(backend)
+        samples = asyncio.run(
+            querier._query_profile(
+                _VIDEO_PROFILE, 2, strategy, tenant_id="flywheel_org:production"
+            )
+        )
+        emitted[strategy] = [call["yql"] for call in backend.calls]
+        sampled[strategy] = [sample["description"] for sample in samples]
+
+    assert emitted["diverse"] == [
+        "select * from sources video_frames where true limit 10"
+    ]
+    assert emitted["multi_modal_sequences"] == [
+        "select * from sources video_frames where true limit 2"
+    ]
+    assert sampled["diverse"] == ["frame a1", "frame b1"]
+    assert sampled["multi_modal_sequences"] == ["frame a1", "frame a2"]

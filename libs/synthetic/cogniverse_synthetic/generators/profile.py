@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 ProfileLabeler = Callable[[str, List[str], str], Awaitable[Any]]
 DEFAULT_PRODUCTION_LABEL_TIMEOUT_SECONDS = 300.0
+TOPIC_WORD_BUDGET = 20
 
 
 class ProfileGenerator(BaseGenerator):
@@ -90,17 +91,17 @@ class ProfileGenerator(BaseGenerator):
                 tenant_id,
             )
 
-        topics = self._extract_topics(sampled_content)
-        if not topics:
+        if not self._extract_topics(sampled_content):
             raise ValueError("sampled_content contains no usable profile topic")
+        queries = self._build_grounded_queries(sampled_content, profile_configs)
         self.require_exact_target_count(
-            topics[:target_count],
+            queries[:target_count],
             target_count,
-            source_context=f"{len(topics)} unique source topics",
+            source_context=f"{len(queries)} unique source topics",
         )
 
         examples: List[BaseModel] = []
-        for query in topics[:target_count]:
+        for query in queries[:target_count]:
             examples.append(await self._label_query(query, profile_configs, tenant_id))
 
         logger.info(f"Generated {len(examples)} ProfileSelectionExample examples")
@@ -334,11 +335,48 @@ class ProfileGenerator(BaseGenerator):
         return examples
 
     def _extract_topic(self, item: Dict[str, Any]) -> str | None:
-        for field in ("topic", "title", "video_title", "description", "transcript"):
+        for field in ("description", "transcript", "topic", "title", "video_title"):
             value = item.get(field)
             if isinstance(value, str) and value.strip():
-                return " ".join(value.split()[:5])
+                return " ".join(value.split()[:TOPIC_WORD_BUDGET])
         return None
+
+    def _source_profile_config(
+        self,
+        item: Dict[str, Any],
+        profile_configs: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        schema_name = item.get("schema_name")
+        if isinstance(schema_name, str) and schema_name.strip():
+            for profile_config in profile_configs.values():
+                if profile_config["schema_name"] == schema_name:
+                    return profile_config
+            raise ValueError(
+                f"Sampled content schema {schema_name!r} has no configured profile"
+            )
+        if len(profile_configs) == 1:
+            return next(iter(profile_configs.values()))
+        raise ValueError(
+            "Sampled content requires schema_name to select a query template"
+        )
+
+    def _build_grounded_queries(
+        self,
+        sampled_content: List[Dict[str, Any]],
+        profile_configs: Dict[str, Dict[str, Any]],
+    ) -> List[str]:
+        queries: List[str] = []
+        for item in sampled_content:
+            topic = self._extract_topic(item)
+            if topic is None:
+                continue
+            traits = self._profile_traits(
+                self._source_profile_config(item, profile_configs)
+            )
+            query = traits["template"].format(topic=topic)
+            if query not in queries:
+                queries.append(query)
+        return queries
 
     def _extract_topics(self, sampled_content: List[Dict[str, Any]]) -> List[str]:
         topics = []
